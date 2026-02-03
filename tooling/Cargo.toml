@@ -18,6 +18,7 @@ version = "4.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "../crates/blockchain" }
@@ -38,7 +39,6 @@ ethrex-prover = { path = "../crates/l2/prover" }
 ethrex-storage-rollup = { path = "../crates/l2/storage" }
 ethrex = { path = "../cmd/ethrex" }
 ethrex-l2-rpc = { path = "../crates/l2/networking/rpc" }
-ethrex-threadpool = { path = "../crates/concurrency" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }

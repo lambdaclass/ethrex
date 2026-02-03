@@ -47,30 +47,32 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
-mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info, instrument, trace};
+use ::tracing::{debug, info, instrument, trace, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{
-    EMPTY_TRIE_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS,
-};
+use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+
+// Re-export stateless validation functions for backwards compatibility
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::EIP4844Transaction;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
-use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    Receipt, Transaction, WrappedEIP4844Transaction,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, TrieLogger};
+pub use ethrex_common::{
+    get_total_blob_gas, validate_block, validate_gas_used, validate_receipts_root,
+    validate_requests_hash,
+};
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
@@ -80,19 +82,21 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
+use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    Arc, Mutex, RwLock,
+    Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
@@ -108,6 +112,17 @@ const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
 type StoreUpdatesMap = FxHashMap<H256, (Result<Trie, StoreError>, FxHashMap<Nibbles, Vec<u8>>)>;
+
+// Result type for execute_block_pipeline
+type BlockExecutionPipelineResult = (
+    BlockExecutionResult,
+    AccountUpdatesList,
+    Option<Vec<AccountUpdate>>,
+    usize,        // max queue length
+    [Instant; 6], // timing instants
+    Duration,     // warmer duration
+);
+
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
@@ -188,6 +203,8 @@ pub struct BlockchainOptions {
     /// EIP-7872: User-configured maximum blobs per block for local building.
     /// If None, uses the protocol maximum for the current fork.
     pub max_blobs_per_block: Option<u32>,
+    /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
+    pub precompute_witnesses: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -197,6 +214,7 @@ impl Default for BlockchainOptions {
             perf_logs_enabled: false,
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
+            precompute_witnesses: false,
         }
     }
 }
@@ -288,17 +306,8 @@ impl Blockchain {
         &self,
         block: &Block,
         parent_header: &BlockHeader,
-        mut vm: Evm,
-    ) -> Result<
-        (
-            BlockExecutionResult,
-            AccountUpdatesList,
-            // FIXME: extract to stats struct
-            usize,
-            [Instant; 6],
-        ),
-        ChainError,
-    > {
+        vm: &mut Evm,
+    ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
         let chain_config = self.storage.get_chain_config();
@@ -311,7 +320,27 @@ impl Blockchain {
         let queue_length = AtomicUsize::new(0);
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
-        let (execution_result, account_updates_list) = std::thread::scope(|s| {
+
+        // Wrap the store with CachingDatabase so both warming and execution
+        // can benefit from shared caching of state lookups
+        let original_store = vm.db.store.clone();
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
+            Arc::new(CachingDatabase::new(original_store));
+
+        // Replace the VM's store with the caching version
+        vm.db.store = caching_store.clone();
+
+        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
+            let vm_type = vm.vm_type;
+            let warm_handle = std::thread::Builder::new()
+                .name("block_executor_warmer".to_string())
+                .spawn_scoped(s, move || {
+                    // Warming uses the same caching store, sharing cached state with execution
+                    let start = Instant::now();
+                    let _ = LEVM::warm_block(block, caching_store, vm_type);
+                    start.elapsed()
+                })
+                .expect("Failed to spawn block_executor warmer thread");
             let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
             let execution_handle = std::thread::Builder::new()
@@ -337,7 +366,7 @@ impl Blockchain {
             let merkleize_handle = std::thread::Builder::new()
                 .name("block_executor_merkleizer".to_string())
                 .spawn_scoped(s, move || -> Result<_, StoreError> {
-                    let account_updates_list = self.handle_merkleization(
+                    let (account_updates_list, accumulated_updates) = self.handle_merkleization(
                         s,
                         rx,
                         parent_header_ref,
@@ -345,9 +374,18 @@ impl Blockchain {
                         max_queue_length_ref,
                     )?;
                     let merkle_end_instant = Instant::now();
-                    Ok((account_updates_list, merkle_end_instant))
+                    Ok((
+                        account_updates_list,
+                        accumulated_updates,
+                        merkle_end_instant,
+                    ))
                 })
                 .expect("Failed to spawn block_executor merkleizer thread");
+            let warmer_duration = warm_handle
+                .join()
+                .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                .ok()
+                .unwrap_or(Duration::ZERO);
             (
                 execution_handle.join().unwrap_or_else(|_| {
                     Err(ChainError::Custom("execution thread panicked".to_string()))
@@ -357,15 +395,18 @@ impl Blockchain {
                         "merklization thread panicked".to_string(),
                     ))
                 }),
+                warmer_duration,
             )
         });
-        let (account_updates_list, merkle_end_instant) = account_updates_list?;
+        let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
+
         let exec_merkle_end_instant = Instant::now();
 
         Ok((
             execution_result,
             account_updates_list,
+            accumulated_updates,
             max_queue_length,
             [
                 start_instant,
@@ -375,6 +416,7 @@ impl Blockchain {
                 merkle_end_instant,
                 exec_merkle_end_instant,
             ],
+            warmer_duration,
         ))
     }
 
@@ -424,7 +466,7 @@ impl Blockchain {
         parent_header: &'b BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<AccountUpdatesList, StoreError>
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError>
     where
         'a: 's,
         'b: 's,
@@ -475,9 +517,34 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
+
+        // Accumulator for witness generation (only used if precompute_witnesses is true)
+        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
+            if self.options.precompute_witnesses {
+                Some(FxHashMap::default())
+            } else {
+                None
+            };
+
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
+
+            // Accumulate updates for witness generation if enabled
+            // We clone here only when witness generation is needed
+            if let Some(acc) = &mut accumulator {
+                for update in updates.clone() {
+                    match acc.entry(update.address) {
+                        Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update);
+                        }
+                    }
+                }
+            }
+
             let mut hashed_updates: Vec<_> = updates
                 .into_iter()
                 .map(|u| {
@@ -552,12 +619,17 @@ impl Blockchain {
             .collect();
         let code_updates = code_updates.into_iter().collect();
 
-        Ok(AccountUpdatesList {
-            state_trie_hash,
-            state_updates,
-            storage_updates,
-            code_updates,
-        })
+        let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+
+        Ok((
+            AccountUpdatesList {
+                state_trie_hash,
+                state_updates,
+                storage_updates,
+                code_updates,
+            },
+            accumulated_updates,
+        ))
     }
 
     fn handle_merkleization_sequential(
@@ -566,7 +638,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<AccountUpdatesList, StoreError> {
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let mut state_trie = self
             .storage
             .state_trie(parent_header.hash())?
@@ -579,9 +651,33 @@ impl Blockchain {
 
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
 
+        // Accumulator for witness generation (only used if precompute_witnesses is true)
+        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
+            if self.options.precompute_witnesses {
+                Some(FxHashMap::default())
+            } else {
+                None
+            };
+
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
+
+            // Accumulate updates for witness generation if enabled
+            // We clone here only when witness generation is needed
+            if let Some(acc) = &mut accumulator {
+                for update in updates.clone() {
+                    match acc.entry(update.address) {
+                        Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update);
+                        }
+                    }
+                }
+            }
+
             let hashed_updates: Vec<_> = updates
                 .into_iter()
                 .map(|u| {
@@ -609,12 +705,17 @@ impl Blockchain {
             .collect();
         let code_updates = code_updates.into_iter().collect();
 
-        Ok(AccountUpdatesList {
-            state_trie_hash,
-            state_updates,
-            storage_updates,
-            code_updates,
-        })
+        let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+
+        Ok((
+            AccountUpdatesList {
+                state_trie_hash,
+                state_updates,
+                storage_updates,
+                code_updates,
+            },
+            accumulated_updates,
+        ))
     }
 
     /// Processes a batch of account updates, applying them to the state trie and storage tries,
@@ -833,7 +934,7 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
@@ -858,15 +959,24 @@ impl Blockchain {
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
-            for account_update in &account_updates {
-                touched_account_storage_slots.insert(
-                    account_update.address,
-                    account_update
-                        .added_storage
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<H256>>(),
-                );
+            let mut state_accessed = logger
+                .state_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+                })?
+                .clone();
+
+            // Deduplicate storage keys while preserving access order
+            for keys in state_accessed.values_mut() {
+                let mut seen = HashSet::new();
+                keys.retain(|k| seen.insert(*k));
+            }
+
+            for (account, acc_keys) in state_accessed.iter() {
+                let slots: &mut Vec<H256> =
+                    touched_account_storage_slots.entry(*account).or_default();
+                slots.extend(acc_keys.iter().copied());
             }
 
             // Get the used block hashes from the logger
@@ -893,14 +1003,7 @@ impl Blockchain {
 
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
-            for (account, acc_keys) in logger
-                .state_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
-                })?
-                .iter()
-            {
+            for (account, acc_keys) in state_accessed.iter() {
                 // Access the account from the state trie to record the nodes used to access it
                 trie.get(&hash_address(account)).map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to access account from trie".to_string())
@@ -946,14 +1049,12 @@ impl Blockchain {
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
-            let (storage_tries_after_update, account_updates_list) = self
-                .storage
-                .apply_account_updates_from_trie_with_witness(
+            let (storage_tries_after_update, account_updates_list) =
+                self.storage.apply_account_updates_from_trie_with_witness(
                     trie,
                     &account_updates,
                     used_storage_tries,
-                )
-                .await?;
+                )?;
 
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
@@ -1107,6 +1208,248 @@ impl Blockchain {
         })
     }
 
+    pub fn generate_witness_from_account_updates(
+        &self,
+        account_updates: Vec<AccountUpdate>,
+        block: &Block,
+        parent_header: BlockHeader,
+        logger: &DatabaseLogger,
+    ) -> Result<ExecutionWitness, ChainError> {
+        // Get state at previous block
+        let trie = self
+            .storage
+            .state_trie(parent_header.hash())
+            .map_err(|_| ChainError::ParentStateNotFound)?
+            .ok_or(ChainError::ParentStateNotFound)?;
+        let initial_state_root = trie.hash_no_commit();
+
+        let (trie_witness, trie) = TrieLogger::open_trie(trie);
+
+        let mut touched_account_storage_slots = BTreeMap::new();
+        // This will become the state trie + storage trie
+        let mut used_trie_nodes = Vec::new();
+
+        // Store the root node in case the block is empty and the witness does not record any nodes
+        let root_node = trie.root_node().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to get root state node".to_string())
+        })?;
+
+        let mut codes = Vec::new();
+
+        for account_update in &account_updates {
+            touched_account_storage_slots.insert(
+                account_update.address,
+                account_update
+                    .added_storage
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<H256>>(),
+            );
+        }
+
+        // Get the used block hashes from the logger
+        let blockhash_opcode_references = logger
+            .block_hashes_accessed
+            .lock()
+            .map_err(|_e| ChainError::WitnessGeneration("Failed to get block hashes".to_string()))?
+            .clone();
+
+        // Access all the accounts needed for withdrawals
+        if let Some(withdrawals) = block.body.withdrawals.as_ref() {
+            for withdrawal in withdrawals {
+                trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
+                    ChainError::Custom("Failed to access account from trie".to_string())
+                })?;
+            }
+        }
+
+        let mut used_storage_tries = HashMap::new();
+
+        // Access all the accounts from the initial trie
+        // Record all the storage nodes for the initial state
+        for (account, acc_keys) in logger
+            .state_accessed
+            .lock()
+            .map_err(|_e| {
+                ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+            })?
+            .iter()
+        {
+            // Access the account from the state trie to record the nodes used to access it
+            trie.get(&hash_address(account)).map_err(|_e| {
+                ChainError::WitnessGeneration("Failed to access account from trie".to_string())
+            })?;
+            // Get storage trie at before updates
+            if !acc_keys.is_empty()
+                && let Ok(Some(storage_trie)) =
+                    self.storage.storage_trie(parent_header.hash(), *account)
+            {
+                let (storage_trie_witness, storage_trie) = TrieLogger::open_trie(storage_trie);
+                // Access all the keys
+                for storage_key in acc_keys {
+                    let hashed_key = hash_key(storage_key);
+                    storage_trie.get(&hashed_key).map_err(|_e| {
+                        ChainError::WitnessGeneration("Failed to access storage key".to_string())
+                    })?;
+                }
+                // Store the tries to reuse when applying account updates
+                used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
+            }
+        }
+
+        // Store all the accessed evm bytecodes
+        for code_hash in logger
+            .code_accessed
+            .lock()
+            .map_err(|_e| {
+                ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
+            })?
+            .iter()
+        {
+            let code = self
+                .storage
+                .get_account_code(*code_hash)
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to get account code".to_string())
+                })?
+                .ok_or(ChainError::WitnessGeneration(
+                    "Failed to get account code".to_string(),
+                ))?;
+            codes.push(code.bytecode.to_vec());
+        }
+
+        // Apply account updates to the trie recording all the necessary nodes to do so
+        let (storage_tries_after_update, _account_updates_list) =
+            self.storage.apply_account_updates_from_trie_with_witness(
+                trie,
+                &account_updates,
+                used_storage_tries,
+            )?;
+
+        for (address, (witness, _storage_trie)) in storage_tries_after_update {
+            let mut witness = witness.lock().map_err(|_| {
+                ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
+            })?;
+            let witness = std::mem::take(&mut *witness);
+            let witness = witness.into_values().collect::<Vec<_>>();
+            used_trie_nodes.extend_from_slice(&witness);
+            touched_account_storage_slots.entry(address).or_default();
+        }
+
+        used_trie_nodes.extend_from_slice(&Vec::from_iter(
+            trie_witness
+                .lock()
+                .map_err(|_| {
+                    ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+                })?
+                .clone()
+                .into_values(),
+        ));
+
+        // If the witness is empty at least try to store the root
+        if used_trie_nodes.is_empty()
+            && let Some(root) = root_node
+        {
+            used_trie_nodes.push((*root).clone());
+        }
+
+        // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
+        let mut block_headers_bytes = Vec::new();
+
+        let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
+        let first_needed_block_hash = first_blockhash_opcode_number
+            .and_then(|n| {
+                (*n < block.header.number.saturating_sub(1))
+                    .then(|| blockhash_opcode_references.get(n))?
+                    .copied()
+            })
+            .unwrap_or(block.header.parent_hash);
+
+        let mut current_header = block.header.clone();
+
+        // Headers from latest - 1 until we reach first block header we need.
+        // We do it this way because we want to fetch headers by hash, not by number
+        while current_header.hash() != first_needed_block_hash {
+            let parent_hash = current_header.parent_hash;
+            let current_number = current_header.number - 1;
+
+            current_header = self
+                .storage
+                .get_block_header_by_hash(parent_hash)?
+                .ok_or_else(|| {
+                    ChainError::WitnessGeneration(format!(
+                        "Failed to get block {current_number} header"
+                    ))
+                })?;
+
+            block_headers_bytes.push(current_header.encode_to_vec());
+        }
+
+        // Create a list of all read/write addresses and storage slots
+        let mut keys = Vec::new();
+        for (address, touched_storage_slots) in touched_account_storage_slots {
+            keys.push(address.as_bytes().to_vec());
+            for slot in touched_storage_slots.iter() {
+                keys.push(slot.as_bytes().to_vec());
+            }
+        }
+
+        // Get initial state trie root and embed the rest of the trie into it
+        let nodes: BTreeMap<H256, Node> = used_trie_nodes
+            .into_iter()
+            .map(|node| (node.compute_hash().finalize(), node))
+            .collect();
+        let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+            Trie::get_embedded_root(&nodes, initial_state_root)?
+        {
+            Some((*state_trie_root).clone())
+        } else {
+            None
+        };
+
+        // Get all initial storage trie roots and embed the rest of the trie into it
+        let state_trie = if let Some(state_trie_root) = &state_trie_root {
+            Trie::new_temp_with_root(state_trie_root.clone().into())
+        } else {
+            Trie::new_temp()
+        };
+        let mut storage_trie_roots = BTreeMap::new();
+        for key in &keys {
+            if key.len() != 20 {
+                continue; // not an address
+            }
+            let address = Address::from_slice(key);
+            let hashed_address = hash_address(&address);
+            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+                continue; // empty account, doesn't have a storage trie
+            };
+            let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
+            if storage_root_hash == *EMPTY_TRIE_HASH {
+                continue; // empty storage trie
+            }
+            if !nodes.contains_key(&storage_root_hash) {
+                continue; // storage trie isn't relevant to this execution
+            }
+            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+            let NodeRef::Node(node, _) = node else {
+                return Err(ChainError::Custom(
+                    "execution witness does not contain non-empty storage trie".to_string(),
+                ));
+            };
+            storage_trie_roots.insert(address, (*node).clone());
+        }
+
+        Ok(ExecutionWitness {
+            codes,
+            block_headers_bytes,
+            first_block_number: parent_header.number,
+            chain_config: self.storage.get_chain_config(),
+            state_trie_root,
+            storage_trie_roots,
+            keys,
+        })
+    }
+
     #[instrument(
         level = "trace",
         name = "Block DB update",
@@ -1180,11 +1523,41 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-        let vm = self.new_evm(vm_db)?;
+        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
+            // If witness pre-generation is enabled, we wrap the db with a logger
+            // to track state access (block hashes, storage keys, codes) during execution
+            // avoiding the need to re-execute the block later.
+            let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
+                self.storage.clone(),
+                parent_header.clone(),
+            )?);
 
-        let (res, account_updates_list, merkle_queue_length, instants) =
-            self.execute_block_pipeline(&block, &parent_header, vm)?;
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
+
+            let vm = match self.options.r#type.clone() {
+                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L2(l2_config) => Evm::new_from_db_for_l2(
+                    logger.clone(),
+                    *l2_config.fee_config.read().map_err(|_| {
+                        EvmError::Custom("Fee config lock was poisoned".to_string())
+                    })?,
+                ),
+            };
+            (vm, Some(logger))
+        } else {
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+            let vm = self.new_evm(vm_db)?;
+            (vm, None)
+        };
+
+        let (
+            res,
+            account_updates_list,
+            accumulated_updates,
+            merkle_queue_length,
+            instants,
+            warmer_duration,
+        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1193,7 +1566,22 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
+        if let Some(logger) = logger
+            && let Some(account_updates) = accumulated_updates
+        {
+            let block_hash = block.hash();
+            let witness = self.generate_witness_from_account_updates(
+                account_updates,
+                &block,
+                parent_header,
+                &logger,
+            )?;
+            self.storage
+                .store_witness(block_hash, block_number, witness)?;
+        };
+
         let result = self.store_block(block, account_updates_list, res);
+
         let stored = Instant::now();
 
         let instants = std::array::from_fn(move |i| {
@@ -1203,6 +1591,7 @@ impl Blockchain {
                 stored
             }
         });
+
         if self.options.perf_logs_enabled {
             Self::print_add_block_pipeline_logs(
                 gas_used,
@@ -1210,9 +1599,11 @@ impl Blockchain {
                 block_number,
                 transactions_count,
                 merkle_queue_length,
+                warmer_duration,
                 instants,
             );
         }
+
         result
     }
 
@@ -1277,55 +1668,161 @@ impl Blockchain {
         block_number: u64,
         transactions_count: usize,
         merkle_queue_length: usize,
+        warmer_duration: Duration,
         [
             start_instant,
             block_validated_instant,
             exec_merkle_start,
             exec_end_instant,
-            _merkle_end_instant,
+            merkle_end_instant,
             exec_merkle_end_instant,
             stored_instant,
         ]: [Instant; 7],
     ) {
-        let interval = stored_instant.duration_since(start_instant).as_secs_f64();
-        if interval != 0f64 {
-            let as_gigas = gas_used as f64 * 1e-9;
-            let throughput = as_gigas / interval;
-
-            metrics!(
-                METRICS_BLOCKS.set_block_number(block_number);
-                METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
-                METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
-                METRICS_BLOCKS.set_latest_gigagas(throughput);
-                METRICS_BLOCKS.set_transaction_count(transactions_count as i64);
-            );
-
-            let base_log = format!(
-                "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
-                block_number,
-                throughput,
-                interval * 1000.0,
-                as_gigas,
-                (gas_used as f64 / gas_limit as f64) * 100.0,
-                transactions_count
-            );
-
-            let percentage = move |init: Instant, end: Instant| {
-                (end.duration_since(init).as_secs_f64() / interval * 100.0).round()
-            };
-            let extra_log = if as_gigas > 0.0 {
-                format!(
-                    " block validation: {}% | exec(w/merkle): {}% | merkle-only: {}% (max_queue_length: {merkle_queue_length}) | store: {}%",
-                    percentage(start_instant, block_validated_instant),
-                    percentage(exec_merkle_start, exec_end_instant),
-                    percentage(exec_end_instant, exec_merkle_end_instant),
-                    percentage(exec_merkle_end_instant, stored_instant),
-                )
-            } else {
-                "".to_string()
-            };
-            info!("{}{}", base_log, extra_log);
+        let total_ms = stored_instant.duration_since(start_instant).as_millis() as u64;
+        if total_ms == 0 {
+            return;
         }
+
+        let as_mgas = gas_used as f64 / 1e6;
+        let throughput = (gas_used as f64 / 1e9) / (total_ms as f64 / 1000.0);
+
+        // Calculate phase durations in ms
+        let validate_ms = block_validated_instant
+            .duration_since(start_instant)
+            .as_millis() as u64;
+        let exec_ms = exec_end_instant
+            .duration_since(exec_merkle_start)
+            .as_millis() as u64;
+        let store_ms = stored_instant
+            .duration_since(exec_merkle_end_instant)
+            .as_millis() as u64;
+        let warmer_ms = warmer_duration.as_millis() as u64;
+
+        // Calculate merkle breakdown
+        // merkle_end_instant marks when merkle thread finished (may be before or after exec)
+        // exec_merkle_end_instant marks when both exec and merkle are done
+        let _merkle_total_ms = exec_merkle_end_instant
+            .duration_since(exec_merkle_start)
+            .as_millis() as u64;
+
+        // Concurrent merkle time: the portion of merkle that ran while exec was running
+        let merkle_concurrent_ms = (merkle_end_instant
+            .duration_since(exec_merkle_start)
+            .as_millis() as u64)
+            .min(exec_ms);
+
+        // Drain time: time spent finishing merkle after exec completed
+        let merkle_drain_ms = exec_merkle_end_instant
+            .saturating_duration_since(exec_end_instant)
+            .as_millis() as u64;
+
+        // Overlap percentage: how much of merkle work was done concurrently
+        let actual_merkle_ms = merkle_concurrent_ms + merkle_drain_ms;
+        let overlap_pct = if actual_merkle_ms > 0 {
+            (merkle_concurrent_ms * 100) / actual_merkle_ms
+        } else {
+            0
+        };
+
+        // Calculate warmer effectiveness (positive = finished early)
+        let warmer_early_ms = exec_ms as i64 - warmer_ms as i64;
+
+        // Determine bottleneck (effective time for each phase)
+        // For merkle, only count the drain time (concurrent time overlaps with exec)
+        let phases = [
+            ("validate", validate_ms),
+            ("exec", exec_ms),
+            ("merkle", merkle_drain_ms),
+            ("store", store_ms),
+        ];
+        let bottleneck = phases
+            .iter()
+            .max_by_key(|(_, ms)| ms)
+            .map(|(name, _)| *name)
+            .unwrap_or("exec");
+
+        // Helper for percentage
+        let pct = |ms: u64| ((ms as f64 / total_ms as f64) * 100.0).round() as u64;
+
+        // Format output
+        let header = format!(
+            "[METRIC] BLOCK {} | {:.3} Ggas/s | {} ms | {} txs | {:.0} Mgas ({}%)",
+            block_number,
+            throughput,
+            total_ms,
+            transactions_count,
+            as_mgas,
+            (gas_used as f64 / gas_limit as f64 * 100.0).round() as u64
+        );
+
+        let bottleneck_marker = |name: &str| {
+            if name == bottleneck {
+                " << BOTTLENECK"
+            } else {
+                ""
+            }
+        };
+
+        let warmer_relation = if warmer_early_ms >= 0 {
+            "before exec"
+        } else {
+            "after exec"
+        };
+
+        info!("{}", header);
+        info!(
+            "  |- validate: {:>4} ms  ({:>2}%){}",
+            validate_ms,
+            pct(validate_ms),
+            bottleneck_marker("validate")
+        );
+        info!(
+            "  |- exec:     {:>4} ms  ({:>2}%){}",
+            exec_ms,
+            pct(exec_ms),
+            bottleneck_marker("exec")
+        );
+        info!(
+            "  |- merkle:   {:>4} ms  ({:>2}%){}  [concurrent: {} ms, drain: {} ms, overlap: {}%, queue: {}]",
+            merkle_drain_ms,
+            pct(merkle_drain_ms),
+            bottleneck_marker("merkle"),
+            merkle_concurrent_ms,
+            merkle_drain_ms,
+            overlap_pct,
+            merkle_queue_length,
+        );
+        info!(
+            "  |- store:    {:>4} ms  ({:>2}%){}",
+            store_ms,
+            pct(store_ms),
+            bottleneck_marker("store")
+        );
+        info!(
+            "  `- warmer:   {:>4} ms         [finished: {} ms {}]",
+            warmer_ms,
+            warmer_early_ms.unsigned_abs(),
+            warmer_relation,
+        );
+
+        // Set prometheus metrics
+        metrics!(
+            METRICS_BLOCKS.set_block_number(block_number);
+            METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
+            METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
+            METRICS_BLOCKS.set_latest_gigagas(throughput);
+            METRICS_BLOCKS.set_transaction_count(transactions_count as i64);
+            METRICS_BLOCKS.set_validate_ms(validate_ms as i64);
+            METRICS_BLOCKS.set_execution_ms(exec_ms as i64);
+            METRICS_BLOCKS.set_merkle_concurrent_ms(merkle_concurrent_ms as i64);
+            METRICS_BLOCKS.set_merkle_drain_ms(merkle_drain_ms as i64);
+            METRICS_BLOCKS.set_merkle_ms(_merkle_total_ms as i64);
+            METRICS_BLOCKS.set_merkle_overlap_pct(overlap_pct as i64);
+            METRICS_BLOCKS.set_store_ms(store_ms as i64);
+            METRICS_BLOCKS.set_warmer_ms(warmer_ms as i64);
+            METRICS_BLOCKS.set_warmer_early_ms(warmer_early_ms);
+        );
     }
 
     /// Adds multiple blocks in a batch.
@@ -1772,31 +2269,6 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
     Ok(evm)
 }
 
-pub fn validate_requests_hash(
-    header: &BlockHeader,
-    chain_config: &ChainConfig,
-    requests: &[Requests],
-) -> Result<(), ChainError> {
-    if !chain_config.is_prague_activated(header.timestamp) {
-        return Ok(());
-    }
-
-    let encoded_requests: Vec<EncodedRequests> = requests.iter().map(|r| r.encode()).collect();
-    let computed_requests_hash = compute_requests_hash(&encoded_requests);
-    let valid = header
-        .requests_hash
-        .map(|requests_hash| requests_hash == computed_requests_hash)
-        .unwrap_or(false);
-
-    if !valid {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::RequestsHashMismatch,
-        ));
-    }
-
-    Ok(())
-}
-
 /// Performs post-execution checks
 pub fn validate_state_root(
     block_header: &BlockHeader,
@@ -1808,21 +2280,6 @@ pub fn validate_state_root(
     } else {
         Err(ChainError::InvalidBlock(
             InvalidBlockError::StateRootMismatch,
-        ))
-    }
-}
-
-pub fn validate_receipts_root(
-    block_header: &BlockHeader,
-    receipts: &[Receipt],
-) -> Result<(), ChainError> {
-    let receipts_root = compute_receipts_root(receipts);
-
-    if receipts_root == block_header.receipts_root {
-        Ok(())
-    } else {
-        Err(ChainError::InvalidBlock(
-            InvalidBlockError::ReceiptsRootMismatch,
         ))
     }
 }
@@ -1851,51 +2308,6 @@ pub fn find_parent_header(
     }
 }
 
-/// Performs pre-execution validation of the block's header values in reference to the parent_header
-/// Verifies that blob gas fields in the header are correct in reference to the block's body.
-/// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas
-///
-/// Note that this doesn't validate that the transactions or withdrawals root of the header matches the body
-/// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
-pub fn validate_block(
-    block: &Block,
-    parent_header: &BlockHeader,
-    chain_config: &ChainConfig,
-    elasticity_multiplier: u64,
-) -> Result<(), ChainError> {
-    // Verify initial header validity against parent
-    validate_block_header(&block.header, parent_header, elasticity_multiplier)
-        .map_err(InvalidBlockError::from)?;
-
-    if chain_config.is_osaka_activated(block.header.timestamp) {
-        let block_rlp_size = block.length();
-        if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
-            return Err(error::ChainError::InvalidBlock(
-                InvalidBlockError::MaximumRlpSizeExceeded(
-                    MAX_RLP_BLOCK_SIZE,
-                    block_rlp_size as u64,
-                ),
-            ));
-        }
-    }
-    if chain_config.is_prague_activated(block.header.timestamp) {
-        validate_prague_header_fields(&block.header, parent_header, chain_config)
-            .map_err(InvalidBlockError::from)?;
-        verify_blob_gas_usage(block, chain_config)?;
-        if chain_config.is_osaka_activated(block.header.timestamp) {
-            verify_transaction_max_gas_limit(block)?;
-        }
-    } else if chain_config.is_cancun_activated(block.header.timestamp) {
-        validate_cancun_header_fields(&block.header, parent_header, chain_config)
-            .map_err(InvalidBlockError::from)?;
-        verify_blob_gas_usage(block, chain_config)?;
-    } else {
-        validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
-    }
-
-    Ok(())
-}
-
 pub async fn is_canonical(
     store: &Store,
     block_number: BlockNumber,
@@ -1905,82 +2317,6 @@ pub async fn is_canonical(
         Some(hash) if hash == block_hash => Ok(true),
         _ => Ok(false),
     }
-}
-
-pub fn validate_gas_used(
-    receipts: &[Receipt],
-    block_header: &BlockHeader,
-) -> Result<(), ChainError> {
-    if let Some(last) = receipts.last()
-        && last.cumulative_gas_used != block_header.gas_used
-    {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::GasUsedMismatch(last.cumulative_gas_used, block_header.gas_used),
-        ));
-    }
-    Ok(())
-}
-
-// Perform validations over the block's blob gas usage.
-// Must be called only if the block has cancun activated
-fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), ChainError> {
-    let mut blob_gas_used = 0_u32;
-    let mut blobs_in_block = 0_u32;
-    let max_blob_number_per_block = config
-        .get_fork_blob_schedule(block.header.timestamp)
-        .map(|schedule| schedule.max)
-        .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
-    let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
-
-    for transaction in block.body.transactions.iter() {
-        if let Transaction::EIP4844Transaction(tx) = transaction {
-            blob_gas_used += get_total_blob_gas(tx);
-            blobs_in_block += tx.blob_versioned_hashes.len() as u32;
-        }
-    }
-    if blob_gas_used > max_blob_gas_per_block {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::ExceededMaxBlobGasPerBlock,
-        ));
-    }
-    if blobs_in_block > max_blob_number_per_block {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::ExceededMaxBlobNumberPerBlock,
-        ));
-    }
-    if block
-        .header
-        .blob_gas_used
-        .is_some_and(|header_blob_gas_used| header_blob_gas_used != blob_gas_used as u64)
-    {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::BlobGasUsedMismatch,
-        ));
-    }
-    Ok(())
-}
-
-// Perform validations over the block's gas usage.
-// Must be called only if the block has osaka activated
-// as specified in https://eips.ethereum.org/EIPS/eip-7825
-fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
-    for transaction in block.body.transactions.iter() {
-        if transaction.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
-            return Err(ChainError::InvalidBlock(
-                InvalidBlockError::InvalidTransaction(format!(
-                    "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
-                    transaction.hash(),
-                    transaction.gas_limit()
-                )),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Calculates the blob gas required by a transaction
-pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
-    GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
 }
 
 /// Collapses a root branch node into an extension or leaf node if it has only one valid child.
@@ -2034,6 +2370,3 @@ fn collapse_root_node(
     };
     Ok(Some(child))
 }
-
-#[cfg(test)]
-mod tests {}

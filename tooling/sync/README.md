@@ -70,12 +70,51 @@ This feature allows running multiple Ethrex nodes in parallel (hoodi, sepolia, m
 
 The parallel snapsync system:
 - Spawns multiple networks simultaneously via Docker Compose
-- Monitors snapsync progress with a 4-hour timeout
-- Verifies block processing for 22 minutes after sync completion
+- Monitors snapsync progress with configurable timeout (default 8 hours)
+- Verifies block processing after sync completion (default 22 minutes)
 - Sends Slack notifications on success/failure
 - Maintains a history log of all runs
 - On success: restarts containers and begins a new sync cycle
 - On failure: keeps containers running for debugging
+
+### Auto-Update Mode with State Trie Validation
+
+The `multisync-loop-auto` target provides continuous integration testing by:
+1. **Pulling latest code** from a configured branch before each run
+2. **Building Docker image** with configurable Cargo profile
+3. **Running state trie validation** when using `release-with-debug-assertions` profile
+4. **Looping continuously** on success, stopping on failure for inspection
+
+State trie validation (enabled with `release-with-debug-assertions` profile) verifies:
+- **State root**: Traverses entire account trie, validates all node hashes
+- **Storage roots**: Validates each account's storage trie (parallelized)
+- **Bytecodes**: Verifies code exists for all accounts with code
+
+This mirrors the daily snapsync CI checks but runs continuously on your own infrastructure.
+
+**Quick Start:**
+
+```bash
+# Run with validation on current branch
+make multisync-loop-auto
+
+# Run on specific branch
+make multisync-loop-auto MULTISYNC_BRANCH=main
+
+# Run without validation (faster builds)
+make multisync-loop-auto MULTISYNC_BUILD_PROFILE=release
+```
+
+**Configuration (in `.env` or as make variables):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MULTISYNC_BRANCH` | current branch | Git branch to track |
+| `MULTISYNC_BUILD_PROFILE` | `release-with-debug-assertions` | Cargo build profile |
+| `MULTISYNC_LOCAL_IMAGE` | `ethrex-local:multisync` | Docker image tag |
+| `MULTISYNC_NETWORKS` | `hoodi,sepolia,mainnet` | Networks to sync |
+
+**Run count persistence:** The run count is persisted across restarts by reading from the history log. If run #5 fails and you restart, the next run will be #6.
 
 ### Requirements
 
@@ -111,6 +150,14 @@ Create a `.env` file in `tooling/sync/` with:
 # Slack notifications (optional)
 SLACK_WEBHOOK_URL_SUCCESS=https://hooks.slack.com/services/...
 SLACK_WEBHOOK_URL_FAILED=https://hooks.slack.com/services/...
+
+# Monitoring timeouts (optional - values shown are defaults)
+SYNC_TIMEOUT=480                  # Sync timeout in minutes (default: 8 hours)
+BLOCK_PROCESSING_DURATION=1320    # Block processing verification in seconds (default: 22 minutes)
+BLOCK_STALL_TIMEOUT=600           # Fail if no new block for this many seconds (default: 10 minutes)
+NODE_UNRESPONSIVE_TIMEOUT=300     # Fail if node unresponsive for this many seconds (default: 5 minutes)
+CHECK_INTERVAL=10                 # How often to check node status in seconds
+STATUS_PRINT_INTERVAL=30          # How often to print status in seconds
 ```
 
 The `MULTISYNC_NETWORKS` variable controls which networks to sync (default: `hoodi,sepolia,mainnet`):
@@ -125,15 +172,15 @@ make multisync-loop MULTISYNC_NETWORKS=hoodi,sepolia
 The `docker_monitor.py` script manages the sync lifecycle:
 
 1. **Waiting**: Node container starting up
-2. **Syncing**: Snapsync in progress (4-hour timeout)
-3. **Block Processing**: Sync complete, verifying block processing (22 minutes)
+2. **Syncing**: Snapsync in progress
+3. **Block Processing**: Sync complete, verifying block processing
 4. **Success**: Network synced and processing blocks
 5. **Failed**: Timeout, stall, or error detected
 
 The monitor checks for:
-- Sync timeout (default 4 hours)
-- Block processing stall (10 minutes without new blocks)
-- Node unresponsiveness
+- Sync timeout (default 8 hours, configurable via `SYNC_TIMEOUT`)
+- Block processing stall (default 10 minutes without new blocks, configurable via `BLOCK_STALL_TIMEOUT`)
+- Node unresponsiveness (default 5 minutes, configurable via `NODE_UNRESPONSIVE_TIMEOUT`)
 
 ### Logs and History
 
