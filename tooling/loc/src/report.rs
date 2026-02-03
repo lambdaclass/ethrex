@@ -301,28 +301,36 @@ ethrex crates loc
 Excluded folders: test/, tests/, tooling/
 ```"#,
         new_report.ethrex_l1,
-        if new_report.ethrex > old_report.ethrex {
+        if new_report.ethrex_l1 > old_report.ethrex_l1 {
             format!("(+{ethrex_l1_diff})")
-        } else {
+        } else if new_report.ethrex_l1 < old_report.ethrex_l1 {
             format!("(-{ethrex_l1_diff})")
+        } else {
+            "".to_string()
         },
         new_report.ethrex_l2,
         if new_report.ethrex_l2 > old_report.ethrex_l2 {
             format!("(+{ethrex_l2_diff})")
-        } else {
+        } else if new_report.ethrex_l2 < old_report.ethrex_l2 {
             format!("(-{ethrex_l2_diff})")
+        } else {
+            "".to_string()
         },
         new_report.levm,
         if new_report.levm > old_report.levm {
             format!("(+{levm_diff})")
-        } else {
+        } else if new_report.levm < old_report.levm {
             format!("(-{levm_diff})")
+        } else {
+            "".to_string()
         },
         new_report.ethrex,
         if new_report.ethrex > old_report.ethrex {
             format!("(+{ethrex_diff_total})")
-        } else {
+        } else if new_report.ethrex < old_report.ethrex {
             format!("(-{ethrex_diff_total})")
+        } else {
+            "".to_string()
         },
         ethrex_crates_github
     )
