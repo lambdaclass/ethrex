@@ -207,7 +207,6 @@ impl PartialEq for BlockHeader {
             && slot_number == &other.slot_number
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
-            && slot_number == &other.slot_number
     }
 }
 
