@@ -2,6 +2,7 @@
 name = "quote-gen"
 version = "9.0.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
