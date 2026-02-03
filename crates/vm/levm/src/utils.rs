@@ -450,7 +450,11 @@ impl<'a> VM<'a> {
                 .map_err(|_| TxValidationError::NonceIsMax)?;
         }
 
-        self.substate.refunded_gas = refunded_gas;
+        self.substate.refunded_gas = self
+            .substate
+            .refunded_gas
+            .checked_add(refunded_gas)
+            .ok_or(InternalError::Overflow)?;
 
         Ok(())
     }
