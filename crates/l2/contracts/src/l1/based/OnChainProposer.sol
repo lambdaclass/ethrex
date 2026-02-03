@@ -696,7 +696,7 @@ contract OnChainProposer is
 
     uint256 constant ZISK_PUBLIC_VALUES_SIZE = 256;
     /// @dev Number of u32 output values from ZisK guest (SHA256 hash = 8 x u32).
-    uint8 constant ZISK_OUTPUT_COUNT = 8;
+    bytes1 constant ZISK_OUTPUT_COUNT = 0x08;
 
     /// @notice Build the 256-byte ZisK publicValues from publicInputs bytes
     function buildZiskPublicValues(bytes memory publicInputs) public pure returns (bytes memory ziskPublicValues) {
