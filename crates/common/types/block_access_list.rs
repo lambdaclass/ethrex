@@ -550,6 +550,10 @@ pub struct BlockAccessListRecorder {
     /// is equal to its pre-transaction value, the slot MUST NOT be recorded as modified."
     /// Key is (address, slot), value is the pre-transaction value.
     tx_initial_storage: BTreeMap<(Address, U256), U256>,
+    /// Per-transaction initial code for net-zero filtering.
+    /// Per EIP-7928: similar to storage, if code changes but post-transaction code equals
+    /// pre-transaction code (e.g., delegate then reset), it MUST NOT be recorded.
+    tx_initial_code: BTreeMap<Address, Bytes>,
     /// Balance changes per address (list of (index, post_balance) pairs).
     balance_changes: BTreeMap<Address, Vec<(u16, U256)>>,
     /// Nonce changes per address (list of (index, post_nonce) pairs).
@@ -579,10 +583,12 @@ impl BlockAccessListRecorder {
         // Filter net-zero changes and clear per-transaction initial values when switching transactions
         // This enables per-transaction round-trip detection as required by EIP-7928
         if self.current_index != index {
-            // Filter net-zero storage writes for the current transaction before switching
+            // Filter net-zero storage writes and code changes for the current transaction before switching
             self.filter_net_zero_storage();
+            self.filter_net_zero_code();
             self.tx_initial_balances.clear();
             self.tx_initial_storage.clear();
+            self.tx_initial_code.clear();
         }
         self.current_index = index;
     }
@@ -638,6 +644,46 @@ impl BlockAccessListRecorder {
 
             // Add as a read instead
             self.storage_reads.entry(addr).or_default().insert(slot);
+        }
+    }
+
+    /// Filters net-zero code changes for the current transaction.
+    /// Per EIP-7928: similar to storage, if code changes but post-transaction code equals
+    /// pre-transaction code (e.g., delegate then reset in same tx), it should not be recorded.
+    fn filter_net_zero_code(&mut self) {
+        let current_idx = self.current_index;
+
+        // Collect addresses with net-zero code changes
+        let mut addrs_to_remove: Vec<Address> = Vec::new();
+
+        for (addr, pre_code) in &self.tx_initial_code {
+            // Check if there are code changes for this address in the current transaction
+            if let Some(changes) = self.code_changes.get(addr) {
+                // Find the final code for this transaction
+                let final_code = changes
+                    .iter()
+                    .filter(|(idx, _)| *idx == current_idx)
+                    .last()
+                    .map(|(_, code)| code);
+
+                if let Some(final_code) = final_code {
+                    if final_code == pre_code {
+                        // Net-zero: final code equals pre-transaction code
+                        addrs_to_remove.push(*addr);
+                    }
+                }
+            }
+        }
+
+        // Remove net-zero code changes
+        for addr in addrs_to_remove {
+            if let Some(changes) = self.code_changes.get_mut(&addr) {
+                changes.retain(|(idx, _)| *idx != current_idx);
+                // If no changes remain for this address, remove the address entry
+                if changes.is_empty() {
+                    self.code_changes.remove(&addr);
+                }
+            }
         }
     }
 
@@ -801,6 +847,13 @@ impl BlockAccessListRecorder {
         }
     }
 
+    /// Captures the initial code for an address before any code changes in the current transaction.
+    /// Used for net-zero code change detection (e.g., delegate then reset in same tx).
+    /// Only the first call per address per transaction is stored.
+    pub fn set_initial_code(&mut self, address: Address, code: Bytes) {
+        self.tx_initial_code.entry(address).or_insert(code);
+    }
+
     /// Records a code change (contract deployment or EIP-7702 delegation).
     /// Per EIP-7928:
     /// - Empty code on CREATE (no initial code → empty) is NOT recorded (test_bal_create_transaction_empty_code)
@@ -844,8 +897,9 @@ impl BlockAccessListRecorder {
     /// post-transaction balance is equal to its pre-transaction balance, then the
     /// change MUST NOT be recorded."
     pub fn build(mut self) -> BlockAccessList {
-        // Filter net-zero storage writes for the current (last) transaction
+        // Filter net-zero storage writes and code changes for the current (last) transaction
         self.filter_net_zero_storage();
+        self.filter_net_zero_code();
         let mut bal = BlockAccessList::with_capacity(self.touched_addresses.len());
 
         // Process all touched addresses
@@ -922,10 +976,18 @@ impl BlockAccessListRecorder {
                 }
             }
 
-            // Add code changes
+            // Add code changes (only FINAL code per transaction)
+            // Per EIP-7928, similar to nonce/balance, we only record the final code per tx.
             if let Some(changes) = self.code_changes.get(address) {
+                // Group code changes by transaction index, keeping only the final one
+                let mut changes_by_tx: BTreeMap<u16, Bytes> = BTreeMap::new();
                 for (index, new_code) in changes {
-                    account_changes.add_code_change(CodeChange::new(*index, new_code.clone()));
+                    // Only keep the final code for each transaction (last write wins)
+                    changes_by_tx.insert(*index, new_code.clone());
+                }
+
+                for (index, new_code) in changes_by_tx {
+                    account_changes.add_code_change(CodeChange::new(index, new_code));
                 }
             }
 

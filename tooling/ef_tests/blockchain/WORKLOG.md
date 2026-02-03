@@ -1,9 +1,9 @@
 # EF Tests Work Log
 
 ## Current Investigation
-**Iteration:** 11
-**Status:** Fix #13 applied - waiting for instructions
-**Working hypothesis:** Remaining EIP-7708 failures are SELFDESTRUCT-related logs
+**Iteration:** 12
+**Status:** Fix #14 applied - waiting for instructions
+**Working hypothesis:** Remaining EIP-7708 failures are SELFDESTRUCT-related logs (9), BAL OOG edge cases (6)
 
 ## Test Summary
 - Total tests: 6158
