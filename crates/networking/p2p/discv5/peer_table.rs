@@ -715,9 +715,23 @@ impl PeerTableServer {
 
     // Weighting function used to select best peer
     // Lower latency peers get a bonus (up to 25 points for sub-100ms latency)
-    fn weight_peer(&self, score: &i64, requests: &i64, latency_ema_ms: f64) -> i64 {
+    fn weight_peer(
+        &self,
+        score: &i64,
+        requests: &i64,
+        latency_ema_ms: f64,
+        completed_requests: u64,
+    ) -> i64 {
         // Base weight from score and requests
         let base_weight = score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT;
+
+        // Only apply latency bonus if we have at least one completed request
+        // New peers with completed_requests == 0 have latency_ema_ms == 0.0, which would
+        // give them the maximum bonus unfairly, making untested peers appear faster than
+        // proven fast peers.
+        if completed_requests == 0 {
+            return base_weight;
+        }
 
         // Latency bonus: lower latency = higher bonus
         // Max latency considered is 5000ms, beyond which there's no bonus
@@ -752,18 +766,21 @@ impl PeerTableServer {
                     // if the peer doesn't have the channel open, we skip it.
                     let connection = peer_data.connection.clone()?;
 
-                    // We return the id, the score, requests, latency and the channel to connect with.
+                    // We return the id, the score, requests, latency, completed_requests and the channel to connect with.
                     Some((
                         *id,
                         peer_data.score,
                         peer_data.requests,
                         peer_data.latency_ema_ms,
+                        peer_data.completed_requests,
                         connection,
                     ))
                 }
             })
-            .max_by_key(|(_, score, reqs, latency, _)| self.weight_peer(score, reqs, *latency))
-            .map(|(k, _, _, _, v)| (k, v))
+            .max_by_key(|(_, score, reqs, latency, completed, _)| {
+                self.weight_peer(score, reqs, *latency, *completed)
+            })
+            .map(|(k, _, _, _, _, v)| (k, v))
     }
 
     fn prune(&mut self) {
