@@ -235,33 +235,30 @@ error!(account = %address, block = %block_num, "Account storage not found");
 
 ## Category 2: Node Operator UX (Priority: HIGH)
 
-### 2.1 Add Startup Banner with Configuration Summary
+### 2.1 Enhance Existing Startup Banner with Configuration Summary
 
-**Problem:** Startup information is buried in INFO-level logs. Operators must parse logs to see configuration.
+**Opportunity:** ethrex already has a startup banner with clean INFO-level log output. The existing format is visually appealing and should be preserved. The improvement is to extend the banner with additional configuration details so operators can confirm their setup at a glance.
 
 **Current** (`cmd/ethrex/ethrex.rs:142`):
 ```
 INFO ethrex version: ethrex/0.1.0
 ```
 
-**Solution:** Display clear startup banner:
+**Proposed Enhancement:** Add configuration details as additional INFO-level log lines following the existing style:
 ```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ETHREX v0.X.X
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Network:      Mainnet (chain ID 1)
-Datadir:      ~/.ethrex
-Sync Mode:    Snap
-HTTP RPC:     http://0.0.0.0:8545
-Auth RPC:     http://127.0.0.1:8551
-Metrics:      http://0.0.0.0:9090
-P2P:          0.0.0.0:30303
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO ethrex version: ethrex/0.1.0
+INFO Network:    Mainnet (chain ID 1)
+INFO Datadir:    ~/.ethrex
+INFO Sync Mode:  Snap
+INFO HTTP RPC:   http://0.0.0.0:8545
+INFO Auth RPC:   http://127.0.0.1:8551
+INFO Metrics:    http://0.0.0.0:9090
+INFO P2P:        0.0.0.0:30303
 ```
 
 **Files:** `cmd/ethrex/ethrex.rs`, `cmd/ethrex/initializers.rs`
 
-**Effort:** 1 day
+**Effort:** 4-6 hours
 **Breaking:** No
 
 ---
@@ -992,7 +989,7 @@ services:
 **Track B - Operator Experience:**
 | Item | Effort | Why Now |
 |------|--------|---------|
-| **2.1 Startup Banner** | 1 day | Operators see config at launch |
+| **2.1 Enhance Startup Banner** | 4-6 hours | Operators see config at launch |
 | **2.7 Shutdown Messages** | 4-6 hours | Clean shutdown feedback |
 | **2.2 CLI Status Command** | 2-3 days | Query node without RPC tools |
 
@@ -1127,7 +1124,7 @@ Each category of change requires corresponding verification:
 - **TODOs about error handling:** 11 locations
 
 ### Node Operator UX (13)
-1. No startup configuration banner
+1. Startup banner lacks configuration details
 2. No CLI status command
 3. Sync progress not in Prometheus
 4. Mempool metrics not wired for L1
