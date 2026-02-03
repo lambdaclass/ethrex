@@ -2,16 +2,16 @@
 
 **Started:** 2026-02-02
 **Completed:** In Progress
-**Total Iterations:** 9
+**Total Iterations:** 10
 **Final Status:** ❌ In Progress
 
 ---
 
 ## Summary
 - Initial failures: 64
-- Current failures: 25
-- Total fixes applied: 11
-- Tests fixed: 39 (64 → 25)
+- Current failures: 20
+- Total fixes applied: 12 (Fix #12 in progress)
+- Tests fixed: 44 (64 → 20)
 - Failed attempts: 2
 
 ---
@@ -162,6 +162,44 @@
 
 ---
 
+### Fix #11 — Record EIP-7702 delegation target in BAL
+- **Iteration:** 10
+- **Test(s):** `test_bal_7702_delegated_storage_access`, `test_bal_7702_delegated_via_call_opcode`, `test_bal_all_transaction_types`, `test_call_to_delegated_account_with_value`, `test_transfer_to_delegated_account_emits_log`
+- **Error:** BlockAccessListHashMismatch (delegation target missing from BAL)
+- **Files:**
+  - `crates/vm/levm/src/opcode_handlers/system.rs` (CALL, CALLCODE, DELEGATECALL, STATICCALL)
+  - `crates/vm/levm/src/hooks/default_hook.rs` (set_bytecode_and_code_address)
+- **Root Cause:** When calling an EIP-7702 delegated account, the delegation target (code origin) was not recorded in BAL. Per EIP-7928, the delegation target is an account access and must appear in BAL.
+- **Solution:** After calling `eip7702_get_code`, if delegation exists, also record `code_address` (delegation target) to BAL. This applies to:
+  1. All CALL opcodes (CALL, CALLCODE, DELEGATECALL, STATICCALL)
+  2. Initial transaction call setup in `set_bytecode_and_code_address`
+- **Diff (key pattern applied to all call opcodes):**
+```diff
+         // Record address touch for BAL (after gas checks pass per EIP-7928)
+         if let Some(recorder) = self.db.bal_recorder.as_mut() {
+             recorder.record_touched_address(callee);
++            // If EIP-7702 delegation, also record the delegation target (code source)
++            if is_delegation_7702 {
++                recorder.record_touched_address(code_address);
++            }
+         }
+```
+
+---
+
+### Fix #12 — Split gas charging for EIP-7702 delegation OOG handling
+- **Iteration:** 10
+- **Test(s):** `test_bal_call_7702_delegation_and_oog`, etc. (NOT yet fixed - in progress)
+- **Error:** BlockAccessListHashMismatch (delegation target in BAL when OOG before delegation access)
+- **Files:** `crates/vm/levm/src/opcode_handlers/system.rs`
+- **Root Cause:** Gas was charged as `cost + eip7702_gas_consumed` atomically. When OOG occurred after target access but before delegation access, neither target nor delegation appeared in BAL (since OOG reverts to checkpoint). Per EIP-7928, target should appear but NOT delegation.
+- **Solution (in progress):** Split gas charging into two stages:
+  1. First charge static cost (target access, transfer, memory) → record target to BAL
+  2. Then charge delegation cost separately → only record delegation if this succeeds
+- **Status:** Implemented but not yet fixing tests - requires further investigation
+
+---
+
 ## Failed Attempts
 
 ### Attempt #1 — Filter out empty accounts from BAL
@@ -180,20 +218,15 @@
 
 ---
 
-## Remaining Issues (25 failures)
-- [ ] EIP-7708 ETH transfer logs: 13 tests
-  - test_call_to_delegated_account_with_value
+## Remaining Issues (20 failures)
+- [ ] EIP-7708 ETH transfer logs: 11 tests
   - test_contract_creation_tx
   - test_finalization_selfdestruct_logs
   - test_selfdestruct_* (9 tests)
-  - test_transfer_to_delegated_account_emits_log
   - test_transfer_to_special_address
-- [ ] EIP-7928 BAL 7702 delegation: 12 tests
-  - test_bal_7702_delegated_storage_access
-  - test_bal_7702_delegated_via_call_opcode
+- [ ] EIP-7928 BAL 7702 delegation: 9 tests
   - test_bal_7702_double_auth_reset
   - test_bal_7702_double_auth_swap
-  - test_bal_all_transaction_types
   - test_bal_*_7702_delegation_and_oog (4 tests)
   - test_bal_call_no_delegation_oog_after_target_access
   - test_bal_create_selfdestruct_to_self_with_call
@@ -207,9 +240,10 @@
 - After Fix #6: 36 failures (11 tests fixed)
 - After Fix #7-8: 31 failures (5 tests fixed)
 - After Fix #9-10: 25 failures (6 tests fixed)
+- After Fix #11: 20 failures (5 tests fixed)
 
 ## Notes
 - EIP-7778 and EIP-8024 tests all pass now
 - Debug output available via DEBUG_BAL=1 environment variable
 - EIP-7708 tests likely need ETH transfer log handling (separate from BAL)
-- Remaining EIP-7928 tests mostly involve 7702 delegation edge cases
+- Remaining EIP-7928 tests involve 7702 delegation OOG edge cases and double auth

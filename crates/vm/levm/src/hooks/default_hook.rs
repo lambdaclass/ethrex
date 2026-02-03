@@ -575,8 +575,21 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;
-        let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
+
+        // Record tx.to as touched in BAL (the target of message call transaction)
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(to);
+        }
+
+        let (is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, to)?;
+
+        // If EIP-7702 delegation, also record the delegation target (code source) in BAL
+        if is_delegation {
+            if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(code_address);
+            }
+        }
 
         (bytecode, code_address)
     };
