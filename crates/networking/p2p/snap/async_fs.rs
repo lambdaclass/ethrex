@@ -1,9 +1,48 @@
 //! Async file system utilities for snap sync
 //!
 //! This module provides async wrappers around file system operations to avoid
-//! blocking the tokio runtime during disk I/O. Uses a hybrid approach:
-//! - `tokio::fs` for simple operations (create_dir, read, remove)
-//! - `spawn_blocking` for complex operations (read_dir iteration)
+//! blocking the tokio runtime during disk I/O.
+//!
+//! # Why Async File I/O Matters
+//!
+//! During snap sync, we perform many file operations (writing snapshots, reading them back,
+//! cleanup). If these operations are synchronous, they block the tokio runtime thread,
+//! preventing network operations from making progress. This can cause:
+//! - Peer timeouts while waiting for disk I/O
+//! - Reduced throughput as network and disk operations cannot overlap
+//! - Poor utilization of available bandwidth
+//!
+//! # Hybrid Approach
+//!
+//! We use two strategies depending on the operation:
+//!
+//! ## `tokio::fs` (for simple operations)
+//! Used for: `create_dir_all`, `read`, `remove_dir_all`, `write`
+//!
+//! These operations are single system calls that tokio can handle efficiently
+//! on its async I/O thread pool.
+//!
+//! ## `spawn_blocking` (for iterator-based operations)
+//! Used for: `read_dir`
+//!
+//! `std::fs::read_dir` returns a `ReadDir` iterator that yields `DirEntry` items.
+//! While `tokio::fs::read_dir` exists, it returns an async stream that requires
+//! careful handling of ownership and lifetimes. Using `spawn_blocking` with the
+//! sync version is simpler and equally efficient for our use case (reading all
+//! entries into a Vec).
+//!
+//! # Thread Pool Implications
+//!
+//! Operations using `spawn_blocking` run on tokio's blocking thread pool (default: 512 threads).
+//! For snap sync workloads (typically <100 concurrent directory reads), this is more than
+//! sufficient. If you need to limit concurrency, consider using a semaphore.
+//!
+//! # Error Handling
+//!
+//! All functions return `SnapError::FileSystem` with:
+//! - `operation`: What we were trying to do (for debugging)
+//! - `path`: Which file/directory failed
+//! - `kind`: The underlying `std::io::ErrorKind`
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -38,8 +77,30 @@ pub async fn ensure_dir_exists(path: &Path) -> Result<(), SnapError> {
 
 /// Reads all file paths from a directory.
 ///
-/// Uses `spawn_blocking` because `read_dir` returns an iterator that's
-/// complex to use with async. Returns sorted paths for deterministic ordering.
+/// # Why `spawn_blocking`?
+///
+/// We use `spawn_blocking` instead of `tokio::fs::read_dir` because:
+/// 1. `tokio::fs::read_dir` returns an async `ReadDir` stream that requires
+///    `.next().await` for each entry, adding complexity
+/// 2. We always need all paths upfront (to pass to rocksdb's `ingest_external_file`
+///    or to iterate over for reading), so streaming provides no benefit
+/// 3. The sync version in `spawn_blocking` is simpler and equally efficient
+///
+/// # Thread Pool Usage
+///
+/// This function runs on tokio's blocking thread pool. The actual directory
+/// read is typically fast (metadata only, no file contents), so thread pool
+/// saturation is unlikely even with many concurrent calls.
+///
+/// # Ordering
+///
+/// Returns paths sorted alphabetically for deterministic processing order.
+/// This is important for reproducible behavior across runs.
+///
+/// # Errors
+///
+/// - Returns `SnapError::FileSystem` if the directory cannot be read
+/// - Individual entry errors are silently skipped (filter_map)
 pub async fn read_dir_paths(dir: &Path) -> Result<Vec<PathBuf>, SnapError> {
     let dir = dir.to_path_buf();
     tokio::task::spawn_blocking(move || {
