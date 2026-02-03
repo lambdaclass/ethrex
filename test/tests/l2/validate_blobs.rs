@@ -28,8 +28,7 @@ fn validate_blobs_match_genesis() {
     let first_blob_path = workspace_root().join("fixtures/blobs/1-1.blob");
 
     // Load genesis file and compute the genesis block hash
-    let genesis_file =
-        File::open(&genesis_path).expect("Failed to open genesis file");
+    let genesis_file = File::open(&genesis_path).expect("Failed to open genesis file");
     let reader = BufReader::new(genesis_file);
     let genesis: Genesis =
         serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
