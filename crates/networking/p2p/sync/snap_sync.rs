@@ -271,6 +271,27 @@ async fn download_headers_background(
         let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
 
         if head_found || head_close_to_0 {
+            info!(
+                "[SNAP_TO_FULL_DEBUG] Switching to FullSync: head_found={}, head_close_to_0={}, \
+                sync_head={:?}, last_block_number={}, remaining_headers={}",
+                head_found,
+                head_close_to_0,
+                sync_head,
+                last_block_number,
+                block_headers.len()
+            );
+
+            let latest_block = store.get_latest_block_number().await?;
+            let latest_canonical = store.get_latest_canonical_block_hash().await?;
+            info!(
+                "[SNAP_TO_FULL_DEBUG] Store state: latest_block_number={}, latest_canonical_hash={:?}",
+                latest_block,
+                latest_canonical
+            );
+
+            let peer_count = peers.count_total_peers().await.unwrap_or(0);
+            info!("[SNAP_TO_FULL_DEBUG] Available peers: {}", peer_count);
+
             info!("Background: Sync head is found, will switch to FullSync");
             snap_enabled.store(false, Ordering::Relaxed);
             // Send remaining headers and signal completion

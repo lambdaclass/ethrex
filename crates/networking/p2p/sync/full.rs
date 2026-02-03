@@ -127,12 +127,34 @@ pub async fn sync_cycle_full(
         let mut blocks = Vec::new();
         // Request block bodies
         // Download block bodies
+        debug!(
+            "[FULLSYNC_DEBUG] Starting body download for {} headers in batch starting at block {}",
+            headers.len(),
+            headers.first().map(|h| h.number).unwrap_or(0)
+        );
+
         while !headers.is_empty() {
             let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
+
+            debug!(
+                "[FULLSYNC_DEBUG] Requesting bodies for {} headers: blocks {}-{}",
+                header_batch.len(),
+                header_batch.first().map(|h| h.number).unwrap_or(0),
+                header_batch.last().map(|h| h.number).unwrap_or(0)
+            );
+
             let bodies = peers
                 .request_block_bodies(header_batch)
                 .await?
-                .ok_or(SyncError::BodiesNotFound)?;
+                .ok_or_else(|| {
+                    warn!(
+                        "[FULLSYNC_DEBUG] BodiesNotFound for blocks {}-{}, first_hash={:?}",
+                        header_batch.first().map(|h| h.number).unwrap_or(0),
+                        header_batch.last().map(|h| h.number).unwrap_or(0),
+                        header_batch.first().map(|h| h.hash())
+                    );
+                    SyncError::BodiesNotFound
+                })?;
             debug!("Obtained: {} block bodies", bodies.len());
             let block_batch = headers
                 .drain(..bodies.len())

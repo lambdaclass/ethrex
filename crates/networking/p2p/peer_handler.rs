@@ -393,6 +393,12 @@ impl PeerHandler {
         start: H256,
         order: BlockRequestOrder,
     ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
+        debug!(
+            "[HEADER_DEBUG] request_block_headers_from_hash: start={:?}, order={:?}",
+            start,
+            matches!(order, BlockRequestOrder::NewToOld)
+        );
+
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
@@ -402,8 +408,13 @@ impl PeerHandler {
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
-            None => Ok(None),
+            None => {
+                debug!("[HEADER_DEBUG] No peer available for header request");
+                Ok(None)
+            }
             Some((peer_id, mut connection)) => {
+                debug!("[HEADER_DEBUG] Requesting headers from peer {peer_id}");
+
                 if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                     id: _,
                     block_headers,
@@ -419,6 +430,18 @@ impl PeerHandler {
                     if !block_headers.is_empty()
                         && are_block_headers_chained(&block_headers, &order)
                     {
+                        if let (Some(first), Some(last)) = (block_headers.first(), block_headers.last()) {
+                            debug!(
+                                "[HEADER_DEBUG] Received {} headers from peer {}: blocks {}-{}, \
+                                first_hash={:?}, last_hash={:?}",
+                                block_headers.len(),
+                                peer_id,
+                                first.number,
+                                last.number,
+                                first.hash(),
+                                last.hash()
+                            );
+                        }
                         return Ok(Some(block_headers));
                     } else {
                         warn!(
@@ -487,27 +510,63 @@ impl PeerHandler {
             id: request_id,
             block_hashes: block_hashes.to_vec(),
         });
+
+        debug!(
+            "[BODY_DEBUG] Requesting {} block bodies. First hash: {:?}, Last hash: {:?}",
+            block_hashes_len,
+            block_hashes.first(),
+            block_hashes.last()
+        );
+
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
-            None => Ok(None),
+            None => {
+                debug!("[BODY_DEBUG] No peer available for block bodies request");
+                Ok(None)
+            }
             Some((peer_id, mut connection)) => {
-                if let Ok(RLPxMessage::BlockBodies(BlockBodies {
-                    id: _,
-                    block_bodies,
-                })) = PeerHandler::make_request(
+                debug!("[BODY_DEBUG] Sending GetBlockBodies request to peer {peer_id}");
+
+                let response = PeerHandler::make_request(
                     &mut self.peer_table,
                     peer_id,
                     &mut connection,
                     request,
                     PEER_REPLY_TIMEOUT,
                 )
-                .await
-                {
-                    // Check that the response is not empty and does not contain more bodies than the ones requested
-                    if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                        self.peer_table.record_success(&peer_id).await?;
-                        return Ok(Some((block_bodies, peer_id)));
+                .await;
+
+                match response {
+                    Ok(RLPxMessage::BlockBodies(BlockBodies { id: _, block_bodies })) => {
+                        debug!(
+                            "[BODY_DEBUG] Received {} block bodies from peer {peer_id} (requested {})",
+                            block_bodies.len(),
+                            block_hashes_len
+                        );
+
+                        // Check that the response is not empty and does not contain more bodies than the ones requested
+                        if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
+                            self.peer_table.record_success(&peer_id).await?;
+                            return Ok(Some((block_bodies, peer_id)));
+                        }
+
+                        warn!(
+                            "[BODY_DEBUG] Invalid response: empty={}, len={}, requested={}",
+                            block_bodies.is_empty(),
+                            block_bodies.len(),
+                            block_hashes_len
+                        );
+                    }
+                    Ok(other) => {
+                        warn!(
+                            "[BODY_DEBUG] Unexpected response type from peer {peer_id}: {:?}",
+                            std::mem::discriminant(&other)
+                        );
+                    }
+                    Err(e) => {
+                        warn!("[BODY_DEBUG] Request failed for peer {peer_id}: {e}");
                     }
                 }
+
                 warn!(
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                 );
@@ -528,10 +587,24 @@ impl PeerHandler {
     ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
         let block_hashes: Vec<H256> = block_headers.iter().map(|h| h.hash()).collect();
 
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+        if let (Some(first), Some(last)) = (block_headers.first(), block_headers.last()) {
+            debug!(
+                "[BODY_DEBUG] request_block_bodies called for {} headers: blocks {}-{}, first_hash={:?}, last_hash={:?}",
+                block_headers.len(),
+                first.number,
+                last.number,
+                block_hashes.first(),
+                block_hashes.last()
+            );
+        }
+
+        for attempt in 0..REQUEST_RETRY_ATTEMPTS {
+            debug!("[BODY_DEBUG] Body request attempt {}/{}", attempt + 1, REQUEST_RETRY_ATTEMPTS);
+
             let Some((block_bodies, peer_id)) =
                 self.request_block_bodies_inner(&block_hashes).await?
             else {
+                debug!("[BODY_DEBUG] Attempt {} failed, retrying...", attempt + 1);
                 continue; // Retry on empty response
             };
             let mut res = Vec::new();
