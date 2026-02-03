@@ -16,13 +16,17 @@ impl<'a> VM<'a> {
         gas_remaining: u64,
     ) -> Result<ContextResult, VMError> {
         match precompile_result {
-            Ok(output) => Ok(ContextResult {
-                result: TxResult::Success,
-                gas_used: gas_limit
+            Ok(output) => {
+                let gas_used = gas_limit
                     .checked_sub(gas_remaining)
-                    .ok_or(InternalError::Underflow)?,
-                output,
-            }),
+                    .ok_or(InternalError::Underflow)?;
+                Ok(ContextResult {
+                    result: TxResult::Success,
+                    gas_used,
+                    gas_spent: gas_used, // Will be updated in finalize_execution
+                    output,
+                })
+            }
             Err(error) => {
                 if error.should_propagate() {
                     return Err(error);
@@ -31,6 +35,7 @@ impl<'a> VM<'a> {
                 Ok(ContextResult {
                     result: TxResult::Revert(error),
                     gas_used: gas_limit,
+                    gas_spent: gas_limit, // Will be updated in finalize_execution
                     output: Bytes::new(),
                 })
             }
@@ -53,12 +58,14 @@ impl<'a> VM<'a> {
                 callframe.gas_remaining = 0;
 
                 #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+                let gas_used = callframe
+                    .gas_limit
+                    .checked_sub(callframe.gas_remaining as u64)
+                    .ok_or(InternalError::Underflow)?;
                 return Ok(ContextResult {
                     result: TxResult::Revert(error),
-                    gas_used: callframe
-                        .gas_limit
-                        .checked_sub(callframe.gas_remaining as u64)
-                        .ok_or(InternalError::Underflow)?,
+                    gas_used,
+                    gas_spent: gas_used, // Will be updated in finalize_execution
                     output: Bytes::new(),
                 });
             }
@@ -70,15 +77,17 @@ impl<'a> VM<'a> {
         }
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+        let gas_used = {
+            let callframe = &mut self.current_call_frame;
+            callframe
+                .gas_limit
+                .checked_sub(callframe.gas_remaining as u64)
+                .ok_or(InternalError::Underflow)?
+        };
         Ok(ContextResult {
             result: TxResult::Success,
-            gas_used: {
-                let callframe = &mut self.current_call_frame;
-                callframe
-                    .gas_limit
-                    .checked_sub(callframe.gas_remaining as u64)
-                    .ok_or(InternalError::Underflow)?
-            },
+            gas_used,
+            gas_spent: gas_used, // Will be updated in finalize_execution
             output: std::mem::take(&mut self.current_call_frame.output),
         })
     }
@@ -97,12 +106,14 @@ impl<'a> VM<'a> {
         }
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+        let gas_used = callframe
+            .gas_limit
+            .checked_sub(callframe.gas_remaining as u64)
+            .ok_or(InternalError::Underflow)?;
         Ok(ContextResult {
             result: TxResult::Revert(error),
-            gas_used: callframe
-                .gas_limit
-                .checked_sub(callframe.gas_remaining as u64)
-                .ok_or(InternalError::Underflow)?,
+            gas_used,
+            gas_spent: gas_used, // Will be updated in finalize_execution
             output: std::mem::take(&mut callframe.output),
         })
     }
@@ -116,6 +127,7 @@ impl<'a> VM<'a> {
             return Ok(Some(ContextResult {
                 result: TxResult::Revert(ExceptionalHalt::AddressAlreadyOccupied.into()),
                 gas_used: self.env.gas_limit,
+                gas_spent: self.env.gas_limit, // Will be updated in finalize_execution
                 output: Bytes::new(),
             }));
         }

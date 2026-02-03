@@ -611,6 +611,7 @@ pub async fn _ensure_post_state_revm(
                         Box::new(ExecutionReport {
                             result: TxResult::Success,
                             gas_used: 42,
+                            gas_spent: 42,
                             gas_refunded: 42,
                             logs: vec![],
                             output: Bytes::new(),
@@ -632,6 +633,7 @@ pub async fn _ensure_post_state_revm(
                             Box::new(ExecutionReport {
                                 result: TxResult::Success,
                                 gas_used: 42,
+                                gas_spent: 42,
                                 gas_refunded: 42,
                                 logs: vec![],
                                 output: Bytes::new(),

@@ -53,16 +53,16 @@ pub fn validate_block(
     Ok(())
 }
 
-/// Validates that the gas used in the receipts matches the block header.
+/// Validates that the block gas used matches the block header.
+/// For Amsterdam+ (EIP-7778), block_gas_used is PRE-REFUND and differs from
+/// receipt cumulative_gas_used which is POST-REFUND.
 pub fn validate_gas_used(
-    receipts: &[Receipt],
+    block_gas_used: u64,
     block_header: &BlockHeader,
 ) -> Result<(), InvalidBlockError> {
-    if let Some(last) = receipts.last()
-        && last.cumulative_gas_used != block_header.gas_used
-    {
+    if block_gas_used != block_header.gas_used {
         return Err(InvalidBlockError::GasUsedMismatch(
-            last.cumulative_gas_used,
+            block_gas_used,
             block_header.gas_used,
         ));
     }

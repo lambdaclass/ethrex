@@ -17,16 +17,31 @@ pub type Index = u64;
 pub struct Receipt {
     pub tx_type: TxType,
     pub succeeded: bool,
+    /// Cumulative gas used by this and all previous transactions in the block.
+    /// This is always post-refund gas.
+    /// Note: Block-level gas accounting (pre-refund for EIP-7778) uses BlockExecutionResult::block_gas_used.
     pub cumulative_gas_used: u64,
+    /// Gas spent after refunds (what the user actually pays).
+    /// This is `None` for pre-EIP-7778 receipts.
+    /// Post-EIP-7778 (Amsterdam+): This is included in RLP encoding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gas_spent: Option<u64>,
     pub logs: Vec<Log>,
 }
 
 impl Receipt {
-    pub fn new(tx_type: TxType, succeeded: bool, cumulative_gas_used: u64, logs: Vec<Log>) -> Self {
+    pub fn new(
+        tx_type: TxType,
+        succeeded: bool,
+        cumulative_gas_used: u64,
+        gas_spent: Option<u64>,
+        logs: Vec<Log>,
+    ) -> Self {
         Self {
             tx_type,
             succeeded,
             cumulative_gas_used,
+            gas_spent,
             logs,
         }
     }
@@ -34,12 +49,17 @@ impl Receipt {
     pub fn encode_inner(&self) -> Vec<u8> {
         let mut encoded_data = vec![];
         let tx_type: u8 = self.tx_type as u8;
-        Encoder::new(&mut encoded_data)
+        let mut encoder = Encoder::new(&mut encoded_data)
             .encode_field(&tx_type)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
-            .encode_field(&self.logs)
-            .finish();
+            .encode_field(&self.logs);
+
+        // EIP-7778: Include gas_spent when present
+        if let Some(gas_spent) = self.gas_spent {
+            encoder = encoder.encode_field(&gas_spent);
+        }
+        encoder.finish();
         encoded_data
     }
 
@@ -51,12 +71,17 @@ impl Receipt {
             encode_buf.push(self.tx_type as u8);
         }
         let bloom = bloom_from_logs(&self.logs);
-        Encoder::new(&mut encode_buf)
+        let mut encoder = Encoder::new(&mut encode_buf)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
             .encode_field(&bloom)
-            .encode_field(&self.logs)
-            .finish();
+            .encode_field(&self.logs);
+
+        // EIP-7778: Include gas_spent when present
+        if let Some(gas_spent) = self.gas_spent {
+            encoder = encoder.encode_field(&gas_spent);
+        }
+        encoder.finish();
         encode_buf
     }
 }
@@ -89,6 +114,9 @@ impl RLPDecode for Receipt {
         let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
         let (logs, decoder) = decoder.decode_field("logs")?;
 
+        // EIP-7778: Try to decode optional gas_spent field
+        let (gas_spent, decoder) = decoder.decode_optional_field();
+
         let Some(tx_type) = TxType::from_u8(tx_type) else {
             return Err(RLPDecodeError::Custom(
                 "Invalid transaction type".to_string(),
@@ -100,6 +128,7 @@ impl RLPDecode for Receipt {
                 tx_type,
                 succeeded,
                 cumulative_gas_used,
+                gas_spent,
                 logs,
             },
             decoder.finish()?,
@@ -112,19 +141,34 @@ impl RLPDecode for Receipt {
 pub struct ReceiptWithBloom {
     pub tx_type: TxType,
     pub succeeded: bool,
+    /// Cumulative gas used by this and all previous transactions in the block.
+    /// This is always post-refund gas.
+    /// Note: Block-level gas accounting (pre-refund for EIP-7778) uses BlockExecutionResult::block_gas_used.
     pub cumulative_gas_used: u64,
     pub bloom: Bloom,
     pub logs: Vec<Log>,
+    /// Gas spent after refunds (what the user actually pays).
+    /// This is `None` for pre-EIP-7778 receipts.
+    /// Post-EIP-7778 (Amsterdam+): This is included in RLP encoding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gas_spent: Option<u64>,
 }
 
 impl ReceiptWithBloom {
-    pub fn new(tx_type: TxType, succeeded: bool, cumulative_gas_used: u64, logs: Vec<Log>) -> Self {
+    pub fn new(
+        tx_type: TxType,
+        succeeded: bool,
+        cumulative_gas_used: u64,
+        gas_spent: Option<u64>,
+        logs: Vec<Log>,
+    ) -> Self {
         Self {
             tx_type,
             succeeded,
             cumulative_gas_used,
             bloom: bloom_from_logs(&logs),
             logs,
+            gas_spent,
         }
     }
 
@@ -154,12 +198,17 @@ impl ReceiptWithBloom {
                 vec![self.tx_type as u8]
             }
         };
-        Encoder::new(&mut encode_buff)
+        let mut encoder = Encoder::new(&mut encode_buff)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
             .encode_field(&self.bloom)
-            .encode_field(&self.logs)
-            .finish();
+            .encode_field(&self.logs);
+
+        // EIP-7778: Include gas_spent when present
+        if let Some(gas_spent) = self.gas_spent {
+            encoder = encoder.encode_field(&gas_spent);
+        }
+        encoder.finish();
         encode_buff
     }
 
@@ -193,6 +242,9 @@ impl ReceiptWithBloom {
         let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
         let (bloom, decoder) = decoder.decode_field("bloom")?;
         let (logs, decoder) = decoder.decode_field("logs")?;
+
+        // EIP-7778: Try to decode optional gas_spent field
+        let (gas_spent, decoder) = decoder.decode_optional_field();
         decoder.finish()?;
 
         Ok(Self {
@@ -201,6 +253,7 @@ impl ReceiptWithBloom {
             cumulative_gas_used,
             bloom,
             logs,
+            gas_spent,
         })
     }
 }
@@ -258,6 +311,9 @@ impl RLPDecode for ReceiptWithBloom {
         let (bloom, decoder) = decoder.decode_field("bloom")?;
         let (logs, decoder) = decoder.decode_field("logs")?;
 
+        // EIP-7778: Try to decode optional gas_spent field
+        let (gas_spent, decoder) = decoder.decode_optional_field();
+
         Ok((
             ReceiptWithBloom {
                 tx_type,
@@ -265,6 +321,7 @@ impl RLPDecode for ReceiptWithBloom {
                 cumulative_gas_used,
                 bloom,
                 logs,
+                gas_spent,
             },
             decoder.finish()?,
         ))
@@ -279,6 +336,7 @@ impl From<&Receipt> for ReceiptWithBloom {
             cumulative_gas_used: receipt.cumulative_gas_used,
             bloom: bloom_from_logs(&receipt.logs),
             logs: receipt.logs.clone(),
+            gas_spent: receipt.gas_spent,
         }
     }
 }
@@ -289,6 +347,7 @@ impl From<&ReceiptWithBloom> for Receipt {
             tx_type: receipt.tx_type,
             succeeded: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
+            gas_spent: receipt.gas_spent,
             logs: receipt.logs.clone(),
         }
     }
@@ -341,6 +400,7 @@ mod test {
             tx_type: TxType::Legacy,
             succeeded: true,
             cumulative_gas_used: 1200,
+            gas_spent: None, // Pre-EIP-7778
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
@@ -357,6 +417,7 @@ mod test {
             tx_type: TxType::EIP4844,
             succeeded: true,
             cumulative_gas_used: 1500,
+            gas_spent: None, // Pre-EIP-7778
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
@@ -366,6 +427,25 @@ mod test {
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
     }
+
+    #[test]
+    fn test_encode_decode_receipt_with_gas_spent() {
+        // EIP-7778: Test receipt with gas_spent field
+        let receipt = Receipt {
+            tx_type: TxType::EIP1559,
+            succeeded: true,
+            cumulative_gas_used: 1500,
+            gas_spent: Some(1400), // Post-EIP-7778
+            logs: vec![Log {
+                address: Address::random(),
+                topics: vec![],
+                data: Bytes::from_static(b"baz"),
+            }],
+        };
+        let encoded_receipt = receipt.encode_to_vec();
+        assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
+    }
+
     #[test]
     fn test_encode_decode_inner_receipt_legacy() {
         let receipt = ReceiptWithBloom {
@@ -378,6 +458,7 @@ mod test {
                 topics: vec![],
                 data: Bytes::from_static(b"foo"),
             }],
+            gas_spent: None, // Pre-EIP-7778
         };
         let encoded_receipt = receipt.encode_inner();
         assert_eq!(
@@ -398,6 +479,29 @@ mod test {
                 topics: vec![],
                 data: Bytes::from_static(b"bar"),
             }],
+            gas_spent: None, // Pre-EIP-7778
+        };
+        let encoded_receipt = receipt.encode_inner();
+        assert_eq!(
+            receipt,
+            ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap()
+        )
+    }
+
+    #[test]
+    fn test_encode_decode_receipt_with_bloom_gas_spent() {
+        // EIP-7778: Test receipt with bloom and gas_spent field
+        let receipt = ReceiptWithBloom {
+            tx_type: TxType::EIP1559,
+            succeeded: true,
+            cumulative_gas_used: 1500,
+            bloom: Bloom::random(),
+            logs: vec![Log {
+                address: Address::random(),
+                topics: vec![],
+                data: Bytes::from_static(b"baz"),
+            }],
+            gas_spent: Some(1400), // Post-EIP-7778
         };
         let encoded_receipt = receipt.encode_inner();
         assert_eq!(
@@ -412,6 +516,7 @@ mod test {
             tx_type: TxType::EIP1559,
             succeeded: true,
             cumulative_gas_used: 1500,
+            gas_spent: None, // Pre-EIP-7778
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![
