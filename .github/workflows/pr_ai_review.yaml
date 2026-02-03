@@ -1,0 +1,36 @@
+# AI Code Review using lambdaclass/actions reusable workflows
+#
+# Triggers:
+# - Automatically on PR open/ready_for_review
+# - On-demand via PR comments: /kimi, /codex, /claude (requires write access)
+#
+# Custom prompt: .github/prompts/ai-review.md
+#
+# Required secrets:
+# - KIMI_API_KEY: For Kimi reviews (https://platform.moonshot.ai/)
+# - OPENAI_API_KEY: For Codex reviews (https://platform.openai.com/)
+# - ANTHROPIC_API_KEY: For Claude reviews (https://console.anthropic.com/)
+
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+jobs:
+  kimi-review:
+    uses: lambdaclass/actions/.github/workflows/ai-review-kimi.yml@v1
+    secrets:
+      KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+
+  codex-review:
+    uses: lambdaclass/actions/.github/workflows/ai-review-codex.yml@v1
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+  claude-review:
+    uses: lambdaclass/actions/.github/workflows/ai-review-claude.yml@v1
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
