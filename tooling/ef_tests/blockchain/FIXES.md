@@ -2,16 +2,16 @@
 
 **Started:** 2026-02-02
 **Completed:** In Progress
-**Total Iterations:** 10
+**Total Iterations:** 11
 **Final Status:** ❌ In Progress
 
 ---
 
 ## Summary
 - Initial failures: 64
-- Current failures: 20
-- Total fixes applied: 12 (Fix #12 in progress)
-- Tests fixed: 44 (64 → 20)
+- Current failures: 17
+- Total fixes applied: 13
+- Tests fixed: 47 (64 → 17)
 - Failed attempts: 2
 
 ---
@@ -200,6 +200,40 @@
 
 ---
 
+### Fix #13 — EIP-7708 transfer logs for contract creation transactions
+- **Iteration:** 11
+- **Test(s):** `test_contract_creation_tx`, `test_selfdestruct_to_self_cross_tx_no_log`, and 1 other
+- **Error:** ReceiptsRootMismatch (missing EIP-7708 transfer log)
+- **File:** `crates/vm/levm/src/execution_handlers.rs:121-139`
+- **Root Cause:** Contract creation transactions with value were not emitting EIP-7708 ETH transfer logs. The `transfer_value` function in `default_hook.rs` only emits logs for message call transactions (has `if !vm.is_create()?` guard). For creation transactions, value transfer happens in `handle_create_transaction` but no log was emitted there.
+- **Solution:** Added EIP-7708 transfer log emission in `handle_create_transaction()`:
+  1. Added imports for `create_eth_transfer_log` from utils and `Fork` from ethrex_common::types
+  2. After `increase_account_balance(new_contract_address, value)`, emit transfer log when fork >= Amsterdam and value > 0
+  3. Log emits from origin (sender) to new_contract_address with value
+- **Diff:**
+```diff
++use crate::utils::create_eth_transfer_log;
++use ethrex_common::types::{Code, Fork};
+
+ pub fn handle_create_transaction(&mut self) -> Result<Option<ContextResult>, VMError> {
+     ...
+-    self.increase_account_balance(new_contract_address, self.current_call_frame.msg_value)?;
++    let value = self.current_call_frame.msg_value;
++    self.increase_account_balance(new_contract_address, value)?;
++
++    // EIP-7708: Emit transfer log for nonzero-value contract creation transactions.
++    if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
++        let log = create_eth_transfer_log(self.env.origin, new_contract_address, value);
++        self.substate.add_log(log);
++    }
+
+     self.increment_account_nonce(new_contract_address)?;
+     Ok(None)
+ }
+```
+
+---
+
 ## Failed Attempts
 
 ### Attempt #1 — Filter out empty accounts from BAL
@@ -218,19 +252,26 @@
 
 ---
 
-## Remaining Issues (20 failures)
-- [ ] EIP-7708 ETH transfer logs: 11 tests
-  - test_contract_creation_tx
+## Remaining Issues (17 failures)
+- [ ] EIP-7708 ETH transfer logs (selfdestruct): 9 tests
   - test_finalization_selfdestruct_logs
-  - test_selfdestruct_* (9 tests)
+  - test_selfdestruct_during_initcode
+  - test_selfdestruct_finalization_after_priority_fee
+  - test_selfdestruct_log_at_fork_transition
+  - test_selfdestruct_same_tx_via_call
+  - test_selfdestruct_to_different_address_same_tx
+  - test_selfdestruct_to_self_same_tx
+  - test_selfdestruct_to_system_address
   - test_transfer_to_special_address
-- [ ] EIP-7928 BAL 7702 delegation: 9 tests
+- [ ] EIP-7928 BAL 7702 delegation: 8 tests
   - test_bal_7702_double_auth_reset
   - test_bal_7702_double_auth_swap
-  - test_bal_*_7702_delegation_and_oog (4 tests)
+  - test_bal_call_7702_delegation_and_oog
+  - test_bal_callcode_7702_delegation_and_oog
+  - test_bal_delegatecall_7702_delegation_and_oog
+  - test_bal_staticcall_7702_delegation_and_oog
   - test_bal_call_no_delegation_oog_after_target_access
   - test_bal_create_selfdestruct_to_self_with_call
-  - test_bal_withdrawal_and_new_contract
 
 ## Progress History
 - Initial: 64 failures
@@ -241,9 +282,10 @@
 - After Fix #7-8: 31 failures (5 tests fixed)
 - After Fix #9-10: 25 failures (6 tests fixed)
 - After Fix #11: 20 failures (5 tests fixed)
+- After Fix #13: 17 failures (3 tests fixed)
 
 ## Notes
 - EIP-7778 and EIP-8024 tests all pass now
 - Debug output available via DEBUG_BAL=1 environment variable
-- EIP-7708 tests likely need ETH transfer log handling (separate from BAL)
+- Remaining EIP-7708 tests involve SELFDESTRUCT log handling
 - Remaining EIP-7928 tests involve 7702 delegation OOG edge cases and double auth

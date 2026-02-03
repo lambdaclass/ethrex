@@ -1,45 +1,42 @@
 # EF Tests Work Log
 
 ## Current Investigation
-**Iteration:** 10
-**Status:** Investigating why split gas charging didn't fix OOG tests
-**Working hypothesis:** OOG happens in a different place than expected, or BAL checkpoint/restore is involved
+**Iteration:** 11
+**Status:** Fix #13 applied - waiting for instructions
+**Working hypothesis:** Remaining EIP-7708 failures are SELFDESTRUCT-related logs
 
 ## Test Summary
 - Total tests: 6158
-- Passed: 6138
-- Failed: 20
-- Previous failures: 25
-- Lowest failure count: 20 (NEW!)
+- Passed: 6141
+- Failed: 17
+- Previous failures: 20
+- Lowest failure count: 17 (NEW!)
 
 ## Key Findings
 
-### Fix #11 Applied - Record EIP-7702 delegation target in BAL (SUCCESS)
-- **Tests fixed:** 5 (25 → 20)
-  - test_bal_7702_delegated_storage_access
-  - test_bal_7702_delegated_via_call_opcode
-  - test_bal_all_transaction_types
-  - test_call_to_delegated_account_with_value
-  - test_transfer_to_delegated_account_emits_log
-- **Root cause:** Delegation target was not being recorded in BAL when calling delegated accounts
-- **Solution:** Record `code_address` (delegation target) when `is_delegation_7702` is true in all CALL opcodes
+### Fix #13 Applied - EIP-7708 transfer logs for contract creation transactions (SUCCESS)
+- **Tests fixed:** 3 (20 → 17)
+  - test_contract_creation_tx
+  - test_selfdestruct_to_self_cross_tx_no_log
+  - (1 other)
+- **Root cause:** Contract creation transactions with value were not emitting EIP-7708 logs
+- **Solution:** Added log emission in `handle_create_transaction()` in execution_handlers.rs
+- **File:** `crates/vm/levm/src/execution_handlers.rs`
 
-### Fix #12 In Progress - Split gas charging for OOG handling
-- **Tests NOT fixed:** OOG tests still failing
-- **Implementation:** Split gas charging into two stages:
-  1. Charge static cost (target access) → record target
-  2. Charge delegation cost → record delegation only if successful
-- **Problem:** Tests still failing, need to investigate why
+## Current Failing Test Categories (17 remaining)
 
-## Current Failing Test Categories (20 remaining)
-
-### EIP-7708 ETH Transfer Logs (11 tests)
-- test_contract_creation_tx
+### EIP-7708 SELFDESTRUCT Logs (9 tests)
 - test_finalization_selfdestruct_logs
-- test_selfdestruct_* (9 tests)
+- test_selfdestruct_during_initcode
+- test_selfdestruct_finalization_after_priority_fee
+- test_selfdestruct_log_at_fork_transition
+- test_selfdestruct_same_tx_via_call
+- test_selfdestruct_to_different_address_same_tx
+- test_selfdestruct_to_self_same_tx
+- test_selfdestruct_to_system_address
 - test_transfer_to_special_address
 
-### EIP-7928 BAL 7702 Delegation OOG (9 tests)
+### EIP-7928 BAL 7702 Delegation (8 tests)
 - test_bal_7702_double_auth_reset
 - test_bal_7702_double_auth_swap
 - test_bal_call_7702_delegation_and_oog
@@ -48,26 +45,21 @@
 - test_bal_staticcall_7702_delegation_and_oog
 - test_bal_call_no_delegation_oog_after_target_access
 - test_bal_create_selfdestruct_to_self_with_call
-- test_bal_withdrawal_and_new_contract
 
 ## Code Locations Identified
-- `crates/vm/levm/src/opcode_handlers/system.rs` - CALL opcodes with split gas charging
-- `crates/vm/levm/src/hooks/default_hook.rs:575-592` - Initial tx delegation handling
-- `crates/vm/levm/src/utils.rs:336-365` - eip7702_get_code function
+- `crates/vm/levm/src/execution_handlers.rs:121-139` - handle_create_transaction (FIXED)
+- `crates/vm/levm/src/hooks/default_hook.rs:267-292` - SELFDESTRUCT finalization logs
+- `crates/vm/levm/src/opcode_handlers/system.rs:641-670` - SELFDESTRUCT opcode logs
 
 ## Attempted Approaches (Successful)
-1-10. Previous fixes ✓
-11. Record delegation target in BAL ✓
-
-## Attempted Approaches (In Progress)
-12. Split gas charging for OOG - implemented but not fixing tests
+1-11. Previous fixes ✓
+13. EIP-7708 transfer logs for contract creation transactions ✓
 
 ## Next Steps
-1. [ ] Debug OOG test to see what's happening
-2. [ ] Check if BAL checkpoint/restore is affecting results
-3. [ ] Check if OOG happens at a different point than expected
+1. [ ] Investigate SELFDESTRUCT log issues (9 tests)
+2. [ ] Investigate BAL 7702 delegation OOG issues (8 tests)
 
 ## Notes
-- Progress: 64 → 20 failures (44 tests fixed total)
+- Progress: 64 → 17 failures (47 tests fixed total)
 - EIP-7778 and EIP-8024 tests all pass
 - Debug output: `DEBUG_BAL=1 cargo test ...`
