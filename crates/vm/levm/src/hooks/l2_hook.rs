@@ -105,23 +105,21 @@ fn finalize_non_privileged_execution(
 
     // Save pre-refund gas for EIP-7778 block accounting
     let gas_used_pre_refund = ctx_result.gas_used;
-
-    let gas_refunded: u64 = default_hook::compute_gas_refunded(vm, ctx_result)?;
-    let actual_gas_used =
-        default_hook::compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
-
     let mut l1_gas = calculate_l1_fee_gas(vm, &fee_config.l1_fee_config)?;
-
-    let mut total_gas = actual_gas_used
-        .checked_add(l1_gas)
-        .ok_or(InternalError::Overflow)?;
 
     // EIP-7778: Track pre-refund gas including L1 gas
     let mut total_gas_pre_refund = gas_used_pre_refund
         .checked_add(l1_gas)
         .ok_or(InternalError::Overflow)?;
 
-    if total_gas > vm.current_call_frame.gas_limit {
+    let gas_refunded: u64 = default_hook::compute_gas_refunded(vm, ctx_result)?;
+    let execution_gas =
+        default_hook::compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
+    let mut actual_gas_used = execution_gas
+        .checked_add(l1_gas)
+        .ok_or(InternalError::Overflow)?;
+
+    if actual_gas_used > vm.current_call_frame.gas_limit {
         vm.substate.revert_backup();
         vm.restore_cache_state()?;
 
@@ -135,8 +133,8 @@ fn finalize_non_privileged_execution(
         l1_gas = vm
             .current_call_frame
             .gas_limit
-            .saturating_sub(actual_gas_used);
-        total_gas = vm.current_call_frame.gas_limit;
+            .saturating_sub(execution_gas);
+        actual_gas_used = vm.current_call_frame.gas_limit;
         total_gas_pre_refund = vm.current_call_frame.gas_limit;
     }
 
@@ -168,7 +166,7 @@ fn finalize_non_privileged_execution(
             vm,
             ctx_result,
             gas_refunded,
-            total_gas,
+            actual_gas_used,
             total_gas_pre_refund,
             fee_token_ratio,
         )?;
@@ -177,14 +175,14 @@ fn finalize_non_privileged_execution(
             vm,
             ctx_result,
             gas_refunded,
-            total_gas,
+            actual_gas_used,
             total_gas_pre_refund,
         )?;
     }
 
     pay_coinbase_l2(
         vm,
-        actual_gas_used.saturating_mul(fee_token_ratio),
+        execution_gas.saturating_mul(fee_token_ratio),
         &fee_config.operator_fee_config,
         use_fee_token,
     )?;
@@ -196,14 +194,14 @@ fn finalize_non_privileged_execution(
     if let Some(base_fee_vault) = fee_config.base_fee_vault {
         pay_base_fee_vault(
             vm,
-            actual_gas_used.saturating_mul(fee_token_ratio),
+            execution_gas.saturating_mul(fee_token_ratio),
             base_fee_vault,
             use_fee_token,
         )?;
     } else if use_fee_token {
         pay_base_fee_vault(
             vm,
-            actual_gas_used.saturating_mul(fee_token_ratio),
+            execution_gas.saturating_mul(fee_token_ratio),
             Address::zero(),
             use_fee_token,
         )?;
@@ -212,7 +210,7 @@ fn finalize_non_privileged_execution(
     if let Some(operator_fee_config) = fee_config.operator_fee_config {
         pay_operator_fee(
             vm,
-            actual_gas_used.saturating_mul(fee_token_ratio),
+            execution_gas.saturating_mul(fee_token_ratio),
             operator_fee_config,
             use_fee_token,
         )?;
