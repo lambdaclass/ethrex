@@ -88,18 +88,11 @@ impl LEVM {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
-            // EIP-7778: Set gas_spent for Amsterdam+ receipts
-            let gas_spent = if fork >= Fork::Amsterdam {
-                Some(report.gas_spent)
-            } else {
-                None
-            };
-
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                gas_spent,
+                fork.gas_spent_for_receipt(report.gas_spent),
                 report.logs,
             );
 
@@ -182,18 +175,11 @@ impl LEVM {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
-            // EIP-7778: Set gas_spent for Amsterdam+ receipts
-            let gas_spent = if fork >= Fork::Amsterdam {
-                Some(report.gas_spent)
-            } else {
-                None
-            };
-
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                gas_spent,
+                fork.gas_spent_for_receipt(report.gas_spent),
                 report.logs,
             );
 

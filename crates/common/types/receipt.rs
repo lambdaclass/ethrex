@@ -18,12 +18,12 @@ pub struct Receipt {
     pub tx_type: TxType,
     pub succeeded: bool,
     /// Cumulative gas used by this and all previous transactions in the block.
-    /// Pre-EIP-7778: This is the post-refund gas.
-    /// Post-EIP-7778: This is the pre-refund gas (for block-level accounting).
+    /// This is always post-refund gas.
+    /// Note: Block-level gas accounting (pre-refund for EIP-7778) uses BlockExecutionResult::block_gas_used.
     pub cumulative_gas_used: u64,
     /// Gas spent after refunds (what the user actually pays).
     /// This is `None` for pre-EIP-7778 receipts.
-    /// Post-EIP-7778: This is included in RLP encoding.
+    /// Post-EIP-7778 (Amsterdam+): This is included in RLP encoding.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_spent: Option<u64>,
     pub logs: Vec<Log>,
@@ -142,14 +142,14 @@ pub struct ReceiptWithBloom {
     pub tx_type: TxType,
     pub succeeded: bool,
     /// Cumulative gas used by this and all previous transactions in the block.
-    /// Pre-EIP-7778: This is the post-refund gas.
-    /// Post-EIP-7778: This is the pre-refund gas (for block-level accounting).
+    /// This is always post-refund gas.
+    /// Note: Block-level gas accounting (pre-refund for EIP-7778) uses BlockExecutionResult::block_gas_used.
     pub cumulative_gas_used: u64,
     pub bloom: Bloom,
     pub logs: Vec<Log>,
     /// Gas spent after refunds (what the user actually pays).
     /// This is `None` for pre-EIP-7778 receipts.
-    /// Post-EIP-7778: This is included in RLP encoding.
+    /// Post-EIP-7778 (Amsterdam+): This is included in RLP encoding.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_spent: Option<u64>,
 }

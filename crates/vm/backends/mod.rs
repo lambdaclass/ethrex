@@ -110,18 +110,11 @@ impl Evm {
 
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
-        // EIP-7778: Set gas_spent for Amsterdam+ receipts
-        let gas_spent = if fork >= Fork::Amsterdam {
-            Some(execution_report.gas_spent)
-        } else {
-            None
-        };
-
         let receipt = Receipt::new(
             tx.tx_type(),
             execution_report.is_success(),
             block_header.gas_limit - *remaining_gas,
-            gas_spent,
+            fork.gas_spent_for_receipt(execution_report.gas_spent),
             execution_report.logs.clone(),
         );
 
