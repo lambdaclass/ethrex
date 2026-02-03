@@ -1114,10 +1114,8 @@ Each category of change requires corresponding verification:
 
 ## Related Documents
 
-- SDK Improvements: `SDK_IMPROVEMENT_PLAN.md`
 - Metrics Gap Analysis: `docs/internal/l1/metrics_coverage_gap_analysis.md`
-- Current Dashboards: `docs/internal/l1/dashboards.md`
-
+- Current Dashboards: `docs/developers/l1/dashboards.md`
 ---
 
 ## Appendix: Detailed Issue Counts
