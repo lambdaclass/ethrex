@@ -91,10 +91,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           REVIEW_CONTENT=$(cat kimi_review.txt)
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          MARKER="<!-- kimi-review-bot -->"
 
-          gh pr comment ${{ github.event.pull_request.number }} --body "## Kimi AI Code Review
+          COMMENT_BODY="$MARKER
+          ## Kimi AI Code Review
 
           $REVIEW_CONTENT
 
           ---
           *Automated review by Kimi (Moonshot AI)*"
+
+          # Find existing comment with our marker
+          EXISTING_COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.body | startswith("<!-- kimi-review-bot -->")) | .id' | head -n1)
+
+          if [ -n "$EXISTING_COMMENT_ID" ]; then
+            # Update existing comment
+            gh api "repos/${{ github.repository }}/issues/comments/${EXISTING_COMMENT_ID}" \
+              -X PATCH \
+              -f body="$COMMENT_BODY"
+          else
+            # Create new comment
+            gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY"
+          fi
