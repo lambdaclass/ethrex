@@ -12,6 +12,7 @@
 //! - `constants`: Protocol constants and configuration values
 //! - `error`: Unified error types for snap protocol operations
 
+pub mod async_fs;
 pub mod client;
 pub mod constants;
 pub mod error;
