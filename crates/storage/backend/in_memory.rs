@@ -111,6 +111,14 @@ impl<'a> StorageReadView for InMemoryReadTx<'a> {
             .cloned())
     }
 
+    fn get_batch(&self, table: &'static str, keys: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, StoreError> {
+        let inner = self.backend.read().map_err(|_| StoreError::Custom("lock poisoned".to_string()))?;
+        let table_data = inner.get(table);
+        Ok(keys.iter().map(|k| {
+            table_data.and_then(|t| t.get(*k).cloned())
+        }).collect())
+    }
+
     fn prefix_iterator(
         &self,
         table: &str,

@@ -59,6 +59,11 @@ pub trait StorageReadView {
     /// Retrieves a value by key from the specified table.
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
+    /// Retrieves multiple values by keys from the specified table.
+    /// Returns results in the same order as input keys.
+    /// All keys must be from the same table/column family.
+    fn get_batch(&self, table: &'static str, keys: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, StoreError>;
+
     /// Returns an iterator over all key-value pairs with the given prefix.
     fn prefix_iterator(
         &self,

@@ -395,30 +395,38 @@ impl Store {
         from: BlockNumber,
         to: BlockNumber,
     ) -> Result<Vec<Option<BlockBody>>, StoreError> {
-        // TODO: Implement read bulk
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let numbers: Vec<BlockNumber> = (from..=to).collect();
-            let mut block_bodies = Vec::new();
-
             let txn = backend.begin_read()?;
-            for number in numbers {
-                let Some(hash) = txn
-                    .get(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?
-                    .map(|bytes| H256::decode(bytes.as_slice()))
-                    .transpose()?
-                else {
-                    block_bodies.push(None);
-                    continue;
-                };
-                let hash_key = hash.encode_to_vec();
-                let block_body_opt = txn
-                    .get(BODIES, &hash_key)?
-                    .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
-                    .transpose()
-                    .map_err(StoreError::from)?;
 
-                block_bodies.push(block_body_opt);
+            // First batch read: get all canonical hashes for block numbers
+            let number_keys: Vec<Vec<u8>> = (from..=to).map(|n| n.to_le_bytes().to_vec()).collect();
+            let number_key_refs: Vec<&[u8]> = number_keys.iter().map(|k| k.as_slice()).collect();
+            let hash_results = txn.get_batch(CANONICAL_BLOCK_HASHES, &number_key_refs)?;
+
+            // Filter out None results (non-canonical blocks), track indices
+            let mut valid_hashes = Vec::new();
+            let mut valid_indices = Vec::new();
+            for (idx, hash_opt) in hash_results.iter().enumerate() {
+                if let Some(hash_bytes) = hash_opt {
+                    let hash = H256::decode(hash_bytes.as_slice())?;
+                    valid_hashes.push(hash);
+                    valid_indices.push(idx);
+                }
+            }
+
+            // Second batch read: get block bodies for valid hashes
+            let hash_keys: Vec<Vec<u8>> = valid_hashes.iter().map(|h| h.encode_to_vec()).collect();
+            let hash_key_refs: Vec<&[u8]> = hash_keys.iter().map(|k| k.as_slice()).collect();
+            let body_results = txn.get_batch(BODIES, &hash_key_refs)?;
+
+            // Reconstruct result vec with None for missing canonical hashes
+            let mut block_bodies = vec![None; (to - from + 1) as usize];
+            for (body_opt, &idx) in body_results.into_iter().zip(valid_indices.iter()) {
+                if let Some(body_bytes) = body_opt {
+                    let body = BlockBodyRLP::from_bytes(body_bytes).to();
+                    block_bodies[idx] = Some(body?);
+                }
             }
 
             Ok(block_bodies)
@@ -433,26 +441,26 @@ impl Store {
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
         let backend = self.backend.clone();
-        // TODO: Implement read bulk
         tokio::task::spawn_blocking(move || {
             let txn = backend.begin_read()?;
-            let mut block_bodies = Vec::new();
-            for hash in hashes {
-                let hash_key = hash.encode_to_vec();
 
-                let Some(block_body) = txn
-                    .get(BODIES, &hash_key)?
-                    .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
-                    .transpose()
-                    .map_err(StoreError::from)?
-                else {
-                    return Err(StoreError::Custom(format!(
-                        "Block body not found for hash: {hash}"
-                    )));
-                };
-                block_bodies.push(block_body);
-            }
-            Ok(block_bodies)
+            // Batch encode keys
+            let hash_keys: Vec<Vec<u8>> = hashes.iter().map(|h| h.encode_to_vec()).collect();
+            let key_refs: Vec<&[u8]> = hash_keys.iter().map(|k| k.as_slice()).collect();
+
+            // Batch read
+            let results = txn.get_batch(BODIES, &key_refs)?;
+
+            // Decode results
+            results
+                .into_iter()
+                .zip(hashes.iter())
+                .map(|(opt, hash)| {
+                    let bytes = opt.ok_or_else(|| StoreError::Custom(format!("missing body for {hash}")))?;
+                    let body = BlockBodyRLP::from_bytes(bytes).to()?;
+                    Ok(body)
+                })
+                .collect()
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1286,17 +1294,24 @@ impl Store {
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
-        let mut res = vec![];
         let read_tx = self.backend.begin_read()?;
-        // TODO: use read_bulk here
-        for key in start..start + limit {
-            let header_opt = read_tx
-                .get(FULLSYNC_HEADERS, &key.to_le_bytes())?
-                .map(|header| BlockHeader::decode(&header))
-                .transpose()?;
-            res.push(header_opt);
-        }
-        Ok(res)
+
+        // Batch encode keys
+        let keys: Vec<Vec<u8>> = (start..start + limit).map(|k| k.to_le_bytes().to_vec()).collect();
+        let key_refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
+
+        // Batch read
+        let results = read_tx.get_batch(FULLSYNC_HEADERS, &key_refs)?;
+
+        // Decode headers from results
+        results
+            .into_iter()
+            .map(|opt| {
+                opt.map(|bytes| BlockHeader::decode(&bytes))
+                    .transpose()
+                    .map_err(StoreError::from)
+            })
+            .collect()
     }
 
     pub async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {

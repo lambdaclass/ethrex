@@ -291,6 +291,22 @@ impl StorageReadView for RocksDBReadTx {
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
+    fn get_batch(&self, table: &'static str, keys: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, StoreError> {
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("missing column family: {}", table)))?;
+        let cf_keys: Vec<_> = keys.iter().map(|k| (&cf, *k)).collect();
+        let results = self.db.multi_get_cf(cf_keys);
+        results
+            .into_iter()
+            .map(|r| r.map_err(|e| StoreError::Custom(format!("Failed to batch get: {}", e))))
+            .collect()
+    }
+
     fn prefix_iterator(
         &self,
         table: &'static str,
