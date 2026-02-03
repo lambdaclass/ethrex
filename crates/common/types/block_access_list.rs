@@ -595,22 +595,22 @@ impl BlockAccessListRecorder {
 
         for ((addr, slot), pre_value) in &self.tx_initial_storage {
             // Check if there are writes for this slot in the current transaction
-            if let Some(slots) = self.storage_writes.get(addr) {
-                if let Some(changes) = slots.get(slot) {
-                    // Find the final value for this transaction
-                    // (last entry with current_idx, or no entry means no change in this tx)
-                    let final_value = changes
-                        .iter()
-                        .filter(|(idx, _)| *idx == current_idx)
-                        .last()
-                        .map(|(_, val)| *val);
+            if let Some(slots) = self.storage_writes.get(addr)
+                && let Some(changes) = slots.get(slot)
+            {
+                // Find the final value for this transaction
+                // (last entry with current_idx, or no entry means no change in this tx)
+                let final_value = changes
+                    .iter()
+                    .filter(|(idx, _)| *idx == current_idx)
+                    .next_back()
+                    .map(|(_, val)| *val);
 
-                    if let Some(final_val) = final_value {
-                        if final_val == *pre_value {
-                            // Net-zero: final value equals pre-transaction value
-                            slots_to_convert.push((*addr, *slot));
-                        }
-                    }
+                if let Some(final_val) = final_value
+                    && final_val == *pre_value
+                {
+                    // Net-zero: final value equals pre-transaction value
+                    slots_to_convert.push((*addr, *slot));
                 }
             }
         }
@@ -699,14 +699,14 @@ impl BlockAccessListRecorder {
 
         // Check if there's already an entry with the same block_access_index
         // If so, update it with the new value, keeping only the final write
-        if let Some(last) = changes.last_mut() {
-            if last.0 == self.current_index {
-                // Update the existing entry with the new value
-                last.1 = post_value;
-                // Mark address as touched
-                self.touched_addresses.insert(address);
-                return;
-            }
+        if let Some(last) = changes.last_mut()
+            && last.0 == self.current_index
+        {
+            // Update the existing entry with the new value
+            last.1 = post_value;
+            // Mark address as touched
+            self.touched_addresses.insert(address);
+            return;
         }
 
         // No existing entry for this index, push new change
@@ -721,7 +721,9 @@ impl BlockAccessListRecorder {
     /// within a transaction will be recorded.
     pub fn capture_pre_storage(&mut self, address: Address, slot: U256, value: U256) {
         // First-write-wins: only capture if not already captured for this transaction
-        self.tx_initial_storage.entry((address, slot)).or_insert(value);
+        self.tx_initial_storage
+            .entry((address, slot))
+            .or_insert(value);
     }
 
     /// Records a balance change.
@@ -866,11 +868,9 @@ impl BlockAccessListRecorder {
                     };
 
                     // Only include the FINAL balance change if NOT a round-trip
-                    if !is_round_trip {
-                        if let Some(final_balance) = final_for_tx {
-                            account_changes
-                                .add_balance_change(BalanceChange::new(*index, final_balance));
-                        }
+                    if !is_round_trip && let Some(final_balance) = final_for_tx {
+                        account_changes
+                            .add_balance_change(BalanceChange::new(*index, final_balance));
                     }
 
                     // Update prev_balance for next transaction
