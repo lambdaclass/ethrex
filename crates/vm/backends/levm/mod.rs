@@ -138,7 +138,13 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
             )?;
-            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+            // Adaptive state flush batching:
+            // - Flush when we have many modified accounts (>32) to keep merkleizer fed
+            // - Also flush every 8 transactions as a fallback for small-delta blocks
+            // - Don't wait for merkleizer to be idle (queue_length == 0) - allow pipelining
+            let pending_accounts = db.pending_accounts_count();
+            let should_flush = pending_accounts > 32 || tx_since_last_flush > 8;
+            if should_flush {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
                 tx_since_last_flush = 0;
             } else {
@@ -166,7 +172,8 @@ impl LEVM {
             ::tracing::info!("{}", precompiles_timings.info_pretty());
         }
 
-        if queue_length.load(Ordering::Relaxed) == 0 {
+        // Flush any remaining state after transaction loop
+        if db.pending_accounts_count() > 0 {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 

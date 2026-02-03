@@ -6,7 +6,7 @@ use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
-use ethrex_common::utils::ZERO_U256;
+use ethrex_common::utils::{ZERO_U256, keccak};
 
 use super::Database;
 use crate::account::AccountStatus;
@@ -43,6 +43,14 @@ impl GeneralizedDatabase {
             codes: Default::default(),
             code_metadata: Default::default(),
         }
+    }
+
+    /// Returns the number of accounts currently in the pending state cache.
+    /// Used for adaptive state flush batching to determine when to send
+    /// state transitions to the merkleizer based on state delta size
+    /// rather than a fixed transaction count.
+    pub fn pending_accounts_count(&self) -> usize {
+        self.current_accounts_state.len()
     }
 
     /// Only used within Levm Runner, where the accounts already have all the storage pre-loaded, not used in real case scenarios.
@@ -285,8 +293,12 @@ impl GeneralizedDatabase {
                 continue;
             }
 
+            // Pre-compute hashed address in executor thread
+            let hashed_address = Some(keccak(*address));
+
             let account_update = AccountUpdate {
                 address: *address,
+                hashed_address,
                 removed,
                 info,
                 code: code.cloned(),
@@ -385,8 +397,13 @@ impl GeneralizedDatabase {
             self.initial_accounts_state
                 .insert(address, new_state_account);
 
+            // Pre-compute hashed address in executor thread to avoid
+            // hashing overhead on the merkleizer's critical path
+            let hashed_address = Some(keccak(address));
+
             let account_update = AccountUpdate {
                 address,
+                hashed_address,
                 removed,
                 info,
                 code,
