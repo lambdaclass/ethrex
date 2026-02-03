@@ -816,6 +816,60 @@ services:
 
 ---
 
+### 3.8 Add Nix Support
+
+**Problem:** No Nix flake or derivation exists for building ethrex. Developers using NixOS or nix-based workflows cannot easily build, develop, or deploy ethrex. This creates friction for a significant portion of the systems programming community and blocks reproducible build guarantees.
+
+**Current State:** Building ethrex requires manually installing Rust toolchain, system dependencies (e.g., libclang for RocksDB, openssl), and managing feature flags. There is no `flake.nix`, `default.nix`, or `shell.nix` in the repository.
+
+**Solution:** Add Nix flake support with:
+
+1. **`flake.nix`** at repository root providing:
+   - `packages.default` — Build ethrex with default features
+   - `packages.ethrex-dev` — Build with `dev` feature enabled
+   - `devShells.default` — Development shell with Rust toolchain, cargo, clippy, rustfmt, and system dependencies (libclang, openssl, pkg-config)
+
+2. **Development shell** should include:
+   - Rust toolchain (pinned via `rust-toolchain.toml` or oxalica overlay)
+   - System libraries required by RocksDB (libclang, snappy, lz4, zstd)
+   - OpenSSL and pkg-config
+   - Optional: cargo-nextest, cargo-audit, and other dev tools
+
+3. **NixOS module** (stretch goal):
+   - Systemd service configuration via NixOS module
+   - Declarative configuration for network, datadir, RPC settings
+   - Integrates with Section 2.13 (Systemd Service Files)
+
+**Example usage:**
+```bash
+# Build ethrex
+nix build
+
+# Enter development shell
+nix develop
+
+# Run directly
+nix run .#ethrex -- --network mainnet
+
+# On NixOS (stretch goal)
+services.ethrex = {
+  enable = true;
+  network = "mainnet";
+  datadir = "/var/lib/ethrex";
+  http.port = 8545;
+};
+```
+
+**Files:**
+- New `flake.nix` at repository root
+- New `flake.lock` (auto-generated)
+- New `nix/` directory for module and overlays (if NixOS module is pursued)
+
+**Effort:** 3-4 days (flake + dev shell), 2-3 days additional for NixOS module
+**Breaking:** No
+
+---
+
 ## Category 4: Documentation (Priority: CRITICAL)
 
 ### 4.1 Storage/Database API Reference
@@ -1043,6 +1097,7 @@ services:
 | 2.9 Peer Health Metrics | 1-2 days | Medium |
 | 3.4 Genesis Validation | 2 days | Medium |
 | 3.7 Log Rotation | 2 days | Medium |
+| 3.8 Nix Support (flake + dev shell) | 3-4 days | Medium |
 
 ---
 
@@ -1139,8 +1194,8 @@ Each category of change requires corresponding verification:
 12. No systemd service files
 13. Incomplete Grafana dashboards
 
-### Configuration (21)
-21 CLI options without environment variable equivalents
+### Configuration (22)
+21 CLI options without environment variable equivalents + no Nix support
 
 ### Documentation (4)
 1. Storage API schema undocumented
