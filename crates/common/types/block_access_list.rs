@@ -810,13 +810,11 @@ impl BlockAccessListRecorder {
     pub fn record_code_change(&mut self, address: Address, new_code: Bytes) {
         // If new code is empty, only record if the address had initial code
         // (i.e., this is an actual code change like delegation clear, not just CREATE empty)
-        if new_code.is_empty() {
-            if !self.addresses_with_initial_code.contains(&address) {
-                // No initial code and setting to empty = no change, skip
-                self.touched_addresses.insert(address);
-                return;
-            }
-            // Had initial code and setting to empty = delegation clear, record it
+        // No initial code and setting to empty = no change, skip
+        // Had initial code and setting to empty = delegation clear, record it
+        if new_code.is_empty() && !self.addresses_with_initial_code.contains(&address) {
+            self.touched_addresses.insert(address);
+            return;
         }
 
         self.code_changes
