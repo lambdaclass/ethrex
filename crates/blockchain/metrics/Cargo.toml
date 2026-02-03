@@ -17,8 +17,12 @@ serde.workspace = true
 
 ethrex-common.workspace = true
 
-
+# Legacy prometheus crate (kept for process collector on Linux)
 prometheus = { version = "0.13.4", features = ["process"], optional = true }
+# New metrics ecosystem for summary quantiles
+metrics = { workspace = true, optional = true }
+metrics-exporter-prometheus = { workspace = true, optional = true }
+metrics-util = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 tracing-subscriber.workspace = true
 
@@ -29,8 +33,8 @@ path = "./mod.rs"
 [features]
 default = ["api"]
 transactions = []
-api = ["dep:axum", "dep:prometheus", "dep:tokio", "dep:tracing"]
-metrics = ["dep:prometheus"]
+api = ["dep:axum", "dep:prometheus", "dep:tokio", "dep:tracing", "dep:metrics", "dep:metrics-exporter-prometheus", "dep:metrics-util"]
+metrics = ["dep:prometheus", "dep:metrics", "dep:metrics-exporter-prometheus", "dep:metrics-util"]
 
 [lints]
 workspace = true

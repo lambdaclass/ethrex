@@ -1,3 +1,4 @@
+use metrics::{gauge, histogram};
 use prometheus::{Encoder, Gauge, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
 use std::sync::LazyLock;
 
@@ -31,79 +32,79 @@ impl Metrics {
         Metrics {
             status_tracker: IntGaugeVec::new(
                 Opts::new(
-                    "l2_blocks_tracker",
-                    "Keeps track of the L2's status based on the L1's contracts",
+                    "old_l2_blocks_tracker",
+                    "[DEPRECATED] Keeps track of the L2's status based on the L1's contracts",
                 ),
                 &["block_type"],
             )
             .unwrap(),
             operations_tracker: IntGaugeVec::new(
                 Opts::new(
-                    "l2_operations_tracker",
-                    "Keeps track of the L2 deposits & withdrawals",
+                    "old_l2_operations_tracker",
+                    "[DEPRECATED] Keeps track of the L2 deposits & withdrawals",
                 ),
                 &["operations_type"],
             )
             .unwrap(),
-            l1_gas_price: IntGauge::new("l1_gas_price", "Keeps track of the l1 gas price").unwrap(),
-            l2_gas_price: IntGauge::new("l2_gas_price", "Keeps track of the l2 gas price").unwrap(),
+            l1_gas_price: IntGauge::new("old_l1_gas_price", "[DEPRECATED] Keeps track of the l1 gas price").unwrap(),
+            l2_gas_price: IntGauge::new("old_l2_gas_price", "[DEPRECATED] Keeps track of the l2 gas price").unwrap(),
             blob_usage: Gauge::new(
-                "l2_blob_usage",
-                "Keeps track of the percentage of blob usage for a batch commitment",
+                "old_l2_blob_usage",
+                "[DEPRECATED] Keeps track of the percentage of blob usage for a batch commitment",
             )
             .unwrap(),
             batch_size: IntGaugeVec::new(
                 Opts::new(
-                    "batch_size",
-                    "Batch size in blocks, labeled by batch number",
+                    "old_batch_size",
+                    "[DEPRECATED] Batch size in blocks, labeled by batch number",
                 ),
                 &["batch_number"],
             )
             .unwrap(),
             batch_gas_used: IntGaugeVec::new(
                 Opts::new(
-                    "batch_gas_used",
-                    "Batch total gas used, labeled by batch number",
+                    "old_batch_gas_used",
+                    "[DEPRECATED] Batch total gas used, labeled by batch number",
                 ),
                 &["batch_number"],
             )
             .unwrap(),
             batch_proving_time: IntGaugeVec::new(
                 Opts::new(
-                    "batch_proving_time",
-                    "Time it took to prove a batch in seconds, labeled by batch number",
+                    "old_batch_proving_time",
+                    "[DEPRECATED] Time it took to prove a batch in seconds, labeled by batch number",
                 ),
                 &["batch_number"],
             )
             .unwrap(),
             batch_verification_gas: IntGaugeVec::new(
                 Opts::new(
-                    "batch_verification_gas",
-                    "Batch verification gas cost in L1, labeled by batch number",
+                    "old_batch_verification_gas",
+                    "[DEPRECATED] Batch verification gas cost in L1, labeled by batch number",
                 ),
                 &["batch_number"],
             )
             .unwrap(),
             batch_commitment_gas: IntGaugeVec::new(
                 Opts::new(
-                    "batch_commitment_gas",
-                    "Batch commitment gas cost in L1, labeled by batch number",
+                    "old_batch_commitment_gas",
+                    "[DEPRECATED] Batch commitment gas cost in L1, labeled by batch number",
                 ),
                 &["batch_number"],
             )
             .unwrap(),
             batch_commitment_blob_gas: IntGaugeVec::new(
                 Opts::new(
-                    "batch_commitment_blob_gas",
-                    "Batch commitment blob gas cost in L1, labeled by batch number",
+                    "old_batch_commitment_blob_gas",
+                    "[DEPRECATED] Batch commitment blob gas cost in L1, labeled by batch number",
                 ),
                 &["batch_number"],
             )
             .unwrap(),
             batch_tx_count: IntGaugeVec::new(
                 Opts::new(
-                    "batch_tx_count",
-                    "Batch transaction count, labeled by batch number",
+                    "old_batch_tx_count",
+                    "[DEPRECATED] Batch transaction count, labeled by batch number",
                 ),
                 &["batch_number"],
             )
@@ -113,10 +114,12 @@ impl Metrics {
 
     pub fn set_l1_gas_price(&self, gas_price: i64) {
         self.l1_gas_price.set(gas_price);
+        gauge!("l1_gas_price").set(gas_price as f64);
     }
 
     pub fn set_l2_gas_price(&self, gas_price: i64) {
         self.l2_gas_price.set(gas_price);
+        gauge!("l2_gas_price").set(gas_price as f64);
     }
 
     pub fn set_block_type_and_block_number(
@@ -160,6 +163,8 @@ impl Metrics {
             .get_metric_with_label_values(&[&batch_number.to_string()])
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         builder.set(size);
+        // Record to new metrics system for summary quantiles
+        histogram!("l2_batch_size_blocks").record(size as f64);
         Ok(())
     }
 
@@ -173,6 +178,8 @@ impl Metrics {
             .get_metric_with_label_values(&[&batch_number.to_string()])
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         builder.set(total_gas);
+        // Record to new metrics system for summary quantiles
+        histogram!("l2_batch_gas_used").record(total_gas as f64);
         Ok(())
     }
 
@@ -186,6 +193,8 @@ impl Metrics {
             .get_metric_with_label_values(&[&batch_number.to_string()])
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         builder.set(proving_time);
+        // Record to new metrics system for summary quantiles (p50, p90, p95, p99, p999)
+        histogram!("l2_batch_proving_seconds").record(proving_time as f64);
         Ok(())
     }
 

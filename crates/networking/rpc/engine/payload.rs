@@ -6,7 +6,9 @@ use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
+use metrics::histogram;
 use serde_json::Value;
+use std::time::Instant;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
@@ -698,6 +700,9 @@ async fn handle_new_payload_v1_v2(
     block: Block,
     context: RpcApiContext,
 ) -> Result<PayloadStatus, RpcErr> {
+    // Start timing for consensus layer newPayload latency metric
+    let start = Instant::now();
+
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
             "New payload requested but syncer is not initialized".to_string(),
@@ -723,6 +728,11 @@ async fn handle_new_payload_v1_v2(
 
     // All checks passed, execute payload
     let payload_status = try_execute_payload(block, &context, latest_valid_hash).await?;
+
+    // Record consensus layer newPayload latency
+    let duration_secs = start.elapsed().as_secs_f64();
+    histogram!("engine_new_payload_latency_seconds").record(duration_secs);
+
     Ok(payload_status)
 }
 

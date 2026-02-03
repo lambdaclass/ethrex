@@ -1,4 +1,5 @@
 use ethrex_common::types::TxType;
+use metrics::{counter, gauge};
 use prometheus::{
     Encoder, Gauge, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
 };
@@ -27,8 +28,8 @@ impl MetricsTx {
     pub fn new() -> Self {
         let transactions_tracker = IntCounterVec::new(
             Opts::new(
-                "transactions_tracker",
-                "Keeps track of all transactions depending on status and tx_type",
+                "old_transactions_tracker",
+                "[DEPRECATED] Keeps track of all transactions depending on status and tx_type",
             ),
             &["tx_type"],
         )
@@ -40,28 +41,28 @@ impl MetricsTx {
             transactions_tracker,
             transaction_errors_count: IntCounterVec::new(
                 Opts::new(
-                    "transaction_errors_count",
-                    "Keeps track of all errors that happen during transaction execution",
+                    "old_transaction_errors_count",
+                    "[DEPRECATED] Keeps track of all errors that happen during transaction execution",
                 ),
                 &["tx_error"],
             )
             .unwrap(),
             transactions_total: IntGauge::new(
-                "transactions_total",
-                "Keeps track of all transactions",
+                "old_transactions_total",
+                "[DEPRECATED] Keeps track of all transactions",
             )
             .unwrap(),
             mempool_tx_count: IntGaugeVec::new(
                 Opts::new(
-                    "mempool_tx_count",
-                    "Keeps track of the amount of txs on the mempool",
+                    "old_mempool_tx_count",
+                    "[DEPRECATED] Keeps track of the amount of txs on the mempool",
                 ),
                 &["type"],
             )
             .unwrap(),
             transactions_per_second: Gauge::new(
-                "transactions_per_second",
-                "Keeps track of the TPS",
+                "old_transactions_per_second",
+                "[DEPRECATED] Keeps track of the TPS",
             )
             .unwrap(),
         }
@@ -79,6 +80,12 @@ impl MetricsTx {
         };
 
         txs_builder.inc();
+        // Record to new metrics system
+        counter!(
+            "transactions_total",
+            "tx_type" => tx_type.to_str().to_string()
+        )
+        .increment(1);
     }
 
     pub fn inc_tx_errors(&self, tx_error: &str) {
@@ -93,10 +100,17 @@ impl MetricsTx {
         };
 
         tx_errors_builder.inc();
+        // Record to new metrics system
+        counter!(
+            "transaction_errors_total",
+            "error_type" => tx_error.to_string()
+        )
+        .increment(1);
     }
 
     pub fn set_tx_count(&self, count: u64) -> Result<(), MetricsError> {
         self.transactions_total.set(count.try_into()?);
+        gauge!("transactions_count").set(count as f64);
         Ok(())
     }
 
@@ -109,12 +123,14 @@ impl MetricsTx {
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         builder.set(count.try_into()?);
+        gauge!("mempool_tx_count", "type" => label.to_string()).set(count as f64);
 
         Ok(())
     }
 
     pub fn set_transactions_per_second(&self, tps: f64) {
         self.transactions_per_second.set(tps);
+        gauge!("transactions_per_second").set(tps);
     }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
