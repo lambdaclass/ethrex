@@ -419,18 +419,18 @@ INFO: Server shutting down!
 
 **Solution:** Display shutdown summary:
 ```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  GRACEFUL SHUTDOWN
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Disconnecting 12 peers
-Saving node configuration
-Closing database
-
-Final State:
-  Last Block:      #18,523,456
-  Session Time:    2h 14m 30s
-  Blocks Synced:   1,234,567
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:   GRACEFUL SHUTDOWN
+INFO: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO: Disconnecting 12 peers
+INFO: Saving node configuration
+INFO: Closing database
+INFO: 
+INFO: Final State:
+INFO:   Last Block:      #18,523,456
+INFO:   Session Time:    2h 14m 30s
+INFO:   Blocks Synced:   1,234,567
+INFO: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 **Files:** `cmd/ethrex/ethrex.rs`
@@ -1149,4 +1149,3 @@ Each category of change requires corresponding verification:
 2. No production deployment guide
 3. Missing crate READMEs (7 crates)
 4. No troubleshooting guide
-
