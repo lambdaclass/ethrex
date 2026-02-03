@@ -112,13 +112,11 @@ pub async fn read_dir_paths(dir: &Path) -> Result<Vec<PathBuf>, SnapError> {
                 kind: e.kind(),
             })?
             .map(|entry| {
-                entry
-                    .map(|e| e.path())
-                    .map_err(|e| SnapError::FileSystem {
-                        operation: "read directory entry",
-                        path: dir.clone(),
-                        kind: e.kind(),
-                    })
+                entry.map(|e| e.path()).map_err(|e| SnapError::FileSystem {
+                    operation: "read directory entry",
+                    path: dir.clone(),
+                    kind: e.kind(),
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         paths.sort();
