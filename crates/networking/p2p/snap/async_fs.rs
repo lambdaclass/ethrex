@@ -100,7 +100,8 @@ pub async fn ensure_dir_exists(path: &Path) -> Result<(), SnapError> {
 /// # Errors
 ///
 /// - Returns `SnapError::FileSystem` if the directory cannot be read
-/// - Individual entry errors are silently skipped (filter_map)
+/// - Returns `SnapError::FileSystem` if any directory entry cannot be read
+///   (e.g., permission denied, corrupted filesystem)
 pub async fn read_dir_paths(dir: &Path) -> Result<Vec<PathBuf>, SnapError> {
     let dir = dir.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -110,8 +111,16 @@ pub async fn read_dir_paths(dir: &Path) -> Result<Vec<PathBuf>, SnapError> {
                 path: dir.clone(),
                 kind: e.kind(),
             })?
-            .filter_map(|entry| entry.ok().map(|e| e.path()))
-            .collect();
+            .map(|entry| {
+                entry
+                    .map(|e| e.path())
+                    .map_err(|e| SnapError::FileSystem {
+                        operation: "read directory entry",
+                        path: dir.clone(),
+                        kind: e.kind(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         paths.sort();
         Ok(paths)
     })
