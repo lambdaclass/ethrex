@@ -466,7 +466,7 @@ async fn zip_requeue_node_responses_score_peer(
                     ?node_bytes,
                     "Node Hash failed"
                 );
-                Err(RLPDecodeError::MalformedData)
+                Err(RLPDecodeError::malformed_data())
             } else {
                 Ok(NodeResponse {
                     node_request: node_request.clone(),

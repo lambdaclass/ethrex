@@ -286,7 +286,7 @@ impl RLPDecode for ReceiptWithBloom {
         // to check for bytes prefix to diferenticate between legacy receipts and non-legacy receipt payloads
         let (tx_type, rlp) = if is_encoded_as_bytes(rlp)? {
             let payload = get_rlp_bytes_item_payload(rlp)?;
-            let tx_type = match payload.first().ok_or(RLPDecodeError::InvalidLength)? {
+            let tx_type = match payload.first().ok_or(RLPDecodeError::invalid_length())? {
                 0x0 => TxType::Legacy,
                 0x1 => TxType::EIP2930,
                 0x2 => TxType::EIP1559,

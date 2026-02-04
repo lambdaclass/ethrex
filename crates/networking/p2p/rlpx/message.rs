@@ -173,7 +173,7 @@ impl Message {
                 }
                 PingMessage::CODE => Ok(Message::Ping(PingMessage::decode(data)?)),
                 PongMessage::CODE => Ok(Message::Pong(PongMessage::decode(data)?)),
-                _ => Err(RLPDecodeError::MalformedData),
+                _ => Err(RLPDecodeError::malformed_data()),
             }
         } else if msg_id < eth_version.snap_capability_offset() {
             // eth capability
@@ -210,7 +210,7 @@ impl Message {
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
-                _ => Err(RLPDecodeError::MalformedData),
+                _ => Err(RLPDecodeError::malformed_data()),
             }
         } else if msg_id < eth_version.based_capability_offset() {
             // snap capability
@@ -227,7 +227,7 @@ impl Message {
                 ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
                 GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
                 TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
-                _ => Err(RLPDecodeError::MalformedData),
+                _ => Err(RLPDecodeError::malformed_data()),
             }
         } else {
             // based capability
@@ -242,12 +242,12 @@ impl Message {
                         let decoded = l2::messages::BatchSealed::decode(data)?;
                         L2Message::BatchSealed(decoded)
                     }
-                    _ => return Err(RLPDecodeError::MalformedData),
+                    _ => return Err(RLPDecodeError::malformed_data()),
                 },
             ));
 
             #[cfg(not(feature = "l2"))]
-            Err(RLPDecodeError::MalformedData)
+            Err(RLPDecodeError::malformed_data())
         }
     }
 

@@ -295,10 +295,10 @@ impl RLPDecode for AccountStateSlimCodec {
                         let data;
                         (data, rlp) = rlp
                             .split_first_chunk::<32>()
-                            .ok_or(RLPDecodeError::InvalidLength)?;
+                            .ok_or(RLPDecodeError::invalid_length())?;
                         H256(*data)
                     }
-                    _ => return Err(RLPDecodeError::InvalidLength),
+                    _ => return Err(RLPDecodeError::invalid_length()),
                 };
 
                 Ok((Self(value), rlp))
@@ -314,10 +314,10 @@ impl RLPDecode for AccountStateSlimCodec {
                         let data;
                         (data, rlp) = rlp
                             .split_first_chunk::<32>()
-                            .ok_or(RLPDecodeError::InvalidLength)?;
+                            .ok_or(RLPDecodeError::invalid_length())?;
                         H256(*data)
                     }
-                    _ => return Err(RLPDecodeError::InvalidLength),
+                    _ => return Err(RLPDecodeError::invalid_length()),
                 };
 
                 Ok((Self(value), rlp))

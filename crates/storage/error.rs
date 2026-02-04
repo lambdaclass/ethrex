@@ -2,11 +2,8 @@ use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::TrieError;
 use thiserror::Error;
 
-// TODO improve errors
 #[derive(Debug, Error)]
 pub enum StoreError {
-    #[error("DecodeError")]
-    DecodeError,
     #[cfg(feature = "rocksdb")]
     #[error("Rocksdb error: {0}")]
     RocksdbError(#[from] rocksdb::Error),

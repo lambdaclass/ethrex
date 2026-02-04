@@ -163,8 +163,8 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, PeerConnectionError> {
-    let peer_pk =
-        compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
+    let peer_pk = compress_pubkey(remote_public_key)
+        .ok_or_else(|| PeerConnectionError::InvalidPeerId("failed to compress public key"))?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
@@ -183,8 +183,8 @@ async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, PeerConnectionError> {
-    let peer_pk =
-        compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
+    let peer_pk = compress_pubkey(remote_public_key)
+        .ok_or_else(|| PeerConnectionError::InvalidPeerId("failed to compress public key"))?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
@@ -206,10 +206,10 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
-        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength("handshake message too short"))?;
     let msg = &msg_bytes
         .get(2..)
-        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength("handshake message too short"))?;
     let (auth, remote_ephemeral_key) = decode_auth_message(signer, msg, size_data)?;
 
     Ok(RemoteState {
@@ -228,10 +228,10 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
-        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength("handshake message too short"))?;
     let msg = &msg_bytes
         .get(2..)
-        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength("handshake message too short"))?;
     let ack = decode_ack_message(signer, msg, size_data)?;
     let remote_ephemeral_key = ack
         .get_ephemeral_pubkey()
@@ -255,7 +255,9 @@ async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
     let ack_data = [buf[0], buf[1]];
     let msg_size = u16::from_be_bytes(ack_data) as usize;
     if msg_size > P2P_MAX_MESSAGE_SIZE {
-        return Err(PeerConnectionError::InvalidMessageLength);
+        return Err(PeerConnectionError::InvalidMessageLength(
+            "handshake message too short",
+        ));
     }
     buf.resize(msg_size + 2, 0);
 
@@ -315,8 +317,8 @@ fn decode_auth_message(
     let (auth, _padding) = AuthMessage::decode_unfinished(&payload)?;
 
     // Derive a shared secret from the static keys.
-    let peer_pk =
-        compress_pubkey(auth.public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
+    let peer_pk = compress_pubkey(auth.public_key)
+        .ok_or_else(|| PeerConnectionError::InvalidPeerId("failed to compress public key"))?;
     let static_shared_secret = ecdh_xchng(static_key, &peer_pk).map_err(|error| {
         PeerConnectionError::CryptographyError(format!(
             "Invalid generated static shared secret: {error}"
@@ -368,13 +370,13 @@ fn decrypt_message(
     // public-key (65) || iv (16) || ciphertext || mac (32)
     let (pk, rest) = msg
         .split_at_checked(65)
-        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength("handshake message too short"))?;
     let (iv, rest) = rest
         .split_at_checked(16)
-        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength("handshake message too short"))?;
     let (c, d) = rest
         .split_at_checked(rest.len() - 32)
-        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength("handshake message too short"))?;
 
     // Derive the message shared secret.
     let shared_secret = ecdh_xchng(static_key, &PublicKey::from_slice(pk)?).map_err(|error| {
