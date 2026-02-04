@@ -132,13 +132,13 @@ contract OnChainProposer is
         address owner,
         bool requireRisc0Proof,
         bool requireSp1Proof,
-        bool requireZisKProof,
         bool requireTdxProof,
+        bool requireZisKProof,
         bool aligned,
         address r0verifier,
         address sp1verifier,
-        address ziskVerifier,
         address tdxverifier,
+        address ziskVerifier,
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
@@ -167,14 +167,6 @@ contract OnChainProposer is
         );
         SP1_VERIFIER_ADDRESS = sp1verifier;
 
-        // ZisK constants
-        REQUIRE_ZISK_PROOF = requireZisKProof;
-        require(
-            !REQUIRE_ZISK_PROOF || ziskVerifier != address(0),
-            "OnChainProposer: missing ZisK verifier address"
-        );
-        ZISK_VERIFIER_ADDRESS = ziskVerifier;
-
         // TDX constants
         REQUIRE_TDX_PROOF = requireTdxProof;
         require(
@@ -182,6 +174,14 @@ contract OnChainProposer is
             "OnChainProposer: missing TDX verifier address"
         );
         TDX_VERIFIER_ADDRESS = tdxverifier;
+
+        // ZisK constants
+        REQUIRE_ZISK_PROOF = requireZisKProof;
+        require(
+            !REQUIRE_ZISK_PROOF || ziskVerifier != address(0),
+            "OnChainProposer: missing ZisK verifier address"
+        );
+        ZISK_VERIFIER_ADDRESS = ziskVerifier;
 
         // Aligned Layer constants
         ALIGNED_MODE = aligned;
