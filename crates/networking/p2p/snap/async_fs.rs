@@ -12,24 +12,25 @@
 //! - Reduced throughput as network and disk operations cannot overlap
 //! - Poor utilization of available bandwidth
 //!
-//! # Hybrid Approach
+//! # Approach
 //!
 //! We use two strategies depending on the operation:
 //!
 //! ## `tokio::fs` (for simple operations)
 //! Used for: `create_dir_all`, `read`, `remove_dir_all`, `write`
 //!
-//! These operations are single system calls that tokio can handle efficiently
-//! on its async I/O thread pool.
+//! Note: `tokio::fs` internally uses `spawn_blocking` for most operations.
+//! The benefit is that callers get a clean async API without managing the
+//! blocking task spawning themselves, and tokio handles the thread pool.
 //!
-//! ## `spawn_blocking` (for iterator-based operations)
+//! ## Explicit `spawn_blocking` (for iterator-based operations)
 //! Used for: `read_dir`
 //!
 //! `std::fs::read_dir` returns a `ReadDir` iterator that yields `DirEntry` items.
 //! While `tokio::fs::read_dir` exists, it returns an async stream that requires
-//! careful handling of ownership and lifetimes. Using `spawn_blocking` with the
-//! sync version is simpler and equally efficient for our use case (reading all
-//! entries into a Vec).
+//! careful handling of ownership and lifetimes. Using explicit `spawn_blocking`
+//! with the sync version is simpler for our use case (reading all entries into
+//! a Vec at once).
 //!
 //! # Thread Pool Implications
 //!
