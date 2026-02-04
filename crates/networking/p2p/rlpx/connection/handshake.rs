@@ -256,7 +256,7 @@ async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
     let msg_size = u16::from_be_bytes(ack_data) as usize;
     if msg_size > P2P_MAX_MESSAGE_SIZE {
         return Err(PeerConnectionError::InvalidMessageLength(
-            "handshake message too short",
+            "handshake message exceeds maximum size",
         ));
     }
     buf.resize(msg_size + 2, 0);
