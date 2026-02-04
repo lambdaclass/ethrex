@@ -92,7 +92,7 @@ use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    Arc, Mutex, RwLock,
+    Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
@@ -288,7 +288,7 @@ impl Blockchain {
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
 
@@ -350,7 +350,7 @@ impl Blockchain {
                         vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
                     // Validate execution went alright
-                    validate_gas_used(&execution_result.receipts, &block.header)?;
+                    validate_gas_used(execution_result.block_gas_used, &block.header)?;
                     validate_receipts_root(&block.header, &execution_result.receipts)?;
                     validate_requests_hash(
                         &block.header,
@@ -859,7 +859,7 @@ impl Blockchain {
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let execution_result = vm.execute_block(block)?;
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
 
@@ -934,7 +934,7 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
@@ -1532,7 +1532,7 @@ impl Blockchain {
                 parent_header.clone(),
             )?);
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let vm = match self.options.r#type.clone() {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),

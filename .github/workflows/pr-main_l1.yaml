@@ -36,11 +36,18 @@ jobs:
               - '!crates/l2/**'
             non_docs:
               - "!docs/**"
+            code_changed:
+              - "**/*.rs"
+              - "**/*.toml"
+              - "**/*.lock"
       - name: finish
         id: finish
         run: |
           if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
             echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+              # In merge queue, only run lint if code files changed
+              echo "run_tests=${{ steps.filter.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
