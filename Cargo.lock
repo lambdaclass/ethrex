@@ -4362,7 +4362,7 @@ dependencies = [
  "hex-literal 0.4.1",
  "proptest",
  "rand 0.8.5",
- "reqwest 0.12.24",
+ "reqwest",
  "rkyv",
  "rustc-hash 2.1.1",
  "secp256k1",
