@@ -354,6 +354,13 @@ impl DiscoveryServer {
             .set_session_info(src_id, session.clone())
             .await?;
 
+        // Store validated ENR in peer table
+        if let Some(record) = authdata.record.clone() {
+            self.peer_table
+                .new_contact_records(vec![record], self.local_node.node_id())
+                .await?;
+        }
+
         // Decrypt and handle the contained message
         let mut encrypted = packet.encrypted_message.clone();
         decrypt_message(&session.inbound_key, &packet, &mut encrypted)?;
