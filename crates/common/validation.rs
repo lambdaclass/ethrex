@@ -107,6 +107,22 @@ pub fn validate_requests_hash(
     Ok(())
 }
 
+/// Helper to validate that all indices in an iterator are within bounds.
+fn validate_bal_indices(
+    indices: impl Iterator<Item = u16>,
+    max_valid_index: u16,
+) -> Result<(), InvalidBlockError> {
+    for index in indices {
+        if index > max_valid_index {
+            return Err(InvalidBlockError::BlockAccessListIndexOutOfBounds {
+                index,
+                max: max_valid_index,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Validates that the block access list hash matches the block header (Amsterdam+).
 /// Also validates that all BlockAccessIndex values are within valid bounds per EIP-7928.
 pub fn validate_block_access_list_hash(
@@ -128,46 +144,40 @@ pub fn validate_block_access_list_hash(
     // Validate all indices in the BAL
     for account in computed_bal.accounts() {
         // Check storage_changes indices
-        for slot_changes in account.storage_changes() {
-            for change in slot_changes.changes() {
-                if change.block_access_index() > max_valid_index {
-                    return Err(InvalidBlockError::BlockAccessListIndexOutOfBounds {
-                        index: change.block_access_index(),
-                        max: max_valid_index,
-                    });
-                }
-            }
-        }
+        validate_bal_indices(
+            account
+                .storage_changes()
+                .iter()
+                .flat_map(|slot| slot.changes().iter().map(|c| c.block_access_index())),
+            max_valid_index,
+        )?;
 
         // Check balance_changes indices
-        for change in account.balance_changes() {
-            if change.block_access_index() > max_valid_index {
-                return Err(InvalidBlockError::BlockAccessListIndexOutOfBounds {
-                    index: change.block_access_index(),
-                    max: max_valid_index,
-                });
-            }
-        }
+        validate_bal_indices(
+            account
+                .balance_changes()
+                .iter()
+                .map(|c| c.block_access_index()),
+            max_valid_index,
+        )?;
 
         // Check nonce_changes indices
-        for change in account.nonce_changes() {
-            if change.block_access_index() > max_valid_index {
-                return Err(InvalidBlockError::BlockAccessListIndexOutOfBounds {
-                    index: change.block_access_index(),
-                    max: max_valid_index,
-                });
-            }
-        }
+        validate_bal_indices(
+            account
+                .nonce_changes()
+                .iter()
+                .map(|c| c.block_access_index()),
+            max_valid_index,
+        )?;
 
         // Check code_changes indices
-        for change in account.code_changes() {
-            if change.block_access_index() > max_valid_index {
-                return Err(InvalidBlockError::BlockAccessListIndexOutOfBounds {
-                    index: change.block_access_index(),
-                    max: max_valid_index,
-                });
-            }
-        }
+        validate_bal_indices(
+            account
+                .code_changes()
+                .iter()
+                .map(|c| c.block_access_index()),
+            max_valid_index,
+        )?;
     }
 
     let computed_hash = computed_bal.compute_hash();

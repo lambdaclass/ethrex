@@ -585,9 +585,7 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
             eip7702_get_code(vm.db, &mut vm.substate, to)?;
 
         // If EIP-7702 delegation, also record the delegation target (code source) in BAL
-        if is_delegation
-            && let Some(recorder) = vm.db.bal_recorder.as_mut()
-        {
+        if is_delegation && let Some(recorder) = vm.db.bal_recorder.as_mut() {
             recorder.record_touched_address(code_address);
         }
 

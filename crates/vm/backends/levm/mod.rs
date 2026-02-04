@@ -524,7 +524,7 @@ impl LEVM {
             let new_balance = account.info.balance;
 
             // Record balance change for BAL (EIP-7928)
-            if let Some(recorder) = db.bal_recorder.as_mut() {
+            if let Some(recorder) = db.bal_recorder_mut() {
                 if let Some(initial) = initial_balance {
                     recorder.set_initial_balance(address, initial);
                 }

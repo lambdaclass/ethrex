@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bytes::{BufMut, Bytes};
-use ethereum_types::{Address, H160, H256, U256};
+use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::{RLPEncode, encode_length, list_length},
@@ -10,15 +10,8 @@ use ethrex_rlp::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::constants::EMPTY_BLOCK_ACCESS_LIST_HASH;
+use crate::constants::{EMPTY_BLOCK_ACCESS_LIST_HASH, SYSTEM_ADDRESS};
 use crate::utils::keccak;
-
-/// SYSTEM_ADDRESS is excluded from the BAL unless it has actual state changes.
-/// 0xfffffffffffffffffffffffffffffffffffffffe
-pub const SYSTEM_ADDRESS: Address = H160([
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0xFF, 0xFF, 0xFE,
-]);
 
 /// Encode a slice of items in sorted order without cloning.
 fn encode_sorted_by<T, K, F>(items: &[T], buf: &mut dyn BufMut, key_fn: F)
@@ -114,6 +107,14 @@ impl SlotChange {
         Self {
             slot,
             slot_changes: Vec::new(),
+        }
+    }
+
+    /// Creates a new slot change with the given slot and changes.
+    pub fn with_changes(slot: U256, changes: Vec<StorageChange>) -> Self {
+        Self {
+            slot,
+            slot_changes: changes,
         }
     }
 
@@ -331,6 +332,31 @@ impl AccountChanges {
         }
     }
 
+    pub fn with_storage_changes(mut self, changes: Vec<SlotChange>) -> Self {
+        self.storage_changes = changes;
+        self
+    }
+
+    pub fn with_storage_reads(mut self, reads: Vec<U256>) -> Self {
+        self.storage_reads = reads;
+        self
+    }
+
+    pub fn with_balance_changes(mut self, changes: Vec<BalanceChange>) -> Self {
+        self.balance_changes = changes;
+        self
+    }
+
+    pub fn with_nonce_changes(mut self, changes: Vec<NonceChange>) -> Self {
+        self.nonce_changes = changes;
+        self
+    }
+
+    pub fn with_code_changes(mut self, changes: Vec<CodeChange>) -> Self {
+        self.code_changes = changes;
+        self
+    }
+
     /// Returns the address for this account changes.
     pub fn address(&self) -> Address {
         self.address
@@ -448,6 +474,11 @@ impl BlockAccessList {
     /// Creates a new empty block access list.
     pub fn new() -> Self {
         Self { inner: Vec::new() }
+    }
+
+    /// Creates a block access list from a vector of account changes.
+    pub fn from_accounts(accounts: Vec<AccountChanges>) -> Self {
+        Self { inner: accounts }
     }
 
     /// Creates a new block access list with pre-allocated capacity.
@@ -1135,592 +1166,5 @@ impl BlockAccessListRecorder {
 
         // Note: touched_addresses is intentionally NOT restored - per EIP-7928,
         // accessed addresses must be included even from reverted calls
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ethereum_types::{H160, U256};
-    use ethrex_rlp::decode::RLPDecode;
-    use ethrex_rlp::encode::RLPEncode;
-
-    use crate::types::block_access_list::{
-        AccountChanges, BalanceChange, NonceChange, SlotChange, StorageChange,
-    };
-
-    use super::BlockAccessList;
-
-    const ALICE_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10]); //0xA
-    const BOB_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11]); //0xB
-    const CHARLIE_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12]); //0xC
-    const CONTRACT_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12]); //0xC
-
-    #[test]
-    fn test_encode_decode_empty_list_validation() {
-        let actual_bal = BlockAccessList {
-            inner: vec![AccountChanges {
-                address: ALICE_ADDR,
-                ..Default::default()
-            }],
-        };
-
-        let mut buf = Vec::new();
-        actual_bal.encode(&mut buf);
-
-        let encoded_rlp = hex::encode(&buf);
-        assert_eq!(
-            &encoded_rlp,
-            "dbda94000000000000000000000000000000000000000ac0c0c0c0c0"
-        );
-
-        let decoded_bal = BlockAccessList::decode(&buf).unwrap();
-        assert_eq!(decoded_bal, actual_bal);
-    }
-
-    #[test]
-    fn test_encode_decode_partial_validation() {
-        let actual_bal = BlockAccessList {
-            inner: vec![AccountChanges {
-                address: ALICE_ADDR,
-                storage_reads: vec![U256::from(1), U256::from(2)],
-                balance_changes: vec![BalanceChange {
-                    block_access_index: 1,
-                    post_balance: U256::from(100),
-                }],
-                nonce_changes: vec![NonceChange {
-                    block_access_index: 1,
-                    post_nonce: 1,
-                }],
-                ..Default::default()
-            }],
-        };
-
-        let mut buf = Vec::new();
-        actual_bal.encode(&mut buf);
-
-        let encoded_rlp = hex::encode(&buf);
-        assert_eq!(
-            &encoded_rlp,
-            "e3e294000000000000000000000000000000000000000ac0c20102c3c20164c3c20101c0"
-        );
-
-        let decoded_bal = BlockAccessList::decode(&buf).unwrap();
-        assert_eq!(decoded_bal, actual_bal);
-    }
-
-    #[test]
-    fn test_storage_changes_validation() {
-        let actual_bal = BlockAccessList {
-            inner: vec![AccountChanges {
-                address: CONTRACT_ADDR,
-                storage_changes: vec![SlotChange {
-                    slot: U256::from(0x1),
-                    slot_changes: vec![StorageChange {
-                        block_access_index: 1,
-                        post_value: U256::from(0x42),
-                    }],
-                }],
-                ..Default::default()
-            }],
-        };
-
-        let mut buf = Vec::new();
-        actual_bal.encode(&mut buf);
-
-        let encoded_rlp = hex::encode(buf);
-        assert_eq!(
-            &encoded_rlp,
-            "e1e094000000000000000000000000000000000000000cc6c501c3c20142c0c0c0c0"
-        );
-    }
-
-    #[test]
-    fn test_expected_addresses_auto_sorted() {
-        let actual_bal = BlockAccessList {
-            inner: vec![
-                AccountChanges {
-                    address: CHARLIE_ADDR,
-                    ..Default::default()
-                },
-                AccountChanges {
-                    address: ALICE_ADDR,
-                    ..Default::default()
-                },
-                AccountChanges {
-                    address: BOB_ADDR,
-                    ..Default::default()
-                },
-            ],
-        };
-
-        let mut buf = Vec::new();
-        actual_bal.encode(&mut buf);
-
-        let encoded_rlp = hex::encode(buf);
-        assert_eq!(
-            &encoded_rlp,
-            "f851da94000000000000000000000000000000000000000ac0c0c0c0c0da94000000000000000000000000000000000000000bc0c0c0c0c0da94000000000000000000000000000000000000000cc0c0c0c0c0"
-        );
-    }
-
-    #[test]
-    fn test_expected_storage_slots_ordering_correct_order_should_pass() {
-        let actual_bal = BlockAccessList {
-            inner: vec![AccountChanges {
-                address: ALICE_ADDR,
-                storage_changes: vec![
-                    SlotChange {
-                        slot: U256::from(0x02),
-                        slot_changes: vec![],
-                    },
-                    SlotChange {
-                        slot: U256::from(0x01),
-                        slot_changes: vec![],
-                    },
-                    SlotChange {
-                        slot: U256::from(0x03),
-                        slot_changes: vec![],
-                    },
-                ],
-                ..Default::default()
-            }],
-        };
-
-        let mut buf = Vec::new();
-        actual_bal.encode(&mut buf);
-
-        let encoded_rlp = hex::encode(&buf);
-        assert_eq!(
-            &encoded_rlp,
-            "e4e394000000000000000000000000000000000000000ac9c201c0c202c0c203c0c0c0c0c0"
-        );
-    }
-
-    #[test]
-    fn test_expected_storage_reads_ordering_correct_order_should_pass() {
-        let actual_bal = BlockAccessList {
-            inner: vec![AccountChanges {
-                address: ALICE_ADDR,
-                storage_reads: vec![U256::from(0x02), U256::from(0x01), U256::from(0x03)],
-                ..Default::default()
-            }],
-        };
-
-        let mut buf = Vec::new();
-        actual_bal.encode(&mut buf);
-
-        let encoded_rlp = hex::encode(buf);
-        assert_eq!(
-            &encoded_rlp,
-            "dedd94000000000000000000000000000000000000000ac0c3010203c0c0c0"
-        );
-    }
-
-    #[test]
-    fn test_expected_tx_indices_ordering_correct_order_should_pass() {
-        let actual_bal = BlockAccessList {
-            inner: vec![AccountChanges {
-                address: ALICE_ADDR,
-                nonce_changes: vec![
-                    NonceChange {
-                        block_access_index: 2,
-                        post_nonce: 2,
-                    },
-                    NonceChange {
-                        block_access_index: 3,
-                        post_nonce: 3,
-                    },
-                    NonceChange {
-                        block_access_index: 1,
-                        post_nonce: 1,
-                    },
-                ],
-                ..Default::default()
-            }],
-        };
-
-        let mut buf = Vec::new();
-        actual_bal.encode(&mut buf);
-
-        let encoded_rlp = hex::encode(buf);
-        assert_eq!(
-            &encoded_rlp,
-            "e4e394000000000000000000000000000000000000000ac0c0c0c9c20101c20202c20303c0"
-        );
-    }
-
-    #[test]
-    fn test_decode_storage_slots_ordering_correct_order_should_pass() {
-        let actual_bal = BlockAccessList {
-            inner: vec![AccountChanges {
-                address: ALICE_ADDR,
-                storage_changes: vec![
-                    SlotChange {
-                        slot: U256::from(0x01),
-                        slot_changes: vec![],
-                    },
-                    SlotChange {
-                        slot: U256::from(0x02),
-                        slot_changes: vec![],
-                    },
-                    SlotChange {
-                        slot: U256::from(0x03),
-                        slot_changes: vec![],
-                    },
-                ],
-                ..Default::default()
-            }],
-        };
-
-        let encoded_rlp: Vec<u8> = hex::decode(
-            "e4e394000000000000000000000000000000000000000ac9c201c0c202c0c203c0c0c0c0c0",
-        )
-        .unwrap();
-
-        let decoded_bal = BlockAccessList::decode(&encoded_rlp).unwrap();
-        assert_eq!(decoded_bal, actual_bal);
-    }
-
-    // ====================== BlockAccessListRecorder Tests ======================
-
-    use super::BlockAccessListRecorder;
-    use super::SYSTEM_ADDRESS;
-
-    #[test]
-    fn test_recorder_empty_build() {
-        let recorder = BlockAccessListRecorder::new();
-        let bal = recorder.build();
-        assert!(bal.is_empty());
-    }
-
-    #[test]
-    fn test_recorder_touched_address_only() {
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.record_touched_address(ALICE_ADDR);
-        let bal = recorder.build();
-
-        assert_eq!(bal.accounts().len(), 1);
-        let account = &bal.accounts()[0];
-        assert_eq!(account.address(), ALICE_ADDR);
-        // Account with no changes should still appear (per EIP-7928)
-        assert!(account.storage_changes().is_empty());
-        assert!(account.balance_changes().is_empty());
-    }
-
-    #[test]
-    fn test_recorder_storage_read_then_write_becomes_write() {
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        // First read a slot
-        recorder.record_storage_read(ALICE_ADDR, U256::from(0x10));
-        // Then write to the same slot
-        recorder.record_storage_write(ALICE_ADDR, U256::from(0x10), U256::from(0x42));
-
-        let bal = recorder.build();
-
-        assert_eq!(bal.accounts().len(), 1);
-        let account = &bal.accounts()[0];
-        // The slot should appear in writes, not reads
-        assert_eq!(account.storage_changes().len(), 1);
-        assert!(account.storage_reads().is_empty());
-        assert_eq!(account.storage_changes()[0].slot(), U256::from(0x10));
-    }
-
-    #[test]
-    fn test_recorder_storage_read_only() {
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        recorder.record_storage_read(ALICE_ADDR, U256::from(0x10));
-        recorder.record_storage_read(ALICE_ADDR, U256::from(0x20));
-
-        let bal = recorder.build();
-
-        assert_eq!(bal.accounts().len(), 1);
-        let account = &bal.accounts()[0];
-        assert!(account.storage_changes().is_empty());
-        assert_eq!(account.storage_reads().len(), 2);
-    }
-
-    #[test]
-    fn test_recorder_multiple_writes_same_slot() {
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-        recorder.record_storage_write(ALICE_ADDR, U256::from(0x10), U256::from(0x01));
-        recorder.set_block_access_index(2);
-        recorder.record_storage_write(ALICE_ADDR, U256::from(0x10), U256::from(0x02));
-
-        let bal = recorder.build();
-
-        let account = &bal.accounts()[0];
-        assert_eq!(account.storage_changes().len(), 1);
-        let slot_change = &account.storage_changes()[0];
-        // Should have two changes with different indices
-        assert_eq!(slot_change.changes().len(), 2);
-    }
-
-    #[test]
-    fn test_recorder_balance_roundtrip_filtered_within_tx() {
-        // Per EIP-7928: "If an account's balance changes during a transaction, but its
-        // post-transaction balance is equal to its pre-transaction balance, then the
-        // change MUST NOT be recorded."
-        // This is per-TRANSACTION filtering, not per-block.
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        // Set initial balance
-        recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
-        // Record changes within the SAME transaction that round-trip
-        recorder.record_balance_change(ALICE_ADDR, U256::from(500)); // decrease
-        recorder.record_balance_change(ALICE_ADDR, U256::from(1000)); // back to initial
-
-        let bal = recorder.build();
-
-        let account = &bal.accounts()[0];
-        // Balance round-tripped within same TX, so balance_changes should be empty
-        assert!(account.balance_changes().is_empty());
-    }
-
-    #[test]
-    fn test_recorder_balance_changes_across_txs_not_filtered() {
-        // Per EIP-7928: Per-transaction filtering means changes across different
-        // transactions are evaluated independently.
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        // Set initial balance for TX 1
-        recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
-        // TX 1: decrease to 500 (NOT round-trip: 1000 -> 500)
-        recorder.record_balance_change(ALICE_ADDR, U256::from(500));
-
-        // TX 2: increase back to 1000 (NOT round-trip: 500 -> 1000)
-        recorder.set_block_access_index(2);
-        recorder.record_balance_change(ALICE_ADDR, U256::from(1000));
-
-        let bal = recorder.build();
-
-        let account = &bal.accounts()[0];
-        // Both transactions have actual balance changes (not round-trips within their tx)
-        // TX 1: 1000 -> 500, TX 2: 500 -> 1000
-        assert_eq!(account.balance_changes().len(), 2);
-    }
-
-    #[test]
-    fn test_recorder_balance_change_recorded() {
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
-        recorder.record_balance_change(ALICE_ADDR, U256::from(500));
-
-        let bal = recorder.build();
-
-        let account = &bal.accounts()[0];
-        // Balance changed to different value, should be recorded
-        assert_eq!(account.balance_changes().len(), 1);
-        assert_eq!(account.balance_changes()[0].post_balance(), U256::from(500));
-    }
-
-    #[test]
-    fn test_recorder_nonce_change() {
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        recorder.record_nonce_change(ALICE_ADDR, 1);
-
-        let bal = recorder.build();
-
-        let account = &bal.accounts()[0];
-        assert_eq!(account.nonce_changes().len(), 1);
-        assert_eq!(account.nonce_changes()[0].post_nonce(), 1);
-    }
-
-    #[test]
-    fn test_recorder_code_change() {
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        recorder.record_code_change(ALICE_ADDR, bytes::Bytes::from_static(&[0x60, 0x00]));
-
-        let bal = recorder.build();
-
-        let account = &bal.accounts()[0];
-        assert_eq!(account.code_changes().len(), 1);
-        assert_eq!(
-            account.code_changes()[0].new_code(),
-            &bytes::Bytes::from_static(&[0x60, 0x00])
-        );
-    }
-
-    #[test]
-    fn test_recorder_system_address_excluded_when_only_touched() {
-        let mut recorder = BlockAccessListRecorder::new();
-        // Just touch SYSTEM_ADDRESS without actual state changes
-        recorder.record_touched_address(SYSTEM_ADDRESS);
-
-        let bal = recorder.build();
-        // SYSTEM_ADDRESS should not appear if only touched
-        assert!(bal.is_empty());
-    }
-
-    #[test]
-    fn test_recorder_system_address_included_with_state_change() {
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-        // Record an actual state change for SYSTEM_ADDRESS
-        recorder.record_storage_write(SYSTEM_ADDRESS, U256::from(0x10), U256::from(0x42));
-
-        let bal = recorder.build();
-        // SYSTEM_ADDRESS should appear because it has actual state changes
-        assert_eq!(bal.accounts().len(), 1);
-        assert_eq!(bal.accounts()[0].address(), SYSTEM_ADDRESS);
-    }
-
-    #[test]
-    fn test_recorder_multiple_addresses_sorted() {
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.record_touched_address(CHARLIE_ADDR);
-        recorder.record_touched_address(ALICE_ADDR);
-        recorder.record_touched_address(BOB_ADDR);
-
-        let bal = recorder.build();
-
-        // Addresses should be sorted lexicographically in the encoded output
-        assert_eq!(bal.accounts().len(), 3);
-        // BTreeSet maintains order, so the build() returns them in sorted order
-        let addresses: Vec<_> = bal.accounts().iter().map(|a| a.address()).collect();
-        // The set should be sorted
-        let mut sorted = addresses.clone();
-        sorted.sort();
-        assert_eq!(addresses, sorted);
-    }
-
-    // ====================== EIP-7928 Execution Spec Tests ======================
-
-    #[test]
-    fn test_bal_self_transfer() {
-        // Per EIP-7928: Self-transfers where an account sends value to itself
-        // result in balance changes that round-trip within the same TX.
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        // Initial balance of 1000
-        recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
-        // Self-transfer: balance goes down then back up by same amount
-        // (In a real self-transfer, the net effect is zero)
-        recorder.record_balance_change(ALICE_ADDR, U256::from(1000)); // No net change
-
-        let bal = recorder.build();
-
-        let account = &bal.accounts()[0];
-        // Self-transfer with no net balance change should result in empty balance_changes
-        assert!(account.balance_changes().is_empty());
-    }
-
-    #[test]
-    fn test_bal_zero_value_transfer() {
-        // Per EIP-7928: Zero-value transfers touch accounts but don't change balances.
-        // Both sender and recipient must appear in BAL even with no balance changes.
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        // Touch both addresses (simulating a zero-value transfer)
-        recorder.record_touched_address(ALICE_ADDR); // sender
-        recorder.record_touched_address(BOB_ADDR); // recipient
-
-        // Set initial balances (no actual change occurs in zero-value transfer)
-        recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
-        recorder.set_initial_balance(BOB_ADDR, U256::from(500));
-
-        // Record same balances (no change)
-        recorder.record_balance_change(ALICE_ADDR, U256::from(1000));
-        recorder.record_balance_change(BOB_ADDR, U256::from(500));
-
-        let bal = recorder.build();
-
-        // Both accounts should appear (they were touched)
-        assert_eq!(bal.accounts().len(), 2);
-        // Neither should have balance_changes (balances unchanged)
-        for account in bal.accounts() {
-            assert!(account.balance_changes().is_empty());
-        }
-    }
-
-    #[test]
-    fn test_bal_checkpoint_restore_preserves_touched_addresses() {
-        // Per EIP-7928: "State changes from reverted calls are discarded, but all
-        // accessed addresses must be included."
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        // Record some state before checkpoint
-        recorder.record_touched_address(ALICE_ADDR);
-        recorder.record_storage_write(ALICE_ADDR, U256::from(0x10), U256::from(0x01));
-
-        // Take checkpoint (simulating entering a nested call)
-        let checkpoint = recorder.checkpoint();
-
-        // Record more state that will be reverted
-        recorder.record_touched_address(BOB_ADDR);
-        recorder.record_storage_write(BOB_ADDR, U256::from(0x20), U256::from(0x02));
-
-        // Revert (simulating nested call failure)
-        recorder.restore(checkpoint);
-
-        let bal = recorder.build();
-
-        // ALICE should have her storage write preserved
-        // BOB's storage write should be reverted
-        // BUT both addresses should still appear (touched_addresses persists)
-        assert_eq!(bal.accounts().len(), 2);
-
-        let alice = bal
-            .accounts()
-            .iter()
-            .find(|a| a.address() == ALICE_ADDR)
-            .unwrap();
-        let bob = bal
-            .accounts()
-            .iter()
-            .find(|a| a.address() == BOB_ADDR)
-            .unwrap();
-
-        // Alice's storage write survived
-        assert_eq!(alice.storage_changes().len(), 1);
-        // Bob's storage write was reverted
-        assert!(bob.storage_changes().is_empty());
-    }
-
-    #[test]
-    fn test_bal_reverted_write_restores_read() {
-        // When a slot is read, then written (which removes it from reads), then
-        // the write is reverted, the slot should be restored as a read.
-        let mut recorder = BlockAccessListRecorder::new();
-        recorder.set_block_access_index(1);
-
-        // Read a slot
-        recorder.record_storage_read(ALICE_ADDR, U256::from(0x10));
-
-        // Take checkpoint
-        let checkpoint = recorder.checkpoint();
-
-        // Write to the same slot (this removes it from reads and adds to writes)
-        recorder.record_storage_write(ALICE_ADDR, U256::from(0x10), U256::from(0x42));
-
-        // At this point, the slot should be in writes, not reads
-        // (verified by existing test test_recorder_storage_read_then_write_becomes_write)
-
-        // Revert the write
-        recorder.restore(checkpoint);
-
-        let bal = recorder.build();
-
-        let account = &bal.accounts()[0];
-        // The write was reverted, so slot should be back in reads
-        assert_eq!(account.storage_reads().len(), 1);
-        assert!(account.storage_reads().contains(&U256::from(0x10)));
-        // And not in writes
-        assert!(account.storage_changes().is_empty());
     }
 }

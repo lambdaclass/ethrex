@@ -1,4 +1,4 @@
-use ethrex_common::{H160, H256, U256};
+use ethrex_common::{H256, U256};
 use k256::elliptic_curve::bigint::Encoding;
 use p256::{
     FieldElement as P256FieldElement, NistP256,
@@ -99,10 +99,8 @@ lazy_static::lazy_static! {
 
 // EIP-7708: ETH Transfers Emit a Log
 // System address for EIP-7708 logs (0xfffffffffffffffffffffffffffffffffffffffe)
-pub const EIP7708_SYSTEM_ADDRESS: H160 = H160([
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0xFF, 0xFF, 0xFE,
-]);
+// Re-exported from common constants for consistency
+pub use ethrex_common::constants::SYSTEM_ADDRESS as EIP7708_SYSTEM_ADDRESS;
 
 /// EIP-7708: keccak256('Transfer(address,address,uint256)')
 pub const TRANSFER_EVENT_TOPIC: H256 = H256([
