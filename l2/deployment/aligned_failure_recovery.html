@@ -240,7 +240,7 @@
 <h1 id="aligned-layer-failure-recovery-guide"><a class="header" href="#aligned-layer-failure-recovery-guide">Aligned Layer Failure Recovery Guide</a></h1>
 <p>This guide provides operators with procedures for handling various Aligned Layer failure scenarios when running ethrex L2 in Aligned mode.</p>
 <blockquote>
-<p><strong>SDK Version</strong>: This documentation is based on Aligned SDK revision <code>c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23</code>.</p>
+<p><strong>SDK Version</strong>: This documentation is based on Aligned Aggregation Mode SDK revision <code>54ca2471624700536561b6bd369ed9f4d327991e</code>.</p>
 </blockquote>
 <blockquote>
 <p><strong>WARNING</strong>: This document is intended to be iterated and improved with use and with ethrex and Aligned upgrades. If you encounter a scenario not covered here or find that a procedure needs adjustment, please contribute improvements.</p>
@@ -251,36 +251,39 @@
 <li><a href="#scenario-1-aligned-stops-then-recovers">Scenario 1: Aligned Stops Then Recovers</a></li>
 <li><a href="#scenario-2-aligned-loses-a-proof-before-verification">Scenario 2: Aligned Loses a Proof Before Verification</a></li>
 <li><a href="#scenario-3-aligned-permanent-shutdown">Scenario 3: Aligned Permanent Shutdown</a></li>
-<li><a href="#scenario-4-insufficient-batcher-balance">Scenario 4: Insufficient Batcher Balance</a></li>
+<li><a href="#scenario-4-insufficient-quota-balance">Scenario 4: Insufficient Quota Balance</a></li>
 <li><a href="#scenario-5-proof-marked-as-invalid-by-aligned">Scenario 5: Proof Marked as Invalid by Aligned</a></li>
 <li><a href="#monitoring-and-detection">Monitoring and Detection</a></li>
 </ol>
 <hr />
 <h2 id="understanding-the-aligned-integration"><a class="header" href="#understanding-the-aligned-integration">Understanding the Aligned Integration</a></h2>
 <p>Before handling failures, understand the proof lifecycle in Aligned mode:</p>
-<pre><code>1. Prover generates compressed STARK proof
-2. L1ProofSender submits proof to Aligned Batcher (WebSocket)
-3. Aligned Batcher queues proof for aggregation
-4. Aligned Aggregator aggregates multiple proofs
-5. Aggregated proof is posted to L1 (AlignedProofAggregatorService)
+<pre><code>1. Prover generates compressed SP1 proof
+2. L1ProofSender submits proof to Aligned Gateway (HTTP)
+3. Aligned Gateway queues proof for aggregation
+4. Aligned Aggregator aggregates multiple proofs (typically every 24 hours)
+5. Aggregated proof is posted to L1 (AlignedProofAggregationService)
 6. L1ProofVerifier polls for aggregation status
 7. Once aggregated, L1ProofVerifier calls verifyBatchesAligned() on OnChainProposer
 </code></pre>
 <p><strong>Key Components</strong>:</p>
 <ul>
-<li><strong>L1ProofSender</strong>: Submits proofs to Aligned Batcher</li>
+<li><strong>L1ProofSender</strong>: Submits SP1 proofs to Aligned Gateway via HTTP</li>
 <li><strong>L1ProofVerifier</strong>: Polls Aligned for aggregation status and triggers on-chain verification</li>
-<li><strong>Aligned Batcher</strong>: Receives and queues proofs</li>
+<li><strong>Aligned Gateway</strong>: Receives and queues proofs via HTTP REST API</li>
 <li><strong>Aligned Aggregator</strong>: Aggregates proofs and posts to L1</li>
 </ul>
+<blockquote>
+<p><strong>Note</strong>: Aligned mode only supports SP1 proofs.</p>
+</blockquote>
 <hr />
 <h2 id="scenario-1-aligned-stops-then-recovers"><a class="header" href="#scenario-1-aligned-stops-then-recovers">Scenario 1: Aligned Stops Then Recovers</a></h2>
 <h3 id="symptoms"><a class="header" href="#symptoms">Symptoms</a></h3>
 <ul>
-<li>L1ProofSender logs show connection errors to Aligned Batcher</li>
+<li>L1ProofSender logs show connection errors to Aligned Gateway</li>
 <li>Proofs are generated but not being sent</li>
-<li><code>AlignedGetNonceError</code> in logs (failed to get nonce from batcher)</li>
-<li><code>AlignedSubmitProofError</code> in logs (WebSocket connection to batcher failed)</li>
+<li><code>AlignedGetNonceError</code> in logs (failed to get nonce from gateway)</li>
+<li><code>AlignedSubmitProofError</code> in logs (HTTP request to gateway failed)</li>
 </ul>
 <blockquote>
 <p><strong>Note</strong>: <code>AlignedFeeEstimateError</code> indicates your Ethereum RPC endpoints are failing, not Aligned. Fee estimation uses your configured <code>--eth.rpc-url</code> to query L1 gas prices.</p>
@@ -335,12 +338,38 @@ SELECT batch, prover_type, length(proof) as proof_size
 FROM batch_proofs
 WHERE batch = &lt;BATCH_NUMBER&gt;;
 </code></pre>
-<p><strong>Check if Aligned has aggregated the proof:</strong></p>
-<p>The Aligned SDK provides <code>check_proof_verification()</code> which checks if a proof was aggregated on-chain. The L1ProofVerifier already uses this - if it keeps logging "has not yet been aggregated" for an extended period, the proof likely wasn't received by Aligned.</p>
-<blockquote>
-<p><strong>Note</strong>: The current SDK version (<code>c60d7eb</code>) only allows checking if a proof was <strong>aggregated</strong> (posted to L1), not if it's pending in the batcher queue. There's no API to check batcher queue status.</p>
-</blockquote>
-<p>If the proof exists locally, <code>latest_sent</code> shows the batch was sent, but Aligned hasn't aggregated it after an extended period, the proof was likely lost.</p>
+<p><strong>Find the nonce used for the batch:</strong></p>
+<p>When the L1ProofSender submits a proof to Aligned, it logs the batch number and the nonce used:</p>
+<pre><code>INFO ethrex_l2::sequencer::l1_proof_sender: Submitted proof to Aligned batch_number=5 nonce=42 task_id=...
+</code></pre>
+<p><strong>Important</strong>: Pay attention to these logs and note down the <code>batch_number</code> → <code>nonce</code> mapping. The nonce is needed to verify if the gateway received the proof.</p>
+<p><strong>Check if Aligned has aggregated the proof on-chain:</strong></p>
+<p>Use the Aligned CLI's <code>verify-on-chain</code> command:</p>
+<pre><code class="language-bash">cd aligned_layer/aggregation_mode/cli
+
+cargo run --release -- verify-on-chain \
+  --network &lt;NETWORK&gt; \
+  --rpc-url &lt;RPC_URL&gt; \
+  --beacon-url &lt;BEACON_URL&gt; \
+  --proving-system sp1 \
+  --vk-hash &lt;VK_HASH_FILE&gt; \
+  --public-inputs &lt;PUBLIC_INPUTS_FILE&gt;
+</code></pre>
+<p>The L1ProofVerifier also continuously checks this - if it keeps logging "has not yet been aggregated" for an extended period, the proof likely wasn't received by Aligned.</p>
+<p><strong>Check if the gateway received the proof:</strong></p>
+<p>The SDK provides <code>get_receipts_for(address, nonce)</code> to check if a proof is in the gateway's database:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use aligned_sdk::gateway::AggregationModeGatewayProvider;
+
+let gateway = AggregationModeGatewayProvider::new(network);
+let receipts = gateway.get_receipts_for(proof_sender_address, Some(nonce)).await?;
+
+for receipt in receipts {
+    println!("Nonce: {}, Status: {}", receipt.nonce, receipt.status);
+}
+<span class="boring">}</span></code></pre></pre>
+<p>If the proof exists locally, <code>latest_sent</code> shows the batch was sent, but neither the gateway has a receipt nor Aligned has aggregated it after an extended period, the proof was likely lost.</p>
 <h4 id="step-2-reset-the-latest-sent-batch-pointer"><a class="header" href="#step-2-reset-the-latest-sent-batch-pointer">Step 2: Reset the Latest Sent Batch Pointer</a></h4>
 <p>The proof still exists in the database - the system just thinks it was already sent. Reset the <code>latest_sent</code> value to make the L1ProofSender resend it:</p>
 <pre><code class="language-sql">-- Reset to the batch before the lost one (SQL storage)
@@ -365,13 +394,13 @@ UPDATE latest_sent SET batch = &lt;BATCH_NUMBER - 1&gt; WHERE _id = 0;
 <ul>
 <li>Monitor proof submission success rates</li>
 <li>Set up alerts for proofs stuck in "not aggregated" state for &gt;N minutes</li>
-<li>Keep the Aligned Batcher deposit funded (see Scenario 4)</li>
+<li>Keep the quota balance funded (see Scenario 4)</li>
 </ul>
 <hr />
 <h2 id="scenario-3-aligned-permanent-shutdown"><a class="header" href="#scenario-3-aligned-permanent-shutdown">Scenario 3: Aligned Permanent Shutdown</a></h2>
 <h3 id="symptoms-2"><a class="header" href="#symptoms-2">Symptoms</a></h3>
 <ul>
-<li>Sustained inability to connect to Aligned Batcher</li>
+<li>Sustained inability to connect to Aligned Gateway</li>
 <li>Aligned team confirms permanent shutdown or migration</li>
 </ul>
 <h3 id="impact-2"><a class="header" href="#impact-2">Impact</a></h3>
@@ -417,11 +446,11 @@ ethrex l2 \
 <li>L1ProofSender will submit directly to OnChainProposer.verifyBatch()</li>
 </ol>
 <hr />
-<h2 id="scenario-4-insufficient-batcher-balance"><a class="header" href="#scenario-4-insufficient-batcher-balance">Scenario 4: Insufficient Batcher Balance</a></h2>
+<h2 id="scenario-4-insufficient-quota-balance"><a class="header" href="#scenario-4-insufficient-quota-balance">Scenario 4: Insufficient Quota Balance</a></h2>
 <h3 id="symptoms-3"><a class="header" href="#symptoms-3">Symptoms</a></h3>
 <ul>
-<li>Proof submission fails with insufficient balance errors</li>
-<li>L1ProofSender logs show: <code>AlignedSubmitProofError</code> with message <code>Insufficient balance, address: 0x...</code></li>
+<li>Proof submission fails with insufficient balance/quota errors</li>
+<li>L1ProofSender logs show: <code>AlignedSubmitProofError</code> with insufficient quota message</li>
 </ul>
 <p>The error from the Aligned SDK looks like:</p>
 <pre><code>Submit error: Insufficient balance, address: 0x&lt;YOUR_PROOF_SENDER_ADDRESS&gt;
@@ -432,23 +461,20 @@ ethrex l2 \
 <li>Verification stalls for new batches</li>
 </ul>
 <h3 id="recovery-steps-3"><a class="header" href="#recovery-steps-3">Recovery Steps</a></h3>
-<h4 id="step-1-check-current-balance"><a class="header" href="#step-1-check-current-balance">Step 1: Check Current Balance</a></h4>
-<pre><code class="language-bash"># Using Aligned CLI
-aligned get-batcher-balance \
+<h4 id="step-1-deposit-more-funds"><a class="header" href="#step-1-deposit-more-funds">Step 1: Deposit More Funds</a></h4>
+<p>Using the Aligned CLI from the <code>aligned_layer</code> repository:</p>
+<pre><code class="language-bash">cd aligned_layer/aggregation_mode/cli
+
+cargo run --release -- deposit \
+  --private-key &lt;PROOF_SENDER_PRIVATE_KEY&gt; \
   --network &lt;NETWORK&gt; \
-  --address &lt;PROOF_SENDER_ADDRESS&gt;
+  --rpc-url &lt;RPC_URL&gt;
 </code></pre>
-<h4 id="step-2-deposit-more-funds"><a class="header" href="#step-2-deposit-more-funds">Step 2: Deposit More Funds</a></h4>
-<pre><code class="language-bash">aligned deposit-to-batcher \
-  --network &lt;NETWORK&gt; \
-  --private_key &lt;PROOF_SENDER_PRIVATE_KEY&gt; \
-  --rpc_url &lt;RPC_URL&gt; \
-  --amount &lt;DEPOSIT_AMOUNT&gt;
-</code></pre>
+<p>Where <code>&lt;NETWORK&gt;</code> is one of: <code>devnet</code>, <code>hoodi</code>, or <code>mainnet</code>.</p>
 <h3 id="prevention-1"><a class="header" href="#prevention-1">Prevention</a></h3>
 <ul>
-<li>Set up balance monitoring alerts (e.g., alert when balance drops below N ETH)</li>
-<li>Track proof submission costs over time to estimate burn rate and plan deposits accordingly</li>
+<li>Monitor the <code>AggregationModePaymentService</code> contract for your address's quota balance</li>
+<li>Track proof submission frequency to estimate quota consumption</li>
 <li>Consider depositing a larger buffer to reduce maintenance frequency</li>
 </ul>
 <hr />
@@ -486,7 +512,7 @@ aligned get-batcher-balance \
 <tr><td><code>Sending batch proof(s) to Aligned Layer</code></td><td>L1ProofSender</td><td>Proof submission starting</td></tr>
 <tr><td><code>Submitted proof to Aligned</code></td><td>L1ProofSender</td><td>Proof sent successfully</td></tr>
 <tr><td><code>Proof is invalid, will be deleted</code></td><td>L1ProofSender</td><td>Aligned rejected the proof</td></tr>
-<tr><td><code>Failed to get nonce</code></td><td>L1ProofSender</td><td>Batcher connection issue</td></tr>
+<tr><td><code>Failed to create gateway</code></td><td>L1ProofSender</td><td>Gateway connection issue</td></tr>
 <tr><td><code>Proof aggregated by Aligned</code></td><td>L1ProofVerifier</td><td>Aggregation confirmed</td></tr>
 <tr><td><code>has not yet been aggregated</code></td><td>L1ProofVerifier</td><td>Waiting for aggregation</td></tr>
 <tr><td><code>Batches verified in OnChainProposer</code></td><td>L1ProofVerifier</td><td>On-chain verification complete</td></tr>
@@ -515,7 +541,7 @@ aligned get-batcher-balance \
 <tr><td>Aligned temporary outage</td><td>Yes</td><td>None needed</td></tr>
 <tr><td>Proof lost before verification</td><td>No</td><td>Reset <code>latest_sent</code> pointer to trigger resend</td></tr>
 <tr><td>Aligned permanent shutdown</td><td>No</td><td>Switch to Standard mode</td></tr>
-<tr><td>Insufficient batcher balance</td><td>No</td><td>Deposit funds</td></tr>
+<tr><td>Insufficient quota balance</td><td>No</td><td>Deposit funds</td></tr>
 <tr><td>Proof marked invalid</td><td>Yes</td><td>None needed</td></tr>
 </tbody></table>
 </div>

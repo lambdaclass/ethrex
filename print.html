@@ -5169,18 +5169,15 @@ COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --f
 </blockquote>
 <p>It assumes:</p>
 <ul>
-<li>
-<p>You already installed the <code>ethrex</code> binary to your <code>$PATH</code> (for example from the repo root with <code>cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql --force</code>).</p>
-</li>
-<li>
-<p>You have the ethrex repository checked out locally for the <code>make</code> targets referenced below.</p>
-</li>
-<li>
-<p>Check <a href="l2/deployment/aligned.html#how-to-run-local-devnet">How to Run (local devnet)</a> for development or testing.</p>
-</li>
-<li>
-<p>Check <a href="l2/deployment/aligned.html#how-to-run-testnet">How to Run (testnet)</a> for a prod-like environment.</p>
-</li>
+<li>You already installed the <code>ethrex</code> binary to your <code>$PATH</code> (for example from the repo root with <code>cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1 --force</code>).</li>
+<li>You have the ethrex repository checked out locally for the <code>make</code> targets referenced below.</li>
+</ul>
+<blockquote>
+<p><strong>Important</strong>: Aligned mode only supports <strong>SP1 proofs</strong>. The <code>sp1</code> feature must be enabled when building with Aligned mode.</p>
+</blockquote>
+<ul>
+<li>Check <a href="l2/deployment/aligned.html#how-to-run-local-devnet">How to Run (local devnet)</a> for development or testing.</li>
+<li>Check <a href="l2/deployment/aligned.html#how-to-run-testnet">How to Run (testnet)</a> for a prod-like environment.</li>
 </ul>
 <h2 id="how-to-run-testnet"><a class="header" href="#how-to-run-testnet">How to run (testnet)</a></h2>
 <div class="mdbook-alerts mdbook-alerts-important">
@@ -5192,7 +5189,7 @@ COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --f
 </div>
 <h3 id="1-generate-the-prover-elfvk"><a class="header" href="#1-generate-the-prover-elfvk">1. Generate the prover ELF/VK</a></h3>
 <p>From the ethrex repository root run:</p>
-<pre><code class="language-bash">make -C crates/l2 build-prover-&lt;sp1/risc0&gt; # optional: GPU=true
+<pre><code class="language-bash">make -C crates/l2 build-prover-sp1 # optional: GPU=true
 </code></pre>
 <p>This will generate the SP1 ELF program and verification key under:</p>
 <ul>
@@ -5222,29 +5219,47 @@ ethrex l2 deploy \
 <p>This command requires the <code>COMPILE_CONTRACTS</code> env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 In this step we are initializing the <code>OnChainProposer</code> contract with the <code>ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS</code> and skipping the rest of verifiers; you can find the address for the aligned aggregator service <a href="https://docs.alignedlayer.com/guides/7_contract_addresses">here</a>.
 Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
-Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add <code>--bridge-owner-pk &lt;PRIVATE_KEY&gt;</code> if you want the deployer to immediately call <code>acceptOwnership</code> on behalf of that owner; otherwise, they can accept later.
-If you enable more than one proving system (e.g., both <code>--sp1 true</code> and <code>--risc0 true</code>), all selected proving systems will be required (i.e., every batch must include a proof from each enabled system to settle on L1).</p>
+Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add <code>--bridge-owner-pk &lt;PRIVATE_KEY&gt;</code> if you want the deployer to immediately call <code>acceptOwnership</code> on behalf of that owner; otherwise, they can accept later.</p>
 </div>
-<h3 id="3-deposit-funds-to-the-alignedbatcherpaymentservice-contract-from-the-proof-sender"><a class="header" href="#3-deposit-funds-to-the-alignedbatcherpaymentservice-contract-from-the-proof-sender">3. Deposit funds to the <code>AlignedBatcherPaymentService</code> contract from the proof sender</a></h3>
-<pre><code class="language-bash">aligned deposit-to-batcher \
-  --network &lt;NETWORK&gt; \
-  --private_key &lt;PROOF_SENDER_PRIVATE_KEY&gt; \
-  --rpc_url &lt;RPC_URL&gt; \
-  --amount &lt;DEPOSIT_AMOUNT&gt;
+<h3 id="3-deposit-funds-to-the-aggregationmodepaymentservice-contract-from-the-proof-sender"><a class="header" href="#3-deposit-funds-to-the-aggregationmodepaymentservice-contract-from-the-proof-sender">3. Deposit funds to the <code>AggregationModePaymentService</code> contract from the proof sender</a></h3>
+<p>Aligned uses a quota-based payment model. You need to deposit ETH to obtain quota for proof submissions using the Aligned CLI.</p>
+<p>First, clone the Aligned repository and build the CLI:</p>
+<pre><code class="language-bash">git clone https://github.com/yetanotherco/aligned_layer.git
+cd aligned_layer
+git checkout 54ca2471624700536561b6bd369ed9f4d327991e
 </code></pre>
-<div class="mdbook-alerts mdbook-alerts-important">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  important
-</p>
-<p>Using the <a href="https://docs.alignedlayer.com/guides/9_aligned_cli">Aligned CLI</a></p>
-</div>
+<p>Then run the deposit command:</p>
+<pre><code class="language-bash">cd aggregation_mode/cli
+
+cargo run --release -- deposit \
+  --private-key &lt;PROOF_SENDER_PRIVATE_KEY&gt; \
+  --network &lt;NETWORK&gt; \
+  --rpc-url &lt;RPC_URL&gt;
+</code></pre>
+<p>Where <code>&lt;NETWORK&gt;</code> is one of: <code>devnet</code>, <code>hoodi</code>, or <code>mainnet</code>.</p>
+<p>Example for Hoodi testnet:</p>
+<pre><code class="language-bash">cargo run --release -- deposit \
+  --private-key 0x... \
+  --network hoodi \
+  --rpc-url https://ethereum-hoodi-rpc.publicnode.com
+</code></pre>
+<blockquote>
+<p><strong>Note</strong>: The deposit command sends a fixed amount of ETH (currently 0.0035 ETH) to the payment service contract. The contract addresses are automatically resolved based on the network parameter.</p>
+</blockquote>
+<h4 id="monitoring-quota-balance"><a class="header" href="#monitoring-quota-balance">Monitoring Quota Balance</a></h4>
+<p>To check your remaining quota, you can query the <code>AggregationModePaymentService</code> contract directly:</p>
+<pre><code class="language-bash"># Get the payment service contract address for your network from Aligned docs
+# Then query the quota balance for your proof sender address
+cast call &lt;PAYMENT_SERVICE_ADDRESS&gt; "getQuota(address)(uint256)" &lt;PROOF_SENDER_ADDRESS&gt; --rpc-url &lt;RPC_URL&gt;
+</code></pre>
+<p>Monitor your quota balance regularly. When the L1ProofSender runs out of quota, you'll see <code>AlignedSubmitProofError</code> with an insufficient quota message in the logs. Deposit more funds before this happens to avoid proof submission failures.</p>
 <h3 id="4-running-a-node"><a class="header" href="#4-running-a-node">4. Running a node</a></h3>
 <p>Run the sequencer using the installed <code>ethrex</code> binary:</p>
 <pre><code class="language-bash">ethrex l2 \
   --watcher.block-delay 0 \
   --network fixtures/genesis/l2.json \
   --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; \
+  --l1.timelock-address &lt;TIMELOCK_ADDRESS&gt; \
   --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; \
   --eth.rpc-url &lt;ETH_RPC_URL&gt; \
   --aligned \
@@ -5261,7 +5276,8 @@ If you enable more than one proving system (e.g., both <code>--sp1 true</code> a
 <ul>
 <li><code>--aligned</code>: Enables aligned mode, enforcing all required parameters.</li>
 <li><code>--aligned.beacon-url</code>: URL of the beacon client used by the Aligned SDK to verify proof aggregations, it has to support <code>/eth/v1/beacon/blobs</code></li>
-<li><code>--aligned-network</code>: Parameter used by the <a href="https://docs.alignedlayer.com/guides/1.2_sdk_api_reference">Aligned SDK</a>.</li>
+<li><code>--aligned-network</code>: Parameter used by the Aligned SDK. Available networks: <code>devnet</code>, <code>hoodi</code>, <code>mainnet</code>.</li>
+<li><code>--aligned.from-block</code>: (Optional) Starting L1 block number for proof aggregation search. Helps avoid scanning old blocks from before proofs were being sent. If not set, the search starts from the beginning.</li>
 </ul>
 <p>If you can't find a beacon client URL which supports that endpoint, you can run your own with lighthouse and ethrex:</p>
 <p>Create secrets directory and jwt secret</p>
@@ -5273,10 +5289,10 @@ openssl rand -hex 32 | tr -d "\n" | tee ./ethereum/secrets/jwt.hex
 <pre><code class="language-bash">ethrex --authrpc.jwtsecret ./ethereum/secrets/jwt.hex --network &lt;NETWORK&gt;
 </code></pre>
 <h3 id="5-running-the-prover"><a class="header" href="#5-running-the-prover">5. Running the Prover</a></h3>
-<p>In another terminal start the prover(s):</p>
-<pre><code class="language-bash">make -C crates/l2 init-prover-&lt;sp1/risc0&gt; GPU=true # The GPU parameter is optional
+<p>In another terminal start the prover:</p>
+<pre><code class="language-bash">make -C crates/l2 init-prover-sp1 GPU=true # The GPU parameter is optional
 </code></pre>
-<p>Then you should wait until Aligned aggregates your proof.</p>
+<p>Then you should wait until Aligned aggregates your proof. Note that proofs are typically aggregated every 24 hours.</p>
 <h2 id="how-to-run-local-devnet"><a class="header" href="#how-to-run-local-devnet">How to run (local devnet)</a></h2>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
@@ -5288,10 +5304,10 @@ openssl rand -hex 32 | tr -d "\n" | tee ./ethereum/secrets/jwt.hex
 <h3 id="set-up-the-aligned-environment"><a class="header" href="#set-up-the-aligned-environment">Set Up the Aligned Environment</a></h3>
 <ol>
 <li>
-<p>Clone the Aligned repository and checkout the currently supported release:</p>
+<p>Clone the Aligned repository and checkout the tested revision:</p>
 <pre><code class="language-bash">git clone git@github.com:yetanotherco/aligned_layer.git
 cd aligned_layer
-git checkout tags/v0.19.1
+git checkout 54ca2471624700536561b6bd369ed9f4d327991e
 </code></pre>
 </li>
 <li>
@@ -5310,10 +5326,10 @@ git checkout tags/v0.19.1
 <pre><code># Number of seconds per slot on the Beacon chain
   seconds_per_slot: 4
 </code></pre>
-<p>Change <code>ethereum-genesis-generator</code> to 5.0.8</p>
+<p>Change <code>ethereum-genesis-generator</code> to 5.2.3</p>
 <pre><code>ethereum_genesis_generator_params:
   # The image to use for ethereum genesis generator
-  image: ethpandaops/ethereum-genesis-generator:5.0.8
+  image: ethpandaops/ethereum-genesis-generator:5.2.3
 </code></pre>
 </li>
 <li>
@@ -5324,41 +5340,43 @@ make ethereum_package_start
 <p>If you need to stop it run <code>make ethereum_package_rm</code></p>
 </li>
 <li>
-<p>Start the batcher:</p>
-<p>First, increase the <code>max_proof_size</code> in <code>aligned_layer/config-files/config-batcher-ethereum-package.yaml</code> <code>max_proof_size: 104857600 # 100 MiB</code> for example.</p>
-<pre><code>cd aligned_layer
-make batcher_start_ethereum_package
+<p>Start the payments poller (in a new terminal):</p>
+<pre><code class="language-bash">cd aligned_layer
+make agg_mode_payments_poller_start_ethereum_package
 </code></pre>
-<p>This is the Aligned component that receives the proofs before sending them in a batch.</p>
+<p>This starts PostgreSQL, runs migrations, and starts the payments poller.</p>
+</li>
+<li>
+<p>Start the Aligned gateway (in a new terminal):</p>
+<pre><code class="language-bash">cd aligned_layer
+make agg_mode_gateway_start_ethereum_package
+</code></pre>
+<p>The gateway will listen on <code>http://127.0.0.1:8089</code>.</p>
+</li>
+<li>
+<p>Build and start the proof aggregator in dev mode (in a new terminal):</p>
+<pre><code class="language-bash">cd aligned_layer
+# Build the dev aggregator binary (uses mock proofs, no actual proving)
+AGGREGATOR=sp1 cargo build --manifest-path ./aggregation_mode/Cargo.toml --release --bin proof_aggregator_dev
+
+# Start the aggregator
+make proof_aggregator_start_dev_ethereum_package AGGREGATOR=sp1
+</code></pre>
+<blockquote>
+<p><strong>Note</strong>: The dev mode aggregator uses mock proofs for faster iteration. For production-like testing, use <code>make proof_aggregator_start_ethereum_package SP1_PROVER=cuda AGGREGATOR=sp1</code> instead (requires more resources and a CUDA-capable GPU).</p>
+</blockquote>
 </li>
 </ol>
-<div class="mdbook-alerts mdbook-alerts-warning">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  warning
-</p>
-<p>If you see the following error in the batcher: <code>[ERROR aligned_batcher] Unexpected error: Space limit exceeded: Message too long: 16940713 &gt; 16777216</code> modify the file <code>aligned_layer/batcher/aligned-batcher/src/lib.rs</code> at line 433 with the following code:</p>
-<pre><code class="language-Rust">use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
-
-let mut stream_config = WebSocketConfig::default();
-stream_config.max_frame_size = None;
-
-let ws_stream_future =
-    tokio_tungstenite::accept_async_with_config(raw_stream, Some(stream_config));
-</code></pre>
-</div>
 <h3 id="initialize-l2-node"><a class="header" href="#initialize-l2-node">Initialize L2 node</a></h3>
 <ol>
 <li>
-<p>Deploy the L1 contracts, specifying the <code>AlignedProofAggregatorService</code> contract address, and adding the required prover types (Risc0 or SP1):</p>
+<p>Deploy the L1 contracts, specifying the <code>AlignedProofAggregatorService</code> contract address:</p>
 <pre><code class="language-bash">COMPILE_CONTRACTS=true \
 ETHREX_L2_ALIGNED=true \
 ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=0xcbEAF3BDe82155F56486Fb5a1072cb8baAf547cc \
 ETHREX_L2_SP1=true \
-ETHREX_L2_RISC0=true \
 make -C crates/l2 deploy-l1
 </code></pre>
-<p>Both <code>ETHREX_L2_SP1</code> and <code>ETHREX_L2_RISC0</code> are optional.</p>
 <blockquote>
 <p>[!NOTE]
 This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.</p>
@@ -5370,11 +5388,14 @@ This command requires the COMPILE_CONTRACTS env variable to be set, as the deplo
 <p>This is because not all the accounts are pre-funded from the genesis.</p>
 </li>
 <li>
-<p>Send some funds to the Aligned batcher payment service contract from the proof sender:</p>
-<pre><code class="language-bash">cargo run --manifest-path aligned_layer/crates/cli/Cargo.toml deposit-to-batcher \
+<p>Deposit funds to the AggregationModePaymentService contract from the proof sender using the Aligned CLI:</p>
+<pre><code class="language-bash"># From the aligned_layer repository root
+cd aggregation_mode/cli
+
+cargo run --release -- deposit \
+  --private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
   --network devnet \
-  --private_key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-  --amount 1ether
+  --rpc-url http://localhost:8545
 </code></pre>
 </li>
 <li>
@@ -5384,7 +5405,6 @@ ETHREX_ALIGNED_BEACON_URL=http://127.0.0.1:58801 \
 ETHREX_ALIGNED_NETWORK=devnet \
 ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
 SP1=true \
-RISC0=true \
 make -C crates/l2 init-l2
 </code></pre>
 <p>Suggestion:
@@ -5393,18 +5413,18 @@ When running the integration test, consider increasing the <code>--committer.com
 </code></pre>
 </li>
 <li>
-<p>Start prover(s) in different terminals:</p>
-<pre><code class="language-bash">make -C crates/l2 init-prover-&lt;sp1/risc0&gt; GPU=true # The GPU flag is optional
+<p>Start the SP1 prover in a different terminal:</p>
+<pre><code class="language-bash">make -C crates/l2 init-prover-sp1 GPU=true # The GPU flag is optional
 </code></pre>
 </li>
 </ol>
 <h3 id="aggregate-proofs"><a class="header" href="#aggregate-proofs">Aggregate proofs:</a></h3>
-<p>After some time, you will see that the <code>l1_proof_verifier</code> is waiting for Aligned to aggregate the proofs. You can trigger an aggregation (for either sp1 or risc0 proofs) by running:</p>
-<pre><code class="language-bash">make -C aligned_layer proof_aggregator_start AGGREGATOR=&lt;sp1/risc0&gt;
-
-# or with gpu acceleration
-make -C aligned_layer proof_aggregator_start_gpu AGGREGATOR=&lt;sp1/risc0&gt;
+<p>After some time, you will see that the <code>l1_proof_verifier</code> is waiting for Aligned to aggregate the proofs. In production, proofs are typically aggregated every 24 hours. For local testing, the proof aggregator started in step 8 will process proofs automatically.</p>
+<p>If the aggregator is not running or you need to trigger a new aggregation cycle, run:</p>
+<pre><code class="language-bash">cd aligned_layer
+make proof_aggregator_start_dev_ethereum_package AGGREGATOR=sp1
 </code></pre>
+<p>This will reset the last aggregated block counter and start processing queued proofs.</p>
 <p>If successful, the <code>l1_proof_verifier</code> will print the following logs:</p>
 <pre><code>INFO ethrex_l2::sequencer::l1_proof_verifier: Proof for batch 1 aggregated by Aligned with commitment 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7 and Merkle root 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7
 INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainProposer, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
@@ -5412,28 +5432,41 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <h2 id="behavioral-differences-in-aligned-mode"><a class="header" href="#behavioral-differences-in-aligned-mode">Behavioral Differences in Aligned Mode</a></h2>
 <h3 id="prover"><a class="header" href="#prover">Prover</a></h3>
 <ul>
-<li>Generates <code>Compressed</code> proofs instead of <code>Groth16</code>.</li>
-<li>Required because Aligned accepts compressed proofs (both SP1 and RISC0).</li>
+<li>Generates <code>Compressed</code> proofs instead of <code>Groth16</code> (used in standard mode).</li>
+<li>Required because Aligned accepts compressed SP1 proofs.</li>
+<li><strong>Only SP1 proofs are supported</strong> for Aligned mode.</li>
 </ul>
+<blockquote>
+<p><strong>Note</strong>: RISC0 support is not currently available in Aligned's aggregation mode. The codebase retains RISC0 code paths (verifier IDs, merkle proof handling, contract logic) for future compatibility when Aligned re-enables RISC0 support.</p>
+</blockquote>
 <h3 id="proof-sender"><a class="header" href="#proof-sender">Proof Sender</a></h3>
 <ul>
-<li>Sends proofs to the <strong>Aligned Batcher</strong> instead of the <code>OnChainProposer</code> contract.</li>
+<li>Sends proofs to the <strong>Aligned Gateway</strong> instead of directly to the <code>OnChainProposer</code> contract.</li>
+<li>Uses a quota-based payment model (requires depositing to the <code>AggregationModePaymentService</code> contract).</li>
 <li>Tracks the last proof sent using the rollup store.</li>
 </ul>
 <p><img src="l2/deployment/../img/aligned_mode_proof_sender.png" alt="Proof Sender Aligned Mode" /></p>
 <h3 id="proof-verifier"><a class="header" href="#proof-verifier">Proof Verifier</a></h3>
 <ul>
-<li>Spawned only in Aligned mode.</li>
-<li>Monitors whether the next proof has been aggregated by Aligned.</li>
+<li>Spawned only in Aligned mode (not used in standard mode).</li>
+<li>Monitors whether the next proof has been aggregated by Aligned using the <code>ProofAggregationServiceProvider</code>.</li>
 <li>Once verified, collects all already aggregated proofs and triggers the advancement of the <code>OnChainProposer</code> contract by sending a single transaction.</li>
 </ul>
 <p><img src="l2/deployment/../img/aligned_mode_proof_verifier.png" alt="Aligned Mode Proof Verifier" /></p>
 <h3 id="onchainproposer"><a class="header" href="#onchainproposer">OnChainProposer</a></h3>
 <ul>
-<li>Uses <code>verifyBatchesAligned()</code> instead of <code>verifyBatch()</code>.</li>
+<li>Uses <code>verifyBatchesAligned()</code> instead of <code>verifyBatch()</code> (used in standard mode).</li>
 <li>Receives an array of proofs to verify.</li>
 <li>Delegates proof verification to the <code>AlignedProofAggregatorService</code> contract.</li>
 </ul>
+<h2 id="supported-networks-1"><a class="header" href="#supported-networks-1">Supported Networks</a></h2>
+<p>The Aligned SDK supports the following networks:</p>
+<div class="table-wrapper"><table><thead><tr><th>Network</th><th>Chain ID</th><th>Gateway URL</th></tr></thead><tbody>
+<tr><td>Mainnet</td><td>1</td><td><code>https://mainnet.gateway.alignedlayer.com</code></td></tr>
+<tr><td>Hoodi</td><td>560048</td><td><code>https://hoodi.gateway.alignedlayer.com</code></td></tr>
+<tr><td>Devnet</td><td>31337</td><td><code>http://127.0.0.1:8089</code></td></tr>
+</tbody></table>
+</div>
 <h2 id="failure-recovery"><a class="header" href="#failure-recovery">Failure Recovery</a></h2>
 <p>For guidance on handling Aligned Layer failures and outages, see the <a href="l2/deployment/./aligned_failure_recovery.html">Aligned Failure Recovery Guide</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
@@ -5507,7 +5540,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <h1 id="aligned-layer-failure-recovery-guide"><a class="header" href="#aligned-layer-failure-recovery-guide">Aligned Layer Failure Recovery Guide</a></h1>
 <p>This guide provides operators with procedures for handling various Aligned Layer failure scenarios when running ethrex L2 in Aligned mode.</p>
 <blockquote>
-<p><strong>SDK Version</strong>: This documentation is based on Aligned SDK revision <code>c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23</code>.</p>
+<p><strong>SDK Version</strong>: This documentation is based on Aligned Aggregation Mode SDK revision <code>54ca2471624700536561b6bd369ed9f4d327991e</code>.</p>
 </blockquote>
 <blockquote>
 <p><strong>WARNING</strong>: This document is intended to be iterated and improved with use and with ethrex and Aligned upgrades. If you encounter a scenario not covered here or find that a procedure needs adjustment, please contribute improvements.</p>
@@ -5518,36 +5551,39 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <li><a href="l2/deployment/aligned_failure_recovery.html#scenario-1-aligned-stops-then-recovers">Scenario 1: Aligned Stops Then Recovers</a></li>
 <li><a href="l2/deployment/aligned_failure_recovery.html#scenario-2-aligned-loses-a-proof-before-verification">Scenario 2: Aligned Loses a Proof Before Verification</a></li>
 <li><a href="l2/deployment/aligned_failure_recovery.html#scenario-3-aligned-permanent-shutdown">Scenario 3: Aligned Permanent Shutdown</a></li>
-<li><a href="l2/deployment/aligned_failure_recovery.html#scenario-4-insufficient-batcher-balance">Scenario 4: Insufficient Batcher Balance</a></li>
+<li><a href="l2/deployment/aligned_failure_recovery.html#scenario-4-insufficient-quota-balance">Scenario 4: Insufficient Quota Balance</a></li>
 <li><a href="l2/deployment/aligned_failure_recovery.html#scenario-5-proof-marked-as-invalid-by-aligned">Scenario 5: Proof Marked as Invalid by Aligned</a></li>
 <li><a href="l2/deployment/aligned_failure_recovery.html#monitoring-and-detection">Monitoring and Detection</a></li>
 </ol>
 <hr />
 <h2 id="understanding-the-aligned-integration"><a class="header" href="#understanding-the-aligned-integration">Understanding the Aligned Integration</a></h2>
 <p>Before handling failures, understand the proof lifecycle in Aligned mode:</p>
-<pre><code>1. Prover generates compressed STARK proof
-2. L1ProofSender submits proof to Aligned Batcher (WebSocket)
-3. Aligned Batcher queues proof for aggregation
-4. Aligned Aggregator aggregates multiple proofs
-5. Aggregated proof is posted to L1 (AlignedProofAggregatorService)
+<pre><code>1. Prover generates compressed SP1 proof
+2. L1ProofSender submits proof to Aligned Gateway (HTTP)
+3. Aligned Gateway queues proof for aggregation
+4. Aligned Aggregator aggregates multiple proofs (typically every 24 hours)
+5. Aggregated proof is posted to L1 (AlignedProofAggregationService)
 6. L1ProofVerifier polls for aggregation status
 7. Once aggregated, L1ProofVerifier calls verifyBatchesAligned() on OnChainProposer
 </code></pre>
 <p><strong>Key Components</strong>:</p>
 <ul>
-<li><strong>L1ProofSender</strong>: Submits proofs to Aligned Batcher</li>
+<li><strong>L1ProofSender</strong>: Submits SP1 proofs to Aligned Gateway via HTTP</li>
 <li><strong>L1ProofVerifier</strong>: Polls Aligned for aggregation status and triggers on-chain verification</li>
-<li><strong>Aligned Batcher</strong>: Receives and queues proofs</li>
+<li><strong>Aligned Gateway</strong>: Receives and queues proofs via HTTP REST API</li>
 <li><strong>Aligned Aggregator</strong>: Aggregates proofs and posts to L1</li>
 </ul>
+<blockquote>
+<p><strong>Note</strong>: Aligned mode only supports SP1 proofs.</p>
+</blockquote>
 <hr />
 <h2 id="scenario-1-aligned-stops-then-recovers"><a class="header" href="#scenario-1-aligned-stops-then-recovers">Scenario 1: Aligned Stops Then Recovers</a></h2>
 <h3 id="symptoms"><a class="header" href="#symptoms">Symptoms</a></h3>
 <ul>
-<li>L1ProofSender logs show connection errors to Aligned Batcher</li>
+<li>L1ProofSender logs show connection errors to Aligned Gateway</li>
 <li>Proofs are generated but not being sent</li>
-<li><code>AlignedGetNonceError</code> in logs (failed to get nonce from batcher)</li>
-<li><code>AlignedSubmitProofError</code> in logs (WebSocket connection to batcher failed)</li>
+<li><code>AlignedGetNonceError</code> in logs (failed to get nonce from gateway)</li>
+<li><code>AlignedSubmitProofError</code> in logs (HTTP request to gateway failed)</li>
 </ul>
 <blockquote>
 <p><strong>Note</strong>: <code>AlignedFeeEstimateError</code> indicates your Ethereum RPC endpoints are failing, not Aligned. Fee estimation uses your configured <code>--eth.rpc-url</code> to query L1 gas prices.</p>
@@ -5602,12 +5638,38 @@ SELECT batch, prover_type, length(proof) as proof_size
 FROM batch_proofs
 WHERE batch = &lt;BATCH_NUMBER&gt;;
 </code></pre>
-<p><strong>Check if Aligned has aggregated the proof:</strong></p>
-<p>The Aligned SDK provides <code>check_proof_verification()</code> which checks if a proof was aggregated on-chain. The L1ProofVerifier already uses this - if it keeps logging "has not yet been aggregated" for an extended period, the proof likely wasn't received by Aligned.</p>
-<blockquote>
-<p><strong>Note</strong>: The current SDK version (<code>c60d7eb</code>) only allows checking if a proof was <strong>aggregated</strong> (posted to L1), not if it's pending in the batcher queue. There's no API to check batcher queue status.</p>
-</blockquote>
-<p>If the proof exists locally, <code>latest_sent</code> shows the batch was sent, but Aligned hasn't aggregated it after an extended period, the proof was likely lost.</p>
+<p><strong>Find the nonce used for the batch:</strong></p>
+<p>When the L1ProofSender submits a proof to Aligned, it logs the batch number and the nonce used:</p>
+<pre><code>INFO ethrex_l2::sequencer::l1_proof_sender: Submitted proof to Aligned batch_number=5 nonce=42 task_id=...
+</code></pre>
+<p><strong>Important</strong>: Pay attention to these logs and note down the <code>batch_number</code> → <code>nonce</code> mapping. The nonce is needed to verify if the gateway received the proof.</p>
+<p><strong>Check if Aligned has aggregated the proof on-chain:</strong></p>
+<p>Use the Aligned CLI's <code>verify-on-chain</code> command:</p>
+<pre><code class="language-bash">cd aligned_layer/aggregation_mode/cli
+
+cargo run --release -- verify-on-chain \
+  --network &lt;NETWORK&gt; \
+  --rpc-url &lt;RPC_URL&gt; \
+  --beacon-url &lt;BEACON_URL&gt; \
+  --proving-system sp1 \
+  --vk-hash &lt;VK_HASH_FILE&gt; \
+  --public-inputs &lt;PUBLIC_INPUTS_FILE&gt;
+</code></pre>
+<p>The L1ProofVerifier also continuously checks this - if it keeps logging "has not yet been aggregated" for an extended period, the proof likely wasn't received by Aligned.</p>
+<p><strong>Check if the gateway received the proof:</strong></p>
+<p>The SDK provides <code>get_receipts_for(address, nonce)</code> to check if a proof is in the gateway's database:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use aligned_sdk::gateway::AggregationModeGatewayProvider;
+
+let gateway = AggregationModeGatewayProvider::new(network);
+let receipts = gateway.get_receipts_for(proof_sender_address, Some(nonce)).await?;
+
+for receipt in receipts {
+    println!("Nonce: {}, Status: {}", receipt.nonce, receipt.status);
+}
+<span class="boring">}</span></code></pre></pre>
+<p>If the proof exists locally, <code>latest_sent</code> shows the batch was sent, but neither the gateway has a receipt nor Aligned has aggregated it after an extended period, the proof was likely lost.</p>
 <h4 id="step-2-reset-the-latest-sent-batch-pointer"><a class="header" href="#step-2-reset-the-latest-sent-batch-pointer">Step 2: Reset the Latest Sent Batch Pointer</a></h4>
 <p>The proof still exists in the database - the system just thinks it was already sent. Reset the <code>latest_sent</code> value to make the L1ProofSender resend it:</p>
 <pre><code class="language-sql">-- Reset to the batch before the lost one (SQL storage)
@@ -5632,13 +5694,13 @@ UPDATE latest_sent SET batch = &lt;BATCH_NUMBER - 1&gt; WHERE _id = 0;
 <ul>
 <li>Monitor proof submission success rates</li>
 <li>Set up alerts for proofs stuck in "not aggregated" state for &gt;N minutes</li>
-<li>Keep the Aligned Batcher deposit funded (see Scenario 4)</li>
+<li>Keep the quota balance funded (see Scenario 4)</li>
 </ul>
 <hr />
 <h2 id="scenario-3-aligned-permanent-shutdown"><a class="header" href="#scenario-3-aligned-permanent-shutdown">Scenario 3: Aligned Permanent Shutdown</a></h2>
 <h3 id="symptoms-2"><a class="header" href="#symptoms-2">Symptoms</a></h3>
 <ul>
-<li>Sustained inability to connect to Aligned Batcher</li>
+<li>Sustained inability to connect to Aligned Gateway</li>
 <li>Aligned team confirms permanent shutdown or migration</li>
 </ul>
 <h3 id="impact-2"><a class="header" href="#impact-2">Impact</a></h3>
@@ -5684,11 +5746,11 @@ ethrex l2 \
 <li>L1ProofSender will submit directly to OnChainProposer.verifyBatch()</li>
 </ol>
 <hr />
-<h2 id="scenario-4-insufficient-batcher-balance"><a class="header" href="#scenario-4-insufficient-batcher-balance">Scenario 4: Insufficient Batcher Balance</a></h2>
+<h2 id="scenario-4-insufficient-quota-balance"><a class="header" href="#scenario-4-insufficient-quota-balance">Scenario 4: Insufficient Quota Balance</a></h2>
 <h3 id="symptoms-3"><a class="header" href="#symptoms-3">Symptoms</a></h3>
 <ul>
-<li>Proof submission fails with insufficient balance errors</li>
-<li>L1ProofSender logs show: <code>AlignedSubmitProofError</code> with message <code>Insufficient balance, address: 0x...</code></li>
+<li>Proof submission fails with insufficient balance/quota errors</li>
+<li>L1ProofSender logs show: <code>AlignedSubmitProofError</code> with insufficient quota message</li>
 </ul>
 <p>The error from the Aligned SDK looks like:</p>
 <pre><code>Submit error: Insufficient balance, address: 0x&lt;YOUR_PROOF_SENDER_ADDRESS&gt;
@@ -5699,23 +5761,20 @@ ethrex l2 \
 <li>Verification stalls for new batches</li>
 </ul>
 <h3 id="recovery-steps-3"><a class="header" href="#recovery-steps-3">Recovery Steps</a></h3>
-<h4 id="step-1-check-current-balance"><a class="header" href="#step-1-check-current-balance">Step 1: Check Current Balance</a></h4>
-<pre><code class="language-bash"># Using Aligned CLI
-aligned get-batcher-balance \
+<h4 id="step-1-deposit-more-funds"><a class="header" href="#step-1-deposit-more-funds">Step 1: Deposit More Funds</a></h4>
+<p>Using the Aligned CLI from the <code>aligned_layer</code> repository:</p>
+<pre><code class="language-bash">cd aligned_layer/aggregation_mode/cli
+
+cargo run --release -- deposit \
+  --private-key &lt;PROOF_SENDER_PRIVATE_KEY&gt; \
   --network &lt;NETWORK&gt; \
-  --address &lt;PROOF_SENDER_ADDRESS&gt;
+  --rpc-url &lt;RPC_URL&gt;
 </code></pre>
-<h4 id="step-2-deposit-more-funds"><a class="header" href="#step-2-deposit-more-funds">Step 2: Deposit More Funds</a></h4>
-<pre><code class="language-bash">aligned deposit-to-batcher \
-  --network &lt;NETWORK&gt; \
-  --private_key &lt;PROOF_SENDER_PRIVATE_KEY&gt; \
-  --rpc_url &lt;RPC_URL&gt; \
-  --amount &lt;DEPOSIT_AMOUNT&gt;
-</code></pre>
+<p>Where <code>&lt;NETWORK&gt;</code> is one of: <code>devnet</code>, <code>hoodi</code>, or <code>mainnet</code>.</p>
 <h3 id="prevention-1"><a class="header" href="#prevention-1">Prevention</a></h3>
 <ul>
-<li>Set up balance monitoring alerts (e.g., alert when balance drops below N ETH)</li>
-<li>Track proof submission costs over time to estimate burn rate and plan deposits accordingly</li>
+<li>Monitor the <code>AggregationModePaymentService</code> contract for your address's quota balance</li>
+<li>Track proof submission frequency to estimate quota consumption</li>
 <li>Consider depositing a larger buffer to reduce maintenance frequency</li>
 </ul>
 <hr />
@@ -5753,7 +5812,7 @@ aligned get-batcher-balance \
 <tr><td><code>Sending batch proof(s) to Aligned Layer</code></td><td>L1ProofSender</td><td>Proof submission starting</td></tr>
 <tr><td><code>Submitted proof to Aligned</code></td><td>L1ProofSender</td><td>Proof sent successfully</td></tr>
 <tr><td><code>Proof is invalid, will be deleted</code></td><td>L1ProofSender</td><td>Aligned rejected the proof</td></tr>
-<tr><td><code>Failed to get nonce</code></td><td>L1ProofSender</td><td>Batcher connection issue</td></tr>
+<tr><td><code>Failed to create gateway</code></td><td>L1ProofSender</td><td>Gateway connection issue</td></tr>
 <tr><td><code>Proof aggregated by Aligned</code></td><td>L1ProofVerifier</td><td>Aggregation confirmed</td></tr>
 <tr><td><code>has not yet been aggregated</code></td><td>L1ProofVerifier</td><td>Waiting for aggregation</td></tr>
 <tr><td><code>Batches verified in OnChainProposer</code></td><td>L1ProofVerifier</td><td>On-chain verification complete</td></tr>
@@ -5782,7 +5841,7 @@ aligned get-batcher-balance \
 <tr><td>Aligned temporary outage</td><td>Yes</td><td>None needed</td></tr>
 <tr><td>Proof lost before verification</td><td>No</td><td>Reset <code>latest_sent</code> pointer to trigger resend</td></tr>
 <tr><td>Aligned permanent shutdown</td><td>No</td><td>Switch to Standard mode</td></tr>
-<tr><td>Insufficient batcher balance</td><td>No</td><td>Deposit funds</td></tr>
+<tr><td>Insufficient quota balance</td><td>No</td><td>Deposit funds</td></tr>
 <tr><td>Proof marked invalid</td><td>Yes</td><td>None needed</td></tr>
 </tbody></table>
 </div>
@@ -17122,6 +17181,11 @@ Aligned options:
           [env: ETHREX_ALIGNED_NETWORK=]
           [default: devnet]
 
+      --aligned.from-block &lt;BLOCK_NUMBER&gt;
+          Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.
+
+          [env: ETHREX_ALIGNED_FROM_BLOCK=]
+
       --aligned.fee-estimate &lt;FEE_ESTIMATE&gt;
           Fee estimate for Aligned sdk
 
@@ -17574,8 +17638,8 @@ Long-term research directions and second-order ideas are intentionally out of sc
 <hr />
 <h2 id="rpc"><a class="header" href="#rpc">RPC</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Item</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
-<tr><td>Parallel tx decoding</td><td>0</td><td>Pending</td><td>Use rayon to decode transactions in parallel. Currently sequential at ~5-10μs per tx</td></tr>
-<tr><td>simd-json</td><td>0</td><td>Pending</td><td>Replace serde_json with simd-json for SIMD-accelerated JSON parsing</td></tr>
+<tr><td>Parallel tx decoding</td><td>0</td><td>Discarded</td><td>Use rayon to decode transactions in parallel. Currently sequential at ~5-10μs per tx</td></tr>
+<tr><td>simd-json</td><td>0</td><td>Discarded</td><td>Replace serde_json with simd-json for SIMD-accelerated JSON parsing</td></tr>
 <tr><td>Remove payload.clone()</td><td>0</td><td>Pending</td><td>Avoid cloning <code>ExecutionPayload</code> in <code>get_block_from_payload</code> (<code>crates/networking/rpc/engine/payload.rs:674</code>). Use references or owned values directly</td></tr>
 <tr><td>Remove params.clone()</td><td>0</td><td>Pending</td><td>Avoid cloning params before <code>serde_json::from_value()</code>. Use references instead of <code>params[i].clone()</code> in RPC handlers (<code>crates/networking/rpc/engine/payload.rs</code>)</td></tr>
 <tr><td>Use Bytes instead of String</td><td>0</td><td>Pending</td><td>Change HTTP body extraction from <code>String</code> to <code>Bytes</code> and use <code>serde_json::from_slice()</code> instead of <code>from_str()</code> to avoid UTF-8 validation overhead (<code>crates/networking/rpc/rpc.rs:536,563</code>)</td></tr>
