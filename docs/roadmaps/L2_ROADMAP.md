@@ -67,18 +67,24 @@ Axiom's modular zkVM framework integration.
 
 ## 2. Native Rollups
 
-EIP-8079 native rollups where L1 executes L2 state transitions directly.
+EIP-8079 native rollups where L1 executes L2 state transitions directly via the `EXECUTE` precompile, eliminating the need for separate proof systems.
 
 | Item | Status | Issue/PR | Description |
 |------|--------|----------|-------------|
-| EXEC Precompile (L1) | Research | — | Implement proof-of-concept EXECUTE precompile per [EIP-8079](https://eips.ethereum.org/EIPS/eip-8079) |
-| L2 Adaptation | Research | — | Adapt L2 to use the EXEC precompile for verification |
+| Research & Gap Analysis | Research | — | Analyze EIP-8079 spec; document ethrex deviations from vanilla EVM |
+| EXECUTE Precompile PoC | Pending | — | Implement precompile in ethrex L1 with trace generation (feature-gated) |
+| L2 Adaptation | Pending | — | Replace custom tx types with anchoring mechanism; update bridge contracts |
+| Ultra Sound Design | Research | — | Combine native execution with based sequencing; evaluate preconfirmations |
 
-**Context:** Native rollups use an L1 precompile to verify EVM state transitions, eliminating the need for separate proof systems. This depends on Ethereum protocol changes (target: post-Fusaka).
+**Context:** EIP-8079 is still in Draft status and not yet scheduled for a specific Ethereum fork (Glamsterdam and Hegota in 2026 have other priorities). ethrex can proceed with PoC and devnet testing while the EIP matures.
+
+**Documentation:** [Native Rollups Integration Guide](../prover/native_rollups.md)
 
 **References:**
-- [EIP-8079: Native rollups](https://eips.ethereum.org/EIPS/eip-8079)
-- [Scroll: Native Rollups Research](https://scroll.io/research/native-rollups-promises-and-challenges)
+- [EIP-8079: Native Rollups](https://eips.ethereum.org/EIPS/eip-8079)
+- [Native Rollups: Superpowers from L1 Execution](https://ethresear.ch/t/native-rollups-superpowers-from-l1-execution/21517)
+- [L2Beat Native Rollups Introduction](https://native-rollups.l2beat.com/introduction.html)
+- [Combining Preconfirmations with Based Rollups](https://ethresear.ch/t/combining-preconfirmations-with-based-rollups-for-synchronous-composability/23863)
 
 ---
 
@@ -205,3 +211,4 @@ The following sections from the previous roadmap are not part of the core focus 
 - [Stage Compliance Analysis](../l2/stages.md)
 - [zkVM Comparison Benchmarks](../l2/bench/zkvm_comparison.md)
 - [SP1 Hypercube Integration Guide](../prover/sp1_hypercube.md)
+- [Native Rollups Integration Guide](../prover/native_rollups.md)
