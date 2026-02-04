@@ -222,6 +222,8 @@ impl BlockProducer {
         let execution_result = BlockExecutionResult {
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
+            // Use the block header's gas_used which was set during payload building
+            block_gas_used: block.header.gas_used,
         };
 
         let account_updates_list = self
