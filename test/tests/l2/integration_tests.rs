@@ -776,31 +776,31 @@ async fn test_erc20_withdraw_l1_address_mismatch(
     let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
+        workspace_root().join("fixtures/contracts/ERC20/ERC20.bin/TestToken.bin"),
     )?)?;
 
     println!("test_erc20_withdraw_l1_address_mismatch: Deploying ERC20 token on L1");
     let token_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
 
-    let contracts_path = Path::new("contracts");
+    let contracts_path = workspace_root().join("crates/l2/contracts");
 
-    get_contract_dependencies(contracts_path);
+    get_contract_dependencies(&contracts_path);
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
     compile_contract(
-        contracts_path,
+        &contracts_path,
         &contracts_path.join("src/example/L2ERC20.sol"),
         false,
         false,
         Some(&remappings),
-        &[contracts_path],
+        &[&contracts_path],
         None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
-        "contracts/solc_out/TestTokenL2.bin",
+        contracts_path.join("solc_out/TestTokenL2.bin"),
     )?)?)?;
     let init_code_l2 = [
         init_code_l2_inner,
