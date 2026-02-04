@@ -88,7 +88,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc::Sender;
@@ -744,6 +744,7 @@ impl Blockchain {
         let mut account_cache: FxHashMap<H256, AccountState> = Default::default();
         let mut storage_nodes = vec![];
         let mut deferred_inserts: Vec<H256> = vec![];
+        let mut deferred_inserts_set: FxHashSet<H256> = Default::default();
         let mut deferred_prefetches: Vec<H256> = vec![];
         loop {
             let msg = match rx.try_recv() {
@@ -752,6 +753,7 @@ impl Blockchain {
                     // Channel empty — do one deferred state_trie operation.
                     // Inserts first (actual writes needed), then prefetches (warming).
                     if let Some(hashed_account) = deferred_inserts.pop() {
+                        deferred_inserts_set.remove(&hashed_account);
                         let path = hashed_account.as_bytes();
                         let account_state = &account_cache[&hashed_account];
                         if *account_state != AccountState::default() {
@@ -798,7 +800,9 @@ impl Blockchain {
                         account_state.balance = info.balance;
                         account_state.code_hash = info.code_hash;
                         // Defer the expensive state_trie.insert/remove
-                        deferred_inserts.push(hashed_account);
+                        if deferred_inserts_set.insert(hashed_account) {
+                            deferred_inserts.push(hashed_account);
+                        }
                     } else {
                         // Defer the entire pre-fetch (get + insert for node warming)
                         deferred_prefetches.push(hashed_account);
@@ -807,7 +811,8 @@ impl Blockchain {
                 MerklizationRequest::ClearStorage(prefix) => {
                     tree.insert(prefix, Trie::new_temp());
                 }
-                MerklizationRequest::UpdateStorageBatch(batch) => {
+                MerklizationRequest::UpdateStorageBatch(mut batch) => {
+                    batch.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
                     for (prefix, key, value) in batch {
                         let trie = match tree.entry(prefix) {
                             Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
@@ -856,8 +861,19 @@ impl Blockchain {
                     }
                 }
                 MerklizationRequest::FinalizeAndCollectState { accounts, tx } => {
-                    // Flush ALL remaining deferred state_trie inserts
+                    // Build set of accounts that will be re-inserted with storage roots below
+                    let finalized_with_storage: FxHashSet<H256> = accounts
+                        .iter()
+                        .filter(|(_, storage_root, _)| storage_root.is_some())
+                        .map(|(hash, _, _)| *hash)
+                        .collect();
+
+                    // Flush remaining deferred state_trie inserts, skipping those
+                    // that will be re-inserted with an updated storage_root below
                     for hashed_account in deferred_inserts.drain(..) {
+                        if finalized_with_storage.contains(&hashed_account) {
+                            continue;
+                        }
                         let path = hashed_account.as_bytes();
                         let account_state = &account_cache[&hashed_account];
                         if *account_state != AccountState::default() {
@@ -867,6 +883,7 @@ impl Blockchain {
                             state_trie.remove(path)?;
                         }
                     }
+                    deferred_inserts_set.clear();
                     // Discard any remaining prefetches
                     deferred_prefetches.clear();
 
