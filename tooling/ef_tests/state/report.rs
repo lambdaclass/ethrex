@@ -113,6 +113,18 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
     let total_passed = total_fork_test_passed(reports);
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
+
+    let fork_summaries: Vec<String> = [
+        Fork::Amsterdam,
+        Fork::Prague,
+        Fork::Cancun,
+        Fork::Shanghai,
+        Fork::Paris,
+    ]
+    .iter()
+    .filter_map(|fork| fork_summary_for_slack(reports, *fork))
+    .collect();
+
     format!(
         r#"{{
     "blocks": [
@@ -130,22 +142,24 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
             "type": "section",
             "text": {{
                 "type": "mrkdwn",
-                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n"
+                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n"
             }}
         }}
     ]
 }}"#,
-        fork_summary_for_slack(reports, Fork::Prague),
-        fork_summary_for_slack(reports, Fork::Cancun),
-        fork_summary_for_slack(reports, Fork::Shanghai),
-        fork_summary_for_slack(reports, Fork::Paris),
+        fork_summaries.join("\n"),
     )
 }
 
-fn fork_summary_for_slack(reports: &[EFTestReport], fork: Fork) -> String {
+fn fork_summary_for_slack(reports: &[EFTestReport], fork: Fork) -> Option<String> {
     let fork_str: &str = fork.into();
     let (fork_tests, fork_passed_tests, fork_success_percentage) = fork_statistics(reports, fork);
-    format!(r#"*{fork_str}:* {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)"#)
+    if fork_tests == 0 {
+        return None;
+    }
+    Some(format!(
+        r#"*{fork_str}:* {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)"#
+    ))
 }
 
 pub fn write_summary_for_slack(reports: &[EFTestReport]) -> Result<PathBuf, EFTestRunnerError> {
@@ -166,19 +180,33 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
     let total_passed = total_fork_test_passed(reports);
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
+
+    let fork_summaries: Vec<String> = [
+        Fork::Amsterdam,
+        Fork::Prague,
+        Fork::Cancun,
+        Fork::Shanghai,
+        Fork::Paris,
+    ]
+    .iter()
+    .filter_map(|fork| fork_summary_for_github(reports, *fork))
+    .collect();
+
     format!(
-        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n"#,
-        fork_summary_for_github(reports, Fork::Prague),
-        fork_summary_for_github(reports, Fork::Cancun),
-        fork_summary_for_github(reports, Fork::Shanghai),
-        fork_summary_for_github(reports, Fork::Paris),
+        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n"#,
+        fork_summaries.join("\n"),
     )
 }
 
-fn fork_summary_for_github(reports: &[EFTestReport], fork: Fork) -> String {
+fn fork_summary_for_github(reports: &[EFTestReport], fork: Fork) -> Option<String> {
     let fork_str: &str = fork.into();
     let (fork_tests, fork_passed_tests, fork_success_percentage) = fork_statistics(reports, fork);
-    format!("{fork_str}: {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)")
+    if fork_tests == 0 {
+        return None;
+    }
+    Some(format!(
+        "{fork_str}: {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)"
+    ))
 }
 
 pub fn write_summary_for_github(reports: &[EFTestReport]) -> Result<PathBuf, EFTestRunnerError> {

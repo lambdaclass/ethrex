@@ -1,0 +1,146 @@
+name: Daily LEVM Amsterdam Report
+
+on:
+  schedule:
+    # Every day at UTC midnight (weekdays)
+    - cron: "0 0 * * 1,2,3,4,5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  levm-amsterdam-state-tests:
+    name: LEVM Amsterdam State Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Download test vectors
+        run: cd tooling/ef_tests/state && make download-evm-ef-tests
+
+      - name: Run Amsterdam state tests
+        run: |
+          cd tooling/ef_tests/state
+          cargo test -p ef_tests-state --test all --profile release-with-debug -- --forks Amsterdam --summary || true
+
+      - name: Upload state test summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: state-test-summary
+          path: |
+            tooling/ef_tests/state/levm_ef_tests_summary_slack.txt
+            tooling/ef_tests/state/levm_ef_tests_summary_github.txt
+
+  levm-amsterdam-blockchain-tests:
+    name: LEVM Amsterdam Blockchain Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Download test vectors
+        run: cd tooling/ef_tests/blockchain && make download-test-vectors
+
+      - name: Run Amsterdam blockchain tests (unfiltered)
+        run: |
+          cd tooling/ef_tests/blockchain
+          UNFILTERED_AMSTERDAM=1 cargo test --profile release-with-debug -- amsterdam 2>&1 | tee blockchain_test_output.txt || true
+
+      - name: Parse blockchain test results
+        run: |
+          cd tooling/ef_tests/blockchain
+          # Extract pass/fail counts from cargo test output
+          if grep -q "test result:" blockchain_test_output.txt; then
+            RESULT=$(grep "test result:" blockchain_test_output.txt | tail -1)
+            PASSED=$(echo "$RESULT" | grep -oP '\d+(?= passed)' || echo "0")
+            FAILED=$(echo "$RESULT" | grep -oP '\d+(?= failed)' || echo "0")
+            IGNORED=$(echo "$RESULT" | grep -oP '\d+(?= ignored)' || echo "0")
+            TOTAL=$((PASSED + FAILED))
+            if [ "$TOTAL" -gt 0 ]; then
+              PERCENTAGE=$(echo "scale=2; $PASSED * 100 / $TOTAL" | bc)
+            else
+              PERCENTAGE="0.00"
+            fi
+            echo "BLOCKCHAIN_PASSED=$PASSED" >> $GITHUB_ENV
+            echo "BLOCKCHAIN_FAILED=$FAILED" >> $GITHUB_ENV
+            echo "BLOCKCHAIN_IGNORED=$IGNORED" >> $GITHUB_ENV
+            echo "BLOCKCHAIN_TOTAL=$TOTAL" >> $GITHUB_ENV
+            echo "BLOCKCHAIN_PERCENTAGE=$PERCENTAGE" >> $GITHUB_ENV
+          fi
+
+      - name: Generate blockchain summary
+        run: |
+          cd tooling/ef_tests/blockchain
+          echo "Blockchain Tests: ${BLOCKCHAIN_PASSED:-0}/${BLOCKCHAIN_TOTAL:-0} (${BLOCKCHAIN_PERCENTAGE:-0.00}%)" > blockchain_summary_github.txt
+          echo "Failed: ${BLOCKCHAIN_FAILED:-0}, Ignored: ${BLOCKCHAIN_IGNORED:-0}" >> blockchain_summary_github.txt
+
+      - name: Upload blockchain test summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: blockchain-test-summary
+          path: |
+            tooling/ef_tests/blockchain/blockchain_summary_github.txt
+            tooling/ef_tests/blockchain/blockchain_test_output.txt
+
+  post-report:
+    name: Post Amsterdam Report
+    needs: [levm-amsterdam-state-tests, levm-amsterdam-blockchain-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Download state test summary
+        uses: actions/download-artifact@v4
+        with:
+          name: state-test-summary
+          path: state-results
+
+      - name: Download blockchain test summary
+        uses: actions/download-artifact@v4
+        with:
+          name: blockchain-test-summary
+          path: blockchain-results
+
+      - name: Post to GitHub summary
+        run: |
+          echo "# LEVM Amsterdam EF Tests Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## State Tests" >> $GITHUB_STEP_SUMMARY
+          cat state-results/levm_ef_tests_summary_github.txt >> $GITHUB_STEP_SUMMARY || echo "No state test summary"
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Blockchain Tests" >> $GITHUB_STEP_SUMMARY
+          cat blockchain-results/blockchain_summary_github.txt >> $GITHUB_STEP_SUMMARY || echo "No blockchain test summary"
+
+      - name: Build combined Slack message
+        run: |
+          # Read blockchain results
+          BLOCKCHAIN_SUMMARY=$(cat blockchain-results/blockchain_summary_github.txt 2>/dev/null | head -1 || echo "Blockchain Tests: N/A")
+
+          # Modify state test slack message to include blockchain results
+          if [ -f state-results/levm_ef_tests_summary_slack.txt ]; then
+            # Insert blockchain results into the slack message
+            sed -i "s/Daily LEVM EF Tests Run Report/Daily LEVM Amsterdam EF Tests Report/" state-results/levm_ef_tests_summary_slack.txt
+            sed -i "s|\*Summary\*:|\*State Tests Summary\*:|" state-results/levm_ef_tests_summary_slack.txt
+            # Add blockchain summary before the closing braces
+            sed -i "s|\(\"text\": \"\*State Tests Summary\*:.*\)\"|\1\\\\n\\\\n*Blockchain Tests*: ${BLOCKCHAIN_SUMMARY}\"|" state-results/levm_ef_tests_summary_slack.txt
+          fi
+
+      - name: Post to Slack
+        env:
+          url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+        run: |
+          curl -X POST "$url" -H 'Content-Type: application/json' -d @state-results/levm_ef_tests_summary_slack.txt

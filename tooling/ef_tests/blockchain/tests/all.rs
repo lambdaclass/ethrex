@@ -111,11 +111,18 @@ const BACKEND: Option<BackendType> = None;
 
 fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     // Compose the final skip list
+    // Set UNFILTERED_AMSTERDAM=1 to run Amsterdam tests without skips (for CI reporting)
+    let skip_amsterdam = std::env::var("UNFILTERED_AMSTERDAM").is_err();
+
     let skips: Vec<&'static str> = SKIPPED_BASE
         .iter()
         .copied()
         .chain(EXTRA_SKIPS.iter().copied())
-        .chain(SKIPPED_AMSTERDAM.iter().copied())
+        .chain(if skip_amsterdam {
+            SKIPPED_AMSTERDAM.iter().copied().collect::<Vec<_>>()
+        } else {
+            vec![]
+        })
         .collect();
 
     parse_and_execute(path, Some(&skips), BACKEND)
