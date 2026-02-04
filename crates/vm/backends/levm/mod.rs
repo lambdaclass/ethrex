@@ -162,7 +162,7 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
             )?;
-            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 2 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
                 tx_since_last_flush = 0;
             } else {

@@ -109,6 +109,20 @@ impl Network {
         Network::PublicNetwork(PublicNetwork::Mainnet)
     }
 
+    /// Returns a directory-safe name for this network, suitable for use as a subdirectory name.
+    pub fn datadir_name(&self) -> String {
+        match self {
+            Network::PublicNetwork(PublicNetwork::Holesky) => "holesky".to_string(),
+            Network::PublicNetwork(PublicNetwork::Hoodi) => "hoodi".to_string(),
+            Network::PublicNetwork(PublicNetwork::Mainnet) => "mainnet".to_string(),
+            Network::PublicNetwork(PublicNetwork::Sepolia) => "sepolia".to_string(),
+            Network::LocalDevnet => "local-devnet".to_string(),
+            Network::LocalDevnetL2 => "local-devnet-l2".to_string(),
+            Network::L2Chain(chain_id) => format!("l2-chain-{}", chain_id),
+            Network::GenesisPath(_) => "custom".to_string(),
+        }
+    }
+
     pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
         match self {
             Network::PublicNetwork(public_network) => {

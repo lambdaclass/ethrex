@@ -17,16 +17,22 @@ ethrex --sync <mode>
 
 ## File Locations
 
-By default, ethrex stores its data in:
+By default, ethrex stores its data in `~/.ethrex/<network>`, where `<network>` is the network name (e.g., `mainnet`, `hoodi`, `sepolia`, `holesky`).
 
-- Linux: `~/.local/share/ethrex`
-- macOS: `~/Library/Application Support/ethrex`
+Examples:
+- Mainnet: `~/.ethrex/mainnet`
+- Hoodi testnet: `~/.ethrex/hoodi`
+- Sepolia testnet: `~/.ethrex/sepolia`
+- Local devnet: `~/.ethrex/local-devnet`
+- Custom genesis: `~/.ethrex/custom`
 
-You can change the data directory with:
+You can change the base data directory with:
 
 ```sh
 ethrex --datadir <path>
 ```
+
+The network subdirectory will still be appended to the specified path.
 
 ## Ports
 

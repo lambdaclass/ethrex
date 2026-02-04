@@ -431,18 +431,18 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir: &PathBuf =
-        if opts.dev && cfg!(feature = "dev") && !is_memory_datadir(&opts.datadir) {
-            &opts.datadir.join("dev")
-        } else {
-            &opts.datadir
-        };
-
-    if !is_memory_datadir(datadir) {
-        init_datadir(datadir);
-    }
-
     let network = get_network(&opts);
+
+    // Compute the datadir by appending the network name to the base datadir.
+    let datadir: PathBuf = if is_memory_datadir(&opts.datadir) {
+        opts.datadir.clone()
+    } else {
+        opts.datadir.join(network.datadir_name())
+    };
+
+    if !is_memory_datadir(&datadir) {
+        init_datadir(&datadir);
+    }
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
@@ -451,7 +451,7 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(datadir, genesis).await {
+    let store = match init_store(&datadir, genesis).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
@@ -482,11 +482,11 @@ pub async fn init_l1(
 
     regenerate_head_state(&store, &blockchain).await?;
 
-    let signer = get_signer(datadir);
+    let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
+    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
     let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
 
@@ -537,7 +537,7 @@ pub async fn init_l1(
         init_network(
             &opts,
             &network,
-            datadir,
+            &datadir,
             peer_handler.clone(),
             tracker.clone(),
             blockchain.clone(),

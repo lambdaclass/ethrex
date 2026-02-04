@@ -1,6 +1,6 @@
 use crate::decode;
 use bytes::Bytes;
-use directories::ProjectDirs;
+use dirs::home_dir;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     peer_table::PeerTable,
@@ -92,9 +92,9 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
 }
 
 pub fn default_datadir() -> PathBuf {
-    let app_name: &'static str = "ethrex";
-    let project_dir = ProjectDirs::from("", "", app_name).expect("Couldn't find home directory");
-    project_dir.data_local_dir().to_path_buf()
+    home_dir()
+        .expect("Couldn't find home directory")
+        .join(".ethrex")
 }
 
 /// Ensures that the provided data directory exists and is a directory.
