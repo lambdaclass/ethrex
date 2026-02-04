@@ -743,11 +743,51 @@ impl Blockchain {
         let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
         let mut account_cache: FxHashMap<H256, AccountState> = Default::default();
         let mut storage_nodes = vec![];
-        for msg in rx {
+        let mut deferred_inserts: Vec<H256> = vec![];
+        let mut deferred_prefetches: Vec<H256> = vec![];
+        loop {
+            let msg = match rx.try_recv() {
+                Ok(msg) => msg,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Channel empty — do one deferred state_trie operation.
+                    // Inserts first (actual writes needed), then prefetches (warming).
+                    if let Some(hashed_account) = deferred_inserts.pop() {
+                        let path = hashed_account.as_bytes();
+                        let account_state = &account_cache[&hashed_account];
+                        if *account_state != AccountState::default() {
+                            state_trie
+                                .insert(path.to_vec(), account_state.encode_to_vec())?;
+                        } else {
+                            state_trie.remove(path)?;
+                        }
+                        continue;
+                    }
+                    if let Some(hashed_account) = deferred_prefetches.pop() {
+                        let path = hashed_account.as_bytes();
+                        if let Some(rlp) = state_trie.get(path)? {
+                            state_trie.insert(path.to_vec(), rlp.clone())?;
+                            account_cache
+                                .entry(hashed_account)
+                                .or_insert_with(|| {
+                                    AccountState::decode(&rlp).unwrap_or_default()
+                                });
+                        }
+                        continue;
+                    }
+                    // Nothing deferred — block for next message
+                    match rx.recv() {
+                        Ok(msg) => msg,
+                        Err(_) => break,
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            };
+
             match msg {
                 MerklizationRequest::UpdateAccount { hashed_account, info } => {
-                    let path = hashed_account.as_bytes();
                     if let Some(info) = info {
+                        // Update cache immediately (cheap: flat KV read on miss + field assignment)
+                        let path = hashed_account.as_bytes();
                         let account_state = account_cache
                             .entry(hashed_account)
                             .or_insert_with(|| match state_trie.get(path) {
@@ -757,18 +797,11 @@ impl Blockchain {
                         account_state.nonce = info.nonce;
                         account_state.balance = info.balance;
                         account_state.code_hash = info.code_hash;
-                        if *account_state != AccountState::default() {
-                            state_trie
-                                .insert(path.to_vec(), account_state.encode_to_vec())?;
-                        } else {
-                            state_trie.remove(path)?;
-                        }
-                    } else if let Some(rlp) = state_trie.get(path)? {
-                        // Pre-fetch: re-insert to load intermediate trie nodes
-                        state_trie.insert(path.to_vec(), rlp.clone())?;
-                        account_cache
-                            .entry(hashed_account)
-                            .or_insert_with(|| AccountState::decode(&rlp).unwrap_or_default());
+                        // Defer the expensive state_trie.insert/remove
+                        deferred_inserts.push(hashed_account);
+                    } else {
+                        // Defer the entire pre-fetch (get + insert for node warming)
+                        deferred_prefetches.push(hashed_account);
                     }
                 }
                 MerklizationRequest::ClearStorage(prefix) => {
@@ -809,6 +842,8 @@ impl Blockchain {
                     }
                 }
                 MerklizationRequest::CollectStorages { tx } => {
+                    // Discard remaining prefetches — no longer useful for warming
+                    deferred_prefetches.clear();
                     for (prefix, trie) in tree.drain() {
                         let (root, nodes) = collect_trie(index, trie)?;
                         tx.send(CollectedStorageMsg {
@@ -821,6 +856,20 @@ impl Blockchain {
                     }
                 }
                 MerklizationRequest::FinalizeAndCollectState { accounts, tx } => {
+                    // Flush ALL remaining deferred state_trie inserts
+                    for hashed_account in deferred_inserts.drain(..) {
+                        let path = hashed_account.as_bytes();
+                        let account_state = &account_cache[&hashed_account];
+                        if *account_state != AccountState::default() {
+                            state_trie
+                                .insert(path.to_vec(), account_state.encode_to_vec())?;
+                        } else {
+                            state_trie.remove(path)?;
+                        }
+                    }
+                    // Discard any remaining prefetches
+                    deferred_prefetches.clear();
+
                     for (hashed_account, storage_root, mut nodes) in accounts {
                         let mut computed_storage_root = None;
                         if let Some(root) = storage_root {
