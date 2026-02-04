@@ -530,10 +530,16 @@ jobs:
           sudo apt-get install -y qemu-system-x86 qemu-utils
 
       - name: Install rex
+        # NOTE: TDX deployment uses automata-on-chain-pccs which has rex commands
+        # with old CLI syntax (positional args). Updating to rex v8.0.0 requires
+        # updating that repo first: https://github.com/lambdaclass/automata-on-chain-pccs
         run: |
-          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-linux-x86_64 -o /tmp/rex
-          chmod +x /tmp/rex
-          sudo mv /tmp/rex /usr/local/bin/rex
+          cd /tmp
+          git clone https://github.com/lambdaclass/rex
+          cd rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
+          cargo build --release
+          sudo cp target/release/rex /usr/local/bin
 
       - name: Build prover
         run: |
