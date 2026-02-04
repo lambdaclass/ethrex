@@ -11,7 +11,7 @@ use ethrex_common::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -248,6 +248,25 @@ impl PayloadBuildContext {
         // Enable BAL recording for Amsterdam and later forks (EIP-7928)
         if config.is_amsterdam_activated(payload.header.timestamp) {
             vm.enable_bal_recording();
+            // Set index 0 for pre-execution phase (system contracts)
+            vm.set_bal_index(0);
+            // Record coinbase if block will have txs or withdrawals (per EIP-7928)
+            let has_withdrawals = payload
+                .body
+                .withdrawals
+                .as_ref()
+                .is_some_and(|w| !w.is_empty());
+            // Note: transactions will be added later, so we always record coinbase
+            // since the block builder intends to add transactions
+            if let Some(recorder) = vm.db.bal_recorder_mut() {
+                recorder.record_touched_address(payload.header.coinbase);
+                // Record withdrawal recipients for BAL per EIP-7928
+                if has_withdrawals {
+                    if let Some(withdrawals) = &payload.body.withdrawals {
+                        recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+                    }
+                }
+            }
         }
 
         let payload_size = payload.length() as u64;
@@ -585,6 +604,20 @@ impl Blockchain {
                 txs.pop();
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
+            }
+
+            // Set BAL index for this transaction (1-indexed per EIP-7928)
+            // Index is based on current transaction count + 1
+            #[allow(clippy::cast_possible_truncation)]
+            let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+            context.vm.set_bal_index(tx_index);
+
+            // Record tx sender and recipient for BAL
+            if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+                recorder.record_touched_address(head_tx.tx.sender());
+                if let TxKind::Call(to) = head_tx.to() {
+                    recorder.record_touched_address(to);
+                }
             }
 
             // Execute tx
