@@ -15558,11 +15558,12 @@ Ok(commit_tx_hash)  ```
 </ul>
 <p>Running the node with the deposits of the rich accounts will create <code>N-1.blob</code> files (you can move them into <code>fixtures/blobs/</code> afterwards).</p>
 <h2 id="3-run-the-l2-and-capture-six-blobs"><a class="header" href="#3-run-the-l2-and-capture-six-blobs">3. Run the L2 and capture six blobs</a></h2>
-<p>Start the local L2 with a 20 seconds per commit so we have at least 6 batches with transactions:</p>
-<pre><code class="language-sh">COMPILE_CONTRACTS=true cargo run --release --bin ethrex --features l2,l2-sql -- l2 --dev --no-monitor --committer.commit-time 20000
-</code></pre>
-<p>In another terminal run:</p>
+<p><strong>Important:</strong> Start the prover first, then the sequencer. This prevents the committer from getting stuck waiting for deposits to be verified.</p>
+<p>In the first terminal, start the prover:</p>
 <pre><code class="language-sh">make init-prover-exec
+</code></pre>
+<p>In another terminal, start the L2 with a 20 seconds per commit so we have at least 6 batches with transactions:</p>
+<pre><code class="language-sh">COMPILE_CONTRACTS=true cargo run --release --bin ethrex --features l2,l2-sql -- l2 --dev --no-monitor --committer.commit-time 20000
 </code></pre>
 <p>Once the sequencer has produced six batches you will see six files named <code>1-1.blob</code> through <code>6-1.blob</code>. Copy them into <code>fixtures/blobs/</code> (overwriting the existing files).</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
