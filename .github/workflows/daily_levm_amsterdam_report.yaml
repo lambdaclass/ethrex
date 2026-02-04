@@ -73,11 +73,13 @@ jobs:
             else
               PERCENTAGE="0.00"
             fi
-            echo "BLOCKCHAIN_PASSED=$PASSED" >> $GITHUB_ENV
-            echo "BLOCKCHAIN_FAILED=$FAILED" >> $GITHUB_ENV
-            echo "BLOCKCHAIN_IGNORED=$IGNORED" >> $GITHUB_ENV
-            echo "BLOCKCHAIN_TOTAL=$TOTAL" >> $GITHUB_ENV
-            echo "BLOCKCHAIN_PERCENTAGE=$PERCENTAGE" >> $GITHUB_ENV
+            {
+              echo "BLOCKCHAIN_PASSED=$PASSED"
+              echo "BLOCKCHAIN_FAILED=$FAILED"
+              echo "BLOCKCHAIN_IGNORED=$IGNORED"
+              echo "BLOCKCHAIN_TOTAL=$TOTAL"
+              echo "BLOCKCHAIN_PERCENTAGE=$PERCENTAGE"
+            } >> $GITHUB_ENV
           fi
 
       - name: Generate blockchain summary
@@ -117,18 +119,20 @@ jobs:
 
       - name: Post to GitHub summary
         run: |
-          echo "# LEVM Amsterdam EF Tests Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## State Tests" >> $GITHUB_STEP_SUMMARY
-          cat state-results/levm_ef_tests_summary_github.txt >> $GITHUB_STEP_SUMMARY || echo "No state test summary"
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Blockchain Tests" >> $GITHUB_STEP_SUMMARY
-          cat blockchain-results/blockchain_summary_github.txt >> $GITHUB_STEP_SUMMARY || echo "No blockchain test summary"
+          {
+            echo "# LEVM Amsterdam EF Tests Report"
+            echo ""
+            echo "## State Tests"
+            cat state-results/levm_ef_tests_summary_github.txt || echo "No state test summary"
+            echo ""
+            echo "## Blockchain Tests"
+            cat blockchain-results/blockchain_summary_github.txt || echo "No blockchain test summary"
+          } >> $GITHUB_STEP_SUMMARY
 
       - name: Build combined Slack message
         run: |
           # Read blockchain results
-          BLOCKCHAIN_SUMMARY=$(cat blockchain-results/blockchain_summary_github.txt 2>/dev/null | head -1 || echo "Blockchain Tests: N/A")
+          BLOCKCHAIN_SUMMARY=$(head -1 blockchain-results/blockchain_summary_github.txt 2>/dev/null || echo "Blockchain Tests: N/A")
 
           # Modify state test slack message to include blockchain results
           if [ -f state-results/levm_ef_tests_summary_slack.txt ]; then
