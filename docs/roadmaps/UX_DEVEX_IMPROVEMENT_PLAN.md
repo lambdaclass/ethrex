@@ -21,7 +21,7 @@ This plan identifies **50+ actionable improvements** across 4 categories to enha
 | Category | Issues Found | Severity | Impact |
 |----------|-------------|----------|--------|
 | Error Handling | 150+ problems | Mixed (5 Critical, 2 High, rest Medium) | Node crashes, hours lost debugging |
-| Node Operator UX | 13 gaps | High | Can't monitor/diagnose issues |
+| Node Operator UX | 15 gaps | High | Can't monitor/diagnose issues |
 | Configuration | 21 missing env vars | Medium | Container deployment friction |
 | Documentation | 4 major gaps | Medium | Onboarding delays |
 
@@ -573,6 +573,36 @@ WantedBy=multi-user.target
 
 ---
 
+### 2.14 Interactive REPL for Node State Inspection
+
+**Problem:** Operators have no interactive way to inspect node state. Diagnosing issues requires crafting RPC calls manually or writing scripts. Other clients (e.g., geth's JavaScript console) provide a REPL that lets operators query accounts, storage, blocks, and chain state interactively.
+
+**Solution:** Provide a REPL (read-eval-print loop) that works both locally (connecting to a running node via IPC or RPC) and remotely (connecting over HTTP/WS). The REPL should support:
+- Querying account balances, nonces, and code
+- Inspecting block headers, transactions, and receipts
+- Browsing storage slots
+- Checking sync status and peer info
+- Scriptable via command history and piping
+
+**Effort:** 1-2 weeks
+**Breaking:** No
+
+---
+
+### 2.15 State and Block Composition Analysis
+
+**Problem:** Operators and researchers have no built-in way to analyze the composition of on-chain state or blocks. Understanding what percentage of state consists of ERC20 tokens, bridge contracts, DeFi protocols, etc. — or what types of transactions fill blocks — requires external tooling.
+
+**Solution:** Provide a tool or command (e.g., `ethrex analyze`) that generates reports on:
+- State composition: breakdown of accounts by type (EOA vs contract), classification of known contract types (ERC20, ERC721, bridge, DeFi, etc.)
+- Block composition: transaction types, gas usage by category, blob usage
+- Output formats: human-readable summary, CSV, or JSON for further analysis
+
+**Effort:** 1-2 weeks
+**Breaking:** No
+
+---
+
 ## Category 3: Configuration and Setup (Priority: MEDIUM)
 
 ### 3.1 Expand Environment Variable Coverage
@@ -1109,6 +1139,8 @@ These items are valuable but lower priority given current goals:
 |------|--------|-----------------|
 | 2.10 Network Diagnostics Command | 2-3 days | Nice-to-have, not blocking |
 | 2.11 Database Management Commands | 1 week | Large effort, can wait |
+| 2.14 Interactive REPL for Node State Inspection | 1-2 weeks | Large effort, nice-to-have |
+| 2.15 State and Block Composition Analysis | 1-2 weeks | Large effort, research-oriented |
 | 4.1 Storage API Reference | 2 days | Developer docs, not operator |
 
 ---
@@ -1179,7 +1211,7 @@ Each category of change requires corresponding verification:
 - **Context-discarding map_err:** 100+ locations
 - **TODOs about error handling:** 11 locations
 
-### Node Operator UX (13)
+### Node Operator UX (15)
 1. Startup banner lacks configuration details
 2. No CLI status command
 3. Sync progress not in Prometheus
@@ -1193,6 +1225,8 @@ Each category of change requires corresponding verification:
 11. No network diagnostics
 12. No systemd service files
 13. Incomplete Grafana dashboards
+14. No interactive REPL for node state inspection
+15. No state/block composition analysis tooling
 
 ### Configuration (22)
 21 CLI options without environment variable equivalents + no Nix support
