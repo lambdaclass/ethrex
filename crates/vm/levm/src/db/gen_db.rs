@@ -6,7 +6,7 @@ use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
-use ethrex_common::utils::ZERO_U256;
+use ethrex_common::utils::{ZERO_U256, keccak};
 
 use super::Database;
 use crate::account::AccountStatus;
@@ -285,8 +285,12 @@ impl GeneralizedDatabase {
                 continue;
             }
 
+            // Pre-compute keccak hash of address for merkleizer
+            let hashed_address = Some(keccak(address));
+
             let account_update = AccountUpdate {
                 address: *address,
+                hashed_address,
                 removed,
                 info,
                 code: code.cloned(),
@@ -385,8 +389,12 @@ impl GeneralizedDatabase {
             self.initial_accounts_state
                 .insert(address, new_state_account);
 
+            // Pre-compute keccak hash of address for merkleizer
+            let hashed_address = Some(keccak(&address));
+
             let account_update = AccountUpdate {
                 address,
+                hashed_address,
                 removed,
                 info,
                 code,

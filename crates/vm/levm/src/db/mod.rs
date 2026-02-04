@@ -1,17 +1,13 @@
 use crate::errors::DatabaseError;
+use dashmap::DashMap;
 use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
-use rustc_hash::FxHashMap;
-use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use rustc_hash::FxBuildHasher;
+use std::sync::Arc;
 
 pub mod gen_db;
-
-// Type aliases for cache storage maps
-type AccountCache = FxHashMap<Address, AccountState>;
-type StorageCache = FxHashMap<(Address, H256), U256>;
-type CodeCache = FxHashMap<H256, Code>;
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -28,85 +24,58 @@ pub trait Database: Send + Sync {
 /// the sequential execution phase to reuse warmed state. Reduces redundant
 /// database/trie lookups when multiple transactions touch the same accounts.
 ///
-/// Thread-safe via RwLock - optimized for read-heavy concurrent access.
+/// Thread-safe via DashMap - provides fine-grained shard-level locking instead
+/// of coarse RwLock, eliminating lock contention during parallel warming.
 ///
 /// This caching database is inspired by reth's overlay/proof worker cache.
 pub struct CachingDatabase {
     inner: Arc<dyn Database>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
-    accounts: RwLock<AccountCache>,
+    accounts: DashMap<Address, AccountState, FxBuildHasher>,
     /// Cached storage values
-    storage: RwLock<StorageCache>,
+    storage: DashMap<(Address, H256), U256, FxBuildHasher>,
     /// Cached contract code
-    code: RwLock<CodeCache>,
+    code: DashMap<H256, Code, FxBuildHasher>,
 }
 
 impl CachingDatabase {
     pub fn new(inner: Arc<dyn Database>) -> Self {
         Self {
             inner,
-            accounts: RwLock::new(FxHashMap::default()),
-            storage: RwLock::new(FxHashMap::default()),
-            code: RwLock::new(FxHashMap::default()),
+            accounts: DashMap::with_hasher(FxBuildHasher),
+            storage: DashMap::with_hasher(FxBuildHasher),
+            code: DashMap::with_hasher(FxBuildHasher),
         }
     }
-
-    fn read_accounts(&self) -> Result<RwLockReadGuard<'_, AccountCache>, DatabaseError> {
-        self.accounts.read().map_err(poison_error_to_db_error)
-    }
-
-    fn write_accounts(&self) -> Result<RwLockWriteGuard<'_, AccountCache>, DatabaseError> {
-        self.accounts.write().map_err(poison_error_to_db_error)
-    }
-
-    fn read_storage(&self) -> Result<RwLockReadGuard<'_, StorageCache>, DatabaseError> {
-        self.storage.read().map_err(poison_error_to_db_error)
-    }
-
-    fn write_storage(&self) -> Result<RwLockWriteGuard<'_, StorageCache>, DatabaseError> {
-        self.storage.write().map_err(poison_error_to_db_error)
-    }
-
-    fn read_code(&self) -> Result<RwLockReadGuard<'_, CodeCache>, DatabaseError> {
-        self.code.read().map_err(poison_error_to_db_error)
-    }
-
-    fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
-        self.code.write().map_err(poison_error_to_db_error)
-    }
-}
-
-fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {
-    DatabaseError::Custom(format!("Cache lock poisoned: {err}"))
 }
 
 impl Database for CachingDatabase {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
         // Check cache first
-        if let Some(state) = self.read_accounts()?.get(&address).copied() {
+        if let Some(state) = self.accounts.get(&address).map(|r| *r) {
             return Ok(state);
         }
 
         // Cache miss: query underlying database
         let state = self.inner.get_account_state(address)?;
 
-        // Populate cache (AccountState is Copy, no clone needed)
-        self.write_accounts()?.insert(address, state);
+        // Populate cache (AccountState is Copy)
+        self.accounts.insert(address, state);
 
         Ok(state)
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
         // Check cache first
-        if let Some(value) = self.read_storage()?.get(&(address, key)).copied() {
+        if let Some(value) = self.storage.get(&(address, key)).map(|r| *r) {
             return Ok(value);
         }
 
         // Cache miss: query underlying database
         let value = self.inner.get_storage_value(address, key)?;
 
-        // Populate cache (U256 is Copy, no clone needed)
-        self.write_storage()?.insert((address, key), value);
+        // Populate cache (U256 is Copy)
+        self.storage.insert((address, key), value);
 
         Ok(value)
     }
@@ -124,7 +93,7 @@ impl Database for CachingDatabase {
 
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
         // Check cache first
-        if let Some(code) = self.read_code()?.get(&code_hash).cloned() {
+        if let Some(code) = self.code.get(&code_hash).map(|r| r.clone()) {
             return Ok(code);
         }
 
@@ -132,7 +101,7 @@ impl Database for CachingDatabase {
         let code = self.inner.get_account_code(code_hash)?;
 
         // Populate cache (Code contains Bytes which is ref-counted, clone is cheap)
-        self.write_code()?.insert(code_hash, code.clone());
+        self.code.insert(code_hash, code.clone());
 
         Ok(code)
     }
