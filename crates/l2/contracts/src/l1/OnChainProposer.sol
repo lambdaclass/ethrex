@@ -46,6 +46,10 @@ contract OnChainProposer is
     uint8 internal constant SP1_VERIFIER_ID = 1;
     uint8 internal constant RISC0_VERIFIER_ID = 2;
 
+    /// @notice Aligned Layer proving system ID for SP1 in isProofVerified calls.
+    /// @dev Currently only SP1 is supported by Aligned in aggregation mode.
+    uint16 internal constant ALIGNED_SP1_PROVING_SYSTEM_ID = 1;
+
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
     /// @dev If a batch was not committed yet, it won't be here.
@@ -147,8 +151,10 @@ contract OnChainProposer is
             "OnChainProposer: missing RISC0 verifier address"
         );
         RISC0_VERIFIER_ADDRESS = r0verifier;
+        // In Aligned mode, SP1 proofs are verified through the AlignedProofAggregator,
+        // not through a direct SP1 verifier contract, so we don't require sp1verifier.
         require(
-            !REQUIRE_SP1_PROOF || sp1verifier != address(0),
+            !REQUIRE_SP1_PROOF || aligned || sp1verifier != address(0),
             "OnChainProposer: missing SP1 verifier address"
         );
         SP1_VERIFIER_ADDRESS = sp1verifier;
@@ -160,6 +166,17 @@ contract OnChainProposer is
 
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
+
+        // Aligned mode requires SP1 proofs to be enabled
+        require(
+            !aligned || requireSp1Proof,
+            "OnChainProposer: Aligned mode requires SP1 proof"
+        );
+        // Aligned mode does not support RISC0 proofs (not yet available in aggregation mode)
+        require(
+            !aligned || !requireRisc0Proof,
+            "OnChainProposer: Aligned mode does not support RISC0 proof"
+        );
 
         require(
             commitHash != bytes32(0),
@@ -539,6 +556,7 @@ contract OnChainProposer is
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
+                    ALIGNED_SP1_PROVING_SYSTEM_ID,
                     verificationKeys[batchCommitments[batchNumber].commitHash][
                         SP1_VERIFIER_ID
                     ],
@@ -546,9 +564,13 @@ contract OnChainProposer is
                 );
             }
 
+            // NOTE: This block is currently unreachable because initialize() prevents
+            // aligned mode with RISC0 enabled. It is kept for future compatibility when
+            // Aligned re-enables RISC0 support - at that point, update the proving system ID.
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
+                    0, // Placeholder - RISC0 proving system ID TBD
                     verificationKeys[batchCommitments[batchNumber].commitHash][
                         RISC0_VERIFIER_ID
                     ],
@@ -572,12 +594,14 @@ contract OnChainProposer is
 
     function _verifyProofInclusionAligned(
         bytes32[] calldata merkleProofsList,
+        uint16 provingSystemId,
         bytes32 verificationKey,
         bytes memory publicInputsList
     ) internal view {
         bytes memory callData = abi.encodeWithSignature(
-            "verifyProofInclusion(bytes32[],bytes32,bytes)",
+            "isProofVerified(bytes32[],uint16,bytes32,bytes)",
             merkleProofsList,
+            provingSystemId,
             verificationKey,
             publicInputsList
         );
