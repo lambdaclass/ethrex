@@ -1,6 +1,7 @@
 lazy_static::lazy_static! {
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }
+
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};
@@ -16,7 +17,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::utils::RpcResponse;
 use ethrex_storage::Store;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::File;
@@ -40,15 +41,9 @@ const DUMPS_BEFORE_CHECKPOINT: usize = 10;
 struct Dump {
     #[serde(rename = "root")]
     state_root: H256,
-    accounts: HashMap<MaybeAddress, DumpAccount>,
+    accounts: HashMap<Address, DumpAccount>,
     #[serde(default)]
     next: Option<String>,
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-enum MaybeAddress {
-    Address(Address),
-    HashesAddress(H256),
 }
 
 #[derive(Deserialize, Debug, Serialize)]
@@ -67,51 +62,6 @@ struct DumpAccount {
     address: Option<Address>,
     #[serde(rename = "key")]
     hashed_address: Option<H256>,
-}
-
-use serde::de::Error;
-use std::str::FromStr;
-
-impl<'de> Deserialize<'de> for MaybeAddress {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        // Check if it is an address or a pre(hashed_address)
-        let str = String::deserialize(deserializer)?;
-        if let Some(str) = str.strip_prefix("pre(") {
-            Ok(MaybeAddress::HashesAddress(
-                H256::from_str(str.trim_end_matches(")")).map_err(D::Error::custom)?,
-            ))
-        } else {
-            Ok(MaybeAddress::Address(
-                Address::from_str(&str).map_err(D::Error::custom)?,
-            ))
-        }
-    }
-}
-
-impl Serialize for MaybeAddress {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            MaybeAddress::Address(address) => address.serialize(serializer),
-            MaybeAddress::HashesAddress(hash) => {
-                serializer.serialize_str(&format!("pre({hash:?})"))
-            }
-        }
-    }
-}
-
-impl MaybeAddress {
-    fn into_hashed(self) -> H256 {
-        match self {
-            MaybeAddress::Address(address) => keccak(address),
-            MaybeAddress::HashesAddress(hashed) => hashed,
-        }
-    }
 }
 
 pub async fn archive_sync(
@@ -187,7 +137,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
     for (address, dump_account) in dump.accounts.into_iter() {
         let hashed_address = dump_account
             .hashed_address
-            .unwrap_or_else(|| address.into_hashed());
+            .unwrap_or_else(|| keccak(address));
         // Add account to state trie
         // Maybe we can validate the dump account here? or while deserializing
         state_trie.insert(
@@ -224,9 +174,8 @@ async fn process_dump_storage(
 ) -> eyre::Result<()> {
     let mut trie = store.open_direct_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
-        // The key we receive is NOT the preimage of the one stored in the trie
-        // This was changed in geth so that we can archive sync even if geth doesn't have the preimages (full node + archive instead of fully archive)
-        trie.insert(key.0.to_vec(), val.encode_to_vec())?;
+        // The key we receive is the preimage of the one stored in the trie
+        trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
     }
     if trie.hash()? != storage_root {
         Err(eyre::ErrReport::msg(
@@ -599,7 +548,7 @@ impl DumpIpcReader {
         "id": 1,
         "jsonrpc": "2.0",
         "method": "debug_accountRange",
-        "params": [format!("{:#x}", self.block_number), format!("{:#x}", self.start), MAX_ACCOUNTS, false, false, true]
+        "params": [format!("{:#x}", self.block_number), format!("{:#x}", self.start), MAX_ACCOUNTS, false, false, false]
         });
         let response = send_ipc_json_request(&mut self.stream, request).await?;
         let dump: Dump = serde_json::from_value(response)?;
@@ -607,10 +556,7 @@ impl DumpIpcReader {
         let last_key = dump
             .accounts
             .iter()
-            .map(|(addr, acc)| {
-                acc.hashed_address
-                    .unwrap_or_else(|| addr.clone().into_hashed())
-            })
+            .map(|(addr, acc)| acc.hashed_address.unwrap_or_else(|| keccak(addr)))
             .max()
             .unwrap_or_default();
         self.start = hash_next(last_key);

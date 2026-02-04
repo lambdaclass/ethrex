@@ -9,7 +9,6 @@ members = [
   "loc",
   "migrations",
   "reorgs",
-  "geth2ethrex"
 ]
 exclude = ["ef_tests/state"]
 resolver = "2"
@@ -19,6 +18,7 @@ version = "4.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "../crates/blockchain" }
