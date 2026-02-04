@@ -291,7 +291,7 @@ impl Blockchain {
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
@@ -387,7 +387,7 @@ impl Blockchain {
                         vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
                     // Validate execution went alright
-                    validate_gas_used(&execution_result.receipts, &block.header)?;
+                    validate_gas_used(execution_result.block_gas_used, &block.header)?;
                     validate_receipts_root(&block.header, &execution_result.receipts)?;
                     validate_requests_hash(
                         &block.header,
@@ -898,7 +898,7 @@ impl Blockchain {
         let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
         let (execution_result, bal) = vm.execute_block(block, record_bal)?;
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {

@@ -666,11 +666,11 @@ impl BlockAccessListRecorder {
                     .last()
                     .map(|(_, code)| code);
 
-                if let Some(final_code) = final_code {
-                    if final_code == pre_code {
-                        // Net-zero: final code equals pre-transaction code
-                        addrs_to_remove.push(*addr);
-                    }
+                if let Some(final_code) = final_code
+                    && final_code == pre_code
+                {
+                    // Net-zero: final code equals pre-transaction code
+                    addrs_to_remove.push(*addr);
                 }
             }
         }
