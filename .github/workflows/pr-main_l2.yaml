@@ -111,6 +111,9 @@ jobs:
   validate-blobs:
     # Fast validation to catch stale blobs early
     # This prevents waiting for state-diff-test to fail
+    # If this fails, regenerate blobs following:
+    # - docs/workflows/regenerate-blobs.md (agent workflow)
+    # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
     name: Validate Blob Fixtures
     runs-on: ubuntu-latest
     needs: detect-changes
@@ -572,6 +575,9 @@ jobs:
           pkill -9 -f ethrex_tdx_prover
 
   state-diff-test:
+    # If this test fails due to stale blobs, regenerate them following:
+    # - docs/workflows/regenerate-blobs.md (agent workflow)
+    # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2, validate-blobs]
