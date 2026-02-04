@@ -535,10 +535,9 @@ impl RLPDecode for BlockAccessList {
 /// across reverts.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BlockAccessListCheckpoint {
-    /// Snapshot of storage reads at checkpoint time.
-    /// We need to store the actual slots because when a write is reverted, it must
-    /// be converted back to a read if it was originally a read.
-    storage_reads_snapshot: BTreeMap<Address, BTreeSet<U256>>,
+    /// Number of promoted reads per address at checkpoint time.
+    /// Reads that became writes are tracked in a Vec for ordered truncation.
+    reads_promoted_len: BTreeMap<Address, usize>,
     /// For each address+slot, the number of writes at checkpoint time.
     storage_writes_len: BTreeMap<Address, BTreeMap<U256, usize>>,
     /// Number of balance changes per address at checkpoint time.
@@ -595,6 +594,10 @@ pub struct BlockAccessListRecorder {
     /// Used to distinguish CREATE-with-empty-code (no initial code → empty = no change)
     /// from delegation-clear (had code → empty = actual change).
     addresses_with_initial_code: BTreeSet<Address>,
+    /// Tracks reads that were promoted to writes, in insertion order per address.
+    /// Used for efficient checkpoint/restore without cloning storage_reads.
+    /// On restore, we truncate this Vec and the slots go back to being reads.
+    reads_promoted_to_writes: BTreeMap<Address, Vec<U256>>,
 }
 
 impl BlockAccessListRecorder {
@@ -760,14 +763,24 @@ impl BlockAccessListRecorder {
     }
 
     /// Records a storage slot write.
-    /// If the slot was previously recorded as a read, it is removed from reads.
+    /// If the slot was previously recorded as a read, it is tracked as promoted
+    /// (for efficient checkpoint/restore) but kept in storage_reads until build().
     ///
     /// Per EIP-7928: Multiple writes to the same slot within the same transaction
     /// (same block_access_index) only keep the final value.
     pub fn record_storage_write(&mut self, address: Address, slot: U256, post_value: U256) {
-        // Remove from reads if present (reads that become writes are writes)
-        if let Some(reads) = self.storage_reads.get_mut(&address) {
-            reads.remove(&slot);
+        // Track if this read is being promoted to a write (for checkpoint/restore)
+        // We don't remove from storage_reads here - filtering happens in build()
+        if self
+            .storage_reads
+            .get(&address)
+            .is_some_and(|reads| reads.contains(&slot))
+        {
+            // Only track promotion if not already tracked
+            let promoted = self.reads_promoted_to_writes.entry(address).or_default();
+            if !promoted.contains(&slot) {
+                promoted.push(slot);
+            }
         }
 
         // Get or create the changes vector for this slot
@@ -948,9 +961,14 @@ impl BlockAccessListRecorder {
                 }
             }
 
-            // Add storage reads
+            // Add storage reads (excluding slots that were promoted to writes)
             if let Some(reads) = self.storage_reads.get(address) {
+                let promoted = self.reads_promoted_to_writes.get(address);
                 for slot in reads {
+                    // Skip if this read was promoted to a write
+                    if promoted.is_some_and(|p| p.contains(slot)) {
+                        continue;
+                    }
                     account_changes.add_storage_read(*slot);
                 }
             }
@@ -1044,7 +1062,11 @@ impl BlockAccessListRecorder {
     /// be restored on revert, while touched_addresses are preserved.
     pub fn checkpoint(&self) -> BlockAccessListCheckpoint {
         BlockAccessListCheckpoint {
-            storage_reads_snapshot: self.storage_reads.clone(),
+            reads_promoted_len: self
+                .reads_promoted_to_writes
+                .iter()
+                .map(|(addr, promoted)| (*addr, promoted.len()))
+                .collect(),
             storage_writes_len: self
                 .storage_writes
                 .iter()
@@ -1084,8 +1106,20 @@ impl BlockAccessListRecorder {
     /// - Storage writes from reverted calls become READS (slot was accessed but value unchanged)
     /// - Balance/nonce/code changes are discarded
     pub fn restore(&mut self, checkpoint: BlockAccessListCheckpoint) {
-        // Step 1: Collect slots that were written after checkpoint (to convert to reads)
-        let mut reverted_write_slots: BTreeMap<Address, BTreeSet<U256>> = BTreeMap::new();
+        // Step 1: Truncate reads_promoted_to_writes (undo promotions after checkpoint)
+        // Reads are never removed from storage_reads, so truncating promotions
+        // means those slots will be treated as reads again in build().
+        self.reads_promoted_to_writes.retain(|addr, promoted| {
+            if let Some(&len) = checkpoint.reads_promoted_len.get(addr) {
+                promoted.truncate(len);
+                len > 0
+            } else {
+                false
+            }
+        });
+
+        // Step 2: Find slots that were written after checkpoint but were NOT reads
+        // (fresh writes need to become reads on revert)
         for (addr, slots) in &self.storage_writes {
             let checkpoint_lens = checkpoint.storage_writes_len.get(addr);
             for (slot, changes) in slots {
@@ -1094,30 +1128,14 @@ impl BlockAccessListRecorder {
                     .copied()
                     .unwrap_or(0);
                 if changes.len() > checkpoint_len {
-                    // This slot had writes after the checkpoint - convert to read
-                    reverted_write_slots.entry(*addr).or_default().insert(*slot);
+                    // This slot had writes after checkpoint - ensure it's recorded as a read
+                    // (Reads that became writes are already in storage_reads since we don't remove them)
+                    self.storage_reads.entry(*addr).or_default().insert(*slot);
                 }
             }
         }
 
-        // Step 2: Keep current reads (new reads during reverted call persist)
-        // Step 3: Restore reads that became writes (union with snapshot)
-        for (addr, snapshot_reads) in checkpoint.storage_reads_snapshot {
-            let current_reads = self.storage_reads.entry(addr).or_default();
-            for slot in snapshot_reads {
-                current_reads.insert(slot);
-            }
-        }
-
-        // Step 4: Convert reverted writes to reads
-        for (addr, slots) in reverted_write_slots {
-            let current_reads = self.storage_reads.entry(addr).or_default();
-            for slot in slots {
-                current_reads.insert(slot);
-            }
-        }
-
-        // Step 5: Truncate storage_writes (keep only writes from before checkpoint)
+        // Step 3: Truncate storage_writes (keep only writes from before checkpoint)
         self.storage_writes.retain(|addr, slots| {
             if let Some(slot_lens) = checkpoint.storage_writes_len.get(addr) {
                 slots.retain(|slot, changes| {
