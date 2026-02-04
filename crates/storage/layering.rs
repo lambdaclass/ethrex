@@ -1,8 +1,13 @@
 use ethrex_common::H256;
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use fastbloom::AtomicBloomFilter;
+use rayon::prelude::*;
+use rustc_hash::{FxBuildHasher, FxHashMap};
+use std::{fmt, sync::Arc};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
+
+const BLOOM_SIZE: usize = 1_000_000;
+const FALSE_POSITIVE_RATE: f64 = 0.02;
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
@@ -11,7 +16,7 @@ struct TrieLayer {
     id: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
@@ -19,23 +24,28 @@ pub struct TrieLayerCache {
     /// Number of layers after which we should commit to the database.
     commit_threshold: usize,
     layers: FxHashMap<H256, Arc<TrieLayer>>,
-    /// Global bloom that accrues all layer blooms.
+    /// Global bloom filter that tracks all keys across all layers.
     ///
-    /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
+    /// Used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
-    ///
-    /// In case a bloom filter insert or merge fails, we need to mark the bloom filter as poisoned
-    /// so we never use it again, because if we don't we may be misled into believing a key is not present
-    /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
-    bloom: Option<qfilter::Filter>,
+    bloom: AtomicBloomFilter<FxBuildHasher>,
+}
+
+impl fmt::Debug for TrieLayerCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TrieLayerCache")
+            .field("last_id", &self.last_id)
+            .field("commit_threshold", &self.commit_threshold)
+            .field("layers", &self.layers)
+            .field("bloom", &"AtomicBloomFilter")
+            .finish()
+    }
 }
 
 impl Default for TrieLayerCache {
     fn default() -> Self {
-        // Try to create the bloom filter, if it fails use poison mode.
-        let bloom = Self::create_filter().ok();
         Self {
-            bloom,
+            bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
             commit_threshold: 128,
@@ -45,27 +55,24 @@ impl Default for TrieLayerCache {
 
 impl TrieLayerCache {
     pub fn new(commit_threshold: usize) -> Self {
-        let bloom = Self::create_filter().ok();
         Self {
-            bloom,
+            bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
         }
     }
 
-    // TODO: tune this
-    fn create_filter() -> Result<qfilter::Filter, qfilter::Error> {
-        qfilter::Filter::new_resizeable(1_000_000, 100_000_000, 0.02)
-            .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
+    fn create_filter(expected_items: usize) -> AtomicBloomFilter<FxBuildHasher> {
+        AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
+            .hasher(FxBuildHasher)
+            .expected_items(expected_items.max(BLOOM_SIZE))
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
-        // Fast check to know if any layer may contains the given key.
-        // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
-        if let Some(filter) = &self.bloom
-            && !filter.contains(key)
-        {
+        // Fast check to know if any layer may contain the given key.
+        // We can only be certain it doesn't exist, but if it returns true it may or may not exist (false positive).
+        if !self.bloom.contains(key) {
             // TrieWrapper goes to db when returning None.
             return None;
         }
@@ -123,15 +130,9 @@ impl TrieLayerCache {
             return;
         }
 
-        // add this new bloom to the global one.
-        if let Some(filter) = &mut self.bloom {
-            for (p, _) in &key_values {
-                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
-                    tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
-                    self.bloom = None;
-                    break;
-                }
-            }
+        // Add keys to the global bloom filter
+        for (p, _) in &key_values {
+            self.bloom.insert(p.as_ref());
         }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
@@ -150,27 +151,19 @@ impl TrieLayerCache {
 
     /// Rebuilds the global bloom filter by inserting all keys from all layers.
     pub fn rebuild_bloom(&mut self) {
-        let Ok(mut new_global_filter) = Self::create_filter() else {
-            tracing::warn!(
-                "TrieLayerCache: rebuild_bloom could not create new filter. Poisoning bloom."
-            );
-            self.bloom = None;
-            return;
-        };
+        // Pre-compute total keys for optimal filter sizing
+        let total_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
 
-        for layer in self.layers.values() {
+        let filter = Self::create_filter(total_keys.max(BLOOM_SIZE));
+
+        // Parallel insertion - AtomicBloomFilter allows concurrent insert via &self
+        self.layers.par_iter().for_each(|(_, layer)| {
             for path in layer.nodes.keys() {
-                if let Err(qfilter::Error::CapacityExceeded) = new_global_filter.insert(path) {
-                    tracing::warn!(
-                        "TrieLayerCache: rebuild_bloom capacity exceeded. Poisoning bloom."
-                    );
-                    self.bloom = None;
-                    return;
-                }
+                filter.insert(path);
             }
-        }
+        });
 
-        self.bloom = Some(new_global_filter);
+        self.bloom = filter;
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {

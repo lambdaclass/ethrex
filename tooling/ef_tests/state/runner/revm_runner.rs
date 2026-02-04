@@ -611,6 +611,7 @@ pub async fn _ensure_post_state_revm(
                         Box::new(ExecutionReport {
                             result: TxResult::Success,
                             gas_used: 42,
+                            gas_spent: 42,
                             gas_refunded: 42,
                             logs: vec![],
                             output: Bytes::new(),
@@ -632,6 +633,7 @@ pub async fn _ensure_post_state_revm(
                             Box::new(ExecutionReport {
                                 result: TxResult::Success,
                                 gas_used: 42,
+                                gas_spent: 42,
                                 gas_refunded: 42,
                                 logs: vec![],
                                 output: Bytes::new(),
@@ -700,7 +702,7 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::BPO3 => SpecId::OSAKA,
         Fork::BPO4 => SpecId::OSAKA,
         Fork::BPO5 => SpecId::OSAKA,
-        Fork::Amsterdam => todo!(),
+        Fork::Amsterdam => SpecId::OSAKA, // Amsterdam maps to OSAKA until revm adds AMSTERDAM SpecId
     }
 }
 

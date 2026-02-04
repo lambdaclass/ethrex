@@ -2,6 +2,7 @@
 version = "9.0.0"
 name = "ethrex-guest-openvm"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [workspace]
 
@@ -21,7 +22,6 @@ ethrex-vm = { path = "../../../vm", default-features = false, features = [
 ethrex-common = { path = "../../../common", default-features = false, features = [
     "openvm",
 ] }
-ethrex-blockchain = { path = "../../../blockchain", default-features = false }
 
 ethrex-guest-program = { path = "../..", default-features = false }
 

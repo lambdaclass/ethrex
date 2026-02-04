@@ -11,8 +11,8 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, types::fee_config::FeeConfig};
 pub use ethrex_levm::call_frame::CallFrameBackup;
-use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
+pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -102,6 +102,9 @@ impl Evm {
         remaining_gas: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
+        let chain_config = self.db.store.get_chain_config()?;
+        let fork = chain_config.fork(block_header.timestamp);
+
         let execution_report =
             LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
 
@@ -111,6 +114,7 @@ impl Evm {
             tx.tx_type(),
             execution_report.is_success(),
             block_header.gas_limit - *remaining_gas,
+            fork.gas_spent_for_receipt(execution_report.gas_spent),
             execution_report.logs.clone(),
         );
 
@@ -205,4 +209,7 @@ impl Evm {
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
+    /// Block gas used (PRE-REFUND for Amsterdam+ per EIP-7778).
+    /// This differs from receipt cumulative_gas_used which is POST-REFUND.
+    pub block_gas_used: u64,
 }

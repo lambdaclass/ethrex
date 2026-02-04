@@ -2,6 +2,7 @@
 name = "ethrex-guest-sp1"
 version = "9.0.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [workspace]
 
@@ -15,14 +16,9 @@ rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 ethrex-guest-program = { path = "../../", features = ["sp1-cycles"] }
 
-ethrex-common = { path = "../../../common", default-features = false }
-ethrex-storage = { path = "../../../storage", default-features = false }
-ethrex-rlp = { path = "../../../common/rlp" }
 ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "sp1",
 ] }
-ethrex-blockchain = { path = "../../../blockchain", default-features = false }
-ethrex-l2-common = { path = "../../../l2/common", default-features = false }
 
 [patch.crates-io]
 sha2-v0-10-9 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-4.0.0" }

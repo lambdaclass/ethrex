@@ -57,11 +57,13 @@ use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
 // Re-export stateless validation functions for backwards compatibility
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::EIP4844Transaction;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction,
+    Receipt, Transaction, WrappedEIP4844Transaction,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -80,6 +82,7 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
+use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -89,11 +92,11 @@ use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    Arc, Mutex, RwLock,
+    Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
@@ -117,6 +120,7 @@ type BlockExecutionPipelineResult = (
     Option<Vec<AccountUpdate>>,
     usize,        // max queue length
     [Instant; 6], // timing instants
+    Duration,     // warmer duration
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -284,7 +288,7 @@ impl Blockchain {
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
 
@@ -317,13 +321,24 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
-        let (execution_result, merkleization_result) = std::thread::scope(|s| {
-            let store = vm.db.store.clone();
+        // Wrap the store with CachingDatabase so both warming and execution
+        // can benefit from shared caching of state lookups
+        let original_store = vm.db.store.clone();
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
+            Arc::new(CachingDatabase::new(original_store));
+
+        // Replace the VM's store with the caching version
+        vm.db.store = caching_store.clone();
+
+        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
             let vm_type = vm.vm_type;
             let warm_handle = std::thread::Builder::new()
                 .name("block_executor_warmer".to_string())
                 .spawn_scoped(s, move || {
-                    let _ = LEVM::warm_block(block, store, vm_type);
+                    // Warming uses the same caching store, sharing cached state with execution
+                    let start = Instant::now();
+                    let _ = LEVM::warm_block(block, caching_store, vm_type);
+                    start.elapsed()
                 })
                 .expect("Failed to spawn block_executor warmer thread");
             let max_queue_length_ref = &mut max_queue_length;
@@ -335,7 +350,7 @@ impl Blockchain {
                         vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
                     // Validate execution went alright
-                    validate_gas_used(&execution_result.receipts, &block.header)?;
+                    validate_gas_used(execution_result.block_gas_used, &block.header)?;
                     validate_receipts_root(&block.header, &execution_result.receipts)?;
                     validate_requests_hash(
                         &block.header,
@@ -366,9 +381,11 @@ impl Blockchain {
                     ))
                 })
                 .expect("Failed to spawn block_executor merkleizer thread");
-            let _ = warm_handle
+            let warmer_duration = warm_handle
                 .join()
-                .inspect_err(|e| warn!("Warming thread error: {e:?}"));
+                .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                .ok()
+                .unwrap_or(Duration::ZERO);
             (
                 execution_handle.join().unwrap_or_else(|_| {
                     Err(ChainError::Custom("execution thread panicked".to_string()))
@@ -378,6 +395,7 @@ impl Blockchain {
                         "merklization thread panicked".to_string(),
                     ))
                 }),
+                warmer_duration,
             )
         });
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
@@ -398,6 +416,7 @@ impl Blockchain {
                 merkle_end_instant,
                 exec_merkle_end_instant,
             ],
+            warmer_duration,
         ))
     }
 
@@ -840,7 +859,7 @@ impl Blockchain {
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let execution_result = vm.execute_block(block)?;
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
 
@@ -915,7 +934,7 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
@@ -1513,7 +1532,7 @@ impl Blockchain {
                 parent_header.clone(),
             )?);
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let vm = match self.options.r#type.clone() {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
@@ -1531,8 +1550,14 @@ impl Blockchain {
             (vm, None)
         };
 
-        let (res, account_updates_list, accumulated_updates, merkle_queue_length, instants) =
-            self.execute_block_pipeline(&block, &parent_header, &mut vm)?;
+        let (
+            res,
+            account_updates_list,
+            accumulated_updates,
+            merkle_queue_length,
+            instants,
+            warmer_duration,
+        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1574,6 +1599,7 @@ impl Blockchain {
                 block_number,
                 transactions_count,
                 merkle_queue_length,
+                warmer_duration,
                 instants,
             );
         }
@@ -1642,55 +1668,161 @@ impl Blockchain {
         block_number: u64,
         transactions_count: usize,
         merkle_queue_length: usize,
+        warmer_duration: Duration,
         [
             start_instant,
             block_validated_instant,
             exec_merkle_start,
             exec_end_instant,
-            _merkle_end_instant,
+            merkle_end_instant,
             exec_merkle_end_instant,
             stored_instant,
         ]: [Instant; 7],
     ) {
-        let interval = stored_instant.duration_since(start_instant).as_secs_f64();
-        if interval != 0f64 {
-            let as_gigas = gas_used as f64 * 1e-9;
-            let throughput = as_gigas / interval;
-
-            metrics!(
-                METRICS_BLOCKS.set_block_number(block_number);
-                METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
-                METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
-                METRICS_BLOCKS.set_latest_gigagas(throughput);
-                METRICS_BLOCKS.set_transaction_count(transactions_count as i64);
-            );
-
-            let base_log = format!(
-                "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
-                block_number,
-                throughput,
-                interval * 1000.0,
-                as_gigas,
-                (gas_used as f64 / gas_limit as f64) * 100.0,
-                transactions_count
-            );
-
-            let percentage = move |init: Instant, end: Instant| {
-                (end.duration_since(init).as_secs_f64() / interval * 100.0).round()
-            };
-            let extra_log = if as_gigas > 0.0 {
-                format!(
-                    " block validation: {}% | exec(w/merkle): {}% | merkle-only: {}% (max_queue_length: {merkle_queue_length}) | store: {}%",
-                    percentage(start_instant, block_validated_instant),
-                    percentage(exec_merkle_start, exec_end_instant),
-                    percentage(exec_end_instant, exec_merkle_end_instant),
-                    percentage(exec_merkle_end_instant, stored_instant),
-                )
-            } else {
-                "".to_string()
-            };
-            info!("{}{}", base_log, extra_log);
+        let total_ms = stored_instant.duration_since(start_instant).as_millis() as u64;
+        if total_ms == 0 {
+            return;
         }
+
+        let as_mgas = gas_used as f64 / 1e6;
+        let throughput = (gas_used as f64 / 1e9) / (total_ms as f64 / 1000.0);
+
+        // Calculate phase durations in ms
+        let validate_ms = block_validated_instant
+            .duration_since(start_instant)
+            .as_millis() as u64;
+        let exec_ms = exec_end_instant
+            .duration_since(exec_merkle_start)
+            .as_millis() as u64;
+        let store_ms = stored_instant
+            .duration_since(exec_merkle_end_instant)
+            .as_millis() as u64;
+        let warmer_ms = warmer_duration.as_millis() as u64;
+
+        // Calculate merkle breakdown
+        // merkle_end_instant marks when merkle thread finished (may be before or after exec)
+        // exec_merkle_end_instant marks when both exec and merkle are done
+        let _merkle_total_ms = exec_merkle_end_instant
+            .duration_since(exec_merkle_start)
+            .as_millis() as u64;
+
+        // Concurrent merkle time: the portion of merkle that ran while exec was running
+        let merkle_concurrent_ms = (merkle_end_instant
+            .duration_since(exec_merkle_start)
+            .as_millis() as u64)
+            .min(exec_ms);
+
+        // Drain time: time spent finishing merkle after exec completed
+        let merkle_drain_ms = exec_merkle_end_instant
+            .saturating_duration_since(exec_end_instant)
+            .as_millis() as u64;
+
+        // Overlap percentage: how much of merkle work was done concurrently
+        let actual_merkle_ms = merkle_concurrent_ms + merkle_drain_ms;
+        let overlap_pct = if actual_merkle_ms > 0 {
+            (merkle_concurrent_ms * 100) / actual_merkle_ms
+        } else {
+            0
+        };
+
+        // Calculate warmer effectiveness (positive = finished early)
+        let warmer_early_ms = exec_ms as i64 - warmer_ms as i64;
+
+        // Determine bottleneck (effective time for each phase)
+        // For merkle, only count the drain time (concurrent time overlaps with exec)
+        let phases = [
+            ("validate", validate_ms),
+            ("exec", exec_ms),
+            ("merkle", merkle_drain_ms),
+            ("store", store_ms),
+        ];
+        let bottleneck = phases
+            .iter()
+            .max_by_key(|(_, ms)| ms)
+            .map(|(name, _)| *name)
+            .unwrap_or("exec");
+
+        // Helper for percentage
+        let pct = |ms: u64| ((ms as f64 / total_ms as f64) * 100.0).round() as u64;
+
+        // Format output
+        let header = format!(
+            "[METRIC] BLOCK {} | {:.3} Ggas/s | {} ms | {} txs | {:.0} Mgas ({}%)",
+            block_number,
+            throughput,
+            total_ms,
+            transactions_count,
+            as_mgas,
+            (gas_used as f64 / gas_limit as f64 * 100.0).round() as u64
+        );
+
+        let bottleneck_marker = |name: &str| {
+            if name == bottleneck {
+                " << BOTTLENECK"
+            } else {
+                ""
+            }
+        };
+
+        let warmer_relation = if warmer_early_ms >= 0 {
+            "before exec"
+        } else {
+            "after exec"
+        };
+
+        info!("{}", header);
+        info!(
+            "  |- validate: {:>4} ms  ({:>2}%){}",
+            validate_ms,
+            pct(validate_ms),
+            bottleneck_marker("validate")
+        );
+        info!(
+            "  |- exec:     {:>4} ms  ({:>2}%){}",
+            exec_ms,
+            pct(exec_ms),
+            bottleneck_marker("exec")
+        );
+        info!(
+            "  |- merkle:   {:>4} ms  ({:>2}%){}  [concurrent: {} ms, drain: {} ms, overlap: {}%, queue: {}]",
+            merkle_drain_ms,
+            pct(merkle_drain_ms),
+            bottleneck_marker("merkle"),
+            merkle_concurrent_ms,
+            merkle_drain_ms,
+            overlap_pct,
+            merkle_queue_length,
+        );
+        info!(
+            "  |- store:    {:>4} ms  ({:>2}%){}",
+            store_ms,
+            pct(store_ms),
+            bottleneck_marker("store")
+        );
+        info!(
+            "  `- warmer:   {:>4} ms         [finished: {} ms {}]",
+            warmer_ms,
+            warmer_early_ms.unsigned_abs(),
+            warmer_relation,
+        );
+
+        // Set prometheus metrics
+        metrics!(
+            METRICS_BLOCKS.set_block_number(block_number);
+            METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
+            METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
+            METRICS_BLOCKS.set_latest_gigagas(throughput);
+            METRICS_BLOCKS.set_transaction_count(transactions_count as i64);
+            METRICS_BLOCKS.set_validate_ms(validate_ms as i64);
+            METRICS_BLOCKS.set_execution_ms(exec_ms as i64);
+            METRICS_BLOCKS.set_merkle_concurrent_ms(merkle_concurrent_ms as i64);
+            METRICS_BLOCKS.set_merkle_drain_ms(merkle_drain_ms as i64);
+            METRICS_BLOCKS.set_merkle_ms(_merkle_total_ms as i64);
+            METRICS_BLOCKS.set_merkle_overlap_pct(overlap_pct as i64);
+            METRICS_BLOCKS.set_store_ms(store_ms as i64);
+            METRICS_BLOCKS.set_warmer_ms(warmer_ms as i64);
+            METRICS_BLOCKS.set_warmer_early_ms(warmer_early_ms);
+        );
     }
 
     /// Adds multiple blocks in a batch.

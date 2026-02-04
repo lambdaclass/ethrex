@@ -2,6 +2,7 @@
 version = "9.0.0"
 name = "ethrex-guest-zisk"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [workspace]
 
@@ -15,9 +16,6 @@ ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "zisk",
 ] }
 ethrex-common = { path = "../../../common", default-features = false, features = [
-    "zisk",
-] }
-ethrex-blockchain = { path = "../../../blockchain", default-features = false, features = [
     "zisk",
 ] }
 
