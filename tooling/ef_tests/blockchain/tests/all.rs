@@ -61,44 +61,35 @@ const EXTRA_SKIPS: &[&str] = &[];
 const SKIPPED_AMSTERDAM: &[&str] = &[
     // =========================================================================
     // SECTION 1: Amsterdam-specific EIP tests
-    // Comment out individual EIPs to test them (use cargo test filter)
+    // These EIP-specific test directories have failing tests. Once an EIP is
+    // fully implemented, remove it from this list to enable its tests.
     // =========================================================================
     //
-    // EIP-7928: Block-Level Access Lists (SFI) - NOT IMPLEMENTED
-    // Requires block-level state access tracking that changes gas costs
-    // ~250 tests | To test: cargo test eip7928 --profile release-with-debug
+    // EIP-7928: Block-Level Access Lists (SFI) - 94 failing tests
+    // Requires block-level state access tracking (BAL hash validation)
     "eip7928_block_level_access_lists",
     //
-    // EIP-7708: ETH Transfers Emit a Log (CFI) - NOT IMPLEMENTED
+    // EIP-7708: ETH Transfers Emit a Log (CFI) - 38 failing tests
     // Requires LOG emission on ETH value transfers
-    // ~66 tests | To test: cargo test eip7708 --profile release-with-debug
     "eip7708_eth_transfer_logs",
     //
-    // EIP-7778: Block Gas Accounting without Refunds (CFI) - NOT IMPLEMENTED
+    // EIP-7778: Block Gas Accounting without Refunds (CFI) - 2 failing tests
     // Requires changes to gas refund calculations at block level
-    // ~24 tests | To test: cargo test eip7778 --profile release-with-debug
     "eip7778_block_gas_accounting_without_refunds",
     //
-    // EIP-7843: SLOTNUM Opcode (CFI) - PARTIALLY IMPLEMENTED
+    // EIP-7843: SLOTNUM Opcode (CFI) - 2 failing tests
     // New opcode returning current slot number
-    // ~7 tests | To test: cargo test eip7843 --profile release-with-debug
     "eip7843_slotnum",
     //
-    // EIP-8024: DUPN/SWAPN/EXCHANGE (CFI) - IMPLEMENTED
-    // New stack manipulation opcodes
-    // Tests fail due to gas cost changes from other Amsterdam EIPs (EIP-7928, EIP-7778)
-    // ~400 tests | To test: cargo test eip8024 --profile release-with-debug
+    // EIP-8024: DUPN/SWAPN/EXCHANGE (CFI) - 41 failing tests
+    // New stack manipulation opcodes (tests fail due to gas cost differences)
     "eip8024_dupn_swapn_exchange",
     //
     // =========================================================================
-    // SECTION 2: Legacy tests running on Amsterdam fork
-    // These tests from older EIP directories run on Amsterdam and fail because
-    // Amsterdam changes gas costs (EIP-7928, EIP-7778). Keep skipped until ALL
-    // Amsterdam EIPs are implemented.
-    // ~31,000 tests across berlin, byzantium, cancun, prague, etc.
+    // SECTION 2: Legacy tests running on Amsterdam fork - ENABLED
+    // These pass (5971 tests) as they don't depend on Amsterdam-specific EIP
+    // features beyond what's implemented.
     // =========================================================================
-    "fork_Amsterdam",
-    "ToAmsterdam",
 ];
 
 // Select backend
