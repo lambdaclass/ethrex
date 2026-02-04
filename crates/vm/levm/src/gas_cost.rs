@@ -80,6 +80,7 @@ pub const PUSH0: u64 = 2;
 pub const PUSHN: u64 = 3;
 pub const DUPN: u64 = 3;
 pub const SWAPN: u64 = 3;
+pub const EXCHANGE: u64 = 3;
 pub const LOGN_STATIC: u64 = 375;
 pub const LOGN_DYNAMIC_BASE: u64 = 375;
 pub const LOGN_DYNAMIC_BYTE_BASE: u64 = 8;

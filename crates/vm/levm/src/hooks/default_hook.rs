@@ -136,11 +136,15 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
-        let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
-        refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
+        // Save pre-refund gas for EIP-7778 block accounting
+        let gas_used_pre_refund = ctx_result.gas_used;
 
-        pay_coinbase(vm, actual_gas_used)?;
+        let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
+        let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
+
+        refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
+
+        pay_coinbase(vm, gas_spent)?;
 
         delete_self_destruct_accounts(vm)?;
 
@@ -159,21 +163,40 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
+/// Refunds unused gas to the sender.
+///
+/// # EIP-7778 Changes
+/// - `gas_spent`: Post-refund gas (what the user actually pays)
+/// - `gas_used_pre_refund`: Pre-refund gas (for block-level accounting in Amsterdam+)
+///
+/// For Amsterdam+, the block uses pre-refund gas (`gas_used`) while the user pays post-refund
+/// gas (`gas_spent`). Before Amsterdam, both values are the same (post-refund).
 pub fn refund_sender(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
-    actual_gas_used: u64,
+    gas_spent: u64,
+    gas_used_pre_refund: u64,
 ) -> Result<(), VMError> {
-    // c. Update gas used and refunded.
-    ctx_result.gas_used = actual_gas_used;
     vm.substate.refunded_gas = refunded_gas;
 
-    // d. Finally, return unspent gas to the sender.
+    // EIP-7778: Separate block vs user gas accounting for Amsterdam+
+    if vm.env.config.fork >= Fork::Amsterdam {
+        // Block accounting uses pre-refund gas
+        ctx_result.gas_used = gas_used_pre_refund;
+        // User pays post-refund gas
+        ctx_result.gas_spent = gas_spent;
+    } else {
+        // Pre-Amsterdam: both use post-refund value
+        ctx_result.gas_used = gas_spent;
+        ctx_result.gas_spent = gas_spent;
+    }
+
+    // Return unspent gas to the sender (based on what user pays)
     let gas_to_return = vm
         .env
         .gas_limit
-        .checked_sub(actual_gas_used)
+        .checked_sub(gas_spent)
         .ok_or(InternalError::Underflow)?;
 
     let wei_return_amount = vm
@@ -230,6 +253,33 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
+    // EIP-7708: Emit Selfdestruct logs for accounts with non-zero balance
+    // This handles the case where a contract receives ETH after being flagged for SELFDESTRUCT
+    // Must emit in lexicographical order of address
+    if vm.env.config.fork >= Fork::Amsterdam {
+        let mut addresses_with_balance: Vec<(Address, U256)> = vm
+            .substate
+            .iter_selfdestruct()
+            .filter_map(|addr| {
+                let balance = vm.db.get_account(*addr).ok()?.info.balance;
+                if !balance.is_zero() {
+                    Some((*addr, balance))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by address (lexicographical order per EIP-7708)
+        addresses_with_balance.sort_by_key(|(addr, _)| *addr);
+
+        for (addr, balance) in addresses_with_balance {
+            let log = create_selfdestruct_log(addr, balance);
+            vm.substate.add_log(log);
+        }
+    }
+
+    // Delete the accounts
     for address in vm.substate.iter_selfdestruct() {
         let account_to_remove = vm.db.get_account_mut(*address)?;
         vm.current_call_frame
@@ -483,7 +533,18 @@ pub fn deduct_caller(
 /// Transfer msg_value to transaction recipient
 pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
     if !vm.is_create()? {
-        vm.increase_account_balance(vm.current_call_frame.to, vm.current_call_frame.msg_value)?;
+        let value = vm.current_call_frame.msg_value;
+        let to = vm.current_call_frame.to;
+
+        vm.increase_account_balance(to, value)?;
+
+        // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
+        // Self-transfers (origin == to) should NOT emit a log per the EIP spec
+        let from = vm.env.origin;
+        if vm.env.config.fork >= Fork::Amsterdam && !value.is_zero() && from != to {
+            let log = create_eth_transfer_log(from, to, value);
+            vm.substate.add_log(log);
+        }
     }
     Ok(())
 }
