@@ -261,10 +261,8 @@ impl PayloadBuildContext {
             if let Some(recorder) = vm.db.bal_recorder_mut() {
                 recorder.record_touched_address(payload.header.coinbase);
                 // Record withdrawal recipients for BAL per EIP-7928
-                if has_withdrawals {
-                    if let Some(withdrawals) = &payload.body.withdrawals {
-                        recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
-                    }
+                if has_withdrawals && let Some(withdrawals) = &payload.body.withdrawals {
+                    recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
                 }
             }
         }
