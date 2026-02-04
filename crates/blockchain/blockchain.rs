@@ -288,7 +288,7 @@ impl Blockchain {
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
 
@@ -350,7 +350,7 @@ impl Blockchain {
                         vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
                     // Validate execution went alright
-                    validate_gas_used(&execution_result.receipts, &block.header)?;
+                    validate_gas_used(execution_result.block_gas_used, &block.header)?;
                     validate_receipts_root(&block.header, &execution_result.receipts)?;
                     validate_requests_hash(
                         &block.header,
@@ -859,7 +859,7 @@ impl Blockchain {
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let execution_result = vm.execute_block(block)?;
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
 
