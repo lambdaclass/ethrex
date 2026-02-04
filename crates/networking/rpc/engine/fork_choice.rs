@@ -488,9 +488,9 @@ fn validate_attributes_v4(
 ) -> Result<(), RpcErr> {
     // Similar validation to V3
     let chain_config = context.storage.get_chain_config();
-    if !chain_config.is_cancun_activated(attributes.timestamp) {
+    if !chain_config.is_amsterdam_activated(attributes.timestamp) {
         return Err(RpcErr::InvalidPayloadAttributes(
-            "V4 payload attributes used for pre-Cancun timestamp".to_string(),
+            "V4 payload attributes used for pre-Amsterdam timestamp".to_string(),
         ));
     }
     if attributes.withdrawals.is_none() {
