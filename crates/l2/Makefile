@@ -261,6 +261,9 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 
 # State reconstruction tests
+# If this fails due to stale blobs, regenerate them following:
+# - docs/workflows/regenerate-blobs.md (agent workflow)
+# - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
 state-diff-test:
 	touch .env
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
@@ -276,5 +279,8 @@ state-diff-test:
 
 # Fast validation to check if blobs match genesis
 # Use this before state-diff-test to catch stale blobs early
+# If this fails, regenerate blobs following:
+# - docs/workflows/regenerate-blobs.md (agent workflow)
+# - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
 validate-blobs:
 	cargo test validate_blobs_match_genesis --release
