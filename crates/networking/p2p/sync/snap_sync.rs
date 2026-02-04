@@ -7,8 +7,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 #[cfg(feature = "rocksdb")]
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime};
 
 use ethrex_blockchain::Blockchain;
@@ -259,9 +259,13 @@ pub async fn snap_sync(
         .ok_or(SyncError::CorruptDB)?;
 
     while block_is_stale(&pivot_header) {
-        pivot_header =
-            update_pivot(pivot_header.number, pivot_header.timestamp, peers, block_sync_state)
-                .await?;
+        pivot_header = update_pivot(
+            pivot_header.number,
+            pivot_header.timestamp,
+            peers,
+            block_sync_state,
+        )
+        .await?;
     }
     debug!(
         "Selected block {} as pivot for snap sync",
@@ -388,8 +392,10 @@ pub async fn snap_sync(
                     );
                 }
 
-                warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
-                    This could impact snap sync time (healing may take a while).");
+                warn!(
+                    "Storage could not be downloaded after multiple attempts. Marking for healing.
+                    This could impact snap sync time (healing may take a while)."
+                );
 
                 storage_accounts.accounts_with_storage_root.clear();
             }
@@ -487,8 +493,8 @@ pub async fn snap_sync(
     let mut code_hashes_to_download = Vec::new();
 
     info!("Starting download code hashes from peers");
-    for entry in
-        std::fs::read_dir(&code_hashes_dir).map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
+    for entry in std::fs::read_dir(&code_hashes_dir)
+        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
     {
         let entry = entry.map_err(|_| SyncError::CorruptPath)?;
         let snapshot_contents = std::fs::read(entry.path())

@@ -604,3 +604,74 @@ pub fn parse_duration(input: String) -> Option<Duration> {
     }
     Some(res)
 }
+
+pub mod block_access_list {
+
+    use super::*;
+    use ethrex_rlp::decode::RLPDecode;
+    use ethrex_rlp::encode::RLPEncode;
+
+    pub mod rlp_str {
+
+        use crate::types::block_access_list::BlockAccessList;
+
+        use super::*;
+        pub fn deserialize<'de, D>(d: D) -> Result<BlockAccessList, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = String::deserialize(d)?;
+            let bytes = hex::decode(value.trim_start_matches("0x"))
+                .map_err(|e| D::Error::custom(e.to_string()))?;
+            BlockAccessList::decode(&bytes)
+                .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
+        }
+
+        pub fn serialize<S>(value: &BlockAccessList, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let buf = value.encode_to_vec();
+            serializer.serialize_str(&format!("0x{}", hex::encode(buf)))
+        }
+    }
+
+    pub mod rlp_str_opt {
+
+        use serde::Serialize;
+
+        use crate::types::block_access_list::BlockAccessList;
+
+        use super::*;
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<BlockAccessList>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = Option::<String>::deserialize(d)?;
+            match value {
+                Some(s) if !s.is_empty() => hex::decode(s.trim_start_matches("0x"))
+                    .map_err(|e| D::Error::custom(e.to_string()))
+                    .and_then(|b| {
+                        BlockAccessList::decode(&b)
+                            .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
+                    })
+                    .map(Some),
+                _ => Ok(None),
+            }
+        }
+
+        pub fn serialize<S>(
+            value: &Option<BlockAccessList>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let bal = value
+                .as_ref()
+                .map(|bal| bal.encode_to_vec())
+                .map(|bytes| format!("0x{}", hex::encode(bytes)));
+            Option::<String>::serialize(&bal, serializer)
+        }
+    }
+}

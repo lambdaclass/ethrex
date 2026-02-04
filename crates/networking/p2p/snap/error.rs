@@ -129,6 +129,8 @@ impl From<tokio::task::JoinError> for SnapError {
 }
 
 /// Error that occurs when dumping snapshots to disk
+#[derive(thiserror::Error)]
+#[error("Failed to dump snapshot to {}: {:?}", path.display(), error)]
 pub struct DumpError {
     pub path: PathBuf,
     pub contents: Vec<u8>,

@@ -17,7 +17,7 @@ use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
 use crate::{
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
     rkyv_utils,
 };
 
@@ -257,7 +257,6 @@ pub struct ChainConfig {
     pub bpo3_time: Option<u64>,
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
-
     pub amsterdam_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
@@ -349,6 +348,18 @@ impl From<Fork> for &str {
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
             Fork::Amsterdam => "Amsterdam",
+        }
+    }
+}
+
+impl Fork {
+    /// Returns the gas_spent value for receipt encoding based on fork.
+    /// EIP-7778 (Amsterdam+): receipts include gas_spent field.
+    pub fn gas_spent_for_receipt(self, gas_spent: u64) -> Option<u64> {
+        if self >= Fork::Amsterdam {
+            Some(gas_spent)
+        } else {
+            None
         }
     }
 }
@@ -696,8 +707,13 @@ impl Genesis {
             .is_prague_activated(self.timestamp)
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
 
-        // Amsterdam fork fields - these are optional and only included if present in genesis
-        let block_access_list_hash = self.block_access_list_hash;
+        let block_access_list_hash = self
+            .config
+            .is_amsterdam_activated(self.timestamp)
+            .then_some(
+                self.block_access_list_hash
+                    .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH),
+            );
         let slot_number = self.slot_number;
 
         BlockHeader {
