@@ -119,7 +119,7 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
         .copied()
         .chain(EXTRA_SKIPS.iter().copied())
         .chain(if skip_amsterdam {
-            SKIPPED_AMSTERDAM.iter().copied().collect::<Vec<_>>()
+            SKIPPED_AMSTERDAM.to_vec()
         } else {
             vec![]
         })
