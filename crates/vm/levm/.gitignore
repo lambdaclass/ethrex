@@ -1,6 +1,0 @@
-*.tar.gz
-*.svg
-
-tests/ef/tests
-tmp/
-target/

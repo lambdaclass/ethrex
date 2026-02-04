@@ -727,4 +727,360 @@ mod tests {
         }];
         assert_test_cases(test_cases, genesis.config, genesis_hash);
     }
+
+    #[test]
+    fn mainnet_test_cases() {
+        let genesis_file = std::fs::File::open("../../cmd/ethrex/networks/mainnet/genesis.json")
+            .expect("Failed to open genesis file");
+        let genesis_reader = BufReader::new(genesis_file);
+        let genesis: Genesis =
+            serde_json::from_reader(genesis_reader).expect("Failed to read genesis file");
+        let genesis_header = genesis.get_block().header;
+
+        let test_cases: Vec<TestCase> = vec![
+            TestCase {
+                head: 0,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xfc64ec04").unwrap(),
+                    fork_next: 1150000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1149999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xfc64ec04").unwrap(),
+                    fork_next: 1150000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1150000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x97c2c34c").unwrap(),
+                    fork_next: 1920000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1919999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x97c2c34c").unwrap(),
+                    fork_next: 1920000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1920000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x91d1f948").unwrap(),
+                    fork_next: 2463000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 2462999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x91d1f948").unwrap(),
+                    fork_next: 2463000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 2463000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x7a64da13").unwrap(),
+                    fork_next: 2675000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 2674999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x7a64da13").unwrap(),
+                    fork_next: 2675000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 2675000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x3edd5b10").unwrap(),
+                    fork_next: 4370000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 4369999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x3edd5b10").unwrap(),
+                    fork_next: 4370000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 4370000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xa00bc324").unwrap(),
+                    fork_next: 7280000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 7279999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xa00bc324").unwrap(),
+                    fork_next: 7280000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 7280000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x668db0af").unwrap(),
+                    fork_next: 9069000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 9068999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x668db0af").unwrap(),
+                    fork_next: 9069000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 9069000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x879d6e30").unwrap(),
+                    fork_next: 9200000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 9199999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x879d6e30").unwrap(),
+                    fork_next: 9200000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 9200000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xe029e991").unwrap(),
+                    fork_next: 12244000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 12243999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xe029e991").unwrap(),
+                    fork_next: 12244000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 12244000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x0eb440f6").unwrap(),
+                    fork_next: 12965000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 12964999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x0eb440f6").unwrap(),
+                    fork_next: 12965000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 12965000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xb715077d").unwrap(),
+                    fork_next: 13773000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 13772999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xb715077d").unwrap(),
+                    fork_next: 13773000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 13773000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x20c327fc").unwrap(),
+                    fork_next: 15050000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 15049999,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x20c327fc").unwrap(),
+                    fork_next: 15050000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 15050000,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xf0afd0e3").unwrap(),
+                    fork_next: 1681338455,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1681338454,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xf0afd0e3").unwrap(),
+                    fork_next: 1681338455,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1681338455,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xdce96c2d").unwrap(),
+                    fork_next: 1710338135,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1710338134,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xdce96c2d").unwrap(),
+                    fork_next: 1710338135,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1710338135,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x9f3d2254").unwrap(),
+                    fork_next: 1746612311,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1746612310,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x9f3d2254").unwrap(),
+                    fork_next: 1746612311,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1746612311,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xc376cf8b").unwrap(),
+                    fork_next: 1764798551,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1764798550,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xc376cf8b").unwrap(),
+                    fork_next: 1764798551,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1764798551,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x5167e2a6").unwrap(),
+                    fork_next: 1765290071,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1765290070,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x5167e2a6").unwrap(),
+                    fork_next: 1765290071,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1765290071,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xcba2a1c0").unwrap(),
+                    fork_next: 1767747671,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1767747670,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xcba2a1c0").unwrap(),
+                    fork_next: 1767747671,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 20000000,
+                time: 1767747671,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x07c9462e").unwrap(),
+                    fork_next: 0,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 25000000,
+                time: 2000000000,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x07c9462e").unwrap(),
+                    fork_next: 0,
+                },
+                is_valid: true,
+            },
+        ];
+        assert_test_cases(test_cases, genesis.config, genesis_header);
+    }
 }

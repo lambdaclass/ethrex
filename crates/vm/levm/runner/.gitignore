@@ -1,7 +1,0 @@
-code_*.txt
-mnemonics_*.txt
-input_*.json
-!input_example.json
-!code_example.txt
-!initcode_example.txt
-!mnemonics_example.txt

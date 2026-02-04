@@ -1,7 +1,0 @@
-type: "file-raw"
-keyType: "SECP256K1"
-privateKey: "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
----
-type: "file-raw"
-keyType: "SECP256K1"
-privateKey: "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"

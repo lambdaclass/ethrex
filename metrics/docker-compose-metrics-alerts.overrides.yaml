@@ -1,8 +1,0 @@
-services:
-  grafana:
-    volumes:
-      - ../metrics/provisioning/grafana/alerting:/etc/grafana/provisioning/alerting
-    environment:
-      - ALERTS_SLACK_TOKEN=${GRAFANA_SLACK_TOKEN:?Slack token is needed for alerts}
-      - ALERTS_SLACK_CHANNEL=${GRAFANA_SLACK_CHANNEL:?Slack channel is needed for alerts}
-      - INSTANCE=${GRAFANA_INSTANCE:-docker}
