@@ -395,7 +395,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "OnChainProposer: Invalid RISC0 proof failed proof verification"
+                    "00c" // OnChainProposer: Invalid RISC0 proof failed proof verification
                 );
             }
         }
@@ -411,7 +411,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "OnChainProposer: Invalid SP1 proof failed proof verification"
+                    "00e" // OnChainProposer: Invalid SP1 proof failed proof verification
                 );
             }
         }
@@ -424,7 +424,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "OnChainProposer: Invalid TDX proof failed proof verification"
+                    "00g" // OnChainProposer: Invalid TDX proof failed proof verification
                 );
             }
         }
