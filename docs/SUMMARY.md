@@ -117,6 +117,7 @@
   - [Generate blobs for the state reconstruction test](./developers/l2/state-reconstruction-blobs.md)
 - [Prover](./prover/prover.md)
   - [Guest program](./prover/guest_program.md)
+  - [SP1 Hypercube Integration](./prover/sp1_hypercube.md)
 - [Rich Accounts](./developers/rich-accounts.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
@@ -128,6 +129,7 @@
 # Roadmap
 
 - [Roadmap](../ROADMAP.md)
+- [L2 Roadmap](./roadmaps/L2_ROADMAP.md)
 
 # Why ethrex
 
