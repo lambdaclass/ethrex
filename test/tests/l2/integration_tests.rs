@@ -46,11 +46,12 @@ use std::cmp::min;
 use std::ops::{Add, AddAssign};
 use std::time::Duration;
 use std::{
-    fs::{File, read_to_string},
-    io::{BufRead, BufReader},
+    fs::read_to_string,
     path::{Path, PathBuf},
 };
 use tokio::task::JoinSet;
+
+use super::utils::{read_env_file_by_config, workspace_root};
 
 /// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
 /// from L1 to L2 and back.
@@ -97,8 +98,8 @@ const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
     0x25, 0x4c, 0xa1, 0x1d,
 ]);
 
-const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.txt";
-const DEFAULT_TEST_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_tests.txt";
+const DEFAULT_RICH_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_l1.txt";
+const DEFAULT_TEST_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_tests.txt";
 
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
@@ -302,8 +303,8 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
     let bridge_owner_private_key = bridge_owner_private_key();
     println!("test_upgrade: Downloading openzeppelin contracts");
 
-    let contracts_path = Path::new("contracts");
-    get_contract_dependencies(contracts_path);
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    get_contract_dependencies(&contracts_path);
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
@@ -312,16 +313,18 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
 
     println!("test_upgrade: Compiling CommonBridgeL2 contract");
     compile_contract(
-        contracts_path,
-        Path::new("contracts/src/l2/CommonBridgeL2.sol"),
+        &contracts_path,
+        &contracts_path.join("src/l2/CommonBridgeL2.sol"),
         false,
         false,
         Some(&remappings),
-        &[contracts_path],
+        &[&contracts_path],
         None,
     )?;
 
-    let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
+    let bridge_code = hex::decode(std::fs::read(
+        contracts_path.join("solc_out/CommonBridgeL2.bin"),
+    )?)?;
 
     println!("test_upgrade: Deploying CommonBridgeL2 contract");
     let (deploy_address, fees_details) = test_deploy(
@@ -552,31 +555,31 @@ async fn test_erc20_roundtrip(
     let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
+        workspace_root().join("fixtures/contracts/ERC20/ERC20.bin/TestToken.bin"),
     )?)?;
 
     println!("test_erc20_roundtrip: Deploying ERC20 token on L1");
     let token_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
 
-    let contracts_path = Path::new("contracts");
+    let contracts_path = workspace_root().join("crates/l2/contracts");
 
-    get_contract_dependencies(contracts_path);
+    get_contract_dependencies(&contracts_path);
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
     compile_contract(
-        contracts_path,
+        &contracts_path,
         &contracts_path.join("src/example/L2ERC20.sol"),
         false,
         false,
         Some(&remappings),
-        &[contracts_path],
+        &[&contracts_path],
         None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
-        "contracts/solc_out/TestTokenL2.bin",
+        contracts_path.join("solc_out/TestTokenL2.bin"),
     )?)?)?;
     let init_code_l2 = [
         init_code_l2_inner,
@@ -773,31 +776,31 @@ async fn test_erc20_withdraw_l1_address_mismatch(
     let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
+        workspace_root().join("fixtures/contracts/ERC20/ERC20.bin/TestToken.bin"),
     )?)?;
 
     println!("test_erc20_withdraw_l1_address_mismatch: Deploying ERC20 token on L1");
     let token_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
 
-    let contracts_path = Path::new("contracts");
+    let contracts_path = workspace_root().join("crates/l2/contracts");
 
-    get_contract_dependencies(contracts_path);
+    get_contract_dependencies(&contracts_path);
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
     compile_contract(
-        contracts_path,
+        &contracts_path,
         &contracts_path.join("src/example/L2ERC20.sol"),
         false,
         false,
         Some(&remappings),
-        &[contracts_path],
+        &[&contracts_path],
         None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
-        "contracts/solc_out/TestTokenL2.bin",
+        contracts_path.join("solc_out/TestTokenL2.bin"),
     )?)?)?;
     let init_code_l2 = [
         init_code_l2_inner,
@@ -969,7 +972,9 @@ async fn test_aliasing(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     println!("Testing aliasing");
-    let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
+    let init_code_l1 = hex::decode(std::fs::read(
+        workspace_root().join("fixtures/contracts/caller/Caller.bin"),
+    )?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
     let send_to_l2_calldata = encode_calldata(
         "sendToL2((address,uint256,uint256,bytes))",
@@ -1024,7 +1029,7 @@ async fn test_erc20_failed_deposit(
     let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
+        workspace_root().join("fixtures/contracts/ERC20/ERC20.bin/TestToken.bin"),
     )?)?;
 
     println!("test_erc20_failed_deposit: Deploying ERC20 token on L1");
@@ -1306,6 +1311,10 @@ async fn test_deposit(
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
+    println!(
+        "test_deposit: rich_wallet_address={rich_wallet_address:#x}, initial L2 balance={deposit_recipient_l2_initial_balance} wei"
+    );
+
     let bridge_initial_balance = l1_client
         .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -1414,7 +1423,7 @@ async fn test_privileged_spammer(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
+        workspace_root().join("fixtures/contracts/deposit_spammer/DepositSpammer.bin"),
     )?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
     for _ in 0..50 {
@@ -2240,20 +2249,20 @@ async fn test_fee_token(
     let l1_client = l1_client();
     println!("{test}: Rich wallet address: {rich_wallet_address:#x}");
 
-    let contracts_path = Path::new("contracts");
-    get_contract_dependencies(contracts_path);
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    get_contract_dependencies(&contracts_path);
 
-    let fee_token_path = Path::new("../../crates/l2/contracts/src/example");
-    let interfaces_path = Path::new("../../crates/l2/contracts/src/l2");
+    let fee_token_path = workspace_root().join("crates/l2/contracts/src/example");
+    let interfaces_path = workspace_root().join("crates/l2/contracts/src/l2");
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
-    let allow_paths = [fee_token_path, interfaces_path, contracts_path];
+    let allow_paths: [&Path; 3] = [&fee_token_path, &interfaces_path, &contracts_path];
 
     compile_contract(
-        fee_token_path,
+        &fee_token_path,
         &fee_token_path.join("FeeToken.sol"),
         false,
         false,
@@ -2675,33 +2684,6 @@ async fn get_fee_vault_balance(l2_client: &EthClient, vault_address: Option<Addr
         .unwrap()
 }
 
-pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
-    let Ok(env_file) = File::open(env_file_path) else {
-        println!(".env file not found, skipping");
-        return;
-    };
-
-    let reader = BufReader::new(env_file);
-
-    for line in reader.lines() {
-        let line = line.expect("Failed to read line");
-        if line.starts_with("#") {
-            // Skip comments
-            continue;
-        };
-        match line.split_once('=') {
-            Some((key, value)) => {
-                if std::env::vars().any(|(k, _)| k == key) {
-                    continue;
-                }
-                unsafe { std::env::set_var(key, value) }
-            }
-            None => continue,
-        };
-    }
-}
-
 fn get_tests_private_keys() -> Vec<SecretKey> {
     let private_keys_file_path = test_private_keys_path();
     let pks =
@@ -2752,7 +2734,7 @@ fn test_private_keys_path() -> PathBuf {
             println!(
                 "INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_TEST_KEYS_FILE_PATH}",
             );
-            PathBuf::from(DEFAULT_TEST_KEYS_FILE_PATH)
+            workspace_root().join(DEFAULT_TEST_KEYS_FILE_PATH)
         }
     }
 }
@@ -2764,7 +2746,7 @@ fn rich_keys_file_path() -> PathBuf {
             println!(
                 "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_RICH_KEYS_FILE_PATH}",
             );
-            PathBuf::from(DEFAULT_RICH_KEYS_FILE_PATH)
+            workspace_root().join(DEFAULT_RICH_KEYS_FILE_PATH)
         }
     }
 }
@@ -2794,24 +2776,28 @@ fn get_contract_dependencies(contracts_path: &Path) {
     .unwrap();
 }
 
-// Removes the contracts/lib and contracts/solc_out directories
-// generated by the tests.
+// Removes the contracts/lib, contracts/solc_out, and contracts/src/example/solc_out
+// directories generated by the tests.
 fn clean_contracts_dir() {
-    let lib_path = Path::new("contracts/lib");
-    let solc_path = Path::new("contracts/solc_out");
+    let contracts_base = workspace_root().join("crates/l2/contracts");
+    let paths_to_clean = [
+        contracts_base.join("lib"),
+        contracts_base.join("solc_out"),
+        contracts_base.join("src/example/solc_out"),
+    ];
 
-    let _ = std::fs::remove_dir_all(lib_path).inspect_err(|e| {
-        println!("Failed to remove {}: {}", lib_path.display(), e);
-    });
-    let _ = std::fs::remove_dir_all(solc_path).inspect_err(|e| {
-        println!("Failed to remove {}: {}", solc_path.display(), e);
-    });
+    for path in &paths_to_clean {
+        let _ = std::fs::remove_dir_all(path).inspect_err(|e| {
+            println!("Failed to remove {}: {e}", path.display());
+        });
+    }
 
-    println!(
-        "Cleaned up {} and {}",
-        lib_path.display(),
-        solc_path.display()
-    );
+    let cleaned_paths = paths_to_clean
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("Cleaned up: {cleaned_paths}");
 }
 
 fn transfer_value() -> U256 {

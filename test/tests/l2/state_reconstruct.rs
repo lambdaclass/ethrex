@@ -10,9 +10,11 @@ use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 use secp256k1::SecretKey;
 
-const ETH_RPC_URL: &str = "http://localhost:1729";
-
 use std::fs;
+
+use super::utils::workspace_root;
+
+const ETH_RPC_URL: &str = "http://localhost:1729";
 
 // This test verifies the correct reconstruction of the L2 state from data blobs.
 
@@ -30,8 +32,12 @@ use std::fs;
 // - Each block contains exactly 10 deposit transactions
 #[tokio::test]
 async fn test_state_reconstruct() {
-    let pks_path = std::env::var("PRIVATE_KEYS_PATH")
-        .unwrap_or("../../fixtures/keys/private_keys_l1.txt".to_string());
+    let pks_path = std::env::var("PRIVATE_KEYS_PATH").unwrap_or_else(|_| {
+        workspace_root()
+            .join("fixtures/keys/private_keys_l1.txt")
+            .to_string_lossy()
+            .into_owned()
+    });
     let pks = fs::read_to_string(&pks_path).unwrap();
     let private_keys: Vec<String> = pks
         .lines()

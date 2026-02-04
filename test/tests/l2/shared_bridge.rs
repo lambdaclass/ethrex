@@ -26,14 +26,10 @@ use ethrex_rpc::{
 };
 use reqwest::Url;
 use secp256k1::SecretKey;
-use std::{fs::File, io::BufRead};
-use std::{
-    io::BufReader,
-    path::{Path, PathBuf},
-    str::FromStr,
-    time::Duration,
-};
+use std::{path::Path, str::FromStr, time::Duration};
 use tokio::time::sleep;
+
+use super::utils::{read_env_file_by_config, workspace_root};
 
 const L1_RPC_URL: &str = "http://localhost:8545";
 const L2A_RPC_URL: &str = "http://localhost:1729";
@@ -72,33 +68,6 @@ fn on_chain_proposer_address() -> Address {
         .unwrap_or(DEFAULT_ON_CHAIN_PROPOSER_ADDRESS)
 }
 
-pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
-    let Ok(env_file) = File::open(env_file_path) else {
-        println!(".env file not found, skipping");
-        return;
-    };
-
-    let reader = BufReader::new(env_file);
-
-    for line in reader.lines() {
-        let line = line.expect("Failed to read line");
-        if line.starts_with("#") {
-            // Skip comments
-            continue;
-        };
-        match line.split_once('=') {
-            Some((key, value)) => {
-                if std::env::vars().any(|(k, _)| k == key) {
-                    continue;
-                }
-                unsafe { std::env::set_var(key, value) }
-            }
-            None => continue,
-        };
-    }
-}
-
 #[tokio::test]
 async fn test_shared_bridge() -> Result<()> {
     test_counter().await?;
@@ -123,6 +92,16 @@ async fn test_transfer_erc_20() -> Result<()> {
     let signer: Signer = LocalSigner::new(private_key).into();
     let sender_address = signer.address();
     println!("test_transfer_erc_20: Sender address: {sender_address:?}");
+
+    let sender_l2a_balance = l2a_client
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let sender_l2b_balance = l2b_client
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    println!(
+        "test_transfer_erc_20: sender_address={sender_address:#x}, initial L2A balance={sender_l2a_balance} wei, initial L2B balance={sender_l2b_balance} wei"
+    );
 
     let l1_erc20_contract_address = deploy_l1_erc20(&l1_client, &signer, sender_address).await?;
     let fee_token_contract = build_fee_token_bytecode(l1_erc20_contract_address)?;
@@ -226,8 +205,9 @@ async fn deploy_l1_erc20(
     signer: &Signer,
     sender_address: Address,
 ) -> Result<Address> {
-    let init_code_bytes = std::fs::read("../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin")
-        .context("failed to read L1 ERC20 bytecode file")?;
+    let init_code_bytes =
+        std::fs::read(workspace_root().join("fixtures/contracts/ERC20/ERC20.bin/TestToken.bin"))
+            .context("failed to read L1 ERC20 bytecode file")?;
     let init_code_l1 =
         hex::decode(init_code_bytes).context("failed to decode L1 ERC20 bytecode")?;
 
@@ -248,20 +228,24 @@ async fn deploy_l1_erc20(
 }
 
 fn build_fee_token_bytecode(l1_erc20_contract_address: Address) -> Result<Vec<u8>> {
-    let contracts_path = Path::new("contracts");
-    get_contract_dependencies(contracts_path);
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    get_contract_dependencies(&contracts_path);
 
-    let fee_token_path = Path::new("../../crates/l2/contracts/src/example");
-    let interfaces_path = Path::new("../../crates/l2/contracts/src/l2");
+    let fee_token_path = contracts_path.join("src/example");
+    let interfaces_path = contracts_path.join("src/l2");
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
-    let allow_paths = [fee_token_path, interfaces_path, contracts_path];
+    let allow_paths = [
+        fee_token_path.as_path(),
+        interfaces_path.as_path(),
+        contracts_path.as_path(),
+    ];
 
     compile_contract(
-        fee_token_path,
+        &fee_token_path,
         &fee_token_path.join("FeeToken.sol"),
         false,
         false,
@@ -377,6 +361,13 @@ async fn test_counter() -> Result<()> {
         .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await
         .expect("Error getting balance");
+
+    println!(
+        "test_counter: sender_address={sender_address:#x}, initial L2B balance={sender_balance} wei"
+    );
+    println!(
+        "test_counter: receiver_address={receiver_address:#x}, initial L2A balance={receiver_balance} wei"
+    );
 
     let private_key = SecretKey::from_str(SENDER_PRIVATE_KEY).unwrap();
     let value = U256::from(VALUE);
@@ -690,25 +681,26 @@ async fn compile_and_deploy_counter(
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
 ) -> Result<Address> {
-    let contracts_path = Path::new("contracts");
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    let counter_path = contracts_path.join("src/example");
 
-    get_contract_dependencies(contracts_path);
+    get_contract_dependencies(&contracts_path);
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
     compile_contract(
-        contracts_path,
-        &contracts_path.join("src/example/Counter.sol"),
+        &counter_path,
+        &counter_path.join("Counter.sol"),
         false,
         false,
         Some(&remappings),
-        &[contracts_path],
+        &[counter_path.as_path(), contracts_path.as_path()],
         None,
     )?;
     let init_code_l2 = hex::decode(String::from_utf8(std::fs::read(
-        "contracts/solc_out/Counter.bin",
+        counter_path.join("solc_out/Counter.bin"),
     )?)?)?;
 
     let counter = test_deploy(
