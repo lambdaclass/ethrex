@@ -659,19 +659,16 @@ impl Blockchain {
     ) -> Result<Trie, StoreError> {
         Ok(match prefix {
             Some(account_hash) => {
-                let trie = self.storage.open_storage_trie(
+                let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
+                let storage_root = match state_trie.get(account_hash.as_bytes())? {
+                    Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                    None => *EMPTY_TRIE_HASH,
+                };
+                self.storage.open_storage_trie(
                     account_hash,
                     parent_header.state_root,
-                    *EMPTY_TRIE_HASH,
-                )?;
-                let root = trie
-                    .db()
-                    .get(Nibbles::default())?
-                    .filter(|rlp| !rlp.is_empty())
-                    .map(keccak)
-                    .unwrap_or(*EMPTY_TRIE_HASH);
-                self.storage
-                    .open_storage_trie(account_hash, parent_header.state_root, root)?
+                    storage_root,
+                )?
             }
             None => self.storage.open_state_trie(parent_header.state_root)?,
         })
