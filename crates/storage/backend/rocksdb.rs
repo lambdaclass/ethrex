@@ -11,8 +11,8 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
-    WriteBatch,
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MultiThreaded, Options,
+    SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -73,8 +73,17 @@ impl RocksDBBackend {
             FULLSYNC_HEADERS,
         ];
 
-        // opts.enable_statistics();
-        // opts.set_stats_dump_period_sec(600);
+        opts.enable_statistics();
+        opts.set_stats_dump_period_sec(600);
+
+        // Shared LRU block cache for trie column families (default 1 GB)
+        let block_cache_size: usize = std::env::var("ETHREX_BLOCK_CACHE_MB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1024)
+            * 1024
+            * 1024;
+        let block_cache = Cache::new_lru_cache(block_cache_size);
 
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
@@ -127,7 +136,10 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_bloom_filter(15.0, false); // 15 bits per key (~0.1% FP)
+                    block_opts.set_block_cache(&block_cache);
+                    block_opts.set_cache_index_and_filter_blocks(true);
+                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -139,7 +151,10 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_bloom_filter(15.0, false); // 15 bits per key (~0.1% FP)
+                    block_opts.set_block_cache(&block_cache);
+                    block_opts.set_cache_index_and_filter_blocks(true);
+                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {

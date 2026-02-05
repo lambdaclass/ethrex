@@ -1,4 +1,6 @@
 use ethrex_common::H256;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::storage::METRICS_STORAGE;
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
@@ -73,6 +75,8 @@ impl TrieLayerCache {
         // Fast check to know if any layer may contain the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or may not exist (false positive).
         if !self.bloom.contains(key) {
+            #[cfg(feature = "metrics")]
+            METRICS_STORAGE.inc_layer_cache_misses();
             // TrieWrapper goes to db when returning None.
             return None;
         }
@@ -81,6 +85,8 @@ impl TrieLayerCache {
 
         while let Some(layer) = self.layers.get(&current_state_root) {
             if let Some(value) = layer.nodes.get(key) {
+                #[cfg(feature = "metrics")]
+                METRICS_STORAGE.inc_layer_cache_hits();
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
@@ -94,6 +100,8 @@ impl TrieLayerCache {
                 panic!("State cycle found");
             }
         }
+        #[cfg(feature = "metrics")]
+        METRICS_STORAGE.inc_layer_cache_misses();
         None
     }
 
@@ -147,6 +155,8 @@ impl TrieLayerCache {
             id: self.last_id,
         };
         self.layers.insert(state_root, Arc::new(entry));
+        #[cfg(feature = "metrics")]
+        METRICS_STORAGE.set_layer_cache_layers(self.layers.len() as i64);
     }
 
     /// Rebuilds the global bloom filter by inserting all keys from all layers.
@@ -177,6 +187,8 @@ impl TrieLayerCache {
         let top_layer_id = layers_to_commit.first()?.id;
         // older layers are useless
         self.layers.retain(|_, item| item.id > top_layer_id);
+        #[cfg(feature = "metrics")]
+        METRICS_STORAGE.set_layer_cache_layers(self.layers.len() as i64);
         self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
         let nodes_to_commit = layers_to_commit
             .into_iter()

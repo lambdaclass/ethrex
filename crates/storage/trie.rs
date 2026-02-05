@@ -5,6 +5,8 @@ use crate::api::{StorageBackend, StorageLockedView};
 use crate::error::StoreError;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::storage::METRICS_STORAGE;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::sync::Arc;
 
@@ -91,6 +93,8 @@ impl TrieDB for BackendTrieDB {
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        #[cfg(feature = "metrics")]
+        METRICS_STORAGE.inc_db_reads();
         let prefixed_key = self.make_key(key);
         let table = self.table_for_key(&prefixed_key);
         let tx = self.db.begin_read().map_err(|e| {
@@ -101,6 +105,11 @@ impl TrieDB for BackendTrieDB {
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        #[cfg(feature = "metrics")]
+        {
+            METRICS_STORAGE.inc_db_writes();
+            METRICS_STORAGE.set_db_write_batch_size(key_values.len() as i64);
+        }
         let mut tx = self.db.begin_write().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
         })?;

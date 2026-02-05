@@ -4296,6 +4296,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-trie",
  "fastbloom",

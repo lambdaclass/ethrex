@@ -29,10 +29,12 @@ tokio = { workspace = true, features = ["rt"] }
 fastbloom = "0.14"
 rayon.workspace = true
 lru = "0.16.2"
+ethrex-metrics = { path = "../blockchain/metrics", default-features = false, optional = true }
 
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
+metrics = ["dep:ethrex-metrics", "ethrex-metrics/metrics"]
 
 [dev-dependencies]
 hex.workspace = true

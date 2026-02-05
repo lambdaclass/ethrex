@@ -14,6 +14,8 @@ pub mod process;
 pub mod profiling;
 #[cfg(feature = "api")]
 pub mod rpc;
+#[cfg(any(feature = "api", feature = "metrics"))]
+pub mod storage;
 #[cfg(any(feature = "api", feature = "transactions"))]
 pub mod transactions;
 
