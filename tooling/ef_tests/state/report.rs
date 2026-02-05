@@ -125,6 +125,12 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
     .filter_map(|fork| fork_summary_for_slack(reports, *fork))
     .collect();
 
+    let fork_details = if fork_summaries.len() > 1 {
+        format!("\n\n{}", fork_summaries.join("\n"))
+    } else {
+        String::new()
+    };
+
     format!(
         r#"{{
     "blocks": [
@@ -142,12 +148,11 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
             "type": "section",
             "text": {{
                 "type": "mrkdwn",
-                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n"
+                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%){fork_details}\n"
             }}
         }}
     ]
 }}"#,
-        fork_summaries.join("\n"),
     )
 }
 
@@ -192,9 +197,14 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
     .filter_map(|fork| fork_summary_for_github(reports, *fork))
     .collect();
 
+    let fork_details = if fork_summaries.len() > 1 {
+        format!("\n\n{}", fork_summaries.join("\n"))
+    } else {
+        String::new()
+    };
+
     format!(
-        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n"#,
-        fork_summaries.join("\n"),
+        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%){fork_details}\n"#,
     )
 }
 
