@@ -328,6 +328,28 @@ impl Node {
         Ok(())
     }
 
+    /// Inserts a batch of sorted (path, value) pairs into the subtrie originating from this node.
+    /// Keys must be sorted by path for optimal performance. This groups DB reads efficiently
+    /// by loading each intermediate node at most once across all keys in the batch.
+    pub fn insert_batch(
+        &mut self,
+        db: &dyn TrieDB,
+        updates: &[(Nibbles, ValueRLP)],
+    ) -> Result<(), TrieError> {
+        let new_node = match self {
+            Node::Branch(n) => {
+                n.insert_batch(db, updates)?;
+                None
+            }
+            Node::Extension(n) => n.insert_batch(db, updates)?,
+            Node::Leaf(n) => n.insert_batch(db, updates)?,
+        };
+        if let Some(new_node) = new_node {
+            *self = new_node;
+        }
+        Ok(())
+    }
+
     /// Removes a value from the subtrie originating from this node given its path
     /// Returns a bool indicating if the new subtrie is empty, and the removed value if it existed in the subtrie
     pub fn remove(

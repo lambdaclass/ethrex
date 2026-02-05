@@ -151,6 +151,84 @@ impl Trie {
         Ok(())
     }
 
+    /// Insert a batch of (path, value) pairs into the trie. The pairs are sorted by path
+    /// internally for optimal performance. Empty values are treated as removals.
+    /// When duplicate keys exist, the last entry wins (preserving input order semantics).
+    /// This method groups DB reads efficiently by loading each intermediate node at most once.
+    pub fn insert_batch_sorted(
+        &mut self,
+        updates: Vec<(PathRLP, ValueRLP)>,
+    ) -> Result<(), TrieError> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        // Deduplicate: keep only the last operation for each key (last-write-wins)
+        let mut deduped: BTreeMap<PathRLP, ValueRLP> = BTreeMap::new();
+        for (path, value) in updates {
+            deduped.insert(path, value);
+        }
+
+        // Separate removes (empty value) from inserts
+        let mut removes: Vec<PathRLP> = Vec::new();
+        let mut inserts: Vec<(PathRLP, ValueRLP)> = Vec::new();
+        for (path, value) in deduped {
+            if value.is_empty() {
+                removes.push(path);
+            } else {
+                inserts.push((path, value));
+            }
+        }
+
+        // Process removes first via existing remove logic
+        for path in &removes {
+            self.remove(path)?;
+        }
+
+        if inserts.is_empty() {
+            return Ok(());
+        }
+
+        // Convert to Nibbles and sort
+        let mut nibble_updates: Vec<(Nibbles, ValueRLP)> = inserts
+            .into_iter()
+            .map(|(path, value)| (Nibbles::from_bytes(&path), value))
+            .collect();
+        nibble_updates.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+        // Mark all paths as dirty and remove from pending_removal
+        for (path, _) in &nibble_updates {
+            self.pending_removal.remove(path);
+            self.dirty.insert(path.clone());
+        }
+
+        if self.root.is_valid() {
+            self.root
+                .get_node_mut(self.db.as_ref(), Nibbles::default())?
+                .ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
+                })?
+                .insert_batch(self.db.as_ref(), &nibble_updates)?;
+        } else {
+            // Empty trie: create first leaf, then batch insert the rest
+            let (first_path, first_value) = nibble_updates.remove(0);
+            self.root = Node::from(LeafNode::new(first_path, first_value)).into();
+            if !nibble_updates.is_empty() {
+                self.root
+                    .get_node_mut(self.db.as_ref(), Nibbles::default())?
+                    .ok_or_else(|| {
+                        TrieError::InconsistentTree(Box::new(
+                            InconsistentTreeError::RootNotFoundNoHash,
+                        ))
+                    })?
+                    .insert_batch(self.db.as_ref(), &nibble_updates)?;
+            }
+        }
+        self.root.clear_hash();
+
+        Ok(())
+    }
+
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
@@ -607,5 +685,170 @@ impl ProofTrie {
 impl From<Trie> for ProofTrie {
     fn from(value: Trie) -> Self {
         Self(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: insert key-value pairs sequentially and return the trie hash
+    fn sequential_insert_hash(pairs: &[(Vec<u8>, Vec<u8>)]) -> H256 {
+        let mut trie = Trie::new_temp();
+        for (path, value) in pairs {
+            if value.is_empty() {
+                trie.remove(path).unwrap();
+            } else {
+                trie.insert(path.clone(), value.clone()).unwrap();
+            }
+        }
+        trie.hash_no_commit()
+    }
+
+    /// Helper: insert key-value pairs via batch and return the trie hash
+    fn batch_insert_hash(pairs: &[(Vec<u8>, Vec<u8>)]) -> H256 {
+        let mut trie = Trie::new_temp();
+        trie.insert_batch_sorted(pairs.to_vec()).unwrap();
+        trie.hash_no_commit()
+    }
+
+    /// Generate deterministic H256-like keys for testing
+    fn make_key(seed: u8) -> Vec<u8> {
+        // Use keccak to get well-distributed keys
+        ethrex_crypto::keccak::keccak_hash([seed]).to_vec()
+    }
+
+    #[test]
+    fn batch_insert_matches_sequential_hash() {
+        // Insert 100 random H256 keys both ways, compare trie root hash
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..100u8)
+            .map(|i| (make_key(i), vec![i, i + 1, i + 2]))
+            .collect();
+
+        let seq_hash = sequential_insert_hash(&pairs);
+        let batch_hash = batch_insert_hash(&pairs);
+        assert_eq!(
+            seq_hash, batch_hash,
+            "Batch insert must produce identical root hash as sequential insert"
+        );
+    }
+
+    #[test]
+    fn batch_insert_into_existing_trie() {
+        // Pre-populate trie with 50 keys, batch-insert 50 more, compare to sequential
+        let first_half: Vec<(Vec<u8>, Vec<u8>)> = (0..50u8)
+            .map(|i| (make_key(i), vec![i, i + 1]))
+            .collect();
+        let second_half: Vec<(Vec<u8>, Vec<u8>)> = (50..100u8)
+            .map(|i| (make_key(i), vec![i, i + 1]))
+            .collect();
+
+        // Sequential: insert all 100
+        let all_pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..100u8)
+            .map(|i| (make_key(i), vec![i, i + 1]))
+            .collect();
+        let expected_hash = sequential_insert_hash(&all_pairs);
+
+        // Batch: insert first 50 sequentially, then batch-insert next 50
+        let mut trie = Trie::new_temp();
+        for (path, value) in &first_half {
+            trie.insert(path.clone(), value.clone()).unwrap();
+        }
+        trie.insert_batch_sorted(second_half).unwrap();
+        let actual_hash = trie.hash_no_commit();
+
+        assert_eq!(
+            expected_hash, actual_hash,
+            "Batch insert into existing trie must match sequential"
+        );
+    }
+
+    #[test]
+    fn batch_insert_with_removes() {
+        // Mix of inserts and removes (empty value = remove)
+        let mut pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..50u8)
+            .map(|i| (make_key(i), vec![i, i + 1]))
+            .collect();
+        // Add some removes for keys that were inserted
+        for i in [5u8, 15, 25, 35, 45] {
+            pairs.push((make_key(i), vec![]));
+        }
+
+        let seq_hash = sequential_insert_hash(&pairs);
+        let batch_hash = batch_insert_hash(&pairs);
+        assert_eq!(
+            seq_hash, batch_hash,
+            "Batch insert with removes must match sequential"
+        );
+    }
+
+    #[test]
+    fn batch_insert_empty_trie() {
+        let mut trie = Trie::new_temp();
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..10u8)
+            .map(|i| (make_key(i), vec![i]))
+            .collect();
+
+        let expected = sequential_insert_hash(&pairs);
+        trie.insert_batch_sorted(pairs).unwrap();
+        assert_eq!(trie.hash_no_commit(), expected);
+    }
+
+    #[test]
+    fn batch_insert_single_element() {
+        let pairs = vec![(make_key(42), vec![42, 43, 44])];
+
+        let seq_hash = sequential_insert_hash(&pairs);
+        let batch_hash = batch_insert_hash(&pairs);
+        assert_eq!(seq_hash, batch_hash);
+    }
+
+    #[test]
+    fn batch_insert_empty_updates() {
+        let mut trie = Trie::new_temp();
+        // Insert something first
+        trie.insert(make_key(1), vec![1, 2, 3]).unwrap();
+        let hash_before = trie.hash_no_commit();
+
+        // Batch insert with empty updates should not change anything
+        trie.insert_batch_sorted(vec![]).unwrap();
+        assert_eq!(trie.hash_no_commit(), hash_before);
+    }
+
+    #[test]
+    fn batch_insert_duplicate_keys_last_wins() {
+        // When batch contains duplicate keys, the last value should win
+        // (since we sort by key and process in order)
+        let key = make_key(7);
+        let pairs_batch = vec![
+            (key.clone(), vec![1]),
+            (key.clone(), vec![2]),
+            (key.clone(), vec![3]),
+        ];
+
+        // Sequential: last write wins
+        let seq_hash = sequential_insert_hash(&pairs_batch);
+        let batch_hash = batch_insert_hash(&pairs_batch);
+        assert_eq!(seq_hash, batch_hash);
+    }
+
+    #[test]
+    fn batch_insert_values_retrievable() {
+        // Verify that values inserted via batch can be retrieved
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..20u8)
+            .map(|i| (make_key(i), vec![i, i * 2]))
+            .collect();
+
+        let mut trie = Trie::new_temp();
+        trie.insert_batch_sorted(pairs.clone()).unwrap();
+
+        for (path, expected_value) in &pairs {
+            let got = trie.get(path).unwrap();
+            assert_eq!(
+                got.as_deref(),
+                Some(expected_value.as_slice()),
+                "Value for key should be retrievable after batch insert"
+            );
+        }
     }
 }

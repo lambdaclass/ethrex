@@ -3,7 +3,7 @@ use std::mem;
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::{
-    ValueRLP,
+    TrieDB, ValueRLP,
     error::TrieError,
     nibbles::Nibbles,
     node::{BranchNode, NodeRemoveResult},
@@ -122,6 +122,49 @@ impl LeafNode {
             };
 
             Ok(Some(final_node))
+        }
+    }
+
+    /// Inserts a batch of sorted (path, value) pairs into the subtrie originating from this node.
+    /// Returns `Some(Node)` if the leaf must be replaced (split into branch/extension).
+    /// Returns `None` if only the leaf's value was updated.
+    pub fn insert_batch(
+        &mut self,
+        db: &dyn TrieDB,
+        updates: &[(Nibbles, ValueRLP)],
+    ) -> Result<Option<Node>, TrieError> {
+        if updates.is_empty() {
+            return Ok(None);
+        }
+
+        // Insert the first element using existing logic to handle leaf splitting
+        let (ref first_path, ref first_value) = updates[0];
+        let new_node = self.insert(first_path.clone(), first_value.clone().into())?;
+
+        if updates.len() == 1 {
+            return Ok(new_node);
+        }
+
+        // If the leaf was replaced with a new structure, insert remaining into that
+        if let Some(mut node) = new_node {
+            node.insert_batch(db, &updates[1..])?;
+            Ok(Some(node))
+        } else {
+            // Leaf was updated in place (same path). Insert remaining elements sequentially
+            // since they must have different paths and will split the leaf.
+            let new_node = self.insert(updates[1].0.clone(), updates[1].1.clone().into())?;
+            if let Some(mut node) = new_node {
+                if updates.len() > 2 {
+                    node.insert_batch(db, &updates[2..])?;
+                }
+                Ok(Some(node))
+            } else {
+                // All updates have the same path - just keep updating value
+                for (path, value) in &updates[2..] {
+                    self.insert(path.clone(), value.clone().into())?;
+                }
+                Ok(None)
+            }
         }
     }
 

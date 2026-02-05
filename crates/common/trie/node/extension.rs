@@ -150,6 +150,62 @@ impl ExtensionNode {
         }
     }
 
+    /// Inserts a batch of sorted (path, value) pairs into the subtrie originating from this node.
+    /// Returns `Some(Node)` if the extension node must be replaced (e.g., when paths diverge from prefix).
+    /// Returns `None` if the extension was mutated in place (all paths share the prefix).
+    pub fn insert_batch(
+        &mut self,
+        db: &dyn TrieDB,
+        updates: &[(Nibbles, ValueRLP)],
+    ) -> Result<Option<Node>, TrieError> {
+        // Check if all updates share this extension's prefix
+        let all_share_prefix = updates
+            .iter()
+            .all(|(path, _)| path.count_prefix(&self.prefix) == self.prefix.len());
+
+        if all_share_prefix {
+            // Common case: all updates go through this extension's prefix.
+            // Strip prefix and recurse into child.
+            let stripped: Vec<(Nibbles, ValueRLP)> = updates
+                .iter()
+                .map(|(p, v)| (p.offset(self.prefix.len()), v.clone()))
+                .collect();
+
+            let Some(child_node) = self.child.get_node_mut(db, stripped[0].0.current())? else {
+                return Err(TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: stripped[0].0.current(),
+                    }),
+                )));
+            };
+            child_node.insert_batch(db, &stripped)?;
+            self.child.clear_hash();
+            Ok(None)
+        } else {
+            // Some updates diverge from the extension prefix.
+            // Fall back to sequential inserts for correctness (handles extension splitting).
+            let mut result_node: Option<Node> = None;
+            for (path, value) in updates {
+                if let Some(ref mut node) = result_node {
+                    node.insert(db, path.clone(), value.clone())?;
+                } else {
+                    match self.insert(db, path.clone(), value.clone().into())? {
+                        Some(new_node) => {
+                            result_node = Some(new_node);
+                        }
+                        None => {
+                            // Extension was mutated in place, continue
+                        }
+                    }
+                }
+            }
+            Ok(result_node)
+        }
+    }
+
     pub fn remove(
         &mut self,
         db: &dyn TrieDB,

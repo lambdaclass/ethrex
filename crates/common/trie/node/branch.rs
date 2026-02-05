@@ -260,6 +260,97 @@ impl BranchNode {
         Ok((Some(new_node), value))
     }
 
+    /// Inserts a batch of sorted (path, value) pairs into the subtrie originating from this node.
+    /// Updates must be sorted by path. This avoids redundant intermediate node loads by grouping
+    /// keys that share the same first nibble and loading each child at most once.
+    pub fn insert_batch(
+        &mut self,
+        db: &dyn TrieDB,
+        updates: &[(Nibbles, ValueRLP)],
+    ) -> Result<(), TrieError> {
+        // Group updates by their first nibble (contiguous runs since sorted)
+        let mut i = 0;
+        while i < updates.len() {
+            let (ref path, _) = updates[i];
+            if path.is_empty() || path.at(0) == 16 {
+                // This update targets the branch node's own value
+                self.update(updates[i].1.clone());
+                i += 1;
+                continue;
+            }
+            let choice = path.at(0);
+            // Find the end of the run sharing this nibble
+            let mut j = i + 1;
+            while j < updates.len() {
+                let (ref p, _) = updates[j];
+                if p.is_empty() || p.at(0) == 16 || p.at(0) != choice {
+                    break;
+                }
+                j += 1;
+            }
+            let group = &updates[i..j];
+
+            if group.len() == 1 {
+                // Single update: use standard insert
+                let (ref path, ref value) = group[0];
+                let mut path = path.clone();
+                path.next_choice(); // consume the first nibble
+                if !self.choices[choice].is_valid() {
+                    let new_leaf = LeafNode::new(path, value.clone());
+                    self.choices[choice] = Node::from(new_leaf).into();
+                } else {
+                    let Some(child_node) =
+                        self.choices[choice].get_node_mut(db, path.current())?
+                    else {
+                        return Err(TrieError::InconsistentTree(Box::new(
+                            InconsistentTreeError::NodeNotFoundOnBranchNode(
+                                self.choices[choice].compute_hash().finalize(),
+                                self.compute_hash().finalize(),
+                                path.current(),
+                            ),
+                        )));
+                    };
+                    child_node.insert(db, path, value.clone())?;
+                    self.choices[choice].clear_hash();
+                }
+            } else {
+                // Multiple updates sharing this nibble: strip first nibble and recurse
+                let stripped: Vec<(Nibbles, ValueRLP)> = group
+                    .iter()
+                    .map(|(p, v)| (p.offset(1), v.clone()))
+                    .collect();
+
+                if !self.choices[choice].is_valid() {
+                    // No existing child: create a new subtrie from the batch
+                    // Use the first element as a leaf, then insert the rest via batch
+                    let (ref first_path, ref first_value) = stripped[0];
+                    let mut new_node =
+                        Node::from(LeafNode::new(first_path.clone(), first_value.clone()));
+                    if stripped.len() > 1 {
+                        new_node.insert_batch(db, &stripped[1..])?;
+                    }
+                    self.choices[choice] = new_node.into();
+                } else {
+                    let Some(child_node) = self.choices[choice]
+                        .get_node_mut(db, stripped[0].0.current())?
+                    else {
+                        return Err(TrieError::InconsistentTree(Box::new(
+                            InconsistentTreeError::NodeNotFoundOnBranchNode(
+                                self.choices[choice].compute_hash().finalize(),
+                                self.compute_hash().finalize(),
+                                stripped[0].0.current(),
+                            ),
+                        )));
+                    };
+                    child_node.insert_batch(db, &stripped)?;
+                    self.choices[choice].clear_hash();
+                }
+            }
+            i = j;
+        }
+        Ok(())
+    }
+
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
         self.compute_hash_no_alloc(&mut vec![])
