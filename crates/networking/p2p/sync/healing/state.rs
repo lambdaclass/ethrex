@@ -28,6 +28,7 @@ use crate::{
     snap::{
         SnapError,
         constants::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
+        request_state_trienodes,
     },
     sync::{AccountStorageRoots, SyncError, code_collector::CodeHashCollector},
     utils::current_unix_time,
@@ -243,7 +244,7 @@ async fn heal_state_trie(
                 let peer_table = peers.peer_table.clone();
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
-                    let response = PeerHandler::request_state_trienodes(
+                    let response = request_state_trienodes(
                         peer_id,
                         connection,
                         peer_table,

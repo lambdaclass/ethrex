@@ -11,6 +11,7 @@ use crate::{
             MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, SHOW_PROGRESS_INTERVAL_DURATION,
             STORAGE_BATCH_SIZE,
         },
+        request_storage_trienodes,
     },
     sync::{AccountStorageRoots, SyncError},
     utils::current_unix_time,
@@ -372,8 +373,7 @@ async fn ask_peers_for_nodes(
 
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
-            let response =
-                PeerHandler::request_storage_trienodes(peer_id, connection, peer_table, gtn).await;
+            let response = request_storage_trienodes(peer_id, connection, peer_table, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(
                 |err| debug!(error=?err, "Failed to send state trie nodes response"),
