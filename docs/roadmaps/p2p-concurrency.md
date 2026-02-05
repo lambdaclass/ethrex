@@ -11,11 +11,11 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 > **IMPORTANT: DiscV4 Deprecation Notice**
 > Source: [Official EL DiscV5 Tracker](https://notes.ethereum.org/@cskiraly/el-discovery-v5-tracker) (Ethereum Foundation)
 >
-> | Milestone | Date |
-> |-----------|------|
-> | DiscV5 implementation deadline | **Jan 15, 2026** |
-> | DiscV5 must be enabled | **Jan 31, 2026** |
-> | DiscV4 disabled | **Glamsterdam hard fork** (~mid-2026, TBD) |
+> | Milestone | Date | Status |
+> |-----------|------|--------|
+> | DiscV5 implementation deadline | **Jan 15, 2026** | PASSED - ethrex has DiscV5 impl |
+> | DiscV5 must be enabled | **Jan 31, 2026** | PASSED - dual-stack via [#5962](https://github.com/lambdaclass/ethrex/pull/5962) |
+> | DiscV4 disabled | **Glamsterdam hard fork** (~mid-2026, TBD) | Upcoming |
 >
 > **Current client status:** Geth/Nimbus have both on; Erigon v3.3.3+ is DiscV5-only; Besu/Nethermind/Reth still need DiscV5.
 >
@@ -258,7 +258,7 @@ Based on review of official Ethereum devp2p specifications (RLPx, DiscV4, DiscV5
 | Gap | Severity | Location | Spec Requirement | Status |
 |-----|----------|----------|------------------|--------|
 | ~~DiscV5 codec encoder~~ | ~~HIGH~~ | `discv5/codec.rs:39` | ~~Required for encoding~~ | **NOT A BUG** - Encoding via `Packet::encode()` |
-| **Missing Neighbors request tracking (discv5)** | MEDIUM | `discv5/server.rs:529` | Accept only solicited Neighbors | TODO references #3746 |
+| **Missing Neighbors request tracking (discv5)** | MEDIUM | `discv5/server.rs:523` | Accept only solicited Neighbors | TODO references #3746 |
 | **RLPx message size limit enforcement** | MEDIUM | `rlpx/connection/codec.rs` | Reject decompressed >16 MiB | **NEEDS VERIFICATION** |
 | ~~DiscV4 ENRResponse validation~~ | ~~HIGH~~ | `discv4/server.rs:215-222` | ~~Must verify signature~~ | **DEPRIORITIZED** - DiscV4 sunset Jan 2026 |
 | ~~DiscV4 rate limiting~~ | ~~MEDIUM~~ | `discv4/server.rs` | ~~Prevent amplification~~ | **DEPRIORITIZED** - DiscV4 sunset Jan 2026 |
@@ -296,7 +296,8 @@ New messages needed:
 | `discv4/server.rs:301,325,350` | Parametrize expiration timeouts | Maintainability |
 | `discv4/server.rs:809` | Reimplement removed tests | Test coverage |
 | `rlpx/connection/server.rs:775` | Match error types to disconnect reasons | Spec compliance |
-| `rlpx/connection/server.rs:434,920` | Check if errors are common problems | Debugging |
+| `rlpx/connection/server.rs:434` | Check if errors are common problems | Debugging |
+| `rlpx/connection/server.rs:920` | Handle disconnection request properly | Spec compliance |
 | `rlpx/eth/transactions.rs:180` | Batch transaction fetching | Performance |
 | `peer_handler.rs:1578` | FIXME: unzip takes unnecessary memory | Memory usage |
 
@@ -335,8 +336,8 @@ New messages needed:
 
 | Protocol | Compliance | Critical Gaps | Priority |
 |----------|------------|---------------|----------|
-| **DiscV5** | 95% | Session TODOs (ENR updates, Neighbors validation) | **HIGH** - Mandatory Jan 2026 |
-| **DiscV4** | 95% | ENRResponse validation | **LOW** - Sunset Jan 2026 |
+| **DiscV5** | 95% | Session TODOs (ENR updates, Neighbors validation) | **HIGH** - Deadline passed, hardening ongoing |
+| **DiscV4** | 95% | ENRResponse validation | **LOW** - Sunset at Glamsterdam |
 | **RLPx** | 98% | Size limit verification | MEDIUM |
 | **eth/68** | 100% | None | — |
 | **eth/69** | 95% | Block range handling | MEDIUM |
