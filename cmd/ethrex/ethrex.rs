@@ -11,9 +11,6 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-#[cfg(feature = "cpu_profiling")]
-use {pprof::protos::Message, std::fs::File, std::io::Write};
-
 const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
 
 #[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
@@ -51,6 +48,20 @@ async fn server_shutdown(
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     info!("Server shutting down!");
+}
+
+/// Builds the CPU profile report and writes it to `profile.pb` in the current directory.
+#[cfg(feature = "cpu_profiling")]
+fn write_cpu_profile(guard: pprof::ProfilerGuard<'_>) -> eyre::Result<()> {
+    use pprof::protos::Message;
+
+    let report = guard.report().build()?;
+    let profile = report.pprof()?;
+    let mut content = Vec::new();
+    profile.write_to_vec(&mut content)?;
+    std::fs::write("profile.pb", &content)?;
+    info!("CPU profile written to profile.pb");
+    Ok(())
 }
 
 /// Fetches the latest release version on github
@@ -143,12 +154,14 @@ async fn main() -> eyre::Result<()> {
     let (log_filter_handler, _guard) = init_tracing(&opts);
 
     #[cfg(feature = "cpu_profiling")]
-    let profiler_guard = pprof::ProfilerGuardBuilder::default()
-        .frequency(1000)
-        .build()
-        .expect("failed to build CPU profiler");
-    #[cfg(feature = "cpu_profiling")]
-    info!("CPU profiling enabled (1000 Hz), will write profile.pb at shutdown");
+    let profiler_guard = {
+        let guard = pprof::ProfilerGuardBuilder::default()
+            .frequency(1000)
+            .build()
+            .expect("failed to build CPU profiler");
+        info!("CPU profiling enabled (1000 Hz), will write profile.pb at shutdown");
+        guard
+    };
 
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
@@ -173,23 +186,8 @@ async fn main() -> eyre::Result<()> {
     }
 
     #[cfg(feature = "cpu_profiling")]
-    match profiler_guard.report().build() {
-        Ok(report) => match report.pprof() {
-            Ok(profile) => {
-                let mut content = Vec::new();
-                if let Err(e) = profile.write_to_vec(&mut content) {
-                    tracing::error!("Failed to serialize CPU profile: {e}");
-                } else if let Err(e) =
-                    File::create("profile.pb").and_then(|mut f| f.write_all(&content))
-                {
-                    tracing::error!("Failed to write CPU profile to profile.pb: {e}");
-                } else {
-                    info!("CPU profile written to profile.pb");
-                }
-            }
-            Err(e) => tracing::error!("Failed to generate pprof data: {e}"),
-        },
-        Err(e) => tracing::error!("Failed to build CPU profile report: {e}"),
+    if let Err(e) = write_cpu_profile(profiler_guard) {
+        tracing::error!("Failed to write CPU profile: {e}");
     }
 
     Ok(())

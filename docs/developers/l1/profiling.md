@@ -47,13 +47,11 @@ The `cpu_profiling` feature is opt-in (not in `default`) so normal builds are un
 
 2. Let the node run through the workload you want to profile.
 
-3. Stop the node with `Ctrl+C` or `SIGTERM`. The shutdown logs will include:
+3. Stop the node with `Ctrl+C` or `SIGTERM`. The file `profile.pb` will be written to the current working directory and the shutdown logs will include:
 
    ```
    CPU profile written to profile.pb
    ```
-
-4. The file `profile.pb` is written to the current working directory.
 
 ### Analyzing the profile
 
