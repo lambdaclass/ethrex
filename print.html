@@ -15514,7 +15514,7 @@ You can see a list of available flags by passing <code>--help</code> to the CLI,
 
 </style>
 <h1 id="generate-blobs-for-the-state-reconstruction-test"><a class="header" href="#generate-blobs-for-the-state-reconstruction-test">Generate blobs for the state reconstruction test</a></h1>
-<p>The test in <code>crates/l2/tests/state_reconstruct.rs</code> replays a fixed set of blobs to reconstruct. The fixtures need to be regenerated whenever the genesis file changes, because a new genesis alters the hash of the very first block and, by extension, all descendant blocks. Our stored blobs encode parent pointers, so stale hashes make the fixtures unusable. If you ever need to regenerate those blobs, you need to change the files <code>payload_builder.rs</code> and <code>l1_committer.rs</code> and run the sequencer to capture fresh blobs.</p>
+<p>The test in <code>test/tests/l2/state_reconstruct.rs</code> replays a fixed set of blobs to reconstruct. The fixtures need to be regenerated whenever the genesis file changes, because a new genesis alters the hash of the very first block and, by extension, all descendant blocks. Our stored blobs encode parent pointers, so stale hashes make the fixtures unusable. If you ever need to regenerate those blobs, you need to change the files <code>payload_builder.rs</code> and <code>l1_committer.rs</code> and run the sequencer to capture fresh blobs.</p>
 <h2 id="summary-5"><a class="header" href="#summary-5">Summary</a></h2>
 <ol>
 <li>Limit every block to ten transactions to make the batches predictable.</li>
