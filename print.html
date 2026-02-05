@@ -1535,7 +1535,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 </li>
 </ol>
 <p>This will launch Prometheus and Grafana, already set up to scrape ethrex metrics.</p>
-<p><strong>Note: We depend on <code>ethereum-metrics-exporter</code> for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add <code>--http</code> and <code>--http-address 0.0.0.0</code> flags to it before the dashboards pick up all metrics. This won't be needed in the near future</strong></p>
+<p><strong>Note: We depend on <code>ethereum-metrics-exporter</code> for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthouse you may need to add <code>--http</code> and <code>--http-address 0.0.0.0</code> flags to it before the dashboards pick up all metrics. This won't be needed in the near future</strong></p>
 <h2 id="logs"><a class="header" href="#logs">Logs</a></h2>
 <p>Ethrex logs are written to stdout by default. To enable file logging, you must specify the <code>--log.dir</code> argument, with this you'll be able to have Promtail collect the logs and send them to Grafana Loki for log visualization.</p>
 <ul>
