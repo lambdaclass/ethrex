@@ -104,6 +104,14 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 ## LINE OF WORK 2: CONCURRENCY
 
+> **See Also: Comprehensive Snap Sync Roadmap ([#6112](https://github.com/lambdaclass/ethrex/pull/6112))**
+>
+> PR #6112 contains a detailed 788-line snap sync roadmap covering:
+> - **Phase 1: Performance Optimization** - Parallel headers, adaptive chunking, async I/O, memory-bounded structures
+> - **Phase 2: Code Quality & Maintainability** - Context structs, documentation, error handling consistency
+>
+> The phases below align with and implement specific items from that roadmap.
+
 ### Phase 1: Snap Sync Refactoring with Spawned
 
 **Goal:** Reorganize snap sync code and convert to spawned patterns.
