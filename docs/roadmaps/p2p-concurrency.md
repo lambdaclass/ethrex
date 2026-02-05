@@ -115,6 +115,15 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | P1 | Snapsync rewrite with spawned | [#4240](https://github.com/lambdaclass/ethrex/issues/4240) | Open (Milestone: Syncing) |
 | P1 | Extract snapshot dumping helpers | [#6099](https://github.com/lambdaclass/ethrex/pull/6099) | Open |
 
+> **Snap Sync Reorganization Plan ([#5975](https://github.com/lambdaclass/ethrex/pull/5975))**
+>
+> PR #5975 contains a detailed 5-phase refactoring plan covering ~6,500 lines across 7 files:
+> - **Phase 1: Foundation** - Create `snap/` module directory, extract server code, add constants
+> - **Phase 2: Protocol Layer** - Split `rlpx/snap.rs` into messages and codec modules
+> - **Phase 3: Healing Unification** - Create unified `sync/healing/` directory with shared types
+> - **Phase 4: Sync Orchestration** - Split `sync.rs` into focused modules, extract snap client from peer_handler
+> - **Phase 5: Error Handling** - Create unified `SnapError` enum, remove redundant error types
+
 **Branches:** `snap_sync_final_p2p_perf`, `fix_snap_sync_trie_spawned`
 
 ### Phase 2: Parallel Operations
