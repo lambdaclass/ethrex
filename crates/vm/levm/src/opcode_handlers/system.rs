@@ -717,14 +717,6 @@ impl<'a> VM<'a> {
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
-        // Add new contract to accessed addresses
-        self.substate.add_accessed_address(new_address);
-
-        // Record address touch for BAL (after address is calculated per EIP-7928)
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            recorder.record_touched_address(new_address);
-        }
-
         // Log CREATE in tracer
         let call_type = match salt {
             Some(_) => CallType::CREATE2,
@@ -743,6 +735,8 @@ impl<'a> VM<'a> {
         // 1. Sender doesn't have enough balance to send value.
         // 2. Depth limit has been reached
         // 3. Sender nonce is max.
+        // NOTE: These early failures do NOT access the new address, so we don't add it to
+        // accessed addresses or BAL until after these checks pass (per EIP-7928).
         let checks = [
             (deployer_balance < value, "OutOfFund"),
             (new_depth > 1024, "MaxDepth"),
@@ -753,6 +747,14 @@ impl<'a> VM<'a> {
                 self.early_revert_message_call(gas_limit, reason.to_string())?;
                 return Ok(OpcodeResult::Continue);
             }
+        }
+
+        // Add new contract to accessed addresses (after early checks pass)
+        self.substate.add_accessed_address(new_address);
+
+        // Record address touch for BAL (after early checks pass per EIP-7928)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(new_address);
         }
 
         // Increment sender nonce (irreversible change)

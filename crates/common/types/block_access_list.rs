@@ -736,19 +736,16 @@ impl BlockAccessListRecorder {
     /// Should be called after every balance modification.
     /// Per EIP-7928, only the final balance per (address, block_access_index) is recorded.
     /// If multiple balance changes occur within the same transaction, only the last one matters.
-    /// Note: SYSTEM_ADDRESS balance changes are excluded (system calls backup/restore it).
     ///
     /// IMPORTANT: We always push new entries (never update in-place) to support checkpoint/restore.
     /// The checkpoint mechanism captures lengths, not values. If we updated in-place, the restored
     /// value would be the updated one, not the original at checkpoint time.
     /// At build() time, we take only the last entry per transaction for each address.
+    ///
+    /// Note: SYSTEM_ADDRESS balance changes are recorded (e.g., SELFDESTRUCT to SYSTEM_ADDRESS)
+    /// but SYSTEM_ADDRESS is not added to touched_addresses. It's handled specially in build()
+    /// to only appear if it has actual non-round-trip balance changes.
     pub fn record_balance_change(&mut self, address: Address, post_balance: U256) {
-        // SYSTEM_ADDRESS balance changes from system contract calls should not be recorded
-        // (system calls backup and restore SYSTEM_ADDRESS state)
-        if address == SYSTEM_ADDRESS {
-            return;
-        }
-
         // Track initial balance for round-trip detection
         self.initial_balances.entry(address).or_insert(post_balance);
 
@@ -757,8 +754,10 @@ impl BlockAccessListRecorder {
         let changes = self.balance_changes.entry(address).or_default();
         changes.push((self.current_index, post_balance));
 
-        // Mark address as touched
-        self.touched_addresses.insert(address);
+        // Mark address as touched (SYSTEM_ADDRESS is handled specially in build())
+        if address != SYSTEM_ADDRESS {
+            self.touched_addresses.insert(address);
+        }
     }
 
     /// Sets the initial balance for an address before any changes.
@@ -951,6 +950,47 @@ impl BlockAccessListRecorder {
 
             // Add account to BAL (even if empty - per EIP-7928, touched addresses must appear)
             bal.add_account_changes(account_changes);
+        }
+
+        // Special handling for SYSTEM_ADDRESS: include it only if it has actual state changes.
+        // SYSTEM_ADDRESS is excluded from touched_addresses, but we still record its balance changes
+        // (e.g., SELFDESTRUCT to SYSTEM_ADDRESS). Include it only if there are non-round-trip changes.
+        if !self.touched_addresses.contains(&SYSTEM_ADDRESS) {
+            if let Some(changes) = self.balance_changes.get(&SYSTEM_ADDRESS) {
+                // Check if there are non-round-trip balance changes
+                let mut changes_by_tx: BTreeMap<u16, Vec<U256>> = BTreeMap::new();
+                for (index, post_balance) in changes {
+                    changes_by_tx.entry(*index).or_default().push(*post_balance);
+                }
+
+                let mut account_changes = AccountChanges::new(SYSTEM_ADDRESS);
+                let mut prev_balance = self.initial_balances.get(&SYSTEM_ADDRESS).copied();
+                let mut has_actual_changes = false;
+
+                for (index, tx_changes) in &changes_by_tx {
+                    let initial_for_tx = prev_balance;
+                    let final_for_tx = tx_changes.last().copied();
+
+                    let is_round_trip = match (initial_for_tx, final_for_tx) {
+                        (Some(initial), Some(final_bal)) => initial == final_bal,
+                        _ => false,
+                    };
+
+                    if !is_round_trip {
+                        if let Some(final_balance) = final_for_tx {
+                            account_changes
+                                .add_balance_change(BalanceChange::new(*index, final_balance));
+                            has_actual_changes = true;
+                        }
+                    }
+                    prev_balance = final_for_tx;
+                }
+
+                // Only add SYSTEM_ADDRESS if it has actual (non-round-trip) balance changes
+                if has_actual_changes {
+                    bal.add_account_changes(account_changes);
+                }
+            }
         }
 
         bal
