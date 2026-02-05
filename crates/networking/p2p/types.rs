@@ -477,7 +477,7 @@ impl RLPDecode for NodeRecord {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         if decoder.get_payload_len() > MAX_NODE_RECORD_ENCODED_SIZE {
-            return Err(RLPDecodeError::InvalidLength);
+            return Err(RLPDecodeError::invalid_length());
         }
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (seq, decoder) = decoder.decode_field("seq")?;

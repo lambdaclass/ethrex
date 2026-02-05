@@ -52,7 +52,7 @@ impl<'a> Decoder<'a> {
     pub fn new(buf: &'a [u8]) -> Result<Self, RLPDecodeError> {
         match decode_rlp_item(buf)? {
             (true, payload, remaining) => Ok(Self { payload, remaining }),
-            (false, _, _) => Err(RLPDecodeError::UnexpectedString),
+            (false, _, _) => Err(RLPDecodeError::unexpected_string()),
         }
     }
 
@@ -103,7 +103,7 @@ impl<'a> Decoder<'a> {
         if self.payload.is_empty() {
             Ok(self.remaining)
         } else {
-            Err(RLPDecodeError::MalformedData)
+            Err(RLPDecodeError::malformed_data())
         }
     }
 

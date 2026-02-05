@@ -206,7 +206,7 @@ impl Message {
                 let (enr_response_msg, _rest) = ENRResponseMessage::decode_unfinished(msg)?;
                 Ok(Message::ENRResponse(enr_response_msg))
             }
-            _ => Err(RLPDecodeError::MalformedData),
+            _ => Err(RLPDecodeError::malformed_data()),
         }
     }
 

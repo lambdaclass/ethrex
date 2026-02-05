@@ -92,7 +92,7 @@ impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (protocol_name, rest) = String::decode_unfinished(&rlp[1..])?;
         if protocol_name.len() > CAPABILITY_NAME_MAX_LENGTH {
-            return Err(RLPDecodeError::InvalidLength);
+            return Err(RLPDecodeError::invalid_length());
         }
         let (version, rest) = u8::decode_unfinished(rest)?;
         let mut protocol = [0; CAPABILITY_NAME_MAX_LENGTH];
@@ -167,7 +167,7 @@ impl RLPxMessage for HelloMessage {
 
         Ok(Self::new(
             capabilities,
-            compress_pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
+            compress_pubkey(node_id).ok_or(RLPDecodeError::malformed_data())?,
             client_id,
         ))
     }

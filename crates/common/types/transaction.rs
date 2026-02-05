@@ -83,39 +83,43 @@ impl RLPEncode for P2PTransaction {
 
 impl RLPDecode for P2PTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
-        if !is_list {
-            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
-            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            // Look at the first byte to check if it corresponds to a TransactionType
-            match *tx_type {
-                // Legacy
-                0x0 => LegacyTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
-                // EIP2930
-                0x1 => EIP2930Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP2930Transaction(tx), remainder)),
-                // EIP1559
-                0x2 => EIP1559Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP1559Transaction(tx), remainder)),
-                // EIP4844
-                0x3 => WrappedEIP4844Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP4844TransactionWithBlobs(tx), remainder)),
-                // EIP7702
-                0x4 => EIP7702Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP7702Transaction(tx), remainder)),
-                // FeeToken
-                0x7d => FeeTokenTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
-                ty => Err(RLPDecodeError::Custom(format!(
-                    "Invalid transaction type: {ty}"
-                ))),
-            }
-        } else {
-            // LegacyTransaction
-            LegacyTransaction::decode_unfinished(rlp)
-                .map(|(tx, rem)| (P2PTransaction::LegacyTransaction(tx), rem))
+        decode_p2p_transaction(rlp).map_err(|e| e.with_context("P2PTransaction"))
+    }
+}
+
+fn decode_p2p_transaction(rlp: &[u8]) -> Result<(P2PTransaction, &[u8]), RLPDecodeError> {
+    let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
+    if !is_list {
+        let tx_type = payload.first().ok_or(RLPDecodeError::invalid_length())?;
+        let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::invalid_length())?;
+        // Look at the first byte to check if it corresponds to a TransactionType
+        match *tx_type {
+            // Legacy
+            0x0 => LegacyTransaction::decode(tx_encoding)
+                .map(|tx| (P2PTransaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
+            // EIP2930
+            0x1 => EIP2930Transaction::decode(tx_encoding)
+                .map(|tx| (P2PTransaction::EIP2930Transaction(tx), remainder)),
+            // EIP1559
+            0x2 => EIP1559Transaction::decode(tx_encoding)
+                .map(|tx| (P2PTransaction::EIP1559Transaction(tx), remainder)),
+            // EIP4844
+            0x3 => WrappedEIP4844Transaction::decode(tx_encoding)
+                .map(|tx| (P2PTransaction::EIP4844TransactionWithBlobs(tx), remainder)),
+            // EIP7702
+            0x4 => EIP7702Transaction::decode(tx_encoding)
+                .map(|tx| (P2PTransaction::EIP7702Transaction(tx), remainder)),
+            // FeeToken
+            0x7d => FeeTokenTransaction::decode(tx_encoding)
+                .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
+            ty => Err(RLPDecodeError::Custom(format!(
+                "Invalid transaction type: {ty}"
+            ))),
         }
+    } else {
+        // LegacyTransaction
+        LegacyTransaction::decode_unfinished(rlp)
+            .map(|(tx, rem)| (P2PTransaction::LegacyTransaction(tx), rem))
     }
 }
 
@@ -440,42 +444,46 @@ impl RLPDecode for Transaction {
     /// B) Non legacy transactions: rlp(Bytes) where Bytes represents the canonical encoding for the transaction as a bytes object.
     /// Checkout [Transaction::decode_canonical] for more information
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
-        if !is_list {
-            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
-            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            // Look at the first byte to check if it corresponds to a TransactionType
-            match *tx_type {
-                // Legacy
-                0x0 => LegacyTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
-                // EIP2930
-                0x1 => EIP2930Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP2930Transaction(tx), remainder)),
-                // EIP1559
-                0x2 => EIP1559Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP1559Transaction(tx), remainder)),
-                // EIP4844
-                0x3 => EIP4844Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP4844Transaction(tx), remainder)),
-                // EIP7702
-                0x4 => EIP7702Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP7702Transaction(tx), remainder)),
-                // FeeToken
-                0x7d => FeeTokenTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::FeeTokenTransaction(tx), remainder)),
-                // PrivilegedL2
-                0x7e => PrivilegedL2Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
-                ty => Err(RLPDecodeError::Custom(format!(
-                    "Invalid transaction type: {ty}"
-                ))),
-            }
-        } else {
-            // LegacyTransaction
-            LegacyTransaction::decode_unfinished(rlp)
-                .map(|(tx, rem)| (Transaction::LegacyTransaction(tx), rem))
+        decode_transaction(rlp).map_err(|e| e.with_context("Transaction"))
+    }
+}
+
+fn decode_transaction(rlp: &[u8]) -> Result<(Transaction, &[u8]), RLPDecodeError> {
+    let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
+    if !is_list {
+        let tx_type = payload.first().ok_or(RLPDecodeError::invalid_length())?;
+        let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::invalid_length())?;
+        // Look at the first byte to check if it corresponds to a TransactionType
+        match *tx_type {
+            // Legacy
+            0x0 => LegacyTransaction::decode(tx_encoding)
+                .map(|tx| (Transaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
+            // EIP2930
+            0x1 => EIP2930Transaction::decode(tx_encoding)
+                .map(|tx| (Transaction::EIP2930Transaction(tx), remainder)),
+            // EIP1559
+            0x2 => EIP1559Transaction::decode(tx_encoding)
+                .map(|tx| (Transaction::EIP1559Transaction(tx), remainder)),
+            // EIP4844
+            0x3 => EIP4844Transaction::decode(tx_encoding)
+                .map(|tx| (Transaction::EIP4844Transaction(tx), remainder)),
+            // EIP7702
+            0x4 => EIP7702Transaction::decode(tx_encoding)
+                .map(|tx| (Transaction::EIP7702Transaction(tx), remainder)),
+            // FeeToken
+            0x7d => FeeTokenTransaction::decode(tx_encoding)
+                .map(|tx| (Transaction::FeeTokenTransaction(tx), remainder)),
+            // PrivilegedL2
+            0x7e => PrivilegedL2Transaction::decode(tx_encoding)
+                .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
+            ty => Err(RLPDecodeError::Custom(format!(
+                "Invalid transaction type: {ty}"
+            ))),
         }
+    } else {
+        // LegacyTransaction
+        LegacyTransaction::decode_unfinished(rlp)
+            .map(|(tx, rem)| (Transaction::LegacyTransaction(tx), rem))
     }
 }
 
@@ -498,7 +506,7 @@ impl RLPEncode for TxKind {
 
 impl RLPDecode for TxKind {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let first_byte = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
+        let first_byte = rlp.first().ok_or(RLPDecodeError::invalid_length())?;
         if *first_byte == RLP_NULL {
             return Ok((Self::Create, &rlp[1..]));
         }

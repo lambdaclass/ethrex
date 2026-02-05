@@ -18,15 +18,14 @@ pub enum CryptographyError {
     CouldNotGetKeyFromSecret(String),
 }
 
-// TODO improve errors
 #[derive(Debug, Error)]
 pub enum PeerConnectionError {
     #[error("{0}")]
     HandshakeError(String),
     #[error("Invalid connection state: {0}")]
     StateError(String),
-    #[error("No matching capabilities")]
-    NoMatchingCapabilities,
+    #[error("No matching capabilities: {0}")]
+    NoMatchingCapabilities(String),
     #[error("Too many peers")]
     TooManyPeers,
     #[error("Peer disconnected")]
@@ -37,12 +36,12 @@ pub enum PeerConnectionError {
     DisconnectSent(DisconnectReason),
     #[error("Not Found: {0}")]
     NotFound(String),
-    #[error("Invalid peer id")]
-    InvalidPeerId,
+    #[error("Invalid peer ID: {0}")]
+    InvalidPeerId(&'static str),
     #[error("Invalid recovery id")]
     InvalidRecoveryId,
-    #[error("Invalid message length")]
-    InvalidMessageLength,
+    #[error("Invalid message length: {0}")]
+    InvalidMessageLength(&'static str),
     #[error("Request id not present: {0}")]
     ExpectedRequestId(String),
     #[error("Cannot handle message: {0}")]

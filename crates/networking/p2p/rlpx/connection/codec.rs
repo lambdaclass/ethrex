@@ -165,7 +165,9 @@ impl Decoder for RLPxCodec {
         // Check that the size is not too large to avoid a denial of
         // service attack where the server runs out of memory.
         if padded_size > MAX_MESSAGE_SIZE {
-            return Err(PeerConnectionError::InvalidMessageLength);
+            return Err(PeerConnectionError::InvalidMessageLength(
+                "frame exceeds max size",
+            ));
         }
 
         let total_message_size = (32 + padded_size + 16) as usize;

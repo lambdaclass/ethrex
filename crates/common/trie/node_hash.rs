@@ -151,7 +151,7 @@ impl RLPDecode for NodeHash {
         let (hash, rest): (Vec<u8>, &[u8]);
         (hash, rest) = RLPDecode::decode_unfinished(rlp)?;
         if hash.len() > 32 {
-            return Err(RLPDecodeError::InvalidLength);
+            return Err(RLPDecodeError::invalid_length());
         }
         let hash = NodeHash::from_slice(&hash);
         Ok((hash, rest))

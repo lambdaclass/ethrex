@@ -271,7 +271,7 @@ impl GenServer for PeerConnectionServer {
                     initialize_connection(handle, &mut established_state, stream, eth_version).await
                 {
                     match &reason {
-                        PeerConnectionError::NoMatchingCapabilities
+                        PeerConnectionError::NoMatchingCapabilities(_)
                         | PeerConnectionError::HandshakeError(_) => {
                             established_state
                                 .peer_table
@@ -420,9 +420,9 @@ impl GenServer for PeerConnectionServer {
                     | PeerConnectionError::DisconnectReceived(_)
                     | PeerConnectionError::DisconnectSent(_)
                     | PeerConnectionError::HandshakeError(_)
-                    | PeerConnectionError::NoMatchingCapabilities
-                    | PeerConnectionError::InvalidPeerId
-                    | PeerConnectionError::InvalidMessageLength
+                    | PeerConnectionError::NoMatchingCapabilities(_)
+                    | PeerConnectionError::InvalidPeerId(_)
+                    | PeerConnectionError::InvalidMessageLength(_)
                     | PeerConnectionError::StateError(_)
                     | PeerConnectionError::InvalidRecoveryId => {
                         trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
@@ -849,7 +849,9 @@ where
             state.capabilities = hello_message.capabilities;
 
             if negotiated_eth_version == 0 {
-                return Err(PeerConnectionError::NoMatchingCapabilities);
+                return Err(PeerConnectionError::NoMatchingCapabilities(
+                    "no common eth version".to_string(),
+                ));
             }
             debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));

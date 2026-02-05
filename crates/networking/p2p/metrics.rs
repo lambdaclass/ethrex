@@ -362,7 +362,7 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::NoMatchingCapabilities => {
+            PeerConnectionError::NoMatchingCapabilities(_) => {
                 failures_grouped_by_reason
                     .entry("NoMatchingCapabilities".to_owned())
                     .and_modify(|e| *e += 1)
@@ -398,7 +398,7 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::InvalidPeerId => {
+            PeerConnectionError::InvalidPeerId(_) => {
                 failures_grouped_by_reason
                     .entry("InvalidPeerId".to_owned())
                     .and_modify(|e| *e += 1)
@@ -410,7 +410,7 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::InvalidMessageLength => {
+            PeerConnectionError::InvalidMessageLength(_) => {
                 failures_grouped_by_reason
                     .entry("InvalidMessageLength".to_owned())
                     .and_modify(|e| *e += 1)

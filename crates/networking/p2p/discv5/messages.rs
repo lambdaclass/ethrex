@@ -513,7 +513,7 @@ impl Message {
     }
 
     pub fn decode(message: &[u8]) -> Result<Message, RLPDecodeError> {
-        let &message_type = message.first().ok_or(RLPDecodeError::InvalidLength)?;
+        let &message_type = message.first().ok_or(RLPDecodeError::invalid_length())?;
         match message_type {
             0x01 => {
                 let ping = PingMessage::decode(&message[1..])?;
@@ -543,7 +543,7 @@ impl Message {
                 let ticket_msg = TicketMessage::decode(&message[1..])?;
                 Ok(Message::Ticket(ticket_msg))
             }
-            _ => Err(RLPDecodeError::MalformedData),
+            _ => Err(RLPDecodeError::malformed_data()),
         }
     }
 }
