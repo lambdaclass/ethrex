@@ -9,6 +9,7 @@ use crate::rlpx::snap::{
 use ethrex_common::types::AccountStateSlimCodec;
 
 use super::error::SnapError;
+use super::proof_to_encodable;
 
 // Request Processing
 
@@ -158,16 +159,4 @@ pub async fn process_trie_nodes_request(
     })
     .await
     .map_err(|e| SnapError::TaskPanic(e.to_string()))?
-}
-
-// Helper method to convert proof to RLP-encodable format
-#[inline]
-pub(crate) fn proof_to_encodable(proof: Vec<Vec<u8>>) -> Vec<Bytes> {
-    proof.into_iter().map(Bytes::from).collect()
-}
-
-// Helper method to obtain proof from RLP-encodable format
-#[inline]
-pub(crate) fn encodable_to_proof(proof: &[Bytes]) -> Vec<Vec<u8>> {
-    proof.iter().map(|bytes| bytes.to_vec()).collect()
 }

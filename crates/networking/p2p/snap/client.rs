@@ -552,9 +552,10 @@ impl PeerHandler {
                 }
                 None => {
                     let root = store
-                        .get_account_state_by_acc_hash(pivot_header.hash(), *account)
-                        .expect("Failed to get account in state trie")
-                        .expect("Could not find account that should have been downloaded or healed")
+                        .get_account_state_by_acc_hash(pivot_header.hash(), *account)?
+                        .ok_or_else(|| SnapError::InternalError(
+                            "Could not find account that should have been downloaded or healed".to_string(),
+                        ))?
                         .storage_root;
                     accounts_by_root_hash
                         .entry(root)

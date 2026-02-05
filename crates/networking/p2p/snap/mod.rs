@@ -17,6 +17,8 @@ pub mod constants;
 pub mod error;
 mod server;
 
+use bytes::Bytes;
+
 // Re-export public server functions
 pub use server::{
     process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
@@ -29,5 +31,14 @@ pub use error::{DumpError, SnapError};
 // Re-export client types
 pub use client::{RequestMetadata, RequestStorageTrieNodesError};
 
-// Re-export crate-internal helper functions
-pub(crate) use server::encodable_to_proof;
+// Helper to convert proof to RLP-encodable format
+#[inline]
+pub(crate) fn proof_to_encodable(proof: Vec<Vec<u8>>) -> Vec<Bytes> {
+    proof.into_iter().map(Bytes::from).collect()
+}
+
+// Helper to obtain proof from RLP-encodable format
+#[inline]
+pub(crate) fn encodable_to_proof(proof: &[Bytes]) -> Vec<Vec<u8>> {
+    proof.iter().map(|bytes| bytes.to_vec()).collect()
+}
