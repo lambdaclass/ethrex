@@ -102,9 +102,6 @@ impl Evm {
         remaining_gas: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
-        let chain_config = self.db.store.get_chain_config()?;
-        let fork = chain_config.fork(block_header.timestamp);
-
         let execution_report =
             LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
 
@@ -114,7 +111,6 @@ impl Evm {
             tx.tx_type(),
             execution_report.is_success(),
             block_header.gas_limit - *remaining_gas,
-            fork.gas_spent_for_receipt(execution_report.gas_spent),
             execution_report.logs.clone(),
         );
 

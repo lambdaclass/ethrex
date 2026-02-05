@@ -250,7 +250,6 @@ async fn test_store_block_receipt(store: Store) {
         tx_type: TxType::EIP2930,
         succeeded: true,
         cumulative_gas_used: 1747,
-        gas_spent: None,
         logs: vec![],
     };
     let block_number = 6;
