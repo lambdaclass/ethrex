@@ -105,25 +105,29 @@ pub async fn process_storage_ranges_request(
     .map_err(|e| SnapError::TaskPanic(e.to_string()))?
 }
 
-pub fn process_byte_codes_request(
+pub async fn process_byte_codes_request(
     request: GetByteCodes,
     store: Store,
 ) -> Result<ByteCodes, SnapError> {
-    let mut codes = vec![];
-    let mut bytes_used = 0;
-    for code_hash in request.hashes {
-        if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.bytecode) {
-            bytes_used += code.len() as u64;
-            codes.push(code);
+    tokio::task::spawn_blocking(move || {
+        let mut codes = vec![];
+        let mut bytes_used = 0;
+        for code_hash in request.hashes {
+            if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.bytecode) {
+                bytes_used += code.len() as u64;
+                codes.push(code);
+            }
+            if bytes_used >= request.bytes {
+                break;
+            }
         }
-        if bytes_used >= request.bytes {
-            break;
-        }
-    }
-    Ok(ByteCodes {
-        id: request.id,
-        codes,
+        Ok(ByteCodes {
+            id: request.id,
+            codes,
+        })
     })
+    .await
+    .map_err(|e| SnapError::TaskPanic(e.to_string()))?
 }
 
 pub async fn process_trie_nodes_request(

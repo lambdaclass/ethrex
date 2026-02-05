@@ -43,6 +43,9 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 /// during the initial snap sync phases.
 pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64;
 
+/// Number of chunks to split the account range into for parallel downloading.
+pub const ACCOUNT_RANGE_CHUNK_COUNT: usize = 800;
+
 /// Number of storage accounts to process per batch during state healing.
 pub const STORAGE_BATCH_SIZE: usize = 300;
 

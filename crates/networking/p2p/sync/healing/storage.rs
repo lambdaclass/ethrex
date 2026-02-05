@@ -51,7 +51,7 @@ pub struct StorageHealingQueueEntry {
     node_response: NodeResponse,
     /// How many missing children this node has
     /// if this number is 0, it should be flushed to the db, not stored in memory
-    missing_children_count: usize,
+    pending_children_count: usize,
 }
 
 /// The healing queue key represents the account path and the storage path
@@ -528,16 +528,16 @@ fn process_node_responses(
             node_response.node_request.storage_path.len(),
         );
 
-        let (missing_children_nibbles, missing_children_count) =
-            determine_missing_children(&node_response, store).inspect_err(|err| {
+        let (pending_children_nibbles, pending_children_count) =
+            determine_pending_children(&node_response, store).inspect_err(|err| {
                 debug!(
                     error=?err,
                     ?node_response,
-                    "Error in determine_missing_children"
+                    "Error in determine_pending_children"
                 )
             })?;
 
-        if missing_children_count == 0 {
+        if pending_children_count == 0 {
             // We flush to the database this node
             commit_node(&node_response, healing_queue, roots_healed, to_write).inspect_err(
                 |err| {
@@ -557,10 +557,10 @@ fn process_node_responses(
                 key,
                 StorageHealingQueueEntry {
                     node_response: node_response.clone(),
-                    missing_children_count,
+                    pending_children_count,
                 },
             );
-            download_queue.extend(missing_children_nibbles);
+            download_queue.extend(pending_children_nibbles);
         }
     }
 
@@ -606,7 +606,7 @@ fn get_initial_downloads(
 
 /// Returns the full paths to the node's missing children and grandchildren
 /// and the number of direct missing children
-pub fn determine_missing_children(
+pub fn determine_pending_children(
     node_response: &NodeResponse,
     store: &Store,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
@@ -712,9 +712,9 @@ fn commit_node(
         .remove(&parent_key)
         .expect("We are missing the parent from the healing_queue!");
 
-    parent_entry.missing_children_count -= 1;
+    parent_entry.pending_children_count -= 1;
 
-    if parent_entry.missing_children_count == 0 {
+    if parent_entry.pending_children_count == 0 {
         commit_node(
             &parent_entry.node_response,
             healing_queue,

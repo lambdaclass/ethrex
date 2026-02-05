@@ -11,7 +11,7 @@ use crate::{
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
-        p2p::SUPPORTED_ETH_CAPABILITIES,
+        p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{
             AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
@@ -108,9 +108,8 @@ impl PeerHandler {
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
 
-        let chunk_count = 800;
         let range = limit_u256 - start_u256;
-        let chunk_count = U256::from(chunk_count)
+        let chunk_count = U256::from(ACCOUNT_RANGE_CHUNK_COUNT)
             .min(range.max(U256::one()))
             .as_usize();
         let chunk_size = range / chunk_count;
@@ -226,7 +225,7 @@ impl PeerHandler {
 
             let Some((peer_id, connection)) = self
                 .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
                 .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
@@ -420,7 +419,7 @@ impl PeerHandler {
 
             let Some((peer_id, mut connection)) = self
                 .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
                 .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
                 .unwrap_or(None)
@@ -567,7 +566,7 @@ impl PeerHandler {
         let mut accounts_by_root_hash = Vec::from_iter(accounts_by_root_hash);
         // TODO: Turn this into a stable sort for binary search.
         accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
-        let chunk_size = 300;
+        let chunk_size = STORAGE_BATCH_SIZE;
         let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
 
         // list of tasks to be executed
@@ -825,7 +824,7 @@ impl PeerHandler {
                                     let start_hash_u256 = start_hash_u256 + chunk_size * i;
                                     let start_hash = H256::from_uint(&start_hash_u256);
                                     let end_hash = if i == chunk_count - 1 {
-                                        H256::repeat_byte(0xff)
+                                        HASH_MAX
                                     } else {
                                         let end_hash_u256 = start_hash_u256
                                             .checked_add(chunk_size)
@@ -860,7 +859,7 @@ impl PeerHandler {
                                 let start_hash_u256 = start_hash_u256 + chunk_size * i;
                                 let start_hash = H256::from_uint(&start_hash_u256);
                                 let end_hash = if i == chunk_count - 1 {
-                                    H256::repeat_byte(0xff)
+                                    HASH_MAX
                                 } else {
                                     let end_hash_u256 = start_hash_u256
                                         .checked_add(chunk_size)
@@ -956,7 +955,7 @@ impl PeerHandler {
 
             let Some((peer_id, connection)) = self
                 .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
                 .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
                 .unwrap_or(None)
