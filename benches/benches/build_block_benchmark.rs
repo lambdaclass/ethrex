@@ -146,6 +146,7 @@ fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
         random: genesis_block.header.prev_randao,
         withdrawals: None,
         beacon_root: genesis_block.header.parent_beacon_block_root,
+        slot_number: None,
         version: 3,
         elasticity_multiplier: 1,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,

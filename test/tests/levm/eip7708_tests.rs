@@ -185,6 +185,7 @@ impl TestBuilder {
             timestamp: U256::from(1000),
             prev_randao: Some(H256::zero()),
             difficulty: U256::zero(),
+            slot_number: U256::zero(),
             chain_id: U256::from(1),
             base_fee_per_gas: U256::from(1000),
             base_blob_fee_per_gas: U256::from(1),

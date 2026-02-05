@@ -26,6 +26,7 @@ pub struct Environment {
     pub timestamp: U256,
     pub prev_randao: Option<H256>,
     pub difficulty: U256,
+    pub slot_number: U256,
     pub chain_id: U256,
     pub base_fee_per_gas: U256,
     pub base_blob_fee_per_gas: U256,
