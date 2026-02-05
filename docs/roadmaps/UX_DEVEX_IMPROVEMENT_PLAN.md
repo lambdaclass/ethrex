@@ -335,6 +335,7 @@ ethrex_sync_accounts_downloaded: IntGauge,
 ethrex_sync_storage_downloaded: IntGauge,
 ethrex_sync_bytecodes_downloaded: IntGauge,
 ethrex_sync_state_healed: IntGauge,
+ethrex_sync_fkv_calculation_progress: Gauge,  // FKV (Flat Key-Value) calculation progress
 ```
 
 **Files:**
