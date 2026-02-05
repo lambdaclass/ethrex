@@ -232,19 +232,23 @@ impl RLPEncode for AccountState {
 
 impl RLPDecode for AccountState {
     fn decode_unfinished(rlp: &[u8]) -> Result<(AccountState, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (balance, decoder) = decoder.decode_field("balance")?;
-        let (storage_root, decoder) = decoder.decode_field("storage_root")?;
-        let (code_hash, decoder) = decoder.decode_field("code_hash")?;
-        let state = AccountState {
-            nonce,
-            balance,
-            storage_root,
-            code_hash,
-        };
-        Ok((state, decoder.finish()?))
+        decode_account_state(rlp).map_err(|e| e.with_context("AccountState"))
     }
+}
+
+fn decode_account_state(rlp: &[u8]) -> Result<(AccountState, &[u8]), RLPDecodeError> {
+    let decoder = Decoder::new(rlp)?;
+    let (nonce, decoder) = decoder.decode_field("nonce")?;
+    let (balance, decoder) = decoder.decode_field("balance")?;
+    let (storage_root, decoder) = decoder.decode_field("storage_root")?;
+    let (code_hash, decoder) = decoder.decode_field("code_hash")?;
+    let state = AccountState {
+        nonce,
+        balance,
+        storage_root,
+        code_hash,
+    };
+    Ok((state, decoder.finish()?))
 }
 
 impl RLPEncode for AccountStateSlimCodec {

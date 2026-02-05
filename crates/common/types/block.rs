@@ -63,20 +63,24 @@ impl RLPEncode for Block {
 
 impl RLPDecode for Block {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (header, decoder) = decoder.decode_field("header")?;
-        let (transactions, decoder) = decoder.decode_field("transactions")?;
-        let (ommers, decoder) = decoder.decode_field("ommers")?;
-        let (withdrawals, decoder) = decoder.decode_optional_field();
-        let remaining = decoder.finish()?;
-        let body = BlockBody {
-            transactions,
-            ommers,
-            withdrawals,
-        };
-        let block = Block::new(header, body);
-        Ok((block, remaining))
+        decode_block(rlp).map_err(|e| e.with_context("Block"))
     }
+}
+
+fn decode_block(rlp: &[u8]) -> Result<(Block, &[u8]), RLPDecodeError> {
+    let decoder = Decoder::new(rlp)?;
+    let (header, decoder) = decoder.decode_field("header")?;
+    let (transactions, decoder) = decoder.decode_field("transactions")?;
+    let (ommers, decoder) = decoder.decode_field("ommers")?;
+    let (withdrawals, decoder) = decoder.decode_optional_field();
+    let remaining = decoder.finish()?;
+    let body = BlockBody {
+        transactions,
+        ommers,
+        withdrawals,
+    };
+    let block = Block::new(header, body);
+    Ok((block, remaining))
 }
 
 /// Header part of a block on the chain.
@@ -242,62 +246,66 @@ impl RLPEncode for BlockHeader {
 
 impl RLPDecode for BlockHeader {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (parent_hash, decoder) = decoder.decode_field("parent_hash")?;
-        let (ommers_hash, decoder) = decoder.decode_field("ommers_hash")?;
-        let (coinbase, decoder) = decoder.decode_field("coinbase")?;
-        let (state_root, decoder) = decoder.decode_field("state_root")?;
-        let (transactions_root, decoder) = decoder.decode_field("transactions_root")?;
-        let (receipts_root, decoder) = decoder.decode_field("receipts_root")?;
-        let (logs_bloom, decoder) = decoder.decode_field("logs_bloom")?;
-        let (difficulty, decoder) = decoder.decode_field("difficulty")?;
-        let (number, decoder) = decoder.decode_field("number")?;
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
-        let (gas_used, decoder) = decoder.decode_field("gas_used")?;
-        let (timestamp, decoder) = decoder.decode_field("timestamp")?;
-        let (extra_data, decoder) = decoder.decode_field("extra_data")?;
-        let (prev_randao, decoder) = decoder.decode_field("prev_randao")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let nonce = u64::from_be_bytes(nonce);
-        let (base_fee_per_gas, decoder) = decoder.decode_optional_field();
-        let (withdrawals_root, decoder) = decoder.decode_optional_field();
-        let (blob_gas_used, decoder) = decoder.decode_optional_field();
-        let (excess_blob_gas, decoder) = decoder.decode_optional_field();
-        let (parent_beacon_block_root, decoder) = decoder.decode_optional_field();
-        let (requests_hash, decoder) = decoder.decode_optional_field();
-        let (block_access_list_hash, decoder) = decoder.decode_optional_field();
-        let (slot_number, decoder) = decoder.decode_optional_field();
-
-        Ok((
-            BlockHeader {
-                hash: OnceCell::new(),
-                parent_hash,
-                ommers_hash,
-                coinbase,
-                state_root,
-                transactions_root,
-                receipts_root,
-                logs_bloom,
-                difficulty,
-                number,
-                gas_limit,
-                gas_used,
-                timestamp,
-                extra_data,
-                prev_randao,
-                nonce,
-                base_fee_per_gas,
-                withdrawals_root,
-                blob_gas_used,
-                excess_blob_gas,
-                parent_beacon_block_root,
-                requests_hash,
-                block_access_list_hash,
-                slot_number,
-            },
-            decoder.finish()?,
-        ))
+        decode_block_header(rlp).map_err(|e| e.with_context("BlockHeader"))
     }
+}
+
+fn decode_block_header(rlp: &[u8]) -> Result<(BlockHeader, &[u8]), RLPDecodeError> {
+    let decoder = Decoder::new(rlp)?;
+    let (parent_hash, decoder) = decoder.decode_field("parent_hash")?;
+    let (ommers_hash, decoder) = decoder.decode_field("ommers_hash")?;
+    let (coinbase, decoder) = decoder.decode_field("coinbase")?;
+    let (state_root, decoder) = decoder.decode_field("state_root")?;
+    let (transactions_root, decoder) = decoder.decode_field("transactions_root")?;
+    let (receipts_root, decoder) = decoder.decode_field("receipts_root")?;
+    let (logs_bloom, decoder) = decoder.decode_field("logs_bloom")?;
+    let (difficulty, decoder) = decoder.decode_field("difficulty")?;
+    let (number, decoder) = decoder.decode_field("number")?;
+    let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+    let (gas_used, decoder) = decoder.decode_field("gas_used")?;
+    let (timestamp, decoder) = decoder.decode_field("timestamp")?;
+    let (extra_data, decoder) = decoder.decode_field("extra_data")?;
+    let (prev_randao, decoder) = decoder.decode_field("prev_randao")?;
+    let (nonce, decoder) = decoder.decode_field("nonce")?;
+    let nonce = u64::from_be_bytes(nonce);
+    let (base_fee_per_gas, decoder) = decoder.decode_optional_field();
+    let (withdrawals_root, decoder) = decoder.decode_optional_field();
+    let (blob_gas_used, decoder) = decoder.decode_optional_field();
+    let (excess_blob_gas, decoder) = decoder.decode_optional_field();
+    let (parent_beacon_block_root, decoder) = decoder.decode_optional_field();
+    let (requests_hash, decoder) = decoder.decode_optional_field();
+    let (block_access_list_hash, decoder) = decoder.decode_optional_field();
+    let (slot_number, decoder) = decoder.decode_optional_field();
+
+    Ok((
+        BlockHeader {
+            hash: OnceCell::new(),
+            parent_hash,
+            ommers_hash,
+            coinbase,
+            state_root,
+            transactions_root,
+            receipts_root,
+            logs_bloom,
+            difficulty,
+            number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data,
+            prev_randao,
+            nonce,
+            base_fee_per_gas,
+            withdrawals_root,
+            blob_gas_used,
+            excess_blob_gas,
+            parent_beacon_block_root,
+            requests_hash,
+            block_access_list_hash,
+            slot_number,
+        },
+        decoder.finish()?,
+    ))
 }
 
 // The body of a block on the chain
@@ -370,19 +378,23 @@ impl RLPEncode for BlockBody {
 
 impl RLPDecode for BlockBody {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (transactions, decoder) = decoder.decode_field("transactions")?;
-        let (ommers, decoder) = decoder.decode_field("ommers")?;
-        let (withdrawals, decoder) = decoder.decode_optional_field();
-        Ok((
-            BlockBody {
-                transactions,
-                ommers,
-                withdrawals,
-            },
-            decoder.finish()?,
-        ))
+        decode_block_body(rlp).map_err(|e| e.with_context("BlockBody"))
     }
+}
+
+fn decode_block_body(rlp: &[u8]) -> Result<(BlockBody, &[u8]), RLPDecodeError> {
+    let decoder = Decoder::new(rlp)?;
+    let (transactions, decoder) = decoder.decode_field("transactions")?;
+    let (ommers, decoder) = decoder.decode_field("ommers")?;
+    let (withdrawals, decoder) = decoder.decode_optional_field();
+    Ok((
+        BlockBody {
+            transactions,
+            ommers,
+            withdrawals,
+        },
+        decoder.finish()?,
+    ))
 }
 
 impl BlockHeader {

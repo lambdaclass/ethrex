@@ -108,32 +108,36 @@ impl RLPEncode for Receipt {
 
 impl RLPDecode for Receipt {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (tx_type, decoder): (u8, _) = decoder.decode_field("tx-type")?;
-        let (succeeded, decoder) = decoder.decode_field("succeeded")?;
-        let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
-        let (logs, decoder) = decoder.decode_field("logs")?;
-
-        // EIP-7778: Try to decode optional gas_spent field
-        let (gas_spent, decoder) = decoder.decode_optional_field();
-
-        let Some(tx_type) = TxType::from_u8(tx_type) else {
-            return Err(RLPDecodeError::Custom(
-                "Invalid transaction type".to_string(),
-            ));
-        };
-
-        Ok((
-            Receipt {
-                tx_type,
-                succeeded,
-                cumulative_gas_used,
-                gas_spent,
-                logs,
-            },
-            decoder.finish()?,
-        ))
+        decode_receipt(rlp).map_err(|e| e.with_context("Receipt"))
     }
+}
+
+fn decode_receipt(rlp: &[u8]) -> Result<(Receipt, &[u8]), RLPDecodeError> {
+    let decoder = Decoder::new(rlp)?;
+    let (tx_type, decoder): (u8, _) = decoder.decode_field("tx-type")?;
+    let (succeeded, decoder) = decoder.decode_field("succeeded")?;
+    let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
+    let (logs, decoder) = decoder.decode_field("logs")?;
+
+    // EIP-7778: Try to decode optional gas_spent field
+    let (gas_spent, decoder) = decoder.decode_optional_field();
+
+    let Some(tx_type) = TxType::from_u8(tx_type) else {
+        return Err(RLPDecodeError::Custom(
+            "Invalid transaction type".to_string(),
+        ));
+    };
+
+    Ok((
+        Receipt {
+            tx_type,
+            succeeded,
+            cumulative_gas_used,
+            gas_spent,
+            logs,
+        },
+        decoder.finish()?,
+    ))
 }
 
 /// Result of a transaction
@@ -282,50 +286,54 @@ impl RLPDecode for ReceiptWithBloom {
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        // The minimum size for a ReceiptWithBloom is > 256 bytes (due to the Bloom type field) meaning that it is safe
-        // to check for bytes prefix to diferenticate between legacy receipts and non-legacy receipt payloads
-        let (tx_type, rlp) = if is_encoded_as_bytes(rlp)? {
-            let payload = get_rlp_bytes_item_payload(rlp)?;
-            let tx_type = match payload.first().ok_or(RLPDecodeError::invalid_length())? {
-                0x0 => TxType::Legacy,
-                0x1 => TxType::EIP2930,
-                0x2 => TxType::EIP1559,
-                0x3 => TxType::EIP4844,
-                0x4 => TxType::EIP7702,
-                0x7d => TxType::FeeToken,
-                0x7e => TxType::Privileged,
-                ty => {
-                    return Err(RLPDecodeError::Custom(format!(
-                        "Invalid transaction type: {ty}"
-                    )));
-                }
-            };
-            (tx_type, &payload[1..])
-        } else {
-            (TxType::Legacy, rlp)
-        };
-
-        let decoder = Decoder::new(rlp)?;
-        let (succeeded, decoder) = decoder.decode_field("succeeded")?;
-        let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
-        let (bloom, decoder) = decoder.decode_field("bloom")?;
-        let (logs, decoder) = decoder.decode_field("logs")?;
-
-        // EIP-7778: Try to decode optional gas_spent field
-        let (gas_spent, decoder) = decoder.decode_optional_field();
-
-        Ok((
-            ReceiptWithBloom {
-                tx_type,
-                succeeded,
-                cumulative_gas_used,
-                bloom,
-                logs,
-                gas_spent,
-            },
-            decoder.finish()?,
-        ))
+        decode_receipt_with_bloom(rlp).map_err(|e| e.with_context("ReceiptWithBloom"))
     }
+}
+
+fn decode_receipt_with_bloom(rlp: &[u8]) -> Result<(ReceiptWithBloom, &[u8]), RLPDecodeError> {
+    // The minimum size for a ReceiptWithBloom is > 256 bytes (due to the Bloom type field) meaning that it is safe
+    // to check for bytes prefix to diferenticate between legacy receipts and non-legacy receipt payloads
+    let (tx_type, rlp) = if is_encoded_as_bytes(rlp)? {
+        let payload = get_rlp_bytes_item_payload(rlp)?;
+        let tx_type = match payload.first().ok_or(RLPDecodeError::invalid_length())? {
+            0x0 => TxType::Legacy,
+            0x1 => TxType::EIP2930,
+            0x2 => TxType::EIP1559,
+            0x3 => TxType::EIP4844,
+            0x4 => TxType::EIP7702,
+            0x7d => TxType::FeeToken,
+            0x7e => TxType::Privileged,
+            ty => {
+                return Err(RLPDecodeError::Custom(format!(
+                    "Invalid transaction type: {ty}"
+                )));
+            }
+        };
+        (tx_type, &payload[1..])
+    } else {
+        (TxType::Legacy, rlp)
+    };
+
+    let decoder = Decoder::new(rlp)?;
+    let (succeeded, decoder) = decoder.decode_field("succeeded")?;
+    let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
+    let (bloom, decoder) = decoder.decode_field("bloom")?;
+    let (logs, decoder) = decoder.decode_field("logs")?;
+
+    // EIP-7778: Try to decode optional gas_spent field
+    let (gas_spent, decoder) = decoder.decode_optional_field();
+
+    Ok((
+        ReceiptWithBloom {
+            tx_type,
+            succeeded,
+            cumulative_gas_used,
+            bloom,
+            logs,
+            gas_spent,
+        },
+        decoder.finish()?,
+    ))
 }
 
 impl From<&Receipt> for ReceiptWithBloom {
