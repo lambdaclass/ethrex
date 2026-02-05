@@ -59,9 +59,6 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
-        let chain_config = db.store.get_chain_config()?;
-        let fork = chain_config.fork(block.header.timestamp);
-
         let mut receipts = Vec::new();
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
@@ -92,7 +89,6 @@ impl LEVM {
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                fork.gas_spent_for_receipt(report.gas_spent),
                 report.logs,
             );
 
@@ -126,9 +122,6 @@ impl LEVM {
         queue_length: &AtomicUsize,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
-
-        let chain_config = db.store.get_chain_config()?;
-        let fork = chain_config.fork(block.header.timestamp);
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
@@ -179,7 +172,6 @@ impl LEVM {
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                fork.gas_spent_for_receipt(report.gas_spent),
                 report.logs,
             );
 
