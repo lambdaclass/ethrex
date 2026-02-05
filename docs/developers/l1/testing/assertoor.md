@@ -8,7 +8,7 @@ make localnet-assertoor-tx
 make localnet-assertoor-blob
 ```
 
-Those are two different set of assertoor checks the details are as follows:
+Those are two different sets of assertoor checks the details are as follows:
 
 _assertoor-tx_
 
