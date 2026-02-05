@@ -66,10 +66,14 @@ const SKIPPED_AMSTERDAM: &[&str] = &[
     // =========================================================================
     //
     // EIP-7928: Block-Level Access Lists (SFI)
-    // Directory ENABLED - 13 tests pass, 97 tests skipped below due to other
+    // Directory ENABLED - 20 tests pass, 90 tests skipped below due to other
     // Amsterdam EIP dependencies (EIP-7778 gas accounting, EIP-7708 ETH transfer logs)
     // Passing tests: test_bal_invalid_*, test_bal_4788_empty_block,
-    //                test_bal_empty_block_no_coinbase, test_bal_withdrawal_to_coinbase_empty_block
+    //                test_bal_empty_block_no_coinbase, test_bal_withdrawal_to_coinbase_empty_block,
+    //                test_bal_withdrawal_empty_block, test_bal_zero_withdrawal,
+    //                test_bal_withdrawal_largest_amount, test_bal_withdrawal_no_evm_execution,
+    //                test_bal_withdrawal_to_nonexistent_account, test_bal_withdrawal_to_precompiles,
+    //                test_bal_multiple_withdrawals_same_address
     "test_bal_2930_account_listed_but_untouched",
     "test_bal_2930_slot_listed_and_unlisted_reads",
     "test_bal_2930_slot_listed_and_unlisted_writes",
@@ -128,7 +132,6 @@ const SKIPPED_AMSTERDAM: &[&str] = &[
     "test_bal_lexicographic_address_ordering",
     "test_bal_multiple_balance_changes_same_account",
     "test_bal_multiple_storage_writes_same_slot",
-    "test_bal_multiple_withdrawals_same_address",
     "test_bal_nested_delegatecall_storage_writes_net_zero",
     "test_bal_net_zero_balance_transfer",
     "test_bal_nonce_changes",
@@ -158,15 +161,9 @@ const SKIPPED_AMSTERDAM: &[&str] = &[
     "test_bal_withdrawal_and_transaction",
     "test_bal_withdrawal_and_value_transfer_same_address",
     "test_bal_withdrawal_contract_cross_index",
-    "test_bal_withdrawal_empty_block",
-    "test_bal_withdrawal_largest_amount",
-    "test_bal_withdrawal_no_evm_execution",
     "test_bal_withdrawal_to_7702_delegation",
     "test_bal_withdrawal_to_coinbase",
-    "test_bal_withdrawal_to_nonexistent_account",
-    "test_bal_withdrawal_to_precompiles",
     "test_bal_zero_value_transfer",
-    "test_bal_zero_withdrawal",
     //
     // EIP-7708: ETH Transfers Emit a Log (CFI) - 38 failing tests
     // Requires LOG emission on ETH value transfers
