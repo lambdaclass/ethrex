@@ -250,21 +250,6 @@ impl PayloadBuildContext {
             vm.enable_bal_recording();
             // Set index 0 for pre-execution phase (system contracts)
             vm.set_bal_index(0);
-            // Record coinbase if block will have txs or withdrawals (per EIP-7928)
-            let has_withdrawals = payload
-                .body
-                .withdrawals
-                .as_ref()
-                .is_some_and(|w| !w.is_empty());
-            // Note: transactions will be added later, so we always record coinbase
-            // since the block builder intends to add transactions
-            if let Some(recorder) = vm.db.bal_recorder_mut() {
-                recorder.record_touched_address(payload.header.coinbase);
-                // Record withdrawal recipients for BAL per EIP-7928
-                if has_withdrawals && let Some(withdrawals) = &payload.body.withdrawals {
-                    recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
-                }
-            }
         }
 
         let payload_size = payload.length() as u64;

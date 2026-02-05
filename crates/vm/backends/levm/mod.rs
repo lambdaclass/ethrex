@@ -74,19 +74,6 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type)?;
 
-        // Record coinbase if block has txs or withdrawals (per EIP-7928)
-        if record_bal {
-            let has_txs_or_withdrawals = !block.body.transactions.is_empty()
-                || block
-                    .body
-                    .withdrawals
-                    .as_ref()
-                    .is_some_and(|w| !w.is_empty());
-            if has_txs_or_withdrawals && let Some(recorder) = db.bal_recorder_mut() {
-                recorder.record_touched_address(block.header.coinbase);
-            }
-        }
-
         let chain_config = db.store.get_chain_config()?;
         let fork = chain_config.fork(block.header.timestamp);
         let mut receipts = Vec::new();
