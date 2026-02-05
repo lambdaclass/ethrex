@@ -488,13 +488,9 @@ pub struct BlockAccessListRecorder {
     storage_reads: BTreeMap<Address, BTreeSet<U256>>,
     /// Storage writes per address (slot -> list of (index, post_value) pairs).
     storage_writes: BTreeMap<Address, BTreeMap<U256, Vec<(u16, U256)>>>,
-    /// Initial balances for detecting balance round-trips (per-block, used for general reference).
+    /// Initial balances for detecting balance round-trips.
+    /// Used as the starting point for per-transaction round-trip detection in build().
     initial_balances: BTreeMap<Address, U256>,
-    /// Per-transaction initial balances for round-trip detection.
-    /// Per EIP-7928: "If an account's balance changes during a transaction, but its
-    /// post-transaction balance is equal to its pre-transaction balance, then the
-    /// change MUST NOT be recorded."
-    tx_initial_balances: BTreeMap<Address, U256>,
     /// Per-transaction initial storage values for net-zero filtering.
     /// Per EIP-7928: "If a storage slot's value is changed but its post-transaction value
     /// is equal to its pre-transaction value, the slot MUST NOT be recorded as modified."
@@ -529,18 +525,14 @@ impl BlockAccessListRecorder {
     /// Sets the current block access index per EIP-7928 spec (uint16).
     /// Call this before each transaction (index 1..n) and for withdrawals (n+1).
     ///
-    /// Per EIP-7928: "If an account's balance changes during a transaction, but its
-    /// post-transaction balance is equal to its pre-transaction balance, then the
-    /// change MUST NOT be recorded."
-    /// Also filters net-zero storage writes before switching to a new transaction.
+    /// Filters net-zero storage writes and code changes for the current transaction
+    /// before switching to a new transaction index.
     pub fn set_block_access_index(&mut self, index: u16) {
         // Filter net-zero changes and clear per-transaction initial values when switching transactions
-        // This enables per-transaction round-trip detection as required by EIP-7928
         if self.current_index != index {
             // Filter net-zero storage writes and code changes for the current transaction before switching
             self.filter_net_zero_storage();
             self.filter_net_zero_code();
-            self.tx_initial_balances.clear();
             self.tx_initial_storage.clear();
             self.tx_initial_code.clear();
         }
@@ -772,13 +764,12 @@ impl BlockAccessListRecorder {
     /// Sets the initial balance for an address before any changes.
     /// This should be called when first accessing an account to enable round-trip detection.
     ///
-    /// Tracks both per-block initial (for general reference) and per-transaction initial
-    /// (for EIP-7928 round-trip detection).
+    /// Per EIP-7928: "If an account's balance changes during a transaction, but its
+    /// post-transaction balance is equal to its pre-transaction balance, then the
+    /// change MUST NOT be recorded." The initial balance is used in build() to detect
+    /// such round-trips on a per-transaction basis.
     pub fn set_initial_balance(&mut self, address: Address, balance: U256) {
-        // Track per-block initial (for overall reference)
         self.initial_balances.entry(address).or_insert(balance);
-        // Track per-transaction initial (for EIP-7928 round-trip detection)
-        self.tx_initial_balances.entry(address).or_insert(balance);
     }
 
     /// Records a nonce change.

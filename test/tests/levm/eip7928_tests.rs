@@ -924,8 +924,10 @@ fn test_bal_checkpoint_restore_preserves_touched_addresses() {
 
 #[test]
 fn test_bal_reverted_write_restores_read() {
-    // When a slot is read, then written (which removes it from reads), then
-    // the write is reverted, the slot should be restored as a read.
+    // When a slot is read, then written, then the write is reverted,
+    // the slot should appear as a read in the final BAL.
+    // Note: reads are tracked via reads_promoted_to_writes and filtered in build(),
+    // not removed from storage_reads during write.
     let mut recorder = BlockAccessListRecorder::new();
     recorder.set_block_access_index(1);
 
@@ -935,7 +937,7 @@ fn test_bal_reverted_write_restores_read() {
     // Take checkpoint
     let checkpoint = recorder.checkpoint();
 
-    // Write to the same slot (this removes it from reads and adds to writes)
+    // Write to the same slot (this tracks the promotion but keeps the read)
     recorder.record_storage_write(ALICE_ADDR, U256::from(0x10), U256::from(0x42));
 
     // Revert the write
