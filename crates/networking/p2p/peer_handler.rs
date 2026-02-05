@@ -501,15 +501,12 @@ impl PeerHandler {
                 )
                 .await;
 
-                match response {
-                    Ok(RLPxMessage::BlockBodies(BlockBodies { id: _, block_bodies })) => {
-                        // Check that the response is not empty and does not contain more bodies than the ones requested
-                        if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                            self.peer_table.record_success(&peer_id).await?;
-                            return Ok(Some((block_bodies, peer_id)));
-                        }
+                if let Ok(RLPxMessage::BlockBodies(BlockBodies { id: _, block_bodies })) = response {
+                    // Check that the response is not empty and does not contain more bodies than the ones requested
+                    if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
+                        self.peer_table.record_success(&peer_id).await?;
+                        return Ok(Some((block_bodies, peer_id)));
                     }
-                    _ => {}
                 }
 
                 warn!(
