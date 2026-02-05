@@ -88,7 +88,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc::Sender;
@@ -733,18 +733,18 @@ impl Blockchain {
         parent_header: &BlockHeader,
         index: u8,
     ) -> Result<(), StoreError> {
+        // Open tries eagerly (concurrent with execution), buffer updates per-trie,
+        // flush with batch_insert at CollectStorages (keeps trie-opening overlapped).
+        let mut tree: FxHashMap<H256, Trie> = Default::default();
+        let mut storage_updates: FxHashMap<H256, Vec<(Vec<u8>, Vec<u8>)>> = Default::default();
         let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
         let mut storage_nodes = vec![];
         let mut accounts: FxHashMap<H256, AccountState> = Default::default();
 
-        // Buffered storage state (Phase 1 optimization)
-        let mut storage_buffer: FxHashMap<H256, Vec<(H256, U256, u64)>> = Default::default();
-        let mut delete_seq: FxHashMap<H256, u64> = Default::default();
-        let mut seq_counter: u64 = 0;
-
         // Instrumentation counters
         let mut w_load_account_ns: u64 = 0;
         let mut w_load_account_count: u64 = 0;
+        let mut w_merklize_storage_ns: u64 = 0;
         let mut w_merklize_storage_count: u64 = 0;
         let mut w_open_storage_trie_ns: u64 = 0;
         let mut w_open_storage_trie_count: u64 = 0;
@@ -781,15 +781,35 @@ impl Blockchain {
                     w_load_account_count += 1;
                 }
                 MerklizationRequest::Delete(prefix) => {
-                    seq_counter += 1;
-                    delete_seq.insert(prefix, seq_counter);
+                    // Reset trie to empty and clear any buffered updates
+                    tree.insert(prefix, Trie::new_temp());
+                    storage_updates.remove(&prefix);
                 }
                 MerklizationRequest::MerklizeStorage { prefix, key, value } => {
-                    seq_counter += 1;
-                    storage_buffer
-                        .entry(prefix)
-                        .or_default()
-                        .push((key, value, seq_counter));
+                    let ms_start = Instant::now();
+                    // Open trie eagerly (concurrent with execution) — same as before
+                    if let Entry::Vacant(vacant_entry) = tree.entry(prefix) {
+                        let ost_start = Instant::now();
+                        let storage_root = match state_trie.get(prefix.as_bytes())? {
+                            Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                            None => *EMPTY_TRIE_HASH,
+                        };
+                        vacant_entry.insert(self.storage.open_storage_trie(
+                            prefix,
+                            parent_header.state_root,
+                            storage_root,
+                        )?);
+                        w_open_storage_trie_ns += ost_start.elapsed().as_nanos() as u64;
+                        w_open_storage_trie_count += 1;
+                    }
+                    // Buffer update for batch insert at CollectStorages
+                    let update = if value.is_zero() {
+                        (key.as_bytes().to_vec(), vec![])
+                    } else {
+                        (key.as_bytes().to_vec(), value.encode_to_vec())
+                    };
+                    storage_updates.entry(prefix).or_default().push(update);
+                    w_merklize_storage_ns += ms_start.elapsed().as_nanos() as u64;
                     w_merklize_storage_count += 1;
                 }
                 MerklizationRequest::MerklizeAccount {
@@ -846,59 +866,18 @@ impl Blockchain {
                 }
                 MerklizationRequest::CollectStorages { tx } => {
                     let cs_start = Instant::now();
-
-                    // Flush buffered storage updates with sorted batch inserts
-                    let mut all_prefixes: FxHashSet<H256> = Default::default();
-                    all_prefixes.extend(storage_buffer.keys());
-                    all_prefixes.extend(delete_seq.keys());
-
-                    for prefix in all_prefixes {
-                        let del_seq = delete_seq.get(&prefix).copied().unwrap_or(0);
-                        let ops = storage_buffer.remove(&prefix).unwrap_or_default();
-
-                        // Filter ops: keep only those after the last delete
-                        let ops: Vec<_> = ops
-                            .into_iter()
-                            .filter(|(_, _, seq)| *seq > del_seq)
-                            .collect();
-
-                        // Open the trie: fresh if deleted, otherwise from account's storage root
-                        let ost_start = Instant::now();
-                        let mut trie = if del_seq > 0 {
-                            Trie::new_temp()
-                        } else {
-                            let storage_root = match accounts.get(&prefix) {
-                                Some(acct) => acct.storage_root,
-                                None => match state_trie.get(prefix.as_bytes())? {
-                                    Some(rlp) => AccountState::decode(&rlp)?.storage_root,
-                                    None => *EMPTY_TRIE_HASH,
-                                },
-                            };
-                            self.storage.open_storage_trie(
-                                prefix,
-                                parent_header.state_root,
-                                storage_root,
-                            )?
-                        };
-                        w_open_storage_trie_ns += ost_start.elapsed().as_nanos() as u64;
-                        w_open_storage_trie_count += 1;
-
-                        if !ops.is_empty() {
-                            let bi_start = Instant::now();
-                            let updates: Vec<(Vec<u8>, Vec<u8>)> = ops
-                                .into_iter()
-                                .map(|(key, value, _seq)| {
-                                    if value.is_zero() {
-                                        (key.as_bytes().to_vec(), vec![])
-                                    } else {
-                                        (key.as_bytes().to_vec(), value.encode_to_vec())
-                                    }
-                                })
-                                .collect();
-                            trie.insert_batch_sorted(updates)?;
-                            w_storage_batch_insert_ns += bi_start.elapsed().as_nanos() as u64;
+                    // Flush buffered updates into tries with batch insert
+                    for (prefix, updates) in storage_updates.drain() {
+                        if let Some(trie) = tree.get_mut(&prefix) {
+                            if !updates.is_empty() {
+                                let bi_start = Instant::now();
+                                trie.insert_batch_sorted(updates)?;
+                                w_storage_batch_insert_ns +=
+                                    bi_start.elapsed().as_nanos() as u64;
+                            }
                         }
-
+                    }
+                    for (prefix, trie) in tree.drain() {
                         let (root, nodes) = collect_trie(index, trie)?;
                         tx.send(CollectedStorageMsg {
                             index,
@@ -908,12 +887,6 @@ impl Blockchain {
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
-
-                    // Clear buffers for next round
-                    storage_buffer.clear();
-                    delete_seq.clear();
-                    seq_counter = 0;
-
                     w_collect_storages_ns += cs_start.elapsed().as_nanos() as u64;
                 }
                 MerklizationRequest::CollectState { tx } => {
@@ -939,7 +912,7 @@ impl Blockchain {
                 w_rx_wait_ns as f64 / 1_000_000.0,
                 w_load_account_ns as f64 / 1_000_000.0,
                 w_load_account_count,
-                (w_open_storage_trie_ns + w_storage_batch_insert_ns) as f64 / 1_000_000.0,
+                w_merklize_storage_ns as f64 / 1_000_000.0,
                 w_merklize_storage_count,
                 w_open_storage_trie_ns as f64 / 1_000_000.0,
                 w_open_storage_trie_count,
