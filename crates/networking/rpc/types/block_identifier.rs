@@ -90,7 +90,16 @@ impl BlockIdentifier {
 }
 
 impl BlockIdentifierOrHash {
-    #[allow(unused)]
+    pub async fn resolve_block_header(
+        &self,
+        storage: &Store,
+    ) -> Result<Option<BlockHeader>, StoreError> {
+        match self.resolve_block_number(storage).await? {
+            Some(block_number) => storage.get_block_header(block_number),
+            _ => Ok(None),
+        }
+    }
+
     pub async fn resolve_block_number(
         &self,
         storage: &Store,
