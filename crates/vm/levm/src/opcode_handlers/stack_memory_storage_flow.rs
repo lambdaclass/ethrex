@@ -135,11 +135,11 @@ impl<'a> VM<'a> {
             (storage_slot_key, address)
         };
 
-        let storage_slot_key = u256_to_h256(storage_slot_key);
+        let key = u256_to_h256(storage_slot_key);
 
         // Note: access_storage_slot does NOT record to BAL per EIP-7928.
         // BAL recording must happen AFTER gas check passes.
-        let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
+        let (value, storage_slot_was_cold) = self.access_storage_slot(address, key)?;
 
         self.current_call_frame
             .increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
@@ -186,7 +186,7 @@ impl<'a> VM<'a> {
         // has already happened (to get current_value and original_value).
         // "If SSTORE fails the GAS_CALL_STIPEND check, the storage slot MUST NOT appear in BAL"
         // only refers to the stipend check, NOT the main gas check.
-        self.record_storage_slot_to_bal(to, key);
+        self.record_storage_slot_to_bal(to, storage_slot_key);
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
@@ -230,7 +230,7 @@ impl<'a> VM<'a> {
 
         self.substate.refunded_gas = gas_refunds;
 
-        // Main gas check - if this fails, the slot MUST NOT appear in BAL
+        // Main gas check - if this fails, the storage read is already recorded above
         self.current_call_frame
             .increase_consumed_gas(gas_cost::sstore(
                 original_value,

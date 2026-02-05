@@ -131,7 +131,7 @@ fn test_storage_net_zero_filtered_within_tx() {
     // The storage change should be filtered out as it's net-zero
     let account = &bal.accounts()[0];
     assert!(
-        account.storage_changes().is_empty(),
+        account.storage_changes.is_empty(),
         "Net-zero storage changes should be filtered"
     );
 }
@@ -156,7 +156,7 @@ fn test_storage_net_zero_with_intermediate_write() {
 
     let account = &bal.accounts()[0];
     assert!(
-        account.storage_changes().is_empty(),
+        account.storage_changes.is_empty(),
         "Net-zero storage should be filtered even with intermediate writes"
     );
 }
@@ -174,8 +174,8 @@ fn test_storage_non_zero_change_recorded() {
     let bal = recorder.build();
 
     let account = &bal.accounts()[0];
-    assert_eq!(account.storage_changes().len(), 1);
-    assert_eq!(account.storage_changes()[0].slot(), U256::from(0x10));
+    assert_eq!(account.storage_changes.len(), 1);
+    assert_eq!(account.storage_changes[0].slot, U256::from(0x10));
 }
 
 // ==================== Checkpoint/Restore Tests ====================
@@ -200,16 +200,12 @@ fn test_checkpoint_restore_storage_writes() {
 
     // Only ALICE with slot 0x10 should have a write
     // BOB should still appear as touched but with no changes
-    let alice = bal
-        .accounts()
-        .iter()
-        .find(|a| a.address() == ALICE)
-        .unwrap();
-    assert_eq!(alice.storage_changes().len(), 1);
-    assert_eq!(alice.storage_changes()[0].slot(), U256::from(0x10));
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    assert_eq!(alice.storage_changes.len(), 1);
+    assert_eq!(alice.storage_changes[0].slot, U256::from(0x10));
 
-    let bob = bal.accounts().iter().find(|a| a.address() == BOB).unwrap();
-    assert!(bob.storage_changes().is_empty());
+    let bob = bal.accounts().iter().find(|a| a.address == BOB).unwrap();
+    assert!(bob.storage_changes.is_empty());
 }
 
 #[test]
@@ -229,15 +225,11 @@ fn test_checkpoint_restore_balance_changes() {
 
     let bal = recorder.build();
 
-    let alice = bal
-        .accounts()
-        .iter()
-        .find(|a| a.address() == ALICE)
-        .unwrap();
-    assert_eq!(alice.balance_changes().len(), 1);
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    assert_eq!(alice.balance_changes.len(), 1);
 
-    let bob = bal.accounts().iter().find(|a| a.address() == BOB).unwrap();
-    assert!(bob.balance_changes().is_empty());
+    let bob = bal.accounts().iter().find(|a| a.address == BOB).unwrap();
+    assert!(bob.balance_changes.is_empty());
 }
 
 #[test]
@@ -255,15 +247,11 @@ fn test_checkpoint_restore_nonce_changes() {
 
     let bal = recorder.build();
 
-    let alice = bal
-        .accounts()
-        .iter()
-        .find(|a| a.address() == ALICE)
-        .unwrap();
-    assert_eq!(alice.nonce_changes().len(), 1);
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    assert_eq!(alice.nonce_changes.len(), 1);
 
-    let bob = bal.accounts().iter().find(|a| a.address() == BOB).unwrap();
-    assert!(bob.nonce_changes().is_empty());
+    let bob = bal.accounts().iter().find(|a| a.address == BOB).unwrap();
+    assert!(bob.nonce_changes.is_empty());
 }
 
 #[test]
@@ -281,15 +269,11 @@ fn test_checkpoint_restore_code_changes() {
 
     let bal = recorder.build();
 
-    let alice = bal
-        .accounts()
-        .iter()
-        .find(|a| a.address() == ALICE)
-        .unwrap();
-    assert_eq!(alice.code_changes().len(), 1);
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    assert_eq!(alice.code_changes.len(), 1);
 
-    let bob = bal.accounts().iter().find(|a| a.address() == BOB).unwrap();
-    assert!(bob.code_changes().is_empty());
+    let bob = bal.accounts().iter().find(|a| a.address == BOB).unwrap();
+    assert!(bob.code_changes.is_empty());
 }
 
 #[test]
@@ -312,7 +296,7 @@ fn test_nested_checkpoints() {
 
     let bal = recorder.build();
     let alice = &bal.accounts()[0];
-    assert_eq!(alice.storage_changes().len(), 2); // slots 0x10 and 0x20
+    assert_eq!(alice.storage_changes.len(), 2); // slots 0x10 and 0x20
 
     // Now test restoring to cp1 from fresh state
     let mut recorder2 = BlockAccessListRecorder::new();
@@ -328,7 +312,7 @@ fn test_nested_checkpoints() {
 
     let bal2 = recorder2.build();
     let alice2 = &bal2.accounts()[0];
-    assert_eq!(alice2.storage_changes().len(), 1); // only slot 0x10
+    assert_eq!(alice2.storage_changes.len(), 1); // only slot 0x10
 }
 
 // ==================== SYSTEM_ADDRESS Tests ====================
@@ -360,7 +344,7 @@ fn test_system_address_with_storage_change() {
 
     // SYSTEM_ADDRESS should appear because it has actual state changes
     assert_eq!(bal.accounts().len(), 1);
-    assert_eq!(bal.accounts()[0].address(), SYSTEM_ADDRESS);
+    assert_eq!(bal.accounts()[0].address, SYSTEM_ADDRESS);
 }
 
 // ==================== Block Access Index Tests ====================
@@ -392,18 +376,14 @@ fn test_block_access_index_semantics() {
 
     let bal = recorder.build();
 
-    let alice = bal
-        .accounts()
-        .iter()
-        .find(|a| a.address() == ALICE)
-        .unwrap();
-    assert_eq!(alice.storage_changes().len(), 3);
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    assert_eq!(alice.storage_changes.len(), 3);
 
     // Verify indices are correctly assigned
     let indices: Vec<u16> = alice
-        .storage_changes()
+        .storage_changes
         .iter()
-        .flat_map(|s| s.changes().iter().map(|c| c.block_access_index()))
+        .flat_map(|s| s.slot_changes.iter().map(|c| c.block_access_index))
         .collect();
     assert!(indices.contains(&0)); // pre-exec
     assert!(indices.contains(&1)); // tx 1
@@ -652,10 +632,10 @@ fn test_recorder_touched_address_only() {
 
     assert_eq!(bal.accounts().len(), 1);
     let account = &bal.accounts()[0];
-    assert_eq!(account.address(), ALICE_ADDR);
+    assert_eq!(account.address, ALICE_ADDR);
     // Account with no changes should still appear (per EIP-7928)
-    assert!(account.storage_changes().is_empty());
-    assert!(account.balance_changes().is_empty());
+    assert!(account.storage_changes.is_empty());
+    assert!(account.balance_changes.is_empty());
 }
 
 #[test]
@@ -673,9 +653,9 @@ fn test_recorder_storage_read_then_write_becomes_write() {
     assert_eq!(bal.accounts().len(), 1);
     let account = &bal.accounts()[0];
     // The slot should appear in writes, not reads
-    assert_eq!(account.storage_changes().len(), 1);
-    assert!(account.storage_reads().is_empty());
-    assert_eq!(account.storage_changes()[0].slot(), U256::from(0x10));
+    assert_eq!(account.storage_changes.len(), 1);
+    assert!(account.storage_reads.is_empty());
+    assert_eq!(account.storage_changes[0].slot, U256::from(0x10));
 }
 
 #[test]
@@ -690,8 +670,8 @@ fn test_recorder_storage_read_only() {
 
     assert_eq!(bal.accounts().len(), 1);
     let account = &bal.accounts()[0];
-    assert!(account.storage_changes().is_empty());
-    assert_eq!(account.storage_reads().len(), 2);
+    assert!(account.storage_changes.is_empty());
+    assert_eq!(account.storage_reads.len(), 2);
 }
 
 #[test]
@@ -705,10 +685,10 @@ fn test_recorder_multiple_writes_same_slot() {
     let bal = recorder.build();
 
     let account = &bal.accounts()[0];
-    assert_eq!(account.storage_changes().len(), 1);
-    let slot_change = &account.storage_changes()[0];
+    assert_eq!(account.storage_changes.len(), 1);
+    let slot_change = &account.storage_changes[0];
     // Should have two changes with different indices
-    assert_eq!(slot_change.changes().len(), 2);
+    assert_eq!(slot_change.slot_changes.len(), 2);
 }
 
 #[test]
@@ -729,7 +709,7 @@ fn test_recorder_balance_roundtrip_filtered_within_tx() {
 
     let account = &bal.accounts()[0];
     // Balance round-tripped within same TX, so balance_changes should be empty
-    assert!(account.balance_changes().is_empty());
+    assert!(account.balance_changes.is_empty());
 }
 
 #[test]
@@ -753,7 +733,7 @@ fn test_recorder_balance_changes_across_txs_not_filtered() {
     let account = &bal.accounts()[0];
     // Both transactions have actual balance changes (not round-trips within their tx)
     // TX 1: 1000 -> 500, TX 2: 500 -> 1000
-    assert_eq!(account.balance_changes().len(), 2);
+    assert_eq!(account.balance_changes.len(), 2);
 }
 
 #[test]
@@ -768,8 +748,8 @@ fn test_recorder_balance_change_recorded() {
 
     let account = &bal.accounts()[0];
     // Balance changed to different value, should be recorded
-    assert_eq!(account.balance_changes().len(), 1);
-    assert_eq!(account.balance_changes()[0].post_balance(), U256::from(500));
+    assert_eq!(account.balance_changes.len(), 1);
+    assert_eq!(account.balance_changes[0].post_balance, U256::from(500));
 }
 
 #[test]
@@ -782,8 +762,8 @@ fn test_recorder_nonce_change() {
     let bal = recorder.build();
 
     let account = &bal.accounts()[0];
-    assert_eq!(account.nonce_changes().len(), 1);
-    assert_eq!(account.nonce_changes()[0].post_nonce(), 1);
+    assert_eq!(account.nonce_changes.len(), 1);
+    assert_eq!(account.nonce_changes[0].post_nonce, 1);
 }
 
 #[test]
@@ -796,9 +776,9 @@ fn test_recorder_code_change() {
     let bal = recorder.build();
 
     let account = &bal.accounts()[0];
-    assert_eq!(account.code_changes().len(), 1);
+    assert_eq!(account.code_changes.len(), 1);
     assert_eq!(
-        account.code_changes()[0].new_code(),
+        account.code_changes[0].new_code,
         &bytes::Bytes::from_static(&[0x60, 0x00])
     );
 }
@@ -824,7 +804,7 @@ fn test_recorder_system_address_included_with_state_change() {
     let bal = recorder.build();
     // SYSTEM_ADDRESS should appear because it has actual state changes
     assert_eq!(bal.accounts().len(), 1);
-    assert_eq!(bal.accounts()[0].address(), SYSTEM_ADDRESS);
+    assert_eq!(bal.accounts()[0].address, SYSTEM_ADDRESS);
 }
 
 #[test]
@@ -839,7 +819,7 @@ fn test_recorder_multiple_addresses_sorted() {
     // Addresses should be sorted lexicographically in the encoded output
     assert_eq!(bal.accounts().len(), 3);
     // BTreeSet maintains order, so the build() returns them in sorted order
-    let addresses: Vec<_> = bal.accounts().iter().map(|a| a.address()).collect();
+    let addresses: Vec<_> = bal.accounts().iter().map(|a| a.address).collect();
     // The set should be sorted
     let mut sorted = addresses.clone();
     sorted.sort();
@@ -865,7 +845,7 @@ fn test_bal_self_transfer() {
 
     let account = &bal.accounts()[0];
     // Self-transfer with no net balance change should result in empty balance_changes
-    assert!(account.balance_changes().is_empty());
+    assert!(account.balance_changes.is_empty());
 }
 
 #[test]
@@ -893,7 +873,7 @@ fn test_bal_zero_value_transfer() {
     assert_eq!(bal.accounts().len(), 2);
     // Neither should have balance_changes (balances unchanged)
     for account in bal.accounts() {
-        assert!(account.balance_changes().is_empty());
+        assert!(account.balance_changes.is_empty());
     }
 }
 
@@ -928,18 +908,18 @@ fn test_bal_checkpoint_restore_preserves_touched_addresses() {
     let alice = bal
         .accounts()
         .iter()
-        .find(|a| a.address() == ALICE_ADDR)
+        .find(|a| a.address == ALICE_ADDR)
         .unwrap();
     let bob = bal
         .accounts()
         .iter()
-        .find(|a| a.address() == BOB_ADDR)
+        .find(|a| a.address == BOB_ADDR)
         .unwrap();
 
     // Alice's storage write survived
-    assert_eq!(alice.storage_changes().len(), 1);
+    assert_eq!(alice.storage_changes.len(), 1);
     // Bob's storage write was reverted
-    assert!(bob.storage_changes().is_empty());
+    assert!(bob.storage_changes.is_empty());
 }
 
 #[test]
@@ -965,8 +945,8 @@ fn test_bal_reverted_write_restores_read() {
 
     let account = &bal.accounts()[0];
     // The write was reverted, so slot should be back in reads
-    assert_eq!(account.storage_reads().len(), 1);
-    assert!(account.storage_reads().contains(&U256::from(0x10)));
+    assert_eq!(account.storage_reads.len(), 1);
+    assert!(account.storage_reads.contains(&U256::from(0x10)));
     // And not in writes
-    assert!(account.storage_changes().is_empty());
+    assert!(account.storage_changes.is_empty());
 }

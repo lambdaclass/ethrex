@@ -46,8 +46,8 @@ fn sorted_list_length<T: RLPEncode>(items: &[T]) -> usize {
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StorageChange {
     /// Block access index per EIP-7928 spec (uint16).
-    block_access_index: u16,
-    post_value: U256,
+    pub block_access_index: u16,
+    pub post_value: U256,
 }
 
 impl StorageChange {
@@ -57,16 +57,6 @@ impl StorageChange {
             block_access_index,
             post_value,
         }
-    }
-
-    /// Returns the block access index for this storage change.
-    pub fn block_access_index(&self) -> u16 {
-        self.block_access_index
-    }
-
-    /// Returns the post value for this storage change.
-    pub fn post_value(&self) -> U256 {
-        self.post_value
     }
 }
 
@@ -97,8 +87,8 @@ impl RLPDecode for StorageChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SlotChange {
-    slot: U256,
-    slot_changes: Vec<StorageChange>,
+    pub slot: U256,
+    pub slot_changes: Vec<StorageChange>,
 }
 
 impl SlotChange {
@@ -118,19 +108,9 @@ impl SlotChange {
         }
     }
 
-    /// Returns the slot for this slot change.
-    pub fn slot(&self) -> U256 {
-        self.slot
-    }
-
     /// Adds a storage change to this slot.
     pub fn add_change(&mut self, change: StorageChange) {
         self.slot_changes.push(change);
-    }
-
-    /// Returns an iterator over the storage changes.
-    pub fn changes(&self) -> &[StorageChange] {
-        &self.slot_changes
     }
 }
 
@@ -156,8 +136,8 @@ impl RLPDecode for SlotChange {
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct BalanceChange {
     /// Block access index per EIP-7928 spec (uint16).
-    block_access_index: u16,
-    post_balance: U256,
+    pub block_access_index: u16,
+    pub post_balance: U256,
 }
 
 impl BalanceChange {
@@ -167,16 +147,6 @@ impl BalanceChange {
             block_access_index,
             post_balance,
         }
-    }
-
-    /// Returns the block access index for this balance change.
-    pub fn block_access_index(&self) -> u16 {
-        self.block_access_index
-    }
-
-    /// Returns the post balance for this balance change.
-    pub fn post_balance(&self) -> U256 {
-        self.post_balance
     }
 }
 
@@ -208,8 +178,8 @@ impl RLPDecode for BalanceChange {
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NonceChange {
     /// Block access index per EIP-7928 spec (uint16).
-    block_access_index: u16,
-    post_nonce: u64,
+    pub block_access_index: u16,
+    pub post_nonce: u64,
 }
 
 impl NonceChange {
@@ -219,16 +189,6 @@ impl NonceChange {
             block_access_index,
             post_nonce,
         }
-    }
-
-    /// Returns the block access index for this nonce change.
-    pub fn block_access_index(&self) -> u16 {
-        self.block_access_index
-    }
-
-    /// Returns the post nonce for this nonce change.
-    pub fn post_nonce(&self) -> u64 {
-        self.post_nonce
     }
 }
 
@@ -260,8 +220,8 @@ impl RLPDecode for NonceChange {
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CodeChange {
     /// Block access index per EIP-7928 spec (uint16).
-    block_access_index: u16,
-    new_code: Bytes,
+    pub block_access_index: u16,
+    pub new_code: Bytes,
 }
 
 impl CodeChange {
@@ -271,16 +231,6 @@ impl CodeChange {
             block_access_index,
             new_code,
         }
-    }
-
-    /// Returns the block access index for this code change.
-    pub fn block_access_index(&self) -> u16 {
-        self.block_access_index
-    }
-
-    /// Returns the new code for this code change.
-    pub fn new_code(&self) -> &Bytes {
-        &self.new_code
     }
 }
 
@@ -311,12 +261,12 @@ impl RLPDecode for CodeChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct AccountChanges {
-    address: Address,
-    storage_changes: Vec<SlotChange>,
-    storage_reads: Vec<U256>,
-    balance_changes: Vec<BalanceChange>,
-    nonce_changes: Vec<NonceChange>,
-    code_changes: Vec<CodeChange>,
+    pub address: Address,
+    pub storage_changes: Vec<SlotChange>,
+    pub storage_reads: Vec<U256>,
+    pub balance_changes: Vec<BalanceChange>,
+    pub nonce_changes: Vec<NonceChange>,
+    pub code_changes: Vec<CodeChange>,
 }
 
 impl AccountChanges {
@@ -357,11 +307,6 @@ impl AccountChanges {
         self
     }
 
-    /// Returns the address for this account changes.
-    pub fn address(&self) -> Address {
-        self.address
-    }
-
     /// Adds a slot change (storage write) to this account.
     pub fn add_storage_change(&mut self, slot_change: SlotChange) {
         self.storage_changes.push(slot_change);
@@ -394,31 +339,6 @@ impl AccountChanges {
             && self.balance_changes.is_empty()
             && self.nonce_changes.is_empty()
             && self.code_changes.is_empty()
-    }
-
-    /// Returns the storage changes.
-    pub fn storage_changes(&self) -> &[SlotChange] {
-        &self.storage_changes
-    }
-
-    /// Returns the storage reads.
-    pub fn storage_reads(&self) -> &[U256] {
-        &self.storage_reads
-    }
-
-    /// Returns the balance changes.
-    pub fn balance_changes(&self) -> &[BalanceChange] {
-        &self.balance_changes
-    }
-
-    /// Returns the nonce changes.
-    pub fn nonce_changes(&self) -> &[NonceChange] {
-        &self.nonce_changes
-    }
-
-    /// Returns the code changes.
-    pub fn code_changes(&self) -> &[CodeChange] {
-        &self.code_changes
     }
 }
 

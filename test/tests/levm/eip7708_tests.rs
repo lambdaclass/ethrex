@@ -13,14 +13,14 @@
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    constants::EMPTY_TRIE_HASH,
+    constants::{EMPTY_TRIE_HASH, SYSTEM_ADDRESS},
     types::{
         Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork, Log,
         Transaction, TxKind,
     },
 };
 use ethrex_levm::{
-    constants::{EIP7708_SYSTEM_ADDRESS, SELFDESTRUCT_EVENT_TOPIC, TRANSFER_EVENT_TOPIC},
+    constants::{SELFDESTRUCT_EVENT_TOPIC, TRANSFER_EVENT_TOPIC},
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
     errors::{DatabaseError, ExecutionReport},
@@ -293,7 +293,7 @@ fn create_with_value_bytecode(init_code: &[u8], value: U256) -> Bytes {
 
 fn assert_transfer_log(log: &Log, from: Address, to: Address, value: U256) {
     assert_eq!(
-        log.address, EIP7708_SYSTEM_ADDRESS,
+        log.address, SYSTEM_ADDRESS,
         "Log should be from system address"
     );
     assert_eq!(log.topics.len(), 3, "Transfer log should have 3 topics");
@@ -329,7 +329,7 @@ fn assert_transfer_log(log: &Log, from: Address, to: Address, value: U256) {
 #[allow(dead_code)]
 fn assert_selfdestruct_log(log: &Log, contract: Address, balance: U256) {
     assert_eq!(
-        log.address, EIP7708_SYSTEM_ADDRESS,
+        log.address, SYSTEM_ADDRESS,
         "Log should be from system address"
     );
     assert_eq!(log.topics.len(), 2, "Selfdestruct log should have 2 topics");
@@ -658,7 +658,7 @@ fn test_create_with_value() {
         "Should have one log for CREATE with value"
     );
     assert_eq!(
-        report.logs[0].address, EIP7708_SYSTEM_ADDRESS,
+        report.logs[0].address, SYSTEM_ADDRESS,
         "Log should be from system address"
     );
     assert_eq!(
@@ -768,9 +768,9 @@ fn test_topic_hash_and_system_address_constants() {
         0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
     ];
     assert_eq!(
-        EIP7708_SYSTEM_ADDRESS.as_bytes(),
+        SYSTEM_ADDRESS.as_bytes(),
         &expected_bytes,
-        "EIP7708_SYSTEM_ADDRESS should be 0xfffffffffffffffffffffffffffffffffffffffe"
+        "SYSTEM_ADDRESS should be 0xfffffffffffffffffffffffffffffffffffffffe"
     );
 }
 

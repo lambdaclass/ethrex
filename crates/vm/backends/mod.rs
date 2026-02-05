@@ -76,14 +76,13 @@ impl Evm {
 
     /// Execute a block and return the execution result.
     ///
-    /// If `record_bal` is true, also records and returns the Block Access List (EIP-7928).
-    /// The BAL will be `None` if `record_bal` is false.
+    /// Also records and returns the Block Access List (EIP-7928) for Amsterdam+ forks.
+    /// The BAL will be `None` for pre-Amsterdam forks.
     pub fn execute_block(
         &mut self,
         block: &Block,
-        record_bal: bool,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
-        LEVM::execute_block(block, &mut self.db, self.vm_type, record_bal)
+        LEVM::execute_block(block, &mut self.db, self.vm_type)
     }
 
     #[instrument(

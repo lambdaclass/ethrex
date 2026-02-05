@@ -97,11 +97,6 @@ lazy_static::lazy_static! {
     pub static ref P256_B: P256FieldElement = P256FieldElement::from_uint(P256_B_UINT).unwrap();
 }
 
-// EIP-7708: ETH Transfers Emit a Log
-// System address for EIP-7708 logs (0xfffffffffffffffffffffffffffffffffffffffe)
-// Re-exported from common constants for consistency
-pub use ethrex_common::constants::SYSTEM_ADDRESS as EIP7708_SYSTEM_ADDRESS;
-
 /// EIP-7708: keccak256('Transfer(address,address,uint256)')
 pub const TRANSFER_EVENT_TOPIC: H256 = H256([
     0xdd, 0xf2, 0x52, 0xad, 0x1b, 0xe2, 0xc8, 0x9b, 0x69, 0xc2, 0xb0, 0x68, 0xfc, 0x37, 0x8d, 0xaa,

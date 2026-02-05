@@ -146,36 +146,27 @@ pub fn validate_block_access_list_hash(
         // Check storage_changes indices
         validate_bal_indices(
             account
-                .storage_changes()
+                .storage_changes
                 .iter()
-                .flat_map(|slot| slot.changes().iter().map(|c| c.block_access_index())),
+                .flat_map(|slot| slot.slot_changes.iter().map(|c| c.block_access_index)),
             max_valid_index,
         )?;
 
         // Check balance_changes indices
         validate_bal_indices(
-            account
-                .balance_changes()
-                .iter()
-                .map(|c| c.block_access_index()),
+            account.balance_changes.iter().map(|c| c.block_access_index),
             max_valid_index,
         )?;
 
         // Check nonce_changes indices
         validate_bal_indices(
-            account
-                .nonce_changes()
-                .iter()
-                .map(|c| c.block_access_index()),
+            account.nonce_changes.iter().map(|c| c.block_access_index),
             max_valid_index,
         )?;
 
         // Check code_changes indices
         validate_bal_indices(
-            account
-                .code_changes()
-                .iter()
-                .map(|c| c.block_access_index()),
+            account.code_changes.iter().map(|c| c.block_access_index),
             max_valid_index,
         )?;
     }

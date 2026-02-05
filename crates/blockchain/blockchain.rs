@@ -285,9 +285,7 @@ impl Blockchain {
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
-        // Enable BAL recording for Amsterdam+ forks
-        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
-        let (execution_result, bal) = vm.execute_block(block, record_bal)?;
+        let (execution_result, bal) = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
@@ -327,7 +325,7 @@ impl Blockchain {
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
-        let (_execution_result, bal) = vm.execute_block(block, true)?;
+        let (_execution_result, bal) = vm.execute_block(block)?;
 
         Ok(bal)
     }
@@ -894,9 +892,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-        // Enable BAL recording for Amsterdam+ forks
-        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
-        let (execution_result, bal) = vm.execute_block(block, record_bal)?;
+        let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
@@ -1001,7 +997,7 @@ impl Blockchain {
             };
 
             // Re-execute block with logger
-            let (execution_result, _bal) = vm.execute_block(block, false)?;
+            let (execution_result, _bal) = vm.execute_block(block)?;
 
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;

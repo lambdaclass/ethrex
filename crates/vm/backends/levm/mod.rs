@@ -55,15 +55,17 @@ pub struct LEVM;
 impl LEVM {
     /// Execute a block and return the execution result.
     ///
-    /// If `record_bal` is true, also records and returns the Block Access List (EIP-7928).
-    /// The BAL will be `None` if `record_bal` is false.
+    /// Also records and returns the Block Access List (EIP-7928) for Amsterdam+ forks.
+    /// The BAL will be `None` for pre-Amsterdam forks.
     pub fn execute_block(
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        record_bal: bool,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
-        // Enable BAL recording if requested
+        let chain_config = db.store.get_chain_config()?;
+        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
+
+        // Enable BAL recording for Amsterdam+ forks
         if record_bal {
             db.enable_bal_recording();
             // Set index 0 for pre-execution phase (system contracts)
@@ -167,7 +169,7 @@ impl LEVM {
         };
 
         // Extract BAL if recording was enabled
-        let bal = if record_bal { db.take_bal() } else { None };
+        let bal = db.take_bal();
 
         Ok((
             BlockExecutionResult {

@@ -14,6 +14,7 @@ use crate::{
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
+use ethrex_common::constants::SYSTEM_ADDRESS;
 use ethrex_common::types::Log;
 use ethrex_common::{
     Address, H256, U256,
@@ -651,7 +652,7 @@ pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
     let data = value.to_big_endian();
 
     Log {
-        address: EIP7708_SYSTEM_ADDRESS,
+        address: SYSTEM_ADDRESS,
         topics: vec![
             TRANSFER_EVENT_TOPIC,
             H256::from(from_topic),
@@ -671,7 +672,7 @@ pub fn create_selfdestruct_log(contract: Address, balance: U256) -> Log {
     let data = balance.to_big_endian();
 
     Log {
-        address: EIP7708_SYSTEM_ADDRESS,
+        address: SYSTEM_ADDRESS,
         topics: vec![SELFDESTRUCT_EVENT_TOPIC, H256::from(contract_topic)],
         data: Bytes::from(data.to_vec()),
     }
