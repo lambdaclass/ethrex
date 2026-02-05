@@ -153,6 +153,6 @@ This will open the Firefox Profiler UI in your browser when the process exits.
 
 | Feature              | What it does                                     | Platform   |
 |----------------------|--------------------------------------------------|------------|
-| `cpu_profiling`      | Built-in pprof CPU profiling, writes `profile.pb`| All        |
+| `cpu_profiling`      | Built-in pprof CPU profiling, writes `profile.pb`| Linux/macOS|
 | `jemalloc`           | Use jemalloc allocator (enables external profilers)| Linux/macOS|
 | `jemalloc_profiling` | jemalloc heap profiling + RPC endpoint           | Linux/macOS|

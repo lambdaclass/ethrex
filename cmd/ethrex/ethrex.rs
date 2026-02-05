@@ -174,13 +174,21 @@ async fn main() -> eyre::Result<()> {
 
     #[cfg(feature = "cpu_profiling")]
     match profiler_guard.report().build() {
-        Ok(report) => {
-            let profile = report.pprof().unwrap();
-            let mut content = Vec::new();
-            profile.write_to_vec(&mut content).unwrap();
-            File::create("profile.pb").unwrap().write_all(&content).unwrap();
-            info!("CPU profile written to profile.pb");
-        }
+        Ok(report) => match report.pprof() {
+            Ok(profile) => {
+                let mut content = Vec::new();
+                if let Err(e) = profile.write_to_vec(&mut content) {
+                    tracing::error!("Failed to serialize CPU profile: {e}");
+                } else if let Err(e) =
+                    File::create("profile.pb").and_then(|mut f| f.write_all(&content))
+                {
+                    tracing::error!("Failed to write CPU profile to profile.pb: {e}");
+                } else {
+                    info!("CPU profile written to profile.pb");
+                }
+            }
+            Err(e) => tracing::error!("Failed to generate pprof data: {e}"),
+        },
         Err(e) => tracing::error!("Failed to build CPU profile report: {e}"),
     }
 
