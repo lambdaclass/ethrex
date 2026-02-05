@@ -183,6 +183,7 @@ impl BlockProducer {
             random: H256::zero(),
             withdrawals: Default::default(),
             beacon_root: Some(head_beacon_block_root),
+            slot_number: None,
             version,
             elasticity_multiplier: self.elasticity_multiplier,
             gas_ceil: self.block_gas_limit,
@@ -221,6 +222,8 @@ impl BlockProducer {
         let execution_result = BlockExecutionResult {
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
+            // Use the block header's gas_used which was set during payload building
+            block_gas_used: block.header.gas_used,
         };
 
         let account_updates_list = self
