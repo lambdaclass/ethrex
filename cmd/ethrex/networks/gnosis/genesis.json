@@ -12,11 +12,11 @@
     "berlinBlock": 0,
     "londonBlock": 0,
     "mergeNetsplitBlock": 0,
-    "terminalTotalDifficulty": 8626000000000000000000058750000000000000000000,
+    "terminalTotalDifficulty": 0,
     "terminalTotalDifficultyPassed": true,
-    "shanghaiTime": 1690886588,
+    "shanghaiTime": 1690889660,
     "cancunTime": 1710181820,
-    "pragueTime": 1746018748,
+    "pragueTime": 1746021820,
     "blobSchedule": {
       "cancun": {
         "target": 1,
