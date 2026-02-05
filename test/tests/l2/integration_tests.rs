@@ -562,6 +562,7 @@ async fn test_erc20_roundtrip(
     let token_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
 
     let contracts_path = workspace_root().join("crates/l2/contracts");
+    let compile_output_path = contracts_path.join("test_erc20_roundtrip");
 
     get_contract_dependencies(&contracts_path);
     let remappings = [(
@@ -570,7 +571,7 @@ async fn test_erc20_roundtrip(
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
     compile_contract(
-        &contracts_path,
+        &compile_output_path,
         &contracts_path.join("src/example/L2ERC20.sol"),
         false,
         false,
@@ -579,7 +580,7 @@ async fn test_erc20_roundtrip(
         None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
-        contracts_path.join("solc_out/TestTokenL2.bin"),
+        compile_output_path.join("solc_out/TestTokenL2.bin"),
     )?)?)?;
     let init_code_l2 = [
         init_code_l2_inner,
@@ -783,6 +784,7 @@ async fn test_erc20_withdraw_l1_address_mismatch(
     let token_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
 
     let contracts_path = workspace_root().join("crates/l2/contracts");
+    let compile_output_path = contracts_path.join("test_erc20_mismatch");
 
     get_contract_dependencies(&contracts_path);
     let remappings = [(
@@ -791,7 +793,7 @@ async fn test_erc20_withdraw_l1_address_mismatch(
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
     compile_contract(
-        &contracts_path,
+        &compile_output_path,
         &contracts_path.join("src/example/L2ERC20.sol"),
         false,
         false,
@@ -800,7 +802,7 @@ async fn test_erc20_withdraw_l1_address_mismatch(
         None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
-        contracts_path.join("solc_out/TestTokenL2.bin"),
+        compile_output_path.join("solc_out/TestTokenL2.bin"),
     )?)?)?;
     let init_code_l2 = [
         init_code_l2_inner,
