@@ -10,11 +10,11 @@
 
 | EIP | Title | Code Status | Tests | devnet-bal | SFI/CFI | Owner |
 |-----|-------|-------------|-------|------------|---------|-------|
-| **7928** | Block-Level Access Lists | ⚠️ Framework only (`block_access_list.rs`) - needs execution integration | Unit tests passing | ✅ | SFI | Edgar |
-| **7708** | ETH Transfers Emit Logs | ✅ Fully implemented (`constants.rs`, `utils.rs`) | 100+ tests | ✅ | CFI | Edgar |
-| **7778** | Block Gas Accounting without Refunds | 🔴 Not implemented | ~24 tests (skipped) | ✅ | CFI | Edgar |
-| **7843** | SLOTNUM Opcode | ⚠️ Opcode 0x4b reserved, impl incomplete | ~7 tests | ✅ | CFI | Esteve |
-| **8024** | DUPN/SWAPN/EXCHANGE | ✅ Fully implemented (`dup.rs`, `exchange.rs`) | ~400 tests | ✅ | CFI | Esteve |
+| **7928** | Block-Level Access Lists | ⚠️ Types + engine_newPayloadV5 merged; execution integration in progress (`eip_7928_tracking` branch) | Unit tests passing | ✅ | SFI | Edgar |
+| **7708** | ETH Transfers Emit Logs | ✅ Merged to main (PR #6074, #6104) | 100+ tests | ✅ | CFI | Edgar |
+| **7778** | Block Gas Accounting without Refunds | ✅ Merged to main (PR #5996) | 7 unit tests in `eip7778_tests.rs` | ✅ | CFI | Edgar |
+| **7843** | SLOTNUM Opcode | ⚠️ Review comments addressed, pending merge (`implement-eip7843` branch) | ~7 tests (skipped) | ✅ | CFI | Esteve |
+| **8024** | DUPN/SWAPN/EXCHANGE | ✅ Merged to main (PR #5970, bugfix #6118) | ~400 tests (skipped due to gas cost deps) | ✅ | CFI | Esteve |
 
 ### Gas Repricing EIPs (New - not on devnet-bal yet)
 
@@ -39,25 +39,31 @@
 
 ---
 
-## February 1-14
+## February 5 Status Update
 
-### Merge Ready
-- [ ] **Merge EIP-7778** (Gas Accounting) → Edgar
-- [ ] **Fix CI and merge EIP-7843** (SLOTNUM) → Esteve
+### Merged ✅
+- [x] **EIP-7778** (Gas Accounting) - PR #5996 merged → Edgar
+- [x] **EIP-7708** (ETH Transfer Logs) - PR #6074, #6104 merged → Edgar
+- [x] **EIP-8024** (DUPN/SWAPN/EXCHANGE) - PR #5970 merged, bugfix #6118 merged → Esteve
+
+### Pending Merge
+- [ ] **EIP-7843** (SLOTNUM) - Review comments addressed on `implement-eip7843` branch → Esteve
 
 ### In Progress
 - [ ] **Complete EIP-7928 integration** (BAL part 2) - execution hook needed → Edgar
-  - Framework exists at `crates/common/types/block_access_list.rs`
-  - `block_access_list_hash` field exists in `BlockHeader`
-  - Missing: block execution integration to populate the list
+  - Types + `engine_newPayloadV5` merged (PR #6020)
+  - Work continues on `eip_7928_tracking` branch
+  - Recent: removed dead code, fixed comments (ce8754cf3)
+  - Missing: block execution integration to populate the access list
 
 ### Documentation
-- [ ] **Update `docs/eip.md`** - Mark EIP-7708 and EIP-8024 as "Supported [x]"
+- [ ] **Update `docs/eip.md`** - Mark EIP-7708, EIP-7778, and EIP-8024 as "Supported [x]"
 
 ### Testing
 - [ ] Update hive tests for Amsterdam
 - [ ] Monitor EEST test changes / EIP spec changes
-- [ ] Address ~31,000 skipped Amsterdam legacy tests
+- [ ] Address ~31,000 skipped Amsterdam legacy tests in `tooling/ef_tests/blockchain/tests/all.rs`
+- [ ] Enable EIP-specific tests as implementations complete (currently all skipped in `SKIPPED_AMSTERDAM`)
 
 ---
 
@@ -86,14 +92,14 @@ pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool
 
 ## EIP Implementation Categories
 
-### Ready to Ship (code complete)
-1. **EIP-7708** - ETH Transfer Logs
-2. **EIP-8024** - DUPN/SWAPN/EXCHANGE
+### Merged to Main ✅
+1. **EIP-7708** - ETH Transfer Logs (PR #6074, #6104)
+2. **EIP-7778** - Gas Accounting (PR #5996)
+3. **EIP-8024** - DUPN/SWAPN/EXCHANGE (PR #5970, bugfix #6118)
 
 ### Almost There (needs finishing)
-1. **EIP-7778** - Gas Accounting (pending merge)
-2. **EIP-7843** - SLOTNUM (CI issues)
-3. **EIP-7928** - BAL (framework done, needs execution integration)
+1. **EIP-7843** - SLOTNUM (review comments addressed, pending merge)
+2. **EIP-7928** - BAL (types merged, execution integration in progress on `eip_7928_tracking`)
 
 ### Not Started (wave 2)
 1. **Gas repricing bundle**: EIP-2780, 7904, 7976, 7981, 8037, 8038
@@ -132,12 +138,13 @@ Post-Glamsterdam fork, execution layer = **Bogota**
 
 ## Technical Debt / Action Items
 
-| Item | Location | Priority |
-|------|----------|----------|
-| Update `docs/eip.md` supported status | `docs/eip.md:9-13` | High |
-| Remove EIP-7843 from partial status | `crates/vm/levm/src/opcodes.rs` | Medium |
-| Complete BAL execution integration | `crates/blockchain/` | High |
-| Address 31k skipped Amsterdam tests | `tooling/ef_tests/` | Medium |
+| Item | Location | Priority | Status |
+|------|----------|----------|--------|
+| Update `docs/eip.md` supported status | `docs/eip.md` | High | Pending |
+| Merge EIP-7843 branch | `origin/implement-eip7843` | High | Review done |
+| Complete BAL execution integration | `origin/eip_7928_tracking` | High | In progress |
+| Enable Amsterdam EIP tests | `tooling/ef_tests/blockchain/tests/all.rs` | Medium | Blocked by EIP impls |
+| Address 31k skipped Amsterdam legacy tests | `SKIPPED_AMSTERDAM` in ef_tests | Medium | Blocked by all EIPs |
 
 ---
 
