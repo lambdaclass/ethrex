@@ -103,7 +103,7 @@ impl<'a> Decoder<'a> {
         if self.payload.is_empty() {
             Ok(self.remaining)
         } else {
-            Err(RLPDecodeError::MalformedData(None))
+            Err(RLPDecodeError::malformed_data())
         }
     }
 

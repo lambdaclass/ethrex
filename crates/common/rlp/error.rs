@@ -25,23 +25,23 @@ fn fmt_ctx(ctx: &Option<&'static str>) -> String {
 }
 
 impl RLPDecodeError {
-    pub fn invalid_length() -> Self {
+    pub const fn invalid_length() -> Self {
         Self::InvalidLength(None)
     }
 
-    pub fn malformed_data() -> Self {
+    pub const fn malformed_data() -> Self {
         Self::MalformedData(None)
     }
 
-    pub fn malformed_boolean(got: u8) -> Self {
+    pub const fn malformed_boolean(got: u8) -> Self {
         Self::MalformedBoolean(got)
     }
 
-    pub fn unexpected_list() -> Self {
+    pub const fn unexpected_list() -> Self {
         Self::UnexpectedList(None)
     }
 
-    pub fn unexpected_string() -> Self {
+    pub const fn unexpected_string() -> Self {
         Self::UnexpectedString(None)
     }
 
