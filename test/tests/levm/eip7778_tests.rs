@@ -32,8 +32,8 @@ fn test_receipt_gas_spent_encoding_pre_amsterdam() {
 
 #[test]
 fn test_receipt_gas_spent_encoding_amsterdam() {
-    // Amsterdam+: gas_spent should be Some(value)
-    // Scenario: 25000 gas used pre-refund, 4800 refund, so gas_spent = 20200
+    // gas_spent is an internal field only and is NOT included in RLP encoding.
+    // After encode/decode cycle, gas_spent should be None.
     let cumulative_gas_used = 25000; // Pre-refund (for block accounting)
     let gas_spent = 20200; // Post-refund (what user pays)
 
@@ -45,15 +45,17 @@ fn test_receipt_gas_spent_encoding_amsterdam() {
         vec![],
     );
 
+    // gas_spent is set on the receipt struct
     assert_eq!(receipt.gas_spent, Some(gas_spent));
 
-    // Encode and decode
+    // Encode and decode - gas_spent is NOT part of RLP encoding
     let encoded = receipt.encode_inner_with_bloom();
     let decoded = ethrex_common::types::ReceiptWithBloom::decode_inner(&encoded).unwrap();
 
     assert!(decoded.succeeded);
     assert_eq!(decoded.cumulative_gas_used, cumulative_gas_used);
-    assert_eq!(decoded.gas_spent, Some(gas_spent));
+    // gas_spent is not encoded in RLP, so it's None after decoding
+    assert!(decoded.gas_spent.is_none());
 }
 
 #[test]
@@ -108,24 +110,31 @@ fn test_execution_report_has_both_gas_fields() {
 
 #[test]
 fn test_receipt_backward_compatibility() {
-    // Test that we can decode receipts without gas_spent (pre-Amsterdam format)
-    // and receipts with gas_spent (Amsterdam+ format)
+    // Test that receipts encode/decode correctly.
+    // gas_spent is an internal field and is NOT part of the RLP encoding,
+    // so both receipts will have gas_spent = None after decoding.
 
-    // Create a pre-Amsterdam receipt (no gas_spent)
-    let pre_amsterdam = Receipt::new(TxType::Legacy, true, 21000, None, vec![]);
+    // Create a receipt without gas_spent set
+    let receipt_without = Receipt::new(TxType::Legacy, true, 21000, None, vec![]);
 
-    // Create an Amsterdam receipt (with gas_spent)
-    let amsterdam = Receipt::new(TxType::Legacy, true, 25000, Some(21000), vec![]);
+    // Create a receipt with gas_spent set internally
+    let receipt_with = Receipt::new(TxType::Legacy, true, 25000, Some(21000), vec![]);
 
     // Both should encode/decode correctly
-    let encoded_pre = pre_amsterdam.encode_inner_with_bloom();
-    let encoded_post = amsterdam.encode_inner_with_bloom();
+    let encoded_without = receipt_without.encode_inner_with_bloom();
+    let encoded_with = receipt_with.encode_inner_with_bloom();
 
-    let decoded_pre = ethrex_common::types::ReceiptWithBloom::decode_inner(&encoded_pre).unwrap();
-    let decoded_post = ethrex_common::types::ReceiptWithBloom::decode_inner(&encoded_post).unwrap();
+    let decoded_without =
+        ethrex_common::types::ReceiptWithBloom::decode_inner(&encoded_without).unwrap();
+    let decoded_with = ethrex_common::types::ReceiptWithBloom::decode_inner(&encoded_with).unwrap();
 
-    assert!(decoded_pre.gas_spent.is_none());
-    assert_eq!(decoded_post.gas_spent, Some(21000));
+    // gas_spent is not part of RLP encoding, so both are None after decode
+    assert!(decoded_without.gas_spent.is_none());
+    assert!(decoded_with.gas_spent.is_none());
+
+    // Other fields should be correctly decoded
+    assert_eq!(decoded_without.cumulative_gas_used, 21000);
+    assert_eq!(decoded_with.cumulative_gas_used, 25000);
 }
 
 #[test]
