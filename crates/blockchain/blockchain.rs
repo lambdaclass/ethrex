@@ -733,93 +733,56 @@ impl Blockchain {
         parent_header: &BlockHeader,
         index: u8,
     ) -> Result<(), StoreError> {
-        // Open tries eagerly (concurrent with execution), buffer updates per-trie,
-        // flush with batch_insert at CollectStorages (keeps trie-opening overlapped).
         let mut tree: FxHashMap<H256, Trie> = Default::default();
-        let mut storage_updates: FxHashMap<H256, Vec<(Vec<u8>, Vec<u8>)>> = Default::default();
         let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
         let mut storage_nodes = vec![];
         let mut accounts: FxHashMap<H256, AccountState> = Default::default();
-
-        // Instrumentation counters
-        let mut w_load_account_ns: u64 = 0;
-        let mut w_load_account_count: u64 = 0;
-        let mut w_merklize_storage_ns: u64 = 0;
-        let mut w_merklize_storage_count: u64 = 0;
-        let mut w_open_storage_trie_ns: u64 = 0;
-        let mut w_open_storage_trie_count: u64 = 0;
-        let mut w_storage_batch_insert_ns: u64 = 0;
-        let mut w_merklize_account_ns: u64 = 0;
-        let mut w_merklize_account_count: u64 = 0;
-        let mut w_collapse_root_ns: u64 = 0;
-        let mut w_state_trie_insert_ns: u64 = 0;
-        let mut w_collect_storages_ns: u64 = 0;
-        let mut w_collect_state_ns: u64 = 0;
-        let mut w_rx_wait_ns: u64 = 0;
-        let mut w_rx_wait_start = Instant::now();
-
         for msg in rx {
-            w_rx_wait_ns += w_rx_wait_start.elapsed().as_nanos() as u64;
             match msg {
-                MerklizationRequest::LoadAccount(prefix) => {
-                    let la_start = Instant::now();
-                    match accounts.entry(prefix) {
-                        Entry::Occupied(_) => {}
-                        Entry::Vacant(vacant_entry) => {
-                            let account_state = match state_trie.get(prefix.as_bytes())? {
-                                Some(rlp) => {
-                                    let state = AccountState::decode(&rlp)?;
-                                    state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
-                                    state
-                                }
-                                None => AccountState::default(),
-                            };
-                            vacant_entry.insert(account_state);
-                        }
+                MerklizationRequest::LoadAccount(prefix) => match accounts.entry(prefix) {
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(vacant_entry) => {
+                        let account_state = match state_trie.get(prefix.as_bytes())? {
+                            Some(rlp) => {
+                                let state = AccountState::decode(&rlp)?;
+                                state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
+                                state
+                            }
+                            None => AccountState::default(),
+                        };
+                        vacant_entry.insert(account_state);
                     }
-                    w_load_account_ns += la_start.elapsed().as_nanos() as u64;
-                    w_load_account_count += 1;
-                }
+                },
                 MerklizationRequest::Delete(prefix) => {
-                    // Reset trie to empty and clear any buffered updates
                     tree.insert(prefix, Trie::new_temp());
-                    storage_updates.remove(&prefix);
                 }
                 MerklizationRequest::MerklizeStorage { prefix, key, value } => {
-                    let ms_start = Instant::now();
-                    // Open trie eagerly (concurrent with execution) — same as before
-                    if let Entry::Vacant(vacant_entry) = tree.entry(prefix) {
-                        let ost_start = Instant::now();
-                        let storage_root = match state_trie.get(prefix.as_bytes())? {
-                            Some(rlp) => AccountState::decode(&rlp)?.storage_root,
-                            None => *EMPTY_TRIE_HASH,
-                        };
-                        vacant_entry.insert(self.storage.open_storage_trie(
-                            prefix,
-                            parent_header.state_root,
-                            storage_root,
-                        )?);
-                        w_open_storage_trie_ns += ost_start.elapsed().as_nanos() as u64;
-                        w_open_storage_trie_count += 1;
-                    }
-                    // Buffer update for batch insert at CollectStorages
-                    let update = if value.is_zero() {
-                        (key.as_bytes().to_vec(), vec![])
-                    } else {
-                        (key.as_bytes().to_vec(), value.encode_to_vec())
+                    let trie = match tree.entry(prefix) {
+                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+                        Entry::Vacant(vacant_entry) => {
+                            let storage_root = match state_trie.get(prefix.as_bytes())? {
+                                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                                None => *EMPTY_TRIE_HASH,
+                            };
+                            vacant_entry.insert(self.storage.open_storage_trie(
+                                prefix,
+                                parent_header.state_root,
+                                storage_root,
+                            )?)
+                        }
                     };
-                    storage_updates.entry(prefix).or_default().push(update);
-                    w_merklize_storage_ns += ms_start.elapsed().as_nanos() as u64;
-                    w_merklize_storage_count += 1;
+                    if value.is_zero() {
+                        trie.remove(key.as_bytes())?;
+                    } else {
+                        trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+                    }
                 }
                 MerklizationRequest::MerklizeAccount {
                     hashed_account,
                     mut state,
                 } => {
-                    let ma_start = Instant::now();
                     let mut storage_root = None;
                     if let Some(root) = state.storage_root {
-                        let cr_start = Instant::now();
                         if let Some(root) =
                             self.collapse_root_node(parent_header, Some(hashed_account), *root)?
                         {
@@ -830,7 +793,6 @@ impl Blockchain {
                             state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
                             storage_root = Some(*EMPTY_TRIE_HASH);
                         }
-                        w_collapse_root_ns += cr_start.elapsed().as_nanos() as u64;
                     }
                     storage_nodes.push((hashed_account, state.nodes));
 
@@ -854,29 +816,13 @@ impl Blockchain {
                         old_state.balance = info.balance;
                         old_state.code_hash = info.code_hash;
                     }
-                    let sti_start = Instant::now();
                     if *old_state != AccountState::default() {
                         state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
                     } else {
                         state_trie.remove(path)?;
                     }
-                    w_state_trie_insert_ns += sti_start.elapsed().as_nanos() as u64;
-                    w_merklize_account_ns += ma_start.elapsed().as_nanos() as u64;
-                    w_merklize_account_count += 1;
                 }
                 MerklizationRequest::CollectStorages { tx } => {
-                    let cs_start = Instant::now();
-                    // Flush buffered updates into tries with batch insert
-                    for (prefix, updates) in storage_updates.drain() {
-                        if let Some(trie) = tree.get_mut(&prefix) {
-                            if !updates.is_empty() {
-                                let bi_start = Instant::now();
-                                trie.insert_batch_sorted(updates)?;
-                                w_storage_batch_insert_ns +=
-                                    bi_start.elapsed().as_nanos() as u64;
-                            }
-                        }
-                    }
                     for (prefix, trie) in tree.drain() {
                         let (root, nodes) = collect_trie(index, trie)?;
                         tx.send(CollectedStorageMsg {
@@ -887,10 +833,8 @@ impl Blockchain {
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
-                    w_collect_storages_ns += cs_start.elapsed().as_nanos() as u64;
                 }
                 MerklizationRequest::CollectState { tx } => {
-                    let cst_start = Instant::now();
                     let (subroot, state_nodes) =
                         collect_trie(index, std::mem::take(&mut state_trie))?;
                     tx.send(CollectedStateMsg {
@@ -900,30 +844,8 @@ impl Blockchain {
                         storage_nodes: std::mem::take(&mut storage_nodes),
                     })
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    w_collect_state_ns += cst_start.elapsed().as_nanos() as u64;
                 }
             }
-            w_rx_wait_start = Instant::now();
-        }
-        if w_load_account_count > 0 || w_merklize_storage_count > 0 || w_merklize_account_count > 0 {
-            info!(
-                "[MERKLE-WORKER-{}] rx_wait: {:.2}ms | load_acct: {:.2}ms/{} | storage: {:.2}ms/{} (open_trie: {:.2}ms/{}, batch_insert: {:.2}ms) | merklize_acct: {:.2}ms/{} (collapse: {:.2}ms, state_insert: {:.2}ms) | collect_stor: {:.2}ms | collect_state: {:.2}ms",
-                index,
-                w_rx_wait_ns as f64 / 1_000_000.0,
-                w_load_account_ns as f64 / 1_000_000.0,
-                w_load_account_count,
-                w_merklize_storage_ns as f64 / 1_000_000.0,
-                w_merklize_storage_count,
-                w_open_storage_trie_ns as f64 / 1_000_000.0,
-                w_open_storage_trie_count,
-                w_storage_batch_insert_ns as f64 / 1_000_000.0,
-                w_merklize_account_ns as f64 / 1_000_000.0,
-                w_merklize_account_count,
-                w_collapse_root_ns as f64 / 1_000_000.0,
-                w_state_trie_insert_ns as f64 / 1_000_000.0,
-                w_collect_storages_ns as f64 / 1_000_000.0,
-                w_collect_state_ns as f64 / 1_000_000.0,
-            );
         }
         Ok(())
     }
