@@ -1,6 +1,6 @@
 # Ethrex L2 contracts
 
-There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.
+There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeable.
 
 ## L1 Contracts
 
@@ -34,11 +34,11 @@ The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain
         bytes data; // Calldata to execute on the target L2 contract
     }
     ```
-    This expresivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.
+    This expressivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.
 2. **Withdrawals (L2 → L1)**
     - **`claimWithdrawal()`**: Withdraw ETH from `CommonBridge` via Merkle proof
     - **`claimWithdrawalERC20()`**: Withdraw ERC20 tokens from `CommonBridge` via Merkle proof
-    - **`publishWithdrawals()`**: Priviledged function to add merkle root of L2 withdrawal logs to `batchWithdrawalLogsMerkleRoots` mapping to make them claimable
+    - **`publishWithdrawals()`**: Privileged function to add merkle root of L2 withdrawal logs to `batchWithdrawalLogsMerkleRoots` mapping to make them claimable
 3. **Transaction Management**
     - **`getPendingTransactionHashes()`**: Returns pending privileged transaction hashes
     - **`removePendingTransactionHashes()`**: Removes processed privileged transactions (only callable by OnChainProposer)

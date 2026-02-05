@@ -85,11 +85,11 @@ Once you run `make test`, you should see the output of the tests being executed 
 
 ### How long do the tests take to run?
 
-The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 to 45 minutes to complete, depending the timing in which you performed the steps.
+The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 to 45 minutes to complete, depending on the timing in which you performed the steps.
 
 ### I think my tests are taking too long, how can I debug this?
 
-If your tests are taking significantly longer than expected, you are likely watching the `Retrying to get message proof for tx ...` counter in the tests terminal increase without progressing. Let's unveil what is happening here. This message indicates that the transaction has been included in an L2 block, but that block has not yet been included in a batch. There's no current way to fairly estimate when the block including the transaction will be included in a batch, but we can see how far is the block from being included.
+If your tests are taking significantly longer than expected, you are likely watching the `Retrying to get message proof for tx ...` counter in the tests terminal increase without progressing. Let's unveil what is happening here. This message indicates that the transaction has been included in an L2 block, but that block has not yet been included in a batch. There's no current way to fairly estimate when the block including the transaction will be included in a batch, but we can see how far the block is from being included.
 
 Using the hash of the transaction shown in the log message, you can check the status of the transaction using an Ethereum utility tool like `rex`. Run the following commands in a new terminal:
 

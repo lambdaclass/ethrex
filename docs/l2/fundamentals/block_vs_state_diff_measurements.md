@@ -29,7 +29,7 @@ The following are results from measurements conducted to understand the efficien
 
 Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately 2x for ETH transfers and 3x for ERC20 transfers.
 
-## How this measurements were done
+## How these measurements were done
 
 ### Prerequisites
 

@@ -41,7 +41,7 @@ ethrex l2 deploy \
 > 
 > `--tdx.verifier-address` to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.
 > 
-> Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the [Run multiple provers](./prover/multi-prover.md) section for more details.
+> Enabling multiple proving backends will require running multiple provers, one for each backend. Refer to the [Run multiple provers](./prover/multi-prover.md) section for more details.
 > 
 > If you enable more than one proving system (e.g., both `--sp1 true` and `--risc0 true`), all selected proving systems will be required (i.e., every batch must include a proof from each enabled system to settle on L1).
 
