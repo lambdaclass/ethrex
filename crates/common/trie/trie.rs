@@ -508,11 +508,11 @@ impl Trie {
     }
 
     pub fn root_node(&self) -> Result<Option<Arc<Node>>, TrieError> {
-        if self.hash_no_commit() == *EMPTY_TRIE_HASH {
-            return Ok(None);
+        if self.root.is_valid() {
+            self.root.get_node(self.db.as_ref(), Nibbles::default())
+        } else {
+            Ok(None)
         }
-        self.root
-            .get_node_checked(self.db.as_ref(), Nibbles::default())
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
