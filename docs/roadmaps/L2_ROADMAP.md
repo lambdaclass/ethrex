@@ -152,9 +152,7 @@ Security hardening and ongoing audit work.
 | Item | Status | Issue/PR | Description |
 |------|--------|----------|-------------|
 | External Security Audit | In Progress | — | External audit in progress; addressing comments as received |
-| Storage Layout Checks | Pending | [#5859](https://github.com/lambdaclass/ethrex/issues/5859) | OpenZeppelin upgrade safety workflow |
-| Arithmetic Overflow Checks | Pending | [#5295](https://github.com/lambdaclass/ethrex/issues/5295) | Enable clippy arithmetic side effects lint |
-| Gas Limit Validation | Pending | [#6053](https://github.com/lambdaclass/ethrex/issues/6053) | Validate gas_limit covers L1 DA fee (griefing prevention) |
+| Internal Security Checks | Pending | [#5859](https://github.com/lambdaclass/ethrex/issues/5859), [#5295](https://github.com/lambdaclass/ethrex/issues/5295), [#6053](https://github.com/lambdaclass/ethrex/issues/6053) | Storage layout checks, arithmetic overflow lint, gas limit validation |
 
 ---
 
