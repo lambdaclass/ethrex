@@ -283,7 +283,7 @@ A message is considered expired if a certain deadline is reached and it has not 
 <h3 id="rollbacks"><a class="header" href="#rollbacks">Rollbacks</a></h3>
 <p>Once a cross-chain message is settled, there is no rollback mechanism in scenarios where the destination L2 either cannot or chooses not to execute the transaction. <a href="#forced-inclusion">Forced Inclusion</a> guarantees that the destination sequencer will eventually have to execute the received message in order to include non-privileged transactions in a batch. Therefore, once a message is settled, the user waits for the destination L2 to include the message, just as when the user performs a deposit to that L2.</p>
 <h2 id="recommendations"><a class="header" href="#recommendations">Recommendations</a></h2>
-<p>We advice not to register more than 100 chains, since this will enquire a high cost when verifying a batch (About 1.6M gas), due to the transfers between bridges.</p>
+<p>We advise not to register more than 100 chains, since this will incur a high cost when verifying a batch (About 1.6M gas), due to the transfers between bridges.</p>
 
                     </main>
 

@@ -388,7 +388,7 @@ mkdir -p ethereum/secrets/
 cd ethereum/
 openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 
-# install lightouse and ethrex
+# install lighthouse and ethrex
 brew install lambdaclass/tap/ethrex
 brew install lighthouse
 </code></pre>
@@ -412,7 +412,7 @@ mkdir -p ethereum/secrets/
 cd ethereum/
 openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 
-# install lightouse and ethrex
+# install lighthouse and ethrex
 curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
 chmod +x ethrex
 curl -LO https://github.com/sigp/lighthouse/releases/download/v8.0.0/lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
@@ -1012,7 +1012,7 @@ chmod +x ethrex
 <li><a href="https://docs.soliditylang.org/en/v0.8.31/installing-solidity.html">solc (v0.8.31)</a> (for L2 development)</li>
 </ul>
 <h3 id="l2-contracts"><a class="header" href="#l2-contracts">L2 contracts</a></h3>
-<p>If you want to install ethrex for L2 development, you may set the <code>COMPILE_CONTRACTS</code> env var, so the binary have the necessary contract code.</p>
+<p>If you want to install ethrex for L2 development, you may set the <code>COMPILE_CONTRACTS</code> env var, so the binary has the necessary contract code.</p>
 <pre><code class="language-sh">export COMPILE_CONTRACTS=true
 </code></pre>
 <h2 id="install-via-cargo-install"><a class="header" href="#install-via-cargo-install">Install via <code>cargo install</code></a></h2>
@@ -1535,7 +1535,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 </li>
 </ol>
 <p>This will launch Prometheus and Grafana, already set up to scrape ethrex metrics.</p>
-<p><strong>Note: We depend on <code>ethereum-metrics-exporter</code> for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add <code>--http</code> and <code>--http-address 0.0.0.0</code> flags to it before the dashboards pick up all metrics. This wont be needed in the near future</strong></p>
+<p><strong>Note: We depend on <code>ethereum-metrics-exporter</code> for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add <code>--http</code> and <code>--http-address 0.0.0.0</code> flags to it before the dashboards pick up all metrics. This won't be needed in the near future</strong></p>
 <h2 id="logs"><a class="header" href="#logs">Logs</a></h2>
 <p>Ethrex logs are written to stdout by default. To enable file logging, you must specify the <code>--log.dir</code> argument, with this you'll be able to have Promtail collect the logs and send them to Grafana Loki for log visualization.</p>
 <ul>
@@ -1579,7 +1579,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <p>For detailed information on the provided Grafana dashboards, see our <a href="l1/running/../../developers/l1/dashboards.html">L1 Dashboard document</a>.</p>
 <h2 id="custom-configuration"><a class="header" href="#custom-configuration">Custom Configuration</a></h2>
 <p>Your ethrex setup may differ from the default configuration. Check your endpoints at <code>provisioning/prometheus/prometheus_l1_sync_docker.yaml</code>.</p>
-<p>Also if you have a centralized Prometheus or Grafana setup, you can adapt the provided configuration files to fit your environment. or even stop the docker containers that run Prometheus and/or Grafana leaving only the additional <code>ethereum-metrics-exporter</code> running alongside ethrex to export the metrics to your existing monitoring stack.</p>
+<p>Also if you have a centralized Prometheus or Grafana setup, you can adapt the provided configuration files to fit your environment, or even stop the docker containers that run Prometheus and/or Grafana leaving only the additional <code>ethereum-metrics-exporter</code> running alongside ethrex to export the metrics to your existing monitoring stack.</p>
 <pre><code class="language-sh">docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d ethereum-metrics-exporter 
 </code></pre>
 <hr />
@@ -2188,7 +2188,7 @@ fn finalize_transaction() -&gt; Receipt
 </span>// crates/storage/store.rs
 Store::apply_account_updates_batch(parent_hash, updates) -&gt; StateTrieHash
 <span class="boring">}</span></code></pre></pre>
-<p>This is one of the two merkelization backends (the other is used by <code>add_block_pipeline</code>):</p>
+<p>This is one of the two merkleization backends (the other is used by <code>add_block_pipeline</code>):</p>
 <ol>
 <li>Load parent state trie</li>
 <li>Apply each account update to the trie</li>
@@ -3348,7 +3348,7 @@ pub trait RLPDecode: Sized {
 <li><a href="l1/fundamentals/networking.html#discovery-protocol">Discovery protocol</a>: built on top of udp and it is how we discover new nodes.</li>
 <li>devP2P: sits on top of tcp and is where the actual blockchain information exchange happens.</li>
 </ul>
-<p>Implementation follows the official spec which can be found <a href="https://github.com/ethereum/devp2p/tree/master">here</a>. Also, we've inspired in some <a href="https://github.com/ethereum/go-ethereum/tree/master/p2p/discover">geth code</a>.</p>
+<p>Implementation follows the official spec which can be found <a href="https://github.com/ethereum/devp2p/tree/master">here</a>. Also, we've been inspired by some <a href="https://github.com/ethereum/go-ethereum/tree/master/p2p/discover">geth code</a>.</p>
 <h2 id="discovery-protocol"><a class="header" href="#discovery-protocol">Discovery protocol</a></h2>
 <p>In the next section, we'll be looking at the discovery protocol (discv4 to be more specific) and the way we have it set up. There are many points for improvement and here we discuss some possible solutions to them.</p>
 <p>At startup, the discovery server launches three concurrent tokio tasks:</p>
@@ -3388,7 +3388,7 @@ pub trait RLPDecode: Sized {
 <h3 id="listen-loop"><a class="header" href="#listen-loop">Listen loop</a></h3>
 <p>The listen loop handles messages sent to our socket. The spec defines 6 types of messages:</p>
 <ul>
-<li><strong>Ping</strong>: Responds with a <code>pong</code> message. If the peer is not in our table we add it, if the corresponding bucket is already filled then we add it as a replacement for that bucket. If it was inserted we send a `ping from our end to get an endpoint proof.</li>
+<li><strong>Ping</strong>: Responds with a <code>pong</code> message. If the peer is not in our table we add it, if the corresponding bucket is already filled then we add it as a replacement for that bucket. If it was inserted we send a <code>ping</code> from our end to get an endpoint proof.</li>
 <li><strong>Pong</strong>: Verifies that the <code>pong</code> corresponds to a previously sent <code>ping</code>, if so we mark the peer as proven.</li>
 <li><strong>FindNodes</strong>: Responds with a <code>neighbors</code> message that contains as many as the 16 closest nodes from the given target. A target is a pubkey provided by the peer in the message. The response can't be sent in one packet as it might exceed the discv4 max packet size. So we split it into different packets.</li>
 <li><strong>Neighbors</strong>: First we verify that we have sent the corresponding <code>find_node</code> message. If so, we receive the peers, store them, and ping them. Also, every <a href="https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/discv4.rs#L305-L314"><code>find_node</code> request</a> may have a <a href="https://docs.rs/tokio/latest/tokio/sync/mpsc/struct.Sender.html">tokio <code>Sender</code></a> attached, if that is the case, we forward the nodes from the message through the channel. This becomes useful when waiting for a <code>find_node</code> response, <a href="https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/net.rs#L517-L570">something we do in the lookups</a>.</li>
@@ -3396,7 +3396,7 @@ pub trait RLPDecode: Sized {
 <li><strong>ENRResponse</strong>: same as above.</li>
 </ul>
 <h3 id="re-validations"><a class="header" href="#re-validations">Re-validations</a></h3>
-<p>Re-validations are tasks that are implemented as intervals, that is: they run an action every <code>x</code> wherever unit of time (currently configured to run every 30 seconds). The current flow of re-validation is as follows</p>
+<p>Re-validations are tasks that are implemented as intervals, that is: they run an action every <code>x</code> whichever unit of time (currently configured to run every 30 seconds). The current flow of re-validation is as follows</p>
 <ol>
 <li>Every 30 seconds (by default) we ping the three least recently pinged peers: this may be fine now to keep simplicity, but we might prefer to choose three random peers instead to avoid the search which might become expensive as our buckets start to fill with more peers.</li>
 <li>In the next iteration we check if they have answered
@@ -3420,7 +3420,7 @@ pub trait RLPDecode: Sized {
 <h3 id="recursive-lookups"><a class="header" href="#recursive-lookups">Recursive Lookups</a></h3>
 <p>Recursive lookups are as with re-validations implemented as intervals. Their current flow is as follows:</p>
 <ol>
-<li>Every 30min we spawn three concurrent lookups: one closest to our pubkey and three others closest to randomly generated pubkeys.</li>
+<li>Every 30min we spawn three concurrent lookups: one closest to our pubkey and two others closest to randomly generated pubkeys.</li>
 <li>Every lookup starts with the closest nodes from our table. Each lookup keeps track of:
 <ul>
 <li>Peers that have already been asked for nodes</li>
@@ -3432,9 +3432,9 @@ pub trait RLPDecode: Sized {
 <li>We wait for the neighbors' response and push or replace those who are closer to the potential peers.</li>
 <li>We select three other nodes from the potential peers vector and do the same until one lookup has no node to ask.</li>
 </ol>
-<p>The way to do lookups aren't part of the spec. Our implementation aligns with geth approach, see <a href="https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/v4_udp.go#L282-L310">here</a>.</p>
+<p>The way to do lookups isn't part of the spec. Our implementation aligns with geth approach, see <a href="https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/v4_udp.go#L282-L310">here</a>.</p>
 <h3 id="an-example-of-how-you-might-build-a-network"><a class="header" href="#an-example-of-how-you-might-build-a-network">An example of how you might build a network</a></h3>
-<p>Finally, here is an example of how you could build a network and see how they connect each other:</p>
+<p>Finally, here is an example of how you could build a network and see how they connect to each other:</p>
 <p>We'll have three nodes: <code>a</code>, <code>b</code>, and <code>c</code>, we'll start <code>a</code>, then <code>b</code> setting <code>a</code> as a bootnode, and finally we'll start <code>c</code> with <code>b</code> as bootnode we should see that <code>c</code> connects to both <code>a</code> and <code>b</code> and so all the network should be connected.</p>
 <p><strong>node a</strong>:</p>
 <pre><code class="language-bash">cargo run --release -- --network ./fixtures/genesis/kurtosis.json
@@ -3536,8 +3536,7 @@ Finally, with <code>node_c</code> we connect to <code>node_b</code>. When the lo
 <h2 id="full-sync-1"><a class="header" href="#full-sync-1">Full sync</a></h2>
 <p>Full syncing works by downloading and executing every block from genesis. This means that full syncing will only work for networks that started after <a href="https://ethereum.org/en/roadmap/merge/">The Merge</a>, as ethrex only supports post merge execution.</p>
 <h2 id="snap-sync-1"><a class="header" href="#snap-sync-1">Snap sync</a></h2>
-<p>For snap sync, you can view the <a href="l1/fundamentals/./snap_sync.html">main document here</a>.
-`</p>
+<p>For snap sync, you can view the <a href="l1/fundamentals/./snap_sync.html">main document here</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -3639,8 +3638,8 @@ Finally, with <code>node_c</code> we connect to <code>node_b</code>. When the lo
 <p>To maintain this invariant, we do the following:</p>
 <ul>
 <li>When we get a new node, we don't immediately store it in the database. We keep track of the amount of every node's children that are not yet in the database. As long as it's not zero, we keep it in a separate in-memory structure "Membatch" instead of on the db.</li>
-<li>When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be commited, etc.</li>
-<li>When the nodes are written to the database, all it's parents are deleted from the db, which preserves the subtree invariant. Because lower down nodes are always written first, we never delete a valid node.</li>
+<li>When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be committed, etc.</li>
+<li>When the nodes are written to the database, all its parents are deleted from the db, which preserves the subtree invariant. Because lower down nodes are always written first, we never delete a valid node.</li>
 </ul>
 <p>Example of a possible state after stopping fast sync due to staleness with membatch.</p>
 <p><img src="l1/fundamentals/./snap_sync/FastSyncMembatchExample-1.png" alt="Fast Sync Membatch Example - 1" /></p>
@@ -3739,7 +3738,7 @@ pub enum SyncMode {
 <p><img src="l1/fundamentals/./snap_sync/Flow-DownloadHeaders.png" alt="request_block_header flowchart" /></p>
 <h3 id="downloading-account-values"><a class="header" href="#downloading-account-values">Downloading Account Values</a></h3>
 <h4 id="api"><a class="header" href="#api">API</a></h4>
-<p>When downloading the account values, we use the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getaccountrange-0x00"><code>GetAccountRange</code></a>. This requests receives:</p>
+<p>When downloading the account values, we use the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getaccountrange-0x00"><code>GetAccountRange</code></a>. This request receives:</p>
 <ul>
 <li>rootHash: state_root of the block we're trying to download</li>
 <li>startingHash: Account hash<sup class="footnote-reference" id="fr-4-1"><a href="#footnote-4">4</a></sup> of the first to retrieve</li>
@@ -3779,10 +3778,9 @@ For an optimization for faster insertion, these are stored ordered in the RocksD
 <p><img src="l1/fundamentals/./snap_sync/Flow-DownloadAccounts.png" alt="request_account_range flowchart" /></p>
 <h3 id="insertion-of-accounts"><a class="header" href="#insertion-of-accounts">Insertion of Accounts</a></h3>
 <p>The sst files in the <code>"account_state_snapshots"</code> subfolder are ingested into a RocksDB database. This provides an ordered array that is used for insertion.</p>
-<p><a href="l1/fundamentals/../../internal/l1/sorted_trie_insert.html">More detailed documentation found in sorted_trie_insert.md</a>.
-<a href="l1/fundamentals/../../internal/l1/sorted_trie_insert.html">More detailed documentation found in sorted_trie_insert.md</a>.</p>
+<p><a href="l1/fundamentals/../../internal/l1/sorted_trie_insert.html">More detailed documentation found in sorted_trie_insert.md</a>.</p>
 <h3 id="downloading-storage-slots"><a class="header" href="#downloading-storage-slots">Downloading Storage Slots</a></h3>
-<p>The download of the storage slots is conceptually similar to the download of accounts, but very different in implementation. The method uses the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getstorageranges-0x02"><code>GetStorageRanges</code></a>. This requests has the following parameters:</p>
+<p>The download of the storage slots is conceptually similar to the download of accounts, but very different in implementation. The method uses the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getstorageranges-0x02"><code>GetStorageRanges</code></a>. This request has the following parameters:</p>
 <ul>
 <li>rootHash: state_root of the block we're trying to download</li>
 <li>accountHashes: List of all the account address hashes of the storage tries to serve</li>
@@ -3822,9 +3820,9 @@ For an optimization for faster insertion, these are stored ordered in the RocksD
 <p>A large amount of the accounts with storage have exactly the same storage as other accounts.<sup class="footnote-reference" id="fr-5-1"><a href="#footnote-5">5</a></sup> As such, when we are creating tasks for download, it's important to group the tasks by storage root and not download them twice.</p>
 <h4 id="big-accounts"><a class="header" href="#big-accounts">Big Accounts</a></h4>
 <p>Storage trie sizes have a very uneven distribution. Around 70% of all ethereum mainnet contracts have only 1 or 2 storage slots. However, a few contracts have more storage slots than all account leaves in the entire state trie. As such, the code needs to take this pareto distribution into account to download storage tries fast.</p>
-<p>At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single requests. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.</p>
+<p>At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single request. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.</p>
 <p><img src="l1/fundamentals/./snap_sync/SnapSyncDownloadingStorages-1.png" alt="proofs for missing slots" /></p>
-<p>When we reach that situation, we chunk the big account based on the "density"<sup class="footnote-reference" id="fr-7-1"><a href="#footnote-7">6</a></sup> of storage slots we downloaded, following this code to get chunks of 10,000 slots<sup class="footnote-reference" id="fr-6-1"><a href="#footnote-6">7</a></sup>. We create the tasks to download those intervals, and store all of the intervals in a struct to check when everything for that account was properly download.</p>
+<p>When we reach that situation, we chunk the big account based on the "density"<sup class="footnote-reference" id="fr-7-1"><a href="#footnote-7">6</a></sup> of storage slots we downloaded, following this code to get chunks of 10,000 slots<sup class="footnote-reference" id="fr-6-1"><a href="#footnote-6">7</a></sup>. We create the tasks to download those intervals, and store all of the intervals in a struct to check when everything for that account was properly downloaded.</p>
 <pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>    // start_hash_u256 is the hash of the address of the last slot
@@ -3872,21 +3870,21 @@ struct StorageTaskResult {
 <h4 id="retry-limit"><a class="header" href="#retry-limit">Retry Limit</a></h4>
 <p>Currently, if ethrex has been downloading storages for more than 2 pivots, the node will stop trying to download storage, and fallback to heal (fast sync) all the storage accounts that were still missing downloads. This prevents snap sync from hanging due to an edge case we do not currently handle if an account time travels. See the "snap sync concerns" document for details on what this edge case is.</p>
 <h3 id="downloading-bytecodes"><a class="header" href="#downloading-bytecodes">Downloading Bytecodes</a></h3>
-<p>Whenever an account is download or healed we check if the code is not empty. If it isn't, we store it for future download. This is added to a list, and when the list grows beyond a certain size it is written to disk. After the healing is done and we have a complete state and storage tree, we start with the download of bytecodes, chunking them to avoid memory overflow.</p>
+<p>Whenever an account is downloaded or healed we check if the code is not empty. If it isn't, we store it for future download. This is added to a list, and when the list grows beyond a certain size it is written to disk. After the healing is done and we have a complete state and storage tree, we start with the download of bytecodes, chunking them to avoid memory overflow.</p>
 <h3 id="forkchoice-update"><a class="header" href="#forkchoice-update">Forkchoice update</a></h3>
-<p>Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from <code>snap</code> to <code>full</code>, and we do an <code>apply_forkchoice</code> to mark that as the last pivot as the last block.</p>
+<p>Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from <code>snap</code> to <code>full</code>, and we do an <code>apply_forkchoice</code> to mark the last pivot as the last block.</p>
 <hr>
 <ol class="footnote-definition"><li id="footnote-1">
 <p>We update pivots based only on the timestamp, not on the peer response. According to the spec, stale roots return empty responses, but Byzantine peers may return empty responses at arbitrary times. Therefore, we rely on the rule that nodes must keep at least 128 blocks. Once <code>time &gt; timestamp + 128 * 12</code> we mark the pivot as stale. <a href="#fr-1-1">↩</a></p>
 </li>
 <li id="footnote-2">
-<p>The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects it current use. <a href="#fr-2-1">↩</a></p>
+<p>The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects its current use. <a href="#fr-2-1">↩</a></p>
 </li>
 <li id="footnote-3">
 <p>This currently isn't a named constant, we should change that <a href="#fr-3-1">↩</a></p>
 </li>
 <li id="footnote-4">
-<p>All accounts and storages are sent and found through the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with adress 0x0001 whose hash would be 0x49d0...49d5 <a href="#fr-4-1">↩</a></p>
+<p>All accounts and storages are sent and found through the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with address 0x0001 whose hash would be 0x49d0...49d5 <a href="#fr-4-1">↩</a></p>
 </li>
 <li id="footnote-5">
 <p>This may be for a variety of reasons, but the most likely is ERC20 tokens that were deployed and never used. <a href="#fr-5-1">↩</a></p>
@@ -3974,16 +3972,16 @@ struct StorageTaskResult {
 </ul>
 <p>Creating EOA is done through sending ETH into a new address, at which point the account is created and added into the state trie.</p>
 <p>Creating a contract can be done through the CREATE and <a href="https://eips.ethereum.org/EIPS/eip-1014">CREATE2</a> opcode. Notably, those opcodes check that the account is created at an address where the code is empty and the nonce is zero, but <strong>it doesn't check balance</strong>. As such, a contract can be created through taking over an existing account.</p>
-<p>During the creating of a contract, the <code>init_code</code> is run which can include the <a href="https://eips.ethereum.org/EIPS/eip-6780">self destruct opcode</a> that deletes the contract in the same transaction it was created. Normally, this deletes an account that was created in the same transaction (because contracts are usually created over empty accounts) but in this case the account already existed because it already had some balance. This is the only edge case in which an account can go from existing to non-existing from one block to another after the Cancun fork.</p>
+<p>During the creation of a contract, the <code>init_code</code> is run which can include the <a href="https://eips.ethereum.org/EIPS/eip-6780">self destruct opcode</a> that deletes the contract in the same transaction it was created. Normally, this deletes an account that was created in the same transaction (because contracts are usually created over empty accounts) but in this case the account already existed because it already had some balance. This is the only edge case in which an account can go from existing to non-existing from one block to another after the Cancun fork.</p>
 <h3 id="how-we-found-it"><a class="header" href="#how-we-found-it">How we found it</a></h3>
 <p>Snap-sync is broadly divided into two stages:</p>
 <ul>
 <li>Downloading the leaves of the state (account states) and storage tries (storage slots)</li>
 <li>Healing (reconciling the state).</li>
 </ul>
-<p>Healing is needed because the leaves can be downloaded from disparate blocks, and to "fix" only the nodes of the trie that changed between nodes. <a href="internal/l1/./healing.html">In depth explanation</a>.</p>
-<p>We were working under the assumption that accounts were never deleted, so we adopted some specific optimizations. During the state healing stage every account that was "healed" was added into a list of accounts that needed to be checked for storage healing. When healing the storage of those accounts the algorithm requested their account states and expected them to be there to see if they had any storage that needed healing. This lead to the storage healing threads panicking when they failed to find the account that was deleted.</p>
-<p>During the test of snapsync mainnet, we started seeing that storage healing was panicking, so we added some logs to see what account hashes were being accessed and when where they healed vs accessed. Exploring the database we saw that the offending account was present in a previous state and missing in the next one, with the corresponding merkle proof matching the block state root. Originally we suspected a reorg, but searching the blocks we saw they were finalized in the chain.</p>
+<p>Healing is needed because the leaves can be downloaded from disparate blocks, and to "fix" only the nodes of the trie that changed between blocks. <a href="internal/l1/./healing.html">In depth explanation</a>.</p>
+<p>We were working under the assumption that accounts were never deleted, so we adopted some specific optimizations. During the state healing stage every account that was "healed" was added into a list of accounts that needed to be checked for storage healing. When healing the storage of those accounts the algorithm requested their account states and expected them to be there to see if they had any storage that needed healing. This led to the storage healing threads panicking when they failed to find the account that was deleted.</p>
+<p>During the test of snapsync mainnet, we started seeing that storage healing was panicking, so we added some logs to see what account hashes were being accessed and when were they healed vs accessed. Exploring the database we saw that the offending account was present in a previous state and missing in the next one, with the corresponding merkle proof matching the block state root. Originally we suspected a reorg, but searching the blocks we saw they were finalized in the chain.</p>
 <p>The account state present indicated an account with nonce 0, no code and no storage but with balance. We didn't have access to the account address, as the state trie only stores the hash of the account address so we turned to another strategy to find it. Using <a href="https://docs.etherscan.io/api-endpoints/accounts#get-internal-transactions-by-block-range">etherscan's API</a> allowing to search internal transactions from a block range, we explored the range where we knew the account existed in the state trie. Hashing all of the <code>to</code> and <code>from</code> of the transactions <a href="https://etherscan.io/tx/0xf23b2c233410141cda0c6d24f21f0074c494565bfd54ce008c5ce1b30b23b0da">we found the transaction</a> that deleted the account with a self destruct. Despite the account becoming a contract just during that transaction, we saw that 900 blocks before it was <a href="https://etherscan.io/tx/0xbc9f52ba45a6915878318be944cb20bd3bb1bbf36b2ce8ff5e6575ce1689f1b6">created with a transfer</a>. The result of the self destruct was the transfer of 0.044 ETH from one account to another.</p>
 <p>The specific transaction that created the contract: https://etherscan.io/tx/0xf23b2c233410141cda0c6d24f21f0074c494565bfd54ce008c5ce1b30b23b0da</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
@@ -4066,9 +4064,9 @@ struct StorageTaskResult {
 <h2 id="performance"><a class="header" href="#performance">Performance</a></h2>
 <p>For performance, having an efficient cache of accounts that need to have their storage downloaded in memory is key, and we should avoid going to the db as much as possible. In particular in storage healing we start by trying to get all of the storage healing roots, and this can be sped up considerably if we avoid going to the db.</p>
 <h3 id="improving-debug"><a class="header" href="#improving-debug">Improving debug</a></h3>
-<p>The functions <code>validate_state_root</code> and <code>validate_storage_roots</code> are very slow, as they rebuild the entire state trie in memory. This is</p>
+<p>The functions <code>validate_state_root</code> and <code>validate_storage_roots</code> are very slow, as they rebuild the entire state trie in memory.</p>
 <h2 id="code-quality"><a class="header" href="#code-quality">Code Quality</a></h2>
-<p>In general, snap sync lacks explanation comments that detail the functioning on the algorithm. Variables and structs should be renamed to make it properly readable.</p>
+<p>In general, snap sync lacks explanation comments that detail the functioning of the algorithm. Variables and structs should be renamed to make it properly readable.</p>
 <h3 id="storage-downloads-1"><a class="header" href="#storage-downloads-1">Storage downloads</a></h3>
 <p>Request storages is a very hard function to read, as the data structures were constantly modified to introduce speed optimizations. As such, this function is critical to restructure and manage it taking into account memory concerns.</p>
 <p>This function also has a lot of numeric constants inserted in the code directly, and should be handled better by having defined consts with explanations.</p>
@@ -4191,7 +4189,7 @@ This happens when the parent shares less nibbles from their paths than what the 
 In our example, the current and next value share 0x17, while the parent only shares 0x1.</p>
 <p>In this scenario, we know the leaf we need to compute from the current value
 so we write that. Furthermore, we know that we need a new branch at 0x17,
-so we create it and insert the leaf we just computed and insert into the branch.
+so we create it and insert the leaf we just computed and insert it into the branch.
 The current parent is stored in the "parent stack", and the new branch becomes the
 current parent.</p>
 <p><img src="internal/l1/sorted_trie_insert/SortedInsertionScenario2.png" alt="Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x172E and next element 0x175B. 0x172E is inserted with a single write, while the current parent branch is put onto the stack, and a new current parent branch 0x17 is created" /></p>
@@ -4293,11 +4291,11 @@ buffer and sends it back through the channels.</p>
 </style>
 <h1 id="healing-algorithm-explanation-and-documentation-before-path-based"><a class="header" href="#healing-algorithm-explanation-and-documentation-before-path-based">Healing Algorithm Explanation and Documentation (Before Path Based)</a></h1>
 <p>Healing is the last step of Snap Sync. Snap begins the downloading of the state and storage tries by downloading the leaves (account states and storage slots), and from those leaves we reconstruct the intermediate nodes (branches and extension). Afterwards we may be left with a malformed trie, as that step will resume the download of leaves with a new state root if the old one times out.</p>
-<p>The purpose of the healing algorithm is “heal” that trie so that it ends up in a consistent state.</p>
+<p>The purpose of the healing algorithm is to "heal" that trie so that it ends up in a consistent state.</p>
 <h1 id="healing-conceptually"><a class="header" href="#healing-conceptually">Healing Conceptually</a></h1>
-<p>The malformed trie is going to have large sections of the trie which are in a correct state, as we had all of the leaves in that sections and those accounts haven’t been modified in the blocks that happened concurrently to the snapsync algorithm.</p>
+<p>The malformed trie is going to have large sections of the trie which are in a correct state, as we had all of the leaves in those sections and those accounts haven’t been modified in the blocks that happened concurrently to the snapsync algorithm.</p>
 <p><img src="internal/l1/healing/Example_1_Step_0.svg" alt="Image of a trie, where the root node is in red, indicating that it’s in an incorrect state. It points to two branches, one is correct and one was computed from faulty data, and such doesn’t exist in the latest block" /></p>
-<p>Example of a trie where 3 leaves where downloaded in block 1 and 1 was downloaded in block 2. The trie root is different from the state root of block 2, as one of the leaf nodes was modified in block 2.</p>
+<p>Example of a trie where 3 leaves were downloaded in block 1 and 1 was downloaded in block 2. The trie root is different from the state root of block 2, as one of the leaf nodes was modified in block 2.</p>
 <p>The algorithm attempts to rebuild the trie through downloading the missing nodes, starting from the top. If the node is present in the database that means that we have that and all of their child nodes present in the database. If not, we download the node and check if the children of the root are present, applying the algorithm recursively.</p>
 <p><img src="internal/l1/healing/Example_1_Step_1.svg" alt="Iteration 1 of algorithm" /></p>
 <p>Iteration 1 of algorithm</p>
@@ -4324,7 +4322,7 @@ buffer and sends it back through the channels.</p>
 }
 <span class="boring">}</span></code></pre></pre>
 <h3 id="staleness"><a class="header" href="#staleness">Staleness</a></h3>
-<p>The spec allows the nodes to stop responding if the request is older than 128 blocks. In that case, the response to the <code>GetTrieNodes</code> will be empty. As such, our algorithm checks periodically if the block is stale, and stops executing. In that scenario, we must be sure that the we leave the storage in a consistent state at any given time and doesn’t break our invariants.</p>
+<p>The spec allows the nodes to stop responding if the request is older than 128 blocks. In that case, the response to the <code>GetTrieNodes</code> will be empty. As such, our algorithm checks periodically if the block is stale, and stops executing. In that scenario, we must be sure that we leave the storage in a consistent state at any given time and don't break our invariants.</p>
 <pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>// Current Staleness logic code
@@ -4341,8 +4339,8 @@ if is_stale &amp;&amp; nodes_to_heal.is_empty() &amp;&amp; inflight_tasks == 0 {
 }
 <span class="boring">}</span></code></pre></pre>
 <h3 id="membatch"><a class="header" href="#membatch">Membatch</a></h3>
-<p>Currently, our algorithm has an invariant, which is that if we have a node in storage we have its and all of its children are present. Therefore, when we download for a node if some of it’s children are missing we can’t immediately store it on disk. Our implementation currently stores the nodes in temporary structure called membatch, which stores the node and how many of it’s children are missing. When a child gets stored, we reduce the counter of missing children of the parent. If that numbers reaches 0, we write the parent to the database.</p>
-<p>In code, the membatch is current <code>HashMap&lt;Nibbles, MembatchEntryValue&gt;</code> with the value being the following struct</p>
+<p>Currently, our algorithm has an invariant, which is that if we have a node in storage we have its and all of its children are present. Therefore, when we download for a node if some of its children are missing we can’t immediately store it on disk. Our implementation currently stores the nodes in temporary structure called membatch, which stores the node and how many of its children are missing. When a child gets stored, we reduce the counter of missing children of the parent. If that numbers reaches 0, we write the parent to the database.</p>
+<p>In code, the membatch is currently a <code>HashMap&lt;Nibbles, MembatchEntryValue&gt;</code> with the value being the following struct</p>
 <pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub struct MembatchEntryValue {
@@ -4359,7 +4357,7 @@ if is_stale &amp;&amp; nodes_to_heal.is_empty() &amp;&amp; inflight_tasks == 0 {
 <li>Membatch gets cleared between iterations, while it could be preserved and the hash checked.</li>
 <li>When checking if a child is present in storage, we can also check if it’s in the membatch. If it is, we can skip that download and act like we have immediately downloaded that node.</li>
 <li>Membatch is currently a <code>HashMap</code>, a <code>BTreeMap</code> or other structures may be faster in real use.</li>
-<li>Storage healing receives as a parameter a list of accounts that need to be healed and it has get their state before it can run. Doing those reads could be more efficient.</li>
+<li>Storage healing receives as a parameter a list of accounts that need to be healed and it has to get their state before it can run. Doing those reads could be more efficient.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
@@ -4503,7 +4501,7 @@ if is_stale &amp;&amp; nodes_to_heal.is_empty() &amp;&amp; inflight_tasks == 0 {
 
 </style>
 <h1 id="deploy-an-l2"><a class="header" href="#deploy-an-l2">Deploy an L2</a></h1>
-<p>This section provides step-by-step guides for deploying different types of ethrex L2 chains, including vanilla, validium, and based configurations, as well as a shared bridge enabled L2 and migrations bewteen versions. Each guide outlines the necessary commands and parameters to successfully deploy and start an L2 node.</p>
+<p>This section provides step-by-step guides for deploying different types of ethrex L2 chains, including vanilla, validium, and based configurations, as well as a shared bridge enabled L2 and migrations between versions. Each guide outlines the necessary commands and parameters to successfully deploy and start an L2 node.</p>
 <p>Use this section to choose the deployment method that best fits your needs and follow the instructions accordingly.</p>
 <ul>
 <li><a href="l2/deployment/./overview.html">Overview</a></li>
@@ -4758,7 +4756,7 @@ COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --f
 <p><code>--risc0.verifier-address</code> to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.</p>
 <p><code>--tdx true</code> to require TEE proofs for validating batch execution and state settlement.</p>
 <p><code>--tdx.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.</p>
-<p>Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the <a href="l2/deployment/./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
+<p>Enabling multiple proving backends will require running multiple provers, one for each backend. Refer to the <a href="l2/deployment/./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
 <p>If you enable more than one proving system (e.g., both <code>--sp1 true</code> and <code>--risc0 true</code>), all selected proving systems will be required (i.e., every batch must include a proof from each enabled system to settle on L1).</p>
 </div>
 <div class="mdbook-alerts mdbook-alerts-important">
@@ -4943,7 +4941,7 @@ COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --f
 <p><code>--risc0.verifier-address</code> to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.</p>
 <p><code>--tdx true</code> to require TEE proofs for validating batch execution and state settlement.</p>
 <p><code>--tdx.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.</p>
-<p>Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the <a href="l2/deployment/./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
+<p>Enabling multiple proving backends will require running multiple provers, one for each backend. Refer to the <a href="l2/deployment/./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
 <p>If you enable more than one proving system (e.g., both <code>--sp1 true</code> and <code>--risc0 true</code>), all selected proving systems will be required (i.e., every batch must include a proof from each enabled system to settle on L1).</p>
 </div>
 <div class="mdbook-alerts mdbook-alerts-important">
@@ -4961,7 +4959,7 @@ COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --f
 <ul>
 <li>Replace <code>L1_RPC_URL</code> with your preferred RPC provider endpoint.</li>
 <li>Replace <code>PRIVATE_KEY</code> with the private key of an account funded on the target L1. This key will sign the transactions during deployment.</li>
-<li>Replace <code>PATH_TO_L2_GENESIS_FILE</code> with the path to your L2 genesis file.A genesis example is available in the fixtures directory of the <a href="https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json">official GitHub repository</a>. This file initializes the <code>OnChainProposer</code> contract with the genesis state root.</li>
+<li>Replace <code>PATH_TO_L2_GENESIS_FILE</code> with the path to your L2 genesis file. A genesis example is available in the fixtures directory of the <a href="https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json">official GitHub repository</a>. This file initializes the <code>OnChainProposer</code> contract with the genesis state root.</li>
 <li>The <code>CommonBridge</code> and <code>OnChainProposer</code> contracts are upgradeable and ownable, with implementations behind proxies initialized during deployment. Replace <code>COMMON_BRIDGE_OWNER_ADDRESS</code> and <code>ON_CHAIN_PROPOSER_OWNER_ADDRESS</code> with the address of the account you want as the owner. The owner can upgrade implementations or perform administrative actions; for more details, see the Architecture section.</li>
 <li>The sequencer components (<code>L1Committer</code> and <code>L1ProofSender</code>) require funded accounts on the target L1 to advance the network. Replace <code>L1_COMMITTER_ADDRESS</code> and <code>L1_PROOF_SENDER_ADDRESS</code> with the addresses of those accounts.</li>
 <li>Replace <code>PATH_TO_ENV_FILE</code> with the path where you want to save the generated environment file. This file contains the deployed contract addresses and other configuration details needed to run the L2 node.</li>
@@ -6681,14 +6679,14 @@ cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,r
   <span class="mdbook-alerts-icon"></span>
   important
 </p>
-<p>Cualquiera haya sido el metodo de instalacion de ethrex, asegurate de que el binario que estas utilizando tiene soporte para SP1, y tambien para GPU si es que tu intencion es correr un prover SP1 GPU.</p>
+<p>Regardless of the installation method used for ethrex, make sure the binary you are using has SP1 support, and also GPU support if you intend to run an SP1 GPU prover.</p>
 </div>
 <div class="mdbook-alerts mdbook-alerts-note">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
   note
 </p>
-<p>The flag <code>--proof-coordinators</code> is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to <code>localhost:3900</code> because the command above command uses the port <code>3900</code> for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
+<p>The flag <code>--proof-coordinators</code> is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to <code>localhost:3900</code> because the command above uses the port <code>3900</code> for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
 We choose SP1 as the backend to indicate the prover to generate SP1 proofs.</p>
 </div>
 <h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
@@ -6787,14 +6785,14 @@ We choose SP1 as the backend to indicate the prover to generate SP1 proofs.</p>
   <span class="mdbook-alerts-icon"></span>
   important
 </p>
-<p>Cualquiera haya sido el metodo de instalacion de ethrex, asegurate de que el binario que estas utilizando tiene soporte para RISC0, y tambien para GPU si es que tu intencion es correr un prover RISC0 GPU.</p>
+<p>Regardless of the installation method used for ethrex, make sure the binary you are using has RISC0 support, and also GPU support if you intend to run a RISC0 GPU prover.</p>
 </div>
 <div class="mdbook-alerts mdbook-alerts-note">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
   note
 </p>
-<p>The flag <code>--proof-coordinators</code> is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to <code>localhost:3900</code> because the command above command uses the port <code>3900</code> for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
+<p>The flag <code>--proof-coordinators</code> is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to <code>localhost:3900</code> because the command above uses the port <code>3900</code> for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
 We choose RISC0 as the backend to indicate the prover to generate RISC0 proofs.</p>
 </div>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
@@ -7710,7 +7708,7 @@ cd ethrex/metrics
 <li>Every once in a while, someone (usually the sequencer, but could be a decentralized network, or even anyone at all in the case of a based contestable rollup) builds a batch of new L2 blocks and publishes it to L1. We will call this the <code>commit</code> L1 transaction.</li>
 <li>For L2 batches to be considered finalized, a zero-knowledge proof attesting to the validity of the batch needs to be sent to L1, and its verification needs to pass. If it does, everyone is assured that all blocks in the batch were valid and thus the new state is. We call this the <code>verification</code> L1 transaction.</li>
 </ul>
-<p>We ommited a lot of details in this high level explanation. Some questions that arise are:</p>
+<p>We omitted a lot of details in this high level explanation. Some questions that arise are:</p>
 <ul>
 <li>What does it mean for the L1 contract to track the state of L2? Is the entire L2 state kept on it? Isn't it really expensive to store a bunch of state on an Ethereum smart contract?</li>
 <li>What does the ZK proof prove exactly?</li>
@@ -7753,7 +7751,7 @@ The principles of verification and compression described below still apply conce
 <p>While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the chain. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the chain or some of their funds.</p>
 <p>This is called the <strong>Data Availability</strong> problem. As discussed before, sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:</p>
 <ul>
-<li>For every new L2 batch, send as part of the <code>commit</code> transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all <code>commit</code> transactions, start executing them from the beginning and recontruct the state.</li>
+<li>For every new L2 batch, send as part of the <code>commit</code> transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all <code>commit</code> transactions, start executing them from the beginning and reconstruct the state.</li>
 </ul>
 <p>This is now feasible; if we take 200 bytes as a rough estimate for the size of a single transfer between two users (see <a href="https://ethereum.stackexchange.com/questions/30175/what-is-the-size-bytes-of-a-simple-ethereum-transaction-versus-a-bitcoin-trans">this post</a> for the calculation on legacy transactions) and 128 KB as <a href="https://github.com/ethereum/go-ethereum/blob/830f3c764c21f0d314ae0f7e60d6dd581dc540ce/core/txpool/legacypool/legacypool.go#L49-L53">a reasonable transaction size limit</a> we get around ~650 transactions at maximum per <code>commit</code> transaction (we are assuming we use calldata here, blobs can increase this limit as each one is 128 KB and we could use multiple per transaction).</p>
 <p>Going a bit further, instead of posting the entire transaction, we could just post which accounts have been modified and their new values (this includes deployed contracts and their bytecode of course). This can reduce the size a lot for most cases; in the case of a regular transfer as above, we only need to record balance updates of two accounts, which requires sending just two <code>(address, balance)</code> pairs, so (20 + 32) * 2 = 104 bytes, or around half as before. Some other clever techniques and compression algorithms can push down the publishing cost of this and other transactions much further.</p>
@@ -7775,7 +7773,7 @@ The principles of verification and compression described below still apply conce
 </div>
 <p>While we could send state diffs through calldata, there is a (hopefully) cheaper way to do it: blobs. The Ethereum Cancun upgrade introduced a new type of transaction where users can submit a list of opaque blobs of data, each one of size at most 128 KB. The main purpose of this new type of transaction is precisely to be used by rollups for data availability; they are priced separately through a <code>blob_gas</code> market instead of the regular <code>gas</code> one and for all intents and purposes should be much cheaper than calldata.</p>
 <p>Using EIP 4844, our state diffs would now be sent through blobs. While this is cheaper, there's a new problem to address with it. The whole point of blobs is that they're cheaper because they are only kept around for approximately two weeks and ONLY in the beacon chain, i.e. the consensus side. The execution side (and thus the EVM when running contracts) does not have access to the contents of a blob. Instead, the only thing it has access to is a <strong>KZG commitment</strong> of it.</p>
-<p>This is important. If you recall, the way the L1 ensured that the state diff published by the sequencer was correct was by hashing its contents and ensuring that the hash matched the given state diff hash. With the contents of the state diff now no longer accesible by the contract, we can't do that anymore, so we need another way to ensure the correct contents of the state diff (i.e. the blob).</p>
+<p>This is important. If you recall, the way the L1 ensured that the state diff published by the sequencer was correct was by hashing its contents and ensuring that the hash matched the given state diff hash. With the contents of the state diff now no longer accessible by the contract, we can't do that anymore, so we need another way to ensure the correct contents of the state diff (i.e. the blob).</p>
 <p>The solution is through a <a href="https://ethresear.ch/t/easy-proof-of-equivalence-between-multiple-polynomial-commitment-schemes-to-the-same-data/8188">proof of equivalence</a> between polynomial commitment schemes. The idea is as follows: proofs of equivalence allow you to show that two (polynomial) commitments point to the same underlying data. In our case, we have two commitments:</p>
 <ul>
 <li>The state diff commitment calculated by the sequencer/prover.</li>
@@ -7786,7 +7784,7 @@ The principles of verification and compression described below still apply conce
 <h3 id="prover-side"><a class="header" href="#prover-side">Prover side</a></h3>
 <ul>
 <li>
-<p>Take the state diff being commited to as <code>4096</code> 32-byte chunks (these will be interpreted as field elements later on, but for now we don't care). Call these chunks <span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span>, with <code>i</code> ranging from 0 to 4095.</p>
+<p>Take the state diff being committed to as <code>4096</code> 32-byte chunks (these will be interpreted as field elements later on, but for now we don't care). Call these chunks <span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span>, with <code>i</code> ranging from 0 to 4095.</p>
 </li>
 <li>
 <p>Build a merkle tree with the <span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span> as leaves. Note that we can think of the merkle root as a polynomial commitment, where the <code>i</code>-th leaf is the evaluation of the polynomial on the <code>i</code>-th power of <span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.03588em;">ω</span></span></span></span>, the <code>4096</code>-th root of unity on <span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.13889em;">F</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.03588em;">q</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span>, the field modulus of the <code>BLS12-381</code> curve. Call this polynomial <span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.10764em;">f</span></span></span></span>. This is the same polynomial that the L1 KZG blob commits to (by definition). Call the L1 blob KZG commitment <span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.07153em;">C</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0715em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span> and the merkle root we just computed <span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.07153em;">C</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0715em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span>.</p>
@@ -7801,7 +7799,7 @@ The principles of verification and compression described below still apply conce
 </ul>
 <h3 id="verifier-side"><a class="header" href="#verifier-side">Verifier side</a></h3>
 <ul>
-<li>When commiting to the data on L1 send, as part of the calldata, a kzg blob commitment along with an opening proving that it evaluates to <code>y</code> on <code>x</code>. The contract, through the point evaluation precompile, checks that both:
+<li>When committing to the data on L1 send, as part of the calldata, a kzg blob commitment along with an opening proving that it evaluates to <code>y</code> on <code>x</code>. The contract, through the point evaluation precompile, checks that both:
 <ul>
 <li>The commitment's hash is equal to the versioned hash for that blob.</li>
 <li>The evaluation is correct.</li>
@@ -7946,7 +7944,7 @@ In this section we talk a bit about them, first going through the more specific 
 <h3 id="l1-transaction-sender-aka-l1-committer"><a class="header" href="#l1-transaction-sender-aka-l1-committer">L1 Transaction Sender (a.k.a. L1 Committer)</a></h3>
 <p>As the name suggests, this component sends transactions to the L1. But not any transaction, only commit and verify transactions.</p>
 <p>Commit transactions are sent when the Proposer wants to commit to a new batch of blocks. These transactions contain the batch data to be committed in the L1.</p>
-<p>Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contains the new state root of the L2, the hash of the state diffs produced in the block, the root of the withdrawals logs merkle tree and the hash of the processed deposits.</p>
+<p>Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contain the new state root of the L2, the hash of the state diffs produced in the block, the root of the withdrawals logs merkle tree and the hash of the processed deposits.</p>
 <h3 id="proof-coordinator"><a class="header" href="#proof-coordinator">Proof Coordinator</a></h3>
 <p>The Proof Coordinator is a simple TCP server that manages communication with a component called the Prover. The Prover acts as a simple TCP client that makes requests to prove a block to the Coordinator. It responds with the proof input data required to generate the proof. Then, the Prover executes a zkVM, generates the Groth16 proof, and sends it back to the Coordinator.</p>
 <p>The Proof Coordinator centralizes the responsibility of determining which block needs to be proven next and how to retrieve the necessary data for proving. This design simplifies the system by reducing the complexity of the Prover, it only makes requests and proves blocks.</p>
@@ -8137,7 +8135,7 @@ For comprehensive details on the internals of the prover, see <a href="l2/archit
 <p>TDX is an Intel technology implementing a Trusted Execution Environment.
 Such an environment allows verifying certain code was executed without being tampered with or observed.</p>
 <p>These verifications (attestations) are known as "quotes" and contain signatures verifying the attestation was generated by a genuine processor, the measurements at the time, and a user-provided piece of data binding the proof.</p>
-<p>The measurements are saved to four Run Time Measurement Registers (RTMR), with each RTMR respresenting a boot stage.
+<p>The measurements are saved to four Run Time Measurement Registers (RTMR), with each RTMR representing a boot stage.
 This is analogous to <a href="https://uapi-group.org/specifications/specs/linux_tpm_pcr_registry/">how PCRs work</a>.</p>
 <h2 id="usage-considerations"><a class="header" href="#usage-considerations">Usage considerations</a></h2>
 <p>Do not hardcode quote verification parameters as <a href="https://cc-enabling.trustedservices.intel.com/intel-tdx-enabling-guide/02/infrastructure_setup/#tcb-recovery-tcb-r">they might change</a>.</p>
@@ -8156,7 +8154,7 @@ This is analogous to <a href="https://uapi-group.org/specifications/specs/linux_
 <h3 id="hypervisornix"><a class="header" href="#hypervisornix">hypervisor.nix</a></h3>
 <p>This builds the modified (with patches for TDX support) qemu, and TDX-specific VBIOS (OVMF) and exports a script to run a given image (the parameters, specifically added devices, affect the measurements).</p>
 <h3 id="servicenix"><a class="header" href="#servicenix">service.nix</a></h3>
-<p>This contains the quote-gen service. It's hash changes every time a non-gitignored file changes.</p>
+<p>This contains the quote-gen service. Its hash changes every time a non-gitignored file changes.</p>
 <h3 id="imagenix"><a class="header" href="#imagenix">image.nix</a></h3>
 <p>Exports an image that uses <a href="https://uapi-group.org/specifications/specs/unified_kernel_image/">UKI</a> and <a href="https://source.android.com/docs/security/features/verifiedboot/dm-verity?hl=en">dm-verity</a> to generate an image where changing any component changes the hash of the bootloader (the UKI image), which is measured by the BIOS.</p>
 <h2 id="running"><a class="header" href="#running">Running</a></h2>
@@ -8178,7 +8176,7 @@ sysctl kernel.apparmor_restrict_unprivileged_userns=0
 </code></pre>
 <h3 id="rtmrmrtd-mismatch"><a class="header" href="#rtmrmrtd-mismatch">RTMR/MRTD mismatch</a></h3>
 <p>If any code or dependencies changed, the measurements will change.</p>
-<p>To obtain the new measurements, first you obtain the quote by running the prover (you don't need to have the l2 running). It's output will contain <code>Sending quote &lt;very long hex string&gt;</code>.</p>
+<p>To obtain the new measurements, first you obtain the quote by running the prover (you don't need to have the l2 running). Its output will contain <code>Sending quote &lt;very long hex string&gt;</code>.</p>
 <p>This usually causes a RTMR1 mismatch. The easiest way to obtain the new RTMR values is by looking at the printed quote for the next 96 bytes after the RTMR0, corresponding to RTMR1||RTMR2 (48 bytes each).</p>
 <p>More generally, you can generate a report with DCAP.verifyAndAttestOnChain(quote) which validates and extracts the report.</p>
 <p>Look at bytes 341..485 of the output for RTMRs and bytes 149..197 for the MRTD.</p>
@@ -8361,7 +8359,7 @@ sysctl kernel.apparmor_restrict_unprivileged_userns=0
 rex l2 deposit 50000000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x65dd6dc5df74b7e08e92c910122f91d7b2d5184f
 </code></pre>
 <h2 id="verifying-the-updated-l2-balance"><a class="header" href="#verifying-the-updated-l2-balance">Verifying the updated L2 balance</a></h2>
-<p>Once the deposit is made you can verify the balance has increase with:</p>
+<p>Once the deposit is made you can verify the balance has increased with:</p>
 <pre><code class="language-sh"># Format: rex l2 balance &lt;ADDRESS&gt; [RPC_URL]
 rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
 </code></pre>
@@ -8438,7 +8436,7 @@ rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
 <p>This section explains how to withdraw funds from the L2 through the native bridge.</p>
 <h2 id="prerequisites-for-l2-withdrawal"><a class="header" href="#prerequisites-for-l2-withdrawal">Prerequisites for L2 withdrawal</a></h2>
 <ul>
-<li>An L2 account with sufficient ETH balance, for developing purpose you can use:
+<li>An L2 account with sufficient ETH balance, for developing purposes you can use:
 <ul>
 <li>Address: <code>0x8943545177806ed17b9f23f0a21ee5948ecaa776</code></li>
 <li>Private Key: <code>0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31</code></li>
@@ -8463,7 +8461,7 @@ rex l2 withdraw 5000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214e
 <h2 id="claiming-the-withdrawal"><a class="header" href="#claiming-the-withdrawal">Claiming the withdrawal</a></h2>
 <p>After making a withdrawal, it has to be claimed in the L1, through the L1 <code>CommonBridge</code> contract.
 For that, we can use the Rex command <code>rex l2 claim-withdraw</code>, with the tx hash obtained in the previous step.
-But first, it is necessary to wait for the block that includes the withdraw to be verified.</p>
+But first, it is necessary to wait for the block that includes the withdrawal to be verified.</p>
 <!-- TODO: how can we check the withdrawal was verified? -->
 <pre><code class="language-sh"># Format: rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; &lt;PRIVATE_KEY&gt; &lt;BRIDGE_ADDRESS&gt; [L1_RPC_URL] [RPC_URL]
 rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x65dd6dc5df74b7e08e92c910122f91d7b2d5184f
@@ -8718,7 +8716,7 @@ rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; 0xbcdf20249abf0ed6d944c0288f
 
 </style>
 <h1 id="blockscout-for-ethrex-l2"><a class="header" href="#blockscout-for-ethrex-l2">Blockscout for ethrex L2</a></h1>
-<p>TDB</p>
+<p>TBD</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -8788,7 +8786,7 @@ rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; 0xbcdf20249abf0ed6d944c0288f
 
 </style>
 <h1 id="l2-hub"><a class="header" href="#l2-hub">L2 Hub</a></h1>
-<p>TDB</p>
+<p>TBD</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -9044,7 +9042,7 @@ Retry the deploy command adding <code>--priority-gas-price</code> and <code>--ga
 <p>For general documentation, see:</p>
 <ul>
 <li><a href="l2/fundamentals/../architecture/overview.html">Architecture overview</a> for a high-level view of the ethrex L2 stack.</li>
-<li><a href="l2/fundamentals/./contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts including steps to upgrade and transfer ownserhip.</li>
+<li><a href="l2/fundamentals/./contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts including steps to upgrade and transfer ownership.</li>
 <li><a href="l2/fundamentals/./based.html">Based sequencing</a> contains ethrex's roadmap for becoming based.</li>
 <li><a href="l2/fundamentals/./state_diffs.html">State diffs</a> explains the mechanism needed to provide data availability.</li>
 <li>How asset <a href="l2/fundamentals/./deposits.html">deposits</a> and <a href="l2/fundamentals/./withdrawals.html">withdrawals</a> work.</li>
@@ -9310,7 +9308,7 @@ number_of_privileged_transaction_logs_u16 ||
 </div>
 <h2 id="conclusion-1"><a class="header" href="#conclusion-1">Conclusion</a></h2>
 <p>Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately 2x for ETH transfers and 3x for ERC20 transfers.</p>
-<h2 id="how-this-measurements-were-done"><a class="header" href="#how-this-measurements-were-done">How this measurements were done</a></h2>
+<h2 id="how-these-measurements-were-done"><a class="header" href="#how-these-measurements-were-done">How these measurements were done</a></h2>
 <h3 id="prerequisites-14"><a class="header" href="#prerequisites-14">Prerequisites</a></h3>
 <ul>
 <li>Fresh cloned ethrex repository</li>
@@ -10016,7 +10014,7 @@ leaf3 = {value, concat(k, path)} # New leaf replacing branch1 and leaf2
 <p>The average latency drops from <strong>242 ms (on-demand)</strong> to <strong>131 ms (pre-generated)</strong>, representing an improvement of approximately <strong>46%</strong>. Median latency shows a similar improvement, decreasing from <strong>224 ms</strong> to <strong>130 ms</strong>.</p>
 <h3 id="overall"><a class="header" href="#overall">Overall</a></h3>
 <p>Pre-serialized execution witnesses exhibit the tightest latency distribution. On-demand requests frequently experience high-latency spikes due to witness generation at request time. Pre-generating and pre-serializing execution witnesses during payload execution effectively eliminates most of these spikes and results in more predictable response times.</p>
-<h2 id="how-these-measurements-were-done"><a class="header" href="#how-these-measurements-were-done">How These Measurements Were Done</a></h2>
+<h2 id="how-these-measurements-were-done-1"><a class="header" href="#how-these-measurements-were-done-1">How These Measurements Were Done</a></h2>
 <p>These metrics were obtained from an <code>ethrex</code> node synced to the Ethereum mainnet.</p>
 <p>Each configuration was measured over a contiguous range of blocks, and latency was recorded for each request.</p>
 <h2 id="how-to-get-metrics"><a class="header" href="#how-to-get-metrics">How to Get Metrics</a></h2>
@@ -10715,7 +10713,7 @@ emit PrivilegedTxSent(
 For this case, the important difference is that the sender of the transaction is set by our L1 bridge.
 This enables our L1 bridge to "forge" transactions from any sender, even arbitrary addresses like the L2 bridge.</li>
 <li>Privileged transactions sent by the L2 bridge don't deduct from the bridge's balance their value.
-In practice, this means ETH equal to the transactions <code>value</code> is minted.</li>
+In practice, this means ETH equal to the transaction's <code>value</code> is minted.</li>
 </ol>
 <p>On L2:</p>
 <ol>
@@ -10791,7 +10789,7 @@ This ensures that L2 token withdrawals don't consume L1 tokens that weren't depo
 <ol>
 <li>On each L2 node, the L1 watcher processes <code>PrivilegedTxSent</code> events, each adding a <code>PrivilegedL2Transaction</code> to the L2 mempool.</li>
 <li>The privileged transaction is an <a href="https://eips.ethereum.org/EIPS/eip-2718">EIP-2718 typed transaction</a>, somewhat similar to an <a href="https://eips.ethereum.org/EIPS/eip-1559">EIP-1559 transaction</a>, but with some changes.
-For this case, the important differences is that the sender of the transaction is set by our L1 bridge.
+For this case, the important difference is that the sender of the transaction is set by our L1 bridge.
 This enables our L1 bridge to "forge" transactions from any sender, even arbitrary addresses like the L2 bridge.</li>
 </ol>
 <p>On L2:</p>
@@ -10875,7 +10873,7 @@ sequenceDiagram
     CommonBridge --&gt;&gt; CommonBridgeL2: Notifies deposit
     CommonBridgeL2 -&gt;&gt; L2Eve: Sends 1 Bar token
 
-    Note over L1Eve,L2Eve: Eve does a malicious withdawal of Alice's funds
+    Note over L1Eve,L2Eve: Eve does a malicious withdrawal of Alice's funds
     L2Eve -&gt;&gt; CommonBridgeL2: Withdraws 101 Bar tokens into Foo
     CommonBridgeL2 --&gt;&gt; CommonBridge: Notifies withdrawal
     CommonBridge -&gt;&gt; L1Eve: Sends 101 Foo tokens
@@ -10908,12 +10906,12 @@ We can compute it as follows:</p>
 )
 </code></pre>
 <h2 id="address-aliasing"><a class="header" href="#address-aliasing">Address Aliasing</a></h2>
-<p>To prevent attacks where a L1 impersonates an L2 contract, we implement Address Aliasing <a href="https://docs.optimism.io/stack/differences#address-aliasing">like Optimism</a> (albeit with we a different constant, to prevent confusion).</p>
+<p>To prevent attacks where a L1 impersonates an L2 contract, we implement Address Aliasing <a href="https://docs.optimism.io/stack/differences#address-aliasing">like Optimism</a> (albeit with a different constant, to prevent confusion).</p>
 <p>The attack prevented would've looked like this:</p>
 <ul>
 <li>An L2 contract gets deployed at address A</li>
 <li>Someone malicious deploys a contract at the same address (through deterministic deployments, etc)</li>
-<li>The malicious contract sends a privileged transaction, which can steal A's resourced on the L2</li>
+<li>The malicious contract sends a privileged transaction, which can steal A's resources on the L2</li>
 </ul>
 <p>By modifying the address of L1 contracts by adding a constant, we prevent this attack since both won't have the same address.</p>
 <h2 id="forced-inclusion"><a class="header" href="#forced-inclusion">Forced Inclusion</a></h2>
@@ -10940,7 +10938,7 @@ sequenceDiagram
     OnChainProposer -&gt;&gt; Sequencer: OK
     Sequencer -&gt;&gt; OnChainProposer: Sends batch with remaining expired privileged transactions, along with other transactions
     OnChainProposer -&gt;&gt; Sequencer: OK
-    Note over Sequencer: Sequencer is now catched up
+    Note over Sequencer: Sequencer is now caught up
     Sequencer -&gt;&gt; OnChainProposer: Sends batch as usual
     OnChainProposer -&gt;&gt; Sequencer: OK
 </pre>
@@ -11299,7 +11297,7 @@ To do this, they compute a merkle proof for the included batch and call the L1 <
 
 </style>
 <h1 id="ethrex-l2-contracts"><a class="header" href="#ethrex-l2-contracts">Ethrex L2 contracts</a></h1>
-<p>There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.</p>
+<p>There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeable.</p>
 <h2 id="l1-contracts"><a class="header" href="#l1-contracts">L1 Contracts</a></h2>
 <h3 id="commonbridge"><a class="header" href="#commonbridge"><code>CommonBridge</code></a></h3>
 <p>The <code>CommonBridge</code> is an upgradeable smart contract that facilitates cross-chain transfers between L1 and L2.</p>
@@ -11330,14 +11328,14 @@ To do this, they compute a merkle proof for the included batch and call the L1 <
     bytes data; // Calldata to execute on the target L2 contract
 }
 </code></pre>
-<p>This expresivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.</p>
+<p>This expressivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.</p>
 </li>
 <li>
 <p><strong>Withdrawals (L2 → L1)</strong></p>
 <ul>
 <li><strong><code>claimWithdrawal()</code></strong>: Withdraw ETH from <code>CommonBridge</code> via Merkle proof</li>
 <li><strong><code>claimWithdrawalERC20()</code></strong>: Withdraw ERC20 tokens from <code>CommonBridge</code> via Merkle proof</li>
-<li><strong><code>publishWithdrawals()</code></strong>: Priviledged function to add merkle root of L2 withdrawal logs to <code>batchWithdrawalLogsMerkleRoots</code> mapping to make them claimable</li>
+<li><strong><code>publishWithdrawals()</code></strong>: Privileged function to add merkle root of L2 withdrawal logs to <code>batchWithdrawalLogsMerkleRoots</code> mapping to make them claimable</li>
 </ul>
 </li>
 <li>
@@ -11550,7 +11548,7 @@ To do this, they compute a merkle proof for the included batch and call the L1 <
   <span class="mdbook-alerts-icon"></span>
   important
 </p>
-<p>This documentation is about the current state of the <code>based</code> feature development and not about the final implementation. It is subject to change as the feature evolves and their still could be unmitigated issues.</p>
+<p>This documentation is about the current state of the <code>based</code> feature development and not about the final implementation. It is subject to change as the feature evolves and there still could be unmitigated issues.</p>
 </div>
 <div class="mdbook-alerts mdbook-alerts-note">
 <p class="mdbook-alerts-title">
@@ -12294,7 +12292,7 @@ Each method accepts a single argument: the <strong><code>block_number</code></st
 <p>The goal of the settlement window is to give enough time to the rollup operator to react in the event of a bug exploit in the L2 before the state is settled on the L1 and, thus, irreversible.</p>
 <p>As said before, the settlement window must be taken into account to calculate the real exit window.</p>
 <h2 id="who-owns-the-timelock"><a class="header" href="#who-owns-the-timelock">Who owns the <code>Timelock</code></a></h2>
-<p>There's no such thing as an unique owner of the <code>Timelock</code> necessarily. <code>Timelock</code> is a <code>TimelockController</code>, which is also an <code>AccessControl</code>, so we can define different roles and assign them to different entities. By "owner" of the <code>Timelock</code>, we refer to the account that has the role to update the contract (i.e. the one that can modify the delay).</p>
+<p>There's no such thing as a unique owner of the <code>Timelock</code> necessarily. <code>Timelock</code> is a <code>TimelockController</code>, which is also an <code>AccessControl</code>, so we can define different roles and assign them to different entities. By "owner" of the <code>Timelock</code>, we refer to the account that has the role to update the contract (i.e. the one that can modify the delay).</p>
 <p>That said, whoever owns the <code>Timelock</code> decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.</p>
 <p>It's worth noting that the designated security council can execute operations instantly in case of emergencies, so it's crucial that the members are trustworthy and committed to the network's security. The <a href="https://forum.l2beat.com/t/the-stages-framework/291">Stages Framework</a> recommends that the security council be in the form of a multisig composed of at least 8 people with a consensus threshold of 75%, and the participants in the set need to be decentralized and diverse enough, possibly coming from different companies and jurisdictions.</p>
 <p>In the case of our <code>Timelock</code>, the owner is not the only one who can act on it. In fact, it is recommended that the security council only act in specific emergencies. The <code>Timelock</code> is also <code>AccessControl</code>, which means it has special functionality for managing accesses, in this case, in the form of roles.</p>
@@ -12709,7 +12707,7 @@ A message is considered expired if a certain deadline is reached and it has not 
 <h3 id="rollbacks"><a class="header" href="#rollbacks">Rollbacks</a></h3>
 <p>Once a cross-chain message is settled, there is no rollback mechanism in scenarios where the destination L2 either cannot or chooses not to execute the transaction. <a href="l2/fundamentals/shared_bridge.html#forced-inclusion">Forced Inclusion</a> guarantees that the destination sequencer will eventually have to execute the received message in order to include non-privileged transactions in a batch. Therefore, once a message is settled, the user waits for the destination L2 to include the message, just as when the user performs a deposit to that L2.</p>
 <h2 id="recommendations-1"><a class="header" href="#recommendations-1">Recommendations</a></h2>
-<p>We advice not to register more than 100 chains, since this will enquire a high cost when verifying a batch (About 1.6M gas), due to the transfers between bridges.</p>
+<p>We advise not to register more than 100 chains, since this will incur a high cost when verifying a batch (About 1.6M gas), due to the transfers between bridges.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -13411,7 +13409,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <p>To build the client run</p>
 <pre><code>cargo build --release --bin ethrex
 </code></pre>
-<p>the following feature can be enable with <code>--features &lt;features&gt;</code></p>
+<p>the following features can be enabled with <code>--features &lt;features&gt;</code></p>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
 <tr><td><strong>default</strong></td><td>Enables "rocksdb", "c-kzg", "rollup_storage_sql", "dev", "metrics" features</td></tr>
 <tr><td>debug</td><td>Enables <a href="developers/../vm/levm/debug.html">debug mode</a> for LEVM</td></tr>
@@ -13597,7 +13595,7 @@ docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" --bui
 <h2 id="prerequisites-16"><a class="header" href="#prerequisites-16">Prerequisites</a></h2>
 <p>This guide assumes you've read the dev <a href="developers/l1/../installing.html">installation guide</a></p>
 <h2 id="dev-mode"><a class="header" href="#dev-mode">Dev mode</a></h2>
-<p>In dev mode ethrex acts as a local Ethereum development node it can be run with the following command</p>
+<p>In dev mode ethrex acts as a local Ethereum development node. It can be run with the following command</p>
 <pre><code class="language-sh">ethrex --dev
 </code></pre>
 <p>Then you can use a tool like <a href="https://github.com/lambdaclass/rex">rex</a> to make sure that the network is advancing</p>
@@ -13703,7 +13701,7 @@ for block in parse(rlp_file) {
 <ol>
 <li>Pre-validation. Checks that the block parent is present, that the base fee matches the parent's expectations, timestamps, header number, transaction root and withdrawals root.</li>
 <li>VM execution. The block contains all the transactions, which is all needed to perform a state transition. The VM has a reference to the store, so it can get the current state to apply transactions on top of it.</li>
-<li>Post execution validations: gas used, receipts root, requets hash.</li>
+<li>Post execution validations: gas used, receipts root, requests hash.</li>
 <li>The VM execution does not mutate the store itself. It returns a list of all changes that happened in execution so they can be applied in any custom way.</li>
 </ol>
 </li>
@@ -13748,7 +13746,7 @@ for block in parse(rlp_file) {
     S2b -- &quot;f(S2', B3')&quot; --&gt; S3b
 </pre>
 <p>This means that for a single block number we actually have different post-states, depending on which block we executed. In turn, this means that using a block number is not a reliable way of getting a state. To fix this, what we do is calculate the hash of a block, which is unique, and use that as an identifier for both the block and its corresponding block state. In that way, if I request the DB the state for <code>hash(B1)</code> it understands that I'm looking for <code>S1</code>, whereas if I request the DB the state for <code>hash(B1')</code> I'm looking for <code>S1'</code>.</p>
-<p>How we determine which is the right fork is called <strong>Fork choice</strong>, which is not done by the execution client, but by the consensus client. What concerns to us is that if we currently think we are on <code>S3</code> and the consensus client notifies us that actually <code>S3'</code> is the current fork, we need to change our current state to that one. That means that we need to save every post-state in case we need to change forks. This changing of the nodes perception of the correct soft fork to a different one is called <strong>reorg</strong>.</p>
+<p>How we determine which is the right fork is called <strong>Fork choice</strong>, which is not done by the execution client, but by the consensus client. What concerns us is that if we currently think we are on <code>S3</code> and the consensus client notifies us that actually <code>S3'</code> is the current fork, we need to change our current state to that one. That means that we need to save every post-state in case we need to change forks. This changing of the nodes perception of the correct soft fork to a different one is called <strong>reorg</strong>.</p>
 <h3 id="vm---state-interaction"><a class="header" href="#vm---state-interaction">VM - State interaction</a></h3>
 <p>As mentioned in the previous point, the VM execution doesn't directly mutate the store. It just calculates all necessary updates. There's an important clarification we need to go through about the starting point for that calculation.</p>
 <p>This is a key piece of code in <code>Blockchain.execute_block</code>:</p>
@@ -13791,10 +13789,10 @@ fn get_account_code(&amp;self, code_hash: H256) -&gt; Result&lt;Bytes, EvmError&
     storage: HashMap&lt;H256, HashMap&lt;H256, Option&lt;U256&gt;&gt;&gt;,
 }
 <span class="boring">}</span></code></pre></pre>
-<p>The accounts are indexed by the hash of their address. The storage has a two level lookup: an index by account address hash, and then an index by hashed slot. The reasons why we use hashes of the addresses and slots instead of using them directly is an implementation detail.</p>
-<p>This flat key-value representation is what we usually call a snapshot. To write and get state, it would be enough and efficient to have a table in the db with some snapshot in the past and then the differences in each account and storage each block. This are precisely the account updates, and this is precisely what we do in our snapshots implementation.</p>
-<p>However, we also need to be able to efficiently summarize a state, which is done using a structure called the Merkle Patricia Trie (MPT). This is a big topic, not covered by this document. A link to an in-detail document will be added soon. The most important part of it is that it's a merkle tree and we can calculate it's root/hash to summarize a whole state. When a node proposes a block, the root of the post-state is included as metadata in the header. That means that after executing a block, we can calculate the root of the resulting post-state MPT and compare it with the metadata. If it matches, we have a cryptographic proof that both nodes arrived at the same conclusion.</p>
-<p>This means that we will need to maintain both a snapshot (for efficient reads) and a trie (for efficient summaries) for every state in the blockchain. Here's an interesting blogpost by the go ethereum (geth) team explaning this need in detail: https://blog.ethereum.org/2020/07/17/ask-about-geth-snapshot-acceleration</p>
+<p>The accounts are indexed by the hash of their address. The storage has a two level lookup: an index by account address hash, and then an index by hashed slot. The reason why we use hashes of the addresses and slots instead of using them directly is an implementation detail.</p>
+<p>This flat key-value representation is what we usually call a snapshot. To write and get state, it would be enough and efficient to have a table in the db with some snapshot in the past and then the differences in each account and storage each block. These are precisely the account updates, and this is precisely what we do in our snapshots implementation.</p>
+<p>However, we also need to be able to efficiently summarize a state, which is done using a structure called the Merkle Patricia Trie (MPT). This is a big topic, not covered by this document. A link to an in-detail document will be added soon. The most important part of it is that it's a merkle tree and we can calculate its root/hash to summarize a whole state. When a node proposes a block, the root of the post-state is included as metadata in the header. That means that after executing a block, we can calculate the root of the resulting post-state MPT and compare it with the metadata. If it matches, we have a cryptographic proof that both nodes arrived at the same conclusion.</p>
+<p>This means that we will need to maintain both a snapshot (for efficient reads) and a trie (for efficient summaries) for every state in the blockchain. Here's an interesting blogpost by the go ethereum (geth) team explaining this need in detail: https://blog.ethereum.org/2020/07/17/ask-about-geth-snapshot-acceleration</p>
 <h1 id="todo"><a class="header" href="#todo">TODO</a></h1>
 <p>Imports</p>
 <ul>
@@ -14144,7 +14142,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <h3 id="engine-latency-by-method"><a class="header" href="#engine-latency-by-method">Engine Latency by Method</a></h3>
 <p>Live timeseries that tries to correlate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.</p>
 <p><img src="developers/l1/img/engine_latency_by_method.png" alt="Engine Latency by Method" /></p>
-<p><em><strong>Limitations</strong>: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window for calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure.</em></p>
+<p><em><strong>Limitations</strong>: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window to calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure.</em></p>
 <h2 id="rpc-api"><a class="header" href="#rpc-api">RPC API</a></h2>
 <p>Another collapsed row focused on the public JSON-RPC surface (<code>namespace="rpc"</code>). Expand it when you need to diagnose endpoint hotspots or validate rate limiting. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
 <p><img src="developers/l1/img/rpc_api_row.png" alt="RPC API row" /></p>
@@ -14162,7 +14160,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <p><img src="developers/l1/img/rpc_latency_by_methods.png" alt="RPC Latency by Methods" /></p>
 <p><em><strong>Limitations</strong>: The RPC latency views inherit the same windowing caveats as the Engine charts: averages use the dashboard time range while the live chart relies on an 18 s window.</em></p>
 <h2 id="engine-and-rpc-error-rates"><a class="header" href="#engine-and-rpc-error-rates">Engine and RPC Error rates</a></h2>
-<p>Collapsed row showing error rates for both Engine and RPC APIs side by side and a deagreagated panel by method and kind of error. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
+<p>Collapsed row showing error rates for both Engine and RPC APIs side by side and a disaggregated panel by method and kind of error. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
 <p><img src="developers/l1/img/engine_and_rpc_error_rates_row.png" alt="Engine and RPC Error rates row" /></p>
 <h3 id="engine-successerror-rate"><a class="header" href="#engine-successerror-rate">Engine Success/Error Rate</a></h3>
 <p>Shows the rate of successful vs. failed Engine API requests per second.</p>
@@ -14453,7 +14451,7 @@ This eliminates code duplication and makes adding new database backends trivial.
 
 </style>
 <h1 id="ethereum-foundation-tests"><a class="header" href="#ethereum-foundation-tests">Ethereum foundation tests</a></h1>
-<p>These are the official execution spec tests there two kinds <code>state tests</code> and <code>blockchain tests</code>, you can execute them with:</p>
+<p>These are the official execution spec tests. There are two kinds: <code>state tests</code> and <code>blockchain tests</code>, you can execute them with:</p>
 <h3 id="state-tests"><a class="header" href="#state-tests">State tests</a></h3>
 <p>The state tests are individual transactions not related one to each other that test particular behavior of the EVM. Tests are usually run for multiple forks and the result of execution may vary between forks.
 See <a href="https://eest.ethereum.org/v4.1.0/consuming_tests/state_test/">docs</a>.</p>
@@ -14558,10 +14556,10 @@ and expects a certain response. You can read more about it <a href="https://gith
 golang 1.23.2
 </code></pre>
 <h4 id="running-simulations"><a class="header" href="#running-simulations">Running Simulations</a></h4>
-<p>Hive tests are categorized by "simulations', and test instances can be filtered with a regex:</p>
+<p>Hive tests are categorized by "simulations", and test instances can be filtered with a regex:</p>
 <pre><code class="language-bash">make run-hive-debug SIMULATION=&lt;simulation&gt; TEST_PATTERN=&lt;test-regex&gt;
 </code></pre>
-<p>This is an example of a Hive simulation called <code>ethereum/rpc-compat</code>, which will specificaly
+<p>This is an example of a Hive simulation called <code>ethereum/rpc-compat</code>, which will specifically
 run chain id and transaction by hash rpc tests:</p>
 <pre><code class="language-bash">make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_getTransactionByHash"
 </code></pre>
@@ -14643,7 +14641,7 @@ run chain id and transaction by hash rpc tests:</p>
 # or
 make localnet-assertoor-blob
 </code></pre>
-<p>Those are two different set of assertoor checks the details are as follows:</p>
+<p>Those are two different sets of assertoor checks the details are as follows:</p>
 <p><em>assertoor-tx</em></p>
 <ul>
 <li><a href="https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml">eoa-transaction-test</a></li>
@@ -15129,9 +15127,9 @@ To see more about the proof coordinator, read the <a href="https://docs.ethrex.x
 <h3 id="what-should-i-expect"><a class="header" href="#what-should-i-expect">What should I expect?</a></h3>
 <p>Once you run <code>make test</code>, you should see the output of the tests being executed one after another. The tests will interact with the ethrex L2 node and the ethrex L2 prover that you started previously. If everything is set up correctly, all tests should pass successfully.</p>
 <h3 id="how-long-do-the-tests-take-to-run"><a class="header" href="#how-long-do-the-tests-take-to-run">How long do the tests take to run?</a></h3>
-<p>The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 to 45 minutes to complete, depending the timing in which you performed the steps.</p>
+<p>The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 to 45 minutes to complete, depending on the timing in which you performed the steps.</p>
 <h3 id="i-think-my-tests-are-taking-too-long-how-can-i-debug-this"><a class="header" href="#i-think-my-tests-are-taking-too-long-how-can-i-debug-this">I think my tests are taking too long, how can I debug this?</a></h3>
-<p>If your tests are taking significantly longer than expected, you are likely watching the <code>Retrying to get message proof for tx ...</code> counter in the tests terminal increase without progressing. Let's unveil what is happening here. This message indicates that the transaction has been included in an L2 block, but that block has not yet been included in a batch. There's no current way to fairly estimate when the block including the transaction will be included in a batch, but we can see how far is the block from being included.</p>
+<p>If your tests are taking significantly longer than expected, you are likely watching the <code>Retrying to get message proof for tx ...</code> counter in the tests terminal increase without progressing. Let's unveil what is happening here. This message indicates that the transaction has been included in an L2 block, but that block has not yet been included in a batch. There's no current way to fairly estimate when the block including the transaction will be included in a batch, but we can see how far the block is from being included.</p>
 <p>Using the hash of the transaction shown in the log message, you can check the status of the transaction using an Ethereum utility tool like <code>rex</code>. Run the following commands in a new terminal:</p>
 <ol>
 <li>Get the block number where the transaction was included (replace <code>&lt;TX_HASH&gt;</code> with the actual transaction hash):
@@ -15379,11 +15377,11 @@ ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
 ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
 # Set to true if you want SP1 proofs to be required
 ETHREX_L2_SP1=true
-# Check the if the verification contract is present on your preferred network. Don't define this if you want it to be deployed automatically.
+# Check if the verification contract is present on your preferred network. Don't define this if you want it to be deployed automatically.
 ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS=&lt;address&gt;
 # Set to true if you want proofs to be required
 ETHREX_L2_RISC0=true
-# Check the if the contract is present on your preferred network. You shall deploy it manually if not.
+# Check if the contract is present on your preferred network. You shall deploy it manually if not.
 ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS=&lt;address&gt;
 # Set to any L1 endpoint.
 ETHREX_ETH_RPC_URL=&lt;url&gt;
@@ -16204,7 +16202,7 @@ You can find the solidity code in the <a href="https://github.com/lambdaclass/et
 <tr><td><code>ethrex-replay block</code></td><td>Replay a single block.</td></tr>
 <tr><td><code>ethrex-replay blocks</code></td><td>Replay a list of specific block numbers, a range of blocks, or from a specific block to the latest (see <code>ethrex-replay blocks --help</code>)</td></tr>
 <tr><td><code>ethrex-replay block-composition</code></td><td></td></tr>
-<tr><td><code>ethrex-replay custom</code></td><td>Build your block before to replay it.</td></tr>
+<tr><td><code>ethrex-replay custom</code></td><td>Build your block before replaying it.</td></tr>
 <tr><td><code>ethrex-replay transaction</code></td><td>Replay a single transaction of a block.</td></tr>
 <tr><td><code>ethrex-replay cache</code></td><td>Generate witness data prior to block replay (see <code>ethrex-replay cache --help</code>)</td></tr>
 </tbody></table>
@@ -16339,7 +16337,7 @@ cargo r -r -p ethrex-replay --features l2,risc0,gpu -- &lt;COMMAND&gt; [ARGS]
 <h4 id="features-1"><a class="header" href="#features-1">Features</a></h4>
 <p>The following table lists the available features for <code>ethrex-replay</code>. To enable a feature, use the <code>--features</code> flag with <code>cargo install</code>, specifying a comma-separated list of features.</p>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>gpu</code></td><td>Enables GPU support with SP1 or RISC0 backends (must be combined with one of each features, e.g. <code>sp1,gpu</code> or <code>risc0,gpu</code>)</td></tr>
+<tr><td><code>gpu</code></td><td>Enables GPU support with SP1 or RISC0 backends (must be combined with one of these features, e.g. <code>sp1,gpu</code> or <code>risc0,gpu</code>)</td></tr>
 <tr><td><code>risc0</code></td><td>Execution and proving is done with RISC0 backend</td></tr>
 <tr><td><code>sp1</code></td><td>Execution and proving is done with SP1 backend</td></tr>
 <tr><td><code>l2</code></td><td>Enables L2 batch execution and proving (can be combined with SP1 or RISC0 and GPU features, e.g. <code>sp1,l2,gpu</code>, <code>risc0,l2,gpu</code>, <code>sp1,l2</code>, <code>risc0,l2</code>)</td></tr>
@@ -16556,14 +16554,14 @@ heaptrack_print heaptrack.&lt;program&gt;.&lt;pid&gt;.gz &gt; heaptrack.stacks
 <p><code>eth_getProof</code> gets the proof for a particular account and the chosen storage slots.
 <code>debug_executionWitness</code> gets the whole execution witness necessary to execute a block in a stateless manner.</p>
 <p>The former endpoint is implemented by all execution clients and you can even find it in RPC Providers like Alchemy, the latter is only implemented by some execution clients and you can't find it in RPC Providers.</p>
-<p>When wanting to execute a historical block we tend to use the <code>eth_getProof</code> method with an RPC Provider because it will be the most reliable, other way is using it against a Hash-Based Archive Node but this would be too heavy to host ourselves (20TB at least). This method is slow because it performs many requests but it's very flexible.</p>
+<p>When wanting to execute a historical block we tend to use the <code>eth_getProof</code> method with an RPC Provider because it will be the most reliable, another way is using it against a Hash-Based Archive Node but this would be too heavy to host ourselves (20TB at least). This method is slow because it performs many requests but it's very flexible.</p>
 <p>If instead we want to execute a recent block we use it against synced ethrex or reth nodes that expose the <code>debug_executionWitness</code> endpoint, this way retrieval of data will be instant and it will be way faster than the other method, because it won't be doing thousands of RPC requests, just one.</p>
 <p>More information regarding the execution witness in <a href="https://github.com/lambdaclass/ethrex/blob/38e0ffc/docs/l2/architecture/prover.md#execution-witness">the prover docs</a>.</p>
 <h3 id="why-stateless-execution-of-some-blocks-doesnt-work-with-eth_getproof"><a class="header" href="#why-stateless-execution-of-some-blocks-doesnt-work-with-eth_getproof">Why stateless execution of some blocks doesn't work with <code>eth_getProof</code></a></h3>
 <p>With this method of execution we get the proof of all the accounts and storage slots accessed during execution, but the problem arises when we want to delete a node from the Merkle Patricia Trie (MPT) when applying the account updates of the block. This is for a particular case in which a tree restructuring happens and we have a missing node that wasn't accessed but we need to know in order to restructure the trie.</p>
 <p>The problem can be explained with a simple example: a Branch node has 2 child nodes and only one was accessed and removed, this branch node should stop existing because they shouldn't have only <strong>one</strong> child. It will be either replaced by a leaf node or by an extension node, this depends on its child.</p>
 <p>This problem is wonderfully explained in <a href="https://github.com/kkrt-labs/zk-pig/blob/main/docs/modified-mpt.md">zkpig docs</a>, they also have a very good intro to the MPT.
-Here they mention two different solutions that we have to implement in order to fix this. The first one works when the missing node is a Leaf or Extension and the second one works then the missing node is a Branch.</p>
+Here they mention two different solutions that we have to implement in order to fix this. The first one works when the missing node is a Leaf or Extension and the second one works when the missing node is a Branch.</p>
 <p>In our code we only applied the first solution by injecting all possible nodes to the execution witness that we build when using <code>eth_getProof</code>, that's why the witness when using this method will be larger than the witness obtained with <code>debug_executionWitness</code>.</p>
 <p>We didn't apply the second change because it needs a change to the MPT that we don't want in our code. However we were able to solve it for execution without using a zkVM by injecting some "fake nodes" to the trie just before execution that have the expected hash but their RLP content doesn't match to it. This way we can "trick" the Trie into thinking that it has the branch nodes when in fact, it doesn't.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
@@ -17103,12 +17101,12 @@ L1 Committer options:
 
 Proof coordinator options:
       --proof-coordinator.l1-private-key &lt;PRIVATE_KEY&gt;
-          Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
+          Private key of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
 
           [env: ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=]
 
       --proof-coordinator.tdx-private-key &lt;PRIVATE_KEY&gt;
-          Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.
+          Private key of a funded account that the TDX tool will use to send the tdx attestation to L1.
 
           [env: ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=]
 
@@ -17469,7 +17467,7 @@ xattr -dr com.apple.quarantine ethrex
 <p>If hotfixes are needed before the final release, commit them to <code>release/vX.Y.Z</code>, push, and create a new pre-release tag. The final tag <code>vX.Y.Z</code> should always point to the exact commit you will merge via PR.</p>
 <h2 id="troubleshooting-4"><a class="header" href="#troubleshooting-4">Troubleshooting</a></h2>
 <h3 id="failure-on-latest-release-workflow"><a class="header" href="#failure-on-latest-release-workflow">Failure on "latest release" workflow</a></h3>
-<p>If the CI fails when setting a release as latest (step 4), Docker tags <code>latest</code> and <code>l2</code> may not be updated. To manually push that changes, follow these steps:</p>
+<p>If the CI fails when setting a release as latest (step 4), Docker tags <code>latest</code> and <code>l2</code> may not be updated. To manually push those changes, follow these steps:</p>
 <ul>
 <li>Create a new Github Personal Access Token (PAT) from the <a href="https://github.com/settings/tokens/new">settings</a>.</li>
 <li>Check <code>write:packages</code> permission (this will auto-check <code>repo</code> permissions too), give a name and a short expiration time.</li>
@@ -18392,7 +18390,7 @@ pub fn main() {
 <h3 id="rlp-encoding"><a class="header" href="#rlp-encoding">RLP Encoding</a></h3>
 <p>Our RLP lib uses a temp buffer to write encoded payloads to, and in the end it <code>finalize</code>s the encoding by writing the payload prefix (which contains a length) to an output buffer, plus the actual payload. This means we are allocating two buffers, initializing them, and copying bytes to both of them for each node that’s being encoded and hashed.</p>
 <p>First I tried preallocating the buffers (which are vecs) by estimating a node’s final RLP length.</p>
-<p>This was done in the <code>l2/opt_rlp_buffer</code>, this had an influence the <code>memcpy</code> length by reducing it almost 15%:</p>
+<p>This was done in the <code>l2/opt_rlp_buffer</code>, this had an influence on the <code>memcpy</code> length by reducing it almost 15%:</p>
 <p>then I tried to bypass our RLP encoder altogether by implementing a small and fast encoding for the <code>Branch</code> node only (which is the majoritarian node type), this reduced <code>memcpy</code>  further, 30% over <code>main</code>:</p>
 <p>I didn’t test implementing fast RLP for the other node types as I was expecting a bigger reduction in <code>memcpy</code> from <code>Branch</code> alone.</p>
 <h3 id="keccak"><a class="header" href="#keccak">Keccak</a></h3>

@@ -245,7 +245,7 @@
 <tr><td><code>ethrex-replay block</code></td><td>Replay a single block.</td></tr>
 <tr><td><code>ethrex-replay blocks</code></td><td>Replay a list of specific block numbers, a range of blocks, or from a specific block to the latest (see <code>ethrex-replay blocks --help</code>)</td></tr>
 <tr><td><code>ethrex-replay block-composition</code></td><td></td></tr>
-<tr><td><code>ethrex-replay custom</code></td><td>Build your block before to replay it.</td></tr>
+<tr><td><code>ethrex-replay custom</code></td><td>Build your block before replaying it.</td></tr>
 <tr><td><code>ethrex-replay transaction</code></td><td>Replay a single transaction of a block.</td></tr>
 <tr><td><code>ethrex-replay cache</code></td><td>Generate witness data prior to block replay (see <code>ethrex-replay cache --help</code>)</td></tr>
 </tbody></table>
@@ -380,7 +380,7 @@ cargo r -r -p ethrex-replay --features l2,risc0,gpu -- &lt;COMMAND&gt; [ARGS]
 <h4 id="features-1"><a class="header" href="#features-1">Features</a></h4>
 <p>The following table lists the available features for <code>ethrex-replay</code>. To enable a feature, use the <code>--features</code> flag with <code>cargo install</code>, specifying a comma-separated list of features.</p>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>gpu</code></td><td>Enables GPU support with SP1 or RISC0 backends (must be combined with one of each features, e.g. <code>sp1,gpu</code> or <code>risc0,gpu</code>)</td></tr>
+<tr><td><code>gpu</code></td><td>Enables GPU support with SP1 or RISC0 backends (must be combined with one of these features, e.g. <code>sp1,gpu</code> or <code>risc0,gpu</code>)</td></tr>
 <tr><td><code>risc0</code></td><td>Execution and proving is done with RISC0 backend</td></tr>
 <tr><td><code>sp1</code></td><td>Execution and proving is done with SP1 backend</td></tr>
 <tr><td><code>l2</code></td><td>Enables L2 batch execution and proving (can be combined with SP1 or RISC0 and GPU features, e.g. <code>sp1,l2,gpu</code>, <code>risc0,l2,gpu</code>, <code>sp1,l2</code>, <code>risc0,l2</code>)</td></tr>

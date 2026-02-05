@@ -273,7 +273,7 @@ emit PrivilegedTxSent(
 For this case, the important difference is that the sender of the transaction is set by our L1 bridge.
 This enables our L1 bridge to "forge" transactions from any sender, even arbitrary addresses like the L2 bridge.</li>
 <li>Privileged transactions sent by the L2 bridge don't deduct from the bridge's balance their value.
-In practice, this means ETH equal to the transactions <code>value</code> is minted.</li>
+In practice, this means ETH equal to the transaction's <code>value</code> is minted.</li>
 </ol>
 <p>On L2:</p>
 <ol>
@@ -349,7 +349,7 @@ This ensures that L2 token withdrawals don't consume L1 tokens that weren't depo
 <ol>
 <li>On each L2 node, the L1 watcher processes <code>PrivilegedTxSent</code> events, each adding a <code>PrivilegedL2Transaction</code> to the L2 mempool.</li>
 <li>The privileged transaction is an <a href="https://eips.ethereum.org/EIPS/eip-2718">EIP-2718 typed transaction</a>, somewhat similar to an <a href="https://eips.ethereum.org/EIPS/eip-1559">EIP-1559 transaction</a>, but with some changes.
-For this case, the important differences is that the sender of the transaction is set by our L1 bridge.
+For this case, the important difference is that the sender of the transaction is set by our L1 bridge.
 This enables our L1 bridge to "forge" transactions from any sender, even arbitrary addresses like the L2 bridge.</li>
 </ol>
 <p>On L2:</p>
@@ -433,7 +433,7 @@ sequenceDiagram
     CommonBridge --&gt;&gt; CommonBridgeL2: Notifies deposit
     CommonBridgeL2 -&gt;&gt; L2Eve: Sends 1 Bar token
 
-    Note over L1Eve,L2Eve: Eve does a malicious withdawal of Alice's funds
+    Note over L1Eve,L2Eve: Eve does a malicious withdrawal of Alice's funds
     L2Eve -&gt;&gt; CommonBridgeL2: Withdraws 101 Bar tokens into Foo
     CommonBridgeL2 --&gt;&gt; CommonBridge: Notifies withdrawal
     CommonBridge -&gt;&gt; L1Eve: Sends 101 Foo tokens
@@ -466,12 +466,12 @@ We can compute it as follows:</p>
 )
 </code></pre>
 <h2 id="address-aliasing"><a class="header" href="#address-aliasing">Address Aliasing</a></h2>
-<p>To prevent attacks where a L1 impersonates an L2 contract, we implement Address Aliasing <a href="https://docs.optimism.io/stack/differences#address-aliasing">like Optimism</a> (albeit with we a different constant, to prevent confusion).</p>
+<p>To prevent attacks where a L1 impersonates an L2 contract, we implement Address Aliasing <a href="https://docs.optimism.io/stack/differences#address-aliasing">like Optimism</a> (albeit with a different constant, to prevent confusion).</p>
 <p>The attack prevented would've looked like this:</p>
 <ul>
 <li>An L2 contract gets deployed at address A</li>
 <li>Someone malicious deploys a contract at the same address (through deterministic deployments, etc)</li>
-<li>The malicious contract sends a privileged transaction, which can steal A's resourced on the L2</li>
+<li>The malicious contract sends a privileged transaction, which can steal A's resources on the L2</li>
 </ul>
 <p>By modifying the address of L1 contracts by adding a constant, we prevent this attack since both won't have the same address.</p>
 <h2 id="forced-inclusion"><a class="header" href="#forced-inclusion">Forced Inclusion</a></h2>
@@ -498,7 +498,7 @@ sequenceDiagram
     OnChainProposer -&gt;&gt; Sequencer: OK
     Sequencer -&gt;&gt; OnChainProposer: Sends batch with remaining expired privileged transactions, along with other transactions
     OnChainProposer -&gt;&gt; Sequencer: OK
-    Note over Sequencer: Sequencer is now catched up
+    Note over Sequencer: Sequencer is now caught up
     Sequencer -&gt;&gt; OnChainProposer: Sends batch as usual
     OnChainProposer -&gt;&gt; Sequencer: OK
 </pre>

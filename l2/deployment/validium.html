@@ -274,7 +274,7 @@
 <p><code>--risc0.verifier-address</code> to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.</p>
 <p><code>--tdx true</code> to require TEE proofs for validating batch execution and state settlement.</p>
 <p><code>--tdx.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.</p>
-<p>Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the <a href="./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
+<p>Enabling multiple proving backends will require running multiple provers, one for each backend. Refer to the <a href="./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
 <p>If you enable more than one proving system (e.g., both <code>--sp1 true</code> and <code>--risc0 true</code>), all selected proving systems will be required (i.e., every batch must include a proof from each enabled system to settle on L1).</p>
 </div>
 <div class="mdbook-alerts mdbook-alerts-important">
@@ -292,7 +292,7 @@
 <ul>
 <li>Replace <code>L1_RPC_URL</code> with your preferred RPC provider endpoint.</li>
 <li>Replace <code>PRIVATE_KEY</code> with the private key of an account funded on the target L1. This key will sign the transactions during deployment.</li>
-<li>Replace <code>PATH_TO_L2_GENESIS_FILE</code> with the path to your L2 genesis file.A genesis example is available in the fixtures directory of the <a href="https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json">official GitHub repository</a>. This file initializes the <code>OnChainProposer</code> contract with the genesis state root.</li>
+<li>Replace <code>PATH_TO_L2_GENESIS_FILE</code> with the path to your L2 genesis file. A genesis example is available in the fixtures directory of the <a href="https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json">official GitHub repository</a>. This file initializes the <code>OnChainProposer</code> contract with the genesis state root.</li>
 <li>The <code>CommonBridge</code> and <code>OnChainProposer</code> contracts are upgradeable and ownable, with implementations behind proxies initialized during deployment. Replace <code>COMMON_BRIDGE_OWNER_ADDRESS</code> and <code>ON_CHAIN_PROPOSER_OWNER_ADDRESS</code> with the address of the account you want as the owner. The owner can upgrade implementations or perform administrative actions; for more details, see the Architecture section.</li>
 <li>The sequencer components (<code>L1Committer</code> and <code>L1ProofSender</code>) require funded accounts on the target L1 to advance the network. Replace <code>L1_COMMITTER_ADDRESS</code> and <code>L1_PROOF_SENDER_ADDRESS</code> with the addresses of those accounts.</li>
 <li>Replace <code>PATH_TO_ENV_FILE</code> with the path where you want to save the generated environment file. This file contains the deployed contract addresses and other configuration details needed to run the L2 node.</li>

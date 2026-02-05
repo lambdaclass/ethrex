@@ -270,8 +270,8 @@
 <p>To maintain this invariant, we do the following:</p>
 <ul>
 <li>When we get a new node, we don't immediately store it in the database. We keep track of the amount of every node's children that are not yet in the database. As long as it's not zero, we keep it in a separate in-memory structure "Membatch" instead of on the db.</li>
-<li>When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be commited, etc.</li>
-<li>When the nodes are written to the database, all it's parents are deleted from the db, which preserves the subtree invariant. Because lower down nodes are always written first, we never delete a valid node.</li>
+<li>When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be committed, etc.</li>
+<li>When the nodes are written to the database, all its parents are deleted from the db, which preserves the subtree invariant. Because lower down nodes are always written first, we never delete a valid node.</li>
 </ul>
 <p>Example of a possible state after stopping fast sync due to staleness with membatch.</p>
 <p><img src="./snap_sync/FastSyncMembatchExample-1.png" alt="Fast Sync Membatch Example - 1" /></p>
@@ -370,7 +370,7 @@ pub enum SyncMode {
 <p><img src="./snap_sync/Flow-DownloadHeaders.png" alt="request_block_header flowchart" /></p>
 <h3 id="downloading-account-values"><a class="header" href="#downloading-account-values">Downloading Account Values</a></h3>
 <h4 id="api"><a class="header" href="#api">API</a></h4>
-<p>When downloading the account values, we use the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getaccountrange-0x00"><code>GetAccountRange</code></a>. This requests receives:</p>
+<p>When downloading the account values, we use the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getaccountrange-0x00"><code>GetAccountRange</code></a>. This request receives:</p>
 <ul>
 <li>rootHash: state_root of the block we're trying to download</li>
 <li>startingHash: Account hash<sup class="footnote-reference" id="fr-4-1"><a href="#footnote-4">4</a></sup> of the first to retrieve</li>
@@ -410,10 +410,9 @@ For an optimization for faster insertion, these are stored ordered in the RocksD
 <p><img src="./snap_sync/Flow-DownloadAccounts.png" alt="request_account_range flowchart" /></p>
 <h3 id="insertion-of-accounts"><a class="header" href="#insertion-of-accounts">Insertion of Accounts</a></h3>
 <p>The sst files in the <code>"account_state_snapshots"</code> subfolder are ingested into a RocksDB database. This provides an ordered array that is used for insertion.</p>
-<p><a href="../../internal/l1/sorted_trie_insert.html">More detailed documentation found in sorted_trie_insert.md</a>.
-<a href="../../internal/l1/sorted_trie_insert.html">More detailed documentation found in sorted_trie_insert.md</a>.</p>
+<p><a href="../../internal/l1/sorted_trie_insert.html">More detailed documentation found in sorted_trie_insert.md</a>.</p>
 <h3 id="downloading-storage-slots"><a class="header" href="#downloading-storage-slots">Downloading Storage Slots</a></h3>
-<p>The download of the storage slots is conceptually similar to the download of accounts, but very different in implementation. The method uses the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getstorageranges-0x02"><code>GetStorageRanges</code></a>. This requests has the following parameters:</p>
+<p>The download of the storage slots is conceptually similar to the download of accounts, but very different in implementation. The method uses the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getstorageranges-0x02"><code>GetStorageRanges</code></a>. This request has the following parameters:</p>
 <ul>
 <li>rootHash: state_root of the block we're trying to download</li>
 <li>accountHashes: List of all the account address hashes of the storage tries to serve</li>
@@ -453,9 +452,9 @@ For an optimization for faster insertion, these are stored ordered in the RocksD
 <p>A large amount of the accounts with storage have exactly the same storage as other accounts.<sup class="footnote-reference" id="fr-5-1"><a href="#footnote-5">5</a></sup> As such, when we are creating tasks for download, it's important to group the tasks by storage root and not download them twice.</p>
 <h4 id="big-accounts"><a class="header" href="#big-accounts">Big Accounts</a></h4>
 <p>Storage trie sizes have a very uneven distribution. Around 70% of all ethereum mainnet contracts have only 1 or 2 storage slots. However, a few contracts have more storage slots than all account leaves in the entire state trie. As such, the code needs to take this pareto distribution into account to download storage tries fast.</p>
-<p>At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single requests. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.</p>
+<p>At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single request. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.</p>
 <p><img src="./snap_sync/SnapSyncDownloadingStorages-1.png" alt="proofs for missing slots" /></p>
-<p>When we reach that situation, we chunk the big account based on the "density"<sup class="footnote-reference" id="fr-7-1"><a href="#footnote-7">6</a></sup> of storage slots we downloaded, following this code to get chunks of 10,000 slots<sup class="footnote-reference" id="fr-6-1"><a href="#footnote-6">7</a></sup>. We create the tasks to download those intervals, and store all of the intervals in a struct to check when everything for that account was properly download.</p>
+<p>When we reach that situation, we chunk the big account based on the "density"<sup class="footnote-reference" id="fr-7-1"><a href="#footnote-7">6</a></sup> of storage slots we downloaded, following this code to get chunks of 10,000 slots<sup class="footnote-reference" id="fr-6-1"><a href="#footnote-6">7</a></sup>. We create the tasks to download those intervals, and store all of the intervals in a struct to check when everything for that account was properly downloaded.</p>
 <pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>    // start_hash_u256 is the hash of the address of the last slot
@@ -503,21 +502,21 @@ struct StorageTaskResult {
 <h4 id="retry-limit"><a class="header" href="#retry-limit">Retry Limit</a></h4>
 <p>Currently, if ethrex has been downloading storages for more than 2 pivots, the node will stop trying to download storage, and fallback to heal (fast sync) all the storage accounts that were still missing downloads. This prevents snap sync from hanging due to an edge case we do not currently handle if an account time travels. See the "snap sync concerns" document for details on what this edge case is.</p>
 <h3 id="downloading-bytecodes"><a class="header" href="#downloading-bytecodes">Downloading Bytecodes</a></h3>
-<p>Whenever an account is download or healed we check if the code is not empty. If it isn't, we store it for future download. This is added to a list, and when the list grows beyond a certain size it is written to disk. After the healing is done and we have a complete state and storage tree, we start with the download of bytecodes, chunking them to avoid memory overflow.</p>
+<p>Whenever an account is downloaded or healed we check if the code is not empty. If it isn't, we store it for future download. This is added to a list, and when the list grows beyond a certain size it is written to disk. After the healing is done and we have a complete state and storage tree, we start with the download of bytecodes, chunking them to avoid memory overflow.</p>
 <h3 id="forkchoice-update"><a class="header" href="#forkchoice-update">Forkchoice update</a></h3>
-<p>Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from <code>snap</code> to <code>full</code>, and we do an <code>apply_forkchoice</code> to mark that as the last pivot as the last block.</p>
+<p>Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from <code>snap</code> to <code>full</code>, and we do an <code>apply_forkchoice</code> to mark the last pivot as the last block.</p>
 <hr>
 <ol class="footnote-definition"><li id="footnote-1">
 <p>We update pivots based only on the timestamp, not on the peer response. According to the spec, stale roots return empty responses, but Byzantine peers may return empty responses at arbitrary times. Therefore, we rely on the rule that nodes must keep at least 128 blocks. Once <code>time &gt; timestamp + 128 * 12</code> we mark the pivot as stale. <a href="#fr-1-1">↩</a></p>
 </li>
 <li id="footnote-2">
-<p>The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects it current use. <a href="#fr-2-1">↩</a></p>
+<p>The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects its current use. <a href="#fr-2-1">↩</a></p>
 </li>
 <li id="footnote-3">
 <p>This currently isn't a named constant, we should change that <a href="#fr-3-1">↩</a></p>
 </li>
 <li id="footnote-4">
-<p>All accounts and storages are sent and found through the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with adress 0x0001 whose hash would be 0x49d0...49d5 <a href="#fr-4-1">↩</a></p>
+<p>All accounts and storages are sent and found through the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with address 0x0001 whose hash would be 0x49d0...49d5 <a href="#fr-4-1">↩</a></p>
 </li>
 <li id="footnote-5">
 <p>This may be for a variety of reasons, but the most likely is ERC20 tokens that were deployed and never used. <a href="#fr-5-1">↩</a></p>

@@ -238,7 +238,7 @@
 
 </style>
 <h1 id="ethrex-l2-contracts"><a class="header" href="#ethrex-l2-contracts">Ethrex L2 contracts</a></h1>
-<p>There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.</p>
+<p>There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeable.</p>
 <h2 id="l1-contracts"><a class="header" href="#l1-contracts">L1 Contracts</a></h2>
 <h3 id="commonbridge"><a class="header" href="#commonbridge"><code>CommonBridge</code></a></h3>
 <p>The <code>CommonBridge</code> is an upgradeable smart contract that facilitates cross-chain transfers between L1 and L2.</p>
@@ -269,14 +269,14 @@
     bytes data; // Calldata to execute on the target L2 contract
 }
 </code></pre>
-<p>This expresivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.</p>
+<p>This expressivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.</p>
 </li>
 <li>
 <p><strong>Withdrawals (L2 → L1)</strong></p>
 <ul>
 <li><strong><code>claimWithdrawal()</code></strong>: Withdraw ETH from <code>CommonBridge</code> via Merkle proof</li>
 <li><strong><code>claimWithdrawalERC20()</code></strong>: Withdraw ERC20 tokens from <code>CommonBridge</code> via Merkle proof</li>
-<li><strong><code>publishWithdrawals()</code></strong>: Priviledged function to add merkle root of L2 withdrawal logs to <code>batchWithdrawalLogsMerkleRoots</code> mapping to make them claimable</li>
+<li><strong><code>publishWithdrawals()</code></strong>: Privileged function to add merkle root of L2 withdrawal logs to <code>batchWithdrawalLogsMerkleRoots</code> mapping to make them claimable</li>
 </ul>
 </li>
 <li>

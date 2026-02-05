@@ -265,7 +265,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 </li>
 </ol>
 <p>This will launch Prometheus and Grafana, already set up to scrape ethrex metrics.</p>
-<p><strong>Note: We depend on <code>ethereum-metrics-exporter</code> for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add <code>--http</code> and <code>--http-address 0.0.0.0</code> flags to it before the dashboards pick up all metrics. This wont be needed in the near future</strong></p>
+<p><strong>Note: We depend on <code>ethereum-metrics-exporter</code> for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add <code>--http</code> and <code>--http-address 0.0.0.0</code> flags to it before the dashboards pick up all metrics. This won't be needed in the near future</strong></p>
 <h2 id="logs"><a class="header" href="#logs">Logs</a></h2>
 <p>Ethrex logs are written to stdout by default. To enable file logging, you must specify the <code>--log.dir</code> argument, with this you'll be able to have Promtail collect the logs and send them to Grafana Loki for log visualization.</p>
 <ul>
@@ -309,7 +309,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <p>For detailed information on the provided Grafana dashboards, see our <a href="../../developers/l1/dashboards.html">L1 Dashboard document</a>.</p>
 <h2 id="custom-configuration"><a class="header" href="#custom-configuration">Custom Configuration</a></h2>
 <p>Your ethrex setup may differ from the default configuration. Check your endpoints at <code>provisioning/prometheus/prometheus_l1_sync_docker.yaml</code>.</p>
-<p>Also if you have a centralized Prometheus or Grafana setup, you can adapt the provided configuration files to fit your environment. or even stop the docker containers that run Prometheus and/or Grafana leaving only the additional <code>ethereum-metrics-exporter</code> running alongside ethrex to export the metrics to your existing monitoring stack.</p>
+<p>Also if you have a centralized Prometheus or Grafana setup, you can adapt the provided configuration files to fit your environment, or even stop the docker containers that run Prometheus and/or Grafana leaving only the additional <code>ethereum-metrics-exporter</code> running alongside ethrex to export the metrics to your existing monitoring stack.</p>
 <pre><code class="language-sh">docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d ethereum-metrics-exporter 
 </code></pre>
 <hr />

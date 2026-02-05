@@ -405,7 +405,7 @@ fn finalize_transaction() -&gt; Receipt
 </span>// crates/storage/store.rs
 Store::apply_account_updates_batch(parent_hash, updates) -&gt; StateTrieHash
 <span class="boring">}</span></code></pre></pre>
-<p>This is one of the two merkelization backends (the other is used by <code>add_block_pipeline</code>):</p>
+<p>This is one of the two merkleization backends (the other is used by <code>add_block_pipeline</code>):</p>
 <ol>
 <li>Load parent state trie</li>
 <li>Apply each account update to the trie</li>

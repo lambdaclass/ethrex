@@ -252,10 +252,10 @@ and expects a certain response. You can read more about it <a href="https://gith
 golang 1.23.2
 </code></pre>
 <h4 id="running-simulations"><a class="header" href="#running-simulations">Running Simulations</a></h4>
-<p>Hive tests are categorized by "simulations', and test instances can be filtered with a regex:</p>
+<p>Hive tests are categorized by "simulations", and test instances can be filtered with a regex:</p>
 <pre><code class="language-bash">make run-hive-debug SIMULATION=&lt;simulation&gt; TEST_PATTERN=&lt;test-regex&gt;
 </code></pre>
-<p>This is an example of a Hive simulation called <code>ethereum/rpc-compat</code>, which will specificaly
+<p>This is an example of a Hive simulation called <code>ethereum/rpc-compat</code>, which will specifically
 run chain id and transaction by hash rpc tests:</p>
 <pre><code class="language-bash">make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_getTransactionByHash"
 </code></pre>

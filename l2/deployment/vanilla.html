@@ -273,7 +273,7 @@
 <p><code>--risc0.verifier-address</code> to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.</p>
 <p><code>--tdx true</code> to require TEE proofs for validating batch execution and state settlement.</p>
 <p><code>--tdx.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.</p>
-<p>Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the <a href="./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
+<p>Enabling multiple proving backends will require running multiple provers, one for each backend. Refer to the <a href="./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
 <p>If you enable more than one proving system (e.g., both <code>--sp1 true</code> and <code>--risc0 true</code>), all selected proving systems will be required (i.e., every batch must include a proof from each enabled system to settle on L1).</p>
 </div>
 <div class="mdbook-alerts mdbook-alerts-important">

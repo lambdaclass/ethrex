@@ -243,7 +243,7 @@
 <li><a href="#discovery-protocol">Discovery protocol</a>: built on top of udp and it is how we discover new nodes.</li>
 <li>devP2P: sits on top of tcp and is where the actual blockchain information exchange happens.</li>
 </ul>
-<p>Implementation follows the official spec which can be found <a href="https://github.com/ethereum/devp2p/tree/master">here</a>. Also, we've inspired in some <a href="https://github.com/ethereum/go-ethereum/tree/master/p2p/discover">geth code</a>.</p>
+<p>Implementation follows the official spec which can be found <a href="https://github.com/ethereum/devp2p/tree/master">here</a>. Also, we've been inspired by some <a href="https://github.com/ethereum/go-ethereum/tree/master/p2p/discover">geth code</a>.</p>
 <h2 id="discovery-protocol"><a class="header" href="#discovery-protocol">Discovery protocol</a></h2>
 <p>In the next section, we'll be looking at the discovery protocol (discv4 to be more specific) and the way we have it set up. There are many points for improvement and here we discuss some possible solutions to them.</p>
 <p>At startup, the discovery server launches three concurrent tokio tasks:</p>
@@ -283,7 +283,7 @@
 <h3 id="listen-loop"><a class="header" href="#listen-loop">Listen loop</a></h3>
 <p>The listen loop handles messages sent to our socket. The spec defines 6 types of messages:</p>
 <ul>
-<li><strong>Ping</strong>: Responds with a <code>pong</code> message. If the peer is not in our table we add it, if the corresponding bucket is already filled then we add it as a replacement for that bucket. If it was inserted we send a `ping from our end to get an endpoint proof.</li>
+<li><strong>Ping</strong>: Responds with a <code>pong</code> message. If the peer is not in our table we add it, if the corresponding bucket is already filled then we add it as a replacement for that bucket. If it was inserted we send a <code>ping</code> from our end to get an endpoint proof.</li>
 <li><strong>Pong</strong>: Verifies that the <code>pong</code> corresponds to a previously sent <code>ping</code>, if so we mark the peer as proven.</li>
 <li><strong>FindNodes</strong>: Responds with a <code>neighbors</code> message that contains as many as the 16 closest nodes from the given target. A target is a pubkey provided by the peer in the message. The response can't be sent in one packet as it might exceed the discv4 max packet size. So we split it into different packets.</li>
 <li><strong>Neighbors</strong>: First we verify that we have sent the corresponding <code>find_node</code> message. If so, we receive the peers, store them, and ping them. Also, every <a href="https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/discv4.rs#L305-L314"><code>find_node</code> request</a> may have a <a href="https://docs.rs/tokio/latest/tokio/sync/mpsc/struct.Sender.html">tokio <code>Sender</code></a> attached, if that is the case, we forward the nodes from the message through the channel. This becomes useful when waiting for a <code>find_node</code> response, <a href="https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/net.rs#L517-L570">something we do in the lookups</a>.</li>
@@ -291,7 +291,7 @@
 <li><strong>ENRResponse</strong>: same as above.</li>
 </ul>
 <h3 id="re-validations"><a class="header" href="#re-validations">Re-validations</a></h3>
-<p>Re-validations are tasks that are implemented as intervals, that is: they run an action every <code>x</code> wherever unit of time (currently configured to run every 30 seconds). The current flow of re-validation is as follows</p>
+<p>Re-validations are tasks that are implemented as intervals, that is: they run an action every <code>x</code> whichever unit of time (currently configured to run every 30 seconds). The current flow of re-validation is as follows</p>
 <ol>
 <li>Every 30 seconds (by default) we ping the three least recently pinged peers: this may be fine now to keep simplicity, but we might prefer to choose three random peers instead to avoid the search which might become expensive as our buckets start to fill with more peers.</li>
 <li>In the next iteration we check if they have answered
@@ -315,7 +315,7 @@
 <h3 id="recursive-lookups"><a class="header" href="#recursive-lookups">Recursive Lookups</a></h3>
 <p>Recursive lookups are as with re-validations implemented as intervals. Their current flow is as follows:</p>
 <ol>
-<li>Every 30min we spawn three concurrent lookups: one closest to our pubkey and three others closest to randomly generated pubkeys.</li>
+<li>Every 30min we spawn three concurrent lookups: one closest to our pubkey and two others closest to randomly generated pubkeys.</li>
 <li>Every lookup starts with the closest nodes from our table. Each lookup keeps track of:
 <ul>
 <li>Peers that have already been asked for nodes</li>
@@ -327,9 +327,9 @@
 <li>We wait for the neighbors' response and push or replace those who are closer to the potential peers.</li>
 <li>We select three other nodes from the potential peers vector and do the same until one lookup has no node to ask.</li>
 </ol>
-<p>The way to do lookups aren't part of the spec. Our implementation aligns with geth approach, see <a href="https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/v4_udp.go#L282-L310">here</a>.</p>
+<p>The way to do lookups isn't part of the spec. Our implementation aligns with geth approach, see <a href="https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/v4_udp.go#L282-L310">here</a>.</p>
 <h3 id="an-example-of-how-you-might-build-a-network"><a class="header" href="#an-example-of-how-you-might-build-a-network">An example of how you might build a network</a></h3>
-<p>Finally, here is an example of how you could build a network and see how they connect each other:</p>
+<p>Finally, here is an example of how you could build a network and see how they connect to each other:</p>
 <p>We'll have three nodes: <code>a</code>, <code>b</code>, and <code>c</code>, we'll start <code>a</code>, then <code>b</code> setting <code>a</code> as a bootnode, and finally we'll start <code>c</code> with <code>b</code> as bootnode we should see that <code>c</code> connects to both <code>a</code> and <code>b</code> and so all the network should be connected.</p>
 <p><strong>node a</strong>:</p>
 <pre><code class="language-bash">cargo run --release -- --network ./fixtures/genesis/kurtosis.json

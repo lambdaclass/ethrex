@@ -470,7 +470,7 @@ pub fn main() {
 <h3 id="rlp-encoding"><a class="header" href="#rlp-encoding">RLP Encoding</a></h3>
 <p>Our RLP lib uses a temp buffer to write encoded payloads to, and in the end it <code>finalize</code>s the encoding by writing the payload prefix (which contains a length) to an output buffer, plus the actual payload. This means we are allocating two buffers, initializing them, and copying bytes to both of them for each node that’s being encoded and hashed.</p>
 <p>First I tried preallocating the buffers (which are vecs) by estimating a node’s final RLP length.</p>
-<p>This was done in the <code>l2/opt_rlp_buffer</code>, this had an influence the <code>memcpy</code> length by reducing it almost 15%:</p>
+<p>This was done in the <code>l2/opt_rlp_buffer</code>, this had an influence on the <code>memcpy</code> length by reducing it almost 15%:</p>
 <p>then I tried to bypass our RLP encoder altogether by implementing a small and fast encoding for the <code>Branch</code> node only (which is the majoritarian node type), this reduced <code>memcpy</code>  further, 30% over <code>main</code>:</p>
 <p>I didn’t test implementing fast RLP for the other node types as I was expecting a bigger reduction in <code>memcpy</code> from <code>Branch</code> alone.</p>
 <h3 id="keccak"><a class="header" href="#keccak">Keccak</a></h3>

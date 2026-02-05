@@ -249,9 +249,9 @@
 <h2 id="performance"><a class="header" href="#performance">Performance</a></h2>
 <p>For performance, having an efficient cache of accounts that need to have their storage downloaded in memory is key, and we should avoid going to the db as much as possible. In particular in storage healing we start by trying to get all of the storage healing roots, and this can be sped up considerably if we avoid going to the db.</p>
 <h3 id="improving-debug"><a class="header" href="#improving-debug">Improving debug</a></h3>
-<p>The functions <code>validate_state_root</code> and <code>validate_storage_roots</code> are very slow, as they rebuild the entire state trie in memory. This is</p>
+<p>The functions <code>validate_state_root</code> and <code>validate_storage_roots</code> are very slow, as they rebuild the entire state trie in memory.</p>
 <h2 id="code-quality"><a class="header" href="#code-quality">Code Quality</a></h2>
-<p>In general, snap sync lacks explanation comments that detail the functioning on the algorithm. Variables and structs should be renamed to make it properly readable.</p>
+<p>In general, snap sync lacks explanation comments that detail the functioning of the algorithm. Variables and structs should be renamed to make it properly readable.</p>
 <h3 id="storage-downloads-1"><a class="header" href="#storage-downloads-1">Storage downloads</a></h3>
 <p>Request storages is a very hard function to read, as the data structures were constantly modified to introduce speed optimizations. As such, this function is critical to restructure and manage it taking into account memory concerns.</p>
 <p>This function also has a lot of numeric constants inserted in the code directly, and should be handled better by having defined consts with explanations.</p>

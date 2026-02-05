@@ -306,7 +306,7 @@
 <h3 id="engine-latency-by-method"><a class="header" href="#engine-latency-by-method">Engine Latency by Method</a></h3>
 <p>Live timeseries that tries to correlate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.</p>
 <p><img src="img/engine_latency_by_method.png" alt="Engine Latency by Method" /></p>
-<p><em><strong>Limitations</strong>: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window for calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure.</em></p>
+<p><em><strong>Limitations</strong>: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window to calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure.</em></p>
 <h2 id="rpc-api"><a class="header" href="#rpc-api">RPC API</a></h2>
 <p>Another collapsed row focused on the public JSON-RPC surface (<code>namespace="rpc"</code>). Expand it when you need to diagnose endpoint hotspots or validate rate limiting. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
 <p><img src="img/rpc_api_row.png" alt="RPC API row" /></p>
@@ -324,7 +324,7 @@
 <p><img src="img/rpc_latency_by_methods.png" alt="RPC Latency by Methods" /></p>
 <p><em><strong>Limitations</strong>: The RPC latency views inherit the same windowing caveats as the Engine charts: averages use the dashboard time range while the live chart relies on an 18 s window.</em></p>
 <h2 id="engine-and-rpc-error-rates"><a class="header" href="#engine-and-rpc-error-rates">Engine and RPC Error rates</a></h2>
-<p>Collapsed row showing error rates for both Engine and RPC APIs side by side and a deagreagated panel by method and kind of error. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
+<p>Collapsed row showing error rates for both Engine and RPC APIs side by side and a disaggregated panel by method and kind of error. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
 <p><img src="img/engine_and_rpc_error_rates_row.png" alt="Engine and RPC Error rates row" /></p>
 <h3 id="engine-successerror-rate"><a class="header" href="#engine-successerror-rate">Engine Success/Error Rate</a></h3>
 <p>Shows the rate of successful vs. failed Engine API requests per second.</p>
