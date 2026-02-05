@@ -3125,7 +3125,7 @@ mod tests {
         let succeeded = true;
         let cumulative_gas_used = 0x5208;
         let logs = vec![];
-        let receipt = Receipt::new(tx_type, succeeded, cumulative_gas_used, None, logs);
+        let receipt = Receipt::new(tx_type, succeeded, cumulative_gas_used, logs);
 
         let result = compute_receipts_root(&[receipt]);
         let expected_root =
