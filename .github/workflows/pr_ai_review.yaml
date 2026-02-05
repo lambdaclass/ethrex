@@ -15,7 +15,7 @@ name: AI Code Review
 
 on:
   pull_request:
-    types: [opened, ready_for_review, synchronize]
+    types: [opened, ready_for_review]
   issue_comment:
     types: [created]
 
