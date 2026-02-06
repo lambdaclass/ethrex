@@ -132,20 +132,29 @@ impl BlobsBundle {
         fork: super::Fork,
     ) -> Result<(), BlobsBundleError> {
         self.validate_cheap(tx, fork)?;
+        self.verify_kzg_proofs()
+    }
 
-        // KZG cryptographic proof verification
-        if self.version != 0 {
-            use ethrex_crypto::kzg::verify_cell_kzg_proof_batch;
-            if !verify_cell_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
-                return Err(BlobsBundleError::BlobToCommitmentAndProofError);
-            }
+    /// Verifies KZG cryptographic proofs against the blobs and commitments.
+    /// Dispatches to cell-proof or standard verification based on bundle version.
+    #[cfg(feature = "c-kzg")]
+    fn verify_kzg_proofs(&self) -> Result<(), BlobsBundleError> {
+        let valid = if self.version != 0 {
+            ethrex_crypto::kzg::verify_cell_kzg_proof_batch(
+                &self.blobs,
+                &self.commitments,
+                &self.proofs,
+            )?
         } else {
-            use ethrex_crypto::kzg::verify_kzg_proof_batch;
-            if !verify_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
-                return Err(BlobsBundleError::BlobToCommitmentAndProofError);
-            }
+            ethrex_crypto::kzg::verify_kzg_proof_batch(
+                &self.blobs,
+                &self.commitments,
+                &self.proofs,
+            )?
+        };
+        if !valid {
+            return Err(BlobsBundleError::BlobToCommitmentAndProofError);
         }
-
         Ok(())
     }
 
