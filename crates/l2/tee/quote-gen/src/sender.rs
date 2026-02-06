@@ -4,10 +4,8 @@ use tokio::{
     net::TcpStream,
 };
 
-use ethrex_l2::sequencer::proof_coordinator::ProofData;
-use ethrex_l2_common::prover::{BatchProof, ProverType};
-
 use ethrex_common::Bytes;
+use ethrex_l2_common::prover::{BatchProof, ProofData, ProverType};
 
 const SERVER_URL: &str = "172.17.0.1:3900";
 const SERVER_URL_DEV: &str = "localhost:3900";
