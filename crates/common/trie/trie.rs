@@ -128,6 +128,32 @@ impl Trie {
         })
     }
 
+    /// Walk the trie path for the given key, populating the underlying DB cache
+    /// (e.g. RocksDB block cache) without using the FKV shortcut.
+    ///
+    /// This is used by the merkle-prewarm thread: `insert()`/`remove()` always
+    /// traverse via `get_node_mut()` → `db.get()`, so pre-walking with `Node::get()`
+    /// (which uses the same `db.get()` calls at each level) warms the same pages.
+    pub fn preload_path(&self, pathrlp: &[u8]) -> Result<(), TrieError> {
+        let path = Nibbles::from_bytes(pathrlp);
+        match &self.root {
+            NodeRef::Node(node, _) => {
+                let _ = node.get(self.db.as_ref(), path)?;
+            }
+            NodeRef::Hash(hash) if hash.is_valid() => {
+                if let Some(rlp) = self.db.get(Nibbles::default())? {
+                    if !rlp.is_empty() {
+                        let _ = Node::decode(&rlp)
+                            .map_err(TrieError::RLPDecode)?
+                            .get(self.db.as_ref(), path)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);

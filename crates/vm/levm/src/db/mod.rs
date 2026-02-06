@@ -4,9 +4,17 @@ use ethrex_common::{
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
 use rustc_hash::FxHashMap;
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod gen_db;
+
+/// Hints sent from CachingDatabase on cache misses to drive
+/// trie-node prewarming ahead of merkleization.
+pub enum PrewarmHint {
+    Account(Address),
+    Storage(Address, H256),
+}
 
 // Type aliases for cache storage maps
 type AccountCache = FxHashMap<Address, AccountState>;
@@ -39,6 +47,8 @@ pub struct CachingDatabase {
     storage: RwLock<StorageCache>,
     /// Cached contract code
     code: RwLock<CodeCache>,
+    /// Optional channel to send prewarm hints on cache misses
+    prewarm_tx: Option<Sender<PrewarmHint>>,
 }
 
 impl CachingDatabase {
@@ -48,6 +58,17 @@ impl CachingDatabase {
             accounts: RwLock::new(FxHashMap::default()),
             storage: RwLock::new(FxHashMap::default()),
             code: RwLock::new(FxHashMap::default()),
+            prewarm_tx: None,
+        }
+    }
+
+    pub fn new_with_prewarm(inner: Arc<dyn Database>, prewarm_tx: Sender<PrewarmHint>) -> Self {
+        Self {
+            inner,
+            accounts: RwLock::new(FxHashMap::default()),
+            storage: RwLock::new(FxHashMap::default()),
+            code: RwLock::new(FxHashMap::default()),
+            prewarm_tx: Some(prewarm_tx),
         }
     }
 
@@ -87,6 +108,11 @@ impl Database for CachingDatabase {
             return Ok(state);
         }
 
+        // Send prewarm hint before the DB read so trie prewarming can start early
+        if let Some(tx) = &self.prewarm_tx {
+            let _ = tx.send(PrewarmHint::Account(address));
+        }
+
         // Cache miss: query underlying database
         let state = self.inner.get_account_state(address)?;
 
@@ -100,6 +126,11 @@ impl Database for CachingDatabase {
         // Check cache first
         if let Some(value) = self.read_storage()?.get(&(address, key)).copied() {
             return Ok(value);
+        }
+
+        // Send prewarm hint before the DB read so trie prewarming can start early
+        if let Some(tx) = &self.prewarm_tx {
+            let _ = tx.send(PrewarmHint::Storage(address, key));
         }
 
         // Cache miss: query underlying database

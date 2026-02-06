@@ -82,13 +82,13 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
-use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::backends::{CachingDatabase, PrewarmHint};
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc::Sender;
@@ -356,15 +356,26 @@ impl Blockchain {
         let mut max_queue_length = 0;
 
         // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
+        // can benefit from shared caching of state lookups.
+        // The prewarm channel streams cache-miss hints to drive trie-node preloading.
         let original_store = vm.db.store.clone();
+        let (prewarm_tx, prewarm_rx) = channel();
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
-            Arc::new(CachingDatabase::new(original_store));
+            Arc::new(CachingDatabase::new_with_prewarm(original_store, prewarm_tx));
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
+            // Spawn prewarm thread first so it's ready to receive hints from warming.
+            // The prewarm_rx is moved in; self and parent_header are borrowed.
+            let merkle_prewarm_handle = std::thread::Builder::new()
+                .name("block_executor_merkle_prewarmer".to_string())
+                .spawn_scoped(s, || {
+                    self.prewarm_merkle_paths(prewarm_rx, parent_header);
+                })
+                .expect("Failed to spawn merkle prewarmer thread");
+
             let vm_type = vm.vm_type;
             let warm_handle = std::thread::Builder::new()
                 .name("block_executor_warmer".to_string())
@@ -420,6 +431,9 @@ impl Blockchain {
                 .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                 .ok()
                 .unwrap_or(Duration::ZERO);
+            // Prewarm thread ends naturally when all Senders drop (warming + execution finish).
+            // Join to ensure it completes before the scope exits.
+            let _ = merkle_prewarm_handle.join();
             (
                 execution_handle.join().unwrap_or_else(|_| {
                     Err(ChainError::Custom("execution thread panicked".to_string()))
@@ -672,6 +686,104 @@ impl Blockchain {
             }
             None => self.storage.open_state_trie(parent_header.state_root)?,
         })
+    }
+
+    /// Dispatches prewarm hints to 16 sharded workers (matching the merkleization
+    /// shard layout) so trie-node reads are parallelized across RocksDB.
+    fn prewarm_merkle_paths(
+        &self,
+        rx: Receiver<PrewarmHint>,
+        parent_header: &BlockHeader,
+    ) {
+        std::thread::scope(|s| {
+            let mut worker_txs = Vec::with_capacity(16);
+            for i in 0..16u8 {
+                let (tx, worker_rx) = channel();
+                worker_txs.push(tx);
+                std::thread::Builder::new()
+                    .name(format!("merkle_prewarm_shard_{i}"))
+                    .spawn_scoped(s, || {
+                        self.prewarm_merkle_shard(worker_rx, parent_header);
+                    })
+                    .expect("Failed to spawn prewarm shard worker");
+            }
+
+            // Dispatch hints to the correct shard by first nibble of hashed address
+            for hint in rx {
+                let hashed_addr = match &hint {
+                    PrewarmHint::Account(address) | PrewarmHint::Storage(address, _) => {
+                        keccak(address)
+                    }
+                };
+                let shard = (hashed_addr.as_bytes()[0] >> 4) as usize;
+                let _ = worker_txs[shard].send(hint);
+            }
+            // Drop senders so workers' `for hint in rx` loops terminate
+            drop(worker_txs);
+        });
+    }
+
+    /// Per-shard prewarm worker: walks trie paths to populate RocksDB block cache.
+    fn prewarm_merkle_shard(
+        &self,
+        rx: Receiver<PrewarmHint>,
+        parent_header: &BlockHeader,
+    ) {
+        let state_trie = match self.storage.open_state_trie(parent_header.state_root) {
+            Ok(t) => t,
+            Err(e) => {
+                warn!("Merkle prewarm shard: failed to open state trie: {e}");
+                return;
+            }
+        };
+        let mut prewarmed_accounts: FxHashSet<H256> = FxHashSet::default();
+        let mut prewarmed_storage: FxHashSet<(H256, H256)> = FxHashSet::default();
+        let mut storage_tries: FxHashMap<H256, Trie> = FxHashMap::default();
+
+        for hint in rx {
+            match hint {
+                PrewarmHint::Account(address) => {
+                    let hashed = keccak(address);
+                    if prewarmed_accounts.insert(hashed) {
+                        let _ = state_trie.preload_path(hashed.as_bytes());
+                    }
+                }
+                PrewarmHint::Storage(address, key) => {
+                    let hashed_address = keccak(address);
+                    if prewarmed_accounts.insert(hashed_address) {
+                        let _ = state_trie.preload_path(hashed_address.as_bytes());
+                    }
+                    let hashed_key = keccak(key);
+                    if !prewarmed_storage.insert((hashed_address, hashed_key)) {
+                        continue;
+                    }
+                    let trie = match storage_tries.entry(hashed_address) {
+                        Entry::Occupied(e) => e.into_mut(),
+                        Entry::Vacant(e) => {
+                            let storage_root = state_trie
+                                .get(hashed_address.as_bytes())
+                                .ok()
+                                .flatten()
+                                .and_then(|rlp| AccountState::decode(&rlp).ok())
+                                .map(|s| s.storage_root)
+                                .unwrap_or(*EMPTY_TRIE_HASH);
+                            if storage_root == *EMPTY_TRIE_HASH {
+                                continue;
+                            }
+                            match self.storage.open_storage_trie(
+                                hashed_address,
+                                parent_header.state_root,
+                                storage_root,
+                            ) {
+                                Ok(t) => e.insert(t),
+                                Err(_) => continue,
+                            }
+                        }
+                    };
+                    let _ = trie.preload_path(hashed_key.as_bytes());
+                }
+            }
+        }
     }
 
     /// Collapses a root branch node into an extension or leaf node if it has only one valid child.
