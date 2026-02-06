@@ -554,6 +554,11 @@ Aligned options:
           [env: ETHREX_ALIGNED_NETWORK=]
           [default: devnet]
 
+      --aligned.from-block <BLOCK_NUMBER>
+          Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.
+
+          [env: ETHREX_ALIGNED_FROM_BLOCK=]
+
       --aligned.fee-estimate <FEE_ESTIMATE>
           Fee estimate for Aligned sdk
 

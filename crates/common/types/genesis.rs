@@ -257,7 +257,6 @@ pub struct ChainConfig {
     pub bpo3_time: Option<u64>,
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
-
     pub amsterdam_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
@@ -349,6 +348,18 @@ impl From<Fork> for &str {
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
             Fork::Amsterdam => "Amsterdam",
+        }
+    }
+}
+
+impl Fork {
+    /// Returns the gas_spent value for receipt encoding based on fork.
+    /// EIP-7778 (Amsterdam+): receipts include gas_spent field.
+    pub fn gas_spent_for_receipt(self, gas_spent: u64) -> Option<u64> {
+        if self >= Fork::Amsterdam {
+            Some(gas_spent)
+        } else {
+            None
         }
     }
 }

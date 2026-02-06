@@ -28,6 +28,7 @@ use crate::{
     snap::{
         SnapError,
         constants::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
+        request_state_trienodes,
     },
     sync::{AccountStorageRoots, SyncError, code_collector::CodeHashCollector},
     utils::current_unix_time,
@@ -243,7 +244,7 @@ async fn heal_state_trie(
                 let peer_table = peers.peer_table.clone();
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
-                    let response = PeerHandler::request_state_trienodes(
+                    let response = request_state_trienodes(
                         peer_id,
                         connection,
                         peer_table,
@@ -346,10 +347,10 @@ fn heal_state_batch(
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     for node in nodes.into_iter() {
         let path = batch.remove(0);
-        let (missing_children_count, missing_children) =
-            node_missing_children(&node, &path.path, trie.db())?;
-        batch.extend(missing_children);
-        if missing_children_count == 0 {
+        let (pending_children_count, pending_children) =
+            node_pending_children(&node, &path.path, trie.db())?;
+        batch.extend(pending_children);
+        if pending_children_count == 0 {
             commit_node(
                 node,
                 &path.path,
@@ -360,7 +361,7 @@ fn heal_state_batch(
         } else {
             let entry = HealingQueueEntry {
                 node: node.clone(),
-                missing_children_count,
+                pending_children_count,
                 parent_path: path.parent_path.clone(),
             };
             healing_queue.insert(path.path.clone(), entry);
@@ -386,8 +387,8 @@ fn commit_node(
         panic!("The parent should exist. Parent: {parent_path:?}, path: {path:?}")
     });
 
-    healing_queue_entry.missing_children_count -= 1;
-    if healing_queue_entry.missing_children_count == 0 {
+    healing_queue_entry.pending_children_count -= 1;
+    if healing_queue_entry.pending_children_count == 0 {
         commit_node(
             healing_queue_entry.node,
             parent_path,
@@ -401,13 +402,13 @@ fn commit_node(
 }
 
 /// Returns the partial paths to the node's children if they are not already part of the trie state
-pub fn node_missing_children(
+pub fn node_pending_children(
     node: &Node,
     path: &Nibbles,
     trie_state: &dyn TrieDB,
 ) -> Result<(usize, Vec<RequestMetadata>), TrieError> {
     let mut paths: Vec<RequestMetadata> = Vec::new();
-    let mut missing_children_count: usize = 0;
+    let mut pending_children_count: usize = 0;
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
@@ -425,7 +426,7 @@ pub fn node_missing_children(
                     continue;
                 }
 
-                missing_children_count += 1;
+                pending_children_count += 1;
                 paths.extend(vec![RequestMetadata {
                     hash: child.compute_hash().finalize(),
                     path: child_path,
@@ -446,7 +447,7 @@ pub fn node_missing_children(
             if validity {
                 return Ok((0, vec![]));
             }
-            missing_children_count += 1;
+            pending_children_count += 1;
 
             paths.extend(vec![RequestMetadata {
                 hash: node.child.compute_hash().finalize(),
@@ -456,5 +457,5 @@ pub fn node_missing_children(
         }
         _ => {}
     }
-    Ok((missing_children_count, paths))
+    Ok((pending_children_count, paths))
 }

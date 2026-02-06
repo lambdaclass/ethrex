@@ -27,9 +27,12 @@ use tracing::{debug, error, info, warn};
 use crate::metrics::{CurrentStepValue, METRICS};
 use crate::peer_handler::PeerHandler;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
-use crate::snap::constants::{
-    BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
-    SECONDS_PER_BLOCK, SNAP_LIMIT,
+use crate::snap::{
+    constants::{
+        BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
+        SECONDS_PER_BLOCK, SNAP_LIMIT,
+    },
+    request_account_range, request_bytecodes, request_storage_ranges,
 };
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
@@ -491,15 +494,15 @@ pub async fn snap_sync(
         // account_state_snapshots_dir
 
         info!("Starting to download account ranges from peers");
-        peers
-            .request_account_range(
-                H256::zero(),
-                H256::repeat_byte(0xff),
-                account_state_snapshots_dir.as_ref(),
-                &mut pivot_header,
-                block_sync_state,
-            )
-            .await?;
+        request_account_range(
+            peers,
+            H256::zero(),
+            H256::repeat_byte(0xff),
+            account_state_snapshots_dir.as_ref(),
+            &mut pivot_header,
+            block_sync_state,
+        )
+        .await?;
         info!("Finish downloading account ranges from peers");
 
         // Process any headers received during account range download
@@ -575,15 +578,15 @@ pub async fn snap_sync(
             );
             storage_range_request_attempts += 1;
             if storage_range_request_attempts < 5 {
-                chunk_index = peers
-                    .request_storage_ranges(
-                        &mut storage_accounts,
-                        account_storages_snapshots_dir.as_ref(),
-                        chunk_index,
-                        &mut pivot_header,
-                        store.clone(),
-                    )
-                    .await?;
+                chunk_index = request_storage_ranges(
+                    peers,
+                    &mut storage_accounts,
+                    account_storages_snapshots_dir.as_ref(),
+                    chunk_index,
+                    &mut pivot_header,
+                    store.clone(),
+                )
+                .await?;
             } else {
                 for (acc_hash, (maybe_root, old_intervals)) in
                     storage_accounts.accounts_with_storage_root.iter()
@@ -741,8 +744,7 @@ pub async fn snap_sync(
                         "Starting bytecode download of {} hashes",
                         code_hashes_to_download.len()
                     );
-                    let bytecodes = peers
-                        .request_bytecodes(&code_hashes_to_download)
+                    let bytecodes = request_bytecodes(peers, &code_hashes_to_download)
                         .await?
                         .ok_or(SyncError::BytecodesNotFound)?;
 
@@ -765,8 +767,7 @@ pub async fn snap_sync(
 
     // Download remaining bytecodes if any
     if !code_hashes_to_download.is_empty() {
-        let bytecodes = peers
-            .request_bytecodes(&code_hashes_to_download)
+        let bytecodes = request_bytecodes(peers, &code_hashes_to_download)
             .await?
             .ok_or(SyncError::BytecodesNotFound)?;
         store
