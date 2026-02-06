@@ -593,13 +593,9 @@ impl Default for SnapSyncConfig {
 
 ---
 
-### 2.14 Move Snap Client Methods Off `PeerHandler`
+### 2.14 Move Snap Client Methods Off `PeerHandler` — ✅ DONE
 
-**Current State:** `request_account_range`, `request_storage_ranges`, etc. are `impl PeerHandler` methods in `snap/client.rs`. These are complex orchestration functions (task queues, workers, file I/O), not peer operations.
-
-**Proposed Change:** Make them standalone functions that take `&mut PeerHandler` as a parameter. This clarifies that `PeerHandler` is a dependency, not the owner of this logic.
-
-**Effort:** Low (1 week)
+**Status:** Already fixed on `refactor/snapsync-healing-unification` branch. Snap client methods were extracted from `peer_handler.rs` to `snap/client.rs` and converted from `PeerHandler` methods to standalone functions taking `peers: &mut PeerHandler` as a parameter.
 
 ---
 
@@ -728,7 +724,7 @@ Week 2-3:   2.13 Self-contained StorageTask with hashes
 Week 2-3:   2.3  Consolidate Error Handling (Merged — PR #5975)
 Week 3-4:   2.12 Use JoinSet for snap workers
 Week 3-5:   2.2  Comprehensive Documentation
-Week 4-5:   2.14 Move snap client methods off PeerHandler
+Week 4-5:   2.14 Move snap client methods off PeerHandler (✅ DONE)
 Week 5-7:   2.7  Configuration Externalization
 Week 7-10:  2.5  State Machine Refactor
 Week 8-12:  2.6  Test Coverage Improvement (parallel)
