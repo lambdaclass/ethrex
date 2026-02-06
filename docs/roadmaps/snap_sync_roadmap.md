@@ -119,31 +119,9 @@ Reduce snap sync time by 50% or more through parallelization, batching optimizat
 
 ---
 
-### 1.2 Parallel Account Range Requests
+### 1.2 ~~Parallel Account Range Requests~~ (Discarded)
 
-**Current State:** Account ranges are requested from peers sequentially within each chunk.
-
-**Proposed Change:** Increase parallelism by:
-1. Using a work-stealing task pool for account range chunks
-2. Implementing adaptive chunk sizing based on peer response times
-3. Adding peer quality scoring to prefer faster peers
-
-**Implementation:**
-```rust
-// Current: Fixed 800 chunks, sequential processing
-let chunk_count = 800;
-
-// Proposed: Adaptive chunking with parallel execution
-struct AdaptiveChunker {
-    min_chunk_size: U256,
-    max_concurrent: usize,
-    peer_scores: HashMap<H256, PeerScore>,
-}
-```
-
-**Expected Impact:** 2-3x faster account range download
-
-**Effort:** Medium (2-3 weeks)
+> Discarded — not needed after profiling.
 
 ---
 
@@ -180,7 +158,7 @@ Adjust batch sizes based on:
 
 ---
 
-### 1.4 Reduce Busy-Wait Loops
+### 1.4 Reduce Busy-Wait Loops (Issue #6140 — Step 9)
 
 **Current State:** Multiple locations use `tokio::time::sleep()` in loops:
 - `sync_cycle_snap()`: 100ms sleep waiting for headers
@@ -213,34 +191,9 @@ match tokio::time::timeout(
 
 ---
 
-### 1.5 Memory-Bounded Structures
+### 1.5 ~~Memory-Bounded Structures~~ (Discarded)
 
-**Current State:**
-- `accounts_by_root_hash` in `request_storage_ranges()` is unbounded
-- Can grow to gigabytes on mainnet
-
-**Proposed Change:**
-```rust
-// Add memory limits with spill-to-disk
-struct BoundedAccountMap {
-    in_memory: BTreeMap<H256, AccountsWithStorage>,
-    max_memory_bytes: usize,
-    spill_dir: PathBuf,
-}
-
-impl BoundedAccountMap {
-    fn insert(&mut self, key: H256, value: AccountsWithStorage) {
-        if self.memory_usage() > self.max_memory_bytes {
-            self.spill_to_disk();
-        }
-        self.in_memory.insert(key, value);
-    }
-}
-```
-
-**Expected Impact:** Stable memory usage, prevents OOM on large states
-
-**Effort:** Medium (2 weeks)
+> Discarded — not a real bottleneck in practice.
 
 ---
 
@@ -311,30 +264,9 @@ fn max_requests_for_peer(&self, peer_id: &H256) -> u32 {
 
 ---
 
-### 1.8 Parallel Storage Healing
+### 1.8 ~~Parallel Storage Healing~~ (Discarded)
 
-**Current State:** Storage healing processes accounts sequentially within batches.
-
-**Proposed Change:** Use rayon for parallel storage trie healing:
-
-```rust
-// Current
-for account in accounts_to_heal {
-    heal_storage_for_account(account).await?;
-}
-
-// Proposed
-accounts_to_heal
-    .par_iter()
-    .map(|account| heal_storage_for_account(account))
-    .collect::<Result<Vec<_>, _>>()?;
-```
-
-**Caveat:** Need to handle DB write contention carefully.
-
-**Expected Impact:** 2-4x faster storage healing
-
-**Effort:** High (3 weeks)
+> Discarded — DB write contention makes this impractical without a larger storage refactor.
 
 ---
 
@@ -345,7 +277,7 @@ Make the codebase clear, well-documented, and easy for new contributors to under
 
 ---
 
-### 2.1 Extract Context Structs
+### 2.1 Extract Context Structs (Issue #6140 — Steps 5, 6)
 
 **Current State:** Functions with many parameters:
 ```rust
@@ -446,44 +378,11 @@ Add comments explaining non-obvious logic, especially:
 
 ---
 
-### 2.3 Consolidate Error Handling
-
-**Current State:** Inconsistent error handling:
-```rust
-// Silent drop
-if let Err(_) = sender.send(headers) { break; }
-
-// Expect with message
-.expect("We shouldn't have a rocksdb error here")
-
-// Proper propagation
-store.get_block_header(number)?
-```
-
-**Proposed Change:** Standardize on:
-1. Use `?` for propagation
-2. Use `tracing::warn!` for recoverable errors
-3. Use `tracing::error!` before returning fatal errors
-4. Never use `.expect()` in production paths
-
-```rust
-// Before
-if sender.send(headers).is_err() { break; }
-
-// After
-if let Err(e) = sender.send(headers) {
-    warn!("Header channel closed unexpectedly: {}", e);
-    break;
-}
-```
-
-**Files Affected:** All snap sync modules
-
-**Effort:** Low (1 week)
+### 2.3 Consolidate Error Handling (Merged — PR #5975)
 
 ---
 
-### 2.4 Extract Helper Functions
+### 2.4 Extract Helper Functions (Issue #6140 — Steps 3, 4)
 
 **Current State:** Duplicated patterns identified:
 - Snapshot dumping (4 occurrences) - **Partially addressed**
@@ -644,6 +543,18 @@ impl Default for SnapSyncConfig {
 
 ---
 
+### 2.8 Fix Correctness Bugs in `request_storage_ranges` (Issue #6140 — Steps 1, 2)
+
+**Current State:** Two locations crash the node on recoverable errors:
+- `panic!("Should have found the account hash")` (line 735)
+- `.expect()` calls on store lookups (lines 554-558)
+
+**Proposed Change:** Replace with proper error propagation using `SnapError::InternalError` and `?` operator.
+
+**Effort:** Very low (< 1 day)
+
+---
+
 ## Success Metrics
 
 ### Phase 1: Performance
@@ -686,28 +597,26 @@ impl Default for SnapSyncConfig {
 
 ```
 Week 1-2:   1.1 Parallel Header Download (complete PR #6059)
-Week 2-3:   1.4 Reduce Busy-Wait Loops
+Week 2-3:   1.4 Reduce Busy-Wait Loops (Issue #6140)
 Week 3-4:   1.6 Async Disk I/O
-Week 4-6:   1.2 Parallel Account Range Requests
-Week 6-8:   1.3 Optimize Trie Node Batching
-Week 8-10:  1.5 Memory-Bounded Structures
-Week 10-12: 1.7 Peer Connection Optimization
-Week 12+:   1.8 Parallel Storage Healing (stretch goal)
+Week 4-6:   1.3 Optimize Trie Node Batching
+Week 6-8:   1.7 Peer Connection Optimization
 ```
 
 ### Phase 2: Code Quality (10 weeks)
 
 ```
-Week 1:     2.1 Extract Context Structs
-Week 1-2:   2.3 Consolidate Error Handling
-Week 2-3:   2.4 Extract Helper Functions
+Week 1:     2.8 Fix Correctness Bugs (Issue #6140)
+Week 1:     2.1 Extract Context Structs (Issue #6140)
+Week 1-2:   2.4 Extract Helper Functions (Issue #6140)
+Week 2-3:   2.3 Consolidate Error Handling (Merged — PR #5975)
 Week 3-5:   2.2 Comprehensive Documentation
 Week 5-7:   2.7 Configuration Externalization
 Week 7-10:  2.5 State Machine Refactor
 Week 8-12:  2.6 Test Coverage Improvement (parallel)
 ```
 
-**Total Duration:** ~16 weeks (phases overlap)
+**Total Duration:** ~14 weeks (phases overlap)
 
 ---
 
