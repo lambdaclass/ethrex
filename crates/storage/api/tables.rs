@@ -102,7 +102,13 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+/// State diffs column family: [`u8; 8`] => [`Vec<u8>`]
+/// - [`u8; 8`] = `block_number.to_be_bytes()` (big-endian for sorted iteration)
+/// - [`Vec<u8>`] = binary-encoded list of (path, old_value) pairs recording what
+///   changed in a given commit for state reconstruction and future pruning.
+pub const STATE_DIFFS: &str = "state_diffs";
+
+pub const TABLES: [&str; 20] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -122,4 +128,5 @@ pub const TABLES: [&str; 19] = [
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
+    STATE_DIFFS,
 ];

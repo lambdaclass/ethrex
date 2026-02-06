@@ -8,7 +8,8 @@ use crate::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
             FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            SNAP_STATE, STATE_DIFFS, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -57,6 +58,11 @@ use tracing::{debug, error, info};
 
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
+
+/// Maximum state diffs to prune per iteration (rate limiting).
+const STATE_PRUNING_BATCH_SIZE: usize = 1000;
+/// Interval between pruning iterations in seconds.
+const STATE_PRUNING_INTERVAL_SECS: u64 = 300;
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
@@ -1345,12 +1351,18 @@ impl Store {
         // Capacity one ensures sender just notifies and goes on
         let (notify_tx, notify_rx) = sync_channel(1);
         let wait_for_new_layer = notify_rx;
+        let last_block_number = update_batch
+            .blocks
+            .last()
+            .map(|b| b.header.number)
+            .unwrap_or(0);
         let trie_update = TrieUpdate {
             parent_state_root,
             account_updates,
             storage_updates,
             result_sender: notify_tx,
             child_state_root: last_state_root,
+            block_number: last_block_number,
         };
         trie_upd_worker_tx.send(trie_update).map_err(|e| {
             StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
@@ -1526,6 +1538,22 @@ impl Store {
                 }
             }
         }));
+        // State diff pruning background worker (opt-in via env var).
+        if let Some(retention_blocks) = std::env::var("ETHREX_STATE_RETENTION_BLOCKS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            let backend_prune = store.backend.clone();
+            background_threads.push(std::thread::spawn(move || {
+                info!("State diff pruning worker started (retention={retention_blocks} blocks)");
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(STATE_PRUNING_INTERVAL_SECS));
+                    if let Err(e) = prune_old_state_diffs(&backend_prune, retention_blocks) {
+                        error!("State diff pruning error: {e}");
+                    }
+                }
+            }));
+        }
         store.background_threads = Arc::new(ThreadList {
             list: background_threads,
         });
@@ -2650,6 +2678,8 @@ struct TrieUpdate {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    /// Last block number in this update (for state diff tracking).
+    block_number: u64,
 }
 
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
@@ -2666,6 +2696,7 @@ fn apply_trie_updates(
         child_state_root,
         account_updates,
         storage_updates,
+        block_number,
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
@@ -2701,19 +2732,24 @@ fn apply_trie_updates(
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
     let mut trie_mut = (*trie).clone();
 
-    let last_written = backend
-        .begin_read()?
+    // Read old values for state diff tracking before writing.
+    let read_tx = backend.begin_read()?;
+    let last_written = read_tx
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
 
-    let mut write_tx = backend.begin_write()?;
-
-    // Before encoding, accounts have only the account address as their path, while storage keys have
-    // the account address (32 bytes) + storage path (up to 32 bytes).
-
     // Commit removes the bottom layer and returns it, this is the mutation step.
     let nodes = trie_mut.commit(root).unwrap_or_default();
-    let mut result = Ok(());
+
+    // Group writes per column family for batched I/O and capture old values for state diffs.
+    let mut account_trie_batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    let mut storage_trie_batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    let mut account_fkv_batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    let mut storage_fkv_batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    let mut deletions: Vec<(&str, Vec<u8>)> = Vec::new();
+    // State diff: list of (key, old_value) pairs. Empty old_value means newly created.
+    let mut state_diff_entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+
     for (key, value) in nodes {
         let is_leaf = key.len() == 65 || key.len() == 131;
         let is_account = key.len() <= 65;
@@ -2721,24 +2757,75 @@ fn apply_trie_updates(
         if is_leaf && key > last_written {
             continue;
         }
+
         let table = if is_leaf {
             if is_account {
-                &ACCOUNT_FLATKEYVALUE
+                ACCOUNT_FLATKEYVALUE
             } else {
-                &STORAGE_FLATKEYVALUE
+                STORAGE_FLATKEYVALUE
             }
         } else if is_account {
-            &ACCOUNT_TRIE_NODES
+            ACCOUNT_TRIE_NODES
         } else {
-            &STORAGE_TRIE_NODES
+            STORAGE_TRIE_NODES
         };
+
+        // Capture old value for state diff (ignore read errors — best effort).
+        let old_value = read_tx.get(table, &key).unwrap_or(None).unwrap_or_default();
+        state_diff_entries.push((key.clone(), old_value));
+
         if value.is_empty() {
-            result = write_tx.delete(table, &key);
+            deletions.push((table, key));
         } else {
-            result = write_tx.put(table, &key, &value);
+            let batch = if is_leaf {
+                if is_account {
+                    &mut account_fkv_batch
+                } else {
+                    &mut storage_fkv_batch
+                }
+            } else if is_account {
+                &mut account_trie_batch
+            } else {
+                &mut storage_trie_batch
+            };
+            batch.push((key, value.to_vec()));
         }
-        if result.is_err() {
-            break;
+    }
+    drop(read_tx);
+
+    let mut write_tx = backend.begin_write()?;
+
+    // Before encoding, accounts have only the account address as their path, while storage keys have
+    // the account address (32 bytes) + storage path (up to 32 bytes).
+
+    let mut result = Ok(());
+    if !account_trie_batch.is_empty() {
+        result = write_tx.put_batch(ACCOUNT_TRIE_NODES, account_trie_batch);
+    }
+    if result.is_ok() && !storage_trie_batch.is_empty() {
+        result = write_tx.put_batch(STORAGE_TRIE_NODES, storage_trie_batch);
+    }
+    if result.is_ok() && !account_fkv_batch.is_empty() {
+        result = write_tx.put_batch(ACCOUNT_FLATKEYVALUE, account_fkv_batch);
+    }
+    if result.is_ok() && !storage_fkv_batch.is_empty() {
+        result = write_tx.put_batch(STORAGE_FLATKEYVALUE, storage_fkv_batch);
+    }
+    if result.is_ok() {
+        for (table, key) in deletions {
+            result = write_tx.delete(table, &key);
+            if result.is_err() {
+                break;
+            }
+        }
+    }
+    // Write state diff in the same transaction for atomicity.
+    if result.is_ok() && !state_diff_entries.is_empty() {
+        match encode_state_diff(&state_diff_entries) {
+            Ok(diff_value) => {
+                result = write_tx.put(STATE_DIFFS, &block_number.to_be_bytes(), &diff_value);
+            }
+            Err(e) => result = Err(e),
         }
     }
     if result.is_ok() {
@@ -2750,6 +2837,154 @@ fn apply_trie_updates(
     // Phase 3: update diff layers with the removal of bottom layer.
     trie_cache.store(Arc::new(trie_mut));
     Ok(())
+}
+
+/// Prune state diffs older than the retention window.
+///
+/// Tracks `last_pruned_state_diff_block` in MISC_VALUES for resumability across restarts.
+/// Only prunes diffs that are at least `2 * retention_blocks` behind the latest block,
+/// ensuring the TrieLayerCache has already been flushed to disk.
+fn prune_old_state_diffs(
+    backend: &Arc<dyn StorageBackend>,
+    retention_blocks: u64,
+) -> Result<(), StoreError> {
+    let read_tx = backend.begin_read()?;
+
+    // Get latest block number from canonical chain.
+    let latest_key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+    let Some(latest_bytes) = read_tx.get(CHAIN_DATA, &latest_key)? else {
+        return Ok(());
+    };
+    let latest_block = u64::from_le_bytes(
+        latest_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| StoreError::Custom("invalid latest_block_number".into()))?,
+    );
+
+    // Safety margin: retention + DB_COMMIT_THRESHOLD to ensure we never prune
+    // state diffs that the TrieLayerCache might still need to commit.
+    let safety_margin = retention_blocks + DB_COMMIT_THRESHOLD as u64;
+    if latest_block <= safety_margin {
+        return Ok(());
+    }
+    let prune_threshold = latest_block - safety_margin;
+
+    let last_pruned = read_tx
+        .get(MISC_VALUES, b"last_pruned_state_diff_block")?
+        .and_then(|bytes| Some(u64::from_le_bytes(bytes.as_slice().try_into().ok()?)))
+        .unwrap_or(0);
+
+    if last_pruned >= prune_threshold {
+        return Ok(());
+    }
+    drop(read_tx);
+
+    // Batch: collect keys to delete in a single read, then delete in a single write.
+    let read_tx = backend.begin_read()?;
+    let mut current = last_pruned;
+    let mut keys_to_delete = Vec::new();
+    while current < prune_threshold && keys_to_delete.len() < STATE_PRUNING_BATCH_SIZE {
+        let key = current.to_be_bytes();
+        if read_tx.get(STATE_DIFFS, &key)?.is_some() {
+            keys_to_delete.push(key);
+        }
+        current += 1;
+    }
+    drop(read_tx);
+
+    let mut tx = backend.begin_write()?;
+    for key in &keys_to_delete {
+        tx.delete(STATE_DIFFS, key)?;
+    }
+    tx.put(
+        MISC_VALUES,
+        b"last_pruned_state_diff_block",
+        &current.to_le_bytes(),
+    )?;
+    tx.commit()?;
+    let pruned = keys_to_delete.len();
+
+    if pruned > 0 {
+        debug!("Pruned {pruned} state diffs up to block {current}");
+    }
+    Ok(())
+}
+
+/// Encode a list of (key, old_value) pairs into a compact binary format for STATE_DIFFS.
+///
+/// Format: `[entry_count: u32 LE] [entries...]`
+/// Each entry: `[key_len: u16 LE] [key] [val_len: u32 LE] [old_value]`
+fn encode_state_diff(entries: &[(Vec<u8>, Vec<u8>)]) -> Result<Vec<u8>, StoreError> {
+    let total_size: usize = 4 + entries
+        .iter()
+        .map(|(k, v)| 2 + k.len() + 4 + v.len())
+        .sum::<usize>();
+    let mut buf = Vec::with_capacity(total_size);
+    buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    for (key, old_value) in entries {
+        let key_len: u16 = key.len().try_into().map_err(|_| {
+            StoreError::Custom(format!("state diff key too long: {} bytes", key.len()))
+        })?;
+        let val_len: u32 = old_value.len().try_into().map_err(|_| {
+            StoreError::Custom(format!(
+                "state diff value too long: {} bytes",
+                old_value.len()
+            ))
+        })?;
+        buf.extend_from_slice(&key_len.to_le_bytes());
+        buf.extend_from_slice(key);
+        buf.extend_from_slice(&val_len.to_le_bytes());
+        buf.extend_from_slice(old_value);
+    }
+    Ok(buf)
+}
+
+/// Decode a STATE_DIFFS value into a list of (key, old_value) pairs.
+#[allow(dead_code, clippy::type_complexity)]
+fn decode_state_diff(data: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StoreError> {
+    if data.len() < 4 {
+        return Err(StoreError::Custom("state diff too short".into()));
+    }
+    let entry_count = u32::from_le_bytes(
+        data[..4]
+            .try_into()
+            .map_err(|_| StoreError::Custom("state diff: bad entry_count".into()))?,
+    ) as usize;
+    let mut entries = Vec::with_capacity(entry_count);
+    let mut offset = 4;
+    for _ in 0..entry_count {
+        if offset + 2 > data.len() {
+            return Err(StoreError::Custom("state diff truncated at key_len".into()));
+        }
+        let key_len = u16::from_le_bytes(
+            data[offset..offset + 2]
+                .try_into()
+                .map_err(|_| StoreError::Custom("state diff: bad key_len".into()))?,
+        ) as usize;
+        offset += 2;
+        if offset + key_len > data.len() {
+            return Err(StoreError::Custom("state diff truncated at key".into()));
+        }
+        let key = data[offset..offset + key_len].to_vec();
+        offset += key_len;
+        if offset + 4 > data.len() {
+            return Err(StoreError::Custom("state diff truncated at val_len".into()));
+        }
+        let val_len = u32::from_le_bytes(
+            data[offset..offset + 4]
+                .try_into()
+                .map_err(|_| StoreError::Custom("state diff: bad val_len".into()))?,
+        ) as usize;
+        offset += 4;
+        if offset + val_len > data.len() {
+            return Err(StoreError::Custom("state diff truncated at value".into()));
+        }
+        let old_value = data[offset..offset + val_len].to_vec();
+        offset += val_len;
+        entries.push((key, old_value));
+    }
+    Ok(entries)
 }
 
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
