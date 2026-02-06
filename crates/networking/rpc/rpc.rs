@@ -158,6 +158,97 @@ pub async fn handle_get_heap_flamegraph() -> Result<(), (StatusCode, String)> {
     ))
 }
 
+#[cfg(feature = "cpu_profiling")]
+mod cpu_profile {
+    use axum::body::Body;
+    use axum::extract::Query;
+    use axum::http::StatusCode;
+    use axum::http::header::CONTENT_TYPE;
+    use axum::response::Response;
+    use pprof::protos::Message;
+    use serde::Deserialize;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Only one ProfilerGuard can exist at a time (signal-based sampling).
+    static PROFILING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+    /// Resets `PROFILING_IN_PROGRESS` on drop to ensure cleanup even on panic.
+    struct ProfilingGuard;
+
+    impl Drop for ProfilingGuard {
+        fn drop(&mut self) {
+            PROFILING_IN_PROGRESS.store(false, Ordering::Release);
+        }
+    }
+
+    fn internal_error(msg: &str, err: impl std::fmt::Display) -> (StatusCode, String) {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("{msg}: {err}"))
+    }
+
+    #[derive(Deserialize)]
+    pub struct ProfileParams {
+        /// Capture duration in seconds (default: 30, max: 300).
+        pub seconds: Option<u64>,
+        /// Sampling frequency in Hz (default: 1000).
+        pub frequency: Option<i32>,
+    }
+
+    pub async fn handle_cpu_profile(
+        params: Query<ProfileParams>,
+    ) -> Result<Response, (StatusCode, String)> {
+        let seconds = params.seconds.unwrap_or(30).min(300);
+        let frequency = params.frequency.unwrap_or(1000).max(1);
+
+        if PROFILING_IN_PROGRESS
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return Err((
+                StatusCode::CONFLICT,
+                "a CPU profile capture is already in progress".into(),
+            ));
+        }
+        let _guard = ProfilingGuard;
+
+        let profiler = pprof::ProfilerGuardBuilder::default()
+            .frequency(frequency)
+            .build()
+            .map_err(|e| internal_error("failed to start profiler", e))?;
+
+        tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+
+        let report = profiler
+            .report()
+            .build()
+            .map_err(|e| internal_error("failed to build report", e))?;
+        let profile = report
+            .pprof()
+            .map_err(|e| internal_error("failed to generate pprof", e))?;
+
+        let mut content = Vec::new();
+        profile
+            .write_to_vec(&mut content)
+            .map_err(|e| internal_error("failed to serialize profile", e))?;
+
+        Response::builder()
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(Body::from(content))
+            .map_err(|e| internal_error("failed to build response", e))
+    }
+}
+
+#[cfg(not(feature = "cpu_profiling"))]
+mod cpu_profile {
+    use axum::http::StatusCode;
+
+    pub async fn handle_cpu_profile() -> Result<(), (StatusCode, String)> {
+        Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "CPU profiling not available (build with `cpu_profiling` feature)".into(),
+        ))
+    }
+}
+
 /// Wrapper for JSON-RPC requests that can be either single or batched.
 ///
 /// According to the JSON-RPC 2.0 specification, clients may send either a single
@@ -512,6 +603,10 @@ pub async fn start_api(
         .route(
             "/debug/pprof/allocs/flamegraph",
             axum::routing::get(handle_get_heap_flamegraph),
+        )
+        .route(
+            "/debug/pprof/profile",
+            axum::routing::get(cpu_profile::handle_cpu_profile),
         )
         .route("/", post(handle_http_request))
         .layer(cors.clone())
@@ -1193,5 +1288,41 @@ mod tests {
         });
         let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
+    }
+
+    /// Tests for the CPU profiling endpoint. Combined into a single test because
+    /// the handler uses a process-global `AtomicBool` flag, so tests must run
+    /// sequentially.
+    #[cfg(feature = "cpu_profiling")]
+    #[tokio::test]
+    async fn cpu_profiling_endpoint() {
+        use crate::rpc::cpu_profile::{ProfileParams, handle_cpu_profile};
+        use axum::extract::Query;
+        use axum::http::StatusCode;
+
+        let query = |seconds, frequency| {
+            Query(ProfileParams {
+                seconds: Some(seconds),
+                frequency: Some(frequency),
+            })
+        };
+
+        // 1. Basic capture returns 200.
+        let resp = handle_cpu_profile(query(1, 100)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // 2. Concurrent request gets 409.
+        let long_capture = tokio::spawn(async move { handle_cpu_profile(query(3, 100)).await });
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        let err = handle_cpu_profile(query(1, 100)).await.unwrap_err();
+        assert_eq!(err.0, StatusCode::CONFLICT);
+
+        let resp = long_capture.await.unwrap().unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // 3. After completion, flag resets — new capture succeeds.
+        let resp = handle_cpu_profile(query(1, 100)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }

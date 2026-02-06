@@ -50,20 +50,6 @@ async fn server_shutdown(
     info!("Server shutting down!");
 }
 
-/// Builds the CPU profile report and writes it to `profile.pb` in the current directory.
-#[cfg(feature = "cpu_profiling")]
-fn write_cpu_profile(guard: pprof::ProfilerGuard<'_>) -> eyre::Result<()> {
-    use pprof::protos::Message;
-
-    let report = guard.report().build()?;
-    let profile = report.pprof()?;
-    let mut content = Vec::new();
-    profile.write_to_vec(&mut content)?;
-    std::fs::write("profile.pb", &content)?;
-    info!("CPU profile written to profile.pb");
-    Ok(())
-}
-
 /// Fetches the latest release version on github
 /// Returns None if there was an error when requesting the latest version
 async fn latest_release_version() -> Option<String> {
@@ -153,16 +139,6 @@ async fn main() -> eyre::Result<()> {
 
     let (log_filter_handler, _guard) = init_tracing(&opts);
 
-    #[cfg(feature = "cpu_profiling")]
-    let profiler_guard = {
-        let guard = pprof::ProfilerGuardBuilder::default()
-            .frequency(1000)
-            .build()
-            .expect("failed to build CPU profiler");
-        info!("CPU profiling enabled (1000 Hz), will write profile.pb at shutdown");
-        guard
-    };
-
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
 
@@ -183,11 +159,6 @@ async fn main() -> eyre::Result<()> {
         _ = signal_terminate.recv() => {
             server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
-    }
-
-    #[cfg(feature = "cpu_profiling")]
-    if let Err(e) = write_cpu_profile(profiler_guard) {
-        tracing::error!("Failed to write CPU profile: {e}");
     }
 
     Ok(())

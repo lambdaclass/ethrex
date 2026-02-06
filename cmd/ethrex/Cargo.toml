@@ -54,8 +54,6 @@ thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
 tracing-appender = "0.2"
-pprof = { version = "0.15", features = ["cpp", "protobuf-codec", "frame-pointer"], optional = true }
-
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 
@@ -126,8 +124,8 @@ sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
 
+cpu_profiling = ["ethrex-rpc/cpu_profiling"]
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
-cpu_profiling = ["dep:pprof"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }

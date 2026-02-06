@@ -40,6 +40,7 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = [
     "flamegraph",
     "symbolize",
 ] }
+pprof = { version = "0.15", features = ["cpp", "protobuf-codec", "frame-pointer"], optional = true }
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 
@@ -62,3 +63,4 @@ redundant_clone = "warn"
 
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
+cpu_profiling = ["dep:pprof"]
