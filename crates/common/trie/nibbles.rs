@@ -19,7 +19,6 @@ const NIBBLE_INLINE_CAP: usize = 0;
 
 // TODO: move path-tracking logic somewhere else
 /// Struct representing a list of nibbles (half-bytes).
-/// Uses SmallVec for stack allocation of common-size paths.
 #[derive(
     Debug,
     Clone,
@@ -318,14 +317,9 @@ impl Nibbles {
         }
         let len = packed[0] as usize;
         let mut data: SmallVec<[u8; NIBBLE_INLINE_CAP]> = SmallVec::with_capacity(len);
-        let bytes = &packed[1..];
-        for (i, &byte) in bytes.iter().enumerate() {
-            let high = byte >> 4;
-            let low = byte & 0x0F;
-            data.push(high);
-            if data.len() < len && i * 2 + 1 < len {
-                data.push(low);
-            }
+        for &byte in &packed[1..] {
+            data.push(byte >> 4);
+            data.push(byte & 0x0F);
         }
         data.truncate(len);
         Self {

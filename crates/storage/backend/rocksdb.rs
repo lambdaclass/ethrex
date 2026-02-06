@@ -11,8 +11,8 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options,
-    SnapshotWithThreadMode, WriteBatch,
+    BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
+    WriteBatch,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -148,7 +148,8 @@ impl RocksDBBackend {
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
+                ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES | ACCOUNT_FLATKEYVALUE
+                | STORAGE_FLATKEYVALUE => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
@@ -164,23 +165,6 @@ impl RocksDBBackend {
                     // effective for trie workloads in practice. Block cache adds
                     // overhead (index/filter competition, double-caching) without
                     // measurable benefit when the working set fits in page cache.
-                    // block_opts.set_block_cache(&block_cache);
-                    // block_opts.set_cache_index_and_filter_blocks(true);
-                    // block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-                    cf_opts.set_block_based_table_factory(&block_opts);
-                }
-                ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
-                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
-                    cf_opts.set_max_write_buffer_number(6);
-                    cf_opts.set_min_write_buffer_number_to_merge(2);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
-                    cf_opts.set_compression_type(trie_compression);
-                    cf_opts.set_compaction_style(trie_compaction_style);
-
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(15.0, false); // 15 bits per key (~0.1% FP)
                     // block_opts.set_block_cache(&block_cache);
                     // block_opts.set_cache_index_and_filter_blocks(true);
                     // block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);

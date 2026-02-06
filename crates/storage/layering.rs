@@ -54,6 +54,16 @@ impl fmt::Debug for TrieLayerCache {
 /// Default maximum memory for trie layer cache (512 MB).
 const DEFAULT_MAX_CACHE_MEMORY: usize = 512 * 1024 * 1024;
 
+/// Estimated per-entry overhead for FxHashMap (bucket pointer + padding).
+const HASHMAP_ENTRY_OVERHEAD: usize = 24;
+
+/// Estimates memory usage for a set of key-value entries including hash map overhead.
+fn estimate_entries_memory<'a>(entries: impl Iterator<Item = (&'a Vec<u8>, &'a Bytes)>) -> usize {
+    entries
+        .map(|(k, v)| k.len() + v.len() + HASHMAP_ENTRY_OVERHEAD)
+        .sum()
+}
+
 impl Default for TrieLayerCache {
     fn default() -> Self {
         Self {
@@ -167,8 +177,7 @@ impl TrieLayerCache {
             .map(|(path, value)| (path.into_vec(), Bytes::from(value)))
             .collect();
 
-        // Track estimated memory: key + value + FxHashMap entry overhead (~24 bytes)
-        let layer_memory: usize = nodes.iter().map(|(k, v)| k.len() + v.len() + 24).sum();
+        let layer_memory = estimate_entries_memory(nodes.iter());
         self.estimated_memory += layer_memory;
 
         self.last_id += 1;
@@ -213,11 +222,7 @@ impl TrieLayerCache {
         self.layers.retain(|_, item| {
             let keep = item.id > top_layer_id;
             if keep {
-                retained_memory += item
-                    .nodes
-                    .iter()
-                    .map(|(k, v)| k.len() + v.len() + 24)
-                    .sum::<usize>();
+                retained_memory += estimate_entries_memory(item.nodes.iter());
             }
             keep
         });
