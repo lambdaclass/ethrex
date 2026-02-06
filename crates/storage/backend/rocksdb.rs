@@ -340,18 +340,22 @@ impl StorageReadView for RocksDBReadTx {
         if keys.is_empty() {
             return Ok(vec![]);
         }
-        let cf_keys: Vec<_> = keys
+        // Resolve CF handles first, then pass (&cf, key) tuples to multi_get_cf.
+        let cf_handles: Vec<_> = keys
             .iter()
-            .map(|(table, key)| {
-                let cf = self
-                    .db
+            .map(|(table, _)| {
+                self.db
                     .cf_handle(table)
-                    .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-                Ok((cf, *key))
+                    .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
         self.db
-            .multi_get_cf(&cf_keys)
+            .multi_get_cf(
+                cf_handles
+                    .iter()
+                    .zip(keys.iter())
+                    .map(|(cf, (_, key))| (cf, *key)),
+            )
             .into_iter()
             .map(|r| r.map_err(|e| StoreError::Custom(format!("multi_get error: {e}"))))
             .collect()
