@@ -2690,15 +2690,9 @@ fn get_tests_private_keys() -> Vec<SecretKey> {
     let private_keys_file_path = test_private_keys_path();
     let pks =
         read_to_string(private_keys_file_path).expect("Failed to read tests private keys file");
-    let private_keys: Vec<String> = pks
-        .lines()
+    pks.lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| line.trim().to_string())
-        .collect();
-
-    private_keys
-        .iter()
-        .map(|pk| parse_private_key(pk).expect("Failed to parse private key"))
+        .map(|line| parse_private_key(line.trim()).expect("Failed to parse private key"))
         .collect()
 }
 
@@ -2709,14 +2703,9 @@ async fn get_rich_accounts_balance(
     let private_keys_file_path = rich_keys_file_path();
 
     let pks = read_to_string(private_keys_file_path)?;
-    let private_keys: Vec<String> = pks
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.trim().to_string())
-        .collect();
 
-    for pk in private_keys.iter() {
-        let secret_key = parse_private_key(pk)?;
+    for line in pks.lines().filter(|line| !line.trim().is_empty()) {
+        let secret_key = parse_private_key(line.trim())?;
         let address = get_address_from_secret_key(&secret_key.secret_bytes())?;
         let get_balance = l2_client
             .get_balance(address, BlockIdentifier::Tag(BlockTag::Latest))

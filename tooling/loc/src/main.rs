@@ -21,7 +21,6 @@ fn count_crates_loc(crates_path: &PathBuf, config: &Config) -> Vec<(String, usiz
             std::fs::read_dir(crates_path.join(nested_dir))
                 .unwrap()
                 .filter_map(|e| e.ok())
-                .collect::<Vec<DirEntry>>()
         })
         .collect();
 

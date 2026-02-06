@@ -398,11 +398,10 @@ impl Store {
         // TODO: Implement read bulk
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let numbers: Vec<BlockNumber> = (from..=to).collect();
             let mut block_bodies = Vec::new();
 
             let txn = backend.begin_read()?;
-            for number in numbers {
+            for number in from..=to {
                 let Some(hash) = txn
                     .get(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?
                     .map(|bytes| H256::decode(bytes.as_slice()))

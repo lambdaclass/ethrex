@@ -798,8 +798,7 @@ impl PeerTableServer {
                     Some(*node_id)
                 }
             })
-            .collect::<Vec<_>>()
-            .len()
+            .count()
     }
 
     fn get_peer_connections(&self, capabilities: Vec<Capability>) -> Vec<(H256, PeerConnection)> {
