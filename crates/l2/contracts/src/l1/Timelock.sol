@@ -32,6 +32,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
     }
 
     /// @notice Disables the parent initialize function to prevent accidental misuse.
+    /// @custom:oz-upgrades-unsafe-allow missing-initializer-call
     function initialize(
         uint256,
         address[] memory,

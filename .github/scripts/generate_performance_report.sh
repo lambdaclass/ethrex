@@ -37,6 +37,53 @@ if [[ "$result_count" -eq 0 ]]; then
   exit 1
 fi
 
+# Query version information from eth_exe_web3_client_version metric
+VERSION_QUERY="eth_exe_web3_client_version"
+version_curl_args=(-sS -G "$QUERY_URL" --data-urlencode "query=$VERSION_QUERY")
+if [[ -n "${PERF_PROMETHEUS_BEARER_TOKEN:-}" ]]; then
+  version_curl_args+=(-H "Authorization: Bearer $PERF_PROMETHEUS_BEARER_TOKEN")
+fi
+if [[ -n "${PERF_PROMETHEUS_BASIC_AUTH:-}" ]]; then
+  version_curl_args+=(-u "$PERF_PROMETHEUS_BASIC_AUTH")
+fi
+
+version_response=$(curl "${version_curl_args[@]}")
+
+# Extract version for each client by instance pattern (bash 3.2 compatible)
+# Extracts only the version portion (e.g., "v1.2.3" from "Client/v1.2.3/platform")
+get_version_by_instance() {
+  local instance_pattern="$1"
+  jq -r --arg pattern "$instance_pattern" '
+    .data.result[] | select(.metric.instance | test($pattern)) | .metric.version // "unknown" | split("/")[1] // "unknown"
+  ' <<<"$version_response" 2>/dev/null | head -1
+}
+
+# Truncate version string if longer than max length
+truncate_version() {
+  local version="$1"
+  local max_len="${2:-24}"
+  if [[ ${#version} -gt $max_len ]]; then
+    echo "${version:0:$((max_len-3))}..."
+  else
+    echo "$version"
+  fi
+}
+
+version_ethrex=$(get_version_by_instance "^ethrex-mainnet-1:")
+version_reth=$(get_version_by_instance "^reth-mainnet-1:")
+version_geth=$(get_version_by_instance "^geth-mainnet-1:")
+version_nethermind=$(get_version_by_instance "^nethermind-mainnet-1:")
+: "${version_ethrex:=unknown}"
+: "${version_reth:=unknown}"
+: "${version_geth:=unknown}"
+: "${version_nethermind:=unknown}"
+
+# Truncated versions for Slack table display
+version_ethrex_short=$(truncate_version "$version_ethrex")
+version_reth_short=$(truncate_version "$version_reth")
+version_geth_short=$(truncate_version "$version_geth")
+version_nethermind_short=$(truncate_version "$version_nethermind")
+
 raw_series=()
 while IFS= read -r line; do
   raw_series+=("$line")
@@ -52,14 +99,13 @@ done < <(jq -r '
   ' <<<"$response")
 ethrex_value=""
 nether_value=""
-reth_p50=""
-reth_p999=""
+reth_value=""
 geth_p50=""
 geth_p999=""
-reth_host=""
 geth_host=""
 ethrex_host=""
 nether_host=""
+reth_host=""
 extra_lines=()
 slack_extra_lines=()
 for row in "${raw_series[@]}"; do
@@ -79,12 +125,8 @@ for row in "${raw_series[@]}"; do
       ethrex_value="$series_value"
       ethrex_host="$host"
       ;;
-    reth:p50)
-      reth_p50="$series_value"
-      reth_host="$host"
-      ;;
-    reth:p99.9)
-      reth_p999="$series_value"
+    reth:mean)
+      reth_value="$series_value"
       reth_host="$host"
       ;;
     geth:p50)
@@ -108,53 +150,88 @@ for row in "${raw_series[@]}"; do
   esac
 done
 
-ordered_lines=()
-if [[ -n "$ethrex_value" ]]; then
-  ordered_lines+=("$(printf "* ethrex: %.3f Ggas/s (mean)\n  %s" "$ethrex_value" "$ethrex_host")")
-fi
-if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
-  ordered_lines+=("$(printf "* reth: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s" "${reth_p50:-0}" "${reth_p999:-0}" "$reth_host")")
-fi
-if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-  ordered_lines+=("$(printf "* geth: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s" "${geth_p50:-0}" "${geth_p999:-0}" "$geth_host")")
-fi
-if [[ -n "$nether_value" ]]; then
-  ordered_lines+=("$(printf "* nethermind: %.3f Ggas/s (mean)\n  %s" "$nether_value" "$nether_host")")
-fi
-ordered_lines+=("${extra_lines[@]:-}")
-
-ordered_slack_lines=()
-if [[ -n "$ethrex_value" ]]; then
-  ordered_slack_lines+=("$(printf "• *ethrex*: %.3f Ggas/s (mean)\n    %s" "$ethrex_value" "$ethrex_host")")
-fi
-if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
-  ordered_slack_lines+=("$(printf "• *reth*: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n    %s" "${reth_p50:-0}" "${reth_p999:-0}" "$reth_host")")
-fi
-if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-  ordered_slack_lines+=("$(printf "• *geth*: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n    %s" "${geth_p50:-0}" "${geth_p999:-0}" "$geth_host")")
-fi
-if [[ -n "$nether_value" ]]; then
-  ordered_slack_lines+=("$(printf "• *nethermind*: %.3f Ggas/s (mean)\n    %s" "$nether_value" "$nether_host")")
-fi
-ordered_slack_lines+=("${slack_extra_lines[@]:-}")
-
 header_text="Daily performance report (24-hour average)"
+
+# Generate text report for GitHub/Telegram (full version on separate line)
+# Sorted by performance value (descending)
 {
   echo "# ${header_text}"
   echo
-  printf '%s\n' "${ordered_lines[@]}"
+
+  # Build sortable entries: "value client"
+  sort_entries=()
+  if [[ -n "$ethrex_value" ]]; then
+    sort_entries+=("$ethrex_value ethrex")
+  fi
+  if [[ -n "$reth_value" ]]; then
+    sort_entries+=("$reth_value reth")
+  fi
+  if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
+    sort_entries+=("${geth_p50:-0} geth")
+  fi
+  if [[ -n "$nether_value" ]]; then
+    sort_entries+=("$nether_value nethermind")
+  fi
+
+  # Sort by value and print each client
+  while read -r value client; do
+    case "$client" in
+      ethrex)
+        printf "• ethrex: %.3f Ggas/s (mean)\n  %s\n" "$ethrex_value" "$version_ethrex"
+        ;;
+      reth)
+        printf "• reth: %.3f Ggas/s (mean)\n  %s\n" "$reth_value" "$version_reth"
+        ;;
+      geth)
+        printf "• geth: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s\n" "${geth_p50:-0}" "${geth_p999:-0}" "$version_geth"
+        ;;
+      nethermind)
+        printf "• nethermind: %.3f Ggas/s (mean)\n  %s\n" "$nether_value" "$version_nethermind"
+        ;;
+    esac
+  done < <(printf '%s\n' "${sort_entries[@]}" | LC_ALL=C sort -rn)
 } >"${OUTPUT_DIR}/performance_report_github.txt"
 
-series_text=""
-for entry in "${ordered_slack_lines[@]}"; do
-  if [[ -n "$series_text" ]]; then
-    series_text+=$'\n\n'
-  fi
-  series_text+="$entry"
-done
-jq -n --arg header "$header_text" --arg series "$series_text" '{
+# Generate Slack message (simple format, similar to Telegram)
+# Sorted by performance value (descending)
+slack_text=""
+
+# Build sortable entries: "value client"
+slack_sort_entries=()
+if [[ -n "$ethrex_value" ]]; then
+  slack_sort_entries+=("$ethrex_value ethrex")
+fi
+if [[ -n "$reth_value" ]]; then
+  slack_sort_entries+=("$reth_value reth")
+fi
+if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
+  slack_sort_entries+=("${geth_p50:-0} geth")
+fi
+if [[ -n "$nether_value" ]]; then
+  slack_sort_entries+=("$nether_value nethermind")
+fi
+
+# Sort by value and append each client entry
+while read -r value client; do
+  case "$client" in
+    ethrex)
+      slack_text+=$(printf "• *ethrex*: %.3f Ggas/s (mean)\n  %s" "$ethrex_value" "$version_ethrex")$'\n'
+      ;;
+    reth)
+      slack_text+=$(printf "• *reth*: %.3f Ggas/s (mean)\n  %s" "$reth_value" "$version_reth")$'\n'
+      ;;
+    geth)
+      slack_text+=$(printf "• *geth*: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s" "${geth_p50:-0}" "${geth_p999:-0}" "$version_geth")$'\n'
+      ;;
+    nethermind)
+      slack_text+=$(printf "• *nethermind*: %.3f Ggas/s (mean)\n  %s" "$nether_value" "$version_nethermind")$'\n'
+      ;;
+  esac
+done < <(printf '%s\n' "${slack_sort_entries[@]}" | LC_ALL=C sort -rn)
+
+jq -n --arg header "$header_text" --arg text "$slack_text" '{
   "blocks": [
     { "type": "header", "text": { "type": "plain_text", "text": $header } },
-    { "type": "section", "text": { "type": "mrkdwn", "text": $series } }
+    { "type": "section", "text": { "type": "mrkdwn", "text": $text } }
   ]
 }' >"${OUTPUT_DIR}/performance_report_slack.json"

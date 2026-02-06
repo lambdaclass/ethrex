@@ -150,7 +150,7 @@ impl From<RpcErr> for RpcErrorMetadata {
             RpcErr::InvalidPayloadAttributes(data) => RpcErrorMetadata {
                 code: -38003,
                 data: Some(data),
-                message: "Invalid forkchoice state".to_string(),
+                message: "Invalid payload attributes".to_string(),
             },
             RpcErr::UnknownPayload(context) => RpcErrorMetadata {
                 code: -38001,
@@ -321,6 +321,14 @@ pub struct RpcErrorResponse {
     pub jsonrpc: String,
     /// Error details including code and message.
     pub error: RpcErrorMetadata,
+}
+
+/// A JSON-RPC 2.0 response, either success or error.
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum RpcResponse {
+    Success(RpcSuccessResponse),
+    Error(RpcErrorResponse),
 }
 
 /// Failure to read from DB will always constitute an internal error

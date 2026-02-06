@@ -2,68 +2,20 @@ use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, serde_utils,
+    Address, H256,
     types::{
         AccountState, BlockHeader, ChainConfig,
-        block_execution_witness::{ExecutionWitness, GuestProgramStateError},
+        block_execution_witness::{ExecutionWitness, GuestProgramStateError, RpcExecutionWitness},
     },
     utils::keccak,
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::hash_address;
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError};
-use serde::{Deserialize, Serialize};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie};
 use serde_json::Value;
 use tracing::debug;
 
 use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifier};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RpcExecutionWitness {
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    pub state: Vec<Bytes>,
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    pub keys: Vec<Bytes>,
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    pub codes: Vec<Bytes>,
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    pub headers: Vec<Bytes>,
-}
-
-impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
-    type Error = TrieError;
-    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
-        let mut nodes = Vec::new();
-        if let Some(state_trie_root) = value.state_trie_root {
-            state_trie_root.encode_subtrie(&mut nodes)?;
-        }
-        for node in value.storage_trie_roots.values() {
-            node.encode_subtrie(&mut nodes)?;
-        }
-        Ok(Self {
-            state: nodes.into_iter().map(Bytes::from).collect(),
-            keys: value.keys.into_iter().map(Bytes::from).collect(),
-            codes: value.codes.into_iter().map(Bytes::from).collect(),
-            headers: value
-                .block_headers_bytes
-                .into_iter()
-                .map(Bytes::from)
-                .collect(),
-        })
-    }
-}
 
 // TODO: Ideally this would be a try_from but crate dependencies complicate this matter
 // This function is used by ethrex-replay
@@ -236,17 +188,15 @@ impl RpcHandler for ExecutionWitnessRequest {
 
         if blocks.len() == 1 {
             // Check if we have a cached witness for this block
+            // Use raw JSON bytes path to avoid deserialization + re-serialization
             let block = &blocks[0];
-            if let Some(witness) = context
+            if let Some(json_bytes) = context
                 .storage
-                .get_witness_by_number_and_hash(block.header.number, block.hash())?
+                .get_witness_json_bytes(block.header.number, block.hash())?
             {
-                let rpc_execution_witness =
-                    RpcExecutionWitness::try_from(witness).map_err(|e| {
-                        RpcErr::Internal(format!("Failed to create rpc execution witness {e}"))
-                    })?;
-                return serde_json::to_value(rpc_execution_witness)
-                    .map_err(|error| RpcErr::Internal(error.to_string()));
+                // Parse directly to Value - witness is already in RPC format
+                return serde_json::from_slice(&json_bytes)
+                    .map_err(|e| RpcErr::Internal(format!("Failed to parse cached witness: {e}")));
             }
         }
 

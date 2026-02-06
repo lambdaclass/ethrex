@@ -8,7 +8,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
+use std::{array::TryFromSliceError, fmt::Display, net::SocketAddr};
 
 use crate::types::NodeRecord;
 
@@ -36,6 +36,10 @@ pub const DISTANCES_PER_FIND_NODE_MSG: u8 = 3;
 pub enum PacketCodecError {
     #[error("RLP decoding error")]
     RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Packet header decoding error")]
+    InvalidHeader,
+    #[error("Message decoding error, message type: {0}")]
+    InvalidMessage(u8),
     #[error("Invalid packet size")]
     InvalidSize,
     #[error("Session not established yet")]
@@ -78,7 +82,8 @@ impl Packet {
 
         let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
 
-        let header = PacketHeader::decode(&mut cipher, encoded_packet)?;
+        let header = PacketHeader::decode(&mut cipher, encoded_packet)
+            .map_err(|_e| PacketCodecError::InvalidHeader)?;
         let encrypted_message = encoded_packet[header.header_end_offset..].to_vec();
         Ok(Packet {
             masking_iv: masking_iv.try_into()?,
@@ -258,38 +263,40 @@ impl Ordinary {
         if packet.header.authdata.len() != 32 {
             return Err(PacketCodecError::InvalidSize);
         }
-        if decrypt_key.len() < 16 {
-            return Err(PacketCodecError::InvalidSize);
-        }
-
-        // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
-        // message-pt = message-type || message-data
-        // message-ad = masking-iv || header
-        let mut message_ad = packet.masking_iv.to_vec();
-        message_ad.extend_from_slice(packet.header.static_header.as_slice());
-        message_ad.extend_from_slice(&packet.header.authdata);
 
         let mut message = packet.encrypted_message.to_vec();
-        Self::decrypt(decrypt_key, &packet.header.nonce, &mut message, message_ad)?;
+        decrypt_message(decrypt_key, packet, &mut message)?;
 
         let src_id = H256::from_slice(&packet.header.authdata);
 
-        let message = Message::decode(&message)?;
+        let message = Message::decode(&message).map_err(|_e| {
+            PacketCodecError::InvalidMessage(message.first().copied().unwrap_or(0))
+        })?;
         Ok(Ordinary { src_id, message })
     }
+}
 
-    fn decrypt(
-        key: &[u8],
-        nonce: &[u8; 12],
-        message: &mut Vec<u8>,
-        message_ad: Vec<u8>,
-    ) -> Result<(), PacketCodecError> {
-        let mut cipher = Aes128Gcm::new(key[..16].into());
-        cipher
-            .decrypt_in_place(nonce.as_slice().into(), &message_ad, message)
-            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
-        Ok(())
+/// Decrypts a message using AES-128-GCM.
+/// The message is decrypted in place.
+pub fn decrypt_message(
+    key: &[u8],
+    packet: &Packet,
+    message: &mut Vec<u8>,
+) -> Result<(), PacketCodecError> {
+    if key.len() < 16 {
+        return Err(PacketCodecError::InvalidSize);
     }
+
+    // message-ad = masking-iv || static-header || authdata
+    let mut message_ad = packet.masking_iv.to_vec();
+    message_ad.extend_from_slice(&packet.header.static_header);
+    message_ad.extend_from_slice(&packet.header.authdata);
+
+    let mut cipher = Aes128Gcm::new(key[..16].into());
+    cipher
+        .decrypt_in_place(packet.header.nonce.as_slice().into(), &message_ad, message)
+        .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,6 +341,60 @@ impl WhoAreYou {
         let enr_seq = u64::from_be_bytes(authdata[16..].try_into()?);
 
         Ok(WhoAreYou { id_nonce, enr_seq })
+    }
+}
+
+/// Parsed handshake authdata, used for signature verification and session key derivation
+/// before decrypting the message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandshakeAuthdata {
+    pub src_id: H256,
+    pub id_signature: Vec<u8>,
+    pub eph_pubkey: Vec<u8>,
+    pub record: Option<NodeRecord>,
+}
+
+impl HandshakeAuthdata {
+    /// Decodes the authdata from a handshake packet header.
+    /// This can be called before decryption to extract the ephemeral public key
+    /// needed for session key derivation.
+    pub fn decode(authdata: &[u8]) -> Result<Self, PacketCodecError> {
+        if authdata.len() < HANDSHAKE_AUTHDATA_HEAD {
+            return Err(PacketCodecError::InvalidSize);
+        }
+
+        let src_id = H256::from_slice(&authdata[..32]);
+        let sig_size = authdata[32] as usize;
+        let eph_key_size = authdata[33] as usize;
+
+        let authdata_head = HANDSHAKE_AUTHDATA_HEAD + sig_size + eph_key_size;
+        if authdata.len() < authdata_head {
+            return Err(PacketCodecError::InvalidSize);
+        }
+
+        let id_signature =
+            authdata[HANDSHAKE_AUTHDATA_HEAD..HANDSHAKE_AUTHDATA_HEAD + sig_size].to_vec();
+
+        let eph_key_start = HANDSHAKE_AUTHDATA_HEAD + sig_size;
+        let eph_pubkey = authdata[eph_key_start..authdata_head].to_vec();
+
+        let record = if authdata.len() > authdata_head {
+            let record_bytes = &authdata[authdata_head..];
+            if record_bytes.is_empty() {
+                None
+            } else {
+                Some(NodeRecord::decode(record_bytes)?)
+            }
+        } else {
+            None
+        };
+
+        Ok(HandshakeAuthdata {
+            src_id,
+            id_signature,
+            eph_pubkey,
+            record,
+        })
     }
 }
 
@@ -383,72 +444,33 @@ impl PacketTrait for Handshake {
 }
 
 impl Handshake {
+    /// Decodes a handshake packet, including decrypting the message.
     pub fn decode(packet: &Packet, decrypt_key: &[u8]) -> Result<Handshake, PacketCodecError> {
-        if decrypt_key.len() < 16 {
-            return Err(PacketCodecError::InvalidSize);
-        }
-        let PacketHeader {
-            static_header,
-            nonce,
-            authdata,
-            ..
-        } = &packet.header;
+        let authdata = HandshakeAuthdata::decode(&packet.header.authdata)?;
 
-        if authdata.len() < HANDSHAKE_AUTHDATA_HEAD {
-            return Err(PacketCodecError::InvalidSize);
-        }
-
-        let src_id = H256::from_slice(&authdata[..32]);
-        let sig_size = authdata[32] as usize;
-        let eph_key_size = authdata[33] as usize;
-
-        let authdata_head = HANDSHAKE_AUTHDATA_HEAD + sig_size + eph_key_size;
-        if authdata.len() < authdata_head {
-            return Err(PacketCodecError::InvalidSize);
-        }
-
-        let id_signature =
-            authdata[HANDSHAKE_AUTHDATA_HEAD..HANDSHAKE_AUTHDATA_HEAD + sig_size].to_vec();
-
-        // TODO
-        // When node B receives the handshake message packet, it first loads the node record and WHOAREYOU challenge which it sent and stored earlier.
-        //
-        // If node B did not have the node record of node A, the handshake message packet must contain a node record.
-        // A record may also be present if node A determined that its record is newer than B's current copy.
-        // If the packet contains a node record, B must first validate it by checking the record's signature.
-        //
-        // Node B then verifies the id-signature against the identity public key of A's record.
-        // SECP256K1.verify_ecdsa(msg, sig, pk);
-
-        let eph_key_start = HANDSHAKE_AUTHDATA_HEAD + sig_size;
-        let eph_pubkey = authdata[eph_key_start..authdata_head].to_vec();
-
-        let record = if authdata.len() > authdata_head {
-            let record_bytes = &authdata[authdata_head..];
-            if record_bytes.is_empty() {
-                None
-            } else {
-                Some(NodeRecord::decode(record_bytes)?)
-            }
-        } else {
-            None
-        };
-
-        let mut message_ad = packet.masking_iv.to_vec();
-        message_ad.extend_from_slice(static_header);
-        message_ad.extend_from_slice(authdata);
-
-        let mut message = packet.encrypted_message.to_vec();
-        Ordinary::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
-        let message = Message::decode(&message)?;
+        let mut encrypted = packet.encrypted_message.to_vec();
+        decrypt_message(decrypt_key, packet, &mut encrypted)?;
+        let message = Message::decode(&encrypted)?;
 
         Ok(Handshake {
-            src_id,
-            id_signature,
-            eph_pubkey,
-            record,
+            src_id: authdata.src_id,
+            id_signature: authdata.id_signature,
+            eph_pubkey: authdata.eph_pubkey,
+            record: authdata.record,
             message,
         })
+    }
+
+    /// Creates a Handshake from pre-parsed authdata and a decrypted message.
+    /// Useful when authdata was already parsed for signature verification.
+    pub fn from_authdata(authdata: HandshakeAuthdata, message: Message) -> Self {
+        Handshake {
+            src_id: authdata.src_id,
+            id_signature: authdata.id_signature,
+            eph_pubkey: authdata.eph_pubkey,
+            record: authdata.record,
+            message,
+        }
     }
 }
 
@@ -490,35 +512,35 @@ impl Message {
         }
     }
 
-    pub fn decode(encrypted_message: &[u8]) -> Result<Message, RLPDecodeError> {
-        let message_type = encrypted_message[0];
+    pub fn decode(message: &[u8]) -> Result<Message, RLPDecodeError> {
+        let &message_type = message.first().ok_or(RLPDecodeError::InvalidLength)?;
         match message_type {
             0x01 => {
-                let ping = PingMessage::decode(&encrypted_message[1..])?;
+                let ping = PingMessage::decode(&message[1..])?;
                 Ok(Message::Ping(ping))
             }
             0x02 => {
-                let pong = PongMessage::decode(&encrypted_message[1..])?;
+                let pong = PongMessage::decode(&message[1..])?;
                 Ok(Message::Pong(pong))
             }
             0x03 => {
-                let find_node_msg = FindNodeMessage::decode(&encrypted_message[1..])?;
+                let find_node_msg = FindNodeMessage::decode(&message[1..])?;
                 Ok(Message::FindNode(find_node_msg))
             }
             0x04 => {
-                let nodes_msg = NodesMessage::decode(&encrypted_message[1..])?;
+                let nodes_msg = NodesMessage::decode(&message[1..])?;
                 Ok(Message::Nodes(nodes_msg))
             }
             0x05 => {
-                let talk_req_msg = TalkReqMessage::decode(&encrypted_message[1..])?;
+                let talk_req_msg = TalkReqMessage::decode(&message[1..])?;
                 Ok(Message::TalkReq(talk_req_msg))
             }
             0x06 => {
-                let enr_response_msg = TalkResMessage::decode(&encrypted_message[1..])?;
+                let enr_response_msg = TalkResMessage::decode(&message[1..])?;
                 Ok(Message::TalkRes(enr_response_msg))
             }
             0x08 => {
-                let ticket_msg = TicketMessage::decode(&encrypted_message[1..])?;
+                let ticket_msg = TicketMessage::decode(&message[1..])?;
                 Ok(Message::Ticket(ticket_msg))
             }
             _ => Err(RLPDecodeError::MalformedData),
@@ -577,7 +599,7 @@ impl RLPDecode for PingMessage {
 pub struct PongMessage {
     pub req_id: Bytes,
     pub enr_seq: u64,
-    pub recipient_addr: IpAddr,
+    pub recipient_addr: SocketAddr,
 }
 
 impl RLPEncode for PongMessage {
@@ -585,23 +607,26 @@ impl RLPEncode for PongMessage {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&self.enr_seq)
-            .encode_field(&self.recipient_addr)
+            .encode_field(&self.recipient_addr.ip())
+            .encode_field(&self.recipient_addr.port())
             .finish();
     }
 }
 
 impl RLPDecode for PongMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        use std::net::IpAddr;
         let decoder = Decoder::new(rlp)?;
         let (req_id, decoder) = decoder.decode_field("req_id")?;
         let (enr_seq, decoder) = decoder.decode_field("enr_seq")?;
-        let (recipient_addr, decoder) = decoder.decode_field("recipient_addr")?;
+        let (recipient_ip, decoder): (IpAddr, _) = decoder.decode_field("recipient_ip")?;
+        let (recipient_port, decoder): (u16, _) = decoder.decode_field("recipient_port")?;
 
         Ok((
             Self {
                 req_id,
                 enr_seq,
-                recipient_addr,
+                recipient_addr: SocketAddr::new(recipient_ip, recipient_port),
             },
             decoder.finish()?,
         ))
@@ -791,7 +816,10 @@ mod tests {
     use ethrex_common::{H264, H512};
     use hex_literal::hex;
     use secp256k1::SecretKey;
-    use std::{net::Ipv4Addr, str::FromStr};
+    use std::{
+        net::{Ipv4Addr, SocketAddr},
+        str::FromStr,
+    };
 
     // node-a-key = 0xeef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f
     // node-b-key = 0x66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628
@@ -1075,6 +1103,7 @@ mod tests {
             &src_id,
             &dest_id,
             &challenge_data,
+            true, // initiator
         );
 
         let expected_read_key = hex!("4f9fac6de7567d1e3b1241dffe90f662");
@@ -1256,6 +1285,7 @@ mod tests {
             &src_id,
             &dest_id,
             &challenge_data,
+            true, // initiator
         );
 
         let expected_read_key = hex!("53b1c075f41876423154e157470c2f48");
@@ -1536,7 +1566,7 @@ mod tests {
         let pkt = PongMessage {
             req_id: Bytes::from_static(&[1, 2, 3, 4]),
             enr_seq: 4321,
-            recipient_addr: Ipv4Addr::BROADCAST.into(),
+            recipient_addr: SocketAddr::new(Ipv4Addr::BROADCAST.into(), 30303),
         };
 
         let buf = pkt.encode_to_vec();

@@ -1,8 +1,8 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, init_datadir, is_memory_datadir,
-        parse_socket_addr, read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_client_version, get_client_version_string, init_datadir,
+        is_memory_datadir, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -379,7 +379,7 @@ async fn create_stub_p2p_layer(
     let localhost = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
     let local_node = Node::new(localhost, 0, 0, ethrex_common::H512::zero());
     let signer = SecretKey::new(&mut OsRng);
-    let peer_table = PeerTable::spawn(1);
+    let peer_table = PeerTable::spawn(1, store.clone());
 
     let p2p_context = P2PContext::new(
         local_node.clone(),
@@ -600,7 +600,7 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.target_peers);
+    let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -614,7 +614,7 @@ pub async fn init_l1(
         peer_table.clone(),
         store.clone(),
         blockchain.clone(),
-        get_client_version(),
+        get_client_version_string(),
         None,
         opts.tx_broadcasting_time_interval,
         opts.lookup_interval,

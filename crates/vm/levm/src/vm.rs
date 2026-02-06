@@ -22,9 +22,10 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
+use rustc_hash::FxHashSet;
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     mem,
     rc::Rc,
 };
@@ -66,13 +67,13 @@ pub struct Substate {
     /// Parent checkpoint for reverting on failure.
     parent: Option<Box<Self>>,
     /// Accounts marked for self-destruction (deleted at end of transaction).
-    selfdestruct_set: HashSet<Address>,
+    selfdestruct_set: FxHashSet<Address>,
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
-    accessed_addresses: HashSet<Address>,
+    accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
     accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     /// Accounts created during this transaction.
-    created_accounts: HashSet<Address>,
+    created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
     pub refunded_gas: u64,
     /// Transient storage (EIP-1153), cleared at end of transaction.
@@ -83,16 +84,16 @@ pub struct Substate {
 
 impl Substate {
     pub fn from_accesses(
-        accessed_addresses: HashSet<Address>,
+        accessed_addresses: FxHashSet<Address>,
         accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
 
-            selfdestruct_set: HashSet::new(),
+            selfdestruct_set: FxHashSet::default(),
             accessed_addresses,
             accessed_storage_slots,
-            created_accounts: HashSet::new(),
+            created_accounts: FxHashSet::default(),
             refunded_gas: 0,
             transient_storage: TransientStorage::new(),
             logs: Vec::new(),
@@ -686,12 +687,21 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_context(&ctx_result, true)?;
 
+        // Only include logs if transaction succeeded. When a transaction reverts,
+        // no logs should be emitted (including EIP-7708 Transfer logs).
+        let logs = if ctx_result.is_success() {
+            self.substate.extract_logs()
+        } else {
+            Vec::new()
+        };
+
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
             gas_used: ctx_result.gas_used,
+            gas_spent: ctx_result.gas_spent,
             gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut ctx_result.output),
-            logs: self.substate.extract_logs(),
+            logs,
         };
 
         Ok(report)
@@ -702,7 +712,7 @@ impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = HashSet::new();
+        let mut initial_accessed_addresses = FxHashSet::default();
         let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
 
         // Add Tx sender to accessed accounts

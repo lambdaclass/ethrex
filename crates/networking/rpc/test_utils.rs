@@ -1,6 +1,13 @@
+//! Test utilities for the ethrex-rpc crate.
+//!
+//! This module provides helper functions and test fixtures for testing RPC functionality.
+//! It is primarily intended for use in integration tests.
+
+#![allow(clippy::unwrap_used)]
+
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
-    rpc::{NodeData, RpcApiContext, start_api, start_block_executor},
+    rpc::{ClientVersion, NodeData, RpcApiContext, start_api, start_block_executor},
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -235,14 +242,21 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             http_addr,
             Some(ws_addr),
             Some(authrpc_addr),
-            storage,
-            blockchain,
+            storage.clone(),
+            blockchain.clone(),
             jwt_secret,
             local_p2p_node,
             local_node_record,
             dummy_sync_manager().await,
-            dummy_peer_handler().await,
-            "ethrex/test".to_string(),
+            dummy_peer_handler(storage).await,
+            ClientVersion::new(
+                "ethrex".to_string(),
+                "0.1.0".to_string(),
+                "test".to_string(),
+                "abcd1234".to_string(),
+                "x86_64-unknown-linux".to_string(),
+                "1.70.0".to_string(),
+            ),
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
@@ -258,16 +272,23 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
     let local_node_record = example_local_node_record();
     let block_worker_channel = start_block_executor(blockchain.clone());
     RpcApiContext {
-        storage,
-        blockchain,
+        storage: storage.clone(),
+        blockchain: blockchain.clone(),
         active_filters: Default::default(),
         syncer: Some(Arc::new(dummy_sync_manager().await)),
-        peer_handler: Some(dummy_peer_handler().await),
+        peer_handler: Some(dummy_peer_handler(storage).await),
         node_data: NodeData {
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
             local_node_record,
-            client_version: "ethrex/test".to_string(),
+            client_version: ClientVersion::new(
+                "ethrex".to_string(),
+                "0.1.0".to_string(),
+                "test".to_string(),
+                "abcd1234".to_string(),
+                "x86_64-unknown-linux".to_string(),
+                "1.70.0".to_string(),
+            ),
             extra_data: Bytes::new(),
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
@@ -281,13 +302,13 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
 /// Creates a dummy SyncManager for tests where syncing is not needed
 /// This should only be used in tests as it won't be able to connect to the p2p network
 pub async fn dummy_sync_manager() -> SyncManager {
+    let store = Store::new("", EngineType::InMemory).expect("Failed to start Store Engine");
+    let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
     SyncManager::new(
-        dummy_peer_handler().await,
+        dummy_peer_handler(store).await,
         &SyncMode::Full,
         CancellationToken::new(),
-        Arc::new(Blockchain::default_with_store(
-            Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
-        )),
+        blockchain,
         Store::new("temp.db", ethrex_storage::EngineType::InMemory)
             .expect("Failed to start Storage Engine"),
         ".".into(),
@@ -297,8 +318,8 @@ pub async fn dummy_sync_manager() -> SyncManager {
 
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
-pub async fn dummy_peer_handler() -> PeerHandler {
-    let peer_table = PeerTable::spawn(TARGET_PEERS);
+pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
+    let peer_table = PeerTable::spawn(TARGET_PEERS, store);
     PeerHandler::new(peer_table.clone(), dummy_gen_server(peer_table).await)
 }
 

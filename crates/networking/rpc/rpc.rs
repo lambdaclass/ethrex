@@ -1,12 +1,15 @@
 use crate::authentication::authenticate;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
-use crate::engine::payload::GetPayloadV5Request;
+use crate::engine::client_version::GetClientVersionV1Request;
+use crate::engine::payload::{GetPayloadV5Request, NewPayloadV5Request};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
-    fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
+    fork_choice::{
+        ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3, ForkChoiceUpdatedV4,
+    },
     payload::{
         GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
@@ -201,6 +204,62 @@ pub struct RpcApiContext {
     pub dev_tx_sender: Option<UnboundedSender<(Box<Transaction>, Option<BlobsBundle>)>>,
 }
 
+/// Client version information used for identification in the Engine API and P2P.
+///
+/// This struct contains the individual components of the client version, which are
+/// used by `engine_getClientVersionV1` and other identification endpoints.
+///
+/// Implements `Display` to return the pre-formatted version string.
+#[derive(Debug, Clone)]
+pub struct ClientVersion {
+    /// Client name (e.g., "ethrex").
+    pub name: String,
+    /// Semantic version (e.g., "0.1.0").
+    pub version: String,
+    /// Git branch name (e.g., "main").
+    pub branch: String,
+    /// Git commit hash (full SHA).
+    pub commit: String,
+    /// OS and architecture (e.g., "x86_64-apple-darwin").
+    pub os_arch: String,
+    /// Rust compiler version (e.g., "1.70.0").
+    pub rustc_version: String,
+    /// Pre-formatted version string for efficient Display.
+    formatted: String,
+}
+
+impl ClientVersion {
+    /// Creates a new ClientVersion with all fields and a pre-formatted string.
+    pub fn new(
+        name: String,
+        version: String,
+        branch: String,
+        commit: String,
+        os_arch: String,
+        rustc_version: String,
+    ) -> Self {
+        let formatted = format!(
+            "{}/v{}-{}-{}/{}/rustc-v{}",
+            name, version, branch, commit, os_arch, rustc_version
+        );
+        Self {
+            name,
+            version,
+            branch,
+            commit,
+            os_arch,
+            rustc_version,
+            formatted,
+        }
+    }
+}
+
+impl std::fmt::Display for ClientVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.formatted)
+    }
+}
+
 /// Node identity and configuration information.
 ///
 /// Contains the node's cryptographic identity, network endpoints, and metadata
@@ -213,8 +272,8 @@ pub struct NodeData {
     pub local_p2p_node: Node,
     /// ENR (Ethereum Node Record) for node discovery.
     pub local_node_record: NodeRecord,
-    /// Client version string (e.g., "ethrex/0.1.0").
-    pub client_version: String,
+    /// Client version information.
+    pub client_version: ClientVersion,
     /// Extra data included in mined blocks.
     pub extra_data: Bytes,
 }
@@ -393,7 +452,7 @@ pub fn start_block_executor(
 /// * `local_node_record` - ENR for node discovery
 /// * `syncer` - Sync manager for block synchronization
 /// * `peer_handler` - Handler for P2P peer operations
-/// * `client_version` - Client version string for `web3_clientVersion`
+/// * `client_version` - Client version information for `web3_clientVersion` and `engine_getClientVersionV1`
 /// * `log_filter_handler` - Optional handler for dynamic log level changes
 /// * `gas_ceil` - Maximum gas limit for payload building
 /// * `extra_data` - Extra data to include in mined blocks
@@ -418,7 +477,7 @@ pub async fn start_api(
     local_node_record: NodeRecord,
     syncer: SyncManager,
     peer_handler: PeerHandler,
-    client_version: String,
+    client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
@@ -785,6 +844,8 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
+        "engine_newPayloadV5" => NewPayloadV5Request::call(req, context).await,
         "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
@@ -806,6 +867,7 @@ pub async fn map_engine_requests(
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         "engine_getBlobsV3" => BlobsV3Request::call(req, context).await,
+        "engine_getClientVersionV1" => GetClientVersionV1Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
@@ -825,7 +887,7 @@ pub async fn map_admin_requests(
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => Ok(Value::String(context.node_data.client_version)),
+        "web3_clientVersion" => Ok(Value::String(context.node_data.client_version.to_string())),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -929,7 +991,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(keccak_hash(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
-                "name": "ethrex/test",
+                "name": "ethrex/v0.1.0-test-abcd1234/x86_64-unknown-linux/rustc-v1.70.0",
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303
@@ -963,6 +1025,7 @@ mod tests {
                         "bpo3Time": null,
                         "bpo4Time": null,
                         "bpo5Time": null,
+                        "amsterdamTime": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,

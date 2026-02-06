@@ -185,6 +185,7 @@ impl BlockBuilder {
             random: H256::zero(),
             withdrawals: Some(Vec::new()),
             beacon_root: Some(H256::zero()),
+            slot_number: None,
             version: 3,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             gas_ceil: self.config.gas_ceil,
