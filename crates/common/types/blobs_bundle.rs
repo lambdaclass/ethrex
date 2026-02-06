@@ -184,6 +184,46 @@ impl BlobsBundle {
         Ok(())
     }
 
+    /// Validates blob bundle structure without expensive KZG cryptographic verification.
+    /// Used in P2P validation where full KZG is deferred to mempool insertion
+    /// (after dedup check), avoiding redundant proof verification for the same
+    /// blob tx received from multiple peers.
+    #[cfg(feature = "c-kzg")]
+    pub fn validate_cheap(
+        &self,
+        tx: &super::EIP4844Transaction,
+        fork: super::Fork,
+    ) -> Result<(), BlobsBundleError> {
+        use super::CELLS_PER_EXT_BLOB;
+
+        let max_blobs = max_blobs_per_block(fork);
+        let blob_count = self.blobs.len();
+
+        if blob_count > max_blobs {
+            return Err(BlobsBundleError::MaxBlobsExceeded);
+        }
+
+        if blob_count == 0 {
+            return Err(BlobsBundleError::BlobBundleEmptyError);
+        }
+
+        if self.version == 0 && fork >= Fork::Osaka || self.version != 0 && fork < Fork::Osaka {
+            return Err(BlobsBundleError::InvalidBlobVersionForFork);
+        }
+
+        if blob_count != self.commitments.len()
+            || (self.version == 0 && blob_count != self.proofs.len())
+            || (self.version != 0 && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
+            || blob_count != tx.blob_versioned_hashes.len()
+        {
+            return Err(BlobsBundleError::BlobsBundleWrongLen);
+        };
+
+        self.validate_blob_commitment_hashes(&tx.blob_versioned_hashes)?;
+
+        Ok(())
+    }
+
     pub fn validate_blob_commitment_hashes(
         &self,
         blob_versioned_hashes: &[H256],
