@@ -2,6 +2,7 @@
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
 		load-test-fibonacci load-test-io run-hive-eels-blobs \
 		build-bolt bolt-instrument bolt-optimize bolt-clean \
+		bolt-perf2bolt bolt-verify \
 		pgo-bolt-build pgo-bolt-optimize pgo-full-build pgo-full-optimize
 
 help: ## 📚 Show help for each of the Makefile recipes
@@ -17,37 +18,19 @@ endif
 build: ## 🔨 Build the client
 	cargo build $(PROFILING_CFG) --workspace
 
-# BOLT optimization targets (Linux x86-64)
-# Prerequisites: llvm-bolt from LLVM 19+ (Debian Trixie has bolt-19, or use apt.llvm.org for newer)
+# BOLT optimization targets (Linux x86-64 only)
+# Prerequisites: llvm-bolt from LLVM 19+
+# See docs/developers/bolt-optimization.md for full setup instructions.
 #
-# STATUS: BOLT works on x86_64 Linux with proper build flags.
-#
-# REQUIREMENTS:
-#   1. Build RocksDB without function splitting: CXXFLAGS='-fno-reorder-blocks-and-partition'
-#   2. Avoid function names containing ".warm" or ".cold" (BOLT false positives)
-#   3. Link with relocations: -Clink-arg=-Wl,--emit-relocs -Clink-arg=-Wl,-q
-#
-# KNOWN ISSUES:
-#   - ARM64: Fails with "Undefined temporary symbol .Ltmp0" during emission (BOLT bug)
-#   - Any Rust function with ".warm" or ".cold" in name triggers false "split function" detection
-#
-# INSTALL BOLT (Debian/Ubuntu):
-#   # Option 1: Use Debian Trixie's bolt-19
-#   sudo apt install bolt-19 libbolt-19-dev
-#   sudo ln -sf /usr/lib/llvm-19/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a
-#
-#   # Option 2: Use latest from apt.llvm.org
-#   wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-#   echo "deb http://apt.llvm.org/unstable/ llvm-toolchain main" | sudo tee /etc/apt/sources.list.d/llvm.list
-#   sudo apt update && sudo apt install bolt-22 libbolt-22-dev
-#   sudo ln -sf /usr/lib/llvm-22/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a
+# BOLT flags (--emit-relocs, frame pointers) are isolated in .cargo/bolt.toml
+# and only loaded by the build-bolt target, so normal builds are unaffected.
 #
 BOLT_PROFILE_DIR ?= /tmp/bolt-profiles
 BOLT_BINARY := target/release-bolt/ethrex
 PERF_DATA ?= perf.data
 
 build-bolt: ## 🔨 Build release binary for BOLT optimization (with relocations)
-	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo build --profile release-bolt
+	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo build --profile release-bolt --config .cargo/bolt.toml
 
 bolt-perf2bolt: ## 📊 Convert perf.data to BOLT profile format
 	@mkdir -p $(BOLT_PROFILE_DIR)

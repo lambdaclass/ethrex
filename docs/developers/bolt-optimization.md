@@ -159,14 +159,14 @@ The quality of BOLT optimization depends on your profiling workload. Choose work
 
 **Examples:**
 ```bash
-# Sync a range of blocks
-./ethrex-instrumented --network sepolia --data-dir /tmp/test-data sync --start 1000000 --end 1010000
+# Sync from a known network (snap sync covers the hot paths)
+./ethrex-instrumented --network mainnet --syncmode snap --datadir /tmp/bolt-data
 
-# Import blocks from file
-./ethrex-instrumented import-blocks blocksrlp.tar.zst
+# Import blocks from an RLP chain file
+./ethrex-instrumented --network mainnet --datadir /tmp/bolt-data import blocks.rlp
 
-# Process transactions
-./ethrex-instrumented process-tx <tx-data>
+# Run in dev mode with a load test (in a separate terminal: make load-test)
+./ethrex-instrumented --dev --datadir /tmp/bolt-data
 ```
 
 ## Advanced: PGO + BOLT Combined
@@ -205,7 +205,7 @@ Expected combined improvement: **5-20%** depending on workload.
 BOLT currently fails on ARM64 Linux with "Undefined temporary symbol .Ltmp0" errors. This is a known LLVM bug. Use x86_64 for now.
 
 ### "Split function detected" Warnings
-BOLT may warn about Rust functions containing `.warm` or `.cold` in their names. These are false positives if you haven't used function splitting. They can be safely ignored if the build succeeds.
+BOLT may warn about split functions (symbols with `.warm` or `.cold` suffixes added by LLVM during function splitting). The `CXXFLAGS='-fno-reorder-blocks-and-partition'` flag in `build-bolt` prevents this for RocksDB. If warnings still appear, they can typically be ignored if the build succeeds.
 
 ### No Profile Data Found
 If `bolt-optimize` reports no profile data:
@@ -281,13 +281,11 @@ The BOLT setup in ethrex includes:
    - `release-bolt` - Release build with debug symbols for BOLT
    - `release-pgo-bolt` - Combined PGO+BOLT profile
 
-2. **Linker configuration** (`.cargo/config.toml`):
+2. **Linker configuration** (`.cargo/bolt.toml`):
    - `--emit-relocs` - Preserves relocations for BOLT rewriting
    - `-Wl,-q` - Quick relocations mode
    - `-Cforce-frame-pointers=yes` - Better stack traces for profiling
+   - Loaded only by `make build-bolt` via `--config .cargo/bolt.toml` to avoid affecting normal builds
 
 3. **Build constraints**:
-   - RocksDB must build with `-fno-reorder-blocks-and-partition`
-   - Avoid function names containing `.warm` or `.cold` (BOLT false positives)
-
-See commit `5f86afd165` on branch `perf/bolt-optimization-setup` for full implementation details.
+   - RocksDB must build with `-fno-reorder-blocks-and-partition` (set by the `build-bolt` target)

@@ -26,13 +26,12 @@ type Proof = Bytes48;
 pub fn warm_up_trusted_setup() {
     #[cfg(feature = "c-kzg")]
     {
-        std::thread::spawn(do_kzg_warmup);
+        let _ = std::thread::Builder::new()
+            .name("kzg-warmup".into())
+            .spawn(|| {
+                std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
+            });
     }
-}
-
-#[cfg(feature = "c-kzg")]
-fn do_kzg_warmup() {
-    std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
 }
 
 #[derive(thiserror::Error, Debug)]
