@@ -108,6 +108,7 @@ async fn main() -> eyre::Result<()> {
         log_filter_handler: None,
         gas_ceil: genesis.gas_limit,
         block_worker_channel: block_worker_sender,
+        dev_tx_sender: None,
     };
 
     let dev_context = DevRpcContext {

@@ -616,6 +616,24 @@ impl RpcHandler for SendRawTransactionRequest {
                 .add_transaction_to_pool(self.to_transaction())
                 .await
         }?;
+
+        // In dev mode, forward the transaction to the GenServer block builder so it
+        // can build a block immediately (on-demand) or queue it (interval mode).
+        // The send is fire-and-forget: we don't fail the RPC call if the builder
+        // channel is closed, since the transaction is already in the mempool.
+        if let Some(ref sender) = context.dev_tx_sender {
+            let (tx, blobs_bundle) =
+                if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
+                    (
+                        self.to_transaction(),
+                        Some(wrapped_blob_tx.blobs_bundle.clone()),
+                    )
+                } else {
+                    (self.to_transaction(), None)
+                };
+            let _ = sender.send((Box::new(tx), blobs_bundle));
+        }
+
         serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }

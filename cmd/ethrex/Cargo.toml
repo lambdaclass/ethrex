@@ -13,7 +13,7 @@ ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-config.workspace = true
 ethrex-crypto.workspace = true
-ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
+ethrex-block-builder = { workspace = true, optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
 ethrex-l2-rpc = { workspace = true, optional = true }
@@ -79,7 +79,7 @@ path = "./lib.rs"
 [features]
 debug = ["ethrex-vm/debug"]
 default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev"]
-dev = ["dep:ethrex-dev"]
+dev = ["dep:ethrex-block-builder"]
 secp256k1 = [
   "ethrex-vm/secp256k1",
   "ethrex-common/secp256k1",

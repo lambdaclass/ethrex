@@ -112,6 +112,24 @@ pub struct Options {
     )]
     pub dev: bool,
     #[arg(
+        long = "dev.block-time",
+        value_name = "MILLISECONDS",
+        requires = "dev",
+        help = "Block production interval in milliseconds (dev mode). Omit for on-demand.",
+        long_help = "When set, the dev block builder collects transactions and builds a block every <MILLISECONDS>. When omitted, blocks are built on-demand: each transaction triggers an immediate block.",
+        help_heading = "Dev options"
+    )]
+    pub dev_block_time: Option<u64>,
+    #[arg(
+        long = "dev.coinbase",
+        value_name = "ADDRESS",
+        requires = "dev",
+        help = "Coinbase address for dev mode blocks.",
+        long_help = "Sets the coinbase (fee recipient) address for blocks built in dev mode. Accepts a hex-encoded Ethereum address (e.g., 0x1234...). Defaults to the zero address.",
+        help_heading = "Dev options"
+    )]
+    pub dev_coinbase: Option<String>,
+    #[arg(
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
@@ -311,6 +329,8 @@ impl Options {
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
             mempool_max_size: 10_000,
+            dev_block_time: None,
+            dev_coinbase: None,
             ..Default::default()
         }
     }
@@ -362,6 +382,8 @@ impl Default for Options {
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
             dev: Default::default(),
+            dev_block_time: None,
+            dev_coinbase: None,
             force: false,
             mempool_max_size: Default::default(),
             tx_broadcasting_time_interval: Default::default(),

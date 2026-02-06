@@ -110,6 +110,7 @@ pub async fn start_api(
             log_filter_handler,
             gas_ceil,
             block_worker_channel,
+            dev_tx_sender: None,
         },
         valid_delegation_addresses,
         sponsor_pk,

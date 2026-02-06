@@ -54,7 +54,7 @@ use axum_extra::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
-use ethrex_common::types::Block;
+use ethrex_common::types::{BlobsBundle, Block, Transaction};
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -196,6 +196,18 @@ pub struct RpcApiContext {
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
+    /// Optional channel for forwarding transactions to the dev-mode block builder.
+    ///
+    /// When running in `--dev` mode, this channel bridges the RPC layer to the
+    /// GenServer-based [`BlockBuilder`]. Each `eth_sendRawTransaction` call sends
+    /// `(Box<Transaction>, Option<BlobsBundle>)` through this channel after the
+    /// transaction has been added to the mempool. A background forwarding task
+    /// receives from the other end and casts `CastMsg::SubmitTransaction` to the
+    /// block builder, which then builds a block on-demand (or queues it for
+    /// interval-based building).
+    ///
+    /// Set to `None` in normal (non-dev) operation.
+    pub dev_tx_sender: Option<UnboundedSender<(Box<Transaction>, Option<BlobsBundle>)>>,
 }
 
 /// Node identity and configuration information.
@@ -355,22 +367,34 @@ pub fn start_block_executor(
 
 /// Starts the JSON-RPC API servers.
 ///
-/// This function initializes and runs three server endpoints:
+/// This function initializes and runs up to three server endpoints, depending
+/// on the provided configuration:
 ///
 /// 1. **HTTP Server** (`http_addr`): Public JSON-RPC endpoint for standard Ethereum
 ///    methods (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
+///    Always started.
 ///
 /// 2. **WebSocket Server** (`ws_addr`): Optional WebSocket endpoint for the same
 ///    methods as HTTP, enabling persistent connections.
+///    Started only when `ws_addr` is `Some`.
 ///
-/// 3. **Auth RPC Server** (`authrpc_addr`): JWT-authenticated endpoint for Engine API
-///    methods (`engine_*`) used by consensus clients.
+/// 3. **Auth RPC Server** (`authrpc_addr`): Optional JWT-authenticated endpoint for
+///    Engine API methods (`engine_*`) used by consensus clients.
+///    Started only when `authrpc_addr` is `Some`. When `None` (dev mode), the
+///    consensus-layer heartbeat timer is also skipped.
+///
+/// # Dev mode
+///
+/// When `dev_tx_sender` is `Some`, the RPC layer operates in dev mode: each
+/// `eth_sendRawTransaction` call forwards the transaction through the channel
+/// to the GenServer block builder, which builds a block on-demand. In this
+/// mode, `authrpc_addr` should be `None` since there is no consensus client.
 ///
 /// # Arguments
 ///
 /// * `http_addr` - Socket address for the HTTP server (e.g., `127.0.0.1:8545`)
 /// * `ws_addr` - Optional socket address for WebSocket server
-/// * `authrpc_addr` - Socket address for authenticated Engine API (e.g., `127.0.0.1:8551`)
+/// * `authrpc_addr` - Optional socket address for authenticated Engine API
 /// * `storage` - Database storage instance
 /// * `blockchain` - Blockchain instance for block operations
 /// * `jwt_secret` - JWT secret for Engine API authentication
@@ -382,6 +406,7 @@ pub fn start_block_executor(
 /// * `log_filter_handler` - Optional handler for dynamic log level changes
 /// * `gas_ceil` - Maximum gas limit for payload building
 /// * `extra_data` - Extra data to include in mined blocks
+/// * `dev_tx_sender` - Optional channel for forwarding transactions to the dev block builder
 ///
 /// # Errors
 ///
@@ -394,7 +419,7 @@ pub fn start_block_executor(
 pub async fn start_api(
     http_addr: SocketAddr,
     ws_addr: Option<SocketAddr>,
-    authrpc_addr: SocketAddr,
+    authrpc_addr: Option<SocketAddr>,
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
@@ -406,6 +431,7 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
+    dev_tx_sender: Option<UnboundedSender<(Box<Transaction>, Option<BlobsBundle>)>>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -428,6 +454,7 @@ pub async fn start_api(
         log_filter_handler,
         gas_ceil,
         block_worker_channel,
+        dev_tx_sender,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -465,38 +492,47 @@ pub async fn start_api(
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
+    // Only start the auth RPC server and CL timer when an auth address is provided.
+    // Dev mode skips this since there's no consensus client.
+    let authrpc_server = if let Some(authrpc_addr) = authrpc_addr {
+        let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
 
-    tokio::spawn(async move {
-        loop {
-            let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
-            if result.is_err() {
-                warn!("No messages from the consensus layer. Is the consensus client running?");
+        tokio::spawn(async move {
+            loop {
+                let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
+                if result.is_err() {
+                    warn!(
+                        "No messages from the consensus layer. Is the consensus client running?"
+                    );
+                }
             }
-        }
-    });
+        });
 
-    let authrpc_handler = move |ctx, auth, body| async move {
-        let _ = timer_sender.send(());
-        handle_authrpc_request(ctx, auth, body).await
+        let authrpc_handler = move |ctx, auth, body| async move {
+            let _ = timer_sender.send(());
+            handle_authrpc_request(ctx, auth, body).await
+        };
+
+        let authrpc_router = Router::new()
+            .route("/", post(authrpc_handler))
+            .with_state(service_context.clone())
+            // Bump the body limit for the engine API to 256MB
+            // This is needed to receive payloads bigger than the default limit of 2MB
+            .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
+
+        let authrpc_listener = TcpListener::bind(authrpc_addr)
+            .await
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
+        let server = axum::serve(authrpc_listener, authrpc_router)
+            .with_graceful_shutdown(shutdown_signal())
+            .into_future();
+        info!("Starting Auth-RPC server at {authrpc_addr}");
+        Some(server)
+    } else {
+        None
     };
 
-    let authrpc_router = Router::new()
-        .route("/", post(authrpc_handler))
-        .with_state(service_context.clone())
-        // Bump the body limit for the engine API to 256MB
-        // This is needed to receive payloads bigger than the default limit of 2MB
-        .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
-
-    let authrpc_listener = TcpListener::bind(authrpc_addr)
-        .await
-        .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .into_future();
-    info!("Starting Auth-RPC server at {authrpc_addr}");
-
-    if let Some(address) = ws_addr {
+    let ws_server = if let Some(address) = ws_addr {
         let ws_handler = |ws: WebSocketUpgrade, ctx| async {
             ws.on_upgrade(|socket| handle_websocket(socket, ctx))
         };
@@ -507,16 +543,34 @@ pub async fn start_api(
         let ws_listener = TcpListener::bind(address)
             .await
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
-        let ws_server = axum::serve(ws_listener, ws_router)
+        let server = axum::serve(ws_listener, ws_router)
             .with_graceful_shutdown(shutdown_signal())
             .into_future();
         info!("Starting WS server at {address}");
-
-        let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
-            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+        Some(server)
     } else {
-        let _ = tokio::try_join!(authrpc_server, http_server)
-            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+        None
+    };
+
+    // Join whichever servers were started
+    match (authrpc_server, ws_server) {
+        (Some(auth), Some(ws)) => {
+            let _ = tokio::try_join!(auth, http_server, ws)
+                .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+        }
+        (Some(auth), None) => {
+            let _ = tokio::try_join!(auth, http_server)
+                .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+        }
+        (None, Some(ws)) => {
+            let _ = tokio::try_join!(http_server, ws)
+                .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+        }
+        (None, None) => {
+            let _ = http_server
+                .await
+                .inspect_err(|e| error!("Error shutting down server: {e:?}"));
+        }
     }
 
     Ok(())

@@ -234,7 +234,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         start_api(
             http_addr,
             Some(ws_addr),
-            authrpc_addr,
+            Some(authrpc_addr),
             storage,
             blockchain,
             jwt_secret,
@@ -246,6 +246,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
+            None,
         )
         .await
         .unwrap()
@@ -273,6 +274,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
+        dev_tx_sender: None,
     }
 }
 

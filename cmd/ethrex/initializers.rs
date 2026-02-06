@@ -215,7 +215,7 @@ pub async fn init_rpc_api(
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
         ws_socket_opts,
-        get_authrpc_socket_addr(opts),
+        Some(get_authrpc_socket_addr(opts)),
         store,
         blockchain,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
@@ -227,6 +227,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
+        None,
     );
 
     tracker.spawn(rpc_api);
@@ -262,35 +263,174 @@ pub async fn init_network(
     ));
 }
 
+/// Initialize an L1 node in dev mode using the GenServer block builder.
+///
+/// This replaces the old Engine API-based dev block producer with an on-demand
+/// block builder that creates blocks immediately when transactions arrive.
+///
+/// ## Architecture
+///
+/// ```text
+/// eth_sendRawTransaction
+///   │
+///   ├─► mempool (existing behavior)
+///   │
+///   └─► dev_tx_sender channel ──► forwarding task ──► BlockBuilder GenServer
+///                                                        │
+///                                                        ├─ on-demand: build block immediately
+///                                                        └─ interval:  queue, build on timer tick
+/// ```
+///
+/// ## What's skipped vs `init_l1`
+///
+/// - **Auth RPC server**: No consensus client in dev mode, so `authrpc_addr` is `None`
+/// - **P2P networking**: No peer discovery or sync needed
+/// - **Consensus-layer timer**: No CL heartbeat monitoring
+///
+/// ## CLI options
+///
+/// - `--dev.block-time <ms>`: Build blocks at intervals (default: on-demand)
+/// - `--dev.coinbase <address>`: Set the coinbase address (default: zero address)
 #[cfg(feature = "dev")]
-pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
-    info!("Running in DEV_MODE");
+pub async fn init_l1_dev(
+    opts: Options,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+    info!("Running in DEV_MODE (GenServer block builder)");
 
-    let head_block_hash = {
-        let current_block_number = store.get_latest_block_number().await.unwrap();
-        store
-            .get_canonical_block_hash(current_block_number)
-            .await
-            .unwrap()
-            .unwrap()
+    let coinbase = opts
+        .dev_coinbase
+        .as_ref()
+        .map(|s| s.parse::<ethrex_common::Address>())
+        .transpose()
+        .map_err(|e| eyre::eyre!("Invalid --dev.coinbase address: {e}"))?
+        .unwrap_or_default();
+
+    let config = ethrex_block_builder::BlockBuilderConfig {
+        coinbase,
+        block_time_ms: opts.dev_block_time,
+        gas_ceil: opts.gas_limit,
     };
 
-    let max_tries = 3;
+    let (mut handle, store, blockchain) = ethrex_block_builder::BlockBuilder::spawn(config)
+        .await
+        .map_err(|e| eyre::eyre!("Failed to spawn block builder: {e}"))?;
 
-    let url = format!(
-        "http://{authrpc_socket_addr}",
-        authrpc_socket_addr = get_authrpc_socket_addr(opts)
+    // Create forwarding channel: RPC → BlockBuilder
+    let (tx_sender, mut tx_receiver) =
+        tokio::sync::mpsc::unbounded_channel::<(
+            Box<ethrex_common::types::Transaction>,
+            Option<ethrex_common::types::BlobsBundle>,
+        )>();
+
+    // Spawn forwarding task
+    tokio::spawn(async move {
+        while let Some((tx, blobs_bundle)) = tx_receiver.recv().await {
+            if let Err(e) = handle
+                .cast(ethrex_block_builder::CastMsg::SubmitTransaction { tx, blobs_bundle })
+                .await
+            {
+                tracing::error!("Failed to forward transaction to block builder: {e}");
+            }
+        }
+    });
+
+    // Dummy SyncManager (dev mode doesn't sync)
+    let dummy_store =
+        Store::new("memory", EngineType::InMemory).map_err(|e| eyre::eyre!("{e}"))?;
+    let dummy_blockchain = Arc::new(Blockchain::new(
+        dummy_store.clone(),
+        BlockchainOptions::default(),
+    ));
+    let cancel_token = CancellationToken::new();
+    let peer_table = PeerTable::spawn(1);
+    let dummy_peer_handler = {
+        let p2p_context = ethrex_p2p::network::P2PContext::new(
+            Node::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                0,
+                0,
+                ethrex_common::H512::zero(),
+            ),
+            TaskTracker::new(),
+            SecretKey::new(&mut OsRng),
+            peer_table.clone(),
+            dummy_store.clone(),
+            dummy_blockchain,
+            String::new(),
+            None,
+            1000,
+            100.0,
+        )
+        .map_err(|e| eyre::eyre!("P2P context error: {e}"))?;
+        let initiator = RLPxInitiator::spawn(p2p_context).await;
+        PeerHandler::new(peer_table.clone(), initiator)
+    };
+
+    let syncer = SyncManager::new(
+        dummy_peer_handler.clone(),
+        &SyncMode::Full,
+        cancel_token.clone(),
+        blockchain.clone(),
+        store.clone(),
+        ".".into(),
+    )
+    .await;
+
+    let dummy_node = Node::new(
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        0,
+        0,
+        ethrex_common::H512::zero(),
+    );
+    let dummy_signer = SecretKey::new(&mut OsRng);
+    let local_node_record = NodeRecord::from_node(&dummy_node, 1, &dummy_signer)
+        .map_err(|e| eyre::eyre!("Failed to create node record: {e}"))?;
+
+    let ws_socket_opts = if opts.ws_enabled {
+        Some(get_ws_socket_addr(&opts))
+    } else {
+        None
+    };
+
+    let tracker = TaskTracker::new();
+
+    let rpc_api = ethrex_rpc::start_api(
+        get_http_socket_addr(&opts),
+        ws_socket_opts,
+        None, // No auth RPC in dev mode
+        store,
+        blockchain,
+        bytes::Bytes::new(),
+        dummy_node,
+        local_node_record.clone(),
+        syncer,
+        dummy_peer_handler,
+        get_client_version(),
+        log_filter_handler,
+        opts.gas_limit,
+        opts.extra_data.clone(),
+        Some(tx_sender),
     );
 
-    let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
-        url,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        head_block_hash,
-        max_tries,
-        1000,
-        ethrex_common::Address::default(),
+    tracker.spawn(rpc_api);
+
+    if opts.metrics_enabled {
+        let network = get_network(&opts);
+        init_metrics(&opts, &network, tracker);
+    }
+
+    info!(
+        "Dev node listening on http://{}",
+        get_http_socket_addr(&opts)
     );
-    tracker.spawn(block_producer_engine);
+
+    Ok((
+        opts.datadir.clone(),
+        cancel_token,
+        peer_table,
+        local_node_record,
+    ))
 }
 
 pub fn get_network(opts: &Options) -> Network {
@@ -431,12 +571,12 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir: &PathBuf =
-        if opts.dev && cfg!(feature = "dev") && !is_memory_datadir(&opts.datadir) {
-            &opts.datadir.join("dev")
-        } else {
-            &opts.datadir
-        };
+    #[cfg(feature = "dev")]
+    if opts.dev {
+        return init_l1_dev(opts, log_filter_handler).await;
+    }
+
+    let datadir: &PathBuf = &opts.datadir;
 
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
@@ -530,10 +670,7 @@ pub async fn init_l1(
         init_metrics(&opts, &network, tracker.clone());
     }
 
-    if opts.dev {
-        #[cfg(feature = "dev")]
-        init_dev_network(&opts, &store, tracker.clone()).await;
-    } else if !opts.p2p_disabled {
+    if !opts.p2p_disabled {
         init_network(
             &opts,
             &network,
