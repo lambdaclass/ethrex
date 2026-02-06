@@ -6,11 +6,14 @@
 set -euo pipefail
 
 # Known failing tests due to hive framework bugs (not ethrex issues)
-# These tests fail with "TEST ISSUE - missing trie node" due to hive's handling
-# of Invalid Missing Ancestor Syncing ReOrg scenarios
+# These tests fail with "missing trie node" errors due to Hive's PathScheme database
+# configuration preventing insertion of blocks with invalid headers.
+# See: https://github.com/ethereum/hive/issues/1382
+# See: https://github.com/ethereum/hive/blob/master/simulators/ethereum/engine/suites/engine/tests.go (TODOs around line 310)
 SKIP_PATTERNS=(
   "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=False, Invalid P8"
   "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=True, Invalid P8"
+  "Invalid Missing Ancestor Syncing ReOrg, Transaction Value, EmptyTxs=False, CanonicalReOrg=False, Invalid P9"
 )
 
 if ! command -v jq >/dev/null 2>&1; then
