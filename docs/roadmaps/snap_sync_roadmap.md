@@ -565,13 +565,9 @@ impl Default for SnapSyncConfig {
 
 ---
 
-### 2.10 Add `spawn_blocking` to Bytecodes Handler
+### 2.10 Add `spawn_blocking` to Bytecodes Handler — ✅ DONE
 
-**Current State:** `process_byte_codes_request` in `snap/server.rs:107` calls `store.get_account_code()` (blocking I/O) without `spawn_blocking`. The other three handlers all use it correctly. Can block the tokio runtime.
-
-**Proposed Change:** Wrap the handler body in `tokio::task::spawn_blocking`, matching the pattern of the other handlers.
-
-**Effort:** Very low (small)
+**Status:** Already fixed on `refactor/snapsync-healing-unification` branch. The function in `snap/server.rs:108-131` is already `async fn` with `spawn_blocking`, matching the pattern of all other handlers.
 
 ---
 
@@ -729,7 +725,7 @@ Week 6-8:   1.7 Peer Connection Optimization
 
 ```
 Week 1:     2.9  Fix snap protocol capability bug (3 lines)
-Week 1:     2.10 Add spawn_blocking to bytecodes handler
+Week 1:     2.10 Add spawn_blocking to bytecodes handler (✅ DONE)
 Week 1:     2.11 Remove DumpError.contents dead field
 Week 1:     2.17 Use existing constants for magic numbers
 Week 1:     2.15 Guard write_set in account path
