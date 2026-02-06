@@ -26,18 +26,19 @@ These endpoints are only available when:
 
 The `/debug/pprof/allocs` endpoint is compatible with Grafana Pyroscope and can be scraped using Grafana Alloy's `pyroscope.scrape` component.
 
-See [lambdaclass/monitoring-stack](https://github.com/lambdaclass/monitoring-stack) for Ansible configuration examples.
-
 ## Manual Analysis
 
-Download a profile and analyze it with pprof:
+Download a profile and analyze with [pprof](https://github.com/google/pprof):
 
 ```bash
 # Download profile
 curl http://localhost:8545/debug/pprof/allocs > heap.pprof
 
-# Analyze with go pprof
+# Analyze with pprof (requires Go or standalone pprof)
 go tool pprof -http=:8080 heap.pprof
+
+# Or view the flamegraph directly in a browser
+# http://localhost:8545/debug/pprof/allocs/flamegraph
 ```
 
 ## Troubleshooting
