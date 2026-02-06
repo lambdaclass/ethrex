@@ -4275,6 +4275,7 @@ dependencies = [
  "hex-literal 0.4.1",
  "jemalloc_pprof",
  "jsonwebtoken",
+ "pprof",
  "rand 0.8.5",
  "reqwest",
  "secp256k1",
