@@ -41,58 +41,48 @@ sudo ln -sf /usr/bin/merge-fdata-22 /usr/local/bin/merge-fdata
 sudo ln -sf /usr/lib/llvm-22/lib/libbolt_rt_instr.a /usr/local/lib/libbolt_rt_instr.a
 ```
 
-## Quick Start: End-to-End Example
+## Quick Start
 
-This walks through the full BOLT workflow using ethrex's built-in benchmark fixtures.
-The fixture `l2-1k-erc20.rlp` contains 1,110 blocks with ~1.5M ERC20 transfers — a
-heavy EVM workload that exercises the hot paths BOLT can optimize.
+### One command (fully automated)
 
 ```bash
-# 0. Install BOLT (see "Installing BOLT" above)
+make bolt-full    # build → instrument → profile → optimize → verify
+make bolt-bench   # benchmark baseline vs BOLT-optimized
+```
 
+This uses the built-in ERC20 benchmark fixture (`l2-1k-erc20.rlp`, 1,110 blocks,
+~1.5M transactions). Prerequisites are validated automatically — if `llvm-bolt` is
+missing, the platform is wrong, or the fixture file hasn't been pulled from Git LFS,
+the build will fail with a clear error message.
+
+**Note:** The fixture `l2-1k-erc20.rlp` is stored in Git LFS. If you see an error
+about the file being missing or empty, run `git lfs pull` first.
+
+### Step by step
+
+If you want to run each step individually or use a custom profiling workload:
+
+```bash
 # 1. Build a BOLT-compatible binary (~2-3 min with fat LTO)
 make build-bolt
 
-# 2. Create an instrumented binary for profiling
+# 2. Create an instrumented binary
 make bolt-instrument
 
-# 3. Profile by importing the ERC20 benchmark blocks.
-#    Use Ctrl-C (SIGINT) if running a long-lived workload — BOLT needs
-#    graceful shutdown to flush profile data. For `import`, the process
-#    exits on its own.
-./ethrex-instrumented \
-    --network fixtures/genesis/perf-ci.json \
-    --datadir /tmp/bolt-data \
-    import fixtures/blockchain/l2-1k-erc20.rlp
+# 3a. Profile with built-in benchmark (automated)
+make bolt-profile
 
-# 4. Verify profile data was written
-ls -lh /tmp/bolt-profiles/   # expect ~15 MB of prof.* files
-
-# 5. Optimize the binary using collected profiles
-make bolt-optimize
-
-# 6. Verify the optimized binary has BOLT markers
-make bolt-verify
-
-# 7. Benchmark: compare baseline vs BOLT-optimized
-echo "=== Baseline ===" && rm -rf /tmp/bench-db && \
-    target/release-bolt/ethrex \
-        --network fixtures/genesis/perf-ci.json \
-        --datadir /tmp/bench-db \
-        import fixtures/blockchain/l2-1k-erc20.rlp
-
-echo "=== BOLT ===" && rm -rf /tmp/bench-db && \
-    ./ethrex-bolt-optimized \
-        --network fixtures/genesis/perf-ci.json \
-        --datadir /tmp/bench-db \
-        import fixtures/blockchain/l2-1k-erc20.rlp
-```
-
-For a live-node workload (more representative of production), profile during snap sync instead:
-
-```bash
+# 3b. OR profile with a custom workload (manual)
+#     Use Ctrl-C (SIGINT) to stop — BOLT needs graceful shutdown to flush data.
 ./ethrex-instrumented --network mainnet --syncmode snap --datadir /tmp/bolt-data
 # Let it run 60-90 seconds, then Ctrl-C
+
+# 4. Optimize using collected profiles
+make bolt-optimize
+
+# 5. Verify and benchmark
+make bolt-verify
+make bolt-bench
 ```
 
 ### Alternative: Using perf Instead of Instrumentation
@@ -294,6 +284,20 @@ llvm-bolt --version
 readelf -p .note.bolt_info ethrex-bolt-optimized
 ```
 
+## Makefile Targets Reference
+
+| Target | Description |
+|--------|-------------|
+| `make bolt-full` | Full automated workflow: build → instrument → profile → optimize → verify |
+| `make bolt-bench` | Benchmark baseline vs BOLT-optimized (3 runs each) |
+| `make build-bolt` | Build BOLT-compatible binary with fat LTO and relocations |
+| `make bolt-instrument` | Create instrumented binary for profiling |
+| `make bolt-profile` | Run instrumented binary with benchmark fixture to collect profiles |
+| `make bolt-optimize` | Apply BOLT optimization using collected profiles |
+| `make bolt-verify` | Check that optimized binary has BOLT markers |
+| `make bolt-perf2bolt` | Convert `perf.data` to BOLT format (alternative to instrumentation) |
+| `make bolt-clean` | Remove all BOLT artifacts and profiles |
+
 ## Cleaning Up
 
 Remove all BOLT artifacts:
@@ -309,31 +313,14 @@ This removes:
 
 ## Performance Validation
 
-After optimization, benchmark to verify improvements. Use `--datadir /tmp/...` to
-avoid conflicts with any running ethrex instance, and `rm -rf` the datadir between
-runs for a clean state (`--removedb` requires interactive confirmation).
-
 ```bash
-# Baseline
-for i in 1 2 3; do
-    rm -rf /tmp/bench-db
-    target/release-bolt/ethrex \
-        --network fixtures/genesis/perf-ci.json \
-        --datadir /tmp/bench-db \
-        import fixtures/blockchain/l2-1k-erc20.rlp 2>&1 | grep "Import completed"
-done
-
-# BOLT-optimized
-for i in 1 2 3; do
-    rm -rf /tmp/bench-db
-    ./ethrex-bolt-optimized \
-        --network fixtures/genesis/perf-ci.json \
-        --datadir /tmp/bench-db \
-        import fixtures/blockchain/l2-1k-erc20.rlp 2>&1 | grep "Import completed"
-done
+make bolt-bench
 ```
 
-Compare the `seconds=` values in the output. Also look for:
+This runs 3 iterations each of baseline and BOLT-optimized, importing the ERC20
+benchmark blocks. Compare the `seconds=` values in the `Import completed` output.
+
+Also look for:
 - Better instruction cache hit rates (via `perf stat`)
 - Improved branch prediction accuracy
 

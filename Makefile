@@ -2,7 +2,7 @@
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
 		load-test-fibonacci load-test-io run-hive-eels-blobs \
 		build-bolt bolt-instrument bolt-optimize bolt-clean \
-		bolt-perf2bolt bolt-verify \
+		bolt-perf2bolt bolt-profile bolt-verify bolt-full \
 		pgo-bolt-build pgo-bolt-optimize pgo-full-build pgo-full-optimize
 
 help: ## 📚 Show help for each of the Makefile recipes
@@ -27,9 +27,21 @@ build: ## 🔨 Build the client
 #
 BOLT_PROFILE_DIR ?= /tmp/bolt-profiles
 BOLT_BINARY := target/release-bolt/ethrex
+BOLT_GENESIS ?= fixtures/genesis/perf-ci.json
+BOLT_BLOCKS ?= fixtures/blockchain/l2-1k-erc20.rlp
 PERF_DATA ?= perf.data
 
-build-bolt: ## 🔨 Build release binary for BOLT optimization (with relocations)
+# Verify BOLT prerequisites before doing anything
+bolt-check:
+	@uname -m | grep -q x86_64 || { echo "ERROR: BOLT requires x86_64 (current: $$(uname -m))"; exit 1; }
+	@uname -s | grep -q Linux || { echo "ERROR: BOLT requires Linux (current: $$(uname -s))"; exit 1; }
+	@command -v llvm-bolt >/dev/null 2>&1 || { echo "ERROR: llvm-bolt not found. See docs/developers/bolt-optimization.md for install instructions."; exit 1; }
+	@if [ ! -s $(BOLT_BLOCKS) ]; then \
+		echo "ERROR: $(BOLT_BLOCKS) missing or empty. Run 'git lfs pull' to fetch fixture files."; \
+		exit 1; \
+	fi
+
+build-bolt: bolt-check ## 🔨 Build release binary for BOLT optimization (with relocations)
 	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo build --profile release-bolt --config .cargo/bolt.toml
 
 bolt-perf2bolt: ## 📊 Convert perf.data to BOLT profile format
@@ -90,8 +102,45 @@ bolt-instrument: build-bolt ## 🔧 Create BOLT-instrumented binary for profilin
 		--instrumentation-file-append-pid \
 		--instrumentation-file=$(BOLT_PROFILE_DIR)/prof
 	@echo "Instrumented binary created: ethrex-instrumented"
-	@echo "Run the binary with a representative workload to collect profile data."
-	@echo "Profile will be written to $(BOLT_PROFILE_DIR)/prof.<pid>.fdata"
+	@echo "Run 'make bolt-profile' to collect profile data, or run the binary manually."
+
+bolt-profile: ## 📊 Run instrumented binary with benchmark blocks to collect profile data
+	@test -f ethrex-instrumented || { echo "ERROR: Run 'make bolt-instrument' first."; exit 1; }
+	@rm -rf /tmp/bolt-data $(BOLT_PROFILE_DIR)/prof.*
+	@echo "Profiling with $(BOLT_BLOCKS) (this may take a few minutes)..."
+	./ethrex-instrumented \
+		--network $(BOLT_GENESIS) \
+		--datadir /tmp/bolt-data \
+		import $(BOLT_BLOCKS)
+	@rm -rf /tmp/bolt-data
+	@echo "Profile data collected:"
+	@ls -lh $(BOLT_PROFILE_DIR)/prof.*
+
+bolt-full: bolt-instrument bolt-profile bolt-optimize bolt-verify ## 🚀 Full BOLT workflow: build → instrument → profile → optimize → verify
+	@echo ""
+	@echo "BOLT optimization complete. Optimized binary: ethrex-bolt-optimized"
+	@echo "Benchmark with: make bolt-bench"
+
+bolt-bench: ## 📈 Benchmark baseline vs BOLT-optimized binary
+	@test -f ethrex-bolt-optimized || { echo "ERROR: Run 'make bolt-full' or 'make bolt-optimize' first."; exit 1; }
+	@echo "=== Baseline (3 runs) ==="
+	@for i in 1 2 3; do \
+		rm -rf /tmp/bolt-bench-db; \
+		$(BOLT_BINARY) \
+			--network $(BOLT_GENESIS) \
+			--datadir /tmp/bolt-bench-db \
+			import $(BOLT_BLOCKS) 2>&1 | grep "Import completed"; \
+	done
+	@echo ""
+	@echo "=== BOLT-optimized (3 runs) ==="
+	@for i in 1 2 3; do \
+		rm -rf /tmp/bolt-bench-db; \
+		./ethrex-bolt-optimized \
+			--network $(BOLT_GENESIS) \
+			--datadir /tmp/bolt-bench-db \
+			import $(BOLT_BLOCKS) 2>&1 | grep "Import completed"; \
+	done
+	@rm -rf /tmp/bolt-bench-db
 
 # cargo-pgo workflow (requires: cargo install cargo-pgo)
 # NOTE: cargo-pgo doesn't pass CXXFLAGS, so use the manual Makefile targets instead
