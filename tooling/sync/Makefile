@@ -4,7 +4,8 @@ flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-d
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
-multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto
+multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto \
+restart-stall-test restart-stall-test-skip-sync
 
 ETHREX_DIR ?= "../.."
 
@@ -342,3 +343,32 @@ multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, an
 		--build-profile "$(MULTISYNC_BUILD_PROFILE)" \
 		--image-tag "$(MULTISYNC_LOCAL_IMAGE)" \
 		--ethrex-dir "$(ETHREX_DIR)"
+
+# ==============================================================================
+# Restart Stall Test (eth-docker)
+# ==============================================================================
+# Tests whether ethrex stalls on header download after restart.
+# Uses eth-docker (must be cloned already) with ethrex + Prysm.
+# Phase 1: Fresh snap sync (terminate + start, wait for completion)
+# Phase 2: Stop only execution client, restart it, check for stall
+# ==============================================================================
+
+RESTART_TEST_NETWORK ?= hoodi
+RESTART_TEST_COUNT ?= 3
+ETH_DOCKER_DIR ?= $(HOME)/eth-docker
+
+restart-stall-test: ## Run restart stall test via eth-docker: configure, sync, then restart cycles.
+	python3 restart_stall_test.py \
+		--eth-docker-dir $(ETH_DOCKER_DIR) \
+		--network $(RESTART_TEST_NETWORK) \
+		--restart-count $(RESTART_TEST_COUNT) \
+		--configure \
+		--ethrex-dir $(ETHREX_DIR)
+
+restart-stall-test-skip-sync: ## Run restart stall test, skip initial sync (node must be synced).
+	python3 restart_stall_test.py \
+		--eth-docker-dir $(ETH_DOCKER_DIR) \
+		--network $(RESTART_TEST_NETWORK) \
+		--restart-count $(RESTART_TEST_COUNT) \
+		--skip-phase1 \
+		--ethrex-dir $(ETHREX_DIR)
