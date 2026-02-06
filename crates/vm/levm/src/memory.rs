@@ -246,6 +246,7 @@ impl Memory {
 
         let new_size = offset.checked_add(total_size).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
+        self.ensure_zeroed(offset)?;
 
         let copy_size = data.len().min(total_size);
         if copy_size > 0 {
@@ -270,6 +271,7 @@ impl Memory {
             }
         }
 
+        self.initialized_len = self.initialized_len.max(new_size);
         Ok(())
     }
 
