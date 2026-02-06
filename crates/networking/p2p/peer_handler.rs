@@ -427,7 +427,7 @@ impl PeerHandler {
             }
         }
 
-        ret.sort_by(|x, y| x.number.cmp(&y.number));
+        ret.sort_unstable_by(|x, y| x.number.cmp(&y.number));
         Ok(Some(ret))
     }
 

@@ -330,7 +330,7 @@ proptest! {
     fn proptest_get_insert_with_removals(mut data in vec((vec(any::<u8>(), 5..100), any::<bool>()), 1..100)) {
         let mut trie = Trie::new_temp();
         // Remove duplicate values with different expected status
-        data.sort_by_key(|(val, _)| val.clone());
+        data.sort_unstable_by_key(|(val, _)| val.clone());
         data.dedup_by_key(|(val, _)| val.clone());
         // Insertions
         for (val, _) in data.iter() {
@@ -405,7 +405,7 @@ proptest! {
         let mut trie = Trie::new_temp();
         let mut cita_trie = cita_trie();
         // Remove duplicate values with different expected status
-        data.sort_by_key(|(val, _)| val.clone());
+        data.sort_unstable_by_key(|(val, _)| val.clone());
         data.dedup_by_key(|(val, _)| val.clone());
         // Insertions
         for (val, _) in data.iter() {
@@ -490,7 +490,7 @@ proptest! {
         let mut trie = Trie::new_temp();
         let mut cita_trie = cita_trie();
         // Remove duplicate values with different expected status
-        data.sort_by_key(|(val, _)| val.clone());
+        data.sort_unstable_by_key(|(val, _)| val.clone());
         data.dedup_by_key(|(val, _)| val.clone());
         // Insertions
         for (val, _) in data.iter() {

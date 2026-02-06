@@ -39,7 +39,7 @@ impl OpcodeTimings {
                 })
             })
             .collect();
-        average.sort_by(|a, b| b.1.cmp(&a.1));
+        average.sort_unstable_by(|a, b| b.1.cmp(&a.1));
         (average, self.blocks, self.txs)
     }
 
@@ -96,7 +96,7 @@ impl PrecompilesTimings {
                 })
             })
             .collect();
-        average.sort_by(|a, b| b.1.cmp(&a.1));
+        average.sort_unstable_by(|a, b| b.1.cmp(&a.1));
         average
     }
 

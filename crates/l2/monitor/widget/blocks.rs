@@ -142,7 +142,7 @@ impl BlocksTable {
             })
             .collect::<Vec<_>>();
 
-        new_blocks_processed.sort_by_key(|x| x.number);
+        new_blocks_processed.sort_unstable_by_key(|x| x.number);
 
         new_blocks_processed
     }

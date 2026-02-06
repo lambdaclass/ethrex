@@ -56,7 +56,7 @@ impl MempoolTable {
             })
             .collect::<Vec<_>>();
 
-        pending_txs.sort_by(
+        pending_txs.sort_unstable_by(
             |(_tx_type_a, _, sender_a, nonce_a), (_tx_type_b, _, sender_b, nonce_b)| {
                 sender_a.cmp(sender_b).then(nonce_a.cmp(nonce_b))
             },

@@ -759,7 +759,7 @@ impl TransactionQueue {
             });
         }
         // Sort heads by higest tip (and lowest timestamp if tip is equal)
-        heads.sort();
+        heads.sort_unstable();
         Ok(TransactionQueue {
             heads,
             txs,

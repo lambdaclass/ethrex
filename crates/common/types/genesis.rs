@@ -614,7 +614,7 @@ impl ChainConfig {
         .collect();
 
         // Remove repeated values
-        block_number_based_forks.sort();
+        block_number_based_forks.sort_unstable();
         block_number_based_forks.dedup();
 
         let mut timestamp_based_forks: Vec<u64> = vec![
@@ -635,7 +635,7 @@ impl ChainConfig {
         .collect();
 
         // Remove repeated values
-        timestamp_based_forks.sort();
+        timestamp_based_forks.sort_unstable();
         timestamp_based_forks.dedup();
 
         // Filter forks before genesis

@@ -625,7 +625,7 @@ pub async fn import_blocks(
             .collect();
 
         // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
-        entries.sort();
+        entries.sort_unstable();
 
         entries
             .iter()
@@ -744,7 +744,7 @@ pub async fn import_blocks_bench(
             .collect();
 
         // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
-        entries.sort();
+        entries.sort_unstable();
 
         entries
             .iter()

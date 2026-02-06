@@ -179,7 +179,7 @@ impl BatchesTable {
     }
 
     fn reorder_batches(new_blocks_processed: &mut [BatchLine]) {
-        new_blocks_processed.sort_by(|a, b| b.number.cmp(&a.number));
+        new_blocks_processed.sort_unstable_by(|a, b| b.number.cmp(&a.number));
     }
 
     fn process_batches(new_batches: Vec<Batch>) -> Vec<BatchLine> {

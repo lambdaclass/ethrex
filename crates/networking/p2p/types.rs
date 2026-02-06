@@ -387,7 +387,7 @@ impl NodeRecord {
         //Pairs need to be sorted by their key.
         //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
         //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
-        self.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        self.pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         self.signature = self.sign_record(signer)?;
         Ok(())

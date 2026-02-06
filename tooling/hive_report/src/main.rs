@@ -168,7 +168,7 @@ fn build_slack_blocks(
             .filter(|result| result.passed_tests < result.total_tests)
             .collect();
 
-        failing_tests.sort_by(|a, b| {
+        failing_tests.sort_unstable_by(|a, b| {
             a.success_percentage
                 .partial_cmp(&b.success_percentage)
                 .unwrap_or(Ordering::Equal)
@@ -294,7 +294,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     // First by category ascending, use fork ordering newest → oldest when applicable, then by passed tests descending.
-    results.sort_by(|a, b| {
+    results.sort_unstable_by(|a, b| {
         let category_cmp = a.category.cmp(&b.category);
         if category_cmp != Ordering::Equal {
             return category_cmp;

@@ -72,7 +72,7 @@ async fn test_iter_accounts(store: Store) {
             )
         })
         .collect();
-    accounts.sort_by_key(|a| a.0);
+    accounts.sort_unstable_by_key(|a| a.0);
     let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
     for (address, state) in &accounts {
         trie.insert(address.0.to_vec(), state.encode_to_vec())
@@ -92,7 +92,7 @@ async fn test_iter_storage(store: Store) {
     let mut slots: Vec<_> = (0u64..1_000)
         .map(|i| (keccak(i.to_be_bytes()), U256::from(2 * i)))
         .collect();
-    slots.sort_by_key(|a| a.0);
+    slots.sort_unstable_by_key(|a| a.0);
     let mut trie = store
         .open_direct_storage_trie(address, *EMPTY_TRIE_HASH)
         .unwrap();

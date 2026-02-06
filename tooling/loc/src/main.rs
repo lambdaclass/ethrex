@@ -44,7 +44,7 @@ fn count_crates_loc(crates_path: &PathBuf, config: &Config) -> Vec<(String, usiz
         })
         .collect();
 
-    ethrex_crates_loc.sort_by_key(|(_crate_name, loc)| *loc);
+    ethrex_crates_loc.sort_unstable_by_key(|(_crate_name, loc)| *loc);
     ethrex_crates_loc.reverse();
     ethrex_crates_loc
 }

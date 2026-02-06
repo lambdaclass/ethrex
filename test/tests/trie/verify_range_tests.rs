@@ -84,7 +84,7 @@ fn verify_range_regular_case() {
         .iter()
         .map(|addr| H256::from_str(addr).unwrap())
         .collect::<Vec<_>>();
-    account_addresses.sort();
+    account_addresses.sort_unstable();
     let trie_values = account_addresses
         .iter()
         .map(|addr| addr.0.to_vec())

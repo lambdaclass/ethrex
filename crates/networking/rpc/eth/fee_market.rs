@@ -263,7 +263,7 @@ fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64
         })
         .collect();
 
-    effective_priority_fees.sort();
+    effective_priority_fees.sort_unstable();
     let t_len = effective_priority_fees.len() as f32;
 
     percentiles

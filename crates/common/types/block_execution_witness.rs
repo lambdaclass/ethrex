@@ -333,7 +333,7 @@ impl GuestProgramState {
 
         // Sort in ascending order
         let mut block_headers: Vec<_> = self.block_headers.iter().collect();
-        block_headers.sort_by_key(|(number, _)| *number);
+        block_headers.sort_unstable_by_key(|(number, _)| *number);
 
         // Validate hashes
         for window in block_headers.windows(2) {

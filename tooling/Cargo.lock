@@ -1582,6 +1582,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "block_analyzer"
+version = "4.0.0"
+dependencies = [
+ "clap 4.5.54",
+ "eyre",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "bls12_381"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

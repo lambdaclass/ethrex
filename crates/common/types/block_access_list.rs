@@ -24,7 +24,7 @@ where
         return;
     }
     let mut indices: Vec<usize> = (0..items.len()).collect();
-    indices.sort_by(|&i, &j| key_fn(&items[i]).cmp(&key_fn(&items[j])));
+    indices.sort_unstable_by(|&i, &j| key_fn(&items[i]).cmp(&key_fn(&items[j])));
 
     let payload_len: usize = items.iter().map(|item| item.length()).sum();
     encode_length(payload_len, buf);

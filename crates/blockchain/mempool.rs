@@ -227,7 +227,7 @@ impl Mempool {
                 .push(tx.clone())
         }
 
-        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
+        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort_unstable());
         Ok(txs_by_sender)
     }
 
@@ -250,7 +250,7 @@ impl Mempool {
             }
         }
 
-        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
+        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort_unstable());
         Ok(txs_by_sender)
     }
 

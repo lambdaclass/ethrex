@@ -87,7 +87,7 @@ pub fn dump_accounts_to_rocks_db(
     if contents.is_empty() {
         return Ok(());
     }
-    contents.sort_by_key(|(k, _)| *k);
+    contents.sort_unstable_by_key(|(k, _)| *k);
     contents.dedup_by_key(|(k, _)| {
         let mut buf = [0u8; 32];
         buf[..32].copy_from_slice(&k.0);
@@ -115,7 +115,7 @@ pub fn dump_storages_to_rocks_db(
     if contents.is_empty() {
         return Ok(());
     }
-    contents.sort();
+    contents.sort_unstable();
     contents.dedup_by_key(|(k0, k1, _)| {
         let mut buffer = [0_u8; 64];
         buffer[0..32].copy_from_slice(&k0.0);

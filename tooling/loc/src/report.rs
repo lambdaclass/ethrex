@@ -29,7 +29,7 @@ pub fn pr_message(
 ) -> String {
     let sorted_file_paths = {
         let mut keys: Vec<_> = new_report.keys().collect();
-        keys.sort();
+        keys.sort_unstable();
         keys
     };
 

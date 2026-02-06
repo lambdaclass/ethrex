@@ -99,10 +99,10 @@ impl GasTipEstimator {
                 .filter_map(|tx| tx.effective_gas_tip(base_fee))
                 .collect::<Vec<u64>>();
 
-            gas_tip_samples.sort();
+            gas_tip_samples.sort_unstable();
             results.extend(gas_tip_samples.into_iter().take(TXS_SAMPLE_SIZE));
         }
-        results.sort();
+        results.sort_unstable();
 
         // If we cannot get a median sample due to blocks being empty, use the last calculated tip
         let estimated_tip = *results.get(results.len() / 2).unwrap_or(&self.last_tip);

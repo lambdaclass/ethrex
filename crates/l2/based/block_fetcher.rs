@@ -234,7 +234,7 @@ impl BlockFetcher {
         let mut missing_batches_logs =
             filter_logs(&batch_committed_logs, last_l2_batch_number_known)?;
 
-        missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
+        missing_batches_logs.sort_unstable_by_key(|(_log, batch_number)| *batch_number);
 
         for (batch_committed_log, batch_number) in missing_batches_logs {
             let tx = self

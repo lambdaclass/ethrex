@@ -271,7 +271,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
             .collect();
 
         // Sort by address (lexicographical order per EIP-7708)
-        addresses_with_balance.sort_by_key(|(addr, _)| *addr);
+        addresses_with_balance.sort_unstable_by_key(|(addr, _)| *addr);
 
         for (addr, balance) in addresses_with_balance {
             let log = create_selfdestruct_log(addr, balance);
