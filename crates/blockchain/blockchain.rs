@@ -355,23 +355,32 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
-        // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
+        // Create concrete CachingDatabase so we can read caches after warming
         let original_store = vm.db.store.clone();
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
-            Arc::new(CachingDatabase::new(original_store));
+        let caching_db = Arc::new(CachingDatabase::new(original_store));
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = caching_db.clone();
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
+        // Clone store and capture state root for trie path warming
+        let store_for_warmer = self.storage.clone();
+        let parent_state_root = parent_header.state_root;
+
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
             let vm_type = vm.vm_type;
+            let caching_db_ref = caching_db;
             let warm_handle = std::thread::Builder::new()
                 .name("block_executor_warmer".to_string())
                 .spawn_scoped(s, move || {
                     // Warming uses the same caching store, sharing cached state with execution
                     let start = Instant::now();
                     let _ = LEVM::warm_block(block, caching_store, vm_type);
+                    // Read addresses/keys the EVM actually touched
+                    let addresses = caching_db_ref.cached_addresses();
+                    let storage_keys = caching_db_ref.cached_storage_keys();
+                    // Warm trie paths for merkleization
+                    warm_trie_paths(&addresses, &storage_keys, &store_for_warmer, parent_state_root);
                     start.elapsed()
                 })
                 .expect("Failed to spawn block_executor warmer thread");
@@ -2341,6 +2350,75 @@ fn branchify(node: Node) -> Box<BranchNode> {
             let mut choices = BranchNode::EMPTY_CHOICES;
             choices[index as usize] = NodeRef::from(Arc::new(node.into()));
             Box::new(BranchNode::new(choices))
+        }
+    }
+}
+
+/// Warm trie paths that will be accessed during merkleization.
+/// Uses addresses and storage keys discovered by the EVM prewarmer
+/// to prefetch state and storage trie nodes into RocksDB's block cache.
+fn warm_trie_paths(
+    addresses: &[Address],
+    storage_keys: &[(Address, H256)],
+    store: &Store,
+    parent_state_root: H256,
+) {
+    let Ok(state_trie) = store.open_state_trie(parent_state_root) else {
+        return;
+    };
+
+    // Build address→hashed_addr map once, avoiding redundant keccak calls.
+    // Also collect unique hashed addresses for the state trie pass.
+    let mut addr_hashes: FxHashMap<Address, H256> =
+        FxHashMap::with_capacity_and_hasher(addresses.len(), Default::default());
+    let mut unique_hashed: Vec<H256> = Vec::with_capacity(addresses.len());
+    for addr in addresses {
+        addr_hashes.entry(*addr).or_insert_with(|| {
+            let h = keccak(addr);
+            unique_hashed.push(h);
+            h
+        });
+    }
+
+    // Group storage keys by hashed address, reusing precomputed address hashes.
+    // Any address found here that wasn't in `addresses` is also added to
+    // `unique_hashed` so its state trie path gets prefetched below.
+    let mut storage_keys_by_addr: FxHashMap<H256, Vec<H256>> =
+        FxHashMap::with_capacity_and_hasher(storage_keys.len() / 4 + 1, Default::default());
+    for (addr, key) in storage_keys {
+        let hashed_addr = *addr_hashes.entry(*addr).or_insert_with(|| {
+            let h = keccak(addr);
+            unique_hashed.push(h);
+            h
+        });
+        storage_keys_by_addr
+            .entry(hashed_addr)
+            .or_default()
+            .push(keccak(key));
+    }
+
+    // Prefetch state trie paths and storage trie paths
+    for hashed_addr in &unique_hashed {
+        match state_trie.prefetch(hashed_addr.as_bytes()) {
+            Ok(Some(encoded)) => {
+                if let Some(keys) = storage_keys_by_addr.get(hashed_addr) {
+                    if let Ok(account) = AccountState::decode(&encoded) {
+                        if let Ok(storage_trie) = store.open_storage_trie(
+                            *hashed_addr,
+                            parent_state_root,
+                            account.storage_root,
+                        ) {
+                            for hashed_key in keys {
+                                let _ = storage_trie.prefetch(hashed_key.as_bytes());
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                debug!("Trie path warming: state prefetch failed for {hashed_addr:?}: {e}");
+            }
         }
     }
 }

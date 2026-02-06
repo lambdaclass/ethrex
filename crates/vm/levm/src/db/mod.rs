@@ -74,6 +74,30 @@ impl CachingDatabase {
     fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
         self.code.write().map_err(poison_error_to_db_error)
     }
+
+    /// Returns addresses cached during warming.
+    pub fn cached_addresses(&self) -> Vec<Address> {
+        self.accounts
+            .read()
+            .map(|cache| {
+                let mut addrs = Vec::with_capacity(cache.len());
+                addrs.extend(cache.keys().copied());
+                addrs
+            })
+            .unwrap_or_default()
+    }
+
+    /// Returns (address, storage_key) pairs cached during warming.
+    pub fn cached_storage_keys(&self) -> Vec<(Address, H256)> {
+        self.storage
+            .read()
+            .map(|cache| {
+                let mut keys = Vec::with_capacity(cache.len());
+                keys.extend(cache.keys().copied());
+                keys
+            })
+            .unwrap_or_default()
+    }
 }
 
 fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {

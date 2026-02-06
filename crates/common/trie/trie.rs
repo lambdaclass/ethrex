@@ -128,6 +128,27 @@ impl Trie {
         })
     }
 
+    /// Traverse the trie path for the given key, loading all intermediate nodes
+    /// from the database. Unlike `get()`, this always walks the trie structure
+    /// (bypassing the flat key-value shortcut), which warms the database cache
+    /// for subsequent `insert`/`remove` operations on the same paths.
+    pub fn prefetch(&self, pathrlp: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
+        let path = Nibbles::from_bytes(pathrlp);
+        match &self.root {
+            NodeRef::Node(node, _) => node.get(self.db.as_ref(), path),
+            NodeRef::Hash(hash) if hash.is_valid() => {
+                Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
+                        hash.finalize(),
+                    )))
+                })?)
+                .map_err(TrieError::RLPDecode)?
+                .get(self.db.as_ref(), path)
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
