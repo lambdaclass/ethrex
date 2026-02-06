@@ -571,13 +571,9 @@ impl Default for SnapSyncConfig {
 
 ---
 
-### 2.11 Remove Dead `DumpError.contents` Field
+### 2.11 Remove Dead `DumpError.contents` Field — ✅ DONE
 
-**Current State:** `DumpError` in `snap/error.rs:136` has a `contents: Vec<u8>` field that holds the full snapshot chunk (up to 64MB). This was for a retry mechanism that no longer exists. The custom `Debug` impl (line 140) was added to avoid printing the huge contents.
-
-**Proposed Change:** Remove `contents` field, replace custom `Debug` impl with `#[derive(Debug)]`.
-
-**Effort:** Very low (small, frees memory)
+**Status:** Already fixed on `refactor/snapsync-healing-unification` branch. `DumpError` in `snap/error.rs:132-137` no longer has the `contents` field and uses `#[derive(Debug, thiserror::Error)]` instead of a custom `Debug` impl.
 
 ---
 
@@ -726,7 +722,7 @@ Week 6-8:   1.7 Peer Connection Optimization
 ```
 Week 1:     2.9  Fix snap protocol capability bug (3 lines)
 Week 1:     2.10 Add spawn_blocking to bytecodes handler (✅ DONE)
-Week 1:     2.11 Remove DumpError.contents dead field
+Week 1:     2.11 Remove DumpError.contents dead field (✅ DONE)
 Week 1:     2.17 Use existing constants for magic numbers
 Week 1:     2.15 Guard write_set in account path
 Week 1:     2.8  Fix Correctness Bugs (Issue #6140)
