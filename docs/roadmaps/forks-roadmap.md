@@ -2,6 +2,16 @@
 
 ## Amsterdam / Glamsterdam → Mainnet June 2026
 
+## Glossary
+
+| Acronym | Meaning |
+|---------|---------|
+| **SFI** | Scheduled for Inclusion - Will be in the fork |
+| **CFI** | Considered for Inclusion - Likely, under discussion |
+| **DFI** | Declined for Inclusion - Won't be included |
+| **PFI** | Proposed for Inclusion - Proposed |
+| **BAL** | Block-Level Access Lists (EIP-7928) |
+
 ---
 
 ## Current Implementation Status
@@ -10,54 +20,55 @@
 
 | EIP | Title | Code Status | Tests | devnet-bal | SFI/CFI | Owner |
 |-----|-------|-------------|-------|------------|---------|-------|
-| **7928** | Block-Level Access Lists | ⚠️ Types + engine_newPayloadV5 merged; execution integration in progress (`eip_7928_tracking` branch) | Unit tests passing | ✅ | SFI | Edgar |
-| **7708** | ETH Transfers Emit Logs | ✅ Merged to main (PR #6074, #6104) | 100+ tests | ✅ | CFI | Edgar |
-| **7778** | Block Gas Accounting without Refunds | ✅ Merged to main (PR #5996) | 7 unit tests in `eip7778_tests.rs` | ✅ | CFI | Edgar |
-| **7843** | SLOTNUM Opcode | ⚠️ Review comments addressed, pending merge (`implement-eip7843` branch) | ~7 tests (skipped) | ✅ | CFI | Esteve |
-| **8024** | DUPN/SWAPN/EXCHANGE | ✅ Merged to main (PR #5970, bugfix #6118) | ~400 tests (skipped due to gas cost deps) | ✅ | CFI | Esteve |
+| **7928** | Block-Level Access Lists | ⚠️ Types + engine_newPayloadV5 merged; execution integration PR [#6024] open | Unit tests passing | ✅ | SFI | Edgar |
+| **7708** | ETH Transfers Emit Logs | ✅ Merged ([#6074], fix [#6104]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1879) | 100+ tests | ✅ | CFI | Edgar |
+| **7778** | Block Gas Accounting without Refunds | ✅ Merged ([#5996], fix [#6128]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1940) | 7 unit tests in `eip7778_tests.rs` | ✅ | CFI | Edgar |
+| **7843** | SLOTNUM Opcode | ✅ Merged ([#5973]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2028) | ~7 tests (skipped) | ✅ | CFI | Esteve |
+| **8024** | DUPN/SWAPN/EXCHANGE | ✅ Merged ([#5970], fix [#6118]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1942) | ~400 tests (skipped due to gas cost deps) | ✅ | CFI | Esteve |
 
 ### Gas Repricing EIPs (New - not on devnet-bal yet)
 
 | EIP | Title | Code Status | Nethermind | Reth | SFI/CFI |
 |-----|-------|-------------|------------|------|---------|
-| **2780** | Reduce Intrinsic Transaction Gas | 🔴 Not implemented (21000 → 4500) | 🔴 | 🔴 | CFI |
-| **7904** | General Repricing | 🔴 Not implemented | ⚠️ PR #9619 (Draft) | 🔴 | CFI |
-| **7954** | Increase Max Contract Size | 🔴 Not implemented (24KiB → 32KiB) | ⚠️ PR #8760 (Draft) | 🔴 | CFI |
-| **7976** | Increase Calldata Floor Cost | 🔴 Not implemented | 🔴 | 🔴 | CFI |
-| **7981** | Increase Access List Cost | 🔴 Not implemented | 🔴 | 🔴 | CFI |
-| **8037** | State Creation Gas Cost Increase | 🔴 Not implemented | 🔴 | 🔴 | CFI |
-| **8038** | State-Access Gas Cost Update | 🔴 Not implemented | 🔴 | 🔴 | CFI |
+| **2780** | Reduce Intrinsic Transaction Gas | 🔴 Not implemented (21000 → 4500) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1940) | 🔴 | 🔴 | CFI |
+| **7904** | General Repricing | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1879) | ⚠️ PR #9619 (Draft) | 🔴 | CFI |
+| **7954** | Increase Max Contract Size | 🔴 Not implemented (24KiB → 32KiB) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2028) | ⚠️ PR #8760 (Draft) | 🔴 | CFI |
+| **7976** | Increase Calldata Floor Cost | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1942) | 🔴 | 🔴 | CFI |
+| **7981** | Increase Access List Cost | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1943) | 🔴 | 🔴 | CFI |
+| **8037** | State Creation Gas Cost Increase | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2040) | 🔴 | 🔴 | CFI |
+| **8038** | State-Access Gas Cost Update | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1941) | 🔴 | 🔴 | CFI |
+
+> **Priority note:** Gas repricing EIPs are **low priority** — no other client has started them. EIP-7904 and EIP-7954 are **medium priority** (Nethermind has draft PRs). Focus on finishing SFI EIPs first (EIP-7928 BAL), then monitor CFI decisions at ACDE calls. If getting ahead, EIP-7954 is simplest (just a constant change: 24KiB → 32KiB).
 
 ### Other Amsterdam EIPs
 
 | EIP | Title | Code Status | Nethermind | Reth | SFI/CFI |
 |-----|-------|-------------|------------|------|---------|
-| **7997** | Deterministic Factory Predeploy | 🔴 Not implemented | 🔴 | 🔴 | CFI |
+| **7997** | Deterministic Factory Predeploy | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1988) | 🔴 | 🔴 | CFI |
 | **8070** | Sparse Blobpool | 🔴 Not implemented (ROADMAP.md: Priority —) | 🔴 | 🔴 | CFI |
 | **7610** | Revert Creation on Non-empty Storage | 🔴 Not implemented | 🔴 | 🔴 | PFI |
-| **7872** | Max Blob Flag for Local Builders | 🔴 Not implemented | 🔴 | 🔴 | PFI |
+| **7872** | Max Blob Flag for Local Builders | ✅ Merged ([#5769]) | 🔴 | 🔴 | PFI |
 
 ---
 
-## February 5 Status Update
+## February 6 Status Update
 
 ### Merged ✅
-- [x] **EIP-7778** (Gas Accounting) - PR #5996 merged → Edgar
-- [x] **EIP-7708** (ETH Transfer Logs) - PR #6074, #6104 merged → Edgar
-- [x] **EIP-8024** (DUPN/SWAPN/EXCHANGE) - PR #5970 merged, bugfix #6118 merged → Esteve
-
-### Pending Merge
-- [ ] **EIP-7843** (SLOTNUM) - Review comments addressed on `implement-eip7843` branch → Esteve
+- [x] **EIP-7778** (Gas Accounting) - [#5996](https://github.com/lambdaclass/ethrex/pull/5996), fix [#6128](https://github.com/lambdaclass/ethrex/pull/6128) merged → Edgar
+- [x] **EIP-7708** (ETH Transfer Logs) - [#6074](https://github.com/lambdaclass/ethrex/pull/6074), fix [#6104](https://github.com/lambdaclass/ethrex/pull/6104) merged → Edgar
+- [x] **EIP-8024** (DUPN/SWAPN/EXCHANGE) - [#5970](https://github.com/lambdaclass/ethrex/pull/5970), bugfix [#6118](https://github.com/lambdaclass/ethrex/pull/6118) merged → Esteve
+- [x] **EIP-7843** (SLOTNUM) - [#5973](https://github.com/lambdaclass/ethrex/pull/5973) merged → Esteve
+- [x] **EIP-7872** (Max Blob Flag) - [#5769](https://github.com/lambdaclass/ethrex/pull/5769) merged → Edgar
 
 ### In Progress
 - [ ] **Complete EIP-7928 integration** (BAL part 2) - execution hook needed → Edgar
-  - Types + `engine_newPayloadV5` merged (PR #6020)
-  - Work continues on `eip_7928_tracking` branch
+  - Types + `engine_newPayloadV5` merged (PR [#6020](https://github.com/lambdaclass/ethrex/pull/6020))
+  - Execution integration PR [#6024](https://github.com/lambdaclass/ethrex/pull/6024) open
   - Recent: removed dead code, fixed comments (ce8754cf3)
   - Missing: block execution integration to populate the access list
 
 ### Documentation
-- [ ] **Update `docs/eip.md`** - Mark EIP-7708, EIP-7778, and EIP-8024 as "Supported [x]"
+- [ ] **Update `docs/eip.md`** - Mark EIP-7708, EIP-7778, EIP-8024, EIP-7843, and EIP-7872 as "Supported [x]"
 
 ### Testing
 - [ ] Update hive tests for Amsterdam
@@ -87,65 +98,6 @@ pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool
 - `cmd/ethrex/networks/holesky/genesis.json`
 - `cmd/ethrex/networks/sepolia/genesis.json`
 - `cmd/ethrex/networks/hoodi/genesis.json`
-
----
-
-## EIP Implementation Categories
-
-### Merged to Main ✅
-1. **EIP-7708** - ETH Transfer Logs (PR #6074, #6104)
-2. **EIP-7778** - Gas Accounting (PR #5996)
-3. **EIP-8024** - DUPN/SWAPN/EXCHANGE (PR #5970, bugfix #6118)
-
-### Almost There (needs finishing)
-1. **EIP-7843** - SLOTNUM (review comments addressed, pending merge)
-2. **EIP-7928** - BAL (types merged, execution integration in progress on `eip_7928_tracking`)
-
-### Not Started (wave 2)
-1. **Gas repricing bundle**: EIP-2780, 7904, 7976, 7981, 8037, 8038
-2. **Contract changes**: EIP-7954 (max size), EIP-7997 (factory predeploy)
-3. **Network**: EIP-8070 (sparse blobpool), EIP-7872 (max blob flag)
-4. **Edge case**: EIP-7610 (non-empty storage revert)
-
----
-
-## Client Implementation Comparison (Wave 2 CFI EIPs)
-
-> Last updated: February 5, 2026
-
-### Summary
-
-The CFI EIPs are **"considered for inclusion"** but have **NOT been officially scheduled** for Glamsterdam. The officially scheduled EIPs are:
-- **EIP-7732**: Enshrined Proposer-Builder Separation (ePBS)
-- **EIP-7928**: Block-Level Access Lists (BALs)
-
-### Nethermind Status
-
-| EIP | Status | Notes |
-|-----|--------|-------|
-| **7904** | ⚠️ Draft PR #9619 | Opened Oct 31, 2025; implements opcode repricing |
-| **7954** | ⚠️ Draft PR #8760 | Opened Jun 10, 2025; related to Berlin Interop devnet-2 |
-| Others | 🔴 Not started | No PRs or issues found |
-
-### Reth Status
-
-| EIP | Status | Notes |
-|-----|--------|-------|
-| All CFI EIPs | 🔴 Not started | Focus is on EIP-7732 (ePBS) and EIP-7928 (BALs) |
-| Tracking | Issue #18783 | Amsterdam hardfork tracking issue |
-
-### Priority Recommendation
-
-| Priority | EIPs | Rationale |
-|----------|------|-----------|
-| **Low** | 2780, 7976, 7981, 8037, 8038, 7997, 8070 | No client has started; not officially scheduled |
-| **Medium** | 7904, 7954 | Nethermind has draft PRs; may gain traction |
-
-### Recommended Action
-
-1. **Complete SFI EIPs first**: Finish EIP-7928 (BAL) and merge EIP-7843 (SLOTNUM)
-2. **Monitor CFI EIPs**: Wait for official inclusion decisions at ACDE calls
-3. **If getting ahead**: EIP-7954 is simplest (just a constant change: 24KiB → 32KiB)
 
 ---
 
@@ -181,22 +133,9 @@ Post-Glamsterdam fork, execution layer = **Bogota**
 | Item | Location | Priority | Status |
 |------|----------|----------|--------|
 | Update `docs/eip.md` supported status | `docs/eip.md` | High | Pending |
-| Merge EIP-7843 branch | `origin/implement-eip7843` | High | Review done |
-| Complete BAL execution integration | `origin/eip_7928_tracking` | High | In progress |
+| Complete BAL execution integration | PR [#6024](https://github.com/lambdaclass/ethrex/pull/6024) | High | In progress |
 | Enable Amsterdam EIP tests | `tooling/ef_tests/blockchain/tests/all.rs` | Medium | Blocked by EIP impls |
 | Address 31k skipped Amsterdam legacy tests | `SKIPPED_AMSTERDAM` in ef_tests | Medium | Blocked by all EIPs |
-
----
-
-## Glossary
-
-| Acronym | Meaning |
-|---------|---------|
-| **SFI** | Scheduled for Inclusion - Will be in the fork |
-| **CFI** | Considered for Inclusion - Likely, under discussion |
-| **DFI** | Declined for Inclusion - Won't be included |
-| **PFI** | Proposed for Inclusion - Proposed |
-| **BAL** | Block-Level Access Lists (EIP-7928) |
 
 ---
 
@@ -216,10 +155,21 @@ Post-Glamsterdam fork, execution layer = **Bogota**
 
 ## ACDE Follow-up
 
-Meetings on **Thursdays**. Options:
+Meetings on **Thursdays**. Track agendas and notes at [ethereum/pm](https://github.com/ethereum/pm). Options:
 
 1. **Attend live** - Direct participation
 2. **Post-call review** - YouTube + transcript with Claude:
    - Timestamps for specific topics
    - Summary of relevant EIP discussions
    - Track CFI/SFI status changes
+
+[#5769]: https://github.com/lambdaclass/ethrex/pull/5769
+[#5970]: https://github.com/lambdaclass/ethrex/pull/5970
+[#5973]: https://github.com/lambdaclass/ethrex/pull/5973
+[#5996]: https://github.com/lambdaclass/ethrex/pull/5996
+[#6020]: https://github.com/lambdaclass/ethrex/pull/6020
+[#6024]: https://github.com/lambdaclass/ethrex/pull/6024
+[#6074]: https://github.com/lambdaclass/ethrex/pull/6074
+[#6104]: https://github.com/lambdaclass/ethrex/pull/6104
+[#6118]: https://github.com/lambdaclass/ethrex/pull/6118
+[#6128]: https://github.com/lambdaclass/ethrex/pull/6128
