@@ -916,12 +916,6 @@ async fn deploy_contracts(
             let tdx_verifier_address = deploy_tdx_contracts(opts, tdx_controller_address)?;
 
             info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
-
-            // Wait for all rex-sent transactions to be included before proceeding
-            // to initialize_contracts, which needs the nonce to be consistent.
-            info!("Waiting for TDX deployment transactions to be included");
-            wait_for_pending_transactions(eth_client, deployer.address()).await?;
-
             tdx_verifier_address
         }
         _ => Address::zero(),
