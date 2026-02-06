@@ -78,6 +78,7 @@ ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
 
+arc-swap = "1.7"
 async-trait = "0.1.88"
 ethereum-types = { version = "0.15.1", features = ["serialize"] }
 serde = { version = "1.0.203", features = ["derive", "rc"] }

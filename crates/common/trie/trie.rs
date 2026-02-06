@@ -4,6 +4,7 @@ pub mod logger;
 mod nibbles;
 pub mod node;
 mod node_hash;
+pub(crate) mod rkyv_smallvec;
 pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]

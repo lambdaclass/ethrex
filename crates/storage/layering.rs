@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use ethrex_common::H256;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::storage::METRICS_STORAGE;
@@ -13,7 +14,7 @@ const FALSE_POSITIVE_RATE: f64 = 0.02;
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    nodes: FxHashMap<Vec<u8>, Bytes>,
     parent: H256,
     id: usize,
 }
@@ -23,8 +24,12 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    /// Number of layers after which we should commit to the database.
+    /// Maximum number of layers before committing to disk (fallback threshold).
     commit_threshold: usize,
+    /// Maximum estimated memory (bytes) before committing to disk.
+    max_memory_bytes: usize,
+    /// Running estimate of memory used by all layers' node data.
+    estimated_memory: usize,
     layers: FxHashMap<H256, Arc<TrieLayer>>,
     /// Global bloom filter that tracks all keys across all layers.
     ///
@@ -38,11 +43,16 @@ impl fmt::Debug for TrieLayerCache {
         f.debug_struct("TrieLayerCache")
             .field("last_id", &self.last_id)
             .field("commit_threshold", &self.commit_threshold)
+            .field("max_memory_bytes", &self.max_memory_bytes)
+            .field("estimated_memory", &self.estimated_memory)
             .field("layers", &self.layers)
             .field("bloom", &"AtomicBloomFilter")
             .finish()
     }
 }
+
+/// Default maximum memory for trie layer cache (512 MB).
+const DEFAULT_MAX_CACHE_MEMORY: usize = 512 * 1024 * 1024;
 
 impl Default for TrieLayerCache {
     fn default() -> Self {
@@ -51,17 +61,26 @@ impl Default for TrieLayerCache {
             last_id: 0,
             layers: Default::default(),
             commit_threshold: 128,
+            max_memory_bytes: DEFAULT_MAX_CACHE_MEMORY,
+            estimated_memory: 0,
         }
     }
 }
 
 impl TrieLayerCache {
     pub fn new(commit_threshold: usize) -> Self {
+        let max_memory_bytes = std::env::var("ETHREX_TRIE_CACHE_MAX_MEMORY_MB")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .map(|mb| mb * 1024 * 1024)
+            .unwrap_or(DEFAULT_MAX_CACHE_MEMORY);
         Self {
             bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
+            max_memory_bytes,
+            estimated_memory: 0,
         }
     }
 
@@ -87,7 +106,7 @@ impl TrieLayerCache {
             if let Some(value) = layer.nodes.get(key) {
                 #[cfg(feature = "metrics")]
                 METRICS_STORAGE.inc_layer_cache_hits();
-                return Some(value.clone());
+                return Some(value.to_vec());
             }
             current_state_root = layer.parent;
             if current_state_root == state_root {
@@ -111,7 +130,7 @@ impl TrieLayerCache {
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
             counter += 1;
-            if counter > self.commit_threshold {
+            if counter > self.commit_threshold || self.estimated_memory > self.max_memory_bytes {
                 return Some(state_root);
             }
         }
@@ -143,10 +162,14 @@ impl TrieLayerCache {
             self.bloom.insert(p.as_ref());
         }
 
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
+        let nodes: FxHashMap<Vec<u8>, Bytes> = key_values
             .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
+            .map(|(path, value)| (path.into_vec(), Bytes::from(value)))
             .collect();
+
+        // Track estimated memory: key + value + FxHashMap entry overhead (~24 bytes)
+        let layer_memory: usize = nodes.iter().map(|(k, v)| k.len() + v.len() + 24).sum();
+        self.estimated_memory += layer_memory;
 
         self.last_id += 1;
         let entry = TrieLayer {
@@ -176,7 +199,7 @@ impl TrieLayerCache {
         self.bloom = filter;
     }
 
-    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Bytes)>> {
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.remove(&current_state_root) {
@@ -186,7 +209,19 @@ impl TrieLayerCache {
         }
         let top_layer_id = layers_to_commit.first()?.id;
         // older layers are useless
-        self.layers.retain(|_, item| item.id > top_layer_id);
+        let mut retained_memory: usize = 0;
+        self.layers.retain(|_, item| {
+            let keep = item.id > top_layer_id;
+            if keep {
+                retained_memory += item
+                    .nodes
+                    .iter()
+                    .map(|(k, v)| k.len() + v.len() + 24)
+                    .sum::<usize>();
+            }
+            keep
+        });
+        self.estimated_memory = retained_memory;
         #[cfg(feature = "metrics")]
         METRICS_STORAGE.set_layer_cache_layers(self.layers.len() as i64);
         self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
