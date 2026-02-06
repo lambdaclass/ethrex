@@ -7,11 +7,11 @@ End-to-End tests with Hive. Hive is a system which sends RPC commands to Ethereu
 This project uses three key repositories for Hive testing:
 
 1. **[ethereum/hive](https://github.com/ethereum/hive)** - The main Hive testing framework
-    - Current commit: `0921fb7833e3de180eacdc9f26de6e51dcab0dba`
+   - Current commit: `0921fb7833e3de180eacdc9f26de6e51dcab0dba`
 2. **[ethereum/execution-spec-tests](https://github.com/ethereum/execution-spec-tests)** - Test fixtures and vectors
-    - Current version: `bal@v5.1.0` (Amsterdam fork support)
+   - Current version: `bal@v5.1.0` (Amsterdam fork support)
 3. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Fork specifications
-    - Current branch: `forks/amsterdam`
+   - Current branch: `forks/amsterdam`
 
 ## Prerequisites
 
@@ -19,40 +19,40 @@ This project uses three key repositories for Hive testing:
 
 1. **Docker** - Required for running containerized clients
 
-    ```bash
-    # Install Docker following the official guide for your OS
-    # Verify installation
-    docker --version
-    ```
+   ```bash
+   # Install Docker following the official guide for your OS
+   # Verify installation
+   docker --version
+   ```
 
 2. **Go** - Required to build the Hive framework
 
-    Using asdf:
+   Using asdf:
 
-    ```bash
-    asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
-    ```
+   ```bash
+   asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
+   ```
 
-    Uncomment the golang line in the `.tool-versions` file:
+   Uncomment the golang line in the `.tool-versions` file:
 
-    ```text
-    rust 1.90.0
-    golang 1.23.2
-    ```
+   ```text
+   rust 1.90.0
+   golang 1.23.2
+   ```
 
-    Then install:
+   Then install:
 
-    ```bash
-    asdf install
-    ```
+   ```bash
+   asdf install
+   ```
 
-    If you need to set GOROOT, follow [these instructions](https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot).
+   If you need to set GOROOT, follow [these instructions](https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot).
 
 3. **Rust** - Required to build the ethrex client
-    ```bash
-    # Already configured in .tool-versions
-    asdf install rust
-    ```
+   ```bash
+   # Already configured in .tool-versions
+   asdf install rust
+   ```
 
 ### Build the ethrex Docker Image
 
@@ -100,7 +100,7 @@ make run-hive SIMULATION=<simulation-name> TEST_PATTERN="<pattern>"
 
 #### Example: RPC Compatibility Tests
 
-Run specific RPC endpoints:
+This is an example of a Hive simulation called `ethereum/rpc-compat`, which will specifically run chain id and transaction by hash rpc tests:
 
 ```bash
 make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_getTransactionByHash"
@@ -317,36 +317,36 @@ To update to a different fork or newer versions:
 
 1. **Update Hive commit** in `Makefile`:
 
-    ```makefile
-    HIVE_BRANCH ?= <new-commit-hash>
-    ```
+   ```makefile
+   HIVE_BRANCH ?= <new-commit-hash>
+   ```
 
 2. **Update execution-spec-tests versions** in `.github/workflows/daily_hive_report.yaml`:
 
-    For Amsterdam tests (fixtures_bal):
+   For Amsterdam tests (fixtures_bal):
 
-    ```yaml
-    FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz"
-    FLAGS+=" --sim.buildarg branch=forks/amsterdam"
-    ```
+   ```yaml
+   FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz"
+   FLAGS+=" --sim.buildarg branch=forks/amsterdam"
+   ```
 
-    For other forks (fixtures_develop):
+   For other forks (fixtures_develop):
 
-    ```yaml
-    FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v<version>/fixtures_develop.tar.gz"
-    FLAGS+=" --sim.buildarg branch=forks/<fork-name>"
-    ```
+   ```yaml
+   FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v<version>/fixtures_develop.tar.gz"
+   FLAGS+=" --sim.buildarg branch=forks/<fork-name>"
+   ```
 
 3. **Update fixtures URL files**:
 
-    ```bash
-    echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url
-    echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz" > tooling/ef_tests/state/.fixtures_url
-    ```
+   ```bash
+   echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url
+   echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz" > tooling/ef_tests/state/.fixtures_url
+   ```
 
 4. **Update fork references** in code if switching to a different fork:
-    - `.github/workflows/daily_hive_report.yaml` - Test names and patterns
-    - `tooling/hive_report/src/main.rs` - Fork ranking and result processing
+   - `.github/workflows/daily_hive_report.yaml` - Test names and patterns
+   - `tooling/hive_report/src/main.rs` - Fork ranking and result processing
 
 ## Troubleshooting
 
