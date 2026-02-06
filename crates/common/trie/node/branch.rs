@@ -318,17 +318,12 @@ impl BranchNode {
                     }
                 } else {
                     // Existing child — load once, batch-insert all
-                    // Compute hashes before mutable borrow for error reporting
-                    let child_hash = self.choices[choice_idx].compute_hash().finalize();
-                    let self_hash = self.compute_hash().finalize();
                     let current = sub_updates[0].0.current();
                     let child = self.choices[choice_idx]
                         .get_node_mut(db, current.clone())?
                         .ok_or_else(|| {
                             TrieError::InconsistentTree(Box::new(
-                                InconsistentTreeError::NodeNotFoundOnBranchNode(
-                                    child_hash, self_hash, current,
-                                ),
+                                InconsistentTreeError::RootNotFoundNoHash,
                             ))
                         })?;
                     child.insert_batch(db, &sub_updates)?;
