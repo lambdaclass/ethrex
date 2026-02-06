@@ -144,7 +144,9 @@ impl BlobsBundle {
             return Err(BlobsBundleError::BlobBundleEmptyError);
         }
 
-        if self.version == 0 && fork >= Fork::Osaka || self.version != 0 && fork < Fork::Osaka {
+        // Version 0 blobs are valid on all forks (Cancun onwards)
+        // Version 1+ blobs (PeerDAS) are only valid on Osaka and later
+        if self.version != 0 && fork < Fork::Osaka {
             return Err(BlobsBundleError::InvalidBlobVersionForFork);
         }
 
@@ -530,6 +532,43 @@ mod tests {
         assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
             Err(crate::types::BlobsBundleError::MaxBlobsExceeded)
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn transaction_with_version_0_blobs_should_pass_on_amsterdam() {
+        // Version 0 blobs should remain valid on Amsterdam fork (which comes after Osaka)
+        let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
+            .into_iter()
+            .map(|data| {
+                crate::types::blobs_bundle::blob_from_bytes(data.into())
+                    .expect("Failed to create blob")
+            })
+            .collect();
+
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, None)
+            .expect("Failed to create blobs bundle");
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let tx = crate::types::transaction::EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
+            blob_versioned_hashes,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            blobs_bundle.validate(&tx, crate::types::Fork::Amsterdam),
+            Ok(())
         ));
     }
 }
