@@ -77,7 +77,6 @@ Based on code analysis and profiling data:
 | Single-threaded account range processing | `request_account_range()` | Underutilizes peers | High |
 | Inefficient trie node batching | `heal_state_trie()`, `heal_storage_trie()` | Excessive DB writes | High |
 | Busy-wait loops | Multiple locations | CPU waste | Medium |
-| Unbounded memory structures | `accounts_by_root_hash` | Memory pressure | Medium |
 | Synchronous disk I/O | Snapshot dumping | Blocks network operations | Medium |
 
 ### Existing Code Quality Issues
