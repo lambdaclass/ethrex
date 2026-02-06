@@ -405,8 +405,8 @@ impl Blockchain {
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, StoreError> {
-                        let (account_updates_list, accumulated_updates) =
-                            self.handle_merkleization(
+                        let (account_updates_list, accumulated_updates) = self
+                            .handle_merkleization(
                                 s,
                                 rx,
                                 parent_header_ref,
