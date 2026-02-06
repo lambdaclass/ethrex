@@ -700,9 +700,12 @@ impl<'a> VM<'a> {
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
+        let mut backup = self.backup_pool.pop().unwrap_or_default();
+        backup.clear();
+
         let next_memory = self.current_call_frame.memory.next_memory();
 
-        let new_call_frame = CallFrame::new(
+        let new_call_frame = CallFrame::new_with_backup(
             deployer,
             new_address,
             new_address,
@@ -719,6 +722,7 @@ impl<'a> VM<'a> {
             0,
             stack,
             next_memory,
+            backup,
         );
         self.add_callframe(new_call_frame);
 
@@ -849,9 +853,12 @@ impl<'a> VM<'a> {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
 
+            let mut backup = self.backup_pool.pop().unwrap_or_default();
+            backup.clear();
+
             let next_memory = self.current_call_frame.memory.next_memory();
 
-            let new_call_frame = CallFrame::new(
+            let new_call_frame = CallFrame::new_with_backup(
                 msg_sender,
                 to,
                 code_address,
@@ -867,6 +874,7 @@ impl<'a> VM<'a> {
                 ret_size,
                 stack,
                 next_memory,
+                backup,
             );
             self.add_callframe(new_call_frame);
 
@@ -981,6 +989,10 @@ impl<'a> VM<'a> {
         stack.clear();
         self.stack_pool.push(stack);
 
+        let mut backup = executed_call_frame.call_frame_backup;
+        backup.clear();
+        self.backup_pool.push(backup);
+
         Ok(())
     }
 
@@ -1032,6 +1044,10 @@ impl<'a> VM<'a> {
         let mut stack = executed_call_frame.stack;
         stack.clear();
         self.stack_pool.push(stack);
+
+        let mut backup = call_frame_backup;
+        backup.clear();
+        self.backup_pool.push(backup);
 
         Ok(())
     }

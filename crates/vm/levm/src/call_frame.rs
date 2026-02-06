@@ -329,6 +329,46 @@ impl CallFrame {
         stack: Stack,
         memory: Memory,
     ) -> Self {
+        Self::new_with_backup(
+            msg_sender,
+            to,
+            code_address,
+            bytecode,
+            msg_value,
+            calldata,
+            is_static,
+            gas_limit,
+            depth,
+            should_transfer_value,
+            is_create,
+            ret_offset,
+            ret_size,
+            stack,
+            memory,
+            CallFrameBackup::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    pub fn new_with_backup(
+        msg_sender: Address,
+        to: Address,
+        code_address: Address,
+        bytecode: Code,
+        msg_value: U256,
+        calldata: Bytes,
+        is_static: bool,
+        gas_limit: u64,
+        depth: usize,
+        should_transfer_value: bool,
+        is_create: bool,
+        ret_offset: usize,
+        ret_size: usize,
+        stack: Stack,
+        memory: Memory,
+        call_frame_backup: CallFrameBackup,
+    ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
@@ -349,7 +389,7 @@ impl CallFrame {
             ret_size,
             stack,
             memory,
-            call_frame_backup: CallFrameBackup::default(),
+            call_frame_backup,
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),

@@ -1,6 +1,6 @@
 use crate::{
     TransientStorage,
-    call_frame::{CallFrame, Stack},
+    call_frame::{CallFrame, CallFrameBackup, Stack},
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
@@ -389,6 +389,8 @@ pub struct VM<'a> {
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
     pub stack_pool: Vec<Stack>,
+    /// Pool of reusable call frame backups to reduce allocations.
+    pub backup_pool: Vec<CallFrameBackup>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
     /// Opcode dispatch table, built dynamically per fork.
@@ -421,6 +423,7 @@ impl<'a> VM<'a> {
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
+            backup_pool: Vec::new(),
             vm_type,
             current_call_frame: CallFrame::new(
                 env.origin,
