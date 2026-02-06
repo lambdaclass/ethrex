@@ -491,7 +491,6 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection)) => {
-
                 let response = PeerHandler::make_request(
                     &mut self.peer_table,
                     peer_id,
@@ -501,7 +500,11 @@ impl PeerHandler {
                 )
                 .await;
 
-                if let Ok(RLPxMessage::BlockBodies(BlockBodies { id: _, block_bodies })) = response {
+                if let Ok(RLPxMessage::BlockBodies(BlockBodies {
+                    id: _,
+                    block_bodies,
+                })) = response
+                {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
                         self.peer_table.record_success(&peer_id).await?;
