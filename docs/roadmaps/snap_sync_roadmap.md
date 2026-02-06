@@ -74,10 +74,9 @@ Based on code analysis and profiling data:
 | Bottleneck | Location | Impact | Priority |
 |------------|----------|--------|----------|
 | Sequential header download | `sync_cycle_snap()` | Blocks state download start | Critical |
-| Single-threaded account range processing | `request_account_range()` | Underutilizes peers | High |
-| Inefficient trie node batching | `heal_state_trie()`, `heal_storage_trie()` | Excessive DB writes | High |
-| Busy-wait loops | Multiple locations | CPU waste | Medium |
-| Synchronous disk I/O | Snapshot dumping | Blocks network operations | Medium |
+| Trie node batching | `heal_state_trie()`, `heal_storage_trie()` | Writes are batched but could use `put_batch_no_alloc` | Medium |
+| Busy-wait loops | Multiple locations | CPU waste (only when no peers available) | Medium |
+| Disk I/O not using `tokio::fs` | Snapshot dumping | Already in `spawn_blocking`, but should use async fs | Low |
 
 ### Existing Code Quality Issues
 
@@ -129,7 +128,7 @@ Reduce snap sync time by 50% or more through parallelization, batching optimizat
 **Current State:**
 - `NODE_BATCH_SIZE = 500` nodes per request
 - `STORAGE_BATCH_SIZE = 300` accounts per batch
-- Individual DB writes with `put_batch()`
+- DB writes use `put_batch()` (already batched)
 
 **Proposed Changes:**
 
@@ -151,7 +150,9 @@ Adjust batch sizes based on:
 - Peer response latency
 - Current healing progress
 
-**Expected Impact:** 30-50% reduction in healing phase duration
+**Note:** Impact on healing duration needs empirical measurement — current batching may already be sufficient.
+
+**Expected Impact:** Needs measurement
 
 **Effort:** Medium (2 weeks)
 
@@ -198,25 +199,21 @@ match tokio::time::timeout(
 
 ### 1.6 Async Disk I/O
 
-**Current State:** Snapshot dumping uses synchronous `std::fs` operations.
+**Current State:** Snapshot dumping is already inside `spawn_blocking`, but uses synchronous `std::fs` operations for directory creation and checks.
 
-**Proposed Change:** Use `tokio::fs` for non-blocking I/O:
+**Proposed Change:** Use `tokio::fs` for directory operations:
 
 ```rust
 // Current
 std::fs::create_dir_all(dir)?;
-dump_accounts_to_file(&path, chunk)?;
 
 // Proposed
 tokio::fs::create_dir_all(dir).await?;
-tokio::task::spawn_blocking(move || {
-    dump_accounts_to_file(&path, chunk)
-}).await??;
 ```
 
-**Expected Impact:** Network operations not blocked by disk I/O
+**Expected Impact:** Minor — main I/O is already non-blocking via `spawn_blocking`.
 
-**Effort:** Low (1 week)
+**Effort:** Low (< 1 week)
 
 ---
 
@@ -258,6 +255,8 @@ fn max_requests_for_peer(&self, peer_id: &H256) -> u32 {
 ```
 
 **Expected Impact:** 20-30% improvement in peer utilization
+
+**Note:** Could introduce excessive complexity. Should evaluate whether the gain justifies the added code.
 
 **Effort:** Medium (2 weeks)
 
