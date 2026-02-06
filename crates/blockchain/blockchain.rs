@@ -63,7 +63,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
+    ChainConfig, Code, Receipt, Transaction, TxKind, WrappedEIP4844Transaction,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -88,7 +88,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc::Sender;
@@ -355,10 +355,11 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
-        // Create concrete CachingDatabase so we can read caches after warming
+        // Wrap the store with CachingDatabase so both warming and execution
+        // can benefit from shared caching of state lookups
         let original_store = vm.db.store.clone();
-        let caching_db = Arc::new(CachingDatabase::new(original_store));
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = caching_db.clone();
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
+            Arc::new(CachingDatabase::new(original_store));
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -369,18 +370,14 @@ impl Blockchain {
 
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
             let vm_type = vm.vm_type;
-            let caching_db_ref = caching_db;
             let warm_handle = std::thread::Builder::new()
                 .name("block_executor_warmer".to_string())
                 .spawn_scoped(s, move || {
                     // Warming uses the same caching store, sharing cached state with execution
                     let start = Instant::now();
                     let _ = LEVM::warm_block(block, caching_store, vm_type);
-                    // Read addresses/keys the EVM actually touched
-                    let addresses = caching_db_ref.cached_addresses();
-                    let storage_keys = caching_db_ref.cached_storage_keys();
                     // Warm trie paths for merkleization
-                    warm_trie_paths(&addresses, &storage_keys, &store_for_warmer, parent_state_root);
+                    warm_trie_paths(block, &store_for_warmer, parent_state_root);
                     start.elapsed()
                 })
                 .expect("Failed to spawn block_executor warmer thread");
@@ -2355,52 +2352,48 @@ fn branchify(node: Node) -> Box<BranchNode> {
 }
 
 /// Warm trie paths that will be accessed during merkleization.
-/// Uses addresses and storage keys discovered by the EVM prewarmer
-/// to prefetch state and storage trie nodes into RocksDB's block cache.
-fn warm_trie_paths(
-    addresses: &[Address],
-    storage_keys: &[(Address, H256)],
-    store: &Store,
-    parent_state_root: H256,
-) {
+/// Traverses state and storage tries for addresses/keys known from
+/// transaction data, populating RocksDB's block cache.
+fn warm_trie_paths(block: &Block, store: &Store, parent_state_root: H256) {
     let Ok(state_trie) = store.open_state_trie(parent_state_root) else {
         return;
     };
 
-    // Build address→hashed_addr map once, avoiding redundant keccak calls.
-    // Also collect unique hashed addresses for the state trie pass.
-    let mut addr_hashes: FxHashMap<Address, H256> =
-        FxHashMap::with_capacity_and_hasher(addresses.len(), Default::default());
-    let mut unique_hashed: Vec<H256> = Vec::with_capacity(addresses.len());
-    for addr in addresses {
-        addr_hashes.entry(*addr).or_insert_with(|| {
-            let h = keccak(addr);
-            unique_hashed.push(h);
-            h
-        });
+    // Collect unique addresses and per-address storage keys from tx data
+    let mut addresses: FxHashSet<H256> = FxHashSet::default();
+    let mut storage_keys_by_addr: FxHashMap<H256, Vec<H256>> = FxHashMap::default();
+
+    // Coinbase is always touched
+    addresses.insert(keccak(block.header.coinbase));
+
+    for tx in &block.body.transactions {
+        if let TxKind::Call(to) = tx.to() {
+            addresses.insert(keccak(to));
+        }
+        for (address, storage_keys) in tx.access_list() {
+            let hashed_addr = keccak(address);
+            addresses.insert(hashed_addr);
+            if !storage_keys.is_empty() {
+                let entry = storage_keys_by_addr.entry(hashed_addr).or_default();
+                for key in storage_keys {
+                    entry.push(keccak(key));
+                }
+            }
+        }
     }
 
-    // Group storage keys by hashed address, reusing precomputed address hashes.
-    // Any address found here that wasn't in `addresses` is also added to
-    // `unique_hashed` so its state trie path gets prefetched below.
-    let mut storage_keys_by_addr: FxHashMap<H256, Vec<H256>> =
-        FxHashMap::with_capacity_and_hasher(storage_keys.len() / 4 + 1, Default::default());
-    for (addr, key) in storage_keys {
-        let hashed_addr = *addr_hashes.entry(*addr).or_insert_with(|| {
-            let h = keccak(addr);
-            unique_hashed.push(h);
-            h
-        });
-        storage_keys_by_addr
-            .entry(hashed_addr)
-            .or_default()
-            .push(keccak(key));
+    // Withdrawal addresses
+    for withdrawal in block.body.withdrawals.iter().flatten() {
+        if withdrawal.amount > 0 {
+            addresses.insert(keccak(withdrawal.address));
+        }
     }
 
     // Prefetch state trie paths and storage trie paths
-    for hashed_addr in &unique_hashed {
+    for hashed_addr in &addresses {
         match state_trie.prefetch(hashed_addr.as_bytes()) {
             Ok(Some(encoded)) => {
+                // If this address has storage keys to warm, open its storage trie
                 if let Some(keys) = storage_keys_by_addr.get(hashed_addr) {
                     if let Ok(account) = AccountState::decode(&encoded) {
                         if let Ok(storage_trie) = store.open_storage_trie(
@@ -2415,10 +2408,7 @@ fn warm_trie_paths(
                     }
                 }
             }
-            Ok(None) => {}
-            Err(e) => {
-                debug!("Trie path warming: state prefetch failed for {hashed_addr:?}: {e}");
-            }
+            _ => {}
         }
     }
 }
