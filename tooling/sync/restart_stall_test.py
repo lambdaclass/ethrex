@@ -368,12 +368,13 @@ def phase1_fresh_sync(eth_docker_dir: str, rpc_url: str) -> bool:
     print(f"{'='*60}\n")
 
     # Terminate (removes volumes) and start fresh
-    print("Terminating existing containers and volumes...")
-    ethd(eth_docker_dir, "terminate")
+    # Use docker compose directly to avoid interactive prompts from ./ethd
+    print("Stopping and removing containers + volumes...")
+    docker_compose_in_ethd(eth_docker_dir, "down", "-v")
     time.sleep(5)
 
     print("Starting eth-docker...")
-    ethd(eth_docker_dir, "up")
+    docker_compose_in_ethd(eth_docker_dir, "up", "-d")
     time.sleep(30)
 
     # Wait for node to come up
