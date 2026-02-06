@@ -355,20 +355,23 @@ multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, an
 
 RESTART_TEST_NETWORK ?= hoodi
 RESTART_TEST_COUNT ?= 3
+RESTART_TEST_FEE_RECIPIENT ?=
 ETH_DOCKER_DIR ?= $(HOME)/eth-docker
 
 restart-stall-test: ## Run restart stall test via eth-docker: configure, sync, then restart cycles.
-	python3 restart_stall_test.py \
+	PYTHONUNBUFFERED=1 python3 restart_stall_test.py \
 		--eth-docker-dir $(ETH_DOCKER_DIR) \
 		--network $(RESTART_TEST_NETWORK) \
 		--restart-count $(RESTART_TEST_COUNT) \
 		--configure \
+		$(if $(RESTART_TEST_FEE_RECIPIENT),--fee-recipient $(RESTART_TEST_FEE_RECIPIENT)) \
 		--ethrex-dir $(ETHREX_DIR)
 
 restart-stall-test-skip-sync: ## Run restart stall test, skip initial sync (node must be synced).
-	python3 restart_stall_test.py \
+	PYTHONUNBUFFERED=1 python3 restart_stall_test.py \
 		--eth-docker-dir $(ETH_DOCKER_DIR) \
 		--network $(RESTART_TEST_NETWORK) \
 		--restart-count $(RESTART_TEST_COUNT) \
 		--skip-phase1 \
+		$(if $(RESTART_TEST_FEE_RECIPIENT),--fee-recipient $(RESTART_TEST_FEE_RECIPIENT)) \
 		--ethrex-dir $(ETHREX_DIR)
