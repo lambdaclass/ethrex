@@ -9,10 +9,7 @@ documentation.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
-ethrex-vm.workspace = true
-ethrex-crypto.workspace = true
 ethrex-config.workspace = true
-ethrex-rpc.workspace = true
 
 spawned-concurrency.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "sync"] }

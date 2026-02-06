@@ -1,8 +1,7 @@
 //! Block Builder GenServer implementation.
 //!
-//! The block builder receives transactions and builds blocks either:
-//! - Immediately (on-demand mode, default)
-//! - At specified intervals (interval mode)
+//! Receives transactions and builds blocks either on-demand (default) or at
+//! specified intervals.
 
 use std::{
     sync::Arc,
@@ -24,17 +23,15 @@ use ethrex_config::networks::Network;
 use ethrex_storage::{EngineType, Store};
 use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
 use tokio::time::interval;
+use tracing::{error, info};
 
 use crate::error::BlockBuilderError;
 
-/// Configuration for the block builder.
 #[derive(Clone)]
 pub struct BlockBuilderConfig {
-    /// Coinbase address for block rewards.
     pub coinbase: Address,
-    /// Block time in milliseconds. None = on-demand mode.
+    /// `None` means on-demand mode (build immediately per transaction).
     pub block_time_ms: Option<u64>,
-    /// Gas ceiling for blocks.
     pub gas_ceil: u64,
 }
 
@@ -48,57 +45,44 @@ impl Default for BlockBuilderConfig {
     }
 }
 
-/// Block builder GenServer state.
 pub struct BlockBuilder {
     store: Store,
     blockchain: Arc<Blockchain>,
     config: BlockBuilderConfig,
-    /// Pending transactions for interval mode.
+    /// Queued transactions for interval mode.
     pending_txs: Vec<(Transaction, Option<BlobsBundle>)>,
-    /// Last block timestamp (to ensure unique timestamps).
     last_timestamp: u64,
 }
 
-/// Synchronous call messages.
+/// Synchronous (request/response) messages.
 #[derive(Clone, Debug)]
 pub enum CallMsg {
-    /// Get the current block number.
     GetBlockNumber,
-    /// Get the current head block hash.
     GetHeadBlockHash,
-    /// Get pending transaction count (for interval mode).
     GetPendingTxCount,
 }
 
-/// Asynchronous cast messages.
+/// Asynchronous (fire-and-forget) messages.
 #[derive(Clone, Debug)]
 pub enum CastMsg {
-    /// Submit a transaction (fire-and-forget).
     SubmitTransaction {
         tx: Box<Transaction>,
         blobs_bundle: Option<BlobsBundle>,
     },
-    /// Timer tick for interval mode - build block with pending txs.
+    /// Timer tick for interval mode.
     BuildBlock,
 }
 
-/// Output messages.
+/// Responses from the block builder GenServer.
 #[derive(Clone, Debug)]
 pub enum OutMsg {
-    /// Block number response.
     BlockNumber(u64),
-    /// Block hash response.
     HeadBlockHash(H256),
-    /// Pending transaction count.
     PendingTxCount(usize),
-    /// Operation completed successfully.
-    Ok,
-    /// Error occurred.
     Error(String),
 }
 
 impl BlockBuilder {
-    /// Create a new block builder with the given configuration.
     pub async fn new(config: BlockBuilderConfig) -> Result<Self, BlockBuilderError> {
         let network = Network::LocalDevnet;
         let genesis = network
@@ -126,12 +110,10 @@ impl BlockBuilder {
         })
     }
 
-    /// Get the store (for RPC server).
     pub fn store(&self) -> Store {
         self.store.clone()
     }
 
-    /// Get the blockchain (for RPC server).
     pub fn blockchain(&self) -> Arc<Blockchain> {
         self.blockchain.clone()
     }
@@ -147,15 +129,14 @@ impl BlockBuilder {
         let blockchain = builder.blockchain();
         let handle = builder.start();
 
-        // If interval mode, spawn a timer task
         if let Some(ms) = block_time_ms {
-            let mut handle_clone = handle.clone();
+            let mut timer_handle = handle.clone();
             tokio::spawn(async move {
                 let mut timer = interval(Duration::from_millis(ms));
                 loop {
                     timer.tick().await;
-                    if let Err(e) = handle_clone.cast(CastMsg::BuildBlock).await {
-                        eprintln!("    Timer error: {}", e);
+                    if let Err(e) = timer_handle.cast(CastMsg::BuildBlock).await {
+                        error!("Block builder timer error: {e}");
                         break;
                     }
                 }
@@ -165,7 +146,7 @@ impl BlockBuilder {
         Ok((handle, store, blockchain))
     }
 
-    /// Get the next unique timestamp.
+    /// Returns a strictly increasing timestamp (ensures unique block timestamps).
     fn next_timestamp(&mut self) -> u64 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -178,7 +159,6 @@ impl BlockBuilder {
         timestamp
     }
 
-    /// Build a block with the given transactions.
     async fn build_block_with_txs(
         &mut self,
         txs: Vec<(Transaction, Option<BlobsBundle>)>,
@@ -254,17 +234,17 @@ impl BlockBuilder {
             .remove_block_transactions_from_pool(&block)
             .map_err(BlockBuilderError::Store)?;
 
-        println!(
-            "    Block {} mined with {} tx (hash: {:#x})",
-            block.header.number,
-            block.body.transactions.len(),
-            block_hash
+        info!(
+            number = block.header.number,
+            txs = block.body.transactions.len(),
+            hash = %format!("{block_hash:#x}"),
+            "Block mined"
         );
 
         Ok(block)
     }
 
-    /// Handle a submitted transaction in on-demand mode.
+    /// Build a block immediately with a single transaction (on-demand mode).
     async fn handle_transaction_on_demand(
         &mut self,
         tx: Transaction,
@@ -275,17 +255,12 @@ impl BlockBuilder {
         Ok(())
     }
 
-    /// Handle a submitted transaction in interval mode.
+    /// Queue a transaction for the next interval-mode block.
     fn handle_transaction_interval(&mut self, tx: Transaction, blobs_bundle: Option<BlobsBundle>) {
-        // Queue the transaction for the next block
         self.pending_txs.push((tx, blobs_bundle));
-        println!(
-            "    Queued transaction, pending count: {}",
-            self.pending_txs.len()
-        );
+        info!(pending = self.pending_txs.len(), "Transaction queued");
     }
 
-    /// Build a block with all pending transactions (interval mode).
     async fn build_pending_block(&mut self) -> Result<(), BlockBuilderError> {
         if self.pending_txs.is_empty() {
             return Ok(());
@@ -337,19 +312,14 @@ impl GenServer for BlockBuilder {
                 let tx_hash = tx.hash();
 
                 if self.config.block_time_ms.is_some() {
-                    // Interval mode - queue the transaction
                     self.handle_transaction_interval(tx, blobs_bundle);
-                } else {
-                    // On-demand mode - build block immediately
-                    if let Err(e) = self.handle_transaction_on_demand(tx, blobs_bundle).await {
-                        eprintln!("    Error building block for tx {:#x}: {}", tx_hash, e);
-                    }
+                } else if let Err(e) = self.handle_transaction_on_demand(tx, blobs_bundle).await {
+                    error!(tx = %format!("{tx_hash:#x}"), "Failed to build block for tx: {e}");
                 }
             }
             CastMsg::BuildBlock => {
-                // Interval mode timer tick
                 if let Err(e) = self.build_pending_block().await {
-                    eprintln!("    Error building pending block: {}", e);
+                    error!("Failed to build pending block: {e}");
                 }
             }
         }
@@ -357,49 +327,3 @@ impl GenServer for BlockBuilder {
     }
 }
 
-// Helper functions for external use
-
-/// Submit a transaction to the block builder.
-pub async fn submit_transaction(
-    handle: &mut GenServerHandle<BlockBuilder>,
-    tx: Transaction,
-    blobs_bundle: Option<BlobsBundle>,
-) -> Result<H256, BlockBuilderError> {
-    let tx_hash = tx.hash();
-    handle
-        .cast(CastMsg::SubmitTransaction {
-            tx: Box::new(tx),
-            blobs_bundle,
-        })
-        .await
-        .map_err(|e| BlockBuilderError::Internal(e.to_string()))?;
-    Ok(tx_hash)
-}
-
-/// Get the current block number.
-pub async fn get_block_number(
-    handle: &mut GenServerHandle<BlockBuilder>,
-) -> Result<u64, BlockBuilderError> {
-    match handle.call(CallMsg::GetBlockNumber).await {
-        Ok(OutMsg::BlockNumber(n)) => Ok(n),
-        Ok(OutMsg::Error(e)) => Err(BlockBuilderError::Internal(e)),
-        Ok(_) => Err(BlockBuilderError::Internal(
-            "Unexpected response".to_string(),
-        )),
-        Err(e) => Err(BlockBuilderError::Internal(e.to_string())),
-    }
-}
-
-/// Get the current head block hash.
-pub async fn get_head_block_hash(
-    handle: &mut GenServerHandle<BlockBuilder>,
-) -> Result<H256, BlockBuilderError> {
-    match handle.call(CallMsg::GetHeadBlockHash).await {
-        Ok(OutMsg::HeadBlockHash(h)) => Ok(h),
-        Ok(OutMsg::Error(e)) => Err(BlockBuilderError::Internal(e)),
-        Ok(_) => Err(BlockBuilderError::Internal(
-            "Unexpected response".to_string(),
-        )),
-        Err(e) => Err(BlockBuilderError::Internal(e.to_string())),
-    }
-}

@@ -196,17 +196,8 @@ pub struct RpcApiContext {
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
-    /// Optional channel for forwarding transactions to the dev-mode block builder.
-    ///
-    /// When running in `--dev` mode, this channel bridges the RPC layer to the
-    /// GenServer-based [`BlockBuilder`]. Each `eth_sendRawTransaction` call sends
-    /// `(Box<Transaction>, Option<BlobsBundle>)` through this channel after the
-    /// transaction has been added to the mempool. A background forwarding task
-    /// receives from the other end and casts `CastMsg::SubmitTransaction` to the
-    /// block builder, which then builds a block on-demand (or queues it for
-    /// interval-based building).
-    ///
-    /// Set to `None` in normal (non-dev) operation.
+    /// Channel for forwarding transactions to the dev-mode block builder.
+    /// `None` in normal (non-dev) operation.
     pub dev_tx_sender: Option<UnboundedSender<(Box<Transaction>, Option<BlobsBundle>)>>,
 }
 
