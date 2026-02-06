@@ -914,11 +914,6 @@ async fn deploy_contracts(
         None if opts.tdx => {
             info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
             let tdx_verifier_address = deploy_tdx_contracts(opts, tdx_controller_address)?;
-            if tdx_verifier_address == Address::zero() {
-                return Err(DeployerError::InternalError(
-                    "TDX verifier deployment returned zero address".to_string(),
-                ));
-            }
 
             info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
             tdx_verifier_address
@@ -1660,22 +1655,22 @@ fn write_contract_addresses_to_env(
     writeln!(
         writer,
         "ENCLAVE_ID_DAO={:#x}",
-        read_tdx_deployment_address("AutomataEnclaveIdentityDao")
+        read_tdx_deployment_address("AutomataEnclaveIdentityDao")?
     )?;
     writeln!(
         writer,
         "FMSPC_TCB_DAO={:#x}",
-        read_tdx_deployment_address("AutomataFmspcTcbDao")
+        read_tdx_deployment_address("AutomataFmspcTcbDao")?
     )?;
     writeln!(
         writer,
         "PCK_DAO={:#x}",
-        read_tdx_deployment_address("AutomataPckDao")
+        read_tdx_deployment_address("AutomataPckDao")?
     )?;
     writeln!(
         writer,
         "PCS_DAO={:#x}",
-        read_tdx_deployment_address("AutomataPcsDao")
+        read_tdx_deployment_address("AutomataPcsDao")?
     )?;
     writeln!(
         writer,
