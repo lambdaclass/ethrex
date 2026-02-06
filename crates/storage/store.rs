@@ -184,6 +184,10 @@ pub struct Store {
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
 
     background_threads: Arc<ThreadList>,
+
+    /// When true, FlatKeyValue lookups are skipped and trie traversal is always used.
+    /// Used by the execution prewarm to warm up trie node caches.
+    skip_fkv: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1461,6 +1465,7 @@ impl Store {
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
+            skip_fkv: false,
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
@@ -2643,6 +2648,9 @@ impl Store {
     }
 
     fn last_written(&self) -> Result<Vec<u8>, StoreError> {
+        if self.skip_fkv {
+            return Ok(Vec::new());
+        }
         let last_computed_flatkeyvalue = self
             .last_computed_flatkeyvalue
             .lock()
@@ -2651,9 +2659,20 @@ impl Store {
     }
 
     fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
+        if self.skip_fkv {
+            return Ok(false);
+        }
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         let last_computed_flatkeyvalue = self.last_written()?;
         Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+    }
+
+    /// Returns a clone of this store that skips FlatKeyValue lookups,
+    /// forcing trie traversal for all reads.
+    pub fn with_skip_fkv(&self) -> Self {
+        let mut store = self.clone();
+        store.skip_fkv = true;
+        store
     }
 }
 

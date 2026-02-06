@@ -355,23 +355,30 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
-        // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
+        // Wrap the store with CachingDatabase so execution
+        // can benefit from caching of state lookups
         let original_store = vm.db.store.clone();
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
             Arc::new(CachingDatabase::new(original_store));
 
         // Replace the VM's store with the caching version
-        vm.db.store = caching_store.clone();
+        vm.db.store = caching_store;
+
+        // Create a separate store for prewarm that always traverses the trie
+        // (skips FlatKeyValue lookups to warm up trie node caches)
+        let prewarm_store = self.storage.with_skip_fkv();
+        let prewarm_vm_db: DynVmDatabase =
+            Box::new(StoreVmDatabase::new(prewarm_store, parent_header.clone())?);
+        let prewarm_db: Arc<dyn ethrex_vm::backends::LevmDatabase> = Arc::new(prewarm_vm_db);
 
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
             let vm_type = vm.vm_type;
             let warm_handle = std::thread::Builder::new()
                 .name("block_executor_warmer".to_string())
                 .spawn_scoped(s, move || {
-                    // Warming uses the same caching store, sharing cached state with execution
+                    // Warming uses a separate store that skips FKVs to traverse the trie
                     let start = Instant::now();
-                    let _ = LEVM::warm_block(block, caching_store, vm_type);
+                    let _ = LEVM::warm_block(block, prewarm_db, vm_type);
                     start.elapsed()
                 })
                 .expect("Failed to spawn block_executor warmer thread");
