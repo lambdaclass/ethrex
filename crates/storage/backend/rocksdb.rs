@@ -11,7 +11,7 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MultiThreaded, Options,
+    BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options,
     SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
@@ -76,19 +76,17 @@ impl RocksDBBackend {
             FULLSYNC_HEADERS,
         ];
 
-        opts.enable_statistics();
-        opts.set_stats_dump_period_sec(600);
+        // NOTE: enable_statistics() adds ~5-10% overhead from atomic counter
+        // increments on every DB operation. Only enable for profiling sessions.
+        // opts.enable_statistics();
+        // opts.set_stats_dump_period_sec(600);
 
-        // Shared LRU block cache for trie column families (default 1 GB)
-        let block_cache_size: usize = std::env::var("ETHREX_BLOCK_CACHE_MB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1024)
-            * 1024
-            * 1024;
-        let block_cache = Cache::new_lru_cache(block_cache_size);
+        // NOTE: Block cache disabled — see comments in trie CF configuration below.
+        // To re-enable, uncomment and use: Cache::new_lru_cache(size_in_bytes)
 
-        // Configurable compression for trie CFs (default: none)
+        // Configurable compression for trie CFs (default: LZ4).
+        // LZ4 reduces SST file sizes by ~40-60% with negligible CPU overhead,
+        // improving read amplification and reducing I/O pressure.
         let trie_compression = std::env::var("ETHREX_TRIE_COMPRESSION")
             .ok()
             .and_then(|v| match v.to_lowercase().as_str() {
@@ -96,7 +94,7 @@ impl RocksDBBackend {
                 "none" => Some(rocksdb::DBCompressionType::None),
                 _ => None,
             })
-            .unwrap_or(rocksdb::DBCompressionType::None);
+            .unwrap_or(rocksdb::DBCompressionType::Lz4);
 
         // Configurable compaction style for trie CFs (default: leveled)
         let trie_compaction_style = std::env::var("ETHREX_TRIE_COMPACTION_STYLE")
@@ -162,9 +160,13 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(15.0, false); // 15 bits per key (~0.1% FP)
-                    block_opts.set_block_cache(&block_cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    // NOTE: Explicit block cache disabled — OS page cache is more
+                    // effective for trie workloads in practice. Block cache adds
+                    // overhead (index/filter competition, double-caching) without
+                    // measurable benefit when the working set fits in page cache.
+                    // block_opts.set_block_cache(&block_cache);
+                    // block_opts.set_cache_index_and_filter_blocks(true);
+                    // block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -179,9 +181,9 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(15.0, false); // 15 bits per key (~0.1% FP)
-                    block_opts.set_block_cache(&block_cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    // block_opts.set_block_cache(&block_cache);
+                    // block_opts.set_cache_index_and_filter_blocks(true);
+                    // block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {

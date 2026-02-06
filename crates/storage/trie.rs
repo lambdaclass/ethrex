@@ -140,10 +140,23 @@ impl TrieDB for BackendTrieDB {
         let mut tx = self.db.begin_write().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
         })?;
+        // Group by table to avoid per-item Vec allocations.
+        let mut nodes_batch = Vec::new();
+        let mut fkv_batch = Vec::new();
         for (key, value) in key_values {
             let prefixed_key = self.make_key(key);
-            let table = self.table_for_key(&prefixed_key);
-            tx.put_batch(table, vec![(prefixed_key, value)])
+            if self.table_for_key(&prefixed_key) == self.fkv_table {
+                fkv_batch.push((prefixed_key, value));
+            } else {
+                nodes_batch.push((prefixed_key, value));
+            }
+        }
+        if !nodes_batch.is_empty() {
+            tx.put_batch(self.nodes_table, nodes_batch)
+                .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
+        }
+        if !fkv_batch.is_empty() {
+            tx.put_batch(self.fkv_table, fkv_batch)
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
         tx.commit()

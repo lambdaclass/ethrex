@@ -244,10 +244,20 @@ pub struct TrieWrapper {
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
     // Apply a prefix with an invalid nibble (17) as a separator, to
     // differentiate between a state trie value and a storage trie root.
+    // Layout: [64 prefix nibbles] [16 leaf flag] [17 separator] [path nibbles]
     match prefix {
-        Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
-            .append_new(17)
-            .concat(&path),
+        Some(prefix) => {
+            let path_ref = path.as_ref();
+            let mut data = Vec::with_capacity(66 + path_ref.len());
+            for byte in prefix.as_bytes() {
+                data.push(byte >> 4);
+                data.push(byte & 0x0F);
+            }
+            data.push(16); // leaf flag (from_bytes appends this)
+            data.push(17); // separator
+            data.extend_from_slice(path_ref);
+            Nibbles::from_hex(data)
+        }
         None => path,
     }
 }
@@ -269,24 +279,27 @@ impl TrieDB for TrieWrapper {
     }
 
     fn get_many(&self, keys: &[Nibbles]) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
-        let prefixed: Vec<Nibbles> = keys
+        let mut prefixed: Vec<Nibbles> = keys
             .iter()
             .map(|k| apply_prefix(self.prefix, k.clone()))
             .collect();
         // Check cache first, collect indices of misses for batch DB lookup.
         let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(keys.len());
         let mut db_indices = Vec::new();
-        let mut db_keys = Vec::new();
         for (i, key) in prefixed.iter().enumerate() {
             if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
                 results.push(Some(value));
             } else {
                 results.push(None);
                 db_indices.push(i);
-                db_keys.push(key.clone());
             }
         }
-        if !db_keys.is_empty() {
+        if !db_indices.is_empty() {
+            // Take ownership of miss keys from prefixed vec to avoid cloning.
+            let db_keys: Vec<Nibbles> = db_indices
+                .iter()
+                .map(|&i| std::mem::take(&mut prefixed[i]))
+                .collect();
             let db_results = self.db.get_many(&db_keys)?;
             for (idx, result) in db_indices.into_iter().zip(db_results) {
                 results[idx] = result;

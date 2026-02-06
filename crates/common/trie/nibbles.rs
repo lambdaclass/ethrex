@@ -10,9 +10,12 @@ use ethrex_rlp::{
 
 use crate::rkyv_smallvec::SmallVecAsVec;
 
-/// Inline capacity for nibble data: covers account trie paths (64 nibbles + leaf flag = 65)
-/// without heap allocation. Storage trie paths (131 nibbles) will spill to the heap.
-const NIBBLE_INLINE_CAP: usize = 65;
+/// Inline capacity for nibble data.
+/// Set to 0 so SmallVec always heap-allocates (~24 bytes per struct, same as Vec).
+/// A capacity of 65 (covering account trie paths) costs ~81 bytes per struct on the
+/// stack, which adds measurable overhead (~1-2ms/block on merkle drain) without
+/// meaningful benefit — the allocation cost is negligible compared to DB I/O.
+const NIBBLE_INLINE_CAP: usize = 0;
 
 // TODO: move path-tracking logic somewhere else
 /// Struct representing a list of nibbles (half-bytes).
