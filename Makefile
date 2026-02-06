@@ -45,6 +45,8 @@ bolt-optimize: ## ⚡ Apply BOLT optimization using collected profiles
 			-split-functions \
 			-split-all-cold \
 			-split-eh \
+			-icf=1 \
+			-use-gnu-stack \
 			-dyno-stats; \
 	elif ls $(BOLT_PROFILE_DIR)/prof.* 1>/dev/null 2>&1; then \
 		merge-fdata $(BOLT_PROFILE_DIR)/prof.* > $(BOLT_PROFILE_DIR)/merged.fdata && \
@@ -55,6 +57,8 @@ bolt-optimize: ## ⚡ Apply BOLT optimization using collected profiles
 			-split-functions \
 			-split-all-cold \
 			-split-eh \
+			-icf=1 \
+			-use-gnu-stack \
 			-dyno-stats; \
 	else \
 		echo "No profile data found. Run perf profiling first:"; \

@@ -24,7 +24,10 @@ BOLT is a post-link optimizer that rearranges binary code layout based on runtim
 #### Option 1: Debian Trixie (BOLT 19)
 ```bash
 sudo apt install bolt-19 libbolt-19-dev
-sudo ln -sf /usr/lib/llvm-19/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a
+sudo ln -sf /usr/bin/llvm-bolt-19 /usr/local/bin/llvm-bolt
+sudo ln -sf /usr/bin/perf2bolt-19 /usr/local/bin/perf2bolt
+sudo ln -sf /usr/bin/merge-fdata-19 /usr/local/bin/merge-fdata
+sudo ln -sf /usr/lib/llvm-19/lib/libbolt_rt_instr.a /usr/local/lib/libbolt_rt_instr.a
 ```
 
 #### Option 2: Latest from apt.llvm.org (BOLT 22+)
@@ -32,7 +35,10 @@ sudo ln -sf /usr/lib/llvm-19/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a
 wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
 echo "deb http://apt.llvm.org/unstable/ llvm-toolchain main" | sudo tee /etc/apt/sources.list.d/llvm.list
 sudo apt update && sudo apt install bolt-22 libbolt-22-dev
-sudo ln -sf /usr/lib/llvm-22/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a
+sudo ln -sf /usr/bin/llvm-bolt-22 /usr/local/bin/llvm-bolt
+sudo ln -sf /usr/bin/perf2bolt-22 /usr/local/bin/perf2bolt
+sudo ln -sf /usr/bin/merge-fdata-22 /usr/local/bin/merge-fdata
+sudo ln -sf /usr/lib/llvm-22/lib/libbolt_rt_instr.a /usr/local/lib/libbolt_rt_instr.a
 ```
 
 ## Quick Start
@@ -108,6 +114,8 @@ make bolt-instrument
 
 This creates a specially instrumented binary that collects detailed execution data in `/tmp/bolt-profiles/prof.<pid>.fdata`.
 
+**Important:** When stopping the instrumented binary, use **SIGINT** (`Ctrl-C` or `kill -INT <pid>`), not SIGTERM. The BOLT runtime library registers an `atexit` handler to flush profile data, which only runs on graceful shutdown.
+
 **Advantages:**
 - More accurate BOLT-specific profiling
 - No kernel perf setup required
@@ -136,6 +144,8 @@ This applies BOLT optimizations:
 - `-split-functions` - Separate hot/cold code paths
 - `-split-all-cold` - Move cold code out of hot paths
 - `-split-eh` - Separate exception handling code
+- `-icf=1` - Identical Code Folding (merges duplicate functions)
+- `-use-gnu-stack` - Use GNU stack markers for compatibility
 - `-dyno-stats` - Display optimization statistics
 
 **Output:** `ethrex-bolt-optimized`
@@ -157,13 +167,18 @@ The quality of BOLT optimization depends on your profiling workload. Choose work
 3. **Are long enough** - Run for at least 10-30 seconds to collect meaningful data
 4. **Are repeatable** - Use consistent inputs for stable optimization
 
+**Important:** Profile quality directly affects optimization quality. In testing, a profile
+collected during snap sync (networking-heavy) produced **0% improvement** on block execution,
+while a profile from block import (EVM-heavy) produced **1.4% improvement** on the same
+benchmark. Always profile with the workload you want to optimize.
+
 **Examples:**
 ```bash
-# Sync from a known network (snap sync covers the hot paths)
-./ethrex-instrumented --network mainnet --syncmode snap --datadir /tmp/bolt-data
+# Import blocks from an RLP chain file (best for block execution optimization)
+./ethrex-instrumented --network <genesis> --datadir /tmp/bolt-data import blocks.rlp
 
-# Import blocks from an RLP chain file
-./ethrex-instrumented --network mainnet --datadir /tmp/bolt-data import blocks.rlp
+# Sync from a known network (covers networking + state sync paths)
+./ethrex-instrumented --network mainnet --syncmode snap --datadir /tmp/bolt-data
 
 # Run in dev mode with a load test (in a separate terminal: make load-test)
 ./ethrex-instrumented --dev --datadir /tmp/bolt-data
@@ -204,8 +219,24 @@ Expected combined improvement: **5-20%** depending on workload.
 ### ARM64 Not Supported
 BOLT currently fails on ARM64 Linux with "Undefined temporary symbol .Ltmp0" errors. This is a known LLVM bug. Use x86_64 for now.
 
-### "Split function detected" Warnings
-BOLT may warn about split functions (symbols with `.warm` or `.cold` suffixes added by LLVM during function splitting). The `CXXFLAGS='-fno-reorder-blocks-and-partition'` flag in `build-bolt` prevents this for RocksDB. If warnings still appear, they can typically be ignored if the build succeeds.
+### "Parent function not found" / "Split function detected" Errors
+
+BOLT's split-function detection regex matches `.warm` and `.cold` substrings anywhere in
+ELF symbol names. Rust's legacy mangling converts `::` to `..`, so function names containing
+`warm` or `cold` will trigger false positives:
+
+- `::warm_block` → `..warm_block..` contains `.warm` → BOLT error
+- `::cold_start` → `..cold_start..` contains `.cold` → BOLT error
+
+**Fix:** Rename the function to avoid `warm`/`cold` (e.g., `warm_block` → `preheat_block`).
+
+Additionally, closures passed to `std::thread::spawn` produce complex `drop_in_place`
+specialization symbols that BOLT can't analyze. **Fix:** Extract the closure body into a
+named function and pass it as a function pointer.
+
+The `CXXFLAGS='-fno-reorder-blocks-and-partition'` flag in `build-bolt` prevents C++ dependencies
+(e.g., RocksDB) from producing split functions. Remaining jemalloc `.cold` symbols are harmless
+warnings that don't cause errors.
 
 ### No Profile Data Found
 If `bolt-optimize` reports no profile data:
@@ -256,6 +287,27 @@ Look for:
 - Better instruction cache hit rates (via `perf stat`)
 - Improved branch prediction accuracy
 
+### Measured Results (ethrex-office-3)
+
+Tested on 128-core AMD EPYC (Debian Trixie), BOLT 19, Rust 1.90.0-nightly.
+
+**Workload:** Import 1,110 blocks containing ~1.5M ERC20 transfer transactions
+(2.4-2.9 Ggas/s), using `fixtures/genesis/perf-ci.json` + `fixtures/blockchain/l2-1k-erc20.rlp`.
+
+| Binary | Avg time (5 runs) |
+|--------|-------------------|
+| Baseline (release-bolt) | 17,706 ms |
+| BOLT-optimized | 17,465 ms |
+| **Improvement** | **~1.4%** |
+
+BOLT dynostats showed significant branch prediction improvements:
+- Taken forward branches: **-84.0%**
+- Taken conditional branches: **-50.6%**
+- Total taken branches: **-53.6%**
+
+**Note:** The improvement is expected to be higher on a live node with concurrent
+networking, mempool processing, and consensus, where I-cache pressure is greater.
+
 ## References
 
 ### Official Documentation
@@ -285,7 +337,13 @@ The BOLT setup in ethrex includes:
    - `--emit-relocs` - Preserves relocations for BOLT rewriting
    - `-Wl,-q` - Quick relocations mode
    - `-Cforce-frame-pointers=yes` - Better stack traces for profiling
+   - `-Cllvm-args=-hot-cold-split=false` - Prevents LLVM from creating `.cold` fragments that BOLT can't match
    - Loaded only by `make build-bolt` via `--config .cargo/bolt.toml` to avoid affecting normal builds
 
 3. **Build constraints**:
    - RocksDB must build with `-fno-reorder-blocks-and-partition` (set by the `build-bolt` target)
+   - Fat LTO (`lto = "fat"` in release-bolt profile) — thin LTO creates `.lto_priv` fragments incompatible with BOLT
+
+4. **Rust source constraints** (for BOLT compatibility):
+   - Function names must not contain `warm` or `cold` — BOLT's split-function regex matches `.warm`/`.cold` inside Rust's mangled symbols
+   - Closures in `thread::spawn` should be extracted into named function pointers — complex closure symbols confuse BOLT
