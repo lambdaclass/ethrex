@@ -1979,12 +1979,16 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
+    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid.
+    ///
+    /// When `blobs_already_validated` is true, blob KZG validation is skipped because the caller
+    /// (e.g. the P2P layer's `validate_requested`) has already performed it.
     #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
+        blobs_already_validated: bool,
     ) -> Result<H256, MempoolError> {
         let fork = self.current_fork().await?;
 
@@ -1995,8 +1999,11 @@ impl Blockchain {
         }
 
         // Validate blobs bundle after checking if it's already added.
-        if let Transaction::EIP4844Transaction(transaction) = &transaction {
-            blobs_bundle.validate(transaction, fork)?;
+        // Skip if the caller already validated (e.g. P2P layer via validate_requested).
+        if !blobs_already_validated {
+            if let Transaction::EIP4844Transaction(transaction) = &transaction {
+                blobs_bundle.validate(transaction, fork)?;
+            }
         }
 
         let sender = transaction.sender()?;

@@ -41,8 +41,10 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
-pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
+pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 500.0;
+pub const LOOKUP_INTERVAL_MS: f64 = 5000.0;
+/// Slow maintenance interval when target peers are met (30 seconds).
+const MAINTENANCE_LOOKUP_INTERVAL: Duration = Duration::from_secs(30);
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -69,7 +71,6 @@ pub enum InMessage {
     Message(Box<Discv4Message>),
     Revalidate,
     Lookup,
-    EnrLookup,
     Prune,
     ChangeFindNodeMessage,
     Shutdown,
@@ -92,6 +93,8 @@ pub struct DiscoveryServer {
     /// signatures being expensive.
     find_node_message: BytesMut,
     initial_lookup_interval: f64,
+    /// Alternates between regular lookup and ENR lookup on each tick.
+    next_lookup_is_enr: bool,
 }
 
 impl DiscoveryServer {
@@ -123,6 +126,7 @@ impl DiscoveryServer {
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
+            next_lookup_is_enr: false,
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -708,7 +712,6 @@ impl GenServer for DiscoveryServer {
             InMessage::ChangeFindNodeMessage,
         );
         let _ = handle.clone().cast(InMessage::Lookup).await;
-        let _ = handle.clone().cast(InMessage::EnrLookup).await;
         send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
 
         Ok(Success(self))
@@ -734,24 +737,36 @@ impl GenServer for DiscoveryServer {
                     .inspect_err(|e| error!(err=?e, "Error revalidating discovered peers"));
             }
             Self::CastMsg::Lookup => {
-                trace!(received = "Lookup");
-                let _ = self
-                    .lookup()
+                // Check if target peers are met — use slow maintenance rate
+                let peer_completion = self
+                    .peer_table
+                    .target_peers_completion()
                     .await
-                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
+                    .unwrap_or_default();
 
-                let interval = self.get_lookup_interval().await;
+                let interval = if peer_completion >= 1.0 {
+                    MAINTENANCE_LOOKUP_INTERVAL
+                } else {
+                    self.get_lookup_interval().await
+                };
+
+                // Alternate between regular lookup and ENR lookup
+                if self.next_lookup_is_enr {
+                    trace!(received = "EnrLookup");
+                    let _ = self
+                        .enr_lookup()
+                        .await
+                        .inspect_err(|e| error!(err=?e, "Error performing Discovery ENR lookup"));
+                } else {
+                    trace!(received = "Lookup");
+                    let _ = self
+                        .lookup()
+                        .await
+                        .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
+                }
+                self.next_lookup_is_enr = !self.next_lookup_is_enr;
+
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
-            }
-            Self::CastMsg::EnrLookup => {
-                trace!(received = "EnrLookup");
-                let _ = self
-                    .enr_lookup()
-                    .await
-                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
-
-                let interval = self.get_lookup_interval().await;
-                send_after(interval, handle.clone(), Self::CastMsg::EnrLookup);
             }
             Self::CastMsg::Prune => {
                 trace!(received = "Prune");

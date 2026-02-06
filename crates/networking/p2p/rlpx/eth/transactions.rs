@@ -283,8 +283,9 @@ impl PooledTransactions {
                     );
                     continue;
                 }
+                // Blobs were already validated in validate_requested() above.
                 if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
+                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle, true)
                     .await
                 {
                     debug!(
