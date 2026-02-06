@@ -352,18 +352,6 @@ impl From<Fork> for &str {
     }
 }
 
-impl Fork {
-    /// Returns the gas_spent value for receipt encoding based on fork.
-    /// EIP-7778 (Amsterdam+): receipts include gas_spent field.
-    pub fn gas_spent_for_receipt(self, gas_spent: u64) -> Option<u64> {
-        if self >= Fork::Amsterdam {
-            Some(gas_spent)
-        } else {
-            None
-        }
-    }
-}
-
 impl ChainConfig {
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
         self.amsterdam_time
