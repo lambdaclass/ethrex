@@ -8,7 +8,9 @@ use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
-    fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
+    fork_choice::{
+        ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3, ForkChoiceUpdatedV4,
+    },
     payload::{
         GetPayloadBodiesByHashV1Request, GetPayloadBodiesByHashV2Request,
         GetPayloadBodiesByRangeV1Request, GetPayloadBodiesByRangeV2Request, GetPayloadV1Request,
@@ -800,6 +802,7 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
         "engine_newPayloadV5" => NewPayloadV5Request::call(req, context).await,
         "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
