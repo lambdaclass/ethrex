@@ -1296,9 +1296,9 @@ mod tests {
     #[cfg(feature = "cpu_profiling")]
     #[tokio::test]
     async fn cpu_profiling_endpoint() {
+        use crate::rpc::cpu_profile::{ProfileParams, handle_cpu_profile};
         use axum::extract::Query;
         use axum::http::StatusCode;
-        use crate::rpc::cpu_profile::{ProfileParams, handle_cpu_profile};
 
         let query = |seconds, frequency| {
             Query(ProfileParams {
@@ -1312,9 +1312,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         // 2. Concurrent request gets 409.
-        let long_capture = tokio::spawn(async move {
-            handle_cpu_profile(query(3, 100)).await
-        });
+        let long_capture = tokio::spawn(async move { handle_cpu_profile(query(3, 100)).await });
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
         let err = handle_cpu_profile(query(1, 100)).await.unwrap_err();
