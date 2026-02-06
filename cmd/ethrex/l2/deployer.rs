@@ -902,37 +902,11 @@ async fn deploy_contracts(
 
     // if it's a required proof type, but no address has been specified, deploy it.
     // TDX deployment shells out to `rex` which independently manages nonces for the
-    // same deployer account. We must wait for all pending deploy receipts first so
+    // same deployer account. We must wait for all pending transactions first so
     // the L1 nonce is up to date when `rex` fetches it, avoiding nonce collisions.
-    let needs_tdx_deploy = opts.tdx && opts.tdx_verifier_address.is_none();
-    if needs_tdx_deploy {
-        let mut pending_tx_hashes = vec![
-            on_chain_proposer_deployment.implementation_tx_hash,
-            on_chain_proposer_deployment.proxy_tx_hash,
-            bridge_deployment.implementation_tx_hash,
-            bridge_deployment.proxy_tx_hash,
-            sequencer_registry_deployment.implementation_tx_hash,
-            sequencer_registry_deployment.proxy_tx_hash,
-            sp1_verifier_deployment_tx_hash,
-            router_deployment.implementation_tx_hash,
-            router_deployment.proxy_tx_hash,
-        ];
-        if let Some(ref td) = timelock_deployment {
-            pending_tx_hashes.push(td.implementation_tx_hash);
-            pending_tx_hashes.push(td.proxy_tx_hash);
-        }
-
+    if opts.tdx && opts.tdx_verifier_address.is_none() {
         info!("Waiting for pending deploy transactions before TDX deployment");
-        for tx_hash in pending_tx_hashes {
-            if tx_hash == H256::default() {
-                continue;
-            }
-            let receipt = wait_for_transaction_receipt(tx_hash, eth_client, 100).await?;
-            if !receipt.receipt.status {
-                error!("Receipt status is false for tx_hash: {tx_hash:#x}");
-                return Err(DeployerError::TransactionReceiptError);
-            }
-        }
+        wait_for_pending_transactions(eth_client, deployer.address()).await?;
     }
 
     let tdx_verifier_address = match opts.tdx_verifier_address {
