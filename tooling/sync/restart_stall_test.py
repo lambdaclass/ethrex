@@ -59,7 +59,7 @@ def configure_eth_docker(eth_docker_dir: str, network: str, fee_recipient: str =
 
     # Settings to override
     overrides = {
-        "COMPOSE_FILE": "prysm.yml:ethrex.yml",
+        "COMPOSE_FILE": "prysm.yml:ethrex.yml:el-shared.yml",
         "NETWORK": network,
         "ETHREX_DOCKERFILE": "Dockerfile.binary",
         "ETHREX_DOCKER_REPO": "ghcr.io/lambdaclass/ethrex",
@@ -93,7 +93,7 @@ def configure_eth_docker(eth_docker_dir: str, network: str, fee_recipient: str =
         f.writelines(new_lines)
 
     print(f"  Wrote {env_file}")
-    print(f"    COMPOSE_FILE=prysm.yml:ethrex.yml")
+    print(f"    COMPOSE_FILE=prysm.yml:ethrex.yml:el-shared.yml")
     print(f"    NETWORK={network}")
     if fee_recipient:
         print(f"    FEE_RECIPIENT={fee_recipient}")
