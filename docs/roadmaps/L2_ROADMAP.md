@@ -204,7 +204,6 @@ The following sections from the previous roadmap are not part of the core focus 
 
 ## References
 
-- [Main Project Roadmap](/ROADMAP.md)
 - [Based Sequencing Design](../l2/fundamentals/based.md)
 - [Stage Compliance Analysis](../l2/stages.md)
 - [zkVM Comparison Benchmarks](../l2/bench/zkvm_comparison.md)
