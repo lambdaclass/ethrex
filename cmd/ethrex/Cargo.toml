@@ -54,7 +54,7 @@ thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
 tracing-appender = "0.2"
-pprof = { version = "0.15", features = ["cpp", "protobuf-codec"], optional = true }
+pprof = { version = "0.15", features = ["cpp", "protobuf-codec", "frame-pointer"], optional = true }
 
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
