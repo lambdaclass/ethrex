@@ -203,9 +203,7 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
         String::new()
     };
 
-    format!(
-        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%){fork_details}\n"#,
-    )
+    format!(r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%){fork_details}\n"#,)
 }
 
 fn fork_summary_for_github(reports: &[EFTestReport], fork: Fork) -> Option<String> {
