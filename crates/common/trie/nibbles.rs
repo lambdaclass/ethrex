@@ -208,11 +208,22 @@ impl Nibbles {
     }
 
     /// Returns a compacted Nibbles containing the effective nibbles starting at
-    /// `offset` from the current position. The returned Nibbles has consumed=0.
+    /// `offset` from the current position. The returned Nibbles has consumed=0,
+    /// suitable for node storage (partial/prefix). Does NOT preserve consumed
+    /// tracking — use `advance()` for traversal where `current()` is needed.
     pub fn offset(&self, offset: usize) -> Nibbles {
         Nibbles {
             data: self.data[self.consumed + offset..].to_vec(),
             consumed: 0,
+        }
+    }
+
+    /// Advances past `n` nibbles while preserving consumed tracking.
+    /// Use this during trie traversal when `current()` will be called later.
+    pub fn advance(&self, n: usize) -> Nibbles {
+        Nibbles {
+            data: self.data.clone(),
+            consumed: self.consumed + n,
         }
     }
 

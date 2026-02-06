@@ -76,7 +76,7 @@ impl ExtensionNode {
         */
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
-            let path = path.offset(match_index);
+            let path = path.advance(match_index);
             // Insert into child node
             let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
                 return Err(TrieError::InconsistentTree(Box::new(
@@ -142,7 +142,7 @@ impl ExtensionNode {
             let mut new_extension =
                 ExtensionNode::new(self.prefix.offset(match_index), self.child.clone());
             let new_node = new_extension
-                .insert(db, path.offset(match_index), value)?
+                .insert(db, path.advance(match_index), value)?
                 .unwrap_or(new_extension.into());
             self.prefix = self.prefix.slice(0, match_index);
             self.child = new_node.into();
