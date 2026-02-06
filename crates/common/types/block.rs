@@ -16,7 +16,7 @@ use bytes::Bytes;
 use ethereum_types::Bloom;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -58,6 +58,15 @@ impl RLPEncode for Block {
             .encode_field(&self.body.ommers)
             .encode_optional_field(&self.body.withdrawals)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let mut payload_len =
+            self.header.length() + self.body.transactions.length() + self.body.ommers.length();
+        if let Some(ref withdrawals) = self.body.withdrawals {
+            payload_len += withdrawals.length();
+        }
+        list_length(payload_len)
     }
 }
 
@@ -238,6 +247,43 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.slot_number)
             .finish();
     }
+
+    fn length(&self) -> usize {
+        let mut payload_len = self.parent_hash.length()
+            + self.ommers_hash.length()
+            + self.coinbase.length()
+            + self.state_root.length()
+            + self.transactions_root.length()
+            + self.receipts_root.length()
+            + self.logs_bloom.length()
+            + self.difficulty.length()
+            + self.number.length()
+            + self.gas_limit.length()
+            + self.gas_used.length()
+            + self.timestamp.length()
+            + self.extra_data.length()
+            + self.prev_randao.length()
+            + self.nonce.to_be_bytes().length();
+        if let Some(base_fee) = self.base_fee_per_gas {
+            payload_len += base_fee.length();
+        }
+        if let Some(ref root) = self.withdrawals_root {
+            payload_len += root.length();
+        }
+        if let Some(gas) = self.blob_gas_used {
+            payload_len += gas.length();
+        }
+        if let Some(gas) = self.excess_blob_gas {
+            payload_len += gas.length();
+        }
+        if let Some(ref root) = self.parent_beacon_block_root {
+            payload_len += root.length();
+        }
+        if let Some(ref hash) = self.requests_hash {
+            payload_len += hash.length();
+        }
+        list_length(payload_len)
+    }
 }
 
 impl RLPDecode for BlockHeader {
@@ -366,6 +412,14 @@ impl RLPEncode for BlockBody {
             .encode_optional_field(&self.withdrawals)
             .finish();
     }
+
+    fn length(&self) -> usize {
+        let mut payload_len = self.transactions.length() + self.ommers.length();
+        if let Some(ref withdrawals) = self.withdrawals {
+            payload_len += withdrawals.length();
+        }
+        list_length(payload_len)
+    }
 }
 
 impl RLPDecode for BlockBody {
@@ -420,6 +474,14 @@ impl RLPEncode for Withdrawal {
             .encode_field(&self.address)
             .encode_field(&self.amount)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.index.length()
+            + self.validator_index.length()
+            + self.address.length()
+            + self.amount.length();
+        list_length(payload_len)
     }
 }
 

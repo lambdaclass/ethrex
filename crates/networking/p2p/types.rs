@@ -4,7 +4,7 @@ use ethrex_common::{H256, H264, H512};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
@@ -51,6 +51,11 @@ impl RLPEncode for Endpoint {
             .encode_field(&self.udp_port)
             .encode_field(&self.tcp_port)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.ip.length() + self.udp_port.length() + self.tcp_port.length();
+        list_length(payload_len)
     }
 }
 
@@ -527,6 +532,17 @@ impl RLPEncode for NodeRecord {
             .encode_key_value_list::<Bytes>(&self.pairs)
             .finish();
     }
+
+    fn length(&self) -> usize {
+        let mut payload_len = self.signature.length() + self.seq.length();
+        // Add length of key-value pairs
+        for (key, value) in &self.pairs {
+            payload_len += key.length();
+            // value is already encoded (RLP prefix || payload), so add its raw length
+            payload_len += value.len();
+        }
+        list_length(payload_len)
+    }
 }
 
 impl RLPEncode for Node {
@@ -537,6 +553,14 @@ impl RLPEncode for Node {
             .encode_field(&self.tcp_port)
             .encode_field(&self.public_key)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.ip.length()
+            + self.udp_port.length()
+            + self.tcp_port.length()
+            + self.public_key.length();
+        list_length(payload_len)
     }
 }
 

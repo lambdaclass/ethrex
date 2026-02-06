@@ -49,6 +49,10 @@ impl RLPEncode for EncodedRequests {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         self.0.encode(buf)
     }
+
+    fn length(&self) -> usize {
+        self.0.length()
+    }
 }
 
 impl RLPDecode for EncodedRequests {

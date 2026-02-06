@@ -9,7 +9,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
@@ -357,6 +357,11 @@ impl RLPEncode for AccountRangeUnit {
             .encode_field(&AccountStateSlimCodec(self.account))
             .finish();
     }
+
+    fn length(&self) -> usize {
+        let payload_len = self.hash.length() + AccountStateSlimCodec(self.account).length();
+        list_length(payload_len)
+    }
 }
 
 impl RLPDecode for AccountRangeUnit {
@@ -375,6 +380,24 @@ impl RLPEncode for StorageSlot {
             .encode_field(&self.hash)
             .encode_bytes(&self.data.encode_to_vec())
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        // self.data is encoded, then that encoded data is wrapped as bytes
+        let data_encoded_len = self.data.length();
+        // For bytes encoding: we need to know the first byte of the encoded data
+        // U256 encodes as bytes, first byte depends on value
+        // For simplicity, compute the bytes_length for the encoded data length
+        // The first byte of RLP-encoded U256 is >= 0x80 for multi-byte, or the value itself for single byte
+        // Since we don't know the first byte without encoding, use a conservative estimate
+        let data_as_bytes_len = if data_encoded_len < 56 {
+            1 + data_encoded_len
+        } else {
+            let len_of_len = (data_encoded_len.ilog2() / 8 + 1) as usize;
+            1 + len_of_len + data_encoded_len
+        };
+        let payload_len = self.hash.length() + data_as_bytes_len;
+        list_length(payload_len)
     }
 }
 

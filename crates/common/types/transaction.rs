@@ -17,7 +17,7 @@ pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, decode_rlp_item},
-    encode::{PayloadRLPEncode, RLPEncode},
+    encode::{PayloadRLPEncode, RLPEncode, bytes_length, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -79,6 +79,32 @@ impl RLPEncode for P2PTransaction {
             tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
         };
     }
+
+    fn length(&self) -> usize {
+        match self {
+            P2PTransaction::LegacyTransaction(t) => t.length(),
+            P2PTransaction::EIP2930Transaction(t) => {
+                let canonical_len = 1 + t.length(); // tx_type + RLP(tx)
+                bytes_length(canonical_len, TxType::EIP2930 as u8)
+            }
+            P2PTransaction::EIP1559Transaction(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::EIP1559 as u8)
+            }
+            P2PTransaction::EIP4844TransactionWithBlobs(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::EIP4844 as u8)
+            }
+            P2PTransaction::EIP7702Transaction(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::EIP7702 as u8)
+            }
+            P2PTransaction::FeeTokenTransaction(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::FeeToken as u8)
+            }
+        }
+    }
 }
 
 impl RLPDecode for P2PTransaction {
@@ -136,6 +162,17 @@ impl RLPEncode for WrappedEIP4844Transaction {
             .encode_field(&self.blobs_bundle.commitments)
             .encode_field(&self.blobs_bundle.proofs)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let mut payload_len = self.tx.length()
+            + self.blobs_bundle.blobs.length()
+            + self.blobs_bundle.commitments.length()
+            + self.blobs_bundle.proofs.length();
+        if let Some(version) = self.wrapper_version {
+            payload_len += version.length();
+        }
+        list_length(payload_len)
     }
 }
 
@@ -432,6 +469,36 @@ impl RLPEncode for Transaction {
             tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
         };
     }
+
+    fn length(&self) -> usize {
+        match self {
+            Transaction::LegacyTransaction(t) => t.length(),
+            Transaction::EIP2930Transaction(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::EIP2930 as u8)
+            }
+            Transaction::EIP1559Transaction(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::EIP1559 as u8)
+            }
+            Transaction::EIP4844Transaction(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::EIP4844 as u8)
+            }
+            Transaction::EIP7702Transaction(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::EIP7702 as u8)
+            }
+            Transaction::PrivilegedL2Transaction(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::Privileged as u8)
+            }
+            Transaction::FeeTokenTransaction(t) => {
+                let canonical_len = 1 + t.length();
+                bytes_length(canonical_len, TxType::FeeToken as u8)
+            }
+        }
+    }
 }
 
 impl RLPDecode for Transaction {
@@ -494,6 +561,13 @@ impl RLPEncode for TxKind {
             Self::Create => buf.put_u8(RLP_NULL),
         }
     }
+
+    fn length(&self) -> usize {
+        match self {
+            Self::Call(address) => address.length(),
+            Self::Create => 1, // RLP_NULL is single byte
+        }
+    }
 }
 
 impl RLPDecode for TxKind {
@@ -520,6 +594,19 @@ impl RLPEncode for LegacyTransaction {
             .encode_field(&self.s)
             .finish();
     }
+
+    fn length(&self) -> usize {
+        let payload_len = self.nonce.length()
+            + self.gas_price.length()
+            + self.gas.length()
+            + self.to.length()
+            + self.value.length()
+            + self.data.length()
+            + self.v.length()
+            + self.r.length()
+            + self.s.length();
+        list_length(payload_len)
+    }
 }
 
 impl RLPEncode for EIP2930Transaction {
@@ -537,6 +624,21 @@ impl RLPEncode for EIP2930Transaction {
             .encode_field(&self.signature_r)
             .encode_field(&self.signature_s)
             .finish()
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.chain_id.length()
+            + self.nonce.length()
+            + self.gas_price.length()
+            + self.gas_limit.length()
+            + self.to.length()
+            + self.value.length()
+            + self.data.length()
+            + self.access_list.length()
+            + self.signature_y_parity.length()
+            + self.signature_r.length()
+            + self.signature_s.length();
+        list_length(payload_len)
     }
 }
 
@@ -556,6 +658,22 @@ impl RLPEncode for EIP1559Transaction {
             .encode_field(&self.signature_r)
             .encode_field(&self.signature_s)
             .finish()
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.chain_id.length()
+            + self.nonce.length()
+            + self.max_priority_fee_per_gas.length()
+            + self.max_fee_per_gas.length()
+            + self.gas_limit.length()
+            + self.to.length()
+            + self.value.length()
+            + self.data.length()
+            + self.access_list.length()
+            + self.signature_y_parity.length()
+            + self.signature_r.length()
+            + self.signature_s.length();
+        list_length(payload_len)
     }
 }
 
@@ -577,6 +695,24 @@ impl RLPEncode for EIP4844Transaction {
             .encode_field(&self.signature_r)
             .encode_field(&self.signature_s)
             .finish()
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.chain_id.length()
+            + self.nonce.length()
+            + self.max_priority_fee_per_gas.length()
+            + self.max_fee_per_gas.length()
+            + self.gas.length()
+            + self.to.length()
+            + self.value.length()
+            + self.data.length()
+            + self.access_list.length()
+            + self.max_fee_per_blob_gas.length()
+            + self.blob_versioned_hashes.length()
+            + self.signature_y_parity.length()
+            + self.signature_r.length()
+            + self.signature_s.length();
+        list_length(payload_len)
     }
 }
 
@@ -622,6 +758,23 @@ impl RLPEncode for EIP7702Transaction {
             .encode_field(&self.signature_s)
             .finish()
     }
+
+    fn length(&self) -> usize {
+        let payload_len = self.chain_id.length()
+            + self.nonce.length()
+            + self.max_priority_fee_per_gas.length()
+            + self.max_fee_per_gas.length()
+            + self.gas_limit.length()
+            + self.to.length()
+            + self.value.length()
+            + self.data.length()
+            + self.access_list.length()
+            + self.authorization_list.length()
+            + self.signature_y_parity.length()
+            + self.signature_r.length()
+            + self.signature_s.length();
+        list_length(payload_len)
+    }
 }
 
 impl RLPEncode for PrivilegedL2Transaction {
@@ -638,6 +791,20 @@ impl RLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.access_list)
             .encode_field(&self.from)
             .finish()
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.chain_id.length()
+            + self.nonce.length()
+            + self.max_priority_fee_per_gas.length()
+            + self.max_fee_per_gas.length()
+            + self.gas_limit.length()
+            + self.to.length()
+            + self.value.length()
+            + self.data.length()
+            + self.access_list.length()
+            + self.from.length();
+        list_length(payload_len)
     }
 }
 
@@ -658,6 +825,23 @@ impl RLPEncode for FeeTokenTransaction {
             .encode_field(&self.signature_r)
             .encode_field(&self.signature_s)
             .finish()
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.chain_id.length()
+            + self.nonce.length()
+            + self.max_priority_fee_per_gas.length()
+            + self.max_fee_per_gas.length()
+            + self.gas_limit.length()
+            + self.to.length()
+            + self.value.length()
+            + self.data.length()
+            + self.access_list.length()
+            + self.fee_token.length()
+            + self.signature_y_parity.length()
+            + self.signature_r.length()
+            + self.signature_s.length();
+        list_length(payload_len)
     }
 }
 
@@ -2989,6 +3173,11 @@ mod mempool {
                 .encode_field(&self.timestamp)
                 .encode_field(&*self.inner)
                 .finish();
+        }
+
+        fn length(&self) -> usize {
+            let payload_len = self.timestamp.length() + self.inner.length();
+            list_length(payload_len)
         }
     }
 

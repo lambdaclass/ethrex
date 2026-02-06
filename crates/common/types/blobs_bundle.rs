@@ -8,7 +8,7 @@ use crate::{Bytes, H256};
 
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -211,6 +211,15 @@ impl RLPEncode for BlobsBundle {
             .encode_field(&self.proofs)
             .encode_optional_field(&(self.version != 0).then_some(self.version))
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let mut payload_len =
+            self.blobs.length() + self.commitments.length() + self.proofs.length();
+        if self.version != 0 {
+            payload_len += self.version.length();
+        }
+        list_length(payload_len)
     }
 }
 

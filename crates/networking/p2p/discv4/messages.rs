@@ -7,7 +7,7 @@ use ethrex_common::{H256, H512, H520, utils::keccak};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
@@ -268,6 +268,17 @@ impl RLPEncode for PingMessage {
             .encode_optional_field(&self.enr_seq)
             .finish();
     }
+
+    fn length(&self) -> usize {
+        let mut payload_len = self.version.length()
+            + self.from.length()
+            + self.to.length()
+            + self.expiration.length();
+        if let Some(enr_seq) = self.enr_seq {
+            payload_len += enr_seq.length();
+        }
+        list_length(payload_len)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -292,6 +303,11 @@ impl RLPEncode for FindNodeMessage {
             .encode_field(&self.target)
             .encode_field(&self.expiration)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.target.length() + self.expiration.length();
+        list_length(payload_len)
     }
 }
 
@@ -400,6 +416,14 @@ impl RLPEncode for PongMessage {
             .encode_optional_field(&self.enr_seq)
             .finish();
     }
+
+    fn length(&self) -> usize {
+        let mut payload_len = self.to.length() + self.ping_hash.length() + self.expiration.length();
+        if let Some(enr_seq) = self.enr_seq {
+            payload_len += enr_seq.length();
+        }
+        list_length(payload_len)
+    }
 }
 
 impl RLPDecode for PongMessage {
@@ -453,6 +477,11 @@ impl RLPEncode for NeighborsMessage {
             .encode_field(&self.nodes)
             .encode_field(&self.expiration)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.nodes.length() + self.expiration.length();
+        list_length(payload_len)
     }
 }
 
@@ -512,6 +541,10 @@ impl RLPEncode for ENRRequestMessage {
             .encode_field(&self.expiration)
             .finish();
     }
+
+    fn length(&self) -> usize {
+        list_length(self.expiration.length())
+    }
 }
 
 impl RLPEncode for ENRResponseMessage {
@@ -520,6 +553,11 @@ impl RLPEncode for ENRResponseMessage {
             .encode_field(&self.request_hash)
             .encode_field(&self.node_record)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.request_hash.length() + self.node_record.length();
+        list_length(payload_len)
     }
 }
 

@@ -3,7 +3,7 @@ use ethereum_types::{Address, Bloom, BloomInput, H256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
-    encode::RLPEncode,
+    encode::{RLPEncode, bytes_length, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -81,6 +81,16 @@ impl RLPEncode for Receipt {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         let encoded_inner = self.encode_inner();
         buf.put_slice(&encoded_inner);
+    }
+
+    fn length(&self) -> usize {
+        // encode_inner produces a list [tx_type, succeeded, cumulative_gas_used, logs]
+        let tx_type: u8 = self.tx_type as u8;
+        let payload_len = tx_type.length()
+            + self.succeeded.length()
+            + self.cumulative_gas_used.length()
+            + self.logs.length();
+        list_length(payload_len)
     }
 }
 
@@ -228,6 +238,26 @@ impl RLPEncode for ReceiptWithBloom {
             }
         };
     }
+
+    fn length(&self) -> usize {
+        // encode_inner produces [succeeded, cumulative_gas_used, bloom, logs]
+        // For non-legacy, it's prefixed with tx_type byte
+        let inner_payload_len = self.succeeded.length()
+            + self.cumulative_gas_used.length()
+            + self.bloom.length()
+            + self.logs.length();
+        let inner_len = list_length(inner_payload_len);
+
+        match self.tx_type {
+            TxType::Legacy => inner_len,
+            _ => {
+                // tx_type byte + inner_len, then wrapped as bytes
+                let typed_len = 1 + inner_len;
+                // First byte of the typed encoding is tx_type (< 0x80)
+                bytes_length(typed_len, self.tx_type as u8)
+            }
+        }
+    }
 }
 
 impl RLPDecode for ReceiptWithBloom {
@@ -315,6 +345,11 @@ impl RLPEncode for Log {
             .encode_field(&self.topics)
             .encode_field(&self.data)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.address.length() + self.topics.length() + self.data.length();
+        list_length(payload_len)
     }
 }
 
