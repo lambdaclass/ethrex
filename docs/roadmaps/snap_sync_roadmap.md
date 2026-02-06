@@ -555,13 +555,9 @@ impl Default for SnapSyncConfig {
 
 ---
 
-### 2.9 Fix Snap Protocol Capability Bug
+### 2.9 Fix Snap Protocol Capability Bug — ✅ DONE
 
-**Current State:** All three `get_best_peer()` calls in `snap/client.rs` (lines 229, 423, 958) use `SUPPORTED_ETH_CAPABILITIES` instead of `SUPPORTED_SNAP_CAPABILITIES`. This selects peers that may not support the snap protocol. The healing modules already use the correct capabilities.
-
-**Proposed Change:** Replace `SUPPORTED_ETH_CAPABILITIES` with `SUPPORTED_SNAP_CAPABILITIES` in all three call sites.
-
-**Effort:** Very low (3 lines)
+**Status:** Already fixed on `refactor/snapsync-healing-unification` branch. All `get_best_peer()` calls in `snap/client.rs` now use `SUPPORTED_SNAP_CAPABILITIES`. PR #6154 provides the same fix for main.
 
 ---
 
@@ -720,7 +716,7 @@ Week 6-8:   1.7 Peer Connection Optimization
 ### Phase 2: Code Quality (10 weeks)
 
 ```
-Week 1:     2.9  Fix snap protocol capability bug (3 lines)
+Week 1:     2.9  Fix snap protocol capability bug (✅ DONE)
 Week 1:     2.10 Add spawn_blocking to bytecodes handler (✅ DONE)
 Week 1:     2.11 Remove DumpError.contents dead field (✅ DONE)
 Week 1:     2.17 Use existing constants for magic numbers
