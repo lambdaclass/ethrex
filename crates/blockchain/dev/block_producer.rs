@@ -56,9 +56,7 @@ pub async fn start_block_producer(
             }
         };
         let Some(payload_id) = fork_choice_response.payload_id else {
-            tracing::error!(
-                "Failed to produce block: payload_id is None in ForkChoiceResponse"
-            );
+            tracing::error!("Failed to produce block: payload_id is None in ForkChoiceResponse");
             sleep(Duration::from_millis(300)).await;
             tries += 1;
             continue;
