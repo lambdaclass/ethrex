@@ -85,6 +85,26 @@ impl RocksDBBackend {
             * 1024;
         let block_cache = Cache::new_lru_cache(block_cache_size);
 
+        // Configurable compression for trie CFs (default: none)
+        let trie_compression = std::env::var("ETHREX_TRIE_COMPRESSION")
+            .ok()
+            .and_then(|v| match v.to_lowercase().as_str() {
+                "lz4" => Some(rocksdb::DBCompressionType::Lz4),
+                "none" => Some(rocksdb::DBCompressionType::None),
+                _ => None,
+            })
+            .unwrap_or(rocksdb::DBCompressionType::None);
+
+        // Configurable compaction style for trie CFs (default: leveled)
+        let trie_compaction_style = std::env::var("ETHREX_TRIE_COMPACTION_STYLE")
+            .ok()
+            .and_then(|v| match v.to_lowercase().as_str() {
+                "universal" => Some(rocksdb::DBCompactionStyle::Universal),
+                "leveled" => Some(rocksdb::DBCompactionStyle::Level),
+                _ => None,
+            })
+            .unwrap_or(rocksdb::DBCompactionStyle::Level);
+
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
             .unwrap_or_else(|_| vec!["default".to_string()]);
@@ -133,6 +153,8 @@ impl RocksDBBackend {
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    cf_opts.set_compression_type(trie_compression);
+                    cf_opts.set_compaction_style(trie_compaction_style);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
@@ -148,6 +170,8 @@ impl RocksDBBackend {
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    cf_opts.set_compression_type(trie_compression);
+                    cf_opts.set_compaction_style(trie_compaction_style);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB

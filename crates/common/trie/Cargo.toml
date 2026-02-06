@@ -23,6 +23,7 @@ digest = "0.10.6"
 lazy_static.workspace = true
 crossbeam.workspace = true
 rustc-hash.workspace = true
+rayon.workspace = true
 rkyv.workspace = true
 
 [features]

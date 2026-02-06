@@ -8,6 +8,7 @@ pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
+use rayon::prelude::*;
 use rkyv::{
     de::Pooling,
     rancor::Source,
@@ -386,12 +387,28 @@ impl Node {
     }
 
     /// Recursively memoizes the hashes of all nodes of the subtrie that has
-    /// `self` as root (post-order traversal)
+    /// `self` as root (post-order traversal).
+    ///
+    /// BranchNode children are hashed in parallel using rayon when there are
+    /// at least 4 valid (in-memory) children, since below that threshold the
+    /// thread scheduling overhead outweighs the benefit.
     pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
         match self {
             Node::Branch(n) => {
-                for child in &n.choices {
-                    child.memoize_hashes(buf);
+                let valid_count = n
+                    .choices
+                    .iter()
+                    .filter(|c| matches!(c, NodeRef::Node(_, hash) if hash.get().is_none()))
+                    .count();
+                if valid_count >= 4 {
+                    n.choices.par_iter().for_each(|child| {
+                        let mut thread_buf = Vec::new();
+                        child.memoize_hashes(&mut thread_buf);
+                    });
+                } else {
+                    for child in &n.choices {
+                        child.memoize_hashes(buf);
+                    }
                 }
             }
             Node::Extension(n) => n.child.memoize_hashes(buf),
