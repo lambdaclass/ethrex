@@ -46,11 +46,12 @@ use std::cmp::min;
 use std::ops::{Add, AddAssign};
 use std::time::Duration;
 use std::{
-    fs::{File, read_to_string},
-    io::{BufRead, BufReader},
+    fs::read_to_string,
     path::{Path, PathBuf},
 };
 use tokio::task::JoinSet;
+
+use super::utils::{read_env_file_by_config, workspace_root};
 
 /// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
 /// from L1 to L2 and back.
@@ -97,8 +98,8 @@ const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
     0x25, 0x4c, 0xa1, 0x1d,
 ]);
 
-const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.txt";
-const DEFAULT_TEST_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_tests.txt";
+const DEFAULT_RICH_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_l1.txt";
+const DEFAULT_TEST_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_tests.txt";
 
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
@@ -219,6 +220,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
+    set.spawn(test_erc20_withdraw_l1_address_mismatch(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
     while let Some(res) = set.join_next().await {
         let fees_details = res??;
         acc_priority_fees += fees_details.priority_fees;
@@ -296,8 +303,8 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
     let bridge_owner_private_key = bridge_owner_private_key();
     println!("test_upgrade: Downloading openzeppelin contracts");
 
-    let contracts_path = Path::new("contracts");
-    get_contract_dependencies(contracts_path);
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    get_contract_dependencies(&contracts_path);
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
@@ -306,16 +313,18 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
 
     println!("test_upgrade: Compiling CommonBridgeL2 contract");
     compile_contract(
-        contracts_path,
-        Path::new("contracts/src/l2/CommonBridgeL2.sol"),
+        &contracts_path,
+        &contracts_path.join("src/l2/CommonBridgeL2.sol"),
         false,
         false,
         Some(&remappings),
-        &[contracts_path],
+        &[&contracts_path],
         None,
     )?;
 
-    let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
+    let bridge_code = hex::decode(std::fs::read(
+        contracts_path.join("solc_out/CommonBridgeL2.bin"),
+    )?)?;
 
     println!("test_upgrade: Deploying CommonBridgeL2 contract");
     let (deploy_address, fees_details) = test_deploy(
@@ -546,31 +555,32 @@ async fn test_erc20_roundtrip(
     let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
+        workspace_root().join("fixtures/contracts/ERC20/ERC20.bin/TestToken.bin"),
     )?)?;
 
     println!("test_erc20_roundtrip: Deploying ERC20 token on L1");
     let token_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
 
-    let contracts_path = Path::new("contracts");
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    let compile_output_path = contracts_path.join("test_erc20_roundtrip");
 
-    get_contract_dependencies(contracts_path);
+    get_contract_dependencies(&contracts_path);
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
     compile_contract(
-        contracts_path,
+        &compile_output_path,
         &contracts_path.join("src/example/L2ERC20.sol"),
         false,
         false,
         Some(&remappings),
-        &[contracts_path],
+        &[&contracts_path],
         None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
-        "contracts/solc_out/TestTokenL2.bin",
+        compile_output_path.join("solc_out/TestTokenL2.bin"),
     )?)?)?;
     let init_code_l2 = [
         init_code_l2_inner,
@@ -658,13 +668,7 @@ async fn test_erc20_roundtrip(
     )
     .await?;
 
-    // Calculate transaction size
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-        data: Bytes::from(encode_calldata(signature, &data)?),
-        ..Default::default()
-    });
-    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
-
+    let transaction_size = calculate_transaction_size(encode_calldata(signature, &data)?.into());
     let approve_fees = get_fees_details_l2(&approve_receipt, &l2_client, transaction_size).await?;
 
     let signature = "withdrawERC20(address,address,address,uint256)";
@@ -685,13 +689,7 @@ async fn test_erc20_roundtrip(
     )
     .await?;
 
-    // Calculate transaction size
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-        data: Bytes::from(encode_calldata(signature, &data)?),
-        ..Default::default()
-    });
-    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
-
+    let transaction_size = calculate_transaction_size(encode_calldata(signature, &data)?.into());
     let withdraw_fees =
         get_fees_details_l2(&withdraw_receipt, &l2_client, transaction_size).await?;
 
@@ -763,6 +761,209 @@ async fn test_erc20_roundtrip(
     Ok(deploy_fees + approve_fees + withdraw_fees)
 }
 
+/// Tests that withdrawERC20 reverts when the provided L1 address doesn't match the token's l1Address()
+/// 1. Deploys an ERC20 token on L1 and L2
+/// 2. Deposits tokens from L1 to L2
+/// 3. Attempts to withdraw with a mismatched L1 address
+/// 4. Verifies that the transaction reverts
+async fn test_erc20_withdraw_l1_address_mismatch(
+    l1_client: EthClient,
+    l2_client: EthClient,
+    rich_wallet_private_key: SecretKey,
+) -> Result<FeesDetails> {
+    let token_amount: U256 = U256::from(100);
+
+    let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
+    let rich_address = rich_wallet_signer.address();
+
+    let init_code_l1 = hex::decode(std::fs::read(
+        workspace_root().join("fixtures/contracts/ERC20/ERC20.bin/TestToken.bin"),
+    )?)?;
+
+    println!("test_erc20_withdraw_l1_address_mismatch: Deploying ERC20 token on L1");
+    let token_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
+
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    let compile_output_path = contracts_path.join("test_erc20_mismatch");
+
+    get_contract_dependencies(&contracts_path);
+    let remappings = [(
+        "@openzeppelin/contracts",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    compile_contract(
+        &compile_output_path,
+        &contracts_path.join("src/example/L2ERC20.sol"),
+        false,
+        false,
+        Some(&remappings),
+        &[&contracts_path],
+        None,
+    )?;
+    let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
+        compile_output_path.join("solc_out/TestTokenL2.bin"),
+    )?)?)?;
+    let init_code_l2 = [
+        init_code_l2_inner,
+        vec![0u8; 12],
+        token_l1.to_fixed_bytes().to_vec(),
+    ]
+    .concat();
+
+    let (token_l2, deploy_fees) = test_deploy(
+        &l2_client,
+        &init_code_l2,
+        &rich_wallet_private_key,
+        "test_erc20_withdraw_l1_address_mismatch",
+    )
+    .await?;
+
+    println!("test_erc20_withdraw_l1_address_mismatch: token l1={token_l1:x}, l2={token_l2:x}");
+
+    // Approve tokens on L1 (tokens already minted during deployment)
+    test_send(
+        &l1_client,
+        &rich_wallet_private_key,
+        token_l1,
+        "approve(address,uint256)",
+        &[Value::Address(bridge_address()?), Value::Uint(token_amount)],
+        "test_erc20_withdraw_l1_address_mismatch",
+    )
+    .await?;
+
+    println!("test_erc20_withdraw_l1_address_mismatch: Depositing ERC20 token from L1 to L2");
+    let deposit_tx = deposit_erc20(
+        token_l1,
+        token_l2,
+        token_amount,
+        rich_address,
+        &rich_wallet_signer,
+        &l1_client,
+    )
+    .await
+    .unwrap();
+
+    let res = wait_for_transaction_receipt(deposit_tx, &l1_client, 10)
+        .await
+        .unwrap();
+    assert!(res.receipt.status);
+
+    let l2_receipt = wait_for_l2_deposit_receipt(&res, &l1_client, &l2_client)
+        .await
+        .unwrap();
+    assert!(l2_receipt.receipt.status);
+
+    let l2_balance = test_balance_of(&l2_client, token_l2, rich_address).await;
+    assert_eq!(l2_balance, token_amount);
+
+    println!("test_erc20_withdraw_l1_address_mismatch: Approving L2 bridge to spend tokens");
+    let approve_receipt = test_send(
+        &l2_client,
+        &rich_wallet_private_key,
+        token_l2,
+        "approve(address,uint256)",
+        &[
+            Value::Address(COMMON_BRIDGE_L2_ADDRESS),
+            Value::Uint(token_amount),
+        ],
+        "test_erc20_withdraw_l1_address_mismatch",
+    )
+    .await?;
+
+    let transaction_size = calculate_transaction_size(
+        encode_calldata(
+            "approve(address,uint256)",
+            &[
+                Value::Address(COMMON_BRIDGE_L2_ADDRESS),
+                Value::Uint(token_amount),
+            ],
+        )?
+        .into(),
+    );
+    let approve_fees = get_fees_details_l2(&approve_receipt, &l2_client, transaction_size).await?;
+
+    // Use a wrong L1 address (not matching token_l2's l1Address())
+    let wrong_token_l1 = Address::random();
+    println!(
+        "test_erc20_withdraw_l1_address_mismatch: Attempting withdrawal with wrong L1 address {wrong_token_l1:x}"
+    );
+
+    let signature = "withdrawERC20(address,address,address,uint256)";
+    let data = [
+        Value::Address(wrong_token_l1), // Wrong L1 address
+        Value::Address(token_l2),
+        Value::Address(rich_address),
+        Value::Uint(token_amount),
+    ];
+
+    // Verify the revert reason using eth_call before sending the transaction
+    let calldata: Bytes = encode_calldata(signature, &data)?.into();
+    // Get the current nonce for the eth_call
+    let nonce = l2_client
+        .get_nonce(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let call_result = l2_client
+        .call(
+            COMMON_BRIDGE_L2_ADDRESS,
+            calldata.clone(),
+            Overrides {
+                from: Some(rich_address),
+                nonce: Some(nonce),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        call_result.is_err(),
+        "Expected eth_call to fail due to L1 address mismatch"
+    );
+    let error_message = call_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("L1 address mismatch"),
+        "Expected revert reason to contain 'L1 address mismatch', got: {error_message}"
+    );
+
+    // Send the transaction with a fixed gas limit (gas estimation fails for reverting txs)
+    let withdraw_tx = build_generic_tx(
+        &l2_client,
+        TxType::EIP1559,
+        COMMON_BRIDGE_L2_ADDRESS,
+        rich_address,
+        calldata.clone(),
+        Overrides {
+            gas_limit: Some(500_000),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let withdraw_tx_hash =
+        send_generic_transaction(&l2_client, withdraw_tx, &rich_wallet_signer).await?;
+    let withdraw_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx_hash, &l2_client, 1000).await?;
+
+    // The transaction should revert
+    assert!(
+        !withdraw_receipt.receipt.status,
+        "Expected withdrawal to revert due to L1 address mismatch, but it succeeded"
+    );
+
+    // Calculate withdraw fees (reverted txs still pay gas)
+    let transaction_size = calculate_transaction_size(calldata);
+    let withdraw_fees =
+        get_fees_details_l2(&withdraw_receipt, &l2_client, transaction_size).await?;
+
+    // Verify that the user's L2 balance is unchanged (tokens were not burned)
+    let l2_balance_after = test_balance_of(&l2_client, token_l2, rich_address).await;
+    assert_eq!(
+        l2_balance_after, token_amount,
+        "L2 balance should be unchanged after failed withdrawal"
+    );
+
+    println!("test_erc20_withdraw_l1_address_mismatch: Withdrawal correctly reverted");
+    Ok(deploy_fees + approve_fees + withdraw_fees)
+}
+
 /// Tests that the aliasing is done correctly when calling from L1 to L2
 /// 1. Deploys a contract on L1 that will call the CommonBridge contract sendToL2 function
 /// 2. Calls the contract to send a message to L2
@@ -773,7 +974,9 @@ async fn test_aliasing(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     println!("Testing aliasing");
-    let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
+    let init_code_l1 = hex::decode(std::fs::read(
+        workspace_root().join("fixtures/contracts/caller/Caller.bin"),
+    )?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
     let send_to_l2_calldata = encode_calldata(
         "sendToL2((address,uint256,uint256,bytes))",
@@ -828,7 +1031,7 @@ async fn test_erc20_failed_deposit(
     let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
+        workspace_root().join("fixtures/contracts/ERC20/ERC20.bin/TestToken.bin"),
     )?)?;
 
     println!("test_erc20_failed_deposit: Deploying ERC20 token on L1");
@@ -1110,6 +1313,10 @@ async fn test_deposit(
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
+    println!(
+        "test_deposit: rich_wallet_address={rich_wallet_address:#x}, initial L2 balance={deposit_recipient_l2_initial_balance} wei"
+    );
+
     let bridge_initial_balance = l1_client
         .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -1218,7 +1425,7 @@ async fn test_privileged_spammer(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
+        workspace_root().join("fixtures/contracts/deposit_spammer/DepositSpammer.bin"),
     )?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
     for _ in 0..50 {
@@ -1628,14 +1835,9 @@ async fn test_n_withdraws(
     let mut total_withdraw_fees_l2 = FeesDetails::default();
 
     // Calculate transaction size for withdrawals
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-        data: Bytes::from(encode_calldata(
-            L2_WITHDRAW_SIGNATURE,
-            &[Value::Address(Address::random())],
-        )?),
-        ..Default::default()
-    });
-    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
+    let transaction_size = calculate_transaction_size(
+        encode_calldata(L2_WITHDRAW_SIGNATURE, &[Value::Address(Address::random())])?.into(),
+    );
 
     for receipt in &receipts {
         total_withdraw_fees_l2 += get_fees_details_l2(receipt, l2_client, transaction_size).await?;
@@ -2049,20 +2251,20 @@ async fn test_fee_token(
     let l1_client = l1_client();
     println!("{test}: Rich wallet address: {rich_wallet_address:#x}");
 
-    let contracts_path = Path::new("contracts");
-    get_contract_dependencies(contracts_path);
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    get_contract_dependencies(&contracts_path);
 
-    let fee_token_path = Path::new("../../crates/l2/contracts/src/example");
-    let interfaces_path = Path::new("../../crates/l2/contracts/src/l2");
+    let fee_token_path = workspace_root().join("crates/l2/contracts/src/example");
+    let interfaces_path = workspace_root().join("crates/l2/contracts/src/l2");
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
-    let allow_paths = [fee_token_path, interfaces_path, contracts_path];
+    let allow_paths: [&Path; 3] = [&fee_token_path, &interfaces_path, &contracts_path];
 
     compile_contract(
-        fee_token_path,
+        &fee_token_path,
         &fee_token_path.join("FeeToken.sol"),
         false,
         false,
@@ -2422,6 +2624,16 @@ async fn get_fees_details_l2(
     })
 }
 
+/// Calculates the encoded transaction size for fee calculation purposes.
+/// Takes calldata bytes and returns the encoded size of a dummy EIP1559 transaction.
+fn calculate_transaction_size(data: Bytes) -> u64 {
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data,
+        ..Default::default()
+    });
+    tx.encode_to_vec().len().try_into().unwrap()
+}
+
 fn l1_client() -> EthClient {
     EthClient::new(
         std::env::var("INTEGRATION_TEST_L1_RPC")
@@ -2474,33 +2686,6 @@ async fn get_fee_vault_balance(l2_client: &EthClient, vault_address: Option<Addr
         .unwrap()
 }
 
-pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
-    let Ok(env_file) = File::open(env_file_path) else {
-        println!(".env file not found, skipping");
-        return;
-    };
-
-    let reader = BufReader::new(env_file);
-
-    for line in reader.lines() {
-        let line = line.expect("Failed to read line");
-        if line.starts_with("#") {
-            // Skip comments
-            continue;
-        };
-        match line.split_once('=') {
-            Some((key, value)) => {
-                if std::env::vars().any(|(k, _)| k == key) {
-                    continue;
-                }
-                unsafe { std::env::set_var(key, value) }
-            }
-            None => continue,
-        };
-    }
-}
-
 fn get_tests_private_keys() -> Vec<SecretKey> {
     let private_keys_file_path = test_private_keys_path();
     let pks =
@@ -2551,7 +2736,7 @@ fn test_private_keys_path() -> PathBuf {
             println!(
                 "INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_TEST_KEYS_FILE_PATH}",
             );
-            PathBuf::from(DEFAULT_TEST_KEYS_FILE_PATH)
+            workspace_root().join(DEFAULT_TEST_KEYS_FILE_PATH)
         }
     }
 }
@@ -2563,7 +2748,7 @@ fn rich_keys_file_path() -> PathBuf {
             println!(
                 "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_RICH_KEYS_FILE_PATH}",
             );
-            PathBuf::from(DEFAULT_RICH_KEYS_FILE_PATH)
+            workspace_root().join(DEFAULT_RICH_KEYS_FILE_PATH)
         }
     }
 }
@@ -2593,24 +2778,28 @@ fn get_contract_dependencies(contracts_path: &Path) {
     .unwrap();
 }
 
-// Removes the contracts/lib and contracts/solc_out directories
-// generated by the tests.
+// Removes the contracts/lib, contracts/solc_out, and contracts/src/example/solc_out
+// directories generated by the tests.
 fn clean_contracts_dir() {
-    let lib_path = Path::new("contracts/lib");
-    let solc_path = Path::new("contracts/solc_out");
+    let contracts_base = workspace_root().join("crates/l2/contracts");
+    let paths_to_clean = [
+        contracts_base.join("lib"),
+        contracts_base.join("solc_out"),
+        contracts_base.join("src/example/solc_out"),
+    ];
 
-    let _ = std::fs::remove_dir_all(lib_path).inspect_err(|e| {
-        println!("Failed to remove {}: {}", lib_path.display(), e);
-    });
-    let _ = std::fs::remove_dir_all(solc_path).inspect_err(|e| {
-        println!("Failed to remove {}: {}", solc_path.display(), e);
-    });
+    for path in &paths_to_clean {
+        let _ = std::fs::remove_dir_all(path).inspect_err(|e| {
+            println!("Failed to remove {}: {e}", path.display());
+        });
+    }
 
-    println!(
-        "Cleaned up {} and {}",
-        lib_path.display(),
-        solc_path.display()
-    );
+    let cleaned_paths = paths_to_clean
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("Cleaned up: {cleaned_paths}");
 }
 
 fn transfer_value() -> U256 {

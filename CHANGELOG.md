@@ -5,6 +5,7 @@
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
+- Implement cache for `EXTCODESIZE` [#6034](https://github.com/lambdaclass/ethrex/pull/6034)
 
 ### 2026-01-23
 
@@ -12,6 +13,7 @@
 
 ### 2026-01-21
 
+- Optimize `debug_executionWitness` by pre-serializing RPC format at storage time [#5956](https://github.com/lambdaclass/ethrex/pull/5956)
 - Use fastbloom as the bloom filter [#5968](https://github.com/lambdaclass/ethrex/pull/5968)
 - Improve snap sync logging with table format and visual progress bars [#5977](https://github.com/lambdaclass/ethrex/pull/5977)
 
@@ -52,6 +54,10 @@
 
 - Make HashSet use fxhash in discv4 peer_table [#5688](https://github.com/lambdaclass/ethrex/pull/5688)
 - Validate tx blobs after checking if it's already in the mempool [#5686](https://github.com/lambdaclass/ethrex/pull/5686)
+
+### 2025-12-15
+
+- Parallelize storage merkelization [#6079](https://github.com/lambdaclass/ethrex/pull/6079)
 
 ### 2025-12-02
 
