@@ -102,80 +102,126 @@ make bolt-perf2bolt
 make bolt-optimize
 ```
 
-## Understanding the Workflow
+## Example: Full Walkthrough with Expected Output
 
-### Step 1: Build with BOLT Compatibility
+This section shows what each step looks like when it succeeds, so you can tell
+if something went wrong.
 
-The `build-bolt` target builds the binary with special flags:
+### Step 1: Build (`make build-bolt`)
 
-```bash
-make build-bolt
+```
+$ make build-bolt
+CXXFLAGS='-fno-reorder-blocks-and-partition' cargo build --profile release-bolt --config .cargo/bolt.toml
+   Compiling ethrex-rlp v9.0.0
+   ...
+   Compiling ethrex v9.0.0
+    Finished `release-bolt` profile [optimized + debuginfo] target(s) in 2m 20s
 ```
 
-This sets:
-- `CXXFLAGS='-fno-reorder-blocks-and-partition'` - Prevents RocksDB function splitting that confuses BOLT
-- `--emit-relocs` linker flag - Preserves relocation information needed by BOLT
-- `-Wl,-q` - Quick relocations mode
-- `-Cforce-frame-pointers=yes` - Better profiling accuracy
-- `debug = 1` in profile - Keeps symbols for BOLT analysis
+Build takes ~2-3 minutes due to fat LTO. Output binary: `target/release-bolt/ethrex`.
 
-**Output:** `target/release-bolt/ethrex`
+**If you see this instead:** `ERROR: BOLT requires x86_64` or `ERROR: llvm-bolt not found` —
+fix your platform or install BOLT (see [Installing BOLT](#installing-bolt)).
 
-### Step 2: Collect Profile Data
+### Step 2: Instrument (`make bolt-instrument`)
 
-Two methods are available:
-
-#### A. BOLT Instrumentation (Recommended)
-```bash
-make bolt-instrument
-./ethrex-instrumented <representative-workload>
+```
+$ make bolt-instrument
+BOLT-INFO: Target architecture: x86_64
+BOLT-INFO: enabling relocation mode
+BOLT-WARNING: split function detected on input : malloc_init_hard_a0_locked.cold. The support is limited in relocation mode
+BOLT-WARNING: Failed to analyze 1580 relocations
+BOLT-INSTRUMENTER: Number of function descriptors: 25271
+BOLT-INSTRUMENTER: Number of branch counters: 403378
+BOLT-INSTRUMENTER: Total number of counters: 790788
+BOLT-INFO: output linked against instrumentation runtime library
+Instrumented binary created: ethrex-instrumented
 ```
 
-This creates a specially instrumented binary that collects detailed execution data in `/tmp/bolt-profiles/prof.<pid>.fdata`.
+The `split function detected` and `Failed to analyze N relocations` warnings are **normal** —
+they come from jemalloc's `.cold` symbols and are harmless. What matters is:
+- "output linked against instrumentation runtime library" appears
+- The `ethrex-instrumented` binary is created
 
-**Important:** When stopping the instrumented binary, use **SIGINT** (`Ctrl-C` or `kill -INT <pid>`), not SIGTERM. The BOLT runtime library registers an `atexit` handler to flush profile data, which only runs on graceful shutdown.
+**If you see:** `BOLT-ERROR: library not found: /usr/local/lib/libbolt_rt_instr.a` —
+create the symlink: `sudo ln -sf /usr/lib/llvm-19/lib/libbolt_rt_instr.a /usr/local/lib/libbolt_rt_instr.a`
 
-**Advantages:**
-- More accurate BOLT-specific profiling
-- No kernel perf setup required
-- Captures all data BOLT needs
+**If you see:** `BOLT-ERROR: parent function not found for ...some_function.../1(*2)` —
+a Rust function name contains `warm` or `cold`, or a closure is too complex for BOLT.
+See [Troubleshooting](#parent-function-not-found--split-function-detected-errors).
 
-#### B. Linux perf
-```bash
-perf record -e cycles:u -j any,u -o perf.data -- target/release-bolt/ethrex <workload>
-make bolt-perf2bolt
+### Step 3: Profile (`make bolt-profile`)
+
+```
+$ make bolt-profile
+Profiling with fixtures/blockchain/l2-1k-erc20.rlp (this may take a few minutes)...
+2026-02-06T21:21:03Z  INFO Importing blocks from file path=fixtures/blockchain/l2-1k-erc20.rlp
+2026-02-06T21:21:12Z  INFO [SYNCING] 40% of batch processed
+2026-02-06T21:21:21Z  INFO [SYNCING] 60% of batch processed
+2026-02-06T21:21:28Z  INFO [SYNCING] 80% of batch processed
+2026-02-06T21:22:01Z  INFO Import completed blocks=1110 seconds=79.341
+Profile data collected:
+-rw-r--r-- 1 admin admin 15M Feb  6 21:22 /tmp/bolt-profiles/prof.12345.fdata
 ```
 
-**Advantages:**
-- Standard Linux profiling tool
-- Can use existing perf workflows
-- Lower runtime overhead
+The instrumented binary is ~4x slower than normal (it's counting every branch).
+Expect ~80 seconds for the 1,110 blocks. The profile file should be **10-20 MB**.
 
-### Step 3: Optimize the Binary
+**If the profile directory is empty:** the binary was killed with SIGTERM instead of
+exiting gracefully. For long-running workloads (snap sync), use `Ctrl-C` or
+`kill -INT <pid>` — BOLT's runtime flushes profile data via an `atexit` handler.
 
-```bash
-make bolt-optimize
+### Step 4: Optimize (`make bolt-optimize`)
+
+```
+$ make bolt-optimize
+BOLT-INFO: 4504 out of 25589 functions in the binary (17.6%) have non-empty execution profile
+BOLT-INFO: ICF folded 360 out of 25851 functions in 4 passes. 0 functions had jump tables.
+BOLT-INFO: basic block reordering modified layout of 2851 functions (63.30% of profiled)
+BOLT-INFO: program-wide dynostats after all optimizations before SCTC and FOP:
+
+         17340235704 : executed forward branches
+          4523681347 : taken forward branches
+         ...
+         17477374136 : executed forward branches (+0.8%)
+           723168777 : taken forward branches (-84.0%)    <-- good: fewer taken branches
+         ...
+          4617316049 : taken branches (-53.6%)             <-- good: 53% fewer total branches
+         ...
 ```
 
-This applies BOLT optimizations:
-- `-reorder-blocks=ext-tsp` - Advanced block reordering algorithm
-- `-reorder-functions=cdsort` - Function reordering by call density
-- `-split-functions` - Separate hot/cold code paths
-- `-split-all-cold` - Move cold code out of hot paths
-- `-split-eh` - Separate exception handling code
-- `-icf=1` - Identical Code Folding (merges duplicate functions)
-- `-use-gnu-stack` - Use GNU stack markers for compatibility
-- `-dyno-stats` - Display optimization statistics
+Key lines to check:
+- **"N out of M functions ... have non-empty execution profile"** — should be >10%.
+  If 0%, your profile didn't capture the right workload.
+- **"taken forward branches (-84%)"** and **"taken branches (-53%)"** — negative
+  percentages mean BOLT improved the layout. Higher reductions = better.
+- **"ICF folded N functions"** — identical code was deduplicated.
 
-**Output:** `ethrex-bolt-optimized`
+### Step 5: Verify (`make bolt-verify`)
 
-### Step 4: Verify Optimization
-
-```bash
-make bolt-verify
+```
+$ make bolt-verify
+✓ Binary contains BOLT markers
 ```
 
-This confirms the binary was processed by BOLT by checking for the `.note.bolt_info` section.
+### Step 6: Benchmark (`make bolt-bench`)
+
+```
+$ make bolt-bench
+=== Baseline (3 runs) ===
+2026-02-06T21:24:39Z  INFO Import completed blocks=1110 seconds=17.698
+2026-02-06T21:24:57Z  INFO Import completed blocks=1110 seconds=17.622
+2026-02-06T21:25:14Z  INFO Import completed blocks=1110 seconds=17.583
+
+=== BOLT-optimized (3 runs) ===
+2026-02-06T21:25:32Z  INFO Import completed blocks=1110 seconds=17.405
+2026-02-06T21:25:49Z  INFO Import completed blocks=1110 seconds=17.385
+2026-02-06T21:26:07Z  INFO Import completed blocks=1110 seconds=17.429
+```
+
+Compare the `seconds=` values. In this example, BOLT is ~1.4% faster
+(17.47s avg vs 17.63s avg). The first run of each set may be slower due
+to cold caches — compare runs 2-3 for the cleanest signal.
 
 ## Choosing a Representative Workload
 
