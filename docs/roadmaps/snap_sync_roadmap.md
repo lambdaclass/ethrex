@@ -553,6 +553,35 @@ impl Default for SnapSyncConfig {
 
 ---
 
+### Issue #6140 — Refactor `request_storage_ranges` (Steps Summary)
+
+9-step plan to refactor `request_storage_ranges` in `crates/networking/p2p/snap/client.rs`. Each step is one independently correct commit. Full details in [Issue #6140](https://github.com/lambdaclass/ethrex/issues/6140).
+
+| Step | Description | Sections | Risk |
+|------|-------------|----------|------|
+| 1 | Replace `panic!` with proper error return | 2.8 | Very low |
+| 2 | Replace `.expect()` with `?` operator | 2.8 | Very low |
+| 3 | Extract `ensure_snapshot_dir` helper (4 occurrences) | 2.4 | Very low |
+| 4 | Extract big-account chunking helper — DRY (~70 dup lines) | 2.4 | Low |
+| 5 | Introduce `TaskTracker` struct for task counting | 2.1 | Very low |
+| 6 | Extract result processing into `StorageDownloadState.process_result()` | 2.1 | Medium |
+| 7 | Track buffer size incrementally (O(1) instead of O(n)) | — | Low |
+| 8 | Remove `accounts_done` HashMap (inline removal) | — | Low |
+| 9 | Replace busy-poll (`try_recv` + `sleep`) with `tokio::select!` | 1.4 | Medium |
+
+**Dependencies:**
+```
+Steps 1, 2, 3, 5 — independent
+Step 4 — independent
+Step 6 — depends on Steps 4, 5
+Steps 7, 8 — depend on Step 6
+Step 9 — depends on Step 6
+```
+
+**Execution order:** 1 → 2 → 3 → 5 → 4 → 6 → 7 → 8 → 9
+
+---
+
 ## Success Metrics
 
 ### Phase 1: Performance
