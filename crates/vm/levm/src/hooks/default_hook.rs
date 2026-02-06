@@ -182,9 +182,11 @@ pub fn refund_sender(
 
     // EIP-7778: Separate block vs user gas accounting for Amsterdam+
     if vm.env.config.fork >= Fork::Amsterdam {
-        // Block accounting uses pre-refund gas
-        ctx_result.gas_used = gas_used_pre_refund;
-        // User pays post-refund gas
+        // Block accounting uses max(pre-refund gas, calldata floor)
+        // This prevents gas smuggling via refunds (EIP-7778)
+        let floor = vm.get_min_gas_used()?;
+        ctx_result.gas_used = gas_used_pre_refund.max(floor);
+        // User pays post-refund gas (with floor)
         ctx_result.gas_spent = gas_spent;
     } else {
         // Pre-Amsterdam: both use post-refund value

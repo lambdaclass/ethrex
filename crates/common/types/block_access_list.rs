@@ -588,6 +588,15 @@ impl BlockAccessListRecorder {
                 }
             }
 
+            // If this slot was promoted from read to write, undo the promotion
+            // so build() doesn't skip it from storage_reads.
+            if let Some(promoted) = self.reads_promoted_to_writes.get_mut(&addr) {
+                promoted.retain(|s| *s != slot);
+                if promoted.is_empty() {
+                    self.reads_promoted_to_writes.remove(&addr);
+                }
+            }
+
             // Add as a read instead
             self.storage_reads.entry(addr).or_default().insert(slot);
         }
