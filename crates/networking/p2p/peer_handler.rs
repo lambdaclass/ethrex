@@ -10,7 +10,7 @@ use crate::{
             HashOrNumber,
         },
         message::Message as RLPxMessage,
-        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
+        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{
             AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
@@ -737,7 +737,7 @@ impl PeerHandler {
 
             let Some((peer_id, connection)) = self
                 .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
                 .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
@@ -1024,7 +1024,7 @@ impl PeerHandler {
 
             let Some((peer_id, mut connection)) = self
                 .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
                 .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
                 .unwrap_or(None)
@@ -1550,7 +1550,7 @@ impl PeerHandler {
 
             let Some((peer_id, connection)) = self
                 .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
                 .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
                 .unwrap_or(None)
