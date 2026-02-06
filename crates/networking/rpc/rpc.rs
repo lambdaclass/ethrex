@@ -551,9 +551,7 @@ pub async fn start_api(
             loop {
                 let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
                 if result.is_err() {
-                    warn!(
-                        "No messages from the consensus layer. Is the consensus client running?"
-                    );
+                    warn!("No messages from the consensus layer. Is the consensus client running?");
                 }
             }
         });

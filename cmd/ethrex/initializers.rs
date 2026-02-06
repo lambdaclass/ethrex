@@ -294,11 +294,10 @@ pub async fn init_l1_dev(
         .map_err(|e| eyre::eyre!("Failed to spawn block builder: {e}"))?;
 
     // Forwarding channel: RPC eth_sendRawTransaction -> BlockBuilder GenServer
-    let (tx_sender, mut tx_receiver) =
-        tokio::sync::mpsc::unbounded_channel::<(
-            Box<ethrex_common::types::Transaction>,
-            Option<ethrex_common::types::BlobsBundle>,
-        )>();
+    let (tx_sender, mut tx_receiver) = tokio::sync::mpsc::unbounded_channel::<(
+        Box<ethrex_common::types::Transaction>,
+        Option<ethrex_common::types::BlobsBundle>,
+    )>();
 
     tokio::spawn(async move {
         while let Some((tx, blobs_bundle)) = tx_receiver.recv().await {

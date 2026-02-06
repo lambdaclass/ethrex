@@ -327,4 +327,3 @@ impl GenServer for BlockBuilder {
         CastResponse::NoReply
     }
 }
-
