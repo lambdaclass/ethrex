@@ -935,17 +935,16 @@ impl Blockchain {
                                     )?)
                                 }
                             };
-                            let updates: Vec<_> = batch[group_start..i]
-                                .iter()
-                                .map(|(_, key, value)| {
-                                    if value.is_zero() {
-                                        (key.as_bytes().to_vec(), vec![])
-                                    } else {
-                                        (key.as_bytes().to_vec(), value.encode_to_vec())
-                                    }
-                                })
-                                .collect();
-                            trie.insert_batch_sorted(updates)?;
+                            for &(_, key, value) in &batch[group_start..i] {
+                                if value.is_zero() {
+                                    trie.remove(key.as_bytes())?;
+                                } else {
+                                    trie.insert(
+                                        key.as_bytes().to_vec(),
+                                        value.encode_to_vec(),
+                                    )?;
+                                }
+                            }
                         }
                     }
                     MerklizationRequest::CollectStorages { tx } => {
