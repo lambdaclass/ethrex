@@ -10,7 +10,7 @@ Flow:
 
 Prerequisites:
   - eth-docker cloned (default: ~/eth-docker)
-  - .env configured with ethrex (COMPOSE_FILE=lighthouse.yml:ethrex.yml, NETWORK=hoodi, etc.)
+  - .env configured with ethrex (COMPOSE_FILE=prysm.yml:ethrex.yml:el-shared.yml, NETWORK=hoodi, etc.)
   - Slack webhooks in eth-docker's .env or exported as env vars (optional)
 
 Usage:
@@ -31,14 +31,15 @@ from pathlib import Path
 
 import requests
 
-# Timeouts (in seconds), configurable via env vars
-SYNC_TIMEOUT = int(os.environ.get("SYNC_TIMEOUT", 8 * 60)) * 60  # default 8h
+# Timeouts (all in seconds), configurable via env vars
+SYNC_TIMEOUT = int(os.environ.get("SYNC_TIMEOUT", 8 * 60 * 60))  # default 8h
 BLOCK_PROCESSING_DURATION = int(os.environ.get("BLOCK_PROCESSING_DURATION", 22 * 60))  # default 22m
+BLOCK_STALL_TIMEOUT = int(os.environ.get("BLOCK_STALL_TIMEOUT", 10 * 60))  # default 10m
 RESTART_STALL_TIMEOUT = int(os.environ.get("RESTART_STALL_TIMEOUT", 15 * 60))  # default 15m
 NODE_STARTUP_TIMEOUT = int(os.environ.get("NODE_STARTUP_TIMEOUT", 5 * 60))  # default 5m
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", 10))
 
-LOGS_DIR = Path("./restart_stall_logs")
+LOGS_DIR = Path(__file__).resolve().parent / "restart_stall_logs"
 
 
 def configure_eth_docker(eth_docker_dir: str, network: str, fee_recipient: str = "", slack_success: str = "", slack_failed: str = ""):
@@ -153,21 +154,21 @@ def rpc_block_number(url: str):
     return None
 
 
-def ethd(eth_docker_dir: str, *args) -> subprocess.CompletedProcess:
-    """Run an ./ethd command in the eth-docker directory."""
-    cmd = ["./ethd"] + list(args)
-    print(f"  $ {' '.join(cmd)}")
-    return subprocess.run(cmd, cwd=eth_docker_dir, capture_output=True, text=True)
-
-
-def docker_compose_in_ethd(eth_docker_dir: str, *args) -> subprocess.CompletedProcess:
+def docker_compose_in_ethd(eth_docker_dir: str, *args, check: bool = False) -> subprocess.CompletedProcess:
     """Run a docker compose command in the eth-docker directory.
 
     Uses eth-docker's .env for COMPOSE_FILE so the right yml files are picked up.
+    If check=True, raises on non-zero exit code.
     """
     cmd = ["docker", "compose"] + list(args)
     print(f"  $ {' '.join(cmd)}")
-    return subprocess.run(cmd, cwd=eth_docker_dir, capture_output=True, text=True)
+    result = subprocess.run(cmd, cwd=eth_docker_dir, capture_output=True, text=True)
+    if check and result.returncode != 0:
+        print(f"  FAILED (exit code {result.returncode})")
+        if result.stderr:
+            print(f"  stderr: {result.stderr.strip()}")
+        raise RuntimeError(f"docker compose {' '.join(args)} failed with exit code {result.returncode}")
+    return result
 
 
 def slack_notify(message: str, success: bool, details: str = "", ethrex_dir: str = None):
@@ -200,8 +201,8 @@ def slack_notify(message: str, success: bool, details: str = "", ethrex_dir: str
 
     try:
         requests.post(url, json={"blocks": blocks}, timeout=10)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  Failed to send Slack notification: {e}")
 
 
 def save_ethd_logs(eth_docker_dir: str, run_dir: Path, suffix: str = ""):
@@ -209,10 +210,7 @@ def save_ethd_logs(eth_docker_dir: str, run_dir: Path, suffix: str = ""):
     for service in ["execution", "consensus"]:
         log_file = run_dir / f"{service}{suffix}.log"
         try:
-            result = subprocess.run(
-                ["docker", "compose", "logs", "--no-color", service],
-                cwd=eth_docker_dir, capture_output=True, text=True, timeout=60,
-            )
+            result = docker_compose_in_ethd(eth_docker_dir, "logs", "--no-color", service)
             log_file.write_text(result.stdout + result.stderr)
             print(f"  Saved logs: {log_file}")
         except Exception as e:
@@ -272,7 +270,17 @@ def wait_for_block_progress(rpc_url: str, duration: int, stall_timeout: int) -> 
     """
     print(f"  Monitoring block progress for {fmt_time(duration)} (stall timeout: {fmt_time(stall_timeout)})...")
     start = time.time()
-    initial_block = rpc_block_number(rpc_url) or 0
+
+    # Retry to get a valid initial block number
+    initial_block = rpc_block_number(rpc_url)
+    retry_start = time.time()
+    while initial_block is None and time.time() - retry_start < stall_timeout:
+        time.sleep(CHECK_INTERVAL)
+        initial_block = rpc_block_number(rpc_url)
+    if initial_block is None:
+        print(f"  Failed to fetch initial block number; node not responding for {fmt_time(stall_timeout)}")
+        return False, 0
+
     last_block = initial_block
     last_block_time = time.time()
     last_status_print = 0
@@ -305,15 +313,21 @@ def wait_for_block_progress(rpc_url: str, duration: int, stall_timeout: int) -> 
     return False, 0
 
 
-def monitor_restart_for_stall(rpc_url: str, timeout: int) -> tuple[str, str]:
+def monitor_restart_for_stall(rpc_url: str, timeout: int, stall_timeout: int) -> tuple[str, str]:
     """Monitor a restarted node for header download stall.
+
+    Args:
+        rpc_url: RPC endpoint to poll.
+        timeout: Overall time limit for monitoring.
+        stall_timeout: Time without block progress to declare a stall.
 
     Returns (result, details) where result is one of:
       - "ok": Node synced/caught up within timeout
-      - "stall": Node appears stalled (not progressing)
+      - "stall": Node appears stalled (no block progress for stall_timeout)
+      - "timeout": Overall timeout reached but node was still making progress
       - "unresponsive": Node never came back up
     """
-    print(f"\n  Monitoring restart for stall (timeout: {fmt_time(timeout)})...")
+    print(f"\n  Monitoring restart for stall (timeout: {fmt_time(timeout)}, stall: {fmt_time(stall_timeout)})...")
     start = time.time()
 
     # Wait for node to come back up
@@ -344,7 +358,7 @@ def monitor_restart_for_stall(rpc_url: str, timeout: int) -> tuple[str, str]:
             if block > last_block:
                 last_block = block
                 last_progress_time = time.time()
-            elif time.time() - last_progress_time > RESTART_STALL_TIMEOUT:
+            elif time.time() - last_progress_time > stall_timeout:
                 stall_duration = fmt_time(time.time() - last_progress_time)
                 return "stall", f"Stalled at block {last_block} for {stall_duration}"
         elif block is None and syncing is None:
@@ -358,7 +372,11 @@ def monitor_restart_for_stall(rpc_url: str, timeout: int) -> tuple[str, str]:
 
         time.sleep(CHECK_INTERVAL)
 
-    return "stall", f"Still syncing after {fmt_time(timeout)}, stuck at block {last_block}"
+    # Distinguish timeout-while-progressing from true stall
+    stall_elapsed = time.time() - last_progress_time
+    if stall_elapsed <= CHECK_INTERVAL * 2:
+        return "timeout", f"Timed out after {fmt_time(timeout)} while still making progress (block {last_block})"
+    return "stall", f"No progress for {fmt_time(stall_elapsed)} (stuck at block {last_block})"
 
 
 def phase1_fresh_sync(eth_docker_dir: str, rpc_url: str) -> bool:
@@ -374,7 +392,7 @@ def phase1_fresh_sync(eth_docker_dir: str, rpc_url: str) -> bool:
     time.sleep(5)
 
     print("Starting eth-docker...")
-    docker_compose_in_ethd(eth_docker_dir, "up", "-d")
+    docker_compose_in_ethd(eth_docker_dir, "up", "-d", check=True)
     time.sleep(30)
 
     # Wait for node to come up
@@ -390,7 +408,7 @@ def phase1_fresh_sync(eth_docker_dir: str, rpc_url: str) -> bool:
 
     # Verify block progress
     print(f"\n  Sync complete. Verifying block progress...")
-    progress_ok, blocks = wait_for_block_progress(rpc_url, BLOCK_PROCESSING_DURATION, 10 * 60)
+    progress_ok, blocks = wait_for_block_progress(rpc_url, BLOCK_PROCESSING_DURATION, BLOCK_STALL_TIMEOUT)
     if not progress_ok:
         print(f"FAILED: No block progress after sync (processed {blocks} blocks)")
         return False
@@ -407,20 +425,25 @@ def phase2_restart_test(eth_docker_dir: str, rpc_url: str, restart_num: int) -> 
 
     # Stop only the execution client (keep consensus + volumes)
     print("Stopping execution client (keeping consensus + volumes)...")
-    docker_compose_in_ethd(eth_docker_dir, "stop", "execution")
+    docker_compose_in_ethd(eth_docker_dir, "stop", "execution", check=True)
     time.sleep(10)
 
     # Restart execution client
     print("Restarting execution client...")
-    docker_compose_in_ethd(eth_docker_dir, "start", "execution")
+    docker_compose_in_ethd(eth_docker_dir, "start", "execution", check=True)
     time.sleep(5)
 
     # Monitor for stall
-    result, details = monitor_restart_for_stall(rpc_url, RESTART_STALL_TIMEOUT * 2)
+    result, details = monitor_restart_for_stall(
+        rpc_url,
+        timeout=RESTART_STALL_TIMEOUT * 2,
+        stall_timeout=RESTART_STALL_TIMEOUT,
+    )
 
     status_str = {
         "ok": "PASS",
         "stall": "STALL DETECTED",
+        "timeout": "TIMEOUT (still progressing)",
         "unresponsive": "NODE UNRESPONSIVE",
     }.get(result, result.upper())
 
@@ -532,7 +555,7 @@ def main():
 
         save_ethd_logs(eth_docker_dir, run_dir, suffix=f"_restart{i}")
 
-        if result != "ok" and not args.no_slack:
+        if result not in ("ok", "timeout") and not args.no_slack:
             slack_notify(
                 f"Restart Stall Test - STALL on restart #{i}",
                 success=False,
@@ -547,14 +570,14 @@ def main():
             )
 
     # Final summary
-    stalls = [(i, r, d) for i, r, d in results if r != "ok"]
+    stalls = [(i, r, d) for i, r, d in results if r not in ("ok", "timeout")]
     all_ok = len(stalls) == 0
 
     print(f"\n{'='*60}")
     print(f"FINAL RESULTS")
     print(f"{'='*60}")
     for i, result, details in results:
-        status = "PASS" if result == "ok" else "FAIL"
+        status = "PASS" if result == "ok" else ("TIMEOUT" if result == "timeout" else "FAIL")
         print(f"  Restart #{i}: {status} - {details}")
     print(f"\n  Overall: {'ALL PASSED' if all_ok else f'{len(stalls)}/{len(results)} STALLED'}")
 
@@ -576,7 +599,7 @@ def main():
     # Final Slack notification
     if not args.no_slack:
         result_lines = "\n".join(
-            f"{'PASS' if r == 'ok' else 'FAIL'} Restart #{i}: {d}" for i, r, d in results
+            f"{'PASS' if r == 'ok' else ('TIMEOUT' if r == 'timeout' else 'FAIL')} Restart #{i}: {d}" for i, r, d in results
         )
         slack_notify(
             f"Restart Stall Test - {'ALL PASSED' if all_ok else 'STALL DETECTED'}",
