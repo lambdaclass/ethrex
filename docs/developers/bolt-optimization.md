@@ -41,45 +41,74 @@ sudo ln -sf /usr/bin/merge-fdata-22 /usr/local/bin/merge-fdata
 sudo ln -sf /usr/lib/llvm-22/lib/libbolt_rt_instr.a /usr/local/lib/libbolt_rt_instr.a
 ```
 
-## Quick Start
+## Quick Start: End-to-End Example
 
-### Method 1: Using Makefile (Recommended)
-
-This is the simplest workflow for BOLT optimization:
+This walks through the full BOLT workflow using ethrex's built-in benchmark fixtures.
+The fixture `l2-1k-erc20.rlp` contains 1,110 blocks with ~1.5M ERC20 transfers — a
+heavy EVM workload that exercises the hot paths BOLT can optimize.
 
 ```bash
-# 1. Build a BOLT-compatible binary
+# 0. Install BOLT (see "Installing BOLT" above)
+
+# 1. Build a BOLT-compatible binary (~2-3 min with fat LTO)
 make build-bolt
 
-# 2. Instrument the binary for profiling
+# 2. Create an instrumented binary for profiling
 make bolt-instrument
 
-# 3. Run the instrumented binary with representative workload
-./ethrex-instrumented <your-workload-args>
-# Profile data is written to /tmp/bolt-profiles/prof.<pid>.fdata
+# 3. Profile by importing the ERC20 benchmark blocks.
+#    Use Ctrl-C (SIGINT) if running a long-lived workload — BOLT needs
+#    graceful shutdown to flush profile data. For `import`, the process
+#    exits on its own.
+./ethrex-instrumented \
+    --network fixtures/genesis/perf-ci.json \
+    --datadir /tmp/bolt-data \
+    import fixtures/blockchain/l2-1k-erc20.rlp
 
-# 4. Optimize using collected profiles
+# 4. Verify profile data was written
+ls -lh /tmp/bolt-profiles/   # expect ~15 MB of prof.* files
+
+# 5. Optimize the binary using collected profiles
 make bolt-optimize
 
-# 5. Use the optimized binary
-./ethrex-bolt-optimized
+# 6. Verify the optimized binary has BOLT markers
+make bolt-verify
+
+# 7. Benchmark: compare baseline vs BOLT-optimized
+echo "=== Baseline ===" && rm -rf /tmp/bench-db && \
+    target/release-bolt/ethrex \
+        --network fixtures/genesis/perf-ci.json \
+        --datadir /tmp/bench-db \
+        import fixtures/blockchain/l2-1k-erc20.rlp
+
+echo "=== BOLT ===" && rm -rf /tmp/bench-db && \
+    ./ethrex-bolt-optimized \
+        --network fixtures/genesis/perf-ci.json \
+        --datadir /tmp/bench-db \
+        import fixtures/blockchain/l2-1k-erc20.rlp
 ```
 
-### Method 2: Using perf (Alternative)
-
-If you prefer using Linux `perf` for profiling:
+For a live-node workload (more representative of production), profile during snap sync instead:
 
 ```bash
-# 1. Build a BOLT-compatible binary
+./ethrex-instrumented --network mainnet --syncmode snap --datadir /tmp/bolt-data
+# Let it run 60-90 seconds, then Ctrl-C
+```
+
+### Alternative: Using perf Instead of Instrumentation
+
+If you prefer `perf` (lower runtime overhead, but needs kernel perf access):
+
+```bash
 make build-bolt
 
-# 2. Profile with perf
-perf record -e cycles:u -j any,u -o perf.data -- target/release-bolt/ethrex <workload>
+perf record -e cycles:u -j any,u -o perf.data -- \
+    target/release-bolt/ethrex \
+        --network fixtures/genesis/perf-ci.json \
+        --datadir /tmp/bolt-data \
+        import fixtures/blockchain/l2-1k-erc20.rlp
 
-# 3. Convert perf data to BOLT format
 make bolt-perf2bolt
-
-# 4. Optimize using collected profiles
 make bolt-optimize
 ```
 
@@ -172,16 +201,24 @@ collected during snap sync (networking-heavy) produced **0% improvement** on blo
 while a profile from block import (EVM-heavy) produced **1.4% improvement** on the same
 benchmark. Always profile with the workload you want to optimize.
 
+**Available benchmark fixtures:**
+
+| Fixture | Genesis | Blocks | Transactions | Best for |
+|---------|---------|--------|-------------|----------|
+| `l2-1k-erc20.rlp` | `perf-ci.json` | 1,110 | ~1.5M ERC20 transfers | EVM execution |
+| `2000-blocks.rlp` | `perf-ci.json` | 2,004 | ~0 per block | Storage/merkle |
+
 **Examples:**
 ```bash
-# Import blocks from an RLP chain file (best for block execution optimization)
-./ethrex-instrumented --network <genesis> --datadir /tmp/bolt-data import blocks.rlp
+# Heavy EVM workload — best for block execution optimization
+./ethrex-instrumented \
+    --network fixtures/genesis/perf-ci.json \
+    --datadir /tmp/bolt-data \
+    import fixtures/blockchain/l2-1k-erc20.rlp
 
-# Sync from a known network (covers networking + state sync paths)
+# Snap sync — covers networking + state sync paths
 ./ethrex-instrumented --network mainnet --syncmode snap --datadir /tmp/bolt-data
-
-# Run in dev mode with a load test (in a separate terminal: make load-test)
-./ethrex-instrumented --dev --datadir /tmp/bolt-data
+# Let it run 60-90 seconds, then Ctrl-C
 ```
 
 ## Advanced: PGO + BOLT Combined
@@ -272,18 +309,31 @@ This removes:
 
 ## Performance Validation
 
-After optimization, benchmark to verify improvements:
+After optimization, benchmark to verify improvements. Use `--datadir /tmp/...` to
+avoid conflicts with any running ethrex instance, and `rm -rf` the datadir between
+runs for a clean state (`--removedb` requires interactive confirmation).
 
 ```bash
-# Baseline (regular release build)
-hyperfine --warmup 1 --runs 5 'target/release/ethrex <workload>'
+# Baseline
+for i in 1 2 3; do
+    rm -rf /tmp/bench-db
+    target/release-bolt/ethrex \
+        --network fixtures/genesis/perf-ci.json \
+        --datadir /tmp/bench-db \
+        import fixtures/blockchain/l2-1k-erc20.rlp 2>&1 | grep "Import completed"
+done
 
 # BOLT-optimized
-hyperfine --warmup 1 --runs 5 './ethrex-bolt-optimized <workload>'
+for i in 1 2 3; do
+    rm -rf /tmp/bench-db
+    ./ethrex-bolt-optimized \
+        --network fixtures/genesis/perf-ci.json \
+        --datadir /tmp/bench-db \
+        import fixtures/blockchain/l2-1k-erc20.rlp 2>&1 | grep "Import completed"
+done
 ```
 
-Look for:
-- Reduced wall-clock time
+Compare the `seconds=` values in the output. Also look for:
 - Better instruction cache hit rates (via `perf stat`)
 - Improved branch prediction accuracy
 
