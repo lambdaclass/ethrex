@@ -11,7 +11,7 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches â
 | `ethrex-replay block`             | Replay a single block.                                                                                                                 |
 | `ethrex-replay blocks`            | Replay a list of specific block numbers, a range of blocks, or from a specific block to the latest (see `ethrex-replay blocks --help`) |
 | `ethrex-replay block-composition` |                                                                                                                                        |
-| `ethrex-replay custom`            | Build your block before to replay it.                                                                                                  |
+| `ethrex-replay custom`            | Build your block before replaying it.                                                                                                  |
 | `ethrex-replay transaction`       | Replay a single transaction of a block.                                                                                                |
 | `ethrex-replay cache`             | Generate witness data prior to block replay (see `ethrex-replay cache --help`)                                                         |
 
@@ -168,7 +168,7 @@ The following table lists the available features for `ethrex-replay`. To enable 
 
 | Feature     | Description                                                                                                                                          |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gpu`       | Enables GPU support with SP1 or RISC0 backends (must be combined with one of each features, e.g. `sp1,gpu` or `risc0,gpu`)                           |
+| `gpu`       | Enables GPU support with SP1 or RISC0 backends (must be combined with one of these features, e.g. `sp1,gpu` or `risc0,gpu`)                           |
 | `risc0`     | Execution and proving is done with RISC0 backend                                                                                                     |
 | `sp1`       | Execution and proving is done with SP1 backend                                                                                                       |
 | `l2`        | Enables L2 batch execution and proving (can be combined with SP1 or RISC0 and GPU features, e.g. `sp1,l2,gpu`, `risc0,l2,gpu`, `sp1,l2`, `risc0,l2`) |

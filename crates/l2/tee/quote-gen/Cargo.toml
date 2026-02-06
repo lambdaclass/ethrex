@@ -2,6 +2,10 @@
 name = "quote-gen"
 version = "9.0.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[build-dependencies]
+vergen-git2 = { version = "1.0.7" }
 
 [dependencies]
 configfs-tsm = "0.0.1"
@@ -20,7 +24,6 @@ ethrex-vm = { path = "../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../blockchain", default-features = false }
 ethrex-rpc = { path = "../../../networking/rpc", default-features = false }
 ethrex-guest-program = { path = "../../../guest-program", default-features = false }
-ethrex-l2 = { path = "../..", default-features = false }
 ethrex-l2-common = { path = "../../common", default-features = false }
 
 secp256k1 = { version = "0.30.0", default-features = false, features = [
@@ -34,4 +37,4 @@ secp256k1 = { version = "0.30.0", default-features = false, features = [
 
 [features]
 default = ["l2"]
-l2 = ["ethrex-guest-program/l2", "ethrex-l2/l2"]
+l2 = ["ethrex-guest-program/l2"]
