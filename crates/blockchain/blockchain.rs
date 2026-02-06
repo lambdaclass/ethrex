@@ -1998,11 +1998,10 @@ impl Blockchain {
             return Ok(hash);
         }
 
-        // Validate blobs bundle after checking if it's already added.
-        // Skip if the caller already validated (e.g. P2P layer via validate_requested).
+        // Validate blobs bundle unless the caller already did (e.g. P2P via validate_requested).
         if !blobs_already_validated {
-            if let Transaction::EIP4844Transaction(transaction) = &transaction {
-                blobs_bundle.validate(transaction, fork)?;
+            if let Transaction::EIP4844Transaction(ref tx) = transaction {
+                blobs_bundle.validate(tx, fork)?;
             }
         }
 

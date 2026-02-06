@@ -89,6 +89,15 @@ impl RocksDBBackend {
         // reads to hit disk (RandomAccessFileReader::Read was 8.89% flat in profiling).
         let block_cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB
 
+        // Creates a BlockBasedOptions with the shared block cache pre-configured.
+        let new_block_opts = || {
+            let mut opts = BlockBasedOptions::default();
+            opts.set_block_cache(&block_cache);
+            opts.set_cache_index_and_filter_blocks(true);
+            opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+            opts
+        };
+
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
             let mut cf_opts = Options::default();
@@ -109,10 +118,7 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(4);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&block_cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    let mut block_opts = new_block_opts();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -121,10 +127,7 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&block_cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    let mut block_opts = new_block_opts();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
@@ -136,10 +139,7 @@ impl RocksDBBackend {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&block_cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    let mut block_opts = new_block_opts();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
@@ -151,10 +151,7 @@ impl RocksDBBackend {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&block_cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    let mut block_opts = new_block_opts();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
@@ -169,10 +166,7 @@ impl RocksDBBackend {
                     cf_opts.set_min_blob_size(32);
                     cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
 
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&block_cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    let mut block_opts = new_block_opts();
                     block_opts.set_block_size(32 * 1024); // 32KB
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -181,10 +175,7 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&block_cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    let mut block_opts = new_block_opts();
                     block_opts.set_block_size(32 * 1024); // 32KB
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -194,10 +185,7 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&block_cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    let mut block_opts = new_block_opts();
                     block_opts.set_block_size(16 * 1024);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }

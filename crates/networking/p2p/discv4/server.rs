@@ -41,8 +41,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 500.0;
-pub const LOOKUP_INTERVAL_MS: f64 = 5000.0;
+pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 500.0; // 2 per second
+pub const LOOKUP_INTERVAL_MS: f64 = 5000.0; // 12 per minute
 /// Slow maintenance interval when target peers are met (30 seconds).
 const MAINTENANCE_LOOKUP_INTERVAL: Duration = Duration::from_secs(30);
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
@@ -281,12 +281,7 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn get_lookup_interval(&mut self) -> Duration {
-        let peer_completion = self
-            .peer_table
-            .target_peers_completion()
-            .await
-            .unwrap_or_default();
+    fn lookup_interval(&self, peer_completion: f64) -> Duration {
         lookup_interval_function(
             peer_completion,
             self.initial_lookup_interval,
@@ -737,7 +732,6 @@ impl GenServer for DiscoveryServer {
                     .inspect_err(|e| error!(err=?e, "Error revalidating discovered peers"));
             }
             Self::CastMsg::Lookup => {
-                // Check if target peers are met — use slow maintenance rate
                 let peer_completion = self
                     .peer_table
                     .target_peers_completion()
@@ -747,10 +741,10 @@ impl GenServer for DiscoveryServer {
                 let interval = if peer_completion >= 1.0 {
                     MAINTENANCE_LOOKUP_INTERVAL
                 } else {
-                    self.get_lookup_interval().await
+                    self.lookup_interval(peer_completion)
                 };
 
-                // Alternate between regular lookup and ENR lookup
+                // Alternate between regular lookup and ENR lookup.
                 if self.next_lookup_is_enr {
                     trace!(received = "EnrLookup");
                     let _ = self

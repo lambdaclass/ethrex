@@ -702,32 +702,26 @@ impl PeerTableServer {
     }
 
     fn get_contact_for_lookup(&self) -> Option<Contact> {
-        // Reservoir sampling: O(n) scan with O(1) memory instead of collecting into a Vec.
-        let mut rng = rand::rngs::OsRng;
-        let mut result: Option<&Contact> = None;
-        let mut count = 0u64;
-        for c in self.contacts.values() {
-            if c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable {
-                count += 1;
-                if rng.gen_range(0..count) == 0 {
-                    result = Some(c);
-                }
-            }
-        }
-        result.cloned()
+        self.random_contact(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
     }
 
     fn get_contact_for_enr_lookup(&mut self) -> Option<Contact> {
-        // Reservoir sampling: O(n) scan with O(1) memory instead of collecting into a Vec.
+        self.random_contact(|c| {
+            c.was_validated()
+                && !c.has_pending_enr_request()
+                && c.record.is_none()
+                && !c.disposable
+        })
+    }
+
+    /// Pick a uniformly random contact matching `predicate` using reservoir sampling.
+    /// O(n) scan with O(1) extra memory (no intermediate Vec allocation).
+    fn random_contact(&self, predicate: impl Fn(&Contact) -> bool) -> Option<Contact> {
         let mut rng = rand::rngs::OsRng;
         let mut result: Option<&Contact> = None;
         let mut count = 0u64;
         for c in self.contacts.values() {
-            if c.was_validated()
-                && !c.has_pending_enr_request()
-                && c.record.is_none()
-                && !c.disposable
-            {
+            if predicate(c) {
                 count += 1;
                 if rng.gen_range(0..count) == 0 {
                     result = Some(c);
