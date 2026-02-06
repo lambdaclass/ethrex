@@ -57,6 +57,9 @@ impl RocksDBBackend {
         opts.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
         opts.set_use_fsync(false); // fdatasync
 
+        // Pipelined writes + concurrent memtable writes provide the same parallel
+        // memtable insertion benefits as unordered_write (which isn't exposed in the
+        // Rust crate), without breaking snapshot immutability.
         opts.set_enable_pipelined_write(true);
         opts.set_allow_concurrent_memtable_write(true);
         opts.set_enable_write_thread_adaptive_yield(true);
@@ -328,6 +331,30 @@ impl StorageReadView for RocksDBReadTx {
         self.db
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
+    }
+
+    fn multi_get(
+        &self,
+        keys: &[(&'static str, &[u8])],
+    ) -> Result<Vec<Option<Vec<u8>>>, StoreError> {
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+        let cf_keys: Vec<_> = keys
+            .iter()
+            .map(|(table, key)| {
+                let cf = self
+                    .db
+                    .cf_handle(table)
+                    .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+                Ok((cf, *key))
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        self.db
+            .multi_get_cf(&cf_keys)
+            .into_iter()
+            .map(|r| r.map_err(|e| StoreError::Custom(format!("multi_get error: {e}"))))
+            .collect()
     }
 
     fn prefix_iterator(

@@ -268,6 +268,33 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
 
+    fn get_many(&self, keys: &[Nibbles]) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
+        let prefixed: Vec<Nibbles> = keys
+            .iter()
+            .map(|k| apply_prefix(self.prefix, k.clone()))
+            .collect();
+        // Check cache first, collect indices of misses for batch DB lookup.
+        let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(keys.len());
+        let mut db_indices = Vec::new();
+        let mut db_keys = Vec::new();
+        for (i, key) in prefixed.iter().enumerate() {
+            if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+                results.push(Some(value));
+            } else {
+                results.push(None);
+                db_indices.push(i);
+                db_keys.push(key.clone());
+            }
+        }
+        if !db_keys.is_empty() {
+            let db_results = self.db.get_many(&db_keys)?;
+            for (idx, result) in db_indices.into_iter().zip(db_results) {
+                results[idx] = result;
+            }
+        }
+        Ok(results)
+    }
+
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // TODO: Get rid of this.
         unimplemented!("This function should not be called");

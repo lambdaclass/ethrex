@@ -12,6 +12,14 @@ pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
+
+    /// Batch-retrieves multiple keys in a single operation.
+    /// Results are returned in the same order as the input keys.
+    /// Default implementation falls back to sequential gets.
+    fn get_many(&self, keys: &[Nibbles]) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
+        keys.iter().map(|k| self.get(k.clone())).collect()
+    }
+
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {

@@ -104,6 +104,33 @@ impl TrieDB for BackendTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
+    fn get_many(&self, keys: &[Nibbles]) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+        #[cfg(feature = "metrics")]
+        for _ in keys {
+            METRICS_STORAGE.inc_db_reads();
+        }
+        let prefixed: Vec<_> = keys
+            .iter()
+            .map(|k| {
+                let pk = self.make_key(k.clone());
+                let table = self.table_for_key(&pk);
+                (table, pk)
+            })
+            .collect();
+        let query: Vec<(&'static str, &[u8])> = prefixed
+            .iter()
+            .map(|(table, pk)| (*table, pk.as_slice()))
+            .collect();
+        let tx = self.db.begin_read().map_err(|e| {
+            TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
+        })?;
+        tx.multi_get(&query)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed multi_get: {}", e)))
+    }
+
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         #[cfg(feature = "metrics")]
         {
