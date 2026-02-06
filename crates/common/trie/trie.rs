@@ -12,6 +12,7 @@ pub mod threadpool;
 mod trie_iter;
 pub mod trie_sorted;
 mod verify_range;
+use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
@@ -46,7 +47,7 @@ lazy_static! {
 /// RLP-encoded trie path
 pub type PathRLP = Vec<u8>;
 /// RLP-encoded trie value
-pub type ValueRLP = Vec<u8>;
+pub type ValueRLP = Bytes;
 /// RLP-encoded trie node
 pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
@@ -110,7 +111,7 @@ impl Trie {
             if value_rlp.is_empty() {
                 return Ok(None);
             }
-            return Ok(Some(value_rlp));
+            return Ok(Some(value_rlp.into()));
         }
 
         Ok(match self.root {
@@ -129,8 +130,9 @@ impl Trie {
     }
 
     /// Insert an RLP-encoded value into the trie.
-    pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
+    pub fn insert(&mut self, path: PathRLP, value: impl Into<ValueRLP>) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
+        let value = value.into();
         self.pending_removal.remove(&path);
         self.dirty.insert(path.clone());
 
@@ -224,6 +226,8 @@ impl Trie {
     /// the cached nodes.
     pub fn commit(&mut self) -> Result<(), TrieError> {
         let acc = self.commit_without_storing();
+        // Zero-copy conversion: Bytes::from(Vec<u8>) takes ownership
+        let acc = acc.into_iter().map(|(k, v)| (k, v.into())).collect();
         self.db.put_batch(acc)?;
 
         // Commit the underlying transaction
@@ -381,8 +385,8 @@ impl Trie {
     }
 
     /// Builds an in-memory trie from the given elements and returns its hash
-    pub fn compute_hash_from_unsorted_iter(
-        iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
+    pub fn compute_hash_from_unsorted_iter<V: Into<ValueRLP>>(
+        iter: impl Iterator<Item = (PathRLP, V)>,
     ) -> H256 {
         let mut trie = Trie::stateless();
         for (path, value) in iter {
@@ -404,7 +408,7 @@ impl Trie {
                 Ok(None)
             }
 
-            fn put_batch(&self, _key_values: Vec<TrieNode>) -> Result<(), TrieError> {
+            fn put_batch(&self, _key_values: Vec<(Nibbles, Bytes)>) -> Result<(), TrieError> {
                 Ok(())
             }
         }

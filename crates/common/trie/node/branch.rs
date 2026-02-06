@@ -24,6 +24,7 @@ use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 )]
 pub struct BranchNode {
     pub choices: [NodeRef; 16],
+    #[rkyv(with = crate::rkyv_utils::BytesWrapper)]
     pub value: ValueRLP,
 }
 
@@ -42,13 +43,16 @@ impl BranchNode {
     }
 
     /// Creates a new branch node given its children and value
-    pub const fn new_with_value(choices: [NodeRef; 16], value: ValueRLP) -> Self {
-        Self { choices, value }
+    pub fn new_with_value(choices: [NodeRef; 16], value: impl Into<ValueRLP>) -> Self {
+        Self {
+            choices,
+            value: value.into(),
+        }
     }
 
     /// Updates the node's path and value
-    pub fn update(&mut self, new_value: ValueRLP) {
-        self.value = new_value;
+    pub fn update(&mut self, new_value: impl Into<ValueRLP>) {
+        self.value = new_value.into();
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
@@ -365,12 +369,12 @@ mod test {
         assert_eq!(
             node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
                 .unwrap(),
-            Some(vec![0x12, 0x34, 0x56, 0x78]),
+            Some(vec![0x12, 0x34, 0x56, 0x78].into()),
         );
         assert_eq!(
             node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]))
                 .unwrap(),
-            Some(vec![0x34, 0x56, 0x78, 0x9A]),
+            Some(vec![0x34, 0x56, 0x78, 0x9A].into()),
         );
     }
 
@@ -406,7 +410,7 @@ mod test {
         node.insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value.into()));
     }
 
     #[test]
@@ -425,7 +429,7 @@ mod test {
         node.insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value.into()));
     }
 
     #[test]
@@ -448,7 +452,7 @@ mod test {
             .unwrap();
 
         assert_eq!(new_node.choices, node.choices);
-        assert_eq!(new_node.value, value);
+        assert_eq!(new_node.value, ValueRLP::from(value));
     }
 
     #[test]
@@ -466,7 +470,7 @@ mod test {
             .unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
-        assert_eq!(value, Some(vec![0x00]));
+        assert_eq!(value, Some(vec![0x00].into()));
     }
 
     #[test]
@@ -485,7 +489,7 @@ mod test {
             .unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::Mutated)));
-        assert_eq!(value, Some(vec![0x00]));
+        assert_eq!(value, Some(vec![0x00].into()));
     }
 
     #[test]
@@ -502,7 +506,7 @@ mod test {
             .unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
-        assert_eq!(value, Some(vec![0x00]));
+        assert_eq!(value, Some(vec![0x00].into()));
     }
 
     #[test]
@@ -519,7 +523,7 @@ mod test {
             .unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
-        assert_eq!(value, Some(vec![0xFF]));
+        assert_eq!(value, Some(vec![0xFF].into()));
     }
 
     #[test]
@@ -537,7 +541,7 @@ mod test {
             .unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::Mutated)));
-        assert_eq!(value, Some(vec![0xFF]));
+        assert_eq!(value, Some(vec![0xFF].into()));
     }
 
     #[test]

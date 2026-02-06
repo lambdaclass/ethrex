@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use crate::api::{
     PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
 };
@@ -6,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-type Table = BTreeMap<Vec<u8>, Vec<u8>>;
+type Table = BTreeMap<Bytes, Bytes>;
 type Database = BTreeMap<&'static str, Table>;
 
 #[derive(Debug)]
@@ -82,7 +83,7 @@ impl Iterator for InMemoryPrefixIter {
 }
 
 impl StorageLockedView for InMemoryLocked {
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, key: &[u8]) -> Result<Option<Bytes>, StoreError> {
         let db = self
             .backend
             .read()
@@ -99,7 +100,7 @@ pub struct InMemoryReadTx<'a> {
 }
 
 impl<'a> StorageReadView for InMemoryReadTx<'a> {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Bytes>, StoreError> {
         let db = self
             .backend
             .read()
@@ -122,12 +123,11 @@ impl<'a> StorageReadView for InMemoryReadTx<'a> {
             .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
 
         let table_data = db.get(table).cloned().unwrap_or_default();
-        let prefix_vec = prefix.to_vec();
 
         let results: Vec<PrefixResult> = table_data
             .into_iter()
-            .filter(|(key, _)| key.starts_with(&prefix_vec))
-            .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
+            .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(k, v)| Ok((k.to_vec().into_boxed_slice(), v.to_vec().into_boxed_slice())))
             .collect();
 
         let iter = InMemoryPrefixIter {
@@ -145,7 +145,7 @@ impl StorageWriteBatch for InMemoryWriteTx {
     fn put_batch(
         &mut self,
         table: &'static str,
-        batch: Vec<(Vec<u8>, Vec<u8>)>,
+        batch: &[(&[u8], &[u8])],
     ) -> Result<(), StoreError> {
         let mut db = self
             .backend
@@ -155,7 +155,7 @@ impl StorageWriteBatch for InMemoryWriteTx {
         let table_ref = db.entry(table).or_insert_with(Table::new);
 
         for (key, value) in batch {
-            table_ref.insert(key, value);
+            table_ref.insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
         }
 
         Ok(())

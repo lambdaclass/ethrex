@@ -297,12 +297,12 @@ mod test {
         assert_eq!(
             node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
                 .unwrap(),
-            Some(vec![0x12, 0x34, 0x56, 0x78]),
+            Some(vec![0x12, 0x34, 0x56, 0x78].into()),
         );
         assert_eq!(
             node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x01]))
                 .unwrap(),
-            Some(vec![0x34, 0x56, 0x78, 0x9A]),
+            Some(vec![0x34, 0x56, 0x78, 0x9A].into()),
         );
     }
 
@@ -369,7 +369,7 @@ mod test {
         assert_eq!(
             node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]))
                 .unwrap(),
-            Some(vec![0x20])
+            Some(vec![0x20].into())
         );
     }
 
@@ -397,7 +397,7 @@ mod test {
         assert_eq!(
             node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]))
                 .unwrap(),
-            Some(vec![0x20])
+            Some(vec![0x20].into())
         );
     }
 
@@ -419,7 +419,7 @@ mod test {
             .unwrap();
 
         assert!(none.is_none());
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value.into()));
     }
 
     #[test]
@@ -440,7 +440,7 @@ mod test {
             .unwrap();
 
         assert!(none.is_none());
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value.into()));
     }
 
     #[test]
@@ -476,7 +476,7 @@ mod test {
             .unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
-        assert_eq!(value, Some(vec![0x01]));
+        assert_eq!(value, Some(vec![0x01].into()));
     }
 
     #[test]
@@ -500,7 +500,7 @@ mod test {
             node,
             Some(NodeRemoveResult::New(Node::Extension(_)))
         ));
-        assert_eq!(value, Some(vec![0x00]));
+        assert_eq!(value, Some(vec![0x00].into()));
     }
 
     #[test]

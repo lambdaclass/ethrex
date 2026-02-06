@@ -18,6 +18,7 @@
 //! - Locked views ([`StorageLockedView`]): read-only views of a point in time (snapshots), right now it's
 //!   only used during snap-sync.
 
+use bytes::Bytes;
 use crate::error::StoreError;
 use std::{fmt::Debug, path::Path};
 
@@ -57,7 +58,7 @@ pub trait StorageBackend: Debug + Send + Sync {
 /// Provides methods to read data from the database
 pub trait StorageReadView {
     /// Retrieves a value by key from the specified table.
-    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Bytes>, StoreError>;
 
     /// Returns an iterator over all key-value pairs with the given prefix.
     fn prefix_iterator(
@@ -75,14 +76,14 @@ pub trait StorageReadView {
 pub trait StorageWriteBatch: Send {
     /// Stores a key-value pair in the specified table.
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.put_batch(table, vec![(key.to_vec(), value.to_vec())])
+        self.put_batch(table, &[(key, value)])
     }
 
     /// Stores multiple key-value pairs in the specified table within the transaction.
     fn put_batch(
         &mut self,
         table: &'static str,
-        batch: Vec<(Vec<u8>, Vec<u8>)>,
+        batch: &[(&[u8], &[u8])],
     ) -> Result<(), StoreError>;
 
     /// Removes a key-value pair from the specified table.
@@ -100,5 +101,5 @@ pub trait StorageWriteBatch: Send {
 // TODO: Check if we can remove this trait and use [`StorageReadView`] instead.
 pub trait StorageLockedView: Send + Sync {
     /// Retrieves a value by key from the locked table.
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+    fn get(&self, key: &[u8]) -> Result<Option<Bytes>, StoreError>;
 }
