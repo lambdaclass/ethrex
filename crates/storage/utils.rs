@@ -45,6 +45,8 @@ pub enum SnapStateIndex {
     StateTrieRebuildCheckpoint = 3,
     // Storage tries awaiting rebuild (AccountHash, ExpectedRoot)
     StorageTrieRebuildPending = 4,
+    // Body backfill checkpoint (last completed block)
+    BodyBackfillCheckpoint = 5,
 }
 
 impl From<u8> for SnapStateIndex {
@@ -55,6 +57,7 @@ impl From<u8> for SnapStateIndex {
             2 => SnapStateIndex::StateHealPaths,
             3 => SnapStateIndex::StateTrieRebuildCheckpoint,
             4 => SnapStateIndex::StorageTrieRebuildPending,
+            5 => SnapStateIndex::BodyBackfillCheckpoint,
             _ => panic!("Invalid value when casting to SnapDataIndex: {value}"),
         }
     }
