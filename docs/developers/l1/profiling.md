@@ -4,7 +4,7 @@ This guide covers the profiling tools available for ethrex developers, including
 
 ## CPU Profiling with `pprof`
 
-Ethrex includes built-in CPU profiling via [pprof-rs](https://github.com/tikv/pprof-rs), gated behind the `cpu_profiling` feature flag. When enabled, a profiler starts at boot (1000 Hz sampling) and writes a `profile.pb` file to the current working directory at shutdown.
+Ethrex includes on-demand CPU profiling via [pprof-rs](https://github.com/tikv/pprof-rs), gated behind the `cpu_profiling` feature flag. When enabled, the RPC server exposes a `GET /debug/pprof/profile` endpoint that captures a CPU profile for a configurable duration and returns protobuf data.
 
 ### Prerequisites
 
@@ -39,19 +39,22 @@ The `cpu_profiling` feature is opt-in (not in `default`) so normal builds are un
    ./target/release/ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network holesky
    ```
 
-   You should see this log line near startup:
+2. Capture a profile by hitting the endpoint with curl:
 
-   ```
-   CPU profiling enabled (1000 Hz), will write profile.pb at shutdown
+   ```bash
+   # Default: 30-second capture at 1000 Hz
+   curl -o profile.pb "http://localhost:8545/debug/pprof/profile"
+
+   # Custom: 60-second capture at 500 Hz
+   curl -o profile.pb "http://localhost:8545/debug/pprof/profile?seconds=60&frequency=500"
    ```
 
-2. Let the node run through the workload you want to profile.
+   Query parameters:
+   - `seconds` — capture duration (default: 30, max: 300)
+   - `frequency` — sampling frequency in Hz (default: 1000)
 
-3. Stop the node with `Ctrl+C` or `SIGTERM`. The file `profile.pb` will be written to the current working directory and the shutdown logs will include:
-
-   ```
-   CPU profile written to profile.pb
-   ```
+   Only one capture can run at a time. A concurrent request returns `409 Conflict`.
+   Without the feature flag, the endpoint returns `501 Not Implemented`.
 
 ### Analyzing the profile
 
@@ -95,8 +98,7 @@ go tool pprof -http=:8080 -focus=execute_block profile.pb
   ```bash
   cargo build -p ethrex --release --features cpu_profiling,jemalloc
   ```
-- **Sampling rate** — the profiler samples at 1000 Hz (once per millisecond). This is high enough to get good resolution without significant overhead.
-- **File location** — `profile.pb` is written to whichever directory you run the binary from. If you want it elsewhere, `cd` to that directory before starting the node, or move the file after shutdown.
+- **Sampling rate** — the default 1000 Hz (once per millisecond) gives good resolution without significant overhead. Lower it for longer captures if needed.
 
 ## Memory Profiling with jemalloc
 
@@ -151,6 +153,6 @@ This will open the Firefox Profiler UI in your browser when the process exits.
 
 | Feature              | What it does                                     | Platform   |
 |----------------------|--------------------------------------------------|------------|
-| `cpu_profiling`      | Built-in pprof CPU profiling, writes `profile.pb`| Linux/macOS|
+| `cpu_profiling`      | On-demand pprof CPU profiling via HTTP endpoint  | Linux/macOS|
 | `jemalloc`           | Use jemalloc allocator (enables external profilers)| Linux/macOS|
 | `jemalloc_profiling` | jemalloc heap profiling + RPC endpoint           | Linux/macOS|

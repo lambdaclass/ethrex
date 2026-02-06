@@ -3836,7 +3836,6 @@ dependencies = [
  "itertools 0.14.0",
  "lazy_static",
  "local-ip-address",
- "pprof",
  "rand 0.8.5",
  "rayon",
  "reqwest",
