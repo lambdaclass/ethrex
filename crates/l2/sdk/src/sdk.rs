@@ -444,18 +444,11 @@ pub async fn create_deploy(
     .await?;
     let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
 
-    let nonce = client
-        .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
-        .await?;
-    let mut encode = vec![];
-    (deployer.address(), nonce).encode(&mut encode);
+    let receipt = wait_for_transaction_receipt(deploy_tx_hash, client, 1000).await?;
 
-    //Taking the last 20bytes so it matches an H160 == Address length
-    let deployed_address = Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
-        EthClientError::Custom("Failed to get deployed_address".to_owned()),
-    )?);
-
-    wait_for_transaction_receipt(deploy_tx_hash, client, 1000).await?;
+    let deployed_address = receipt.tx_info.contract_address.ok_or_else(|| {
+        EthClientError::Custom("Deploy transaction did not create a contract".to_owned())
+    })?;
 
     Ok((deploy_tx_hash, deployed_address))
 }
