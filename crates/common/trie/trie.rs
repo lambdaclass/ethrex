@@ -162,6 +162,22 @@ impl Trie {
             return Ok(());
         }
 
+        // For small batches, sequential inserts are faster because the batch path's
+        // overhead (BTreeMap dedup, Vec allocation per branch level, Nibbles cloning)
+        // outweighs the DB-read savings from shared prefix traversal.
+        // Typical storage tries get 1-20 updates per block, where sequential wins.
+        const BATCH_THRESHOLD: usize = 32;
+        if updates.len() <= BATCH_THRESHOLD {
+            for (path, value) in updates {
+                if value.is_empty() {
+                    self.remove(&path)?;
+                } else {
+                    self.insert(path, value)?;
+                }
+            }
+            return Ok(());
+        }
+
         // Dedup by key, last-write-wins, using BTreeMap for sorted output
         let deduped: BTreeMap<PathRLP, ValueRLP> = updates.into_iter().collect();
 
