@@ -306,13 +306,13 @@ pub async fn init_l1_dev(
         .map_err(|e| eyre::eyre!("Invalid --dev.coinbase address: {e}"))?
         .unwrap_or_default();
 
-    let config = ethrex_block_builder::BlockBuilderConfig {
+    let config = ethrex_dev::BlockBuilderConfig {
         coinbase,
         block_time_ms: opts.dev_block_time,
         gas_ceil: opts.gas_limit,
     };
 
-    let (mut handle, store, blockchain) = ethrex_block_builder::BlockBuilder::spawn(config)
+    let (mut handle, store, blockchain) = ethrex_dev::BlockBuilder::spawn(config)
         .await
         .map_err(|e| eyre::eyre!("Failed to spawn block builder: {e}"))?;
 
@@ -327,7 +327,7 @@ pub async fn init_l1_dev(
     tokio::spawn(async move {
         while let Some((tx, blobs_bundle)) = tx_receiver.recv().await {
             if let Err(e) = handle
-                .cast(ethrex_block_builder::CastMsg::SubmitTransaction { tx, blobs_bundle })
+                .cast(ethrex_dev::CastMsg::SubmitTransaction { tx, blobs_bundle })
                 .await
             {
                 tracing::error!("Failed to forward transaction to block builder: {e}");

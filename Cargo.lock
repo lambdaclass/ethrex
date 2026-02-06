@@ -3587,11 +3587,11 @@ dependencies = [
  "clap",
  "clap_complete",
  "directories 5.0.1",
- "ethrex-block-builder",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-config",
  "ethrex-crypto",
+ "ethrex-dev",
  "ethrex-l2",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
@@ -3645,28 +3645,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
-]
-
-[[package]]
-name = "ethrex-block-builder"
-version = "9.0.0"
-dependencies = [
- "bytes",
- "ethereum-types 0.15.1",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-config",
- "ethrex-crypto",
- "ethrex-rpc",
- "ethrex-storage",
- "ethrex-vm",
- "hex",
- "secp256k1",
- "serde_json",
- "spawned-concurrency",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -3748,43 +3726,21 @@ name = "ethrex-dev"
 version = "9.0.0"
 dependencies = [
  "bytes",
- "envy",
  "ethereum-types 0.15.1",
- "ethrex-rpc",
- "hex",
- "jsonwebtoken 9.3.1",
- "reqwest 0.12.24",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ethrex-dev-bin"
-version = "9.0.0"
-dependencies = [
- "axum 0.8.7",
- "bytes",
- "clap",
- "ethereum-types 0.15.1",
- "ethrex-block-builder",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-config",
- "ethrex-p2p",
+ "ethrex-crypto",
  "ethrex-rpc",
  "ethrex-storage",
- "eyre",
+ "ethrex-vm",
  "hex",
+ "secp256k1",
  "serde_json",
  "spawned-concurrency",
- "spawned-rt",
+ "thiserror 2.0.17",
  "tokio",
  "tracing",
- "tracing-subscriber 0.3.21",
 ]
 
 [[package]]
