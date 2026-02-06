@@ -983,7 +983,7 @@ fn deploy_tdx_contracts(
     opts: &DeployerOptions,
     on_chain_proposer: Address,
 ) -> Result<Address, DeployerError> {
-    Command::new("make")
+    let status = Command::new("make")
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
         .env("RPC_URL", opts.rpc_url.as_str())
@@ -999,22 +999,34 @@ fn deploy_tdx_contracts(
             DeployerError::DeploymentSubtaskFailed(format!("Failed to wait for make: {err}"))
         })?;
 
-    let address = read_tdx_deployment_address("TDXVerifier");
+    if !status.success() {
+        return Err(DeployerError::DeploymentSubtaskFailed(format!(
+            "make deploy-all exited with status {status}"
+        )));
+    }
+
+    let address = read_tdx_deployment_address("TDXVerifier")?;
     Ok(address)
 }
 
-fn read_tdx_deployment_address(name: &str) -> Address {
+fn read_tdx_deployment_address(name: &str) -> Result<Address, DeployerError> {
     let path = format!("tee/contracts/deploydeps/automata-dcap-attestation/evm/deployment/{name}");
-    let Ok(contents) = read_to_string(path) else {
-        return Address::zero();
-    };
-    Address::from_str(&contents).unwrap_or(Address::zero())
+    let contents = read_to_string(&path).map_err(|err| {
+        DeployerError::DeploymentSubtaskFailed(format!(
+            "Failed to read TDX deployment address from {path}: {err}"
+        ))
+    })?;
+    Address::from_str(&contents).map_err(|err| {
+        DeployerError::DeploymentSubtaskFailed(format!(
+            "Failed to parse TDX deployment address from {path}: {err}"
+        ))
+    })
 }
 
 /// Polls the L1 node until all pending transactions from `address` have been
-/// included in a block. This is used after shelling out to `rex` for TDX
-/// contract deployment, where we don't have the transaction hashes but need
-/// to ensure all transactions are confirmed before proceeding.
+/// included in a block. This is used before invoking external TDX contract
+/// deployment tooling (e.g. `deploy_tdx_contracts`) to ensure that the
+/// deployer account has no outstanding pending transactions before proceeding.
 async fn wait_for_pending_transactions(
     eth_client: &EthClient,
     address: Address,
@@ -1036,9 +1048,9 @@ async fn wait_for_pending_transactions(
         );
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
-    Err(DeployerError::InternalError(
-        "Timed out waiting for pending transactions to be included".to_string(),
-    ))
+    Err(DeployerError::InternalError(format!(
+        "Timed out waiting for pending transactions to be included for address {address:#x}"
+    )))
 }
 
 fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
