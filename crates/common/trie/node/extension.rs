@@ -258,6 +258,70 @@ impl ExtensionNode {
         Ok(())
     }
 
+    /// Batch-inserts sorted updates into the subtrie rooted at this extension.
+    /// Returns `Some(Node)` if the extension was restructured (e.g., into a branch).
+    pub fn insert_batch(
+        &mut self,
+        db: &dyn TrieDB,
+        updates: &[(Nibbles, ValueRLP)],
+    ) -> Result<Option<Node>, TrieError> {
+        if updates.is_empty() {
+            return Ok(None);
+        }
+
+        // Check if ALL updates share this extension's prefix
+        let all_share_prefix = updates
+            .iter()
+            .all(|(path, _)| path.count_prefix(&self.prefix) >= self.prefix.len());
+
+        if all_share_prefix {
+            // Strip the prefix from all paths and recurse into the child
+            let stripped: Vec<(Nibbles, ValueRLP)> = updates
+                .iter()
+                .map(|(path, value)| (path.offset(self.prefix.len()), value.clone()))
+                .collect();
+            let child_node = self.child.get_node_mut(db, stripped[0].0.current())?;
+            let Some(child_node) = child_node else {
+                return Err(TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: stripped[0].0.current(),
+                    }),
+                )));
+            };
+            child_node.insert_batch(db, &stripped)?;
+            self.child.clear_hash();
+            Ok(None)
+        } else {
+            // First insert restructures the extension into a branch, then
+            // batch-insert the remaining updates
+            let (first_path, first_value) = &updates[0];
+            let new_node = self.insert(db, first_path.clone(), first_value.clone().into())?;
+            if let Some(mut node) = new_node {
+                if updates.len() > 1 {
+                    node.insert_batch(db, &updates[1..])?;
+                }
+                Ok(Some(node))
+            } else {
+                // Extension survived (partial prefix match shortened it);
+                // recurse remaining into self
+                for (i, (path, value)) in updates[1..].iter().enumerate() {
+                    let new_node = self.insert(db, path.clone(), value.clone().into())?;
+                    if let Some(mut node) = new_node {
+                        let remaining_start = i + 2;
+                        if remaining_start < updates.len() {
+                            node.insert_batch(db, &updates[remaining_start..])?;
+                        }
+                        return Ok(Some(node));
+                    }
+                }
+                Ok(None)
+            }
+        }
+    }
+
     /// Creates a new node by emptying `self` prefix and cloning the child ref
     ///
     /// This is a way to "consume" the node when we just have a mutable reference to it

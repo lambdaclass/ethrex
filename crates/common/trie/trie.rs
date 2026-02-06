@@ -151,6 +151,32 @@ impl Trie {
         Ok(())
     }
 
+    /// Batch insert/remove multiple entries. Empty values signal removal.
+    /// Input does NOT need to be sorted — dedup + sorting is handled internally.
+    /// Last-write-wins for duplicate keys.
+    pub fn insert_batch_sorted(
+        &mut self,
+        updates: Vec<(PathRLP, ValueRLP)>,
+    ) -> Result<(), TrieError> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        // Dedup by key, last-write-wins, using BTreeMap for sorted output
+        let deduped: BTreeMap<PathRLP, ValueRLP> = updates.into_iter().collect();
+
+        // Apply all updates sequentially
+        for (path, value) in deduped {
+            if value.is_empty() {
+                self.remove(&path)?;
+            } else {
+                self.insert(path, value)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
@@ -607,5 +633,186 @@ impl ProofTrie {
 impl From<Trie> for ProofTrie {
     fn from(value: Trie) -> Self {
         Self(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: insert entries one-by-one (sequential) and return the hash
+    fn sequential_hash(entries: &[(Vec<u8>, Vec<u8>)]) -> H256 {
+        let mut trie = Trie::new_temp();
+        for (path, value) in entries {
+            if value.is_empty() {
+                trie.remove(path).unwrap();
+            } else {
+                trie.insert(path.clone(), value.clone()).unwrap();
+            }
+        }
+        trie.hash_no_commit()
+    }
+
+    /// Helper: batch-insert entries and return the hash
+    fn batch_hash(entries: Vec<(Vec<u8>, Vec<u8>)>) -> H256 {
+        let mut trie = Trie::new_temp();
+        trie.insert_batch_sorted(entries).unwrap();
+        trie.hash_no_commit()
+    }
+
+    #[test]
+    fn batch_insert_empty_trie() {
+        let entries = vec![
+            (vec![0x01], vec![0x10]),
+            (vec![0x02], vec![0x20]),
+            (vec![0x03], vec![0x30]),
+        ];
+        assert_eq!(sequential_hash(&entries), batch_hash(entries));
+    }
+
+    #[test]
+    fn batch_insert_single_entry() {
+        let entries = vec![(vec![0xAB, 0xCD], vec![0x01, 0x02])];
+        assert_eq!(sequential_hash(&entries), batch_hash(entries));
+    }
+
+    #[test]
+    fn batch_insert_shared_prefix() {
+        // Keys that share a common prefix should trigger extension node optimization
+        let entries = vec![
+            (vec![0xAB, 0x01], vec![0x10]),
+            (vec![0xAB, 0x02], vec![0x20]),
+            (vec![0xAB, 0x03], vec![0x30]),
+            (vec![0xAB, 0x04], vec![0x40]),
+        ];
+        assert_eq!(sequential_hash(&entries), batch_hash(entries));
+    }
+
+    #[test]
+    fn batch_insert_duplicate_keys_last_wins() {
+        let entries_seq = vec![
+            (vec![0x01], vec![0x30]), // last write
+        ];
+        let entries_batch = vec![
+            (vec![0x01], vec![0x10]),
+            (vec![0x01], vec![0x20]),
+            (vec![0x01], vec![0x30]), // last write wins
+        ];
+        assert_eq!(sequential_hash(&entries_seq), batch_hash(entries_batch));
+    }
+
+    #[test]
+    fn batch_insert_mixed_inserts_and_removes() {
+        // First insert some entries, then batch with removes
+        let mut trie_seq = Trie::new_temp();
+        trie_seq.insert(vec![0x01], vec![0x10]).unwrap();
+        trie_seq.insert(vec![0x02], vec![0x20]).unwrap();
+        trie_seq.insert(vec![0x03], vec![0x30]).unwrap();
+        trie_seq.remove(&[0x02]).unwrap();
+        let seq_hash = trie_seq.hash_no_commit();
+
+        let mut trie_batch = Trie::new_temp();
+        trie_batch.insert(vec![0x01], vec![0x10]).unwrap();
+        trie_batch.insert(vec![0x02], vec![0x20]).unwrap();
+        trie_batch
+            .insert_batch_sorted(vec![
+                (vec![0x02], vec![]),     // remove
+                (vec![0x03], vec![0x30]), // insert
+            ])
+            .unwrap();
+        let batch_hash = trie_batch.hash_no_commit();
+
+        assert_eq!(seq_hash, batch_hash);
+    }
+
+    #[test]
+    fn batch_insert_into_existing_trie() {
+        let mut trie_seq = Trie::new_temp();
+        trie_seq.insert(vec![0x01], vec![0x10]).unwrap();
+        trie_seq.insert(vec![0x02], vec![0x20]).unwrap();
+        trie_seq.insert(vec![0x03], vec![0x30]).unwrap();
+        trie_seq.insert(vec![0x04], vec![0x40]).unwrap();
+        let seq_hash = trie_seq.hash_no_commit();
+
+        let mut trie_batch = Trie::new_temp();
+        trie_batch.insert(vec![0x01], vec![0x10]).unwrap();
+        trie_batch.insert(vec![0x02], vec![0x20]).unwrap();
+        trie_batch
+            .insert_batch_sorted(vec![
+                (vec![0x03], vec![0x30]),
+                (vec![0x04], vec![0x40]),
+            ])
+            .unwrap();
+        let batch_hash = trie_batch.hash_no_commit();
+
+        assert_eq!(seq_hash, batch_hash);
+    }
+
+    #[test]
+    fn batch_insert_leaf_to_branch_restructure() {
+        // Single leaf that gets split by batch insert
+        let mut trie_seq = Trie::new_temp();
+        trie_seq.insert(vec![0x12, 0x34], vec![0xAA]).unwrap();
+        trie_seq.insert(vec![0x12, 0x56], vec![0xBB]).unwrap();
+        trie_seq.insert(vec![0x13, 0x00], vec![0xCC]).unwrap();
+        let seq_hash = trie_seq.hash_no_commit();
+
+        let mut trie_batch = Trie::new_temp();
+        trie_batch
+            .insert_batch_sorted(vec![
+                (vec![0x12, 0x34], vec![0xAA]),
+                (vec![0x12, 0x56], vec![0xBB]),
+                (vec![0x13, 0x00], vec![0xCC]),
+            ])
+            .unwrap();
+        let batch_hash = trie_batch.hash_no_commit();
+
+        assert_eq!(seq_hash, batch_hash);
+    }
+
+    #[test]
+    fn batch_insert_many_entries() {
+        // Test with many entries to exercise branch grouping
+        let entries: Vec<(Vec<u8>, Vec<u8>)> = (0u8..=255)
+            .map(|i| (vec![i], vec![i.wrapping_add(1)]))
+            .collect();
+        assert_eq!(sequential_hash(&entries), batch_hash(entries));
+    }
+
+    #[test]
+    fn batch_insert_empty_batch() {
+        let mut trie = Trie::new_temp();
+        trie.insert(vec![0x01], vec![0x10]).unwrap();
+        let before_hash = trie.hash_no_commit();
+        trie.insert_batch_sorted(vec![]).unwrap();
+        let after_hash = trie.hash_no_commit();
+        assert_eq!(before_hash, after_hash);
+    }
+
+    #[test]
+    fn batch_insert_long_shared_prefix() {
+        // Keys with long shared prefixes (realistic for storage slots)
+        let entries: Vec<(Vec<u8>, Vec<u8>)> = (0u8..16)
+            .map(|i| {
+                let mut key = vec![0xAA, 0xBB, 0xCC, 0xDD];
+                key.push(i);
+                (key, vec![i + 1])
+            })
+            .collect();
+        assert_eq!(sequential_hash(&entries), batch_hash(entries));
+    }
+
+    #[test]
+    fn batch_insert_32_byte_keys() {
+        // Realistic: 32-byte keys like keccak hashes
+        let entries: Vec<(Vec<u8>, Vec<u8>)> = (0u8..20)
+            .map(|i| {
+                let mut key = [0u8; 32];
+                key[0] = i;
+                key[31] = i;
+                (key.to_vec(), vec![i + 1])
+            })
+            .collect();
+        assert_eq!(sequential_hash(&entries), batch_hash(entries));
     }
 }

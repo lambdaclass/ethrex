@@ -328,6 +328,33 @@ impl Node {
         Ok(())
     }
 
+    /// Batch-inserts sorted updates into the subtrie originating from this node.
+    pub fn insert_batch(
+        &mut self,
+        db: &dyn TrieDB,
+        updates: &[(Nibbles, ValueRLP)],
+    ) -> Result<(), TrieError> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+        if updates.len() == 1 {
+            let (path, value) = &updates[0];
+            return self.insert(db, path.clone(), value.clone());
+        }
+        let new_node = match self {
+            Node::Branch(n) => {
+                n.insert_batch(db, updates)?;
+                None
+            }
+            Node::Extension(n) => n.insert_batch(db, updates)?,
+            Node::Leaf(n) => n.insert_batch(db, updates)?,
+        };
+        if let Some(new_node) = new_node {
+            *self = new_node;
+        }
+        Ok(())
+    }
+
     /// Removes a value from the subtrie originating from this node given its path
     /// Returns a bool indicating if the new subtrie is empty, and the removed value if it existed in the subtrie
     pub fn remove(

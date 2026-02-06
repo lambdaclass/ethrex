@@ -160,6 +160,42 @@ impl LeafNode {
         Ok(())
     }
 
+    /// Batch-inserts sorted updates into the subtrie rooted at this leaf.
+    /// Returns `Some(Node)` if the leaf was restructured (e.g., into a branch).
+    pub fn insert_batch(
+        &mut self,
+        db: &dyn crate::TrieDB,
+        updates: &[(Nibbles, ValueRLP)],
+    ) -> Result<Option<Node>, TrieError> {
+        if updates.is_empty() {
+            return Ok(None);
+        }
+        // First insert may restructure this leaf into a branch/extension
+        let (first_path, first_value) = &updates[0];
+        let new_node = self.insert(first_path.clone(), first_value.clone().into())?;
+        if let Some(mut node) = new_node {
+            // Leaf was restructured; batch-insert remaining into the new node
+            if updates.len() > 1 {
+                node.insert_batch(db, &updates[1..])?;
+            }
+            Ok(Some(node))
+        } else {
+            // Same key updated — process remaining sequentially since they
+            // all likely target this same leaf
+            for (i, (path, value)) in updates[1..].iter().enumerate() {
+                let new_node = self.insert(path.clone(), value.clone().into())?;
+                if let Some(mut node) = new_node {
+                    let remaining_start = i + 2; // offset into original updates
+                    if remaining_start < updates.len() {
+                        node.insert_batch(db, &updates[remaining_start..])?;
+                    }
+                    return Ok(Some(node));
+                }
+            }
+            Ok(None)
+        }
+    }
+
     /// Creates a new node by emptying `self` partial and its value
     ///
     /// This is a way to "consume" the node when we just have a mutable reference to it

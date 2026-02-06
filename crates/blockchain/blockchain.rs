@@ -908,7 +908,14 @@ impl Blockchain {
                         tree.insert(prefix, Trie::new_temp());
                     }
                     MerklizationRequest::UpdateStorageBatch(batch) => {
-                        for (prefix, key, value) in batch {
+                        // Group by prefix (account). Batch is already sorted by (prefix, key).
+                        let mut i = 0;
+                        while i < batch.len() {
+                            let prefix = batch[i].0;
+                            let group_start = i;
+                            while i < batch.len() && batch[i].0 == prefix {
+                                i += 1;
+                            }
                             let trie = match tree.entry(prefix) {
                                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                                 Entry::Vacant(vacant_entry) => {
@@ -928,11 +935,17 @@ impl Blockchain {
                                     )?)
                                 }
                             };
-                            if value.is_zero() {
-                                trie.remove(key.as_bytes())?;
-                            } else {
-                                trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
-                            }
+                            let updates: Vec<_> = batch[group_start..i]
+                                .iter()
+                                .map(|(_, key, value)| {
+                                    if value.is_zero() {
+                                        (key.as_bytes().to_vec(), vec![])
+                                    } else {
+                                        (key.as_bytes().to_vec(), value.encode_to_vec())
+                                    }
+                                })
+                                .collect();
+                            trie.insert_batch_sorted(updates)?;
                         }
                     }
                     MerklizationRequest::CollectStorages { tx } => {
