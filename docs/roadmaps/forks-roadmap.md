@@ -20,7 +20,7 @@
 
 | EIP | Title | Code Status | Tests | devnet-bal | SFI/CFI | Owner |
 |-----|-------|-------------|-------|------------|---------|-------|
-| **7928** | Block-Level Access Lists | ⚠️ Types + engine_newPayloadV5 merged; execution integration PR [#6024] open | Unit tests passing | ✅ | SFI | Edgar |
+| **7928** | Block-Level Access Lists | ⚠️ Types + engine_newPayloadV5 merged; execution integration PR [#6024] in review | Unit tests passing | ✅ | SFI | Edgar |
 | **7708** | ETH Transfers Emit Logs | ✅ Merged ([#6074], fix [#6104]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1879) | 100+ tests | ✅ | CFI | Edgar |
 | **7778** | Block Gas Accounting without Refunds | ✅ Merged ([#5996], fix [#6128]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1940) | 7 unit tests in `eip7778_tests.rs` | ✅ | CFI | Edgar |
 | **7843** | SLOTNUM Opcode | ✅ Merged ([#5973]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2028) | ~7 tests (skipped) | ✅ | CFI | Esteve |
@@ -63,7 +63,7 @@
 ### In Progress
 - [ ] **Complete EIP-7928 integration** (BAL part 2) - execution hook needed → Edgar
   - Types + `engine_newPayloadV5` merged (PR [#6020](https://github.com/lambdaclass/ethrex/pull/6020))
-  - Execution integration PR [#6024](https://github.com/lambdaclass/ethrex/pull/6024) open
+  - Execution integration PR [#6024](https://github.com/lambdaclass/ethrex/pull/6024) in review
   - Recent: removed dead code, fixed comments (ce8754cf3)
   - Missing: block execution integration to populate the access list
 
