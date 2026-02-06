@@ -58,6 +58,15 @@ def configure_eth_docker(eth_docker_dir: str, network: str, fee_recipient: str =
     with open(default_env) as f:
         lines = f.readlines()
 
+    # Map network to checkpoint sync URL
+    checkpoint_urls = {
+        "mainnet": "https://mainnet.checkpoint.sigp.io",
+        "hoodi": "https://hoodi.checkpoint.sigp.io",
+        "holesky": "https://holesky.checkpoint.sigp.io",
+        "sepolia": "https://sepolia.checkpoint.sigp.io",
+    }
+    checkpoint_url = checkpoint_urls.get(network, "")
+
     # Settings to override
     overrides = {
         "COMPOSE_FILE": "prysm.yml:ethrex.yml:el-shared.yml",
@@ -66,6 +75,8 @@ def configure_eth_docker(eth_docker_dir: str, network: str, fee_recipient: str =
         "ETHREX_DOCKER_REPO": "ghcr.io/lambdaclass/ethrex",
         "ETHREX_DOCKER_TAG": "latest",
     }
+    if checkpoint_url:
+        overrides["CHECKPOINT_SYNC_URL"] = checkpoint_url
     if fee_recipient:
         overrides["FEE_RECIPIENT"] = fee_recipient
     if slack_success:
@@ -96,6 +107,8 @@ def configure_eth_docker(eth_docker_dir: str, network: str, fee_recipient: str =
     print(f"  Wrote {env_file}")
     print(f"    COMPOSE_FILE=prysm.yml:ethrex.yml:el-shared.yml")
     print(f"    NETWORK={network}")
+    if checkpoint_url:
+        print(f"    CHECKPOINT_SYNC_URL={checkpoint_url}")
     if fee_recipient:
         print(f"    FEE_RECIPIENT={fee_recipient}")
     print(f"    ETHREX_DOCKER_REPO=ghcr.io/lambdaclass/ethrex")
