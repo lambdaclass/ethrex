@@ -266,6 +266,18 @@ fn max_requests_for_peer(&self, peer_id: &H256) -> u32 {
 
 > Discarded — DB write contention makes this impractical without a larger storage refactor.
 
+### 1.9 Bytes for Trie Values — O(1) Clones (PR #6057 - In Progress)
+
+Use `Bytes` instead of `Vec<u8>` for trie values to enable O(1) reference-counted clones in cache lookups, avoiding expensive deep copies.
+
+### 1.10 Snap Sync Benchmark Tool (PR #6108 - In Progress)
+
+Python tool (`tooling/sync/sync_benchmark.py`) to analyze snap sync performance from container logs, identifying bottlenecks per phase.
+
+### 1.11 Per-Phase Timing Breakdown in Slack Notifications (✅ DONE — Merged in #6136)
+
+Surfaces per-phase completion timings (Block Headers, Account Ranges, Storage Ranges, Healing, etc.) directly in Slack notifications from the multisync monitoring script, so performance bottlenecks are visible at a glance.
+
 ---
 
 ## Phase 2: Code Quality & Maintainability
@@ -707,6 +719,9 @@ Week 2-3:   1.4 Reduce Busy-Wait Loops (Issue #6140)
 Week 3-4:   1.6 Async Disk I/O
 Week 4-6:   1.3 Optimize Trie Node Batching
 Week 6-8:   1.7 Peer Connection Optimization
+            1.9  Bytes for trie values (PR #6057)
+            1.10 Snap sync benchmark tool (PR #6108)
+            1.11 Per-phase timing breakdown (✅ DONE)
 ```
 
 ### Phase 2: Code Quality (10 weeks)
