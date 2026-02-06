@@ -25,7 +25,6 @@ members = [
   "crates/common/config",
   "crates/concurrency",
   "crates/blockchain/block_builder",
-  "cmd/ethrex_dev",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
