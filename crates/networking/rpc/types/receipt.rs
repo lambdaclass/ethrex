@@ -56,14 +56,6 @@ pub struct RpcReceiptInfo {
     #[serde(with = "serde_utils::u64::hex_str")]
     pub cumulative_gas_used: u64,
     pub logs_bloom: Bloom,
-    /// EIP-7778: Gas spent after refunds (what the user actually pays).
-    /// This is `None` for pre-EIP-7778 receipts.
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        with = "serde_utils::u64::hex_str_opt",
-        default = "Option::default"
-    )]
-    pub gas_spent: Option<u64>,
 }
 
 impl From<Receipt> for RpcReceiptInfo {
@@ -73,7 +65,6 @@ impl From<Receipt> for RpcReceiptInfo {
             status: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
             logs_bloom: bloom_from_logs(&receipt.logs),
-            gas_spent: receipt.gas_spent,
         }
     }
 }
@@ -234,7 +225,6 @@ mod tests {
                 tx_type: TxType::EIP4844,
                 succeeded: true,
                 cumulative_gas_used: 147,
-                gas_spent: None, // Pre-EIP-7778
                 logs: vec![Log {
                     address: Address::zero(),
                     topics: vec![],
