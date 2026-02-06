@@ -277,6 +277,8 @@ Make the codebase clear, well-documented, and easy for new contributors to under
 
 ### 2.1 Extract Context Structs (Issue #6140 — Steps 5, 6)
 
+**Also includes:** `AccountStorageRoots` simplification — replace `BTreeMap<H256, (Option<H256>, Vec<(H256, H256)>)>` with SoA approach and named struct instead of tuple. Named structs for channel types in `healing/state.rs:106` and worker return types in `client.rs:142`.
+
 **Current State:** Functions with many parameters:
 ```rust
 #[allow(clippy::too_many_arguments)]
@@ -553,6 +555,99 @@ impl Default for SnapSyncConfig {
 
 ---
 
+### 2.9 Fix Snap Protocol Capability Bug
+
+**Current State:** All three `get_best_peer()` calls in `snap/client.rs` (lines 229, 423, 958) use `SUPPORTED_ETH_CAPABILITIES` instead of `SUPPORTED_SNAP_CAPABILITIES`. This selects peers that may not support the snap protocol. The healing modules already use the correct capabilities.
+
+**Proposed Change:** Replace `SUPPORTED_ETH_CAPABILITIES` with `SUPPORTED_SNAP_CAPABILITIES` in all three call sites.
+
+**Effort:** Very low (3 lines)
+
+---
+
+### 2.10 Add `spawn_blocking` to Bytecodes Handler
+
+**Current State:** `process_byte_codes_request` in `snap/server.rs:107` calls `store.get_account_code()` (blocking I/O) without `spawn_blocking`. The other three handlers all use it correctly. Can block the tokio runtime.
+
+**Proposed Change:** Wrap the handler body in `tokio::task::spawn_blocking`, matching the pattern of the other handlers.
+
+**Effort:** Very low (small)
+
+---
+
+### 2.11 Remove Dead `DumpError.contents` Field
+
+**Current State:** `DumpError` in `snap/error.rs:136` has a `contents: Vec<u8>` field that holds the full snapshot chunk (up to 64MB). This was for a retry mechanism that no longer exists. The custom `Debug` impl (line 140) was added to avoid printing the huge contents.
+
+**Proposed Change:** Remove `contents` field, replace custom `Debug` impl with `#[derive(Debug)]`.
+
+**Effort:** Very low (small, frees memory)
+
+---
+
+### 2.12 Use `JoinSet` Instead of Channels for Workers
+
+**Current State:** Both `request_account_range` (line 141) and `request_storage_ranges` (line 589) use `mpsc::channel` for worker communication. If a worker panics, the message is lost silently and the main loop may hang waiting for results.
+
+**Proposed Change:** Migrate to `tokio::task::JoinSet` which propagates panics and handles task lifecycle. The bytecodes path already uses `JoinSet` as a reference.
+
+**Effort:** Medium (1-2 weeks)
+
+---
+
+### 2.13 Self-Contained `StorageTask` with Hashes
+
+**Current State:** `StorageTask` in `snap/client.rs:77` references `accounts_by_root_hash` by index (`start_index`, `end_index`). Any mutation of the vector would silently corrupt in-flight tasks. The task is not self-contained.
+
+**Proposed Change:** Include actual account hashes and storage roots in `StorageTask` instead of indices. This makes tasks self-contained and eliminates the implicit coupling to the vector.
+
+**Effort:** Medium (1 week)
+
+---
+
+### 2.14 Move Snap Client Methods Off `PeerHandler`
+
+**Current State:** `request_account_range`, `request_storage_ranges`, etc. are `impl PeerHandler` methods in `snap/client.rs`. These are complex orchestration functions (task queues, workers, file I/O), not peer operations.
+
+**Proposed Change:** Make them standalone functions that take `&mut PeerHandler` as a parameter. This clarifies that `PeerHandler` is a dependency, not the owner of this logic.
+
+**Effort:** Low (1 week)
+
+---
+
+### 2.15 Guard `write_set` in Account Path
+
+**Current State:** `request_account_range` (line 176) spawns disk-write tasks without checking if one is already pending. The storage path (line 629) already does `!disk_joinset.is_empty()` check. Missing the guard can lead to multiple concurrent writes.
+
+**Proposed Change:** Add the same `!disk_joinset.is_empty()` guard to the account range disk write path, matching the storage path pattern.
+
+**Effort:** Very low (small)
+
+---
+
+### 2.16 Healing Code Unification
+
+**Current State:** `healing/state.rs` (~420 lines) and `healing/storage.rs` (~530 lines) implement the same trie healing algorithm. Differences: path representation (single vs double nibbles) and leaf type (accounts vs U256). Lots of duplicated logic.
+
+**Proposed Change:** Extract a generic healing function parameterized by path and leaf type. Both modules would call into the shared implementation.
+
+**Effort:** High (3+ weeks)
+
+---
+
+### 2.17 Use Existing Constants for Magic Numbers
+
+**Current State:** Several magic numbers in `snap/client.rs` already have named constants in `constants.rs` that aren't being used:
+- Line 569: `300` → should be `STORAGE_BATCH_SIZE`
+- Lines 827, 862: `H256::repeat_byte(0xff)` → should be `HASH_MAX`
+- Line 111: `800` → should be a named constant
+
+**Proposed Change:** Replace magic numbers with existing constants, add new constant for `800`.
+
+**Effort:** Very low (trivial)
+
+---
+
 ### Issue #6140 — Refactor `request_storage_ranges` (Steps Summary)
 
 9-step plan to refactor `request_storage_ranges` in `crates/networking/p2p/snap/client.rs`. Each step is one independently correct commit. Full details in [Issue #6140](https://github.com/lambdaclass/ethrex/issues/6140).
@@ -633,17 +728,26 @@ Week 6-8:   1.7 Peer Connection Optimization
 ### Phase 2: Code Quality (10 weeks)
 
 ```
-Week 1:     2.8 Fix Correctness Bugs (Issue #6140)
-Week 1:     2.1 Extract Context Structs (Issue #6140)
-Week 1-2:   2.4 Extract Helper Functions (Issue #6140)
-Week 2-3:   2.3 Consolidate Error Handling (Merged — PR #5975)
-Week 3-5:   2.2 Comprehensive Documentation
-Week 5-7:   2.7 Configuration Externalization
-Week 7-10:  2.5 State Machine Refactor
-Week 8-12:  2.6 Test Coverage Improvement (parallel)
+Week 1:     2.9  Fix snap protocol capability bug (3 lines)
+Week 1:     2.10 Add spawn_blocking to bytecodes handler
+Week 1:     2.11 Remove DumpError.contents dead field
+Week 1:     2.17 Use existing constants for magic numbers
+Week 1:     2.15 Guard write_set in account path
+Week 1:     2.8  Fix Correctness Bugs (Issue #6140)
+Week 1-2:   2.1  Extract Context Structs (Issue #6140)
+Week 1-2:   2.4  Extract Helper Functions (Issue #6140)
+Week 2-3:   2.13 Self-contained StorageTask with hashes
+Week 2-3:   2.3  Consolidate Error Handling (Merged — PR #5975)
+Week 3-4:   2.12 Use JoinSet for snap workers
+Week 3-5:   2.2  Comprehensive Documentation
+Week 4-5:   2.14 Move snap client methods off PeerHandler
+Week 5-7:   2.7  Configuration Externalization
+Week 7-10:  2.5  State Machine Refactor
+Week 8-12:  2.6  Test Coverage Improvement (parallel)
+Week 10-14: 2.16 Healing Code Unification
 ```
 
-**Total Duration:** ~14 weeks (phases overlap)
+**Total Duration:** ~16 weeks (phases overlap)
 
 ---
 
