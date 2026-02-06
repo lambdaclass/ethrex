@@ -9,6 +9,7 @@ use crate::rlpx::snap::{
 use ethrex_common::types::AccountStateSlimCodec;
 
 use super::error::SnapError;
+use super::proof_to_encodable;
 
 // Request Processing
 
@@ -104,25 +105,29 @@ pub async fn process_storage_ranges_request(
     .map_err(|e| SnapError::TaskPanic(e.to_string()))?
 }
 
-pub fn process_byte_codes_request(
+pub async fn process_byte_codes_request(
     request: GetByteCodes,
     store: Store,
 ) -> Result<ByteCodes, SnapError> {
-    let mut codes = vec![];
-    let mut bytes_used = 0;
-    for code_hash in request.hashes {
-        if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.bytecode) {
-            bytes_used += code.len() as u64;
-            codes.push(code);
+    tokio::task::spawn_blocking(move || {
+        let mut codes = vec![];
+        let mut bytes_used = 0;
+        for code_hash in request.hashes {
+            if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.bytecode) {
+                bytes_used += code.len() as u64;
+                codes.push(code);
+            }
+            if bytes_used >= request.bytes {
+                break;
+            }
         }
-        if bytes_used >= request.bytes {
-            break;
-        }
-    }
-    Ok(ByteCodes {
-        id: request.id,
-        codes,
+        Ok(ByteCodes {
+            id: request.id,
+            codes,
+        })
     })
+    .await
+    .map_err(|e| SnapError::TaskPanic(e.to_string()))?
 }
 
 pub async fn process_trie_nodes_request(
@@ -158,16 +163,4 @@ pub async fn process_trie_nodes_request(
     })
     .await
     .map_err(|e| SnapError::TaskPanic(e.to_string()))?
-}
-
-// Helper method to convert proof to RLP-encodable format
-#[inline]
-pub(crate) fn proof_to_encodable(proof: Vec<Vec<u8>>) -> Vec<Bytes> {
-    proof.into_iter().map(Bytes::from).collect()
-}
-
-// Helper method to obtain proof from RLP-encodable format
-#[inline]
-pub(crate) fn encodable_to_proof(proof: &[Bytes]) -> Vec<Vec<u8>> {
-    proof.iter().map(|bytes| bytes.to_vec()).collect()
 }

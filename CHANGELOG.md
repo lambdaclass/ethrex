@@ -59,6 +59,10 @@
 - Make HashSet use fxhash in discv4 peer_table [#5688](https://github.com/lambdaclass/ethrex/pull/5688)
 - Validate tx blobs after checking if it's already in the mempool [#5686](https://github.com/lambdaclass/ethrex/pull/5686)
 
+### 2025-12-15
+
+- Parallelize storage merkelization [#6079](https://github.com/lambdaclass/ethrex/pull/6079)
+
 ### 2025-12-02
 
 - Avoid unnecessary hashing of init codes and already hashed codes [#5397](https://github.com/lambdaclass/ethrex/pull/5397)
