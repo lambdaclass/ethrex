@@ -1095,11 +1095,13 @@ async fn handle_incoming_message(
         }
         Message::GetByteCodes(req) => {
             let storage_clone = state.storage.clone();
-            let response = process_byte_codes_request(req, storage_clone).map_err(|_| {
-                PeerConnectionError::InternalError(
-                    "Failed to execute bytecode retrieval task".to_string(),
-                )
-            })?;
+            let response = process_byte_codes_request(req, storage_clone)
+                .await
+                .map_err(|_| {
+                    PeerConnectionError::InternalError(
+                        "Failed to execute bytecode retrieval task".to_string(),
+                    )
+                })?;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
