@@ -557,19 +557,19 @@ impl Default for SnapSyncConfig {
 
 ### 2.9 Fix Snap Protocol Capability Bug — ✅ DONE
 
-**Status:** Already fixed on `refactor/snapsync-healing-unification` branch. All `get_best_peer()` calls in `snap/client.rs` now use `SUPPORTED_SNAP_CAPABILITIES`. PR #6154 provides the same fix for main.
+**Status:** Merged in #5975. All `get_best_peer()` calls in `snap/client.rs` now use `SUPPORTED_SNAP_CAPABILITIES`.
 
 ---
 
 ### 2.10 Add `spawn_blocking` to Bytecodes Handler — ✅ DONE
 
-**Status:** Already fixed on `refactor/snapsync-healing-unification` branch. The function in `snap/server.rs:108-131` is already `async fn` with `spawn_blocking`, matching the pattern of all other handlers.
+**Status:** Merged in #5975. The function in `snap/server.rs:108-131` is `async fn` with `spawn_blocking`, matching the pattern of all other handlers.
 
 ---
 
 ### 2.11 Remove Dead `DumpError.contents` Field — ✅ DONE
 
-**Status:** Already fixed on `refactor/snapsync-healing-unification` branch. `DumpError` in `snap/error.rs:132-137` no longer has the `contents` field and uses `#[derive(Debug, thiserror::Error)]` instead of a custom `Debug` impl.
+**Status:** Merged in #5975. `DumpError` in `snap/error.rs:132-137` no longer has the `contents` field and uses `#[derive(Debug, thiserror::Error)]` instead of a custom `Debug` impl.
 
 ---
 
@@ -595,7 +595,7 @@ impl Default for SnapSyncConfig {
 
 ### 2.14 Move Snap Client Methods Off `PeerHandler` — ✅ DONE
 
-**Status:** Already fixed on `refactor/snapsync-healing-unification` branch. Snap client methods were extracted from `peer_handler.rs` to `snap/client.rs` and converted from `PeerHandler` methods to standalone functions taking `peers: &mut PeerHandler` as a parameter.
+**Status:** Merged in #5975. Snap client methods were extracted from `peer_handler.rs` to `snap/client.rs` and converted from `PeerHandler` methods to standalone functions taking `peers: &mut PeerHandler` as a parameter.
 
 ---
 
