@@ -1157,8 +1157,12 @@ impl PeerHandler {
                 None => {
                     let root = store
                         .get_account_state_by_acc_hash(pivot_header.hash(), *account)
-                        .expect("Failed to get account in state trie")
-                        .expect("Could not find account that should have been downloaded or healed")
+                        .map_err(|e| PeerHandlerError::UnrecoverableError(
+                            format!("Failed to get account in state trie: {e}")
+                        ))?
+                        .ok_or_else(|| PeerHandlerError::UnrecoverableError(
+                            format!("Could not find account {account:?} that should have been downloaded or healed")
+                        ))?
                         .storage_root;
                     accounts_by_root_hash
                         .entry(root)
@@ -1330,7 +1334,9 @@ impl PeerHandler {
                                 }
                             }
                             if acc_hash.is_zero() {
-                                panic!("Should have found the account hash");
+                                return Err(PeerHandlerError::UnrecoverableError(
+                                    "Should have found the account hash during storage range processing".to_owned(),
+                                ));
                             }
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root

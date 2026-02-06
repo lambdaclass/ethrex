@@ -364,74 +364,82 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
-        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
-            let vm_type = vm.vm_type;
-            let warm_handle = std::thread::Builder::new()
-                .name("block_executor_warmer".to_string())
-                .spawn_scoped(s, move || {
-                    // Warming uses the same caching store, sharing cached state with execution
-                    let start = Instant::now();
-                    let _ = LEVM::warm_block(block, caching_store, vm_type);
-                    start.elapsed()
-                })
-                .expect("Failed to spawn block_executor warmer thread");
-            let max_queue_length_ref = &mut max_queue_length;
-            let (tx, rx) = channel();
-            let execution_handle = std::thread::Builder::new()
-                .name("block_executor_execution".to_string())
-                .spawn_scoped(s, move || -> Result<_, ChainError> {
-                    let execution_result =
-                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+        let (execution_result, merkleization_result, warmer_duration) =
+            std::thread::scope(|s| -> Result<_, ChainError> {
+                let vm_type = vm.vm_type;
+                let warm_handle = std::thread::Builder::new()
+                    .name("block_executor_warmer".to_string())
+                    .spawn_scoped(s, move || {
+                        // Warming uses the same caching store, sharing cached state with execution
+                        let start = Instant::now();
+                        let _ = LEVM::warm_block(block, caching_store, vm_type);
+                        start.elapsed()
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
+                    })?;
+                let max_queue_length_ref = &mut max_queue_length;
+                let (tx, rx) = channel();
+                let execution_handle = std::thread::Builder::new()
+                    .name("block_executor_execution".to_string())
+                    .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        let execution_result =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
-                    // Validate execution went alright
-                    validate_gas_used(execution_result.block_gas_used, &block.header)?;
-                    validate_receipts_root(&block.header, &execution_result.receipts)?;
-                    validate_requests_hash(
-                        &block.header,
-                        &chain_config,
-                        &execution_result.requests,
-                    )?;
+                        // Validate execution went alright
+                        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+                        validate_receipts_root(&block.header, &execution_result.receipts)?;
+                        validate_requests_hash(
+                            &block.header,
+                            &chain_config,
+                            &execution_result.requests,
+                        )?;
 
-                    let exec_end_instant = Instant::now();
-                    Ok((execution_result, exec_end_instant))
-                })
-                .expect("Failed to spawn block_executor exec thread");
-            let parent_header_ref = &parent_header; // Avoid moving to thread
-            let merkleize_handle = std::thread::Builder::new()
-                .name("block_executor_merkleizer".to_string())
-                .spawn_scoped(s, move || -> Result<_, StoreError> {
-                    let (account_updates_list, accumulated_updates) = self.handle_merkleization(
-                        s,
-                        rx,
-                        parent_header_ref,
-                        queue_length_ref,
-                        max_queue_length_ref,
-                    )?;
-                    let merkle_end_instant = Instant::now();
-                    Ok((
-                        account_updates_list,
-                        accumulated_updates,
-                        merkle_end_instant,
-                    ))
-                })
-                .expect("Failed to spawn block_executor merkleizer thread");
-            let warmer_duration = warm_handle
-                .join()
-                .inspect_err(|e| warn!("Warming thread error: {e:?}"))
-                .ok()
-                .unwrap_or(Duration::ZERO);
-            (
-                execution_handle.join().unwrap_or_else(|_| {
-                    Err(ChainError::Custom("execution thread panicked".to_string()))
-                }),
-                merkleize_handle.join().unwrap_or_else(|_| {
-                    Err(StoreError::Custom(
-                        "merklization thread panicked".to_string(),
-                    ))
-                }),
-                warmer_duration,
-            )
-        });
+                        let exec_end_instant = Instant::now();
+                        Ok((execution_result, exec_end_instant))
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
+                    })?;
+                let parent_header_ref = &parent_header; // Avoid moving to thread
+                let merkleize_handle = std::thread::Builder::new()
+                    .name("block_executor_merkleizer".to_string())
+                    .spawn_scoped(s, move || -> Result<_, StoreError> {
+                        let (account_updates_list, accumulated_updates) =
+                            self.handle_merkleization(
+                                s,
+                                rx,
+                                parent_header_ref,
+                                queue_length_ref,
+                                max_queue_length_ref,
+                            )?;
+                        let merkle_end_instant = Instant::now();
+                        Ok((
+                            account_updates_list,
+                            accumulated_updates,
+                            merkle_end_instant,
+                        ))
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
+                    })?;
+                let warmer_duration = warm_handle
+                    .join()
+                    .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                    .ok()
+                    .unwrap_or(Duration::ZERO);
+                Ok((
+                    execution_handle.join().unwrap_or_else(|_| {
+                        Err(ChainError::Custom("execution thread panicked".to_string()))
+                    }),
+                    merkleize_handle.join().unwrap_or_else(|_| {
+                        Err(StoreError::Custom(
+                            "merklization thread panicked".to_string(),
+                        ))
+                    }),
+                    warmer_duration,
+                ))
+            })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
 
