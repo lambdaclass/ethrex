@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-06
+
+- Add BOLT post-link optimization setup with automated workflow [#5981](https://github.com/lambdaclass/ethrex/pull/5981)
+
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
