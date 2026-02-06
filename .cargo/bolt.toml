@@ -11,4 +11,8 @@ rustflags = [
     "-Clink-arg=-Wl,--emit-relocs",
     "-Clink-arg=-Wl,-q",
     "-Cforce-frame-pointers=yes",
+    # Disable LLVM hot-cold function splitting. Without this, LLVM creates
+    # .cold fragments for drop_in_place specializations that BOLT 19 can't
+    # match to their parent functions, causing "parent function not found" errors.
+    "-Cllvm-args=-hot-cold-split=false",
 ]
