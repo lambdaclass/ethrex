@@ -52,10 +52,13 @@ debug = 2
 inherits = "release"
 debug-assertions = true
 
-# Profile for BOLT preparation - keeps symbols for BOLT optimization
+# Profile for BOLT preparation - keeps symbols for BOLT optimization.
+# Uses fat LTO instead of thin LTO to avoid cross-module function fragments
+# that BOLT 19 can't match (causes "parent function not found" errors).
 [profile.release-bolt]
 inherits = "release"
-debug = 1  # Keep symbols for BOLT
+debug = 1
+lto = "fat"
 
 # For PGO + BOLT combined (maximum optimization)
 [profile.release-pgo-bolt]
