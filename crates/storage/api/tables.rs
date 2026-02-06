@@ -25,6 +25,11 @@ pub const BODIES: &str = "bodies";
 /// - [`Vec<u8>`] = `AccountCodeRLP::from(code).bytes().clone()`
 pub const ACCOUNT_CODES: &str = "account_codes";
 
+/// Account code metadata column family: [`Vec<u8>`] => [`u8; 8`]
+/// - [`Vec<u8>`] = `code_hash.as_bytes().to_vec()`
+/// - [`u8; 8`] = `code_length.to_be_bytes()`
+pub const ACCOUNT_CODE_METADATA: &str = "account_code_metadata";
+
 /// Receipts column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `(block_hash, index).encode_to_vec()`
 /// - [`Vec<u8>`] = `receipt.encode_to_vec()`
@@ -97,9 +102,10 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 18] = [
+pub const TABLES: [&str; 19] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
+    ACCOUNT_CODE_METADATA,
     BODIES,
     BLOCK_NUMBERS,
     CANONICAL_BLOCK_HASHES,

@@ -14,6 +14,7 @@ use crate::{
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
+use ethrex_common::types::Log;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
@@ -431,7 +432,11 @@ impl<'a> VM<'a> {
                 .map_err(|_| TxValidationError::NonceIsMax)?;
         }
 
-        self.substate.refunded_gas = refunded_gas;
+        self.substate.refunded_gas = self
+            .substate
+            .refunded_gas
+            .checked_add(refunded_gas)
+            .ok_or(InternalError::Overflow)?;
 
         Ok(())
     }
@@ -610,5 +615,46 @@ pub fn size_offset_to_usize(size: U256, offset: U256) -> Result<(usize, usize), 
         Ok((0, 0))
     } else {
         Ok((u256_to_usize(size)?, u256_to_usize(offset)?))
+    }
+}
+
+// ==================== EIP-7708 Helper Functions ====================
+
+/// Creates EIP-7708 Transfer log (LOG3) for ETH transfers.
+/// Emitted from SYSTEM_ADDRESS when ETH is transferred.
+#[inline]
+pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
+    let mut from_topic = [0u8; 32];
+    from_topic[12..].copy_from_slice(from.as_bytes());
+
+    let mut to_topic = [0u8; 32];
+    to_topic[12..].copy_from_slice(to.as_bytes());
+
+    let data = value.to_big_endian();
+
+    Log {
+        address: EIP7708_SYSTEM_ADDRESS,
+        topics: vec![
+            TRANSFER_EVENT_TOPIC,
+            H256::from(from_topic),
+            H256::from(to_topic),
+        ],
+        data: Bytes::from(data.to_vec()),
+    }
+}
+
+/// Creates EIP-7708 Selfdestruct log (LOG2) for account destruction.
+/// Emitted from SYSTEM_ADDRESS when a contract is destroyed.
+#[inline]
+pub fn create_selfdestruct_log(contract: Address, balance: U256) -> Log {
+    let mut contract_topic = [0u8; 32];
+    contract_topic[12..].copy_from_slice(contract.as_bytes());
+
+    let data = balance.to_big_endian();
+
+    Log {
+        address: EIP7708_SYSTEM_ADDRESS,
+        topics: vec![SELFDESTRUCT_EVENT_TOPIC, H256::from(contract_topic)],
+        data: Bytes::from(data.to_vec()),
     }
 }

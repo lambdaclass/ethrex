@@ -23,13 +23,13 @@ golang 1.23.2
 
 #### Running Simulations
 
-Hive tests are categorized by "simulations', and test instances can be filtered with a regex:
+Hive tests are categorized by "simulations", and test instances can be filtered with a regex:
 
 ```bash
 make run-hive-debug SIMULATION=<simulation> TEST_PATTERN=<test-regex>
 ```
 
-This is an example of a Hive simulation called `ethereum/rpc-compat`, which will specificaly
+This is an example of a Hive simulation called `ethereum/rpc-compat`, which will specifically
 run chain id and transaction by hash rpc tests:
 
 ```bash

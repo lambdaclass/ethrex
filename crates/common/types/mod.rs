@@ -2,6 +2,7 @@ mod account;
 mod account_update;
 pub mod blobs_bundle;
 mod block;
+pub mod block_access_list;
 pub mod block_execution_witness;
 mod constants;
 mod fork_id;
