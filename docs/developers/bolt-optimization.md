@@ -33,7 +33,7 @@ sudo ln -sf /usr/lib/llvm-19/lib/libbolt_rt_instr.a /usr/local/lib/libbolt_rt_in
 #### Option 2: Latest from apt.llvm.org (BOLT 22+)
 ```bash
 wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-echo "deb http://apt.llvm.org/unstable/ llvm-toolchain main" | sudo tee /etc/apt/sources.list.d/llvm.list
+echo "deb https://apt.llvm.org/unstable/ llvm-toolchain main" | sudo tee /etc/apt/sources.list.d/llvm.list
 sudo apt update && sudo apt install bolt-22 libbolt-22-dev
 sudo ln -sf /usr/bin/llvm-bolt-22 /usr/local/bin/llvm-bolt
 sudo ln -sf /usr/bin/perf2bolt-22 /usr/local/bin/perf2bolt

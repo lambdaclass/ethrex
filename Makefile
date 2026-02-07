@@ -1,8 +1,8 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
 		load-test-fibonacci load-test-io run-hive-eels-blobs \
-		build-bolt bolt-instrument bolt-optimize bolt-clean \
-		bolt-perf2bolt bolt-profile bolt-verify bolt-full \
+		build-bolt bolt-check bolt-instrument bolt-optimize bolt-clean \
+		bolt-perf2bolt bolt-profile bolt-verify bolt-full bolt-bench \
 		pgo-bolt-build pgo-bolt-optimize pgo-full-build pgo-full-optimize
 
 help: ## 📚 Show help for each of the Makefile recipes
@@ -40,15 +40,21 @@ bolt-check:
 		echo "ERROR: $(BOLT_BLOCKS) missing or empty. Run 'git lfs pull' to fetch fixture files."; \
 		exit 1; \
 	fi
+	@if [ ! -s $(BOLT_GENESIS) ]; then \
+		echo "ERROR: $(BOLT_GENESIS) missing or empty."; \
+		exit 1; \
+	fi
 
 build-bolt: bolt-check ## 🔨 Build release binary for BOLT optimization (with relocations)
 	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo build --profile release-bolt --config .cargo/bolt.toml
 
-bolt-perf2bolt: ## 📊 Convert perf.data to BOLT profile format
+bolt-perf2bolt: bolt-check ## 📊 Convert perf.data to BOLT profile format
+	@test -f $(BOLT_BINARY) || { echo "ERROR: $(BOLT_BINARY) not found. Run 'make build-bolt' first."; exit 1; }
 	@mkdir -p $(BOLT_PROFILE_DIR)
 	perf2bolt -p $(PERF_DATA) -o $(BOLT_PROFILE_DIR)/perf.fdata $(BOLT_BINARY)
 
 bolt-optimize: ## ⚡ Apply BOLT optimization using collected profiles
+	@test -f $(BOLT_BINARY) || { echo "ERROR: $(BOLT_BINARY) not found. Run 'make build-bolt' first."; exit 1; }
 	@if [ -f $(BOLT_PROFILE_DIR)/perf.fdata ]; then \
 		llvm-bolt $(BOLT_BINARY) -o ethrex-bolt-optimized \
 			-data=$(BOLT_PROFILE_DIR)/perf.fdata \

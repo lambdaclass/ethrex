@@ -64,6 +64,7 @@ lto = "fat"
 [profile.release-pgo-bolt]
 inherits = "release"
 debug = 1
+lto = "fat"
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
