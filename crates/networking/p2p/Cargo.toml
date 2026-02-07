@@ -60,6 +60,7 @@ crossbeam.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+tempfile = "3.10"
 
 [lib]
 path = "./p2p.rs"

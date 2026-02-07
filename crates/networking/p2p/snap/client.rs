@@ -16,7 +16,7 @@ use crate::{
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
     },
-    snap::{constants::*, encodable_to_proof, error::SnapError},
+    snap::{async_fs, constants::*, encodable_to_proof, error::SnapError},
     sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
@@ -158,13 +158,7 @@ pub async fn request_account_range(
                 .zip(current_account_states)
                 .collect::<Vec<(H256, AccountState)>>();
 
-            if !std::fs::exists(account_state_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("State snapshots directory does not exist".to_string())
-            })? {
-                std::fs::create_dir_all(account_state_snapshots_dir).map_err(|_| {
-                    SnapError::SnapshotDir("Failed to create state snapshots directory".to_string())
-                })?;
-            }
+            async_fs::ensure_dir_exists(account_state_snapshots_dir).await?;
 
             let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
             write_set.spawn(async move {
@@ -288,13 +282,7 @@ pub async fn request_account_range(
             .zip(current_account_states)
             .collect::<Vec<(H256, AccountState)>>();
 
-        if !std::fs::exists(account_state_snapshots_dir).map_err(|_| {
-            SnapError::SnapshotDir("State snapshots directory does not exist".to_string())
-        })? {
-            std::fs::create_dir_all(account_state_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("Failed to create state snapshots directory".to_string())
-            })?;
-        }
+        async_fs::ensure_dir_exists(account_state_snapshots_dir).await?;
 
         let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
         dump_accounts_to_file(&path, account_state_chunk)
@@ -611,15 +599,8 @@ pub async fn request_storage_ranges(
             let current_account_storages = std::mem::take(&mut current_account_storages);
             let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
-            if !std::fs::exists(account_storages_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string())
-            })? {
-                std::fs::create_dir_all(account_storages_snapshots_dir).map_err(|_| {
-                    SnapError::SnapshotDir(
-                        "Failed to create storage snapshots directory".to_string(),
-                    )
-                })?;
-            }
+            async_fs::ensure_dir_exists(account_storages_snapshots_dir).await?;
+
             let account_storages_snapshots_dir_cloned =
                 account_storages_snapshots_dir.to_path_buf();
             if !disk_joinset.is_empty() {
@@ -1004,13 +985,8 @@ pub async fn request_storage_ranges(
     {
         let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
-        if !std::fs::exists(account_storages_snapshots_dir).map_err(|_| {
-            SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string())
-        })? {
-            std::fs::create_dir_all(account_storages_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("Failed to create storage snapshots directory".to_string())
-            })?;
-        }
+        async_fs::ensure_dir_exists(account_storages_snapshots_dir).await?;
+
         let path = get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
         dump_storages_to_file(&path, snapshot).map_err(|_| {
             SnapError::SnapshotDir(format!(

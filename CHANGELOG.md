@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-03
+
+- Replace synchronous disk I/O with async operations in snap sync to prevent tokio runtime blocking [#6113](https://github.com/lambdaclass/ethrex/pull/6113)
+
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)

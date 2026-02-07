@@ -28,6 +28,7 @@ use crate::metrics::{CurrentStepValue, METRICS};
 use crate::peer_handler::PeerHandler;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
+    async_fs,
     constants::{
         BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
         SECONDS_PER_BLOCK, SNAP_LIMIT,
@@ -280,7 +281,7 @@ pub async fn snap_sync(
     let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
 
     let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(datadir);
-    std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
+    async_fs::ensure_dir_exists(&code_hashes_snapshot_dir).await?;
 
     // Create collector to store code hashes in files
     let mut code_hash_collector: CodeHashCollector =
@@ -496,14 +497,11 @@ pub async fn snap_sync(
     let mut code_hashes_to_download = Vec::new();
 
     info!("Starting download code hashes from peers");
-    for entry in std::fs::read_dir(&code_hashes_dir)
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
-    {
-        let entry = entry.map_err(|_| SyncError::CorruptPath)?;
-        let snapshot_contents = std::fs::read(entry.path())
-            .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
+    let code_hash_files = async_fs::read_dir_paths(&code_hashes_dir).await?;
+    for file_path in code_hash_files {
+        let snapshot_contents = async_fs::read_file(&file_path).await?;
         let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
+            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(file_path.clone()))?;
 
         for hash in code_hashes {
             // If we haven't seen the code hash yet, add it to the list of hashes to download
@@ -553,8 +551,7 @@ pub async fn snap_sync(
             .await?;
     }
 
-    std::fs::remove_dir_all(code_hashes_dir)
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
+    async_fs::remove_dir_all(&code_hashes_dir).await?;
 
     *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
@@ -805,15 +802,10 @@ async fn insert_accounts(
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
-    for entry in std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-    {
-        let entry = entry
-            .map_err(|err| SyncError::SnapshotReadError(account_state_snapshots_dir.into(), err))?;
-        info!("Reading account file from entry {entry:?}");
-        let snapshot_path = entry.path();
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+    let snapshot_files = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
+    for snapshot_path in snapshot_files {
+        info!("Reading account file from {snapshot_path:?}");
+        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
         let account_states_snapshot: Vec<(H256, AccountState)> =
             RLPDecode::decode(&snapshot_contents)
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
@@ -854,8 +846,7 @@ async fn insert_accounts(
 
         computed_state_root = current_state_root?;
     }
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
     info!("computed_state_root {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
@@ -867,22 +858,14 @@ async fn insert_storages(
     account_storages_snapshots_dir: &Path,
     _: &Path,
 ) -> Result<(), SyncError> {
+    use crate::utils::AccountsWithStorage;
     use rayon::iter::IntoParallelIterator;
 
-    for entry in std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-    {
-        use crate::utils::AccountsWithStorage;
+    let snapshot_files = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
+    for snapshot_path in snapshot_files {
+        info!("Reading account storage file from {snapshot_path:?}");
 
-        let entry = entry.map_err(|err| {
-            SyncError::SnapshotReadError(account_storages_snapshots_dir.into(), err)
-        })?;
-        info!("Reading account storage file from entry {entry:?}");
-
-        let snapshot_path = entry.path();
-
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
 
         #[expect(clippy::type_complexity)]
         let account_storages_snapshot: Vec<AccountsWithStorage> =
@@ -921,8 +904,7 @@ async fn insert_storages(
             .await?;
     }
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
 
     Ok(())
 }
@@ -947,13 +929,7 @@ async fn insert_accounts(
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
+    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
@@ -989,10 +965,8 @@ async fn insert_accounts(
 
     drop(db); // close db before removing directory
 
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
+    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
+    async_fs::remove_dir_all(&get_rocksdb_temp_accounts_dir(datadir)).await?;
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
@@ -1052,13 +1026,7 @@ async fn insert_storages(
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
         .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
+    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let snapshot = db.snapshot();
@@ -1131,10 +1099,8 @@ async fn insert_storages(
     drop(snapshot);
     drop(db);
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
+    async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
+    async_fs::remove_dir_all(&get_rocksdb_temp_storage_dir(datadir)).await?;
 
     Ok(())
 }
