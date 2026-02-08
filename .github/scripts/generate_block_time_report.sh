@@ -159,44 +159,85 @@ done
 header_text="Daily block time report (24-hour average)"
 
 # Generate text report for GitHub/Telegram (full version on separate line)
+# Sorted by block time (ascending - fastest first)
 {
   echo "# ${header_text}"
   echo
+
+  # Build sortable entries: "value client"
+  sort_entries=()
   if [[ -n "$ethrex_value" ]]; then
-    printf "• ethrex: %.3fms (mean)\n  %s\n" "$ethrex_value" "$version_ethrex"
+    sort_entries+=("$ethrex_value ethrex")
   fi
   if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
-    printf "• reth: %.3fms (p50) | %.3fms (p99.9)\n  %s\n" "${reth_p50:-0}" "${reth_p999:-0}" "$version_reth"
+    sort_entries+=("${reth_p50:-0} reth")
   fi
   if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-    printf "• geth: %.3fms (p50) | %.3fms (p99.9)\n  %s\n" "${geth_p50:-0}" "${geth_p999:-0}" "$version_geth"
+    sort_entries+=("${geth_p50:-0} geth")
   fi
   if [[ -n "$nether_value" ]]; then
-    printf "• nethermind: %.3fms (mean)\n  %s\n" "$nether_value" "$version_nethermind"
+    sort_entries+=("$nether_value nethermind")
   fi
+
+  # Sort by value and print each client
+  while read -r value client; do
+    case "$client" in
+      ethrex)
+        printf "• ethrex: %.3fms (mean)\n  %s\n" "$ethrex_value" "$version_ethrex"
+        ;;
+      reth)
+        printf "• reth: %.3fms (p50) | %.3fms (p99.9)\n  %s\n" "${reth_p50:-0}" "${reth_p999:-0}" "$version_reth"
+        ;;
+      geth)
+        printf "• geth: %.3fms (p50) | %.3fms (p99.9)\n  %s\n" "${geth_p50:-0}" "${geth_p999:-0}" "$version_geth"
+        ;;
+      nethermind)
+        printf "• nethermind: %.3fms (mean)\n  %s\n" "$nether_value" "$version_nethermind"
+        ;;
+    esac
+  done < <(printf '%s\n' "${sort_entries[@]}" | LC_ALL=C sort -n)
 } >"${OUTPUT_DIR}/block_time_report_github.txt"
 
-# Generate Slack message with code block table (truncated versions)
-slack_table='```'$'\n'
-slack_table+='Client       Version                  Block Time'$'\n'
-slack_table+='-------------------------------------------------------'$'\n'
+# Generate Slack message (simple format, similar to Telegram)
+# Sorted by block time (ascending - fastest first)
+slack_text=""
+
+# Build sortable entries: "value client"
+slack_sort_entries=()
 if [[ -n "$ethrex_value" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3fms (mean)" "ethrex" "$version_ethrex_short" "$ethrex_value")$'\n'
+  slack_sort_entries+=("$ethrex_value ethrex")
 fi
 if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3fms (p50) / %.3fms (p99.9)" "reth" "$version_reth_short" "${reth_p50:-0}" "${reth_p999:-0}")$'\n'
+  slack_sort_entries+=("${reth_p50:-0} reth")
 fi
 if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3fms (p50) / %.3fms (p99.9)" "geth" "$version_geth_short" "${geth_p50:-0}" "${geth_p999:-0}")$'\n'
+  slack_sort_entries+=("${geth_p50:-0} geth")
 fi
 if [[ -n "$nether_value" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3fms (mean)" "nethermind" "$version_nethermind_short" "$nether_value")$'\n'
+  slack_sort_entries+=("$nether_value nethermind")
 fi
-slack_table+='```'
 
-jq -n --arg header "$header_text" --arg table "$slack_table" '{
+# Sort by value and append each client entry
+while read -r value client; do
+  case "$client" in
+    ethrex)
+      slack_text+=$(printf "• *ethrex*: %.3fms (mean)\n  %s" "$ethrex_value" "$version_ethrex")$'\n'
+      ;;
+    reth)
+      slack_text+=$(printf "• *reth*: %.3fms (p50) | %.3fms (p99.9)\n  %s" "${reth_p50:-0}" "${reth_p999:-0}" "$version_reth")$'\n'
+      ;;
+    geth)
+      slack_text+=$(printf "• *geth*: %.3fms (p50) | %.3fms (p99.9)\n  %s" "${geth_p50:-0}" "${geth_p999:-0}" "$version_geth")$'\n'
+      ;;
+    nethermind)
+      slack_text+=$(printf "• *nethermind*: %.3fms (mean)\n  %s" "$nether_value" "$version_nethermind")$'\n'
+      ;;
+  esac
+done < <(printf '%s\n' "${slack_sort_entries[@]}" | LC_ALL=C sort -n)
+
+jq -n --arg header "$header_text" --arg text "$slack_text" '{
   "blocks": [
     { "type": "header", "text": { "type": "plain_text", "text": $header } },
-    { "type": "section", "text": { "type": "mrkdwn", "text": $table } }
+    { "type": "section", "text": { "type": "mrkdwn", "text": $text } }
   ]
 }' >"${OUTPUT_DIR}/block_time_report_slack.json"

@@ -37,6 +37,7 @@ use ethrex_levm::{
     vm::VM,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -59,12 +60,16 @@ impl LEVM {
         Self::prepare_block(block, db, vm_type)?;
 
         let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0;
+        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
+        let mut cumulative_gas_used = 0_u64;
+        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
+        let mut block_gas_used = 0_u64;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+            // Use block_gas_used for limit check (pre-refund for Amsterdam+)
+            if block_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
                     block.header.gas_limit,
@@ -74,7 +79,12 @@ impl LEVM {
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
-            cumulative_gas_used += report.gas_used;
+            // EIP-7778: Separate gas tracking
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            cumulative_gas_used += report.gas_spent;
+            block_gas_used += report.gas_used;
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -97,7 +107,11 @@ impl LEVM {
             VMType::L2(_) => Default::default(),
         };
 
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            block_gas_used,
+        })
     }
 
     pub fn execute_block_pipeline(
@@ -112,7 +126,10 @@ impl LEVM {
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0;
+        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
+        let mut cumulative_gas_used = 0_u64;
+        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
+        let mut block_gas_used = 0_u64;
 
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
@@ -121,7 +138,8 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+            // Use block_gas_used for limit check (pre-refund for Amsterdam+)
+            if block_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
                     block.header.gas_limit,
@@ -144,7 +162,12 @@ impl LEVM {
                 tx_since_last_flush += 1;
             }
 
-            cumulative_gas_used += report.gas_used;
+            // EIP-7778: Separate gas tracking
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            cumulative_gas_used += report.gas_spent;
+            block_gas_used += report.gas_used;
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -193,9 +216,23 @@ impl LEVM {
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            block_gas_used,
+        })
     }
 
+    /// Pre-warms state by executing all transactions in parallel, grouped by sender.
+    ///
+    /// Transactions from the same sender are executed sequentially within their group
+    /// to ensure correct nonce and balance propagation. Different sender groups run
+    /// in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
+    /// improves warmup accuracy by avoiding nonce mismatches within sender groups.
+    ///
+    /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
+    /// parallel workers can benefit from shared caching. The same cache should
+    /// be used by the sequential execution phase.
     pub fn warm_block(
         block: &Block,
         store: Arc<dyn Database>,
@@ -203,27 +240,37 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
-        block
-            .body
-            .get_transactions_with_sender()
-            .map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?
-            .into_par_iter()
-            .for_each_with(
-                Vec::with_capacity(STACK_LIMIT),
-                |stack_pool, (tx, tx_sender)| {
-                    let mut db = GeneralizedDatabase::new(store.clone());
+        let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })?;
+
+        // Group transactions by sender for sequential execution within groups
+        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
+        for (tx, sender) in &txs_with_sender {
+            sender_groups.entry(*sender).or_default().push(tx);
+        }
+
+        // Parallel across sender groups, sequential within each group
+        sender_groups.into_par_iter().for_each_with(
+            Vec::with_capacity(STACK_LIMIT),
+            |stack_pool, (sender, txs)| {
+                // Each sender group gets its own db instance for state propagation
+                let mut group_db = GeneralizedDatabase::new(store.clone());
+
+                // Execute transactions sequentially within sender group
+                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
+                for tx in txs {
                     let _ = Self::execute_tx_in_block(
                         tx,
-                        tx_sender,
+                        sender,
                         &block.header,
-                        &mut db,
+                        &mut group_db,
                         vm_type,
                         stack_pool,
                     );
-                },
-            );
+                }
+            },
+        );
 
         for withdrawal in block
             .body
@@ -279,6 +326,10 @@ impl LEVM {
             coinbase: block_header.coinbase,
             timestamp: block_header.timestamp.into(),
             prev_randao: Some(block_header.prev_randao),
+            slot_number: block_header
+                .slot_number
+                .map(U256::from)
+                .unwrap_or(U256::zero()),
             chain_id: chain_config.chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
@@ -349,7 +400,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionResult, EvmError> {
-        let mut env = env_from_generic(tx, block_header, db)?;
+        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
         env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
@@ -505,7 +556,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
-        let mut env = env_from_generic(&tx, header, db)?;
+        let mut env = env_from_generic(&tx, header, db, vm_type)?;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -747,12 +798,31 @@ fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
+    vm_type: VMType,
 ) -> Result<Environment, VMError> {
     let chain_config = db.store.get_chain_config()?;
     let gas_price =
         calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     let block_excess_blob_gas = header.excess_blob_gas.map(U256::from);
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
+
+    // Validate slot_number for Amsterdam+ blocks
+    // For L2 chains, slot_number is always 0
+    let slot_number = if let VMType::L2(_) = vm_type {
+        U256::zero()
+    } else if config.fork >= Fork::Amsterdam {
+        header
+            .slot_number
+            .map(U256::from)
+            .ok_or(VMError::Internal(InternalError::Custom(
+                "slot_number must be present in Amsterdam+ blocks".to_string(),
+            )))?
+    } else {
+        // Pre-Amsterdam: slot_number should be None, default to zero
+        // This value should never be used since SLOTNUM opcode doesn't exist pre-Amsterdam
+        header.slot_number.map(U256::from).unwrap_or(U256::zero())
+    };
+
     Ok(Environment {
         origin: tx.from.0.into(),
         gas_limit: tx
@@ -763,6 +833,7 @@ fn env_from_generic(
         coinbase: header.coinbase,
         timestamp: header.timestamp.into(),
         prev_randao: Some(header.prev_randao),
+        slot_number,
         chain_id: chain_config.chain_id.into(),
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
         base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
