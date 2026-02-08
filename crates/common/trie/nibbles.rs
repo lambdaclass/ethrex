@@ -302,7 +302,9 @@ fn compact_to_hex(compact: &[u8]) -> Vec<u8> {
     if compact.is_empty() {
         return vec![];
     }
-    let mut base = keybytes_to_hex(compact);
+    // `Nibbles::from_raw(..., true)` performs the same bytes→nibbles conversion as
+    // geth's `keybytesToHex` (including the terminator nibble `16`).
+    let mut base = Nibbles::from_raw(compact, true).into_vec();
     // delete terminator flag
     if base[0] < 2 {
         base = base[..base.len() - 1].to_vec();
@@ -312,14 +314,3 @@ fn compact_to_hex(compact: &[u8]) -> Vec<u8> {
     base[chop..].to_vec()
 }
 
-// Code taken from https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/trie/encoding.go#L96
-fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
-    let l = keybytes.len() * 2 + 1;
-    let mut nibbles = vec![0; l];
-    for (i, b) in keybytes.iter().enumerate() {
-        nibbles[i * 2] = b / 16;
-        nibbles[i * 2 + 1] = b % 16;
-    }
-    nibbles[l - 1] = 16;
-    nibbles
-}
