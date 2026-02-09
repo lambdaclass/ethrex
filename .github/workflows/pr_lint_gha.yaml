@@ -1,10 +1,14 @@
 name: Github Actions
 on:
+  workflow_dispatch:
   pull_request:
     branches: ["**"]
     paths:
       - ".github/**.yaml"
       - ".github/*.yml"
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -18,7 +22,8 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: actionlint
-        uses: raven-actions/actionlint@v2
-        with:
-          flags: "-ignore SC2086 -ignore SC2006 -ignore SC2046"
+      - name: Install actionlint
+        run: bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+
+      - name: Run actionlint
+        run: ./actionlint -ignore SC2086 -ignore SC2006 -ignore SC2046

@@ -6,14 +6,18 @@ on:
     paths:
       - ".github/workflows/daily_snapsync.yaml"
   schedule:
-    # Every day at UTC 03:00
-    - cron: "0 3 * * 1,2,3,4,5"
+    # Every 6 hours
+    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       network:
         description: "Network name (hoodi or sepolia)"
         required: false
         default: "hoodi"
+      build_profile:
+        description: "Cargo build profile (release or release-with-debug-assertions)"
+        required: false
+        default: "release-with-debug-assertions"
 
 permissions:
   contents: read
@@ -27,23 +31,24 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.targets.outputs.matrix }}
+      build_profile: ${{ steps.build_opts.outputs.build_profile }}
     steps:
       - id: targets
         run: |
           event_name="${GITHUB_EVENT_NAME}"
           if [[ "$event_name" == "schedule" ]]; then
-            json='[{"network":"hoodi","timeout":"30m"},{"network":"sepolia","timeout":"10h"}]'
+            json='[{"network":"hoodi","timeout":"1h"},{"network":"sepolia","timeout":"3h30m"}]'
           elif [[ "$event_name" == "pull_request" ]]; then
-            json='[{"network":"hoodi","timeout":"30m"}]'
+            json='[{"network":"hoodi","timeout":"1h"}]'
           else
             network=$(jq -r '.inputs.network // empty' "$GITHUB_EVENT_PATH")
 
             case "$network" in
               hoodi)
-                json='[{"network":"hoodi","timeout":"30m"}]'
+                json='[{"network":"hoodi","timeout":"1h"}]'
                 ;;
               sepolia)
-                json='[{"network":"sepolia","timeout":"10h"}]'
+                json='[{"network":"sepolia","timeout":"3h30m"}]'
                 ;;
               *)
                 echo "::error::Unsupported network value '$network'. Allowed values: hoodi, sepolia."
@@ -52,20 +57,96 @@ jobs:
             esac
           fi
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
+      - id: build_opts
+        run: |
+          event_name="${GITHUB_EVENT_NAME}"
+          # Default to release-with-debug-assertions for scheduled runs and PRs
+          # Manual runs can specify a different profile
+          if [[ "$event_name" == "workflow_dispatch" ]]; then
+            profile=$(jq -r '.inputs.build_profile // "release-with-debug-assertions"' "$GITHUB_EVENT_PATH")
+          else
+            profile="release-with-debug-assertions"
+          fi
+          echo "build_profile=$profile" >> "$GITHUB_OUTPUT"
 
-  sync:
+  sync-lighthouse:
     needs: prepare
-    name: Sync ${{ matrix.network }}
+    name: Sync ${{ matrix.network }} - Lighthouse
     runs-on: ethrex-sync
     strategy:
+      fail-fast: false
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
+      - name: Set start timestamp
+        id: start
+        run: |
+          echo "timestamp=$EPOCHSECONDS" >> "$GITHUB_OUTPUT"
+
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
+        id: snapsync
         with:
           network: ${{ matrix.network }}
           timeout: ${{ matrix.timeout }}
+          cl_type: lighthouse
+          cl_image: "sigp/lighthouse:v8.0.1"
+          build_local: "true"
+          build_profile: ${{ needs.prepare.outputs.build_profile }}
+
+      - name: Post run on slack
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.ETHREX_NOTIFICATIONS_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          NAME: "lighthouse-${{ matrix.network }}"
+          OUTCOME: ${{ steps.snapsync.outcome }}
+          HEAD_SHA: ${{ github.sha }}
+          START_TIME: ${{ steps.start.outputs.timestamp }}
+        run: |
+          bash .github/scripts/notify_snapsync_run.sh
+
+  sync-prysm:
+    needs: prepare
+    name: Sync ${{ matrix.network }} - Prysm
+    runs-on: ethrex-sync
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set start timestamp
+        id: start
+        run: |
+          echo "timestamp=$EPOCHSECONDS" >> "$GITHUB_OUTPUT"
+
+      - name: Run Snapsync Test
+        uses: ./.github/actions/snapsync-run
+        id: snapsync
+        with:
+          network: ${{ matrix.network }}
+          timeout: ${{ matrix.timeout }}
+          cl_type: prysm
+          cl_image: "gcr.io/offchainlabs/prysm/beacon-chain:v7.1.0"
+          build_local: "true"
+          build_profile: ${{ needs.prepare.outputs.build_profile }}
+
+      - name: Post run on slack
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.ETHREX_NOTIFICATIONS_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          NAME: "prysm-${{ matrix.network }}"
+          OUTCOME: ${{ steps.snapsync.outcome }}
+          HEAD_SHA: ${{ github.sha }}
+          START_TIME: ${{ steps.start.outputs.timestamp }}
+        run: |
+          bash .github/scripts/notify_snapsync_run.sh

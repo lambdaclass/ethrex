@@ -1,6 +1,6 @@
 # Ethrex L2 contracts
 
-There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.
+There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeable.
 
 ## L1 Contracts
 
@@ -34,11 +34,11 @@ The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain
         bytes data; // Calldata to execute on the target L2 contract
     }
     ```
-    This expresivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.
+    This expressivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.
 2. **Withdrawals (L2 → L1)**
     - **`claimWithdrawal()`**: Withdraw ETH from `CommonBridge` via Merkle proof
     - **`claimWithdrawalERC20()`**: Withdraw ERC20 tokens from `CommonBridge` via Merkle proof
-    - **`publishWithdrawals()`**: Priviledged function to add merkle root of L2 withdrawal logs to `batchWithdrawalLogsMerkleRoots` mapping to make them claimable
+    - **`publishWithdrawals()`**: Privileged function to add merkle root of L2 withdrawal logs to `batchWithdrawalLogsMerkleRoots` mapping to make them claimable
 3. **Transaction Management**
     - **`getPendingTransactionHashes()`**: Returns pending privileged transaction hashes
     - **`removePendingTransactionHashes()`**: Removes processed privileged transactions (only callable by OnChainProposer)
@@ -64,10 +64,6 @@ The `OnChainProposer` is an upgradeable smart contract that ensures the advancem
     - **`verifyBatch()`**: Verifies a single batch using RISC0, SP1, or TDX proofs
     - **`verifyBatchesAligned()`**: Verifies multiple batches in sequence using aligned proofs with Merkle verification
 
-3. **State Validation**
-    - **`_verifyPublicData()`**: Internal function used during `verifyBatch()` or `verifyBatchesAligned()` that validates public proof inputs match previous data from `commitBatch()`
-
-
 ## L2 Contracts
 
 ### `CommonBridgeL2`
@@ -77,7 +73,7 @@ The `CommonBridgeL2` is an L2 smart contract that facilitates cross-chain transf
 
 - **`L1_MESSENGER`**: Constant address (`0x000000000000000000000000000000000000FFFE`) representing the L2-to-L1 messenger contract
 - **`BURN_ADDRESS`**: Constant address (`0x0000000000000000000000000000000000000000`) used to burn ETH during withdrawals
-- **`NATIVE_TOKEN_L2`**: Constant address (`0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`) representing the native token on the L2
+- **`ETH_TOKEN`**: Constant address (`0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`) representing ETH as a token
 
 #### **Core Functionality**
 
@@ -98,17 +94,22 @@ The `CommonBridgeL2` is an L2 smart contract that facilitates cross-chain transf
     - **`onlySelf`**: Modifier ensuring only the bridge contract itself can call privileged functions
     - Validates that privileged operations (like minting) are only performed by the bridge
 
-### `L2ToL1Messenger`
-The `L2ToL1Messenger` is a simple L2 smart contract that enables communication from L2 to L1 by emitting the data as `L1Message` events for sequencers to pick up.
+### `Messenger`
+The `Messenger` is a simple L2 smart contract that enables cross-chain communication. It supports L2 to L1 messaging by emitting `L1Message` events for sequencers to pick up (currently used exclusively for withdrawals), and L2 to L2 messaging by emitting `L2Message` events.
 
 #### **State Variables**
 
 - **`lastMessageId`**: Counter that tracks the ID of the last emitted message (incremented before each message is sent)
+- **`BRIDGE`**: Constant address (`0x000000000000000000000000000000000000FFff`) representing the `CommonBridgeL2` contract
 
 #### **Core Functionality**
 
 1. **Message Sending**
-    - **`sendMessageToL1()`**: Sends a message to L1 by emitting an `L1Message` event with the sender, data, and `lastMessageId`
+    - **`sendMessageToL1()`**: Sends a message to L1 by emitting an `L1Message` event with the sender, data, and `lastMessageId`. Only the `CommonBridgeL2` contract can call this function.
+    - **`sendMessageToL2()`**: Sends a message to another L2 chain by emitting an `L2Message` event. Only the `CommonBridgeL2` contract can call this function.
+
+2. **Access Control**
+    - **`onlyBridge`**: Modifier ensuring only the `CommonBridgeL2` contract can call messaging functions
 
 ## Upgrade the contracts
 

@@ -1,4 +1,3 @@
-use crate::log_peer_error;
 use crate::rlpx::connection::server::send;
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
@@ -6,13 +5,14 @@ use ethereum_types::Address;
 use ethereum_types::Signature;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_common::types::batch::Batch;
 use ethrex_common::types::{Block, recover_address};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::messages::batch_hash;
 use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
@@ -22,11 +22,18 @@ pub struct L2ConnectedState {
     pub latest_block_sent: u64,
     pub latest_block_added: u64,
     pub latest_batch_sent: u64,
-    pub blocks_on_queue: BTreeMap<u64, Arc<Block>>,
+    pub blocks_on_queue: BTreeMap<u64, QueuedBlock>,
+    pub batches_on_queue: BTreeMap<u64, Arc<Batch>>,
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
     pub next_batch_broadcast: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueuedBlock {
+    pub block: Arc<Block>,
+    pub fee_config: ethrex_common::types::fee_config::FeeConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -46,8 +53,12 @@ fn broadcast_message(state: &Established, msg: Message) -> Result<(), PeerConnec
     match msg {
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
+            error!(
+                peer=%state.node,
+                message=%msg,
+                "Broadcasting for this message is not supported"
+            );
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
-            log_peer_error!(&state.node, &error_message);
             Err(PeerConnectionError::BroadcastError(error_message))
         }
     }
@@ -92,6 +103,7 @@ impl L2ConnState {
                     latest_block_sent: 0,
                     latest_block_added: 0,
                     blocks_on_queue: BTreeMap::new(),
+                    batches_on_queue: BTreeMap::new(),
                     latest_batch_sent: 0,
                     store_rollup: ctxt.store_rollup.clone(),
                     committer_key: ctxt.committer_key.clone(),
@@ -119,15 +131,30 @@ pub(crate) async fn handle_based_capability_message(
     match msg {
         L2Message::BatchSealed(ref batch_sealed_msg) => {
             if should_process_batch_sealed(established, batch_sealed_msg).await? {
-                process_batch_sealed(established, batch_sealed_msg).await?;
+                established
+                    .l2_state
+                    .connection_state_mut()?
+                    .batches_on_queue
+                    .entry(batch_sealed_msg.batch.number)
+                    .or_insert_with(|| batch_sealed_msg.batch.clone());
                 broadcast_message(established, msg.into())?;
             }
+            process_batches_on_queue(established).await?;
         }
         L2Message::NewBlock(ref new_block_msg) => {
             if should_process_new_block(established, new_block_msg).await? {
-                process_new_block(established, new_block_msg).await?;
+                established
+                    .l2_state
+                    .connection_state_mut()?
+                    .blocks_on_queue
+                    .entry(new_block_msg.block.header.number)
+                    .or_insert_with(|| QueuedBlock {
+                        block: new_block_msg.block.clone(),
+                        fee_config: new_block_msg.fee_config,
+                    });
                 broadcast_message(established, msg.into())?;
             }
+            process_blocks_on_queue(established).await?;
         }
     }
     Ok(())
@@ -158,9 +185,10 @@ pub(crate) fn broadcast_l2_message(
                 .connection_broadcast_send
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
-                    log_peer_error!(
-                        &state.node,
-                        &format!("Could not broadcast l2 message BatchSealed: {e}"),
+                    error!(
+                        peer=%state.node,
+                        error=%e,
+                        "Could not broadcast l2 message BatchSealed"
                     );
                 })
                 .map_err(|_| {
@@ -176,9 +204,10 @@ pub(crate) fn broadcast_l2_message(
                 .connection_broadcast_send
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
-                    log_peer_error!(
-                        &state.node,
-                        &format!("Could not broadcast l2 message NewBlock: {e}"),
+                    error!(
+                        peer=%state.node,
+                        error=%e,
+                        "Could not broadcast l2 message NewBlock",
                     );
                 })
                 .map_err(|_| {
@@ -256,9 +285,21 @@ pub(crate) async fn send_new_block(
                     signature
                 }
             };
+
+            let Some(fee_config) = l2_state
+                .store_rollup
+                .get_fee_config_by_block(block_number)
+                .await?
+            else {
+                return Err(PeerConnectionError::InternalError(
+                    "Fee config not found in rollup store for block".to_owned(),
+                ));
+            };
+
             NewBlock {
                 block: new_block.into(),
                 signature,
+                fee_config,
             }
         };
 
@@ -279,6 +320,17 @@ async fn should_process_new_block(
     let l2_state = established.l2_state.connection_state_mut()?;
     if !established.blockchain.is_synced() {
         debug!("Not processing new block, blockchain is not synced");
+        return Ok(false);
+    }
+    if established
+        .storage
+        .get_block_header(msg.block.header.number)?
+        .is_some()
+    {
+        debug!(
+            "Block {} received by peer already stored, ignoring it",
+            msg.block.header.number
+        );
         return Ok(false);
     }
     if l2_state.latest_block_added >= msg.block.header.number
@@ -303,9 +355,10 @@ async fn should_process_new_block(
                 PeerConnectionError::InternalError("Recover Address task failed".to_string())
             })?
             .map_err(|e| {
-                log_peer_error!(
-                    &established.node,
-                    &format!("Failed to recover lead sequencer: {e}"),
+                error!(
+                    peer=%established.node,
+                    error=%e,
+                    "Failed to recover lead sequencer",
                 );
                 PeerConnectionError::CryptographyError(e.to_string())
             })?;
@@ -337,24 +390,13 @@ async fn should_process_batch_sealed(
         debug!("Batch {} already sealed, ignoring it", msg.batch.number);
         return Ok(false);
     }
-    if msg.batch.first_block == msg.batch.last_block {
-        // is empty batch
-        return Ok(false);
-    }
-    if l2_state.latest_block_added < msg.batch.last_block {
-        debug!(
-            "Not processing batch {} because the last block {} is not added yet",
-            msg.batch.number, msg.batch.last_block
-        );
-        return Ok(false);
-    }
-
     let hash = batch_hash(&msg.batch);
 
     let recovered_lead_sequencer = recover_address(msg.signature, hash).map_err(|e| {
-        log_peer_error!(
-            &established.node,
-            &format!("Failed to recover lead sequencer: {e}"),
+        error!(
+            peer=%established.node,
+            error=%e,
+            "Failed to recover lead sequencer",
         );
         PeerConnectionError::CryptographyError(e.to_string())
     })?;
@@ -369,18 +411,24 @@ async fn should_process_batch_sealed(
     Ok(true)
 }
 
-async fn process_new_block(
+pub async fn process_blocks_on_queue(
     established: &mut Established,
-    msg: &NewBlock,
 ) -> Result<(), PeerConnectionError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    l2_state
-        .blocks_on_queue
-        .entry(msg.block.header.number)
-        .or_insert_with(|| msg.block.clone());
 
     let mut next_block_to_add = l2_state.latest_block_added + 1;
-    while let Some(block) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
+    if let Some(latest_batch_number) = l2_state.store_rollup.get_batch_number().await?
+        && let Some(latest_batch) = l2_state
+            .store_rollup
+            .get_batch(latest_batch_number, ethrex_common::types::Fork::Prague)
+            .await?
+    {
+        next_block_to_add = next_block_to_add.max(latest_batch.last_block + 1);
+    }
+    filter_potential_old_blocks(l2_state, next_block_to_add);
+
+    while let Some(queued) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
+        let QueuedBlock { block, fee_config } = queued;
         // This check is necessary if a connection to another peer already applied the block but this connection
         // did not register that update.
         if let Ok(Some(_)) = established.storage.get_block_body(next_block_to_add).await {
@@ -390,20 +438,17 @@ async fn process_new_block(
         }
         let block_hash = block.hash();
         let block_number = block.header.number;
-        let block = Arc::<Block>::try_unwrap(block).map_err(|_| {
-            PeerConnectionError::InternalError("Failed to take ownership of block".to_string())
-        })?;
+        let block = Arc::unwrap_or_clone(block);
         established
             .blockchain
-            .add_block(block)
-            .await
+            .add_block_pipeline(block)
             .inspect_err(|e| {
-                log_peer_error!(
-                    &established.node,
-                    &format!(
-                        "Error adding new block {} with hash {:?}, error: {e}",
-                        block_number, block_hash
-                    ),
+                error!(
+                    peer=%established.node,
+                    error=%e,
+                    block_number,
+                    ?block_hash,
+                    "Error adding new block",
                 );
             })?;
 
@@ -415,6 +460,11 @@ async fn process_new_block(
                     block_number, block_hash
                 )))
             })?;
+
+        l2_state
+            .store_rollup
+            .store_fee_config_by_block(block_number, fee_config)
+            .await?;
         info!(
             "Added new block {} with hash {:?}",
             next_block_to_add, block_hash
@@ -423,6 +473,27 @@ async fn process_new_block(
         next_block_to_add += 1;
     }
     Ok(())
+}
+
+fn filter_potential_old_blocks(l2_state: &mut L2ConnectedState, next_block_to_add: u64) {
+    let keys_to_remove = if let Some(block_entry) = l2_state.blocks_on_queue.first_entry()
+        && block_entry.key() < &next_block_to_add
+    {
+        let mut keys = vec![];
+        for key in l2_state.blocks_on_queue.keys() {
+            if *key < next_block_to_add {
+                keys.push(*key);
+            } else {
+                break;
+            }
+        }
+        keys
+    } else {
+        vec![]
+    };
+    for key in keys_to_remove {
+        l2_state.blocks_on_queue.remove(&key);
+    }
 }
 
 pub(crate) async fn send_sealed_batch(
@@ -438,7 +509,12 @@ pub(crate) async fn send_sealed_batch(
         {
             return Ok(());
         }
-        let Some(batch) = l2_state.store_rollup.get_batch(next_batch_to_send).await? else {
+        let l1_fork = established.blockchain.current_fork().await?;
+        let Some(batch) = l2_state
+            .store_rollup
+            .get_batch(next_batch_to_send, l1_fork)
+            .await?
+        else {
             return Ok(());
         };
         match l2_state
@@ -474,16 +550,40 @@ pub(crate) async fn send_sealed_batch(
     Ok(())
 }
 
-async fn process_batch_sealed(
+pub async fn process_batches_on_queue(
     established: &mut Established,
-    msg: &BatchSealed,
 ) -> Result<(), PeerConnectionError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    l2_state.store_rollup.seal_batch(*msg.batch.clone()).await?;
-    info!(
-        "Sealed batch {} with blocks from {} to {}",
-        msg.batch.number, msg.batch.first_block, msg.batch.last_block
-    );
+    let Some(latest_stored_batch) = l2_state.store_rollup.get_batch_number().await? else {
+        return Ok(());
+    };
+    let mut next_batch_to_seal = latest_stored_batch + 1;
+    while let Some(batch) = l2_state.batches_on_queue.get(&next_batch_to_seal) {
+        let last_block_on_next_batch = batch.last_block;
+        if established
+            .storage
+            .get_block_by_number(last_block_on_next_batch)
+            .await?
+            .is_none()
+        {
+            debug!("Missing blocks from the next batch to seal");
+            return Ok(());
+        }
+        let Some(batch) = l2_state.batches_on_queue.remove(&next_batch_to_seal) else {
+            return Ok(());
+        };
+        let batch = Arc::unwrap_or_clone(batch);
+        let (batch_number, batch_first_block, batch_last_block) =
+            (batch.number, batch.first_block, batch.last_block);
+        l2_state.store_rollup.seal_batch(batch).await?;
+        info!(
+            "Sealed batch {} with blocks from {} to {}",
+            batch_number, batch_first_block, batch_last_block
+        );
+
+        next_batch_to_seal += 1;
+    }
+
     Ok(())
 }
 

@@ -139,17 +139,16 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         excess_blob_gas,
         parent_beacon_block_root,
         requests_hash,
+        block_access_list_hash: None,
+        slot_number: None,
     };
     let block = Block::new(header, body);
 
     // 3. Create Blockchain and add block.
 
-    let blockchain = Blockchain::new(
-        store.clone(),
-        ethrex_blockchain::BlockchainOptions::default(),
-    );
+    let blockchain = Blockchain::new(store, ethrex_blockchain::BlockchainOptions::default());
 
-    let result = blockchain.add_block(block).await;
+    let result = blockchain.add_block_pipeline(block);
 
     if result.is_err() && test_case.post.expected_exceptions.is_none() {
         return Err(RunnerError::Custom(

@@ -8,9 +8,11 @@ services:
     build: ../../
     ports:
       - 127.0.0.1:8545:8545
+    environment:
+      - ETHREX_LOG_LEVEL
     volumes:
-      - ../../fixtures/genesis/l1-dev.json:/genesis/l1-dev.json
-    command: --network /genesis/l1-dev.json --http.addr 0.0.0.0 --http.port 8545 --dev
+      - ../../fixtures/genesis/l1.json:/genesis/l1.json
+    command: --network /genesis/l1.json --http.addr 0.0.0.0 --http.port 8545 --dev
 
   contract_deployer:
     container_name: contract_deployer
@@ -24,39 +26,43 @@ services:
       # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${DOCKER_ETHREX_WORKDIR}/contracts
       - env:/env/
-      - ../../fixtures/genesis/l1-dev.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
+      - ../../fixtures/genesis/l1.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1.json
       - ../../fixtures/genesis/l2.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
-      - ./prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
-      - ./prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
+      - ../guest-program/bin/sp1/out/:${DOCKER_ETHREX_WORKDIR}/sp1_out
+      - ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-u32
+      - ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-bn254
+      - ../guest-program/bin/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
     environment:
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those
       # specified in the `volumes:` section
       - ETHREX_DEPLOYER_L1_PRIVATE_KEY=${ETHREX_DEPLOYER_PRIVATE_KEY:-0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924}
       - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
-      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
+      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_GENESIS_L2_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=${ETHREX_DEPLOYER_DEPLOY_RICH:-true}
-      - ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
-      - ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER:-false}
-      - ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
-      - ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
-      - ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER:-false}
-      - ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=${ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS:-0x00000000000000000000000000000000000000aa}
-      - ETHREX_SP1_VERIFICATION_KEY_PATH=${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
+      - ETHREX_L2_RISC0=${ETHREX_L2_RISC0:-false}
+      - ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS
+      - ETHREX_L2_SP1=${ETHREX_L2_SP1:-false}
+      - ETHREX_L2_TDX=${ETHREX_L2_TDX:-false}
+      - ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS
+      - ETHREX_DEPLOYER_ALIGNED=${ETHREX_DEPLOYER_ALIGNED:-false}
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-bn254
       - ETHREX_RISC0_VERIFICATION_KEY_PATH=${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
-      - ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
-      - ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER:-false}
       - ETHREX_TDX_DEV_MODE=${ETHREX_TDX_DEV_MODE:-false}
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+      - ETHREX_BRIDGE_OWNER_PK=${ETHREX_BRIDGE_OWNER_PK:-0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e}
       - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=${ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS:-false}
+      - ETHREX_DEPLOYER_INITIAL_FEE_TOKEN
       - ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM:-false}
-      - ETHREX_NATIVE_TOKEN_L1_ADDRESS=${ETHREX_NATIVE_TOKEN_L1_ADDRESS:-0x0000000000000000000000000000000000000000}
       - COMPILE_CONTRACTS=true
+      - ETHREX_USE_COMPILED_GENESIS=true
+      - ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER
+      - ETHREX_ON_CHAIN_PROPOSER_INCLUSION_MAX_WAIT
     depends_on:
       - ethrex_l1
     entrypoint:
@@ -89,9 +95,16 @@ services:
       - ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS
       - ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS
       - ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS
+      - ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS
+      - ETHREX_WATCHER_L1_FEE_VAULT_ADDRESS
       - ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY=${ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY:-0x0000000000000000000000000000000000000000}
       - ETHREX_COMMITTER_COMMIT_TIME=${ETHREX_COMMITTER_COMMIT_TIME:-60000}
       - ETHREX_WATCHER_WATCH_INTERVAL=${ETHREX_WATCHER_WATCH_INTERVAL:-12000}
+      - ETHREX_OSAKA_ACTIVATION_TIME=${ETHREX_OSAKA_ACTIVATION_TIME:-1761677592}
+      - ETHREX_WATCHER_L2_RPCS
+      - ETHREX_WATCHER_L2_CHAIN_IDS
+      - ETHREX_WATCHER_ROUTER_ADDRESS
+      - ETHREX_LOG_LEVEL
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - env:/env/

@@ -1,4 +1,4 @@
-use std::cmp;
+use std::{cmp, mem};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -10,7 +10,16 @@ use ethrex_rlp::{
 // TODO: move path-tracking logic somewhere else
 // PERF: try using a stack-allocated array
 /// Struct representing a list of nibbles (half-bytes)
-#[derive(Debug, Clone, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    rkyv::Archive,
+)]
 pub struct Nibbles {
     data: Vec<u8>,
     /// Parts of the path that have already been consumed (used for tracking
@@ -252,6 +261,14 @@ impl Nibbles {
             already_consumed: vec![],
         }
     }
+
+    /// Empties `self.data` and returns the content
+    pub fn take(&mut self) -> Self {
+        Nibbles {
+            data: mem::take(&mut self.data),
+            already_consumed: mem::take(&mut self.already_consumed),
+        }
+    }
 }
 
 impl AsRef<[u8]> for Nibbles {
@@ -305,98 +322,4 @@ fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
     }
     nibbles[l - 1] = 16;
     nibbles
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use std::cmp::Ordering;
-
-    #[test]
-    fn skip_prefix_true() {
-        let mut a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 3]);
-        assert!(a.skip_prefix(&b));
-        assert_eq!(a.as_ref(), &[4, 5])
-    }
-
-    #[test]
-    fn skip_prefix_true_same_length() {
-        let mut a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        assert!(a.skip_prefix(&b));
-        assert!(a.is_empty());
-    }
-
-    #[test]
-    fn skip_prefix_longer_prefix() {
-        let mut a = Nibbles::from_hex(vec![1, 2, 3]);
-        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        assert!(!a.skip_prefix(&b));
-        assert_eq!(a.as_ref(), &[1, 2, 3])
-    }
-
-    #[test]
-    fn skip_prefix_false() {
-        let mut a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 4]);
-        assert!(!a.skip_prefix(&b));
-        assert_eq!(a.as_ref(), &[1, 2, 3, 4, 5])
-    }
-
-    #[test]
-    fn count_prefix_all() {
-        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        assert_eq!(a.count_prefix(&b), a.len());
-    }
-
-    #[test]
-    fn count_prefix_partial() {
-        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 3]);
-        assert_eq!(a.count_prefix(&b), b.len());
-    }
-
-    #[test]
-    fn count_prefix_none() {
-        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![2, 3, 4, 5, 6]);
-        assert_eq!(a.count_prefix(&b), 0);
-    }
-
-    #[test]
-    fn compare_prefix_equal() {
-        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
-    }
-
-    #[test]
-    fn compare_prefix_less() {
-        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 4, 4, 5]);
-        assert_eq!(a.compare_prefix(&b), Ordering::Less);
-    }
-
-    #[test]
-    fn compare_prefix_greater() {
-        let a = Nibbles::from_hex(vec![1, 2, 4, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        assert_eq!(a.compare_prefix(&b), Ordering::Greater);
-    }
-
-    #[test]
-    fn compare_prefix_equal_b_longer() {
-        let a = Nibbles::from_hex(vec![1, 2, 3]);
-        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
-    }
-
-    #[test]
-    fn compare_prefix_equal_a_longer() {
-        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 3]);
-        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
-    }
 }

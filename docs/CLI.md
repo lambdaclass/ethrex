@@ -12,6 +12,7 @@ Usage: ethrex [OPTIONS] [COMMAND]
 Commands:
   removedb            Remove the database
   import              Import blocks to the database
+  import-bench        Import blocks to the database for benchmarking
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
   help                Print this message or the help of the given subcommand(s)
@@ -54,12 +55,24 @@ Node options:
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
+          [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
+
+      --log.color <LOG_COLOR>
+          Possible values: auto, always, never
+
+          [default: auto]
+
+      --log.dir <LOG_DIR>
+          Directory to store log files.
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
           [default: 10000]
+
+      --precompute-witnesses
+          Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
@@ -70,11 +83,14 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
+
+      --p2p.addr <ADDRESS>
+          Listening address for the P2P protocol.
 
       --p2p.port <PORT>
-          TCP port for P2P protocol.
+          TCP port for the P2P protocol.
 
           [default: 30303]
 
@@ -88,8 +104,13 @@ P2P options:
 
           [default: 1000]
 
-      --target.peers <MAX_PEERS>
+      --p2p.target-peers <MAX_PEERS>
           Max amount of connected peers.
+
+          [default: 100]
+
+      --p2p.lookup-interval <INITIAL_LOOKUP_INTERVAL>
+          Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
 
           [default: 100]
 
@@ -142,12 +163,15 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 5.0.0"]
+          [default: "ethrex 9.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
-          [default: 30000000]
+          [default: 60000000]
+
+      --builder.max-blobs <MAX_BLOBS>
+          EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.
 ```
 
 <!-- END_CLI_HELP -->
@@ -170,6 +194,11 @@ Commands:
   help          Print this message or the help of the given subcommand(s)
 
 Options:
+      --osaka-activation-time <UINT64>
+          Block timestamp at which the Osaka fork is activated on L1. If not set, it will assume Osaka is already active.
+
+          [env: ETHREX_OSAKA_ACTIVATION_TIME=]
+
   -t, --tick-rate <TICK_RATE>
           time in ms between two ticks
 
@@ -211,8 +240,14 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-
+          
+          [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
+
+      --log.color <LOG_COLOR>
+          Possible values: auto, always, never
+
+          [default: auto]
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
@@ -228,11 +263,14 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
+
+      --p2p.addr <ADDRESS>
+          Listening address for the P2P protocol.
 
       --p2p.port <PORT>
-          TCP port for P2P protocol.
+          TCP port for the P2P protocol.
 
           [default: 30303]
 
@@ -300,12 +338,12 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 5.0.0"]
+          [default: "ethrex 9.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
-          [default: 30000000]
+          [default: 60000000]
 
 Eth options:
       --eth.rpc-url <RPC_URL>...
@@ -358,6 +396,10 @@ L1 Watcher options:
           [default: 10]
 
 Block producer options:
+      --watcher.l1-fee-update-interval-ms <ADDRESS>
+          [env: ETHREX_WATCHER_L1_FEE_UPDATE_INTERVAL_MS=]
+          [default: 60000]
+
       --block-producer.block-time <UINT64>
           How often does the sequencer produce new blocks to the L1 in milliseconds.
 
@@ -373,10 +415,13 @@ Block producer options:
       --block-producer.operator-fee-vault-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=]
 
-      --operator-fee-per-gas <UINT64>
+      --block-producer.operator-fee-per-gas <UINT64>
           Fee that the operator will receive for each unit of gas consumed in a block.
 
           [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=]
+
+      --block-producer.l1-fee-vault-address <ADDRESS>
+          [env: ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=]
 
       --block-producer.block-gas-limit <UINT64>
           Maximum gas limit for the L2 blocks.
@@ -430,12 +475,12 @@ L1 Committer options:
 
 Proof coordinator options:
       --proof-coordinator.l1-private-key <PRIVATE_KEY>
-          Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
+          Private key of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
 
           [env: ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=]
 
       --proof-coordinator.tdx-private-key <PRIVATE_KEY>
-          Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.
+          Private key of a funded account that the TDX tool will use to send the tdx attestation to L1.
 
           [env: ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=]
 
@@ -509,16 +554,16 @@ Aligned options:
           [env: ETHREX_ALIGNED_NETWORK=]
           [default: devnet]
 
+      --aligned.from-block <BLOCK_NUMBER>
+          Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.
+
+          [env: ETHREX_ALIGNED_FROM_BLOCK=]
+
       --aligned.fee-estimate <FEE_ESTIMATE>
           Fee estimate for Aligned sdk
 
           [env: ETHREX_ALIGNED_FEE_ESTIMATE=]
           [default: instant]
-
-      --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
-          Path to the SP1 elf. This is used for proof verification.
-
-          [env: ETHREX_ALIGNED_SP1_ELF_PATH=]
 
 Admin server options:
       --admin-server.addr <IP_ADDRESS>
@@ -531,7 +576,7 @@ Admin server options:
 
 L2 options:
       --validium
-          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.
+          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1.
 
           [env: ETHREX_L2_VALIDIUM=]
 
@@ -547,7 +592,6 @@ L2 options:
 Monitor options:
       --no-monitor
           [env: ETHREX_NO_MONITOR=]
-          
 ```
 
 ## ethrex l2 prover
@@ -582,11 +626,6 @@ Prover client options:
           Possible values: info, debug, trace, warn, error
 
           [default: INFO]
-
-      --aligned
-          Activate aligned proving system
-
-          [env: PROVER_CLIENT_ALIGNED=]
 
       --sp1-server <URL>
           Url to the moongate server to use when using sp1 backend

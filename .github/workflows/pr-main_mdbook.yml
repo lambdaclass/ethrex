@@ -15,7 +15,9 @@ permissions:
   contents: write
 
 jobs:
-  deploy:
+  lint:
+    # "Lint" is a required check, don't change the name
+    name: Lint
     runs-on: ubuntu-latest
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,7 +27,7 @@ jobs:
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
         with:
-          mdbook-version: '0.4.51'
+          mdbook-version: "0.4.51"
 
       - name: Install mdbook dependencies
         run: make docs-deps
@@ -33,12 +35,33 @@ jobs:
       - name: Build documentation
         run: make docs
 
-      - name: Deploy
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Upload docs artifact
         if: ${{ github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs
+          path: book/html
+          retention-days: 1
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: lint
+    if: ${{ github.ref == 'refs/heads/main' }}
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+    steps:
+      - name: Download docs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docs
+          path: book/html
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: book/html
-          destination_dir: .     # root of gh-pages
-          keep_files: true       # do not erase flamegraphs/ or benchmarks/
+          destination_dir: . # root of gh-pages
+          keep_files: true # do not erase flamegraphs/ or benchmarks/
           cname: docs.ethrex.xyz # always commit the CNAME file

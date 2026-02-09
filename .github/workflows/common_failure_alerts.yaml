@@ -14,7 +14,7 @@ on:
       - L2 TDX build
       - LEVM
       - Publish Docker
-      - Publish Ethrex docs page
+      - Publish Ethrex docs to https://docs.ethrex.xyz/
     branches:
       - main
     types:
@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   notify-on-failure:
@@ -45,6 +46,15 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
+      - name: Collect failed job names
+        id: failed_jobs
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const collectFailedJobs = require('./scripts/collect_failed_jobs');
+            await collectFailedJobs({ github, core, context });
+
       - name: Post failure to Slack
         env:
           REPO: ${{ github.repository }}
@@ -53,5 +63,6 @@ jobs:
           RUN_HTML_URL: ${{ github.event.workflow_run.html_url }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          FAILED_JOBS: ${{ steps.failed_jobs.outputs.names }}
         run: |
           bash .github/scripts/notify_workflow_failure.sh "${{ steps.select_webhook.outputs.webhook }}"

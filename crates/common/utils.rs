@@ -1,8 +1,7 @@
 use crate::H256;
 use ethereum_types::U256;
+use ethrex_crypto::keccak::keccak_hash;
 use hex::FromHexError;
-use sha3::Digest;
-use sha3::Keccak256;
 
 pub const ZERO_U256: U256 = U256([0, 0, 0, 0]);
 
@@ -66,23 +65,16 @@ pub fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
 }
 
 pub fn keccak(data: impl AsRef<[u8]>) -> H256 {
-    H256(Keccak256::digest(data.as_ref()).into())
+    H256(keccak_hash(data))
 }
 
-#[cfg(test)]
-mod test {
-    use ethereum_types::U256;
-
-    use crate::utils::u256_to_big_endian;
-
-    #[test]
-    fn u256_to_big_endian_test() {
-        let a = u256_to_big_endian(U256::one());
-        let b = U256::one().to_big_endian();
-        assert_eq!(a, b);
-
-        let a = u256_to_big_endian(U256::max_value());
-        let b = U256::max_value().to_big_endian();
-        assert_eq!(a, b);
-    }
+// Allocation-free operations on arrays.
+///
+/// Truncates an array of size N to size M.
+/// Fails compilation if N < M.
+pub fn truncate_array<const N: usize, const M: usize>(data: [u8; N]) -> [u8; M] {
+    const { assert!(M <= N) };
+    let mut res = [0u8; M];
+    res.copy_from_slice(&data[..M]);
+    res
 }

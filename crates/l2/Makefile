@@ -1,7 +1,7 @@
 .PHONY: help init down restart init-l1-docker down-l1-docker restart-l1-docker \
 	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
-	init-prover build-prover clean-tee clean-tee-contract-deps \
+	init-prover-sp1 init-prover-risc0 init-prover-exec build-prover clean-tee clean-tee-contract-deps \
 	test integration-test integration-test-gpu state-diff-test
 
 .DEFAULT_GOAL := help
@@ -26,7 +26,7 @@ restart: restart-l1-docker deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts
 # ==============================================================================
 
 L2_GENESIS_FILE_PATH=../../fixtures/genesis/l2.json
-L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1-dev.json
+L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1.json
 
 ethrex_PATH=$(shell pwd)/../..
 ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
@@ -36,6 +36,8 @@ DOCKER_ETHREX_WORKDIR := /usr/local/bin
 
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+L2_OWNER_ADDRESS=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+BRIDGE_OWNER_PRIVATE_KEY=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
 
 ethrex_L2_DEV_DB?=dev_ethrex_l2
 ethrex_L1_DEV_DB=dev_ethrex_l1
@@ -45,7 +47,10 @@ L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
 PROOF_COORDINATOR_ADDRESS?=127.0.0.1
-ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS?=1000000000 \
+ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS?=1000000000
+# Timestamp for Osaka activation in the hoodi. Sufficient to start network with Prague for tests.
+# Future: initialize network with Osaka activated once supported.
+ETHREX_OSAKA_ACTIVATION_TIME?=1761677592
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -86,16 +91,13 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--on-chain-proposer-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--genesis-l1-path ${L1_GENESIS_FILE_PATH} \
+	--genesis-l2-path ${L2_GENESIS_FILE_PATH}
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
@@ -107,20 +109,33 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	--sp1.deploy-verifier \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--on-chain-proposer-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--genesis-l1-path ${L1_GENESIS_FILE_PATH} \
+	--genesis-l2-path ${L2_GENESIS_FILE_PATH}
 
 # ==============================================================================
 # L2
 # ==============================================================================
 
+ifdef SP1
+  SP1? := sp1
+else
+  SP1? :=
+endif
+
+ifdef RISC0
+  RISC0? := risc0
+else
+  RISC0? :=
+endif
+
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
-	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features l2,l2-sql,$(SP1?),$(RISC0?) --manifest-path ../../Cargo.toml -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -132,10 +147,11 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
 	--eth.rpc-url ${L1_RPC_URL} \
+	--osaka-activation-time ${ETHREX_OSAKA_ACTIVATION_TIME} \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
 	--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
 	--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
-	--block-producer.operator-fee ${ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS} \
+	--block-producer.operator-fee-per-gas ${ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS} \
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
@@ -143,7 +159,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
-	l2 --dev
+	l2 --dev --osaka-activation-time ${ETHREX_OSAKA_ACTIVATION_TIME}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	L1_RPC_URL=${L1_RPC_URL} \
@@ -167,37 +183,38 @@ restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Clien
 # Prover
 # ==============================================================================
 
-init-prover: ../../target/release/ethrex ## 🚀 Initializes the Prover
-	@if [ -z "$$PROVER" ]; then \
-		PROVER="exec"; \
-	fi; \
-	BACKEND="$$PROVER" \
-	../../target/release/ethrex l2 prover \
-		--backend "$$PROVER" \
-		--proof-coordinators tcp://127.0.0.1:3900 \
-		--log.level debug
+ifdef GPU
+  GPU? := gpu
+else
+  GPU? :=
+endif
 
-build-prover:
-	rm -f ../../target/release/ethrex
-	$(MAKE) PROVER="$(PROVER)" G="$(G)" ../../target/release/ethrex
+build-prover-sp1:
+	cargo build --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml --bin ethrex
 
-../../target/release/ethrex: $(PROVER_SRC_FILES)
-	@if [ -z "$$PROVER" ]; then \
-		echo "Warn: ProverType (PROVER) is missing. Building only with exec mode."; \
-		echo "You can provide it as an argument:"; \
-		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> G=<true>"; \
-		echo "The prover can also be run with GPU (G)"; \
-	fi; \
-	if [ -z "$$G" ]; then \
-		GPU=""; \
-	else \
-		GPU=",gpu"; \
-	fi; \
-	RUSTFLAGS='-C target-cpu=native' \
-	cargo build --release \
-		--manifest-path ../../Cargo.toml \
-		--bin ethrex \
-		--features "l2,l2-sql,$$PROVER$$GPU"
+build-prover-risc0:
+	cargo build --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml --bin ethrex
+
+build-prover-exec:
+	cargo build --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml --bin ethrex
+
+init-prover-sp1:
+	cargo run --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 \
+	--backend sp1
+
+init-prover-risc0:
+	cargo run --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 \
+	--backend risc0
+
+init-prover-exec:
+	cargo run --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 \
+	--backend exec
 
 
 # ==============================================================================
@@ -215,7 +232,7 @@ clean-tee-contract-deps: ## 🧹 Cleans the dependencies for the TEE contracts.
 # ==============================================================================
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	cargo test l2_integration_test --profile release-with-debug -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
+	cargo test -p ethrex-test l2_integration_test --profile release-with-debug --features l2 -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
 integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
@@ -224,10 +241,10 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
 	docker compose up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
+	RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
-	cargo test l2 --release -- --nocapture --test-threads=1
+	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT
 
 integration-test-gpu: rm-db-l2 rm-db-l1
@@ -239,21 +256,31 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
 	docker compose up --detach --build
 
-	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
-	cargo test l2 --release -- --nocapture --test-threads=1
+	RUST_LOG=info,ethrex_prover_lib=debug GPU=true make init-prover-sp1 & \
+	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 
 # State reconstruction tests
+# If this fails due to stale blobs, regenerate them following:
+# - docs/workflows/regenerate-blobs.md (agent workflow)
+# - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
 state-diff-test:
 	touch .env
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
 	l2 reconstruct \
 	-g ../../fixtures/genesis/l2.json \
 	-b ../../fixtures/blobs/ \
-	-s $$PWD/store \
-	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
+	-s $$PWD/store
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
+	docker logs --follow ethrex_l2 & \
+	cargo test -p ethrex-test test_state_reconstruct --release --features l2
 
-	cargo test state_reconstruct --release
+# Fast validation to check if blobs match genesis
+# Use this before state-diff-test to catch stale blobs early
+# If this fails, regenerate blobs following:
+# - docs/workflows/regenerate-blobs.md (agent workflow)
+# - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
+validate-blobs:
+	cargo test -p ethrex-test validate_blobs_match_genesis --release

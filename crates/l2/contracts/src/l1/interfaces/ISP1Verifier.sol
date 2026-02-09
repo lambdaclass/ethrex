@@ -1,6 +1,6 @@
 // From: https://github.com/succinctlabs/sp1-contracts/blob/65a1d96b720ffa2e6d167fb62527c9c8a534abbe/contracts/src/ISP1Verifier.sol
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 /// @title SP1 Verifier Interface
 /// @author Succinct Labs

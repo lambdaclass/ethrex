@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
-use ethrex_common::types::{Block, fee_config::FeeConfig};
+use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType, L2Config};
+use ethrex_common::types::Block;
 
 use crate::utils::{migrate_block_body, migrate_block_header};
 
@@ -93,7 +93,7 @@ async fn migrate_libmdbx_to_rocksdb(
 
     let blockchain_opts = BlockchainOptions {
         // TODO: we may want to migrate using a specified fee config
-        r#type: BlockchainType::L2(FeeConfig::default()),
+        r#type: BlockchainType::L2(L2Config::default()),
         ..Default::default()
     };
     let blockchain = Blockchain::new(new_store.clone(), blockchain_opts);
@@ -121,8 +121,7 @@ async fn migrate_libmdbx_to_rocksdb(
 
         let block_hash = block.hash();
         blockchain
-            .add_block(block)
-            .await
+            .add_block_pipeline(block)
             .unwrap_or_else(|e| panic!("Cannot add block {block_number} to rocksdb store: {e}"));
         added_blocks.push((block_number, block_hash));
     }
@@ -134,7 +133,7 @@ async fn migrate_libmdbx_to_rocksdb(
         .expect("Cannot get last block from libmdbx store");
     new_store
         .forkchoice_update(
-            Some(added_blocks),
+            added_blocks,
             last_block.number,
             last_block.hash(),
             None,

@@ -4,7 +4,6 @@ use super::{
 };
 #[cfg(feature = "l2")]
 use crate::rlpx::l2::l2_connection::L2ConnState;
-use crate::{log_peer_debug, log_peer_trace};
 use crate::{
     rlpx::{
         connection::server::{ConnectionState, Established},
@@ -16,6 +15,7 @@ use crate::{
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
 use ethrex_common::{H128, H256, H512, Signature};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -28,7 +28,6 @@ use secp256k1::{
     PublicKey, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha3::{Digest, Keccak256};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -39,6 +38,7 @@ use tokio::{
     net::{TcpSocket, TcpStream},
 };
 use tokio_util::codec::Framed;
+use tracing::{debug, trace};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
@@ -63,13 +63,13 @@ pub(crate) async fn perform(
     eth_version: Arc<RwLock<EthCapVersion>>,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), PeerConnectionError> {
     let (context, node, framed) = match state {
-        ConnectionState::Initiator(Initiator { context, node, .. }) => {
+        ConnectionState::Initiator(Initiator { context, node }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
-                    log_peer_debug!(&node, &format!("Error creating tcp connection {error}"));
-                    // context.table.lock().await.replace_peer(node.node_id());
+                    // If we can't find a TCP connection it's an issue we should track in debug
+                    debug!(peer=%node, %error, "Error creating tcp connection");
                     return Err(error)?;
                 }
             };
@@ -78,9 +78,9 @@ pub(crate) async fn perform(
             // Local node is initator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
-                Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
+                keccak_hash([remote_state.nonce.0, local_state.nonce.0].concat());
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
-            log_peer_trace!(&node, "Completed handshake as initiator");
+            trace!(peer=%node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec))
         }
         ConnectionState::Receiver(Receiver {
@@ -98,7 +98,7 @@ pub(crate) async fn perform(
             // Remote node is initiator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
-                Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
+                keccak_hash([local_state.nonce.0, remote_state.nonce.0].concat());
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             let node = Node::new(
                 peer_addr.ip(),
@@ -106,7 +106,7 @@ pub(crate) async fn perform(
                 peer_addr.port(),
                 remote_state.public_key,
             );
-            log_peer_trace!(&node, "Completed handshake as receiver");
+            trace!(peer=%node, "Completed handshake as receiver");
             (context, node, Framed::new(stream, codec))
         }
         ConnectionState::Established(_) => {
@@ -127,7 +127,7 @@ pub(crate) async fn perform(
         Established {
             signer: context.signer,
             sink,
-            node: node.clone(),
+            node,
             storage: context.storage.clone(),
             blockchain: context.blockchain.clone(),
             capabilities: vec![],
@@ -142,8 +142,10 @@ pub(crate) async fn perform(
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
-            tx_broadcaster: context.tx_broadcaster.clone(),
+            tx_broadcaster: context.tx_broadcaster,
             current_requests: HashMap::new(),
+            disconnect_reason: None,
+            is_validated: false,
         },
         stream,
     ))

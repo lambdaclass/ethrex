@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use ethrex_common::types::{
     Block, blobs_bundle, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
 };
@@ -27,7 +28,6 @@ pub enum ProverType {
     Exec,
     RISC0,
     SP1,
-    Aligned,
     TDX,
 }
 
@@ -37,8 +37,7 @@ impl From<ProverType> for u32 {
             ProverType::Exec => 0,
             ProverType::RISC0 => 1,
             ProverType::SP1 => 2,
-            ProverType::Aligned => 4,
-            ProverType::TDX => 5,
+            ProverType::TDX => 3,
         }
     }
 }
@@ -50,7 +49,6 @@ impl ProverType {
             ProverType::Exec,
             ProverType::RISC0,
             ProverType::SP1,
-            ProverType::Aligned,
             ProverType::TDX,
         ]
         .into_iter()
@@ -61,26 +59,25 @@ impl ProverType {
     pub fn empty_calldata(&self) -> Vec<Value> {
         match self {
             ProverType::RISC0 => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::SP1 => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::TDX => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
-            ProverType::Aligned => unimplemented!("Doesn't need to generate an empty calldata."),
         }
     }
 
+    /// Used to call a getter for the REQUIRE_*_PROOF boolean in the OnChainProposer contract
     pub fn verifier_getter(&self) -> Option<String> {
         // These values have to match with the OnChainProposer.sol contract
         match self {
-            Self::Aligned => Some("ALIGNEDPROOFAGGREGATOR()".to_string()),
-            Self::RISC0 => Some("R0VERIFIER()".to_string()),
-            Self::SP1 => Some("SP1VERIFIER()".to_string()),
-            Self::TDX => Some("TDXVERIFIER()".to_string()),
+            Self::RISC0 => Some("REQUIRE_RISC0_PROOF()".to_string()),
+            Self::SP1 => Some("REQUIRE_SP1_PROOF()".to_string()),
+            Self::TDX => Some("REQUIRE_TDX_PROOF()".to_string()),
             Self::Exec => None,
         }
     }
@@ -93,7 +90,6 @@ impl Display for ProverType {
             Self::RISC0 => write!(f, "RISC0"),
             Self::SP1 => write!(f, "SP1"),
             Self::TDX => write!(f, "TDX"),
-            Self::Aligned => write!(f, "Aligned"),
         }
     }
 }
@@ -111,7 +107,7 @@ impl BatchProof {
     pub fn prover_type(&self) -> ProverType {
         match self {
             BatchProof::ProofCalldata(proof) => proof.prover_type,
-            BatchProof::ProofBytes(_) => ProverType::Aligned,
+            BatchProof::ProofBytes(proof) => proof.prover_type,
         }
     }
 
@@ -122,10 +118,10 @@ impl BatchProof {
         }
     }
 
-    pub fn proof(&self) -> Vec<u8> {
+    pub fn compressed(&self) -> Option<Vec<u8>> {
         match self {
-            BatchProof::ProofCalldata(_) => vec![],
-            BatchProof::ProofBytes(proof) => proof.proof.clone(),
+            BatchProof::ProofCalldata(_) => None,
+            BatchProof::ProofBytes(proof) => Some(proof.proof.clone()),
         }
     }
 
@@ -141,6 +137,7 @@ impl BatchProof {
 /// It is used to send the proof to Aligned.
 #[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub struct ProofBytes {
+    pub prover_type: ProverType,
     pub proof: Vec<u8>,
     pub public_values: Vec<u8>,
 }
@@ -150,4 +147,119 @@ pub struct ProofBytes {
 pub struct ProofCalldata {
     pub prover_type: ProverType,
     pub calldata: Vec<Value>,
+}
+
+/// Indicates the prover which proof *format* to generate
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+pub enum ProofFormat {
+    #[default]
+    /// A compressed proof wrapped over groth16. EVM friendly.
+    Groth16,
+    /// Fixed size STARK execution proof.
+    Compressed,
+}
+
+/// Enum for the ProverServer <--> ProverClient Communication Protocol.
+#[allow(clippy::large_enum_variant)]
+#[derive(Serialize, Deserialize)]
+pub enum ProofData {
+    /// 1.
+    /// The client performs any needed setup steps
+    /// This includes things such as key registration
+    ProverSetup {
+        prover_type: ProverType,
+        payload: Bytes,
+    },
+
+    /// 2.
+    /// The Server acknowledges the receipt of the setup and it's completion
+    ProverSetupACK,
+
+    /// 3.
+    /// The Client initiates the connection with a BatchRequest.
+    /// Asking for the ProverInputData the prover_server considers/needs.
+    /// The commit hash is used to ensure the client and server are compatible.
+    BatchRequest { commit_hash: String },
+
+    /// 4.
+    /// The Server responds with a NoBatchForVersion if the code version is not the same as the one
+    /// generated in the batch.
+    /// The Client can only prove batches of its own version.
+    NoBatchForVersion { commit_hash: String },
+
+    /// 5.
+    /// The Server responds with a BatchResponse containing the ProverInputData.
+    /// If the BatchResponse is ProofData::BatchResponse{None, None},
+    /// the Client knows the BatchRequest couldn't be performed.
+    BatchResponse {
+        batch_number: Option<u64>,
+        input: Option<ProverInputData>,
+        format: Option<ProofFormat>,
+    },
+
+    /// 6.
+    /// The Client submits the zk Proof generated by the prover for the specified batch.
+    ProofSubmit {
+        batch_number: u64,
+        batch_proof: BatchProof,
+    },
+
+    /// 7.
+    /// The Server acknowledges the receipt of the proof and updates its state,
+    ProofSubmitACK { batch_number: u64 },
+}
+
+impl ProofData {
+    /// Builder function for creating a ProverSetup
+    pub fn prover_setup(prover_type: ProverType, payload: Bytes) -> Self {
+        ProofData::ProverSetup {
+            prover_type,
+            payload,
+        }
+    }
+
+    /// Builder function for creating a ProverSetupACK
+    pub fn prover_setup_ack() -> Self {
+        ProofData::ProverSetupACK
+    }
+
+    /// Builder function for creating a BatchRequest
+    pub fn batch_request(commit_hash: String) -> Self {
+        ProofData::BatchRequest { commit_hash }
+    }
+
+    /// Builder function for creating a NoBatchForVersion
+    pub fn no_batch_for_version(commit_hash: String) -> Self {
+        ProofData::NoBatchForVersion { commit_hash }
+    }
+
+    /// Builder function for creating a BatchResponse
+    pub fn batch_response(batch_number: u64, input: ProverInputData, format: ProofFormat) -> Self {
+        ProofData::BatchResponse {
+            batch_number: Some(batch_number),
+            input: Some(input),
+            format: Some(format),
+        }
+    }
+
+    pub fn empty_batch_response() -> Self {
+        ProofData::BatchResponse {
+            batch_number: None,
+            input: None,
+            format: None,
+        }
+    }
+
+    /// Builder function for creating a ProofSubmit
+    pub fn proof_submit(batch_number: u64, batch_proof: BatchProof) -> Self {
+        ProofData::ProofSubmit {
+            batch_number,
+            batch_proof,
+        }
+    }
+
+    /// Builder function for creating a ProofSubmitAck
+    pub fn proof_submit_ack(batch_number: u64) -> Self {
+        ProofData::ProofSubmitACK { batch_number }
+    }
 }

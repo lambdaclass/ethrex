@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 ethrex-p2p.workspace = true
@@ -14,3 +15,6 @@ hex.workspace = true
 
 [lib]
 path = "lib.rs"
+
+[lints]
+workspace = true

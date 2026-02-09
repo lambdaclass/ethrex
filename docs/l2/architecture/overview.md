@@ -10,7 +10,7 @@ At a high level, the way an L2 works is as follows:
 - Every once in a while, someone (usually the sequencer, but could be a decentralized network, or even anyone at all in the case of a based contestable rollup) builds a batch of new L2 blocks and publishes it to L1. We will call this the `commit` L1 transaction.
 - For L2 batches to be considered finalized, a zero-knowledge proof attesting to the validity of the batch needs to be sent to L1, and its verification needs to pass. If it does, everyone is assured that all blocks in the batch were valid and thus the new state is. We call this the `verification` L1 transaction.
 
-We ommited a lot of details in this high level explanation. Some questions that arise are:
+We omitted a lot of details in this high level explanation. Some questions that arise are:
 
 - What does it mean for the L1 contract to track the state of L2? Is the entire L2 state kept on it? Isn't it really expensive to store a bunch of state on an Ethereum smart contract?
 - What does the ZK proof prove exactly?
@@ -49,11 +49,16 @@ These two ideas will be used extensively throughout the rest of the documentatio
 
 ## Reconstructing state/Data Availability
 
+> [!WARNING]
+> The **state diff** mechanism is retained here for historical and conceptual reference.  
+> Ethrex now publishes **RLP-encoded blocks** (with fee configs) in blobs.  
+> The principles of verification and compression described below still apply conceptually to this new model.
+
 While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the chain. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the chain or some of their funds.
 
 This is called the **Data Availability** problem. As discussed before, sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:
 
-- For every new L2 batch, send as part of the `commit` transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all `commit` transactions, start executing them from the beginning and recontruct the state.
+- For every new L2 batch, send as part of the `commit` transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all `commit` transactions, start executing them from the beginning and reconstruct the state.
 
 This is now feasible; if we take 200 bytes as a rough estimate for the size of a single transfer between two users (see [this post](https://ethereum.stackexchange.com/questions/30175/what-is-the-size-bytes-of-a-simple-ethereum-transaction-versus-a-bitcoin-trans) for the calculation on legacy transactions) and 128 KB as [a reasonable transaction size limit](https://github.com/ethereum/go-ethereum/blob/830f3c764c21f0d314ae0f7e60d6dd581dc540ce/core/txpool/legacypool/legacypool.go#L49-L53) we get around ~650 transactions at maximum per `commit` transaction (we are assuming we use calldata here, blobs can increase this limit as each one is 128 KB and we could use multiple per transaction).
 
@@ -77,11 +82,14 @@ Because state diffs are compressed to save space on L1, this compression needs t
 
 ## EIP 4844 (a.k.a. Blobs)
 
+> [!WARNING]  
+> The explanations below originally refer to *state diffs*, but the same blob-based mechanism now carries **RLP-encoded block data** and their associated **fee configs**.
+
 While we could send state diffs through calldata, there is a (hopefully) cheaper way to do it: blobs. The Ethereum Cancun upgrade introduced a new type of transaction where users can submit a list of opaque blobs of data, each one of size at most 128 KB. The main purpose of this new type of transaction is precisely to be used by rollups for data availability; they are priced separately through a `blob_gas` market instead of the regular `gas` one and for all intents and purposes should be much cheaper than calldata.
 
 Using EIP 4844, our state diffs would now be sent through blobs. While this is cheaper, there's a new problem to address with it. The whole point of blobs is that they're cheaper because they are only kept around for approximately two weeks and ONLY in the beacon chain, i.e. the consensus side. The execution side (and thus the EVM when running contracts) does not have access to the contents of a blob. Instead, the only thing it has access to is a **KZG commitment** of it.
 
-This is important. If you recall, the way the L1 ensured that the state diff published by the sequencer was correct was by hashing its contents and ensuring that the hash matched the given state diff hash. With the contents of the state diff now no longer accesible by the contract, we can't do that anymore, so we need another way to ensure the correct contents of the state diff (i.e. the blob).
+This is important. If you recall, the way the L1 ensured that the state diff published by the sequencer was correct was by hashing its contents and ensuring that the hash matched the given state diff hash. With the contents of the state diff now no longer accessible by the contract, we can't do that anymore, so we need another way to ensure the correct contents of the state diff (i.e. the blob).
 
 The solution is through a [proof of equivalence](https://ethresear.ch/t/easy-proof-of-equivalence-between-multiple-polynomial-commitment-schemes-to-the-same-data/8188) between polynomial commitment schemes. The idea is as follows: proofs of equivalence allow you to show that two (polynomial) commitments point to the same underlying data. In our case, we have two commitments:
 
@@ -94,7 +102,7 @@ Our proof of equivalence implementation follows Method 1 [here](https://notes.et
 
 ### Prover side
 
-- Take the state diff being commited to as `4096` 32-byte chunks (these will be interpreted as field elements later on, but for now we don't care). Call these chunks $d_i$, with `i` ranging from 0 to 4095.
+- Take the state diff being committed to as `4096` 32-byte chunks (these will be interpreted as field elements later on, but for now we don't care). Call these chunks $d_i$, with `i` ranging from 0 to 4095.
 - Build a merkle tree with the $d_i$ as leaves. Note that we can think of the merkle root as a polynomial commitment, where the `i`-th leaf is the evaluation of the polynomial on the `i`-th power of $\omega$, the `4096`-th root of unity on $F_q$, the field modulus of the `BLS12-381` curve. Call this polynomial $f$. This is the same polynomial that the L1 KZG blob commits to (by definition). Call the L1 blob KZG commitment $C_1$ and the merkle root we just computed $C_2$.
 - Choose `x` as keccak($C_1$, $C_2$) and calculate the evaluation $f(x)$; call it `y`. To do this calculation, because we only have the $d_i$, the easiest way to do it is through the [barycentric formula](https://dankradfeist.de/ethereum/2021/06/18/pcs-multiproofs.html#evaluating-a-polynomial-in-evaluation-form-on-a-point-outside-the-domain). IMPORTANT: we are taking the $d_i$, `x`, `y`, and $\omega$ as elements of $F_q$, NOT the native field used by our prover. The evaluation thus is:
 
@@ -104,9 +112,15 @@ Our proof of equivalence implementation follows Method 1 [here](https://notes.et
 
 ### Verifier side
 
-- When commiting to the data on L1 send, as part of the calldata, a kzg blob commitment along with an opening proving that it evaluates to `y` on `x`. The contract, through the point evaluation precompile, checks that both:
+- When committing to the data on L1 send, as part of the calldata, a kzg blob commitment along with an opening proving that it evaluates to `y` on `x`. The contract, through the point evaluation precompile, checks that both:
   - The commitment's hash is equal to the versioned hash for that blob.
   - The evaluation is correct.
+
+## Transition to RLP-encoded Blocks
+
+The state diff approach has been deprecated. While it provided a more compact representation, it only guaranteed the availability of the modified state, not the original transactions themselves. To ensure that transactions are also publicly available, Ethrex now publishes **RLP-encoded blocks**, together with their corresponding **fee configurations**, directly in blobs (see [Transaction fees](../fundamentals/transaction_fees.md)).
+
+This new approach guarantees both transaction and state availability, at the cost of higher data size. According to our internal measurements ([`block_vs_state_diff_measurements.md`](../fundamentals/block_vs_state_diff_measurements.md)), sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately **2× for ETH transfers** and **3× for ERC20 transfers**.
 
 ## L1<->L2 communication
 
@@ -125,29 +139,30 @@ The mechanism for withdrawing funds from L2 back to L1 is explained in detail in
 
 ### Batch Commitment
 
-An L2 batch commitment is the hash of the following things:
+An L2 batch commitment contains:
 
 - The new L2 state root.
-- The state diff hash or polynomial commitments, depending on whether we are using calldata or blobs.
-- The Withdrawal logs merkle root.
+- The latest block's hash
+- The KZG versioned hash of the blobs published by the L2
+- The rolling hash of the processed privileged transactions
+- The Merkle root of the withdrawal logs
 
-The public input to the proof is then the hash of the previous batch commitment and the new one.
+These are committed as public inputs of the zk proof that validates a new L2 state.
 
 ## L1 contract checks
 
 ### Commit transaction
 
-For the `commit` transaction, the L1 verifier contract receives the following things from the sequencer:
-
-- The L2 batch number to be commited.
-- The new L2 state root.
-- The Withdrawal logs merkle root.
-- The state diffs hash or polynomial commitment scheme accordingly.
+For the `commit` transaction, the L1 verifier contract receives the batch commitment, as defined previously, for the new batch.
 
 The contract will then:
 
-- Check that the batch number is the immediate successor of the last batch processed.
-- Check that the state diffs are valid, either through hashing or the point evaluation precompile.
+- Check that the batch number is the immediate successor of the last committed batch.
+- Check that the batch has not been committed already.
+- Check that the `lastBlockHash` is not zero.
+- If privileged transactions were processed, it checks the submitted hash against the one in the `CommonBridge` contract.
+- If withdrawals were processed, it publishes them to the `CommonBridge` contract.
+- It checks that a blob was published if the L2 is running as a rollup, or that no blob was published if it's running as a validium.
 - Calculate the new batch commitment and store it.
 
 ### Verify transaction
@@ -155,11 +170,16 @@ The contract will then:
 On a `verification` transaction, the L1 contract receives the following:
 
 - The batch number.
-- The batch proof.
+- The RISC-V Zero-Knowledge proof of the batch execution (if enabled).
+- The SP1 Zero-Knowledge proof of the batch execution (if enabled).
+- The TDX Zero-Knowledge proof of the batch execution (if enabled).
 
 The contract will then:
 
-- Compute the proof public input from the new and previous batch commitments (both are already stored in the contract).
+- Check that the batch number is the immediate successor of the last verified batch.
+- Check that the batch has been committed.
+- It removes the pending transaction hashes from the `CommonBridge` contract.
+- It verifies the public data of the proof, checking that the data committed in the `commitBatch` call matches the data in the public inputs of the proof.
 - Pass the proof and public inputs to the verifier and assert the proof passes.
 - If the proof passes, finalize the L2 state, setting the latest batch as the given one and allowing any withdrawals for that batch to occur.
 

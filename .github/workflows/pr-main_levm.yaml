@@ -17,13 +17,21 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  contents: read
+  actions: write
+  issues: write
   pull-requests: write
+
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   ef-test:
     if: ${{ github.event_name != 'merge_group' }}
     name: EF Tests Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -68,7 +76,7 @@ jobs:
   ef-test-main:
     if: ${{ github.event_name != 'merge_group' }}
     name: EF Tests Check main
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -109,7 +117,7 @@ jobs:
     if: ${{ github.event_name != 'merge_group' }}
     name: EF Tests Compare
     needs: [ef-test-main, ef-test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -179,7 +187,7 @@ jobs:
   all-tests:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [ef-test]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ always() && needs.ef-test.result != 'skipped' }}
@@ -194,7 +202,7 @@ jobs:
   test:
     # "Test" is a required check, don't change the name
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -207,7 +215,7 @@ jobs:
           make test
   bench:
     name: Benchmarks (LEVM vs REVM)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout sources
@@ -221,10 +229,7 @@ jobs:
           tool: hyperfine@1.16
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Run benchmarks
         run: |

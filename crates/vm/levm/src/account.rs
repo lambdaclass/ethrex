@@ -3,8 +3,8 @@ use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::{AccountState, GenesisAccount};
 use ethrex_common::utils::keccak;
 use ethrex_common::{U256, constants::EMPTY_KECCACK_HASH, types::AccountInfo};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// Similar to `Account` struct but suited for LEVM implementation.
 /// Difference is this doesn't have code and it contains an additional `status` field for decision-making.
@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LevmAccount {
     pub info: AccountInfo,
-    pub storage: BTreeMap<H256, U256>,
+    pub storage: FxHashMap<H256, U256>,
     /// If true it means that attempting to create an account with this address it would at least collide because of storage.
     /// We just care about this kind of collision if the account doesn't have code or nonce. Otherwise its value doesn't matter.
     /// For more information see EIP-7610: https://eips.ethereum.org/EIPS/eip-7610
@@ -40,7 +40,7 @@ pub struct LevmAccount {
 // This is used only in state_v2 runner, storage is already fully filled in the genesis account.
 impl From<GenesisAccount> for LevmAccount {
     fn from(genesis: GenesisAccount) -> Self {
-        let storage: BTreeMap<H256, U256> = genesis
+        let storage: FxHashMap<H256, U256> = genesis
             .storage
             .into_iter()
             .map(|(key, value)| (H256::from(key.to_big_endian()), value))
@@ -66,7 +66,7 @@ impl From<AccountState> for LevmAccount {
                 balance: state.balance,
                 nonce: state.nonce,
             },
-            storage: BTreeMap::new(),
+            storage: Default::default(),
             status: AccountStatus::Unmodified,
             has_storage: state.storage_root != *EMPTY_TRIE_HASH,
         }

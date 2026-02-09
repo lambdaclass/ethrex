@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 ethrex.workspace = true
@@ -29,3 +30,6 @@ ethrex-l2-rpc.workspace = true
 [[bench]]
 name = "build_block_benchmark"
 harness = false
+
+[lints]
+workspace = true

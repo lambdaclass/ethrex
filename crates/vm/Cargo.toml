@@ -4,9 +4,11 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [dependencies]
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, default-features = false }
+ethrex-crypto.workspace = true
 ethrex-levm = { path = "./levm", default-features = false }
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
@@ -14,12 +16,12 @@ ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
 bytes.workspace = true
 thiserror.workspace = true
-hex.workspace = true
 lazy_static.workspace = true
 tracing.workspace = true
 serde.workspace = true
-sha3.workspace = true
 rkyv.workspace = true
+rayon.workspace = true
+rustc-hash.workspace = true
 
 bincode = "1"
 dyn-clone = "1.0"
@@ -30,10 +32,19 @@ ethereum-types.workspace = true
 path = "./lib.rs"
 
 [features]
-default = []
+default = ["secp256k1"]
+
+secp256k1 = ["ethrex-levm/secp256k1", "ethrex-common/secp256k1"]
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+
+sp1 = ["ethrex-levm/sp1", "ethrex-common/sp1"]
+risc0 = ["ethrex-levm/risc0", "ethrex-common/risc0", "c-kzg"]
+zisk = ["ethrex-levm/zisk", "ethrex-common/zisk"]
+openvm = ["ethrex-levm/openvm", "ethrex-common/openvm"]
+perf_opcode_timings = ["ethrex-levm/perf_opcode_timings"]
+
 debug = ["ethrex-levm/debug"]
-sp1 = ["ethrex-levm/sp1"]
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"

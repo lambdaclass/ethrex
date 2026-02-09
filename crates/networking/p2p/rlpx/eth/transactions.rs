@@ -1,4 +1,3 @@
-use crate::log_peer_debug;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -17,6 +16,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_storage::error::StoreError;
+use tracing::debug;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
@@ -224,7 +224,7 @@ pub struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
-    pooled_transactions: Vec<P2PTransaction>,
+    pub pooled_transactions: Vec<P2PTransaction>,
 }
 
 impl PooledTransactions {
@@ -236,7 +236,7 @@ impl PooledTransactions {
     }
 
     /// validates if the received TXs match the request
-    pub async fn validate_requested(
+    pub fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes,
         fork: Fork,
@@ -277,8 +277,8 @@ impl PooledTransactions {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 if is_l2_mode {
-                    log_peer_debug!(
-                        node,
+                    debug!(
+                        peer=%node,
                         "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
                     );
                     continue;
@@ -287,7 +287,11 @@ impl PooledTransactions {
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
-                    log_peer_debug!(node, &format!("Error adding transaction: {e}"));
+                    debug!(
+                        peer=%node,
+                        error=%e,
+                        "Error adding transaction"
+                    );
                     continue;
                 }
             } else {
@@ -295,7 +299,11 @@ impl PooledTransactions {
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
                 if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    log_peer_debug!(node, &format!("Error adding transaction: {e}"));
+                    debug!(
+                        peer=%node,
+                        error=%e,
+                        "Error adding transaction"
+                    );
                     continue;
                 }
             }

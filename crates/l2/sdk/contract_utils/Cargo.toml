@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 thiserror.workspace = true
 tracing.workspace = true
+
+[lints]
+workspace = true

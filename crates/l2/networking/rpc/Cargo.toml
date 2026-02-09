@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -19,7 +20,7 @@ ethrex-rlp.workspace = true
 
 axum.workspace = true
 tower-http.workspace = true
-serde = { version = "1.0.203", features = ["derive"] }
+serde.workspace = true
 serde_json = "1.0.117"
 tokio = { workspace = true, features = ["full"] }
 bytes.workspace = true
@@ -40,3 +41,4 @@ path = "./lib.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"

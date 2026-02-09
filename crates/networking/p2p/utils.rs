@@ -39,20 +39,18 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
     H512::from_slice(&encoded[1..])
 }
 
-/// Returns true if the folders used for the partial download of the leaves exists. if they do exist, it
-/// should be deleted. We don't auto delete them on the off chance we want to backup the files
-pub fn validate_folders(datadir: &Path) -> bool {
-    let folder_doesnt_exist = !std::fs::exists(get_account_state_snapshots_dir(datadir))
-        .is_ok_and(|exists| exists)
-        && !std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|exists| exists)
-        && !std::fs::exists(get_code_hashes_snapshots_dir(datadir)).is_ok_and(|exists| exists);
+/// Deletes the snap folders needed for downloading the leaves during the initial
+/// step of snap sync.
+pub fn delete_leaves_folder(datadir: &Path) {
+    // We ignore the errors because this can happen when the folders don't exist
+    let _ = std::fs::remove_dir_all(get_account_state_snapshots_dir(datadir));
+    let _ = std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir));
+    let _ = std::fs::remove_dir_all(get_code_hashes_snapshots_dir(datadir));
     #[cfg(feature = "rocksdb")]
-    let folder_doesnt_exist = {
-        folder_doesnt_exist
-            && !std::fs::exists(get_rocksdb_temp_accounts_dir(datadir)).is_ok_and(|exists| exists)
-            && !std::fs::exists(get_rocksdb_temp_storage_dir(datadir)).is_ok_and(|exists| exists)
+    {
+        let _ = std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir));
+        let _ = std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir));
     };
-    folder_doesnt_exist
 }
 
 pub fn get_account_storages_snapshots_dir(datadir: &Path) -> PathBuf {
@@ -152,7 +150,6 @@ pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
         .inspect_err(|err| error!(%err, ?path, "Failed to dump snapshot to file"))
         .map_err(|err| DumpError {
             path: path.to_path_buf(),
-            contents,
             error: err.kind(),
         })
 }
@@ -166,7 +163,6 @@ pub fn dump_accounts_to_file(
         .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
         .map_err(|_| DumpError {
             path: path.to_path_buf(),
-            contents: Vec::new(),
             error: std::io::ErrorKind::Other,
         });
     #[cfg(not(feature = "rocksdb"))]
@@ -209,7 +205,6 @@ pub fn dump_storages_to_file(
     .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
     .map_err(|_| DumpError {
         path: path.to_path_buf(),
-        contents: Vec::new(),
         error: std::io::ErrorKind::Other,
     });
 
@@ -222,4 +217,13 @@ pub fn dump_storages_to_file(
             .collect::<Vec<_>>()
             .encode_to_vec(),
     )
+}
+
+/// Computes the distance between two nodes according to the discv4/5 protocols
+/// <https://github.com/ethereum/devp2p/blob/master/discv4.md#node-identities>
+/// <https://github.com/ethereum/devp2p/blob/master/discv5/discv5-theory.md#nodes-records-and-distances>
+pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
+    let xor = node_id_1 ^ node_id_2;
+    let distance = U256::from_big_endian(xor.as_bytes());
+    distance.bits().saturating_sub(1)
 }

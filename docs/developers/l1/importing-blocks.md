@@ -37,7 +37,7 @@ Adding a block is performed in `crates/blockchain/blockchain.rs:add_block`, and 
 1. Block execution (`execute_block`).
    1. Pre-validation. Checks that the block parent is present, that the base fee matches the parent's expectations, timestamps, header number, transaction root and withdrawals root.
    2. VM execution. The block contains all the transactions, which is all needed to perform a state transition. The VM has a reference to the store, so it can get the current state to apply transactions on top of it.
-   3. Post execution validations: gas used, receipts root, requets hash.
+   3. Post execution validations: gas used, receipts root, requests hash.
    4. The VM execution does not mutate the store itself. It returns a list of all changes that happened in execution so they can be applied in any custom way.
 2. Post-state storage (`store_block`)
    1. `apply_account_updates` gets the pre-state from the store, applies the updates to get an updated post-transition-state, calculates the root and commits the new state to disk.
@@ -87,7 +87,7 @@ flowchart LR
 
 This means that for a single block number we actually have different post-states, depending on which block we executed. In turn, this means that using a block number is not a reliable way of getting a state. To fix this, what we do is calculate the hash of a block, which is unique, and use that as an identifier for both the block and its corresponding block state. In that way, if I request the DB the state for `hash(B1)` it understands that I'm looking for `S1`, whereas if I request the DB the state for `hash(B1')` I'm looking for `S1'`.
 
-How we determine which is the right fork is called **Fork choice**, which is not done by the execution client, but by the consensus client. What concerns to us is that if we currently think we are on `S3` and the consensus client notifies us that actually `S3'` is the current fork, we need to change our current state to that one. That means that we need to save every post-state in case we need to change forks. This changing of the nodes perception of the correct soft fork to a different one is called **reorg**.
+How we determine which is the right fork is called **Fork choice**, which is not done by the execution client, but by the consensus client. What concerns us is that if we currently think we are on `S3` and the consensus client notifies us that actually `S3'` is the current fork, we need to change our current state to that one. That means that we need to save every post-state in case we need to change forks. This changing of the nodes perception of the correct soft fork to a different one is called **reorg**.
 
 ### VM - State interaction
 
@@ -96,7 +96,7 @@ As mentioned in the previous point, the VM execution doesn't directly mutate the
 This is a key piece of code in `Blockchain.execute_block`:
 
 ```rust
-let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
 let mut vm = Evm::new(vm_db);
 let execution_result = vm.execute_block(block)?;
 let account_updates = vm.get_state_transitions()?;
@@ -143,13 +143,13 @@ pub struct VmState {
 }
 ```
 
-The accounts are indexed by the hash of their address. The storage has a two level lookup: an index by account address hash, and then an index by hashed slot. The reasons why we use hashes of the addresses and slots instead of using them directly is an implementation detail.
+The accounts are indexed by the hash of their address. The storage has a two level lookup: an index by account address hash, and then an index by hashed slot. The reason why we use hashes of the addresses and slots instead of using them directly is an implementation detail.
 
-This flat key-value representation is what we usually call a snapshot. To write and get state, it would be enough and efficient to have a table in the db with some snapshot in the past and then the differences in each account and storage each block. This are precisely the account updates, and this is precisely what we do in our snapshots implementation.
+This flat key-value representation is what we usually call a snapshot. To write and get state, it would be enough and efficient to have a table in the db with some snapshot in the past and then the differences in each account and storage each block. These are precisely the account updates, and this is precisely what we do in our snapshots implementation.
 
-However, we also need to be able to efficiently summarize a state, which is done using a structure called the Merkle Patricia Trie (MPT). This is a big topic, not covered by this document. A link to an in-detail document will be added soon. The most important part of it is that it's a merkle tree and we can calculate it's root/hash to summarize a whole state. When a node proposes a block, the root of the post-state is included as metadata in the header. That means that after executing a block, we can calculate the root of the resulting post-state MPT and compare it with the metadata. If it matches, we have a cryptographic proof that both nodes arrived at the same conclusion.
+However, we also need to be able to efficiently summarize a state, which is done using a structure called the Merkle Patricia Trie (MPT). This is a big topic, not covered by this document. A link to an in-detail document will be added soon. The most important part of it is that it's a merkle tree and we can calculate its root/hash to summarize a whole state. When a node proposes a block, the root of the post-state is included as metadata in the header. That means that after executing a block, we can calculate the root of the resulting post-state MPT and compare it with the metadata. If it matches, we have a cryptographic proof that both nodes arrived at the same conclusion.
 
-This means that we will need to maintain both a snapshot (for efficient reads) and a trie (for efficient summaries) for every state in the blockchain. Here's an interesting blogpost by the go ethereum (geth) team explaning this need in detail: https://blog.ethereum.org/2020/07/17/ask-about-geth-snapshot-acceleration
+This means that we will need to maintain both a snapshot (for efficient reads) and a trie (for efficient summaries) for every state in the blockchain. Here's an interesting blogpost by the go ethereum (geth) team explaining this need in detail: https://blog.ethereum.org/2020/07/17/ask-about-geth-snapshot-acceleration
 
 # TODO
 

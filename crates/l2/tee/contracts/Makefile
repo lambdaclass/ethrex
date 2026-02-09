@@ -42,7 +42,7 @@ lib/openzeppelin-contracts:
 
 solc_out/TDXVerifier.bin: src/TDXVerifier.sol lib/openzeppelin-contracts
 	mkdir -p solc_out
-	solc src/TDXVerifier.sol --bin --allow-paths lib/ -o solc_out/ --overwrite
+	solc src/TDXVerifier.sol --bin --allow-paths lib/,../../.. --base-path . --include-path ../../ @openzeppelin/=lib/openzeppelin-contracts/ -o solc_out/ --overwrite
 
 deploy: solc_out/TDXVerifier.bin
 	$(eval CONTRACT_BIN := $(shell cat solc_out/TDXVerifier.bin))

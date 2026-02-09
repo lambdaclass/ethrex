@@ -2,6 +2,7 @@
 name = "reorgs"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 ethrex = { workspace = true, features = ["l2"] }
@@ -21,3 +22,4 @@ sha2.workspace = true
 hex.workspace = true
 nix = { version = "0.30", features = ["signal"] }
 secp256k1.workspace = true
+url.workspace = true

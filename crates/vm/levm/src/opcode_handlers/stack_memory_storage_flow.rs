@@ -36,7 +36,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::TLOAD)?;
 
-        current_call_frame.stack.push1(value)?;
+        current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -60,6 +60,7 @@ impl<'a> VM<'a> {
     }
 
     // MLOAD operation
+    #[inline]
     pub fn op_mload(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
@@ -73,7 +74,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(current_call_frame.memory.load_word(offset)?)?;
+            .push(current_call_frame.memory.load_word(offset)?)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -142,7 +143,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
 
-        current_call_frame.stack.push1(value)?;
+        current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -233,7 +234,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
         current_call_frame
             .stack
-            .push1(current_call_frame.memory.len().into())?;
+            .push(current_call_frame.memory.len().into())?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -244,7 +245,7 @@ impl<'a> VM<'a> {
 
         let remaining_gas = current_call_frame.gas_remaining;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
-        current_call_frame.stack.push1(remaining_gas.into())?;
+        current_call_frame.stack.push(remaining_gas.into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -291,7 +292,7 @@ impl<'a> VM<'a> {
     ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
-    fn target_address_is_valid(call_frame: &mut CallFrame, jump_address: u16) -> bool {
+    fn target_address_is_valid(call_frame: &CallFrame, jump_address: u32) -> bool {
         call_frame
             .bytecode
             .jump_targets
@@ -305,14 +306,16 @@ impl<'a> VM<'a> {
     /// to be equal to the specified address. If the address is not a
     /// valid JUMPDEST, it will return an error
     pub fn jump(call_frame: &mut CallFrame, jump_address: U256) -> Result<(), VMError> {
-        let jump_address_u16 = jump_address
+        let jump_address_u32 = jump_address
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         #[expect(clippy::arithmetic_side_effects)]
-        if Self::target_address_is_valid(call_frame, jump_address_u16) {
+        if Self::target_address_is_valid(call_frame, jump_address_u32) {
             call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
-            call_frame.pc = usize::from(jump_address_u16) + 1;
+            call_frame.pc = usize::try_from(jump_address_u32)
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?
+                + 1;
             Ok(())
         } else {
             Err(ExceptionalHalt::InvalidJump.into())
@@ -349,7 +352,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.pc.wrapping_sub(1)))?;
+            .push(U256::from(current_call_frame.pc.wrapping_sub(1)))?;
 
         Ok(OpcodeResult::Continue)
     }

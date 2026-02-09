@@ -13,10 +13,10 @@ use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::{
-    discv4::peer_table::{PeerTable, PeerTableError},
+    peer_table::{PeerTable, PeerTableError},
     rlpx::{
         Message,
         connection::server::PeerConnection,
@@ -112,7 +112,7 @@ pub enum OutMessage {
 }
 
 impl TxBroadcaster {
-    pub async fn spawn(
+    pub fn spawn(
         kademlia: PeerTable,
         blockchain: Arc<Blockchain>,
         tx_broadcasting_time_interval: u64,
@@ -127,7 +127,7 @@ impl TxBroadcaster {
             next_peer_idx: 0,
         };
 
-        let server = state.clone().start();
+        let server = state.start();
 
         send_interval(
             Duration::from_millis(tx_broadcasting_time_interval),
@@ -184,7 +184,7 @@ impl TxBroadcaster {
             .get_txs_for_broadcast()
             .map_err(|_| TxBroadcasterError::Broadcast)?;
         if txs_to_broadcast.is_empty() {
-            debug!("No transactions to broadcast");
+            trace!("No transactions to broadcast");
             return Ok(());
         }
         let peers = self.peer_table.get_peers_with_capabilities().await?;
@@ -193,7 +193,9 @@ impl TxBroadcaster {
         let full_txs = txs_to_broadcast
             .iter()
             .map(|tx| tx.transaction().clone())
-            .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction { .. }))
+            .filter(|tx| {
+                !matches!(tx, Transaction::EIP4844Transaction { .. }) && !tx.is_privileged()
+            })
             .collect::<Vec<Transaction>>();
 
         let blob_txs = txs_to_broadcast
@@ -262,6 +264,7 @@ impl TxBroadcaster {
                     .known_txs
                     .get(&hash)
                     .is_some_and(|record| record.peers.is_set(peer_idx))
+                    && !tx.is_privileged()
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
@@ -318,7 +321,7 @@ impl GenServer for TxBroadcaster {
     ) -> CastResponse {
         match message {
             Self::CastMsg::BroadcastTxs => {
-                debug!(received = "BroadcastTxs");
+                trace!(received = "BroadcastTxs");
 
                 let _ = self.broadcast_txs().await.inspect_err(|_| {
                     error!("Failed to broadcast transactions");

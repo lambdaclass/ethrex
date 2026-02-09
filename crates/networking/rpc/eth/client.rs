@@ -24,10 +24,7 @@ impl RpcHandler for ChainId {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested chain id");
-        let chain_spec = context
-            .storage
-            .get_chain_config()
-            .map_err(|error| RpcErr::Internal(error.to_string()))?;
+        let chain_spec = context.storage.get_chain_config();
         serde_json::to_value(format!("{:#x}", chain_spec.chain_id))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -53,14 +50,18 @@ impl RpcHandler for Syncing {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let Some(syncer) = &context.syncer else {
+            return Err(RpcErr::Internal(
+                "Syncing status requested but syncer is not initialized".to_string(),
+            ));
+        };
         if context.blockchain.is_synced() {
             Ok(Value::Bool(!context.blockchain.is_synced()))
         } else {
             let syncing_status = SyncingStatusRpc {
                 starting_block: context.storage.get_earliest_block_number().await?,
                 current_block: context.storage.get_latest_block_number().await?,
-                highest_block: context
-                    .syncer
+                highest_block: syncer
                     .get_last_fcu_head()
                     .map_err(|error| RpcErr::Internal(error.to_string()))?
                     .to_low_u64_be(),
@@ -87,7 +88,7 @@ struct EthConfigObject {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EthConfigResponse {
+pub struct EthConfigResponse {
     current: EthConfigObject,
     next: Option<EthConfigObject>,
     last: Option<EthConfigObject>,
@@ -99,7 +100,7 @@ impl RpcHandler for Config {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let chain_config = context.storage.get_chain_config()?;
+        let chain_config = context.storage.get_chain_config();
         let Some(latest_block) = context
             .storage
             .get_block_by_number(context.storage.get_latest_block_number().await?)
@@ -143,7 +144,7 @@ async fn get_config_for_fork(
     fork: Fork,
     context: &RpcApiContext,
 ) -> Result<EthConfigObject, RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
+    let chain_config = context.storage.get_chain_config();
     let activation_time = chain_config.get_activation_timestamp_for_fork(fork);
     let genesis_header = context
         .storage

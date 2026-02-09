@@ -17,7 +17,7 @@ The base fee follows the same rules as the Ethereum L1 base fee. It adjusts dyna
 By default, base fees are burned. However, a sequencer can configure a `base fee vault` address to receive the collected base fees instead of burning them.
 
 ```sh
-ethrex l2 --block-producer.base-fee-vault-address <l2-fee-vault-address>
+ethrex l2 --block-producer.base-fee-vault-address <l2-base-fee-vault-address>
 ```
 
 > [!CAUTION]  
@@ -34,7 +34,7 @@ All collected operator fees are deposited into a dedicated `operator fee vault` 
 To set the operator fee amount:
 
 ```sh
-ethrex l2 --block-producer.operator-fee <amount-in-wei>
+ethrex l2 --block-producer.operator-fee-per-gas <amount-in-wei>
 ```
 
 To set the operator fee vault address:
@@ -80,6 +80,56 @@ This behavior ensures that transaction senders **never pay more than `max_fee_pe
 > The `eth_gasPrice` RPC endpoint has been **modified** to include the `operator_fee_per_gas` value when the operator fee mechanism is active.  
 > This means that the value returned by `eth_gasPrice` corresponds to `base_fee_per_gas + operator_fee_per_gas + estimated_gas_tip`.
 
+## L1 Fees
+
+L1 fees represent the cost of posting data from the L2 to the L1.  
+Each transaction is charged based on the amount of **L1 Blob space** it occupies (the size of the transaction when RLP-encoded).
+
+Each time a transaction is executed, the sequencer calculates its RLP-encoded size.
+Then, the L1 fee for that transaction is computed as:
+
+```
+l1_fee = blob_base_fee_per_byte * tx_encoded_size
+```
+
+An additional amount of gas (`l1_gas`) is added to the transaction execution so that:
+
+```
+l1_gas * gas_price = l1_fee
+```
+
+This guarantees that the total amount charged to the user never exceeds `gas_limit * gas_price`, while transparently accounting for the L1 posting cost.  
+Importantly, this process happens automatically — users do **not** need to perform any additional steps.  
+Calls to `eth_estimateGas` already inherit this behavior and will include the extra gas required for the L1 fee.
+
+The computed L1 fee is deducted from the sender’s balance and transferred to the `L1 Fee Vault` address.
+
+The **blob base fee per byte** is derived from the L1 `BlobBaseFee`.  
+The `L1Watcher` periodically fetches the `BlobBaseFee` from L1 (at a configured interval) and uses it to compute:
+
+```
+blob_base_fee_per_byte = (l1_fee_per_blob_gas * GAS_PER_BLOB) / SAFE_BYTES_PER_BLOB
+```
+
+See the `Data availability` section [here](../architecture/overview.md) for more information about how data availability works.
+
+
+L1 fee is deactivated by default. To activate it, configure the **L1 fee vault address**:
+
+```sh
+ethrex l2 --block-producer.l1-fee-vault-address <l1-fee-vault-address>
+```
+
+To configure the **interval** at which the `BlobBaseFee` is fetched from L1:
+
+```sh
+ethrex l2 --block-producer.blob-base-fee-update-interval <milliseconds>
+```
+
+> [!CAUTION]  
+> If the L1 fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.
+
+
 ## Useful RPC Methods
 
 The following custom RPC methods are available to query fee-related parameters directly from the L2 node.  
@@ -90,6 +140,4 @@ Each method accepts a single argument: the **`block_number`** to query historica
 | `ethrex_getBaseFeeVaultAddress` | Returns the address configured to receive the **base fees** collected in the specified block. | ```ethrex_getBaseFeeVaultAddress {"block_number": 12345}``` |
 | `ethrex_getOperatorFeeVaultAddress` | Returns the address configured as the **operator fee vault** in the specified block. | ```ethrex_getOperatorFeeVaultAddress {"block_number": 12345}``` |
 | `ethrex_getOperatorFee` | Returns the **operator fee per gas** value active at the specified block. | ```ethrex_getOperatorFee {"block_number": 12345}``` |
-
-
-## L1 Fees
+| `ethrex_getL1BlobBaseFee` | Returns the **L1 blob base fee per gas** fetched from L1 and used for L1 fee computation at the specified block. | ```ethrex_getL1BlobBaseFee {"block_number": 12345}``` |

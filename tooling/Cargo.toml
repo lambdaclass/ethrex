@@ -1,0 +1,105 @@
+[workspace]
+members = [
+  "archive_sync",
+  "ef_tests/blockchain",
+  "ef_tests/state",
+  "ef_tests/state_v2",
+  "hive_report",
+  "load_test",
+  "loc",
+  "migrations",
+  "reorgs",
+]
+exclude = ["ef_tests/state"]
+resolver = "2"
+
+[workspace.package]
+version = "4.0.0"
+edition = "2024"
+authors = ["LambdaClass"]
+documentation = "https://docs.ethrex.xyz"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+ethrex-blockchain = { path = "../crates/blockchain" }
+ethrex-common = { path = "../crates/common" }
+ethrex-crypto = { path = "../crates/common/crypto" }
+ethrex-config = { path = "../crates/common/config" }
+ethrex-p2p = { path = "../crates/networking/p2p" }
+ethrex-rpc = { path = "../crates/networking/rpc" }
+ethrex-storage = { path = "../crates/storage" }
+ethrex-vm = { path = "../crates/vm", default-features = false }
+ethrex-levm = { path = "../crates/vm/levm" }
+ethrex-trie = { path = "../crates/common/trie" }
+ethrex-rlp = { path = "../crates/common/rlp" }
+ethrex-l2 = { path = "../crates/l2" }
+ethrex-l2-common = { path = "../crates/l2/common" }
+ethrex-sdk = { path = "../crates/l2/sdk" }
+ethrex-prover = { path = "../crates/l2/prover" }
+ethrex-storage-rollup = { path = "../crates/l2/storage" }
+ethrex = { path = "../cmd/ethrex" }
+ethrex-l2-rpc = { path = "../crates/l2/networking/rpc" }
+
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
+
+async-trait = "0.1.88"
+ethereum-types = { version = "0.15.1", features = ["serialize"] }
+serde = { version = "1.0.203", features = ["derive"] }
+serde_with = "3.11.0"
+serde_json = "1.0.117"
+bytes = { version = "1.6.0", features = ["serde"] }
+tokio = { version = "1.41.1", default-features = false }
+thiserror = "2.0.9"
+hex = "0.4.3"
+hex-literal = "0.4.1"
+crc32fast = "1.4.2"
+lazy_static = "1.5.0"
+sha2 = "0.10.8"
+tokio-util = { version = "0.7.15", features = ["rt"] }
+jsonwebtoken = "9.3.0"
+rand = "0.8.5"
+reqwest = { version = "0.12.7", features = ["socks", "json"] }
+snap = "1.1.1"
+secp256k1 = { version = "0.30.0", default-features = false, features = [
+  "global-context",
+  "recovery",
+  "rand",
+] }
+axum = { version = "0.8.1" }
+clap = { version = "4.3", features = ["derive", "env"] }
+clap_complete = "4.5.17"
+eyre = "0.6.12"
+rustc-hex = "2.1.0"
+url = { version = "2.5.4", features = ["serde"] }
+kzg-rs = "0.2.6"
+libsql = "0.9.10"
+futures = "0.3.31"
+spawned-concurrency = "0.4.2"
+spawned-rt = "0.4.2"
+lambdaworks-crypto = "0.13.0"
+tui-logger = { version = "0.17.3", features = ["tracing-support"] }
+crossbeam = "0.8.4"
+rayon = "1.10.0"
+rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
+tempfile = "3.8"
+uuid = { version = "1.18.1", features = ["v4"] }
+tower-http = { version = "0.6.2", features = ["cors"] }
+indexmap = { version = "2.11.4" }
+
+rocksdb = "0.24.0"
+
+[profile.dev]
+debug = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.release-with-debug]
+inherits = "release"
+debug = 2
+
+[patch.crates-io]
+secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }

@@ -72,8 +72,7 @@ where
     // Run in another task to clean up properly on panic
     let result = tokio::spawn(test_fn(simulator.clone())).await;
 
-    simulator.lock_owned().await.stop();
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    simulator.lock_owned().await.stop().await;
 
     match result {
         Ok(_) => info!(test=%test_name, elapsed=?start.elapsed(), "test completed successfully"),

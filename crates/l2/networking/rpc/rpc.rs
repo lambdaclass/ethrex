@@ -1,6 +1,12 @@
-use crate::l2::batch::{BatchNumberRequest, GetBatchByBatchNumberRequest};
-use crate::l2::fees::{GetBaseFeeVaultAddress, GetOperatorFee, GetOperatorFeeVaultAddress};
-use crate::l2::l1_message::GetL1MessageProof;
+use crate::l2::batch::{
+    BatchNumberRequest, GetBatchByBatchBlockNumberRequest, GetBatchByBatchNumberRequest,
+};
+use crate::l2::execution_witness::handle_execution_witness;
+use crate::l2::fees::{
+    GetBaseFeeVaultAddress, GetL1BlobBaseFeeRequest, GetL1FeeVaultAddress, GetOperatorFee,
+    GetOperatorFeeVaultAddress,
+};
+use crate::l2::messages::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
 use axum::{Json, Router, http::StatusCode, routing::post};
@@ -12,8 +18,9 @@ use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
+use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
 use ethrex_rpc::{
-    GasTipEstimator, NodeData, RpcRequestWrapper,
+    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper,
     types::transaction::SendRawTransactionRequest,
     utils::{RpcRequest, RpcRequestId},
 };
@@ -72,9 +79,9 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
-    syncer: SyncManager,
-    peer_handler: PeerHandler,
-    client_version: String,
+    syncer: Option<Arc<SyncManager>>,
+    peer_handler: Option<PeerHandler>,
+    client_version: ClientVersion,
     valid_delegation_addresses: Vec<Address>,
     sponsor_pk: SecretKey,
     rollup_store: StoreRollup,
@@ -84,12 +91,13 @@ pub async fn start_api(
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         l1_ctx: ethrex_rpc::RpcApiContext {
             storage,
             blockchain,
             active_filters: active_filters.clone(),
-            syncer: Arc::new(syncer),
+            syncer,
             peer_handler,
             node_data: NodeData {
                 jwt_secret,
@@ -101,6 +109,7 @@ pub async fn start_api(
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler,
             gas_ceil,
+            block_worker_channel,
         },
         valid_delegation_addresses,
         sponsor_pk,
@@ -195,13 +204,19 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = tx {
                 debug!(
                     "EIP-4844 transaction are not supported in the L2: {:#x}",
-                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()).hash()
+                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx).hash()
                 );
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "EIP-4844 transactions are not supported in the L2".to_string(),
                 ));
             }
             SendRawTransactionRequest::call(req, context.l1_ctx)
+                .await
+                .map_err(RpcErr::L1RpcErr)
+        }
+        "debug_executionWitness" => {
+            let request = ExecutionWitnessRequest::parse(&req.params)?;
+            handle_execution_witness(&request, context)
                 .await
                 .map_err(RpcErr::L1RpcErr)
         }
@@ -214,12 +229,15 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
-        "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
+        "ethrex_getL1MessageProof" => GetL1MessageProof::call(req, context).await,
         "ethrex_batchNumber" => BatchNumberRequest::call(req, context).await,
+        "ethrex_getBatchByBlock" => GetBatchByBatchBlockNumberRequest::call(req, context).await,
         "ethrex_getBatchByNumber" => GetBatchByBatchNumberRequest::call(req, context).await,
         "ethrex_getBaseFeeVaultAddress" => GetBaseFeeVaultAddress::call(req, context).await,
         "ethrex_getOperatorFeeVaultAddress" => GetOperatorFeeVaultAddress::call(req, context).await,
         "ethrex_getOperatorFee" => GetOperatorFee::call(req, context).await,
+        "ethrex_getL1FeeVaultAddress" => GetL1FeeVaultAddress::call(req, context).await,
+        "ethrex_getL1BlobBaseFee" => GetL1BlobBaseFeeRequest::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
         }

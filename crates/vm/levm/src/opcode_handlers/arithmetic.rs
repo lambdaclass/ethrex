@@ -10,13 +10,14 @@ use ethrex_common::{U256, U512};
 
 impl<'a> VM<'a> {
     // ADD operation
+    #[inline]
     pub fn op_add(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
 
         let [augend, addend] = *current_call_frame.stack.pop()?;
         let sum = augend.overflowing_add(addend).0;
-        current_call_frame.stack.push1(sum)?;
+        current_call_frame.stack.push(sum)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -28,7 +29,7 @@ impl<'a> VM<'a> {
 
         let [minuend, subtrahend] = *current_call_frame.stack.pop()?;
         let difference = minuend.overflowing_sub(subtrahend).0;
-        current_call_frame.stack.push1(difference)?;
+        current_call_frame.stack.push(difference)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -40,7 +41,7 @@ impl<'a> VM<'a> {
 
         let [multiplicand, multiplier] = *current_call_frame.stack.pop()?;
         let product = multiplicand.overflowing_mul(multiplier).0;
-        current_call_frame.stack.push1(product)?;
+        current_call_frame.stack.push(product)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -55,7 +56,7 @@ impl<'a> VM<'a> {
             current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue);
         };
-        current_call_frame.stack.push1(quotient)?;
+        current_call_frame.stack.push(quotient)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -86,7 +87,7 @@ impl<'a> VM<'a> {
             None => U256::zero(),
         };
 
-        current_call_frame.stack.push1(quotient)?;
+        current_call_frame.stack.push(quotient)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -100,7 +101,7 @@ impl<'a> VM<'a> {
 
         let remainder = dividend.checked_rem(divisor).unwrap_or_default();
 
-        current_call_frame.stack.push1(remainder)?;
+        current_call_frame.stack.push(remainder)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -134,7 +135,7 @@ impl<'a> VM<'a> {
             unchecked_remainder
         };
 
-        current_call_frame.stack.push1(remainder)?;
+        current_call_frame.stack.push(remainder)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -170,7 +171,7 @@ impl<'a> VM<'a> {
             .try_into()
             .expect("can't fail because we applied % mod where mod is a U256 value");
 
-        current_call_frame.stack.push1(sum_mod)?;
+        current_call_frame.stack.push(sum_mod)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -187,23 +188,36 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let multiplicand: U512 = multiplicand.into();
-        let multiplier: U512 = multiplier.into();
+        #[cfg(feature = "zisk")]
+        let product_mod = {
+            use ziskos::zisklib::mulmod256_c;
+            let mut product_mod = U256::zero();
+            unsafe {
+                mulmod256_c(
+                    multiplicand.0.as_ptr(),
+                    multiplier.0.as_ptr(),
+                    modulus.0.as_ptr(),
+                    product_mod.0.as_mut_ptr(),
+                );
+            }
+            product_mod
+        };
 
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "both values come from a u256, so the product can fit in a U512"
-        )]
-        let product = multiplicand * multiplier;
-        #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
-        let product_mod = product % modulus;
+        #[cfg(not(feature = "zisk"))]
+        let product_mod = {
+            let product = multiplicand.full_mul(multiplier);
 
-        #[allow(clippy::expect_used, reason = "can't overflow")]
-        let product_mod: U256 = product_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
+            #[allow(clippy::arithmetic_side_effects, reason = "modulus isn't zero")]
+            let product_mod = product % modulus;
 
-        current_call_frame.stack.push1(product_mod)?;
+            #[allow(clippy::expect_used, reason = "modulus is a U256, so result fits")]
+            let product_mod: U256 = product_mod
+                .try_into()
+                .expect("can't fail because we applied % mod where mod is a U256 value");
+            product_mod
+        };
+
+        current_call_frame.stack.push(product_mod)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -218,7 +232,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost)?;
 
         let power = base.overflowing_pow(exponent).0;
-        current_call_frame.stack.push1(power)?;
+        current_call_frame.stack.push(power)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -231,7 +245,7 @@ impl<'a> VM<'a> {
         let [byte_size_minus_one, value_to_extend] = *current_call_frame.stack.pop()?;
 
         if byte_size_minus_one > U256::from(31) {
-            current_call_frame.stack.push1(value_to_extend)?;
+            current_call_frame.stack.push(value_to_extend)?;
             return Ok(OpcodeResult::Continue);
         }
 
@@ -255,7 +269,7 @@ impl<'a> VM<'a> {
                 value_to_extend | !mask
             };
 
-            current_call_frame.stack.push1(result)?;
+            current_call_frame.stack.push(result)?;
 
             Ok(OpcodeResult::Continue)
         }
@@ -269,7 +283,7 @@ impl<'a> VM<'a> {
 
         self.current_call_frame
             .stack
-            .push1(U256::from(value.leading_zeros()))?;
+            .push(U256::from(value.leading_zeros()))?;
 
         Ok(OpcodeResult::Continue)
     }

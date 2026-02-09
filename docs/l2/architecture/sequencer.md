@@ -10,7 +10,7 @@ Creates Blocks with a connection to the `auth.rpc` port.
 
 ### L1 Watcher
 
-This component monitors the L1 for new deposits made by users. For that, it queries the CommonBridge contract on L1 at regular intervals (defined by the config file) for new DepositInitiated() events. Once a new deposit event is detected, it creates the corresponding deposit transaction on the L2.
+This component monitors the L1 for new deposits made by users. For that, it queries the CommonBridge contract on L1 at regular intervals (defined by the config file) for new DepositInitiated() events. Once a new deposit event is detected, it creates the corresponding deposit transaction on the L2. It also periodically fetches the `BlobBaseFee` from L1 (at a configured interval), which is used to compute the [L1 fees](../fundamentals/transaction_fees.md#l1-fees).
 
 ### L1 Transaction Sender (a.k.a. L1 Committer)
 
@@ -18,7 +18,7 @@ As the name suggests, this component sends transactions to the L1. But not any t
 
 Commit transactions are sent when the Proposer wants to commit to a new batch of blocks. These transactions contain the batch data to be committed in the L1.
 
-Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contains the new state root of the L2, the hash of the state diffs produced in the block, the root of the withdrawals logs merkle tree and the hash of the processed deposits.
+Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contain the new state root of the L2, the hash of the state diffs produced in the block, the root of the withdrawals logs merkle tree and the hash of the processed deposits.
 
 ### Proof Coordinator
 
@@ -33,7 +33,7 @@ For more information about the Proof Coordinator, the Prover, and the proving pr
 The L1 Proof Sender is responsible for interacting with Ethereum L1 to manage proof verification. Its key functionalities include:
 
 - Connecting to Ethereum L1 to send proofs for verification.
-- Dynamically determine required proof types based on active verifier contracts (`PICOVERIFIER`, `R0VERIFIER`, `SP1VERIFIER`).
+- Dynamically determine required proof types based on active verifier contracts (`REQUIRE_<prover>_PROOF`).
 - Ensure blocks are verified in the correct order by invoking the `verify(..)` function in the `OnChainProposer` contract. Upon successful verification, an event is emitted to confirm the block's verification status.
 - Operating on a configured interval defined by `proof_send_interval_ms`.
 
