@@ -552,6 +552,31 @@ impl L1ProofSender {
         Ok(())
     }
 
+    /// Sends a single batch proof via verifyBatches, deleting the invalid proof
+    /// from the store if the transaction reverts.
+    async fn send_single_batch_proof(
+        &self,
+        batch_number: u64,
+        proofs: &HashMap<ProverType, BatchProof>,
+    ) -> Result<(), ProofSenderError> {
+        let single_batch = [(batch_number, proofs.clone())];
+        let result = self
+            .send_verify_batches_tx(batch_number, &single_batch)
+            .await;
+
+        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
+            ref message, ..
+        })) = result
+        {
+            self.try_delete_invalid_proof(message, batch_number).await?;
+        }
+        let verify_tx_hash = result?;
+        self.rollup_store
+            .store_verify_tx_by_batch(batch_number, verify_tx_hash)
+            .await?;
+        Ok(())
+    }
+
     /// Sends one or more consecutive batch proofs in a single verifyBatches transaction.
     /// On revert with an invalid proof message, falls back to sending each batch
     /// individually to identify which batch has the bad proof.
@@ -580,22 +605,7 @@ impl L1ProofSender {
                 "Multi-batch verify reverted with invalid proof, falling back to single-batch sending"
             );
             for (batch_number, proofs) in batches {
-                let single_batch = [(*batch_number, proofs.clone())];
-                let single_result = self
-                    .send_verify_batches_tx(*batch_number, &single_batch)
-                    .await;
-
-                if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
-                    ref message, ..
-                })) = single_result
-                {
-                    self.try_delete_invalid_proof(message, *batch_number)
-                        .await?;
-                }
-                let verify_tx_hash = single_result?;
-                self.rollup_store
-                    .store_verify_tx_by_batch(*batch_number, verify_tx_hash)
-                    .await?;
+                self.send_single_batch_proof(*batch_number, proofs).await?;
             }
             return Ok(());
         }
