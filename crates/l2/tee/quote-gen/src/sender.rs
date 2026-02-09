@@ -13,6 +13,7 @@ const SERVER_URL_DEV: &str = "localhost:3900";
 pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), String> {
     let batch = connect_to_prover_server_wr(&ProofData::BatchRequest {
         commit_hash: commit_hash.clone(),
+        prover_type: ProverType::TDX,
     })
     .await
     .map_err(|e| format!("Failed to get Response: {e}"))?;
