@@ -1,4 +1,5 @@
 use crate::peer_handler::DumpError;
+use crate::snap::constants::CODE_HASH_WRITE_BUFFER_SIZE;
 use crate::sync::SyncError;
 use crate::utils::{dump_to_file, get_code_hashes_snapshot_file};
 use ethrex_common::H256;
@@ -7,9 +8,6 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use tokio::task::JoinSet;
 use tracing::error;
-
-/// Size of the buffer to store code hashes before flushing to a file
-const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 
 /// Manages code hash collection and async file writing
 pub struct CodeHashCollector {

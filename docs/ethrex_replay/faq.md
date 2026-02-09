@@ -7,7 +7,7 @@
 
 The former endpoint is implemented by all execution clients and you can even find it in RPC Providers like Alchemy, the latter is only implemented by some execution clients and you can't find it in RPC Providers.
 
-When wanting to execute a historical block we tend to use the `eth_getProof` method with an RPC Provider because it will be the most reliable, other way is using it against a Hash-Based Archive Node but this would be too heavy to host ourselves (20TB at least). This method is slow because it performs many requests but it's very flexible.
+When wanting to execute a historical block we tend to use the `eth_getProof` method with an RPC Provider because it will be the most reliable, another way is using it against a Hash-Based Archive Node but this would be too heavy to host ourselves (20TB at least). This method is slow because it performs many requests but it's very flexible.
 
 If instead we want to execute a recent block we use it against synced ethrex or reth nodes that expose the `debug_executionWitness` endpoint, this way retrieval of data will be instant and it will be way faster than the other method, because it won't be doing thousands of RPC requests, just one.
 
@@ -20,7 +20,7 @@ With this method of execution we get the proof of all the accounts and storage s
 The problem can be explained with a simple example: a Branch node has 2 child nodes and only one was accessed and removed, this branch node should stop existing because they shouldn't have only **one** child. It will be either replaced by a leaf node or by an extension node, this depends on its child.
 
 This problem is wonderfully explained in [zkpig docs](https://github.com/kkrt-labs/zk-pig/blob/main/docs/modified-mpt.md), they also have a very good intro to the MPT.
-Here they mention two different solutions that we have to implement in order to fix this. The first one works when the missing node is a Leaf or Extension and the second one works then the missing node is a Branch.
+Here they mention two different solutions that we have to implement in order to fix this. The first one works when the missing node is a Leaf or Extension and the second one works when the missing node is a Branch.
 
 In our code we only applied the first solution by injecting all possible nodes to the execution witness that we build when using `eth_getProof`, that's why the witness when using this method will be larger than the witness obtained with `debug_executionWitness`. 
 
