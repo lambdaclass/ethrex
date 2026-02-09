@@ -3,11 +3,12 @@ use std::sync::LazyLock;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
-use ethrex_common::types::balance_diff::BalanceDiff;
+use ethrex_common::types::balance_diff::{AssetDiff, BalanceDiff};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 pub const MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfe,
@@ -20,6 +21,9 @@ pub static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
 pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
     keccak("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)".as_bytes())
 });
+
+// crosschainMintERC20(address,address,address,address,uint256)
+pub static CROSSCHAIN_MINT_ERC20_SELECTOR: [u8; 4] = [0xf0, 0x26, 0x31, 0x95];
 
 pub const BRIDGE_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -165,18 +169,66 @@ pub fn get_block_l2_out_messages(receipts: &[Receipt], source_chain_id: u64) -> 
 pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
     let mut balance_diffs: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
     for message in messages {
-        let mut value = message.value;
-        if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
-            // This is the mint transaction, ignore the value
-            value = U256::zero();
-        }
+        let mut offset = 4;
+        let (value, value_per_token_decoded) = if let Some(selector) = message.data.get(..4)
+            && *selector == CROSSCHAIN_MINT_ERC20_SELECTOR
+        {
+            let Some(token_l1) = message.data.get(offset + 12..offset + 32) else {
+                warn!("Failed to decode token_l1 from crosschainMintERC20 message");
+                continue;
+            };
+            offset += 32;
+            let Some(token_src_l2) = message.data.get(offset + 12..offset + 32) else {
+                warn!("Failed to decode token_src_l2 from crosschainMintERC20 message");
+                continue;
+            };
+            offset += 32;
+            let Some(token_dst_l2) = message.data.get(offset + 12..offset + 32) else {
+                warn!("Failed to decode token_dst_l2 from crosschainMintERC20 message");
+                continue;
+            };
+            offset += 32;
+            offset += 32; // skip "to" param
+            let Some(value_bytes) = message.data.get(offset..offset + 32) else {
+                warn!("Failed to decode value from crosschainMintERC20 message");
+                continue;
+            };
+            (
+                U256::zero(),
+                Some(AssetDiff {
+                    token_l1: Address::from_slice(token_l1),
+                    token_src_l2: Address::from_slice(token_src_l2),
+                    token_dst_l2: Address::from_slice(token_dst_l2),
+                    value: U256::from_big_endian(value_bytes),
+                }),
+            )
+        } else {
+            let mut value = message.value;
+            if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
+                // This is the mint transaction, ignore the value
+                value = U256::zero();
+            }
+            (value, None)
+        };
         let entry = balance_diffs
             .entry(message.dest_chain_id)
             .or_insert(BalanceDiff {
                 chain_id: message.dest_chain_id,
                 value: U256::zero(),
+                value_per_token: Vec::new(),
                 message_hashes: Vec::new(),
             });
+        if let Some(value_per_token_decoded) = value_per_token_decoded {
+            if let Some(existing) = entry.value_per_token.iter_mut().find(|v| {
+                v.token_l1 == value_per_token_decoded.token_l1
+                    && v.token_src_l2 == value_per_token_decoded.token_src_l2
+                    && v.token_dst_l2 == value_per_token_decoded.token_dst_l2
+            }) {
+                existing.value += value_per_token_decoded.value;
+            } else {
+                entry.value_per_token.push(value_per_token_decoded);
+            }
+        }
         entry.value += value;
         entry.message_hashes.push(get_l2_message_hash(message));
     }

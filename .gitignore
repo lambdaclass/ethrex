@@ -18,6 +18,7 @@ tooling/ef_tests/state/runner_v2/success_report.txt
 tooling/reorgs/data
 
 tooling/sync/logs/
+tooling/sync/multisync_logs/
 
 # Repos checked out by make target
 /hive/
@@ -52,6 +53,10 @@ loc_report.md
 loc_report_slack.txt
 loc_report_github.txt
 loc_report.json
+performance_report_github.txt
+performance_report_slack.json
+block_time_report_github.txt
+block_time_report_slack.json
 
 # used by Flamegraph and Samply
 tooling/ef_tests/state/levm_perfgraphs
@@ -84,3 +89,47 @@ dev_ethrex_l2/
 
 # Logs
 logs/
+
+# Node/npm (root tooling)
+node_modules/
+/package-lock.json
+
+# Test databases
+store-test-db-*/
+
+# Patch files
+*.patch
+*.diff
+
+# Editor/merge temporary files
+*.swp
+*.swo
+*~
+*.orig
+
+# Additional IDE files
+*.iml
+*.code-workspace
+
+# Cargo timing reports
+cargo-timing*.html
+
+# Rust/LLVM profiling artifacts
+*.profraw
+*.profdata
+
+# pprof profiles
+*.pb
+
+# Code coverage reports
+tarpaulin-report.html
+lcov.info
+cobertura.xml
+htmlcov/
+
+# Core dumps
+core
+core.*
+
+# Log files
+*.log

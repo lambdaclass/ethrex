@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -15,7 +16,7 @@ ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
-ethrex-threadpool.workspace = true
+ethrex-l2-common = { workspace = true, optional = true }
 ethereum-types.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"], optional = true }
 
@@ -58,7 +59,7 @@ rayon = "1.10.0"
 crossbeam.workspace = true
 
 [dev-dependencies]
-hex-literal = "0.4.1"
+hex-literal.workspace = true
 
 [lib]
 path = "./p2p.rs"
@@ -67,7 +68,7 @@ path = "./p2p.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
-l2 = ["dep:ethrex-storage-rollup"]
+l2 = ["dep:ethrex-storage-rollup", "dep:ethrex-l2-common"]
 test-utils = []
 metrics = ["dep:ethrex-metrics"]
 # discv5 is currently experimental and should only be enabled for development purposes

@@ -7,7 +7,7 @@ use bytes::BufMut;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, Signature,
-    types::{Block, batch::Batch},
+    types::{Block, batch::Batch, fee_config::FeeConfig},
 };
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
@@ -24,6 +24,7 @@ pub struct NewBlock {
     // when broadcasting this message.
     pub block: Arc<Block>,
     pub signature: Signature,
+    pub fee_config: FeeConfig,
 }
 
 impl RLPxMessage for NewBlock {
@@ -34,6 +35,7 @@ impl RLPxMessage for NewBlock {
         Encoder::new(&mut encoded_data)
             .encode_field(&self.block.deref().clone())
             .encode_field(&self.signature)
+            .encode_field(&self.fee_config.to_vec())
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -45,17 +47,21 @@ impl RLPxMessage for NewBlock {
         let decoder = Decoder::new(&decompressed_data)?;
         let (block, decoder) = decoder.decode_field("block")?;
         let (signature, decoder) = decoder.decode_field("signature")?;
+        let (fee_config_bytes, decoder): (Vec<u8>, _) = decoder.decode_field("fee_config")?;
         decoder.finish()?;
+        let (_, fee_config) = FeeConfig::decode(&fee_config_bytes)
+            .map_err(|e| RLPDecodeError::Custom(format!("fee_config decode: {e}")))?;
         Ok(NewBlock {
             block: Arc::new(block),
             signature,
+            fee_config,
         })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct BatchSealed {
-    pub batch: Box<Batch>,
+    pub batch: Arc<Batch>,
     pub signature: Signature,
 }
 
@@ -78,13 +84,13 @@ impl BatchSealed {
         sig[64] = recovery_id;
         let signature = Signature::from_slice(&sig);
         Ok(Self {
-            batch: Box::new(batch),
+            batch: Arc::new(batch),
             signature,
         })
     }
     pub fn new(batch: Batch, signature: Signature) -> Self {
         Self {
-            batch: Box::new(batch),
+            batch: Arc::new(batch),
             signature,
         }
     }
