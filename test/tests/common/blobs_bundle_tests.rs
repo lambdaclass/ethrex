@@ -1,5 +1,5 @@
 use ethrex_common::types::{
-    blobs_bundle::blob_from_bytes, BlobsBundle, BlobsBundleError, Fork, BYTES_PER_BLOB,
+    BYTES_PER_BLOB, BlobsBundle, BlobsBundleError, Fork, blobs_bundle::blob_from_bytes,
 };
 
 /// Helper: create a valid blob bundle with one blob for pre-Osaka (version 0).

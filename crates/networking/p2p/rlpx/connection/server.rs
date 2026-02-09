@@ -1086,13 +1086,17 @@ async fn handle_incoming_message(
                 #[cfg(not(feature = "l2"))]
                 let is_l2_mode = false;
                 if let Err(error) = msg.handle(&state.node, &state.blockchain, is_l2_mode).await {
-                    if matches!(error, ethrex_blockchain::error::MempoolError::BlobsBundleError(_)) {
+                    if matches!(
+                        error,
+                        ethrex_blockchain::error::MempoolError::BlobsBundleError(_)
+                    ) {
                         warn!(
                             peer=%state.node,
                             reason=%error,
                             "disconnected from peer",
                         );
-                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
                         return Err(PeerConnectionError::DisconnectSent(
                             DisconnectReason::SubprotocolError,
                         ));
