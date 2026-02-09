@@ -1146,12 +1146,12 @@ impl BlockAccessListRecorder {
             .get(&address)
             .copied()
             .unwrap_or_default();
-        if pre_balance.is_zero() {
-            if let Some(changes) = self.balance_changes.get_mut(&address) {
-                changes.retain(|(i, _)| *i != idx);
-                if changes.is_empty() {
-                    self.balance_changes.remove(&address);
-                }
+        if pre_balance.is_zero()
+            && let Some(changes) = self.balance_changes.get_mut(&address)
+        {
+            changes.retain(|(i, _)| *i != idx);
+            if changes.is_empty() {
+                self.balance_changes.remove(&address);
             }
         }
 
