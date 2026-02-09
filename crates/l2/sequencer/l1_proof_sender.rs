@@ -191,7 +191,7 @@ impl L1ProofSender {
             return self.verify_and_send_proof_aligned(batch_to_send).await;
         }
 
-        // Non-aligned path: preserve hotfix for DB < on-chain
+        // If the DB is behind on-chain, sync it up to avoid stalling the proof coordinator
         if latest_sent_batch_db < last_verified_batch {
             self.rollup_store
                 .set_latest_sent_batch_proof(last_verified_batch)
