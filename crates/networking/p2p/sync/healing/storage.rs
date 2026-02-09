@@ -215,8 +215,10 @@ pub async fn heal_storage_trie(
             // NOTE: we keep only a single task in the background to avoid out of order deletes.
             // Parent-path empty markers from batch N could overwrite real node data from batch N+1
             // if commits happen out of order.
-            if !db_joinset.is_empty() {
-                db_joinset.join_next().await;
+            if !db_joinset.is_empty()
+                && let Some(Err(e)) = db_joinset.join_next().await
+            {
+                return Err(SyncError::JoinHandle(e));
             }
             db_joinset.spawn_blocking(move || {
                 let encode_start = std::time::Instant::now();
