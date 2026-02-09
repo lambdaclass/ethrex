@@ -318,10 +318,22 @@ pub async fn periodically_show_peer_stats_during_syncing(
         if current_step != previous_step && current_step != CurrentStepValue::None {
             // Log completion of previous phase (if any)
             if previous_step != CurrentStepValue::None {
-                let phase_elapsed = format_duration(phase_start_time.elapsed());
-                log_phase_completion(
+                // Force a final progress print so the bar doesn't look incomplete
+                let phase_elapsed = phase_start_time.elapsed();
+                let total_elapsed = format_duration(start.elapsed());
+                log_phase_progress(
                     previous_step,
                     phase_elapsed,
+                    &total_elapsed,
+                    peer_number,
+                    &prev_interval,
+                )
+                .await;
+
+                let phase_elapsed_str = format_duration(phase_start_time.elapsed());
+                log_phase_completion(
+                    previous_step,
+                    phase_elapsed_str,
                     &phase_metrics(previous_step, &phase_start).await,
                 );
             }
