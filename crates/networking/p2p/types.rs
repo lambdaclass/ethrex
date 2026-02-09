@@ -447,7 +447,7 @@ impl NodeRecord {
     /// Verifies the ENR signature using the embedded public key.
     /// Returns true if the signature is valid, false otherwise.
     pub fn verify_signature(&self) -> bool {
-        let pairs = self.decode_pairs();
+        let pairs = self.pairs();
         let Some(pubkey_bytes) = pairs.secp256k1 else {
             return false;
         };
@@ -469,7 +469,6 @@ impl NodeRecord {
             .verify_ecdsa(&message, &signature, &pubkey)
             .is_ok()
     }
-}
 
     pub fn pairs(&self) -> &NodeRecordPairs {
         &self.pairs
