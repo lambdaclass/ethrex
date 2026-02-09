@@ -95,4 +95,4 @@ jobs:
           tail -n +1 -f /tmp/ethrex.log &
           tail -n +1 -f /tmp/prover.log &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
-          cargo test l2 --release -- --nocapture --test-threads=1
+          cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
