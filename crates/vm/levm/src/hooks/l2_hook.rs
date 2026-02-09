@@ -264,11 +264,9 @@ fn pay_coinbase_l2(
         .ok_or(InternalError::Overflow)?;
 
     // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
-    // even if the priority fee is zero. System contract calls have gas_price = 0,
-    // so we use this to distinguish them from user transactions.
-    if !vm.env.gas_price.is_zero()
-        && let Some(recorder) = vm.db.bal_recorder.as_mut()
-    {
+    // even if the priority fee is zero. In L2, this function is only called for
+    // non-privileged (user) transactions, so no gas_price check is needed.
+    if let Some(recorder) = vm.db.bal_recorder.as_mut() {
         recorder.record_touched_address(vm.env.coinbase);
     }
 
