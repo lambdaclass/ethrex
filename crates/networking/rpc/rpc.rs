@@ -1,12 +1,15 @@
 use crate::authentication::authenticate;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
-use crate::engine::blobs::BlobsV2Request;
-use crate::engine::payload::GetPayloadV5Request;
+use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
+use crate::engine::client_version::GetClientVersionV1Request;
+use crate::engine::payload::{GetPayloadV5Request, NewPayloadV5Request};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
-    fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
+    fork_choice::{
+        ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3, ForkChoiceUpdatedV4,
+    },
     payload::{
         GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
@@ -55,7 +58,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
-use ethrex_metrics::profiling::record_async_duration;
+use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -76,8 +79,9 @@ use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot,
 };
+use tokio::time::timeout;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -154,58 +158,219 @@ pub async fn handle_get_heap_flamegraph() -> Result<(), (StatusCode, String)> {
     ))
 }
 
+/// Wrapper for JSON-RPC requests that can be either single or batched.
+///
+/// According to the JSON-RPC 2.0 specification, clients may send either a single
+/// request object or an array of request objects (batch request).
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestWrapper {
+    /// A single JSON-RPC request.
     Single(RpcRequest),
+    /// A batch of JSON-RPC requests to be processed together.
     Multiple(Vec<RpcRequest>),
 }
 
+/// Shared context passed to all RPC request handlers.
+///
+/// This struct contains all the dependencies that RPC handlers need to process requests,
+/// including storage access, blockchain state, P2P networking, and configuration.
+///
+/// The context is cloned for each request, with most fields being cheap `Arc` references.
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
+    /// Database storage for blocks, transactions, and state.
     pub storage: Store,
+    /// Blockchain instance for block validation and execution.
     pub blockchain: Arc<Blockchain>,
+    /// Active log filters for `eth_newFilter` / `eth_getFilterChanges` endpoints.
     pub active_filters: ActiveFilters,
-    // L2 nodes don't need to initialize the syncer
+    /// Sync manager for coordinating block synchronization (None for L2 nodes).
     pub syncer: Option<Arc<SyncManager>>,
-    // L2 nodes don't need to initialize the peer handler
+    /// Peer handler for P2P network operations (None for L2 nodes).
     pub peer_handler: Option<PeerHandler>,
+    /// Node identity and configuration data.
     pub node_data: NodeData,
+    /// Gas tip estimator for `eth_gasPrice` and `eth_maxPriorityFeePerGas`.
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
+    /// Handler for dynamically changing log filter levels via `admin_setLogLevel`.
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
+    /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
 }
 
+/// Client version information used for identification in the Engine API and P2P.
+///
+/// This struct contains the individual components of the client version, which are
+/// used by `engine_getClientVersionV1` and other identification endpoints.
+///
+/// Implements `Display` to return the pre-formatted version string.
+#[derive(Debug, Clone)]
+pub struct ClientVersion {
+    /// Client name (e.g., "ethrex").
+    pub name: String,
+    /// Semantic version (e.g., "0.1.0").
+    pub version: String,
+    /// Git branch name (e.g., "main").
+    pub branch: String,
+    /// Git commit hash (full SHA).
+    pub commit: String,
+    /// OS and architecture (e.g., "x86_64-apple-darwin").
+    pub os_arch: String,
+    /// Rust compiler version (e.g., "1.70.0").
+    pub rustc_version: String,
+    /// Pre-formatted version string for efficient Display.
+    formatted: String,
+}
+
+impl ClientVersion {
+    /// Creates a new ClientVersion with all fields and a pre-formatted string.
+    pub fn new(
+        name: String,
+        version: String,
+        branch: String,
+        commit: String,
+        os_arch: String,
+        rustc_version: String,
+    ) -> Self {
+        let formatted = format!(
+            "{}/v{}-{}-{}/{}/rustc-v{}",
+            name, version, branch, commit, os_arch, rustc_version
+        );
+        Self {
+            name,
+            version,
+            branch,
+            commit,
+            os_arch,
+            rustc_version,
+            formatted,
+        }
+    }
+}
+
+impl std::fmt::Display for ClientVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.formatted)
+    }
+}
+
+/// Node identity and configuration information.
+///
+/// Contains the node's cryptographic identity, network endpoints, and metadata
+/// used for P2P discovery and RPC responses.
 #[derive(Debug, Clone)]
 pub struct NodeData {
+    /// JWT secret for authenticating Engine API requests from consensus clients.
     pub jwt_secret: Bytes,
+    /// Local P2P node identity (public key and address).
     pub local_p2p_node: Node,
+    /// ENR (Ethereum Node Record) for node discovery.
     pub local_node_record: NodeRecord,
-    pub client_version: String,
+    /// Client version information.
+    pub client_version: ClientVersion,
+    /// Extra data included in mined blocks.
     pub extra_data: Bytes,
 }
 
+/// Trait for implementing JSON-RPC method handlers.
+///
+/// Each RPC method (e.g., `eth_getBalance`, `engine_newPayloadV3`) is implemented
+/// as a struct that implements this trait. The trait provides a standard pattern
+/// for parsing parameters and handling requests.
+///
+/// # Example
+///
+/// ```ignore
+/// struct GetBalanceRequest {
+///     address: Address,
+///     block: BlockId,
+/// }
+///
+/// impl RpcHandler for GetBalanceRequest {
+///     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+///         let params = params.as_ref().ok_or(RpcErr::MissingParam("params"))?;
+///         Ok(Self {
+///             address: serde_json::from_value(params[0].clone())?,
+///             block: serde_json::from_value(params[1].clone())?,
+///         })
+///     }
+///
+///     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+///         let balance = context.storage.get_balance(self.address, self.block)?;
+///         Ok(serde_json::to_value(balance)?)
+///     }
+/// }
+/// ```
 #[allow(async_fn_in_trait)]
 pub trait RpcHandler: Sized {
+    /// Parse JSON-RPC parameters into the handler struct.
+    ///
+    /// Returns an error if required parameters are missing or have invalid types.
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
 
+    /// Entry point for handling an RPC request.
+    ///
+    /// This method parses the request, records metrics, and delegates to `handle()`.
+    /// Most implementations should not override this method.
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
         let namespace = match req.namespace() {
             Ok(RpcNamespace::Engine) => "engine",
             _ => "rpc",
         };
+        let method = req.method.as_str();
 
-        record_async_duration(namespace, req.method.as_str(), async move {
-            request.handle(context).await
-        })
-        .await
+        let result =
+            record_async_duration(
+                namespace,
+                method,
+                async move { request.handle(context).await },
+            )
+            .await;
+
+        let outcome = match &result {
+            Ok(_) => RpcOutcome::Success,
+            Err(err) => RpcOutcome::Error(get_error_kind(err)),
+        };
+        record_rpc_outcome(namespace, method, outcome);
+
+        result
     }
 
+    /// Handle the RPC request and return a JSON response.
+    ///
+    /// This is where the actual business logic for the RPC method lives.
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
+fn get_error_kind(err: &RpcErr) -> &'static str {
+    match err {
+        RpcErr::MethodNotFound(_) => "MethodNotFound",
+        RpcErr::WrongParam(_) => "WrongParam",
+        RpcErr::BadParams(_) => "BadParams",
+        RpcErr::MissingParam(_) => "MissingParam",
+        RpcErr::TooLargeRequest => "TooLargeRequest",
+        RpcErr::BadHexFormat(_) => "BadHexFormat",
+        RpcErr::UnsuportedFork(_) => "UnsuportedFork",
+        RpcErr::Internal(_) => "Internal",
+        RpcErr::Vm(_) => "Vm",
+        RpcErr::Revert { .. } => "Revert",
+        RpcErr::Halt { .. } => "Halt",
+        RpcErr::AuthenticationError(_) => "AuthenticationError",
+        RpcErr::InvalidForkChoiceState(_) => "InvalidForkChoiceState",
+        RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
+        RpcErr::UnknownPayload(_) => "UnknownPayload",
+    }
+}
+
+/// Duration after which inactive filters are cleaned up.
+///
+/// Filters created via `eth_newFilter` are automatically removed if not
+/// accessed within this duration. In tests, this is set to 1 second for
+/// faster test execution.
 pub const FILTER_DURATION: Duration = {
     if cfg!(test) {
         Duration::from_secs(1)
@@ -214,6 +379,21 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
+/// Spawns a dedicated thread for sequential block execution.
+///
+/// Blocks received from the consensus client via `engine_newPayload` are sent
+/// to this worker thread for execution. This ensures blocks are processed
+/// sequentially and prevents the async runtime from being blocked by CPU-intensive
+/// block execution.
+///
+/// # Returns
+///
+/// An unbounded channel sender for submitting blocks. Each submission includes
+/// a oneshot channel for receiving the execution result.
+///
+/// # Panics
+///
+/// Panics if the worker thread cannot be spawned.
 pub fn start_block_executor(
     blockchain: Arc<Blockchain>,
 ) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
@@ -232,6 +412,43 @@ pub fn start_block_executor(
     block_worker_channel
 }
 
+/// Starts the JSON-RPC API servers.
+///
+/// This function initializes and runs three server endpoints:
+///
+/// 1. **HTTP Server** (`http_addr`): Public JSON-RPC endpoint for standard Ethereum
+///    methods (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
+///
+/// 2. **WebSocket Server** (`ws_addr`): Optional WebSocket endpoint for the same
+///    methods as HTTP, enabling persistent connections.
+///
+/// 3. **Auth RPC Server** (`authrpc_addr`): JWT-authenticated endpoint for Engine API
+///    methods (`engine_*`) used by consensus clients.
+///
+/// # Arguments
+///
+/// * `http_addr` - Socket address for the HTTP server (e.g., `127.0.0.1:8545`)
+/// * `ws_addr` - Optional socket address for WebSocket server
+/// * `authrpc_addr` - Socket address for authenticated Engine API (e.g., `127.0.0.1:8551`)
+/// * `storage` - Database storage instance
+/// * `blockchain` - Blockchain instance for block operations
+/// * `jwt_secret` - JWT secret for Engine API authentication
+/// * `local_p2p_node` - Local node identity for P2P networking
+/// * `local_node_record` - ENR for node discovery
+/// * `syncer` - Sync manager for block synchronization
+/// * `peer_handler` - Handler for P2P peer operations
+/// * `client_version` - Client version information for `web3_clientVersion` and `engine_getClientVersionV1`
+/// * `log_filter_handler` - Optional handler for dynamic log level changes
+/// * `gas_ceil` - Maximum gas limit for payload building
+/// * `extra_data` - Extra data to include in mined blocks
+///
+/// # Errors
+///
+/// Returns an error if any server fails to bind to its address.
+///
+/// # Shutdown
+///
+/// All servers shut down gracefully on SIGINT (Ctrl+C).
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
@@ -244,7 +461,7 @@ pub async fn start_api(
     local_node_record: NodeRecord,
     syncer: SyncManager,
     peer_handler: PeerHandler,
-    client_version: String,
+    client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
@@ -307,7 +524,22 @@ pub async fn start_api(
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
+    let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
+
+    tokio::spawn(async move {
+        loop {
+            let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
+            if result.is_err() {
+                warn!("No messages from the consensus layer. Is the consensus client running?");
+            }
+        }
+    });
+
+    let authrpc_handler = move |ctx, auth, body| async move {
+        let _ = timer_sender.send(());
+        handle_authrpc_request(ctx, auth, body).await
+    };
+
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
         .with_state(service_context.clone())
@@ -349,6 +581,9 @@ pub async fn start_api(
     Ok(())
 }
 
+/// Returns a future that completes when SIGINT (Ctrl+C) is received.
+///
+/// Used to implement graceful shutdown for all RPC servers.
 pub async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
@@ -443,7 +678,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context).await,
-        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context).await,
+        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context),
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
@@ -463,6 +698,15 @@ pub async fn map_authrpc_requests(
     }
 }
 
+/// Routes `eth_*` namespace requests to their handlers.
+///
+/// Handles all standard Ethereum JSON-RPC methods including:
+/// - Account queries: `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount`
+/// - Block queries: `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_blockNumber`
+/// - Transaction operations: `eth_sendRawTransaction`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`
+/// - Gas estimation: `eth_estimateGas`, `eth_gasPrice`, `eth_maxPriorityFeePerGas`, `eth_feeHistory`
+/// - Filters: `eth_newFilter`, `eth_getFilterChanges`, `eth_uninstallFilter`, `eth_getLogs`
+/// - Misc: `eth_chainId`, `eth_syncing`, `eth_createAccessList`, `eth_getProof`
 pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "eth_chainId" => ChainId::call(req, context).await,
@@ -515,6 +759,12 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
     }
 }
 
+/// Routes `debug_*` namespace requests to their handlers.
+///
+/// Handles debugging and introspection methods:
+/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
+/// - Execution witness: `debug_executionWitness` (for stateless validation)
+/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
@@ -528,6 +778,18 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
     }
 }
 
+/// Routes `engine_*` namespace requests to their handlers.
+///
+/// These are Engine API methods used by consensus clients (e.g., Lighthouse, Prysm)
+/// to communicate with the execution layer. All methods require JWT authentication.
+///
+/// Handles:
+/// - Fork choice: `engine_forkchoiceUpdatedV1/V2/V3`
+/// - Payload submission: `engine_newPayloadV1/V2/V3/V4`
+/// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5`
+/// - Payload bodies: `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
+/// - Blob retrieval: `engine_getBlobsV1/V2/V3`
+/// - Capabilities: `engine_exchangeCapabilities`, `engine_exchangeTransitionConfigurationV1`
 pub async fn map_engine_requests(
     req: &RpcRequest,
     context: RpcApiContext,
@@ -537,6 +799,8 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
+        "engine_newPayloadV5" => NewPayloadV5Request::call(req, context).await,
         "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
@@ -557,6 +821,8 @@ pub async fn map_engine_requests(
         }
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
+        "engine_getBlobsV3" => BlobsV3Request::call(req, context).await,
+        "engine_getClientVersionV1" => GetClientVersionV1Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
@@ -568,7 +834,7 @@ pub async fn map_admin_requests(
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         "admin_peers" => admin::peers(&mut context).await,
-        "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
+        "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler),
         "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
@@ -576,7 +842,7 @@ pub async fn map_admin_requests(
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => Ok(Value::String(context.node_data.client_version)),
+        "web3_clientVersion" => Ok(Value::String(context.node_data.client_version.to_string())),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -589,18 +855,28 @@ pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result
     }
 }
 
-pub async fn map_mempool_requests(
-    req: &RpcRequest,
-    contex: RpcApiContext,
-) -> Result<Value, RpcErr> {
+pub fn map_mempool_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
-        "txpool_content" => mempool::content(contex).await,
-        "txpool_status" => mempool::status(contex).await,
+        "txpool_content" => mempool::content(contex),
+        "txpool_status" => mempool::status(contex),
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
 
+/// Formats a handler result into a JSON-RPC 2.0 response.
+///
+/// Wraps the result in either a success response (with `result` field) or
+/// an error response (with `error` field containing code and message).
+///
+/// # Arguments
+///
+/// * `id` - The request ID to include in the response (must match the request)
+/// * `res` - The handler result, either success value or error
+///
+/// # Returns
+///
+/// A JSON value representing the complete JSON-RPC 2.0 response object.
 pub fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Result<Value, RpcErr>
 where
     E: Into<RpcErrorMetadata>,
@@ -670,7 +946,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(keccak_hash(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
-                "name": "ethrex/test",
+                "name": "ethrex/v0.1.0-test-abcd1234/x86_64-unknown-linux/rustc-v1.70.0",
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303
@@ -704,6 +980,7 @@ mod tests {
                         "bpo3Time": null,
                         "bpo4Time": null,
                         "bpo5Time": null,
+                        "amsterdamTime": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
@@ -900,7 +1177,7 @@ mod tests {
                         "ID": "0x0000000000000000000000000000000000000004",
                         "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
                         "MODEXP": "0x0000000000000000000000000000000000000005",
-                        "P256_VERIFICATION":"0x0000000000000000000000000000000000000100",
+                        "P256VERIFY":"0x0000000000000000000000000000000000000100",
                         "RIPEMD160": "0x0000000000000000000000000000000000000003",
                         "SHA256": "0x0000000000000000000000000000000000000002"
                     },

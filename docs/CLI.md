@@ -55,6 +55,7 @@ Node options:
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
+          [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
       --log.color <LOG_COLOR>
@@ -62,10 +63,16 @@ Node options:
 
           [default: auto]
 
+      --log.dir <LOG_DIR>
+          Directory to store log files.
+
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
           [default: 10000]
+
+      --precompute-witnesses
+          Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
@@ -97,8 +104,13 @@ P2P options:
 
           [default: 1000]
 
-      --target.peers <MAX_PEERS>
+      --p2p.target-peers <MAX_PEERS>
           Max amount of connected peers.
+
+          [default: 100]
+
+      --p2p.lookup-interval <INITIAL_LOOKUP_INTERVAL>
+          Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
 
           [default: 100]
 
@@ -151,12 +163,15 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 7.0.0"]
+          [default: "ethrex 9.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
-          [default: 30000000]
+          [default: 60000000]
+
+      --builder.max-blobs <MAX_BLOBS>
+          EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.
 ```
 
 <!-- END_CLI_HELP -->
@@ -225,7 +240,8 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-
+          
+          [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
       --log.color <LOG_COLOR>
@@ -322,12 +338,12 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 7.0.0"]
+          [default: "ethrex 9.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
-          [default: 30000000]
+          [default: 60000000]
 
 Eth options:
       --eth.rpc-url <RPC_URL>...
@@ -459,12 +475,12 @@ L1 Committer options:
 
 Proof coordinator options:
       --proof-coordinator.l1-private-key <PRIVATE_KEY>
-          Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
+          Private key of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
 
           [env: ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=]
 
       --proof-coordinator.tdx-private-key <PRIVATE_KEY>
-          Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.
+          Private key of a funded account that the TDX tool will use to send the tdx attestation to L1.
 
           [env: ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=]
 
@@ -537,6 +553,11 @@ Aligned options:
 
           [env: ETHREX_ALIGNED_NETWORK=]
           [default: devnet]
+
+      --aligned.from-block <BLOCK_NUMBER>
+          Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.
+
+          [env: ETHREX_ALIGNED_FROM_BLOCK=]
 
       --aligned.fee-estimate <FEE_ESTIMATE>
           Fee estimate for Aligned sdk

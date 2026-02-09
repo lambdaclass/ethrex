@@ -1,3 +1,20 @@
 # Lambdaclass core team
 * @lambdaclass/lambda-execution-reviewers
+
+## ethrex L2 code owners
+crates/l2 @ilitteri @manuelbilbao @avilagaston9
 crates/l2/contracts/src @jrchatruc @manuelbilbao
+cmd/ethrex/l2 @ilitteri @manuelbilbao @avilagaston9
+cmd/ethrex/build* @ilitteri @manuelbilbao @avilagaston9
+crates/blockchain/dev @ilitteri @manuelbilbao @avilagaston9
+crates/common/crypto @ilitteri @manuelbilbao @avilagaston9
+crates/common/types/blobs_bundle.rs @ilitteri @manuelbilbao @avilagaston9
+crates/common/types/l2 @ilitteri @manuelbilbao @avilagaston9
+crates/common/types/l2.rs @ilitteri @manuelbilbao @avilagaston9
+crates/common/types/transaction.rs @ilitteri @manuelbilbao @avilagaston9
+crates/common/rkyv_utils.rs @ilitteri @manuelbilbao @avilagaston9
+crates/networking/p2p/rlpx/l2 @ilitteri @manuelbilbao @avilagaston9
+crates/networking/rpc/types/transaction.rs @ilitteri @manuelbilbao @avilagaston9
+crates/networking/rpc/clients @ilitteri @manuelbilbao @avilagaston9
+crates/vm/levm/src/hooks/l2_hook.rs @ilitteri @manuelbilbao @avilagaston9
+crates/blockchain/dev @ilitteri @manuelbilbao @avilagaston9

@@ -16,10 +16,8 @@ pub async fn start_block_producer(
 ) -> Result<(), EngineClientError> {
     let engine_client = EngineClient::new(&execution_client_auth_url, jwt_secret);
 
-    let mut ticker = tokio::time::interval(Duration::from_millis(block_production_interval_ms));
-
-    // Sleep until the first tick to avoid timestamp collision with the genesis block.
-    ticker.tick().await;
+    // Sleep for one slot to avoid timestamp collision with the genesis block.
+    sleep(Duration::from_millis(block_production_interval_ms)).await;
 
     let mut head_block_hash: H256 = head_block_hash;
     let parent_beacon_block_root = H256::zero();
@@ -61,9 +59,9 @@ pub async fn start_block_producer(
             .payload_id
             .expect("Failed to produce block: payload_id is None in ForkChoiceResponse");
 
-        // Wait for the next tick to retrieve the payload.
+        // Wait to retrieve the payload.
         // Note that this makes getPayload failures result in skipped blocks.
-        ticker.tick().await;
+        sleep(Duration::from_millis(block_production_interval_ms)).await;
 
         let execution_payload_response = match engine_client.engine_get_payload_v5(payload_id).await
         {

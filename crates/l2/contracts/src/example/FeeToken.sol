@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "../l2/interfaces/IFeeToken.sol";

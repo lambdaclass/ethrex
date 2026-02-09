@@ -5,14 +5,15 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
+use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
+use rustc_hash::FxHashSet;
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, send_message_on},
 };
 use std::{
-    collections::HashSet,
     net::IpAddr,
     time::{Duration, Instant},
 };
@@ -45,13 +46,21 @@ pub struct Contact {
     /// None if no ping was sent yet or it was already acknowledged.
     pub ping_hash: Option<H256>,
 
+    /// The hash of the last unacknowledged ENRRequest sent to this contact, or
+    /// None if no request was sent yet or it was already acknowledged.
+    pub enr_request_hash: Option<H256>,
+
     pub n_find_node_sent: u64,
+    /// ENR associated with this contact, if it was provided by the peer.
+    pub record: Option<NodeRecord>,
     // This contact failed to respond our Ping.
     pub disposable: bool,
     // Set to true after we send a successful ENRResponse to it.
     pub knows_us: bool,
     // This is a known-bad peer (on another network, no matching capabilities, etc)
     pub unwanted: bool,
+    /// Whether the last known fork ID is valid, None if unknown.
+    pub is_fork_id_valid: Option<bool>,
 }
 
 impl Contact {
@@ -67,6 +76,25 @@ impl Contact {
         self.validation_timestamp = Some(Instant::now());
         self.ping_hash = Some(ping_hash);
     }
+
+    pub fn record_enr_request_sent(&mut self, request_hash: H256) {
+        self.enr_request_hash = Some(request_hash);
+    }
+
+    // If hash does not match, ignore. Otherwise, reset enr_request_hash
+    pub fn record_enr_response_received(&mut self, request_hash: H256, record: NodeRecord) {
+        if self
+            .enr_request_hash
+            .take_if(|h| *h == request_hash)
+            .is_some()
+        {
+            self.record = Some(record);
+        }
+    }
+
+    pub fn has_pending_enr_request(&self) -> bool {
+        self.enr_request_hash.is_some()
+    }
 }
 
 impl From<Node> for Contact {
@@ -75,10 +103,13 @@ impl From<Node> for Contact {
             node,
             validation_timestamp: None,
             ping_hash: None,
+            enr_request_hash: None,
             n_find_node_sent: 0,
+            record: None,
             disposable: false,
             knows_us: true,
             unwanted: false,
+            is_fork_id_valid: None,
         }
     }
 }
@@ -124,7 +155,8 @@ pub struct PeerTable {
 }
 
 impl PeerTable {
-    pub fn spawn(target_peers: usize) -> PeerTable {
+    // It receives the store to maintain concistency with discv5 PeerTable
+    pub fn spawn(target_peers: usize, _store: Store) -> PeerTable {
         PeerTable {
             handle: PeerTableServer::new(target_peers).start(),
         }
@@ -194,6 +226,21 @@ impl PeerTable {
         Ok(())
     }
 
+    /// Set whether the contact fork id is valid.
+    pub async fn set_is_fork_id_valid(
+        &mut self,
+        node_id: &H256,
+        valid: bool,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::SetIsForkIdValid {
+                node_id: *node_id,
+                valid,
+            })
+            .await?;
+        Ok(())
+    }
+
     /// Record a successful connection, used to score peers
     pub async fn record_success(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle
@@ -243,6 +290,38 @@ impl PeerTable {
             .cast(CastMessage::RecordPongReceived {
                 node_id: *node_id,
                 ping_hash,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Record request sent, store the request hash for later check
+    pub async fn record_enr_request_sent(
+        &mut self,
+        node_id: &H256,
+        request_hash: H256,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordEnrRequestSent {
+                node_id: *node_id,
+                request_hash,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a response received. Check previously saved hash and reset it if it matches
+    pub async fn record_enr_response_received(
+        &mut self,
+        node_id: &H256,
+        request_hash: H256,
+        record: NodeRecord,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordEnrResponseReceived {
+                node_id: *node_id,
+                request_hash,
+                record,
             })
             .await?;
         Ok(())
@@ -319,10 +398,18 @@ impl PeerTable {
         }
     }
 
+    /// Return rate of target peers completion
+    pub async fn target_peers_completion(&mut self) -> Result<f64, PeerTableError> {
+        match self.handle.call(CallMessage::TargetPeersCompletion).await? {
+            OutMessage::TargetCompletion(result) => Ok(result),
+            _ => unreachable!(),
+        }
+    }
+
     /// Provide a contact to initiate a connection
     pub async fn get_contact_to_initiate(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactToInitiate).await? {
-            OutMessage::Contact(contact) => Ok(Some(contact)),
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
@@ -331,7 +418,33 @@ impl PeerTable {
     /// Provide a contact to perform Discovery lookup
     pub async fn get_contact_for_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactForLookup).await? {
-            OutMessage::Contact(contact) => Ok(Some(contact)),
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Provide a contact to perform ENR lookup
+    pub async fn get_contact_for_enr_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetContactForEnrLookup)
+            .await?
+        {
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Get a contact using node_id
+    pub async fn get_contact(&mut self, node_id: H256) -> Result<Option<Contact>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetContact { node_id })
+            .await?
+        {
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
@@ -500,8 +613,8 @@ impl PeerTable {
 struct PeerTableServer {
     contacts: IndexMap<H256, Contact>,
     peers: IndexMap<H256, PeerData>,
-    already_tried_peers: HashSet<H256>,
-    discarded_contacts: HashSet<H256>,
+    already_tried_peers: FxHashSet<H256>,
+    discarded_contacts: FxHashSet<H256>,
     target_peers: usize,
 }
 
@@ -575,6 +688,7 @@ impl PeerTableServer {
                 && !self.already_tried_peers.contains(&node_id)
                 && contact.knows_us
                 && !contact.unwanted
+                && contact.is_fork_id_valid != Some(false)
             {
                 self.already_tried_peers.insert(node_id);
 
@@ -587,7 +701,7 @@ impl PeerTableServer {
         None
     }
 
-    fn get_contact_for_lookup(&mut self) -> Option<Contact> {
+    fn get_contact_for_lookup(&self) -> Option<Contact> {
         self.contacts
             .values()
             .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
@@ -597,7 +711,22 @@ impl PeerTableServer {
             .cloned()
     }
 
-    fn get_contacts_to_revalidate(&mut self, revalidation_interval: Duration) -> Vec<Contact> {
+    fn get_contact_for_enr_lookup(&mut self) -> Option<Contact> {
+        self.contacts
+            .values()
+            .filter(|c| {
+                c.was_validated()
+                    && !c.has_pending_enr_request()
+                    && c.record.is_none()
+                    && !c.disposable
+            })
+            .collect::<Vec<_>>()
+            .choose(&mut rand::rngs::OsRng)
+            .cloned()
+            .cloned()
+    }
+
+    fn get_contacts_to_revalidate(&self, revalidation_interval: Duration) -> Vec<Contact> {
         self.contacts
             .values()
             .filter(|c| Self::is_validation_needed(c, revalidation_interval))
@@ -605,7 +734,7 @@ impl PeerTableServer {
             .collect()
     }
 
-    fn validate_contact(&mut self, node_id: H256, sender_ip: IpAddr) -> OutMessage {
+    fn validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> OutMessage {
         let Some(contact) = self.contacts.get(&node_id) else {
             return OutMessage::UnknownContact;
         };
@@ -620,10 +749,10 @@ impl PeerTableServer {
         if sender_ip != contact.node.ip {
             return OutMessage::IpMismatch;
         }
-        OutMessage::Contact(contact.clone())
+        OutMessage::Contact(Box::new(contact.clone()))
     }
 
-    fn get_closest_nodes(&mut self, node_id: H256) -> Vec<Node> {
+    fn get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
         let mut nodes: Vec<(Node, usize)> = vec![];
 
         for (contact_id, contact) in &self.contacts {
@@ -655,7 +784,7 @@ impl PeerTableServer {
         }
     }
 
-    fn peer_count_by_capabilities(&mut self, capabilities: Vec<Capability>) -> usize {
+    fn peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> usize {
         self.peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
@@ -673,10 +802,7 @@ impl PeerTableServer {
             .len()
     }
 
-    fn get_peer_connections(
-        &mut self,
-        capabilities: Vec<Capability>,
-    ) -> Vec<(H256, PeerConnection)> {
+    fn get_peer_connections(&self, capabilities: Vec<Capability>) -> Vec<(H256, PeerConnection)> {
         self.peers
             .iter()
             .filter_map(|(peer_id, peer_data)| {
@@ -695,7 +821,7 @@ impl PeerTableServer {
             .collect()
     }
 
-    fn get_random_peer(&mut self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
+    fn get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
         let peers: Vec<(H256, PeerConnection)> = self
             .peers
             .iter()
@@ -763,6 +889,10 @@ enum CastMessage {
     SetUnwanted {
         node_id: H256,
     },
+    SetIsForkIdValid {
+        node_id: H256,
+        valid: bool,
+    },
     RecordSuccess {
         node_id: H256,
     },
@@ -779,6 +909,15 @@ enum CastMessage {
     RecordPongReceived {
         node_id: H256,
         ping_hash: H256,
+    },
+    RecordEnrRequestSent {
+        node_id: H256,
+        request_hash: H256,
+    },
+    RecordEnrResponseReceived {
+        node_id: H256,
+        request_hash: H256,
+        record: NodeRecord,
     },
     SetDisposable {
         node_id: H256,
@@ -799,8 +938,11 @@ enum CallMessage {
     PeerCountByCapabilities { capabilities: Vec<Capability> },
     TargetReached,
     TargetPeersReached,
+    TargetPeersCompletion,
     GetContactToInitiate,
     GetContactForLookup,
+    GetContactForEnrLookup,
+    GetContact { node_id: H256 },
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
     GetScore { node_id: H256 },
@@ -827,9 +969,10 @@ pub enum OutMessage {
     PeerConnection(Vec<(H256, PeerConnection)>),
     Contacts(Vec<Contact>),
     TargetReached(bool),
+    TargetCompletion(f64),
     IsNew(bool),
     Nodes(Vec<Node>),
-    Contact(Contact),
+    Contact(Box<Contact>),
     InvalidContact,
     UnknownContact,
     IpMismatch,
@@ -875,12 +1018,29 @@ impl GenServer for PeerTableServer {
             CallMessage::TargetPeersReached => CallResponse::Reply(Self::OutMsg::TargetReached(
                 self.peers.len() >= self.target_peers,
             )),
+            CallMessage::TargetPeersCompletion => CallResponse::Reply(
+                Self::OutMsg::TargetCompletion(self.peers.len() as f64 / self.target_peers as f64),
+            ),
             CallMessage::GetContactToInitiate => CallResponse::Reply(
                 self.get_contact_to_initiate()
+                    .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
             CallMessage::GetContactForLookup => CallResponse::Reply(
                 self.get_contact_for_lookup()
+                    .map(Box::new)
+                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
+            ),
+            CallMessage::GetContactForEnrLookup => CallResponse::Reply(
+                self.get_contact_for_enr_lookup()
+                    .map(Box::new)
+                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
+            ),
+            CallMessage::GetContact { node_id } => CallResponse::Reply(
+                self.contacts
+                    .get(&node_id)
+                    .cloned()
+                    .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
             CallMessage::GetContactsToRevalidate(revalidation_interval) => CallResponse::Reply(
@@ -931,6 +1091,7 @@ impl GenServer for PeerTableServer {
                 match self.contacts.entry(node.node_id()) {
                     Entry::Occupied(_) => false,
                     Entry::Vacant(entry) => {
+                        METRICS.record_new_discovery().await;
                         entry.insert(Contact::from(node));
                         true
                     }
@@ -997,6 +1158,11 @@ impl GenServer for PeerTableServer {
                     .entry(node_id)
                     .and_modify(|contact| contact.unwanted = true);
             }
+            CastMessage::SetIsForkIdValid { node_id, valid } => {
+                self.contacts
+                    .entry(node_id)
+                    .and_modify(|contact| contact.is_fork_id_valid = Some(valid));
+            }
             CastMessage::RecordSuccess { node_id } => {
                 self.peers
                     .entry(node_id)
@@ -1028,6 +1194,23 @@ impl GenServer for PeerTableServer {
                     {
                         contact.ping_hash = None
                     }
+                });
+            }
+            CastMessage::RecordEnrRequestSent {
+                node_id,
+                request_hash,
+            } => {
+                self.contacts
+                    .entry(node_id)
+                    .and_modify(|contact| contact.record_enr_request_sent(request_hash));
+            }
+            CastMessage::RecordEnrResponseReceived {
+                node_id,
+                request_hash,
+                record,
+            } => {
+                self.contacts.entry(node_id).and_modify(|contact| {
+                    contact.record_enr_response_received(request_hash, record);
                 });
             }
             CastMessage::SetDisposable { node_id } => {

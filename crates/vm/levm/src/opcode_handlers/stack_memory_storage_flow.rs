@@ -60,6 +60,7 @@ impl<'a> VM<'a> {
     }
 
     // MLOAD operation
+    #[inline]
     pub fn op_mload(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
@@ -291,7 +292,7 @@ impl<'a> VM<'a> {
     ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
-    fn target_address_is_valid(call_frame: &mut CallFrame, jump_address: u32) -> bool {
+    fn target_address_is_valid(call_frame: &CallFrame, jump_address: u32) -> bool {
         call_frame
             .bytecode
             .jump_targets

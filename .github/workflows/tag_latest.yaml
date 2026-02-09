@@ -1,6 +1,7 @@
 name: Ethrex Latest Release
 
 on:
+  workflow_dispatch:
   release:
     types:
       - edited
@@ -53,25 +54,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download Docker images
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2
-
       - name: Retag Docker images
         run: |
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2 \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2 \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance-l2 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2
 
-      - name: Push retagged Docker images
-        run: |
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2
-  
   publish-apt:
     needs: [retag_docker_images]
     uses: lambdaclass/ethrex-apt/.github/workflows/publish-apt.yml@main

@@ -30,7 +30,7 @@ pub struct ExtensionNode {
 
 impl ExtensionNode {
     /// Creates a new extension node given its child hash and prefix
-    pub(crate) const fn new(prefix: Nibbles, child: NodeRef) -> Self {
+    pub const fn new(prefix: Nibbles, child: NodeRef) -> Self {
         Self { prefix, child }
     }
 

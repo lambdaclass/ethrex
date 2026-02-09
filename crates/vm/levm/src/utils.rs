@@ -10,12 +10,11 @@ use crate::{
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
-    opcodes::Opcode,
     vm::{Substate, VM},
 };
 use ExceptionalHalt::OutOfGas;
-use bitvec::{bitvec, order::Msb0, vec::BitVec};
 use bytes::Bytes;
+use ethrex_common::types::Log;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
@@ -23,13 +22,7 @@ use ethrex_common::{
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp;
-use ethrex_rlp::encode::RLPEncode;
-use secp256k1::{
-    Message,
-    ecdsa::{RecoverableSignature, RecoveryId},
-};
 use std::collections::HashMap;
 pub type Storage = HashMap<U256, H256>;
 
@@ -72,66 +65,6 @@ pub fn calculate_create2_address(
         .ok_or(InternalError::Slicing)?,
     );
     Ok(generated_address)
-}
-
-/// # Filter for jump target offsets.
-///
-/// Used to filter which program offsets are not valid jump targets. Implemented as a sorted list of
-/// offsets of bytes `0x5B` (`JUMPDEST`) within push constants.
-#[derive(Debug)]
-pub struct JumpTargetFilter {
-    bytecode: Bytes,
-    jumpdests: Option<BitVec<u8, Msb0>>,
-}
-
-impl JumpTargetFilter {
-    /// Create an empty `JumpTargetFilter`.
-    pub fn new(bytecode: Bytes) -> Self {
-        Self {
-            bytecode,
-            jumpdests: None,
-        }
-    }
-
-    /// Check whether a target jump address is blacklisted or not.
-    ///
-    /// Builds the jumpdest table on the first call, and caches it for future calls.
-    #[expect(
-        clippy::as_conversions,
-        clippy::arithmetic_side_effects,
-        clippy::indexing_slicing
-    )]
-    pub fn is_blacklisted(&mut self, address: usize) -> bool {
-        match self.jumpdests {
-            // Already built the jumpdest table, just check it
-            Some(ref jumpdests) => address >= jumpdests.len() || !jumpdests[address],
-            // First time we are called, need to build the jumpdest table
-            None => {
-                let code = &self.bytecode;
-                let len = code.len();
-                let mut jumpdests = bitvec![u8, Msb0; 0; len]; // All false, size = len
-
-                let mut i = 0;
-                while i < len {
-                    let opcode = Opcode::from(code[i]);
-                    if opcode == Opcode::JUMPDEST {
-                        jumpdests.set(i, true);
-                    } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&opcode) {
-                        // PUSH1 (0x60) to PUSH32 (0x7f): skip 1 to 32 bytes
-                        let skip = opcode as usize - Opcode::PUSH0 as usize;
-                        i += skip; // Advance past data bytes
-                    }
-                    i += 1;
-                }
-
-                let is_blacklisted = address >= jumpdests.len() || !jumpdests[address];
-
-                self.jumpdests = Some(jumpdests);
-
-                is_blacklisted
-            }
-        }
-    }
 }
 
 // ================== Backup related functions =======================
@@ -257,9 +190,83 @@ pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError
     }
 }
 
+#[cfg(any(
+    feature = "zisk",
+    feature = "risc0",
+    feature = "sp1",
+    not(feature = "secp256k1")
+))]
 pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
 ) -> Result<Option<Address>, VMError> {
+    use ethrex_rlp::encode::RLPEncode;
+    use sha2::Digest;
+    use sha3::Keccak256;
+
+    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+        return Ok(None);
+    }
+    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+        return Ok(None);
+    }
+    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
+        return Ok(None);
+    }
+
+    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
+
+    let mut digest = Keccak256::new();
+    digest.update([MAGIC]);
+    digest.update(rlp_buf);
+
+    let bytes = [
+        auth_tuple.r_signature.to_big_endian(),
+        auth_tuple.s_signature.to_big_endian(),
+    ]
+    .concat();
+
+    let Ok(recovery_id) = k256::ecdsa::RecoveryId::try_from(
+        TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
+    ) else {
+        return Ok(None);
+    };
+
+    let Ok(signature) = k256::ecdsa::Signature::from_slice(&bytes) else {
+        return Ok(None);
+    };
+
+    let Ok(authority) =
+        k256::ecdsa::VerifyingKey::recover_from_digest(digest, &signature, recovery_id)
+    else {
+        return Ok(None);
+    };
+
+    let public_key = authority.to_encoded_point(false).to_bytes();
+    let mut hasher = Keccak256::new();
+    hasher.update(public_key.get(1..).ok_or(InternalError::Slicing)?);
+    let address_hash = hasher.finalize();
+
+    // Get the last 20 bytes of the hash -> Address
+    let authority_address_bytes: [u8; 20] = address_hash
+        .get(12..32)
+        .ok_or(InternalError::Slicing)?
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    Ok(Some(Address::from_slice(&authority_address_bytes)))
+}
+
+#[cfg(all(
+    not(feature = "zisk"),
+    not(feature = "risc0"),
+    not(feature = "sp1"),
+    feature = "secp256k1"
+))]
+pub fn eip7702_recover_address(
+    auth_tuple: &AuthorizationTuple,
+) -> Result<Option<Address>, VMError> {
+    use ethrex_crypto::keccak::keccak_hash;
+    use ethrex_rlp::encode::RLPEncode;
+
     if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
         return Ok(None);
     }
@@ -275,7 +282,7 @@ pub fn eip7702_recover_address(
     (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
     let bytes = keccak_hash(&rlp_buf);
 
-    let message = Message::from_digest(bytes);
+    let message = secp256k1::Message::from_digest(bytes);
 
     let bytes = [
         auth_tuple.r_signature.to_big_endian(),
@@ -283,13 +290,14 @@ pub fn eip7702_recover_address(
     ]
     .concat();
 
-    let Ok(recovery_id) = RecoveryId::try_from(
+    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(
         TryInto::<i32>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
     ) else {
         return Ok(None);
     };
 
-    let Ok(signature) = RecoverableSignature::from_compact(&bytes, recovery_id) else {
+    let Ok(signature) = secp256k1::ecdsa::RecoverableSignature::from_compact(&bytes, recovery_id)
+    else {
         return Ok(None);
     };
 
@@ -424,7 +432,11 @@ impl<'a> VM<'a> {
                 .map_err(|_| TxValidationError::NonceIsMax)?;
         }
 
-        self.substate.refunded_gas = refunded_gas;
+        self.substate.refunded_gas = self
+            .substate
+            .refunded_gas
+            .checked_add(refunded_gas)
+            .ok_or(InternalError::Overflow)?;
 
         Ok(())
     }
@@ -603,5 +615,46 @@ pub fn size_offset_to_usize(size: U256, offset: U256) -> Result<(usize, usize), 
         Ok((0, 0))
     } else {
         Ok((u256_to_usize(size)?, u256_to_usize(offset)?))
+    }
+}
+
+// ==================== EIP-7708 Helper Functions ====================
+
+/// Creates EIP-7708 Transfer log (LOG3) for ETH transfers.
+/// Emitted from SYSTEM_ADDRESS when ETH is transferred.
+#[inline]
+pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
+    let mut from_topic = [0u8; 32];
+    from_topic[12..].copy_from_slice(from.as_bytes());
+
+    let mut to_topic = [0u8; 32];
+    to_topic[12..].copy_from_slice(to.as_bytes());
+
+    let data = value.to_big_endian();
+
+    Log {
+        address: EIP7708_SYSTEM_ADDRESS,
+        topics: vec![
+            TRANSFER_EVENT_TOPIC,
+            H256::from(from_topic),
+            H256::from(to_topic),
+        ],
+        data: Bytes::from(data.to_vec()),
+    }
+}
+
+/// Creates EIP-7708 Selfdestruct log (LOG2) for account destruction.
+/// Emitted from SYSTEM_ADDRESS when a contract is destroyed.
+#[inline]
+pub fn create_selfdestruct_log(contract: Address, balance: U256) -> Log {
+    let mut contract_topic = [0u8; 32];
+    contract_topic[12..].copy_from_slice(contract.as_bytes());
+
+    let data = balance.to_big_endian();
+
+    Log {
+        address: EIP7708_SYSTEM_ADDRESS,
+        topics: vec![SELFDESTRUCT_EVENT_TOPIC, H256::from(contract_topic)],
+        data: Bytes::from(data.to_vec()),
     }
 }

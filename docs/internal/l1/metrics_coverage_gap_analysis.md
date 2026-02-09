@@ -37,13 +37,13 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 | Bucket | Geth | Nethermind | Ethrex |
 | --- | --- | --- | --- |
 | Chain sync & finality | Yes | Yes | Partial (head height only) |
-| Peer health | Yes | Yes | No |
+| Peer health | Yes | Yes | Partial (peer count, client distribution, disconnections) |
 | Block & payload pipeline | Yes | Yes | Yes (latency + throughput) |
 | Transaction pool | Yes (basic) | Yes | Partial (counters, no panels) |
 | Engine API & RPC | Partial (metrics exist, limited panels) | Yes | Partial (per-method rate/latency) |
 | State & storage | Yes | Yes | Partial (datadir size; no pruning) |
 | Process & host health | Yes | Yes | Yes (node exporter + process) |
-| Error & anomaly counters | Yes | Yes | No |
+| Error & anomaly counters | Yes | Yes | Partial (Engine/RPC error rates) |
 
 - **Block execution pipeline**
   - Gauges exposed in `ethrex_metrics::metrics_blocks`: `gas_limit`, `gas_used`, `gigagas`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`, plus block-building focused gauges that need to be reviewed first (`gigagas_block_building`, `block_building_ms`, `block_building_base_fee`).
@@ -70,7 +70,7 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 Before addressing the gaps listed below, we should also consider some general improvements in our current metrics setup:
 
 - **Namespace standardisation**: Metric names and labels should follow a consistent naming convention (e.g., `ethrex_l1_` prefix) to avoid collisions and improve clarity. Right now we are not using prefixes.
-- **Panels dependent on `ethereum-metrics-exporter`**: Some metrics are only visible through the external `ethereum-metrics-exporter` (e.g., network, client version, consensus fork), we are already pulling those in our dashboard but this is not ideal. We should consider integrating this key metrics directly into Ethrex.
+- **Panels dependent on `ethereum-metrics-exporter`**: Some metrics are only visible through the external `ethereum-metrics-exporter` (e.g., network, client version, consensus fork), we are already pulling those in our dashboard but this is not ideal. We should consider integrating these key metrics directly into Ethrex.
 - **Label consistency**: We are not using labels consistently, especially in l1. We might need to take a pass to ensure similar metrics use uniform label names and values to facilitate querying and aggregation if needed or decide to not use labels when appropriate.
 - **Exemplars addition**: For histograms, adding exemplars can help trace high-latency events back to specific traces/logs. This is especially useful for latency-sensitive metrics like block execution time or RPC call durations where we could add block hashes as exemplars. This needs to be evaluated on a case-by-case basis and tested.
 
@@ -79,13 +79,13 @@ Before addressing the gaps listed below, we should also consider some general im
 | Bucket | Have today | Missing / next steps |
 | --- | --- | --- |
 | Chain sync & finality | `METRICS_BLOCKS.head_height` surfaced in `crates/blockchain/fork_choice.rs`; Grafana charts head height. | Need best-peer lag, sync stage progress, ETA, and finalized/safe head distance. Current counters live only in logs via `periodically_show_peer_stats_during_syncing` (`crates/networking/p2p/network.rs`). |
-| Peer health | `net_peerCount` RPC endpoint exists. | No Prometheus gauges for active peers, peer limits, snap-capable availability, or handshake failures; dashboard lacks a networking row. |
+| Peer health | `ethrex_p2p_peer_count`, `ethrex_p2p_peer_clients`, and `ethrex_p2p_disconnections` (with reason and client labels) exposed via Prometheus; Grafana "Peer Info" row charts peer count, client distribution pie/timeseries, disconnection events, and a detailed disconnections table. | Still missing peer limits/targets, snap-capable availability, handshake failure counters, and ingress/egress traffic metrics. |
 | Block & payload pipeline | `METRICS_BLOCKS` tracks gas throughput and execution stage timings; `transaction_count` is exported but not visualised yet. | Add p50/p95 histograms for execution stages, block import success/failure counters, and an L1-driven TPS gauge so operators can read execution throughput without relying on L2 metrics. |
 | Transaction pool | Success/error counters per tx type emitted from `crates/blockchain/payload.rs`. | No exported pending depth, blob/regular split, drop reasons, or gossip throughput; aggregates exist only in L2 (`crates/l2/sequencer/metrics.rs`). |
 | Engine API & RPC | Per-method request rate, latency (range-based + 18 s lookback) covering `namespace="engine"` and `namespace="rpc"` metrics. | Deepen error taxonomy ( error/rates and distinguish failure reasons), add payload build latency distributions, and baseline alert thresholds. |
 | State & storage | Only `datadir_size_bytes` today. | Export healing/download progress, snapshot sync %, DB read/write throughput, pruning/backfill counters (we need to check what makes sense here), and cache hit/miss ratios. |
 | Process & host health | Process collector + `datadir_size_bytes`; node_exporter covers CPU/RSS/disk. | Add cache pressure indicators (fd saturation, async task backlog) and ensure dashboards surface alert thresholds. |
-| Error & anomaly counters | None published. | Add Prometheus counters for failed block imports, reorg depth, RPC errors, Engine API retries, sync failures, and wire alerting. |
+| Error & anomaly counters | "Engine and RPC Error rates" row charts success/error rates and error % by method/kind for both Engine API and JSON-RPC. Peer disconnection reasons tracked in "Peer Info" row. | Add counters for failed block imports, reorg depth, sync failures, and wire alerting thresholds. |
 
 ### Next steps
 1. Tackle general improvements around naming conventions and label consistency.
@@ -93,8 +93,8 @@ Before addressing the gaps listed below, we should also consider some general im
 3. Surface txpool metrics by wiring existing counters and charting them.
 4. Add the metrics relying on `ethereum-metrics-exporter` into the existing metrics, and avoid our dashboard dependence on it.
 5. Extend Engine API / JSON-RPC metrics with richer error taxonomy and payload construction latency distributions.
-6. State and Storage metrics, specially related to snapsync, pruning, db and cache.
-7. Process health improvements, specially related to read/write latencies and probably tokio tasks.
+6. State and Storage metrics, especially related to snapsync, pruning, db and cache.
+7. Process health improvements, especially related to read/write latencies and probably tokio tasks.
 8. Review block building metrics.
 9. Revisit histogram buckets and naming conventions once new metrics are merged, then define alert thresholds.
 10. Investigate exemplar usage where appropriate.

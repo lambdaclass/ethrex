@@ -9,7 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, hint::assert_unchecked};
 
 /// [`u64`]s that make up a [`U256`]
 const U64_PER_U256: usize = U256::MAX.0.len();
@@ -148,6 +148,11 @@ impl Stack {
             return Err(ExceptionalHalt::StackUnderflow);
         }
 
+        #[expect(unsafe_code, reason = "self.offset always < STACK_LIMIT")]
+        unsafe {
+            assert_unchecked(self.offset < STACK_LIMIT)
+        };
+
         self.values.swap(self.offset, index);
         Ok(())
     }
@@ -235,7 +240,9 @@ pub struct CallFrame {
     pub to: Address,
     /// Address of the code to execute. Usually the same as `to`, but can be different
     pub code_address: Address,
-    /// Bytecode to execute
+    /// Bytecode to execute.
+    /// Its hash field will be bogus for initcodes, as it is inaccessible to the VM
+    /// unless associated to an account, which doesn't happen for its initcode.
     pub bytecode: Code,
     /// Value sent along the transaction
     pub msg_value: U256,

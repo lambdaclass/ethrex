@@ -11,7 +11,7 @@ members = [
   "crates/l2/",
   "crates/l2/common",
   "crates/l2/prover",
-  "crates/l2/prover/src/guest_program",
+  "crates/guest-program",
   "crates/l2/sdk",
   "crates/l2/sdk/contract_utils",
   "crates/l2/storage",
@@ -23,7 +23,7 @@ members = [
   "crates/vm/levm",
   "crates/vm/levm/runner",
   "crates/common/config",
-  "crates/concurrency",
+  "test",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
@@ -31,10 +31,11 @@ resolver = "2"
 default-members = ["cmd/ethrex"]
 
 [workspace.package]
-version = "7.0.0"
+version = "9.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
+license = "MIT OR Apache-2.0"
 
 [profile.dev]
 debug = 2
@@ -48,9 +49,13 @@ codegen-units = 1
 inherits = "release"
 debug = 2
 
+[profile.release-with-debug-assertions]
+inherits = "release"
+debug-assertions = true
+
 [workspace.dependencies]
-ethrex-blockchain = { path = "./crates/blockchain" }
-ethrex-common = { path = "./crates/common" }
+ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
+ethrex-common = { path = "./crates/common", default-features = false }
 ethrex-config = { path = "./crates/common/config" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
@@ -65,10 +70,10 @@ ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
+ethrex-guest-program = { path = "./crates/guest-program" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
-ethrex-threadpool = { path = "./crates/concurrency" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -85,7 +90,8 @@ hex = "0.4.3"
 hex-literal = "0.4.1"
 crc32fast = "1.4.2"
 lazy_static = "1.5.0"
-sha2 = "0.10.8"
+sha2 = "0.10.9"
+sha3 = "0.10.8"
 tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
@@ -106,7 +112,7 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23" }
+aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "54ca2471624700536561b6bd369ed9f4d327991e", package = "agg_mode_sdk" }
 spawned-concurrency = "0.4.2"
 spawned-rt = "0.4.2"
 lambdaworks-crypto = "0.13.0"
@@ -118,6 +124,8 @@ tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
 indexmap = { version = "2.11.4" }
+k256 = "0.13.4"
+anyhow = "1.0.86"
 
 rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",

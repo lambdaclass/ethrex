@@ -36,7 +36,7 @@ impl RpcHandler for NewPayloadV1Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v1(&self.payload)?;
-        let block = match get_block_from_payload(&self.payload, None, None) {
+        let block = match get_block_from_payload(&self.payload, None, None, None) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -68,7 +68,7 @@ impl RpcHandler for NewPayloadV2Request {
             // Behave as a v1
             validate_execution_payload_v1(&self.payload)?;
         }
-        let block = match get_block_from_payload(&self.payload, None, None) {
+        let block = match get_block_from_payload(&self.payload, None, None, None) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -124,6 +124,7 @@ impl RpcHandler for NewPayloadV3Request {
             &self.payload,
             Some(self.parent_beacon_block_root),
             None,
+            None,
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -144,6 +145,7 @@ impl RpcHandler for NewPayloadV3Request {
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
+
 pub struct NewPayloadV4Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
@@ -195,6 +197,7 @@ impl RpcHandler for NewPayloadV4Request {
             &self.payload,
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
+            None,
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -215,6 +218,94 @@ impl RpcHandler for NewPayloadV4Request {
         // We use v3 since the execution payload remains the same.
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = handle_new_payload_v3(
+            &self.payload,
+            context,
+            block,
+            self.expected_blob_versioned_hashes.clone(),
+        )
+        .await?;
+        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+pub struct NewPayloadV5Request {
+    pub payload: ExecutionPayload,
+    pub expected_blob_versioned_hashes: Vec<H256>,
+    pub parent_beacon_block_root: H256,
+    pub execution_requests: Vec<EncodedRequests>,
+}
+
+impl From<NewPayloadV5Request> for RpcRequest {
+    fn from(val: NewPayloadV5Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadV5".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.payload),
+                serde_json::json!(val.expected_blob_versioned_hashes),
+                serde_json::json!(val.parent_beacon_block_root),
+                serde_json::json!(val.execution_requests),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for NewPayloadV5Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 4 {
+            return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
+        }
+        Ok(Self {
+            payload: serde_json::from_value(params[0].clone())
+                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            execution_requests: serde_json::from_value(params[3].clone())
+                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        validate_execution_payload_v4(&self.payload)?;
+
+        // validate the received requests
+        validate_execution_requests(&self.execution_requests)?;
+
+        let requests_hash = compute_requests_hash(&self.execution_requests);
+        let block_access_list_hash = self
+            .payload
+            .block_access_list
+            .as_ref()
+            .map(|b| b.compute_hash());
+
+        let block = match get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            Some(requests_hash),
+            block_access_list_hash,
+        ) {
+            Ok(block) => block,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?);
+            }
+        };
+
+        let chain_config = context.storage.get_chain_config();
+
+        if !chain_config.is_amsterdam_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(block.header.timestamp)
+            )));
+        }
+        let payload_status = handle_new_payload_v4(
             &self.payload,
             context,
             block,
@@ -470,9 +561,11 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
             return Err(RpcErr::TooLargeRequest);
         }
         let latest_block_number = context.storage.get_latest_block_number().await?;
+        // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
+        // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
         let bodies = context.storage.get_block_bodies(self.start, last).await?;
-        build_payload_body_response(bodies.into_iter().map(Some).collect())
+        build_payload_body_response(bodies)
     }
 }
 
@@ -535,6 +628,20 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
     if payload.excess_blob_gas.is_none() {
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
+
+    Ok(())
+}
+
+#[inline]
+fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    // This method follows the same specification as `engine_newPayloadV4` additionally
+    // rejects payload without block access list
+
+    if payload.block_access_list.is_none() {
+        return Err(RpcErr::WrongParam("block_access_list".to_string()));
+    }
+
+    validate_execution_payload_v3(payload)?;
 
     Ok(())
 }
@@ -642,6 +749,16 @@ async fn handle_new_payload_v3(
     handle_new_payload_v1_v2(payload, block, context).await
 }
 
+async fn handle_new_payload_v4(
+    payload: &ExecutionPayload,
+    context: RpcApiContext,
+    block: Block,
+    expected_blob_versioned_hashes: Vec<H256>,
+) -> Result<PayloadStatus, RpcErr> {
+    // TODO: V4 specific: validate block access list
+    handle_new_payload_v3(payload, context, block, expected_blob_versioned_hashes).await
+}
+
 // Elements of the list MUST be ordered by request_type in ascending order.
 // Elements with empty request_data MUST be excluded from the list.
 fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result<(), RpcErr> {
@@ -663,14 +780,17 @@ fn get_block_from_payload(
     payload: &ExecutionPayload,
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
+    block_access_list_hash: Option<H256>,
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
     let block_number = payload.block_number;
-    info!(%block_hash, %block_number, "Received new payload");
+    debug!(%block_hash, %block_number, "Received new payload");
 
-    payload
-        .clone()
-        .into_block(parent_beacon_block_root, requests_hash)
+    payload.clone().into_block(
+        parent_beacon_block_root,
+        requests_hash,
+        block_access_list_hash,
+    )
 }
 
 fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), RpcErr> {
@@ -719,7 +839,7 @@ async fn try_execute_payload(
     }
 
     // Execute and store the block
-    info!(%block_hash, %block_number, "Executing payload");
+    debug!(%block_hash, %block_number, "Executing payload");
 
     match add_block(context, block).await {
         Err(ChainError::ParentNotFound) => {
@@ -767,7 +887,7 @@ async fn try_execute_payload(
             Err(RpcErr::Internal(e.to_string()))
         }
         Ok(()) => {
-            info!("Block with hash {block_hash} executed and added to storage succesfully");
+            debug!("Block with hash {block_hash} executed and added to storage successfully");
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }
     }

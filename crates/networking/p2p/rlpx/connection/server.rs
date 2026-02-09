@@ -6,15 +6,15 @@ use crate::rlpx::l2::{
     },
 };
 use crate::{
-    discv4::peer_table::PeerTable,
+    backend,
     metrics::METRICS,
     network::P2PContext,
+    peer_table::PeerTable,
     rlpx::{
         Message,
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
-            backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts68, Receipts69},
             status::{StatusMessage68, StatusMessage69},
@@ -79,7 +79,7 @@ pub struct PeerConnection {
 }
 
 impl PeerConnection {
-    pub async fn spawn_as_receiver(
+    pub fn spawn_as_receiver(
         context: P2PContext,
         peer_addr: SocketAddr,
         stream: TcpStream,
@@ -95,7 +95,7 @@ impl PeerConnection {
         }
     }
 
-    pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> PeerConnection {
+    pub fn spawn_as_initiator(context: P2PContext, node: &Node) -> PeerConnection {
         let state = ConnectionState::Initiator(Initiator {
             context,
             node: node.clone(),
@@ -189,6 +189,10 @@ pub struct Established {
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
     pub(crate) current_requests: HashMap<u64, (String, oneshot::Sender<Message>)>,
+    // We store the disconnection reason to handle it in the teardown
+    pub(crate) disconnect_reason: Option<DisconnectReason>,
+    // Indicates if the peer has been validated (ie. the connection was established successfully)
+    pub(crate) is_validated: bool,
 }
 
 impl Established {
@@ -297,6 +301,7 @@ impl GenServer for PeerConnectionServer {
                                 .unwrap_or("Unknown".to_string()),
                         )
                         .await;
+                    established_state.is_validated = true;
                     // New state
                     self.state = ConnectionState::Established(Box::new(established_state));
                     Ok(Success(self))
@@ -325,7 +330,7 @@ impl GenServer for PeerConnectionServer {
                     trace!(
                         peer=%established_state.node,
                         %message,
-                        "Received incomming message",
+                        "Received incoming message",
                     );
                     handle_incoming_message(established_state, message).await
                 }
@@ -392,10 +397,14 @@ impl GenServer for PeerConnectionServer {
                     );
                     match msg {
                         L2Cast::BatchBroadcast => {
-                            l2_connection::send_sealed_batch(established_state).await
+                            let res = l2_connection::send_sealed_batch(established_state).await;
+                            res.and(
+                                l2_connection::process_batches_on_queue(established_state).await,
+                            )
                         }
                         L2Cast::BlockBroadcast => {
-                            l2_connection::send_new_block(established_state).await
+                            let res = l2_connection::send_new_block(established_state).await;
+                            res.and(l2_connection::process_blocks_on_queue(established_state).await)
                         }
                     }
                 }
@@ -469,6 +478,22 @@ impl GenServer for PeerConnectionServer {
         match self.state {
             ConnectionState::Established(mut established_state) => {
                 trace!(peer=%established_state.node, "Closing connection with established peer");
+                if established_state.is_validated {
+                    // If its validated the peer was connected, so we record the disconnection.
+                    let reason = established_state
+                        .disconnect_reason
+                        .unwrap_or(DisconnectReason::NetworkError);
+                    METRICS
+                        .record_new_rlpx_conn_disconnection(
+                            &established_state
+                                .node
+                                .version
+                                .clone()
+                                .unwrap_or("Unknown".to_string()),
+                            reason,
+                        )
+                        .await;
+                }
                 established_state
                     .peer_table
                     .remove_peer(established_state.node.node_id())
@@ -629,9 +654,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
     Ok(())
 }
 
-async fn should_send_block_range_update(
-    state: &mut Established,
-) -> Result<bool, PeerConnectionError> {
+async fn should_send_block_range_update(state: &Established) -> Result<bool, PeerConnectionError> {
     let latest_block = state.storage.get_latest_block_number().await?;
     if latest_block < state.last_block_range_update_block
         || latest_block - state.last_block_range_update_block >= 32
@@ -892,14 +915,7 @@ async fn handle_incoming_message(
                 ?reason,
                 "Received Disconnect"
             );
-            METRICS
-                .record_new_rlpx_conn_disconnection(
-                    &state.node.version.clone().unwrap_or("Unknown".to_string()),
-                    reason,
-                )
-                .await;
-
-            state.peer_table.remove_peer(state.node.node_id()).await?;
+            state.disconnect_reason = Some(reason);
 
             // TODO handle the disconnection request
 
@@ -1049,7 +1065,7 @@ async fn handle_incoming_message(
             if state.blockchain.is_synced() {
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     let fork = state.blockchain.current_fork().await?;
-                    if let Err(error) = msg.validate_requested(requested, fork).await {
+                    if let Err(error) = msg.validate_requested(requested, fork) {
                         warn!(
                             peer=%state.node,
                             reason=%error,
@@ -1079,11 +1095,13 @@ async fn handle_incoming_message(
         }
         Message::GetByteCodes(req) => {
             let storage_clone = state.storage.clone();
-            let response = process_byte_codes_request(req, storage_clone).map_err(|_| {
-                PeerConnectionError::InternalError(
-                    "Failed to execute bytecode retrieval task".to_string(),
-                )
-            })?;
+            let response = process_byte_codes_request(req, storage_clone)
+                .await
+                .map_err(|_| {
+                    PeerConnectionError::InternalError(
+                        "Failed to execute bytecode retrieval task".to_string(),
+                    )
+                })?;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {

@@ -18,8 +18,23 @@ ethrex l2 prover \
 ```
 
 > [!IMPORTANT]
-> Cualquiera haya sido el metodo de instalacion de ethrex, asegurate de que el binario que estas utilizando tiene soporte para SP1, y tambien para GPU si es que tu intencion es correr un prover SP1 GPU.
+> Regardless of the installation method used for ethrex, make sure the binary you are using has SP1 support, and also GPU support if you intend to run an SP1 GPU prover.
 
 > [!NOTE]
-> The flag `--proof-coordinators` is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to `localhost:3900` because the command above command uses the port `3900` for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
+> The flag `--proof-coordinators` is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to `localhost:3900` because the command above uses the port `3900` for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
 > We choose SP1 as the backend to indicate the prover to generate SP1 proofs.
+
+## Troubleshooting
+
+### `docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]`
+
+If you encounter the following error when starting the SP1 prover with GPU support:
+
+```plaintext
+docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]
+```
+
+This error indicates that Docker is unable to find a suitable GPU driver for running containers with GPU support. To resolve this issue, follow these steps:
+
+1. **Install NVIDIA Container Toolkit**: Ensure that you have the NVIDIA Container Toolkit installed on your system. This toolkit allows Docker to utilize NVIDIA GPUs. You can follow the installation instructions from the [official NVIDIA documentation](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+2. **Configure Docker to use the NVIDIA runtime**: After installing the NVIDIA Container Toolkit, you need to configure Docker to use the NVIDIA runtime by default. You can do this by following the instructions in the [Configuring Docker documentation](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#configuring-docker).

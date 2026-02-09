@@ -1,24 +1,21 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
-use std::str::FromStr;
+
+use bytes::Bytes;
 
 use crate::rkyv_utils::H160Wrapper;
-use crate::types::{Block, Code};
+use crate::serde_utils;
+use crate::types::{Block, Code, CodeMetadata};
 use crate::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
-    utils::decode_hex,
 };
-use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
-use serde::de::{SeqAccess, Visitor};
-use serde::ser::SerializeSeq;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{Deserialize, Serialize};
 
 /// State produced by the guest program execution inside the zkVM. It is
 /// essentially built from the `ExecutionWitness`.
@@ -86,6 +83,59 @@ pub struct ExecutionWitness {
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub keys: Vec<Vec<u8>>,
+}
+
+/// RPC-friendly representation of an execution witness.
+///
+/// This is the format returned by the `debug_executionWitness` RPC method.
+/// The trie nodes are pre-serialized (via `encode_subtrie`) to avoid
+/// expensive traversal on every RPC request.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RpcExecutionWitness {
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub state: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub keys: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub codes: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub headers: Vec<Bytes>,
+}
+
+impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
+    type Error = TrieError;
+
+    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
+        let mut nodes = Vec::new();
+        if let Some(state_trie_root) = value.state_trie_root {
+            state_trie_root.encode_subtrie(&mut nodes)?;
+        }
+        for node in value.storage_trie_roots.values() {
+            node.encode_subtrie(&mut nodes)?;
+        }
+        Ok(Self {
+            state: nodes.into_iter().map(Bytes::from).collect(),
+            keys: value.keys.into_iter().map(Bytes::from).collect(),
+            codes: value.codes.into_iter().map(Bytes::from).collect(),
+            headers: value
+                .block_headers_bytes
+                .into_iter()
+                .map(Bytes::from)
+                .collect(),
+        })
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -167,7 +217,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             })
             .collect();
 
-        let guest_program_state = GuestProgramState {
+        let ethrex_guest_program_state = GuestProgramState {
             codes_hashed,
             state_trie,
             storage_tries,
@@ -179,7 +229,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             verified_storage_roots: BTreeMap::new(),
         };
 
-        Ok(guest_program_state)
+        Ok(ethrex_guest_program_state)
     }
 }
 
@@ -402,6 +452,32 @@ impl GuestProgramState {
         }
     }
 
+    /// Retrieves code metadata (length) for a specific code hash.
+    /// This is an optimized path for EXTCODESIZE opcode.
+    pub fn get_code_metadata(
+        &self,
+        code_hash: H256,
+    ) -> Result<CodeMetadata, GuestProgramStateError> {
+        use crate::constants::EMPTY_KECCACK_HASH;
+
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(CodeMetadata { length: 0 });
+        }
+        match self.codes_hashed.get(&code_hash) {
+            Some(code) => Ok(CodeMetadata {
+                length: code.bytecode.len() as u64,
+            }),
+            None => {
+                // Same as get_account_code - default to empty for missing bytecode
+                println!(
+                    "Missing bytecode for hash {} in witness. Defaulting to empty code metadata.",
+                    hex::encode(code_hash)
+                );
+                Ok(CodeMetadata { length: 0 })
+            }
+        }
+    }
+
     /// When executing multiple blocks in the L2 it happens that the headers in block_headers correspond to the same block headers that we have in the blocks array. The main goal is to hash these only once and set them in both places.
     /// We also initialize the remaining block headers hashes. If they are set, we check their validity.
     pub fn initialize_block_header_hashes(
@@ -458,69 +534,6 @@ impl GuestProgramState {
             Ok(Some(storage_trie))
         }
     }
-}
-
-pub fn serialize_code<S>(map: &BTreeMap<H256, Bytes>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let mut seq_serializer = serializer.serialize_seq(Some(map.len()))?;
-    for (code_hash, code) in map {
-        let code_hash = format!("0x{}", hex::encode(code_hash));
-        let code = format!("0x{}", hex::encode(code));
-
-        let mut obj = serde_json::Map::new();
-        obj.insert(code_hash, serde_json::Value::String(code));
-
-        seq_serializer.serialize_element(&obj)?;
-    }
-    seq_serializer.end()
-}
-
-pub fn deserialize_code<'de, D>(deserializer: D) -> Result<BTreeMap<H256, Bytes>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct BytesVecVisitor;
-
-    impl<'de> Visitor<'de> for BytesVecVisitor {
-        type Value = BTreeMap<H256, Bytes>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a list of hex-encoded strings")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut map = BTreeMap::new();
-
-            #[derive(Deserialize)]
-            struct CodeEntry(BTreeMap<String, String>);
-
-            while let Some(CodeEntry(entry)) = seq.next_element::<CodeEntry>()? {
-                if entry.len() != 1 {
-                    return Err(de::Error::custom(
-                        "Each object must contain exactly one key",
-                    ));
-                }
-
-                for (k, v) in entry {
-                    let code_hash =
-                        H256::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
-
-                    let bytecode =
-                        decode_hex(v.trim_start_matches("0x")).map_err(de::Error::custom)?;
-
-                    map.insert(code_hash, Bytes::from(bytecode));
-                }
-            }
-            Ok(map)
-        }
-    }
-
-    deserializer.deserialize_seq(BytesVecVisitor)
 }
 
 fn hash_address(address: &Address) -> Vec<u8> {
