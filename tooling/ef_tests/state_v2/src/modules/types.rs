@@ -379,6 +379,8 @@ pub struct Env {
     pub current_random: Option<H256>,
     #[serde(deserialize_with = "u256::deser_hex_str")]
     pub current_timestamp: U256,
+    #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
+    pub slot_number: Option<U256>,
 }
 
 /// This structure represents a specific test case under general test conditions (`Test` struct). It is mainly
