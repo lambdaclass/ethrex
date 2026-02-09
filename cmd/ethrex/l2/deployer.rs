@@ -1651,26 +1651,27 @@ fn write_contract_addresses_to_env(
         "ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS={:#x}",
         contract_addresses.tdx_verifier_address
     )?;
-    // TDX aux contracts, qpl-tool depends on exact env var naming
+    // TDX aux contracts, qpl-tool depends on exact env var naming.
+    // Default to Address::zero() when TDX is not deployed (files won't exist).
     writeln!(
         writer,
         "ENCLAVE_ID_DAO={:#x}",
-        read_tdx_deployment_address("AutomataEnclaveIdentityDao")?
+        read_tdx_deployment_address("AutomataEnclaveIdentityDao").unwrap_or_default()
     )?;
     writeln!(
         writer,
         "FMSPC_TCB_DAO={:#x}",
-        read_tdx_deployment_address("AutomataFmspcTcbDao")?
+        read_tdx_deployment_address("AutomataFmspcTcbDao").unwrap_or_default()
     )?;
     writeln!(
         writer,
         "PCK_DAO={:#x}",
-        read_tdx_deployment_address("AutomataPckDao")?
+        read_tdx_deployment_address("AutomataPckDao").unwrap_or_default()
     )?;
     writeln!(
         writer,
         "PCS_DAO={:#x}",
-        read_tdx_deployment_address("AutomataPcsDao")?
+        read_tdx_deployment_address("AutomataPcsDao").unwrap_or_default()
     )?;
     writeln!(
         writer,
