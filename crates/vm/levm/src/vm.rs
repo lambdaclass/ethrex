@@ -212,24 +212,28 @@ impl Substate {
 
     /// Mark a storage slot as accessed and return whether it was already marked.
     /// Returns true if warm (already accessed), false if cold (first access).
+    #[inline]
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
         // O(1): flat set already contains inherited parent entries.
         !self.accessed_storage_slots.insert((address, key))
     }
 
     /// Return whether a storage slot has already been accessed.
+    #[inline]
     pub fn is_slot_accessed(&self, address: &Address, key: &H256) -> bool {
         self.accessed_storage_slots.contains(&(*address, *key))
     }
 
     /// Mark an address as accessed and return whether it was already marked.
     /// Returns true if warm (already accessed), false if cold (first access).
+    #[inline]
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
         // O(1): flat set already contains inherited parent entries.
         !self.accessed_addresses.insert(address)
     }
 
     /// Return whether an address has already been accessed.
+    #[inline]
     pub fn is_address_accessed(&self, address: &Address) -> bool {
         self.accessed_addresses.contains(address)
     }
