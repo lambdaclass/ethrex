@@ -216,40 +216,43 @@ pub async fn heal_storage_trie(
             // Parent-path empty markers from batch N could overwrite real node data from batch N+1
             // if commits happen out of order.
             super::wait_for_pending_task(&mut db_joinset).await?;
-            db_joinset.spawn_blocking(move || {
-                let encode_start = std::time::Instant::now();
-                let account_count = to_write.len();
-                let mut encoded_to_write = vec![];
-                for (hashed_account, nodes) in to_write {
-                    let mut account_nodes = std::collections::BTreeMap::new();
-                    for (path, node) in nodes {
-                        for i in 0..path.len() {
-                            account_nodes.entry(path.slice(0, i)).or_insert(vec![]);
+            if !to_write.is_empty() {
+                db_joinset.spawn_blocking(move || {
+                    let encode_start = std::time::Instant::now();
+                    let account_count = to_write.len();
+                    let mut encoded_to_write = vec![];
+                    for (hashed_account, nodes) in to_write {
+                        let mut account_nodes = std::collections::BTreeMap::new();
+                        for (path, node) in nodes {
+                            for i in 0..path.len() {
+                                account_nodes.entry(path.slice(0, i)).or_insert(vec![]);
+                            }
+                            account_nodes.insert(path, node.encode_to_vec());
                         }
-                        account_nodes.insert(path, node.encode_to_vec());
+                        encoded_to_write
+                            .push((hashed_account, account_nodes.into_iter().collect()));
                     }
-                    encoded_to_write.push((hashed_account, account_nodes.into_iter().collect()));
-                }
-                let encode_ms = encode_start.elapsed().as_millis() as u64;
-                let db_start = std::time::Instant::now();
-                store.write_storage_trie_nodes_batch_sync(encoded_to_write)
-                    .expect("db write failed");
-                debug!(
-                    account_count,
-                    encode_ms,
-                    db_write_ms = db_start.elapsed().as_millis() as u64,
-                    "storage healing batch write"
-                );
-            });
+                    let encode_ms = encode_start.elapsed().as_millis() as u64;
+                    let db_start = std::time::Instant::now();
+                    store.write_storage_trie_nodes_batch_sync(encoded_to_write)?;
+                    debug!(
+                        account_count,
+                        encode_ms,
+                        db_write_ms = db_start.elapsed().as_millis() as u64,
+                        "storage healing batch write"
+                    );
+                    Ok(())
+                });
+            }
         }
 
         if is_done {
-            db_joinset.join_all().await;
+            super::drain_pending_tasks(&mut db_joinset).await?;
             return Ok(true);
         }
 
         if is_stale {
-            db_joinset.join_all().await;
+            super::drain_pending_tasks(&mut db_joinset).await?;
             state.healing_queue = HashMap::new();
             return Ok(false);
         }

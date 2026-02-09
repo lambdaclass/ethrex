@@ -287,37 +287,37 @@ async fn heal_state_trie(
             // Parent-path empty markers from batch N could overwrite real node data from batch N+1
             // if commits happen out of order.
             super::wait_for_pending_task(&mut db_joinset).await?;
-            db_joinset.spawn_blocking(move || {
-                let encode_start = std::time::Instant::now();
-                let node_count = to_write.len();
-                let mut encoded_to_write = BTreeMap::new();
-                for (path, node) in to_write {
-                    for i in 0..path.len() {
-                        encoded_to_write.entry(path.slice(0, i)).or_insert(vec![]);
+            if !to_write.is_empty() {
+                db_joinset.spawn_blocking(move || {
+                    let encode_start = std::time::Instant::now();
+                    let node_count = to_write.len();
+                    let mut encoded_to_write = BTreeMap::new();
+                    for (path, node) in to_write {
+                        for i in 0..path.len() {
+                            encoded_to_write.entry(path.slice(0, i)).or_insert(vec![]);
+                        }
+                        encoded_to_write.insert(path, node.encode_to_vec());
                     }
-                    encoded_to_write.insert(path, node.encode_to_vec());
-                }
-                let encode_ms = encode_start.elapsed().as_millis() as u64;
-                let db_start = std::time::Instant::now();
-                let trie_db = store
-                    .open_direct_state_trie(*EMPTY_TRIE_HASH)
-                    .expect("Store should open");
-                let db = trie_db.db();
-                db.put_batch(encoded_to_write.into_iter().collect())
-                    .expect("The put batch on the store failed");
-                debug!(
-                    node_count,
-                    encode_ms,
-                    db_write_ms = db_start.elapsed().as_millis() as u64,
-                    "state healing batch write"
-                );
-            });
+                    let encode_ms = encode_start.elapsed().as_millis() as u64;
+                    let db_start = std::time::Instant::now();
+                    let trie_db = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+                    let db = trie_db.db();
+                    db.put_batch(encoded_to_write.into_iter().collect())?;
+                    debug!(
+                        node_count,
+                        encode_ms,
+                        db_write_ms = db_start.elapsed().as_millis() as u64,
+                        "state healing batch write"
+                    );
+                    Ok(())
+                });
+            }
         }
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if is_done {
             debug!("Nothing more to heal found");
-            db_joinset.join_all().await;
+            super::drain_pending_tasks(&mut db_joinset).await?;
             break;
         }
 
@@ -329,7 +329,7 @@ async fn heal_state_trie(
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             debug!("Finished inflight tasks");
-            db_joinset.join_all().await;
+            super::drain_pending_tasks(&mut db_joinset).await?;
             break;
         }
     }
