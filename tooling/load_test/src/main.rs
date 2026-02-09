@@ -218,13 +218,14 @@ impl TxBuilder {
 /// Returns a vec of (address, target_nonce) pairs for use with `wait_until_all_included`.
 async fn load_test(
     tx_amount: u64,
-    accounts: Vec<Signer>,
-    client: EthClient,
+    accounts: &[Signer],
+    client: &EthClient,
     chain_id: u64,
-    tx_builder: TxBuilder,
+    tx_builder: &TxBuilder,
 ) -> eyre::Result<Vec<(Address, u64)>> {
     let mut tasks = FuturesUnordered::new();
     for account in accounts {
+        let account = account.clone();
         let client = client.clone();
         let tx_builder = tx_builder.clone();
         tasks.push(async move {
@@ -422,10 +423,10 @@ async fn run_round(
 
     let targets = load_test(
         tx_amount,
-        accounts.to_vec(),
-        client.clone(),
+        accounts,
+        client,
         chain_id,
-        tx_builder.clone(),
+        tx_builder,
     )
     .await
     .expect("Failed to load test");
