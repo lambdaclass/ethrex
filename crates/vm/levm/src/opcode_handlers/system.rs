@@ -821,6 +821,9 @@ impl<'a> VM<'a> {
         let Some(recorder) = self.db.bal_recorder.as_mut() else {
             return;
         };
+        // Safe: expansion_cost only fails on usize→u64 overflow, which is infallible
+        // (usize ≤ 64 bits). If it somehow did, u64::MAX makes the gas check fail
+        // conservatively, skipping the BAL touch — a non-consensus recording path.
         let mem_cost =
             memory::expansion_cost(new_memory_size, current_memory_size).unwrap_or(u64::MAX);
         let access_cost = if address_was_cold {
