@@ -72,7 +72,7 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block, validate_block_access_list_hash, validate_gas_used,
-    validate_receipts_root, validate_requests_hash,
+    validate_receipts_root, validate_receipts_root_from_encoded, validate_requests_hash,
 };
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
@@ -324,7 +324,10 @@ impl Blockchain {
 
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts)?;
+        validate_receipts_root_from_encoded(
+            &block.header,
+            &execution_result.encoded_receipts,
+        )?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
@@ -423,7 +426,10 @@ impl Blockchain {
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-                        validate_receipts_root(&block.header, &execution_result.receipts)?;
+                        validate_receipts_root_from_encoded(
+                            &block.header,
+                            &execution_result.encoded_receipts,
+                        )?;
                         validate_requests_hash(
                             &block.header,
                             &chain_config,
@@ -911,7 +917,10 @@ impl Blockchain {
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts)?;
+        validate_receipts_root_from_encoded(
+            &block.header,
+            &execution_result.encoded_receipts,
+        )?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
