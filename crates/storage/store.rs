@@ -183,6 +183,11 @@ pub struct Store {
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
 
+    /// Shared trie node read cache. Populated by warmer and execution threads,
+    /// so that merkleizer reads (and vice-versa) can be served from cache
+    /// instead of going to RocksDB.
+    trie_node_cache: Arc<crate::trie::TrieNodeCache>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -1460,6 +1465,7 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            trie_node_cache: Arc::new(crate::trie::TrieNodeCache::new(4096)),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1484,6 +1490,7 @@ impl Store {
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
+        let trie_node_cache_bg = Arc::clone(&store.trie_node_cache);
         /*
             When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
             This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
@@ -1514,6 +1521,7 @@ impl Store {
                             backend.as_ref(),
                             &flatkeyvalue_control_tx,
                             &trie_cache,
+                            &trie_node_cache_bg,
                             trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
@@ -2422,6 +2430,14 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let backend_db = BackendTrieDB::new_for_accounts(
+            self.backend.clone(),
+            self.last_written()?,
+        )?;
+        let caching_db = crate::trie::CachingBackendTrieDB::new(
+            backend_db,
+            Arc::clone(&self.trie_node_cache),
+        );
         let trie_db = TrieWrapper {
             state_root,
             inner: self
@@ -2429,10 +2445,7 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_accounts(
-                self.backend.clone(),
-                self.last_written()?,
-            )?),
+            db: Box::new(caching_db),
             prefix: None,
         };
         Ok(Trie::open(Box::new(trie_db), state_root))
@@ -2455,6 +2468,14 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let locked_db = state_trie_locked_backend(
+            self.backend.as_ref(),
+            self.last_written()?,
+        )?;
+        let caching_db = crate::trie::CachingBackendTrieDBLocked::new(
+            locked_db,
+            Arc::clone(&self.trie_node_cache),
+        );
         let trie_db = TrieWrapper {
             state_root,
             inner: self
@@ -2462,10 +2483,7 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
-                self.backend.as_ref(),
-                self.last_written()?,
-            )?),
+            db: Box::new(caching_db),
             prefix: None,
         };
         Ok(Trie::open(Box::new(trie_db), state_root))
@@ -2479,6 +2497,14 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
+        let backend_db = BackendTrieDB::new_for_storages(
+            self.backend.clone(),
+            self.last_written()?,
+        )?;
+        let caching_db = crate::trie::CachingBackendTrieDB::new(
+            backend_db,
+            Arc::clone(&self.trie_node_cache),
+        );
         let trie_db = TrieWrapper {
             state_root,
             inner: self
@@ -2486,10 +2512,7 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_storages(
-                self.backend.clone(),
-                self.last_written()?,
-            )?),
+            db: Box::new(caching_db),
             prefix: Some(account_hash),
         };
         Ok(Trie::open(Box::new(trie_db), storage_root))
@@ -2520,6 +2543,14 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
+        let locked_db = state_trie_locked_backend(
+            self.backend.as_ref(),
+            self.last_written()?,
+        )?;
+        let caching_db = crate::trie::CachingBackendTrieDBLocked::new(
+            locked_db,
+            Arc::clone(&self.trie_node_cache),
+        );
         let trie_db = TrieWrapper {
             state_root,
             inner: self
@@ -2527,10 +2558,7 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
-                self.backend.as_ref(),
-                self.last_written()?,
-            )?),
+            db: Box::new(caching_db),
             prefix: Some(account_hash),
         };
         Ok(Trie::open(Box::new(trie_db), storage_root))
@@ -2673,6 +2701,7 @@ fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     trie_cache: &Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_node_cache: &Arc<crate::trie::TrieNodeCache>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2765,6 +2794,9 @@ fn apply_trie_updates(
     // We want to send this message even if there was an error during the batch write
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
+    // Invalidate the trie node read cache — the bottom layers have been
+    // removed so cached entries may now be stale.
+    trie_node_cache.clear();
     // Phase 3: update diff layers with the removal of bottom layer.
     *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
     Ok(())
