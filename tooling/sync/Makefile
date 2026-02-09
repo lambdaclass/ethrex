@@ -4,9 +4,17 @@ flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-d
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
-multisync-restart multisync-monitor multisync-run multisync-loop
+multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto
 
 ETHREX_DIR ?= "../.."
+
+# Frame pointers for profiling (default on for sync/profiling targets)
+FRAME_POINTERS ?= 1
+
+ifeq ($(FRAME_POINTERS),1)
+PROFILING_CFG := --config .cargo/profiling.toml
+endif
+
 EVM ?= levm
 NODE_NAME ?= ethrex
 ENGINE_PORT ?= 8551
@@ -39,7 +47,7 @@ endif
 # Set bootnodes flag only if we have bootnodes
 ifndef BOOTNODES
 BOOTNODES_FLAG ?=
-else 
+else
 BOOTNODES_FLAG ?= --bootnodes ${BOOTNODES}
 endif
 
@@ -57,8 +65,8 @@ gen-jwt: create_datadir ## Create the jwt for a given network. NETWORK environme
 sync: create_datadir ## Run the sync for a given network. SYNC_BLOCK_NUM environment variable required (for block to start from).  If NETWORK environment variable is not provided, mainnet will be used as default. EVM can also be set to select the evm to use.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set")
-endif	
-#	samply record --unstable-presymbolicate --save-only -- 
+endif
+#	samply record --unstable-presymbolicate --save-only --
 	mkdir -p logs
 	make start-ethrex >> ./logs/ethrex-sync-$(NETWORK)-$(EVM).log
 
@@ -121,12 +129,12 @@ endif
 	@echo "Starting L1 docker compose with metrics..."
 	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR) && cargo run --release --features "metrics" --bin ethrex -- \
+	cd $(ETHREX_DIR) && cargo run $(PROFILING_CFG) --release --features "metrics" --bin ethrex -- \
 	--network $(NETWORK) \
 	--metrics \
 	--metrics.port 3701 \
 	import $(RLP_FILE) \
-	--removedb 
+	--removedb
 
 tail-syncing-logs: ## Tail the syncing logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
 ifndef LOGNAME
@@ -174,7 +182,8 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 		--port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT)
 
 start-ethrex: ## Start ethrex for the network given by NETWORK.
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "rocksdb sync-test metrics" --bin ethrex -- \
+	@echo $(RUSTFLAGS)
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run $(PROFILING_CFG) --release --features "rocksdb sync-test metrics" --bin ethrex -- \
     		--http.addr 0.0.0.0 \
     		--http.port 8545 \
     		--authrpc.port 8551 \
@@ -204,6 +213,8 @@ LOGS_FILE ?= output.log
 
 # Use make server-sync SERVER_SYNC_BRANCH=branch_name SERVER_SYNC_NETWORK=network_name LOGS_FILE=logs_file_name  HEALING=1 MEMORY=1 FULL_SYNC=1
 # SERVER_SYNC_BRANCH is the branch to checkout before syncing, SERVER_SYNC_NETWORK is the network to sync, LOGS_FILE is the file to output logs to, HEALING enables healing mode, MEMORY uses memory datadir, FULL_SYNC switches to full-sync mode.
+# If you want to run metrics locally (grafana/prometheus/ethereum-metrics-exporter in docker-compose), make sure to run the following first:
+# 		cd ../../metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 server-sync:
 	git fetch --all
 
@@ -221,7 +232,7 @@ server-sync:
 
 	sleep 0.2
 
-	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker stop metrics-ethereum-metrics-exporter-1 || true && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=info,ethrex_p2p::sync=debug $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(FULL_SYNC),$(HEALING)),--syncmode full)  2>&1 | tee $(LOGS_FILE)"
+	tmux new-window -t sync:2 -n ethrex "cd ../.. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=info,ethrex_p2p::sync=debug $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run $(PROFILING_CFG) --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(FULL_SYNC),$(HEALING)),--syncmode full)  2>&1 | tee $(LOGS_FILE)"
 
 # ==============================================================================
 # Docker Compose Multi-Network Snapsync
@@ -232,6 +243,14 @@ MULTISYNC_NETWORKS ?= hoodi,sepolia,mainnet
 comma := ,
 MULTISYNC_NETWORK_LIST := $(subst $(comma), ,$(MULTISYNC_NETWORKS))
 MULTISYNC_SERVICES := $(foreach n,$(MULTISYNC_NETWORK_LIST),setup-jwt-$(n) ethrex-$(n) consensus-$(n))
+
+# Auto-update configuration (for multisync-loop-auto)
+# Build profile: 'release-with-debug-assertions' enables state trie validation
+MULTISYNC_BUILD_PROFILE ?= release-with-debug-assertions
+# Local image tag for builds
+MULTISYNC_LOCAL_IMAGE ?= ethrex-local:multisync
+# Branch to track for auto-update mode (defaults to current branch if not set)
+MULTISYNC_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 
 multisync-up: ## Start all networks specified in MULTISYNC_NETWORKS via Docker Compose.
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
@@ -295,3 +314,31 @@ multisync-list-logs: ## List all saved run logs.
 	else \
 		echo "No logs directory found."; \
 	fi
+
+# ==============================================================================
+# Multisync with Auto-Update and Validation
+# ==============================================================================
+# The multisync-loop-auto target pulls latest code and rebuilds before each run.
+# When using 'release-with-debug-assertions' profile, state trie validation is
+# enabled (same as daily snapsync CI checks). The validation verifies:
+#   - State root: traverses entire account trie, validates all node hashes
+#   - Storage roots: validates each account's storage trie (parallelized)
+#   - Bytecodes: verifies code exists for all accounts with code
+#
+# If validation fails, the node exits with code 1 and logs the error.
+# ==============================================================================
+
+multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, and validate on each run.
+	@echo "Starting multisync loop with auto-update enabled..."
+	@echo "Branch: $(MULTISYNC_BRANCH)"
+	@echo "Build profile: $(MULTISYNC_BUILD_PROFILE)"
+	@echo "Image tag: $(MULTISYNC_LOCAL_IMAGE)"
+	python3 docker_monitor.py \
+		--networks $(MULTISYNC_NETWORKS) \
+		--compose-file docker-compose.multisync.yaml \
+		--compose-dir $(CURDIR) \
+		--auto-update \
+		--branch "$(MULTISYNC_BRANCH)" \
+		--build-profile "$(MULTISYNC_BUILD_PROFILE)" \
+		--image-tag "$(MULTISYNC_LOCAL_IMAGE)" \
+		--ethrex-dir "$(ETHREX_DIR)"

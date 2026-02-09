@@ -2,9 +2,9 @@ use crate::based::block_fetcher::BlockFetcherError;
 use crate::sequencer::admin_server::AdminError;
 use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
-use aligned_sdk::common::errors::SubmitError;
+use aligned_sdk::gateway::provider::GatewayError;
 use ethereum_types::FromStrRadixErr;
-use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
+use ethrex_blockchain::error::{ChainError, InvalidBlockError, InvalidForkChoice};
 use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
@@ -141,23 +141,23 @@ pub enum ProofSenderError {
     InternalError(#[from] GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
     RollUpStoreError(#[from] RollupStoreError),
-    #[error("Proof Sender failed to estimate Aligned fee: {0}")]
-    AlignedFeeEstimateError(String),
-    #[error("Proof Sender failed to get nonce from batcher: {0}")]
+    #[error("Proof Sender failed to get nonce from gateway: {0}")]
     AlignedGetNonceError(String),
-    #[error("Proof Sender failed to submit proof(s): {0}")]
-    AlignedSubmitProofError(Box<SubmitError>),
+    #[error("Proof Sender failed to submit proof(s): {0:?}")]
+    AlignedSubmitProofError(GatewayError),
     #[error("Wrong batch proof format; should be compressed but found groth16 instead")]
     AlignedWrongProofFormat,
+    #[error("Aligned mode only supports SP1 proofs, got {0}")]
+    AlignedUnsupportedProverType(String),
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
     #[error("Failed to convert integer")]
     TryIntoError(#[from] std::num::TryFromIntError),
 }
 
-impl From<SubmitError> for ProofSenderError {
-    fn from(value: SubmitError) -> Self {
-        ProofSenderError::AlignedSubmitProofError(value.into())
+impl From<GatewayError> for ProofSenderError {
+    fn from(value: GatewayError) -> Self {
+        ProofSenderError::AlignedSubmitProofError(value)
     }
 }
 
@@ -228,6 +228,12 @@ pub enum BlockProducerError {
     EthClientError(#[from] EthClientError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+}
+
+impl From<InvalidBlockError> for BlockProducerError {
+    fn from(err: InvalidBlockError) -> Self {
+        BlockProducerError::ChainError(ChainError::from(err))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

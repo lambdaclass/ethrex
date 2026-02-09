@@ -155,7 +155,7 @@ pub enum Command {
     },
     #[command(about = "Reverts unverified batches.")]
     RevertBatch {
-        #[arg(help = "ID of the batch to revert to")]
+        #[arg(help = "ID of the batch to revert. This and all following batches will be removed.")]
         batch: u64,
         #[arg(
             long = "datadir",
@@ -585,7 +585,7 @@ impl Command {
                     contract_opts
                         .call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
                         .await?;
-                    info!("Reverted to batch {batch} on OnChainProposer")
+                    info!("Reverted batch {batch} on OnChainProposer")
                 } else {
                     info!("Private key not given, not updating contract.");
                 }
