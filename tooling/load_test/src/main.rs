@@ -273,12 +273,11 @@ async fn load_test(
 
 /// Waits until the confirmed nonce of each account reaches its target.
 async fn wait_until_all_included(
-    client: EthClient,
+    client: &EthClient,
     timeout: Option<Duration>,
     targets: Vec<(Address, u64)>,
 ) -> Result<(), String> {
     for (src, target_nonce) in targets {
-        let client = client.clone();
         let encoded_src: String = src.encode_hex();
         let mut last_updated = tokio::time::Instant::now();
         let mut last_nonce = 0;
@@ -398,38 +397,47 @@ async fn main() {
         None
     };
 
-    let mut round = 1;
-    loop {
-        println!(
-            "Starting load test round {round} with {} transactions per account...",
-            cli.tx_amount
-        );
-        let time_now = tokio::time::Instant::now();
-
-        let targets = load_test(
-            cli.tx_amount,
-            accounts.clone(),
-            client.clone(),
-            chain_id,
-            tx_builder.clone(),
-        )
-        .await
-        .expect("Failed to load test");
-
-        println!("Waiting for all transactions to be included in blocks...");
-        wait_until_all_included(client.clone(), wait_time, targets)
-            .await
-            .unwrap();
-
-        let elapsed_time = time_now.elapsed();
-        println!(
-            "Load test round {round} finished. Elapsed time: {} seconds",
-            elapsed_time.as_secs()
-        );
-
-        if !cli.endless {
-            break;
+    if cli.endless {
+        let mut round = 1;
+        loop {
+            run_round(round, cli.tx_amount, &accounts, &client, chain_id, &tx_builder, wait_time).await;
+            round += 1;
         }
-        round += 1;
+    } else {
+        run_round(1, cli.tx_amount, &accounts, &client, chain_id, &tx_builder, wait_time).await;
     }
+}
+
+async fn run_round(
+    round: u64,
+    tx_amount: u64,
+    accounts: &[Signer],
+    client: &EthClient,
+    chain_id: u64,
+    tx_builder: &TxBuilder,
+    wait_time: Option<Duration>,
+) {
+    println!("Starting load test round {round} with {tx_amount} transactions per account...");
+    let time_now = tokio::time::Instant::now();
+
+    let targets = load_test(
+        tx_amount,
+        accounts.to_vec(),
+        client.clone(),
+        chain_id,
+        tx_builder.clone(),
+    )
+    .await
+    .expect("Failed to load test");
+
+    println!("Waiting for all transactions to be included in blocks...");
+    wait_until_all_included(client, wait_time, targets)
+        .await
+        .unwrap();
+
+    let elapsed_time = time_now.elapsed();
+    println!(
+        "Load test round {round} finished. Elapsed time: {} seconds",
+        elapsed_time.as_secs()
+    );
 }
