@@ -31,48 +31,6 @@ const EXTRA_SKIPS: &[&str] = &[
 #[cfg(not(feature = "sp1"))]
 const EXTRA_SKIPS: &[&str] = &[];
 
-// Amsterdam EIP tests - skipped until each EIP is implemented
-// See docs/eip.md for Amsterdam EIP implementation status
-//
-// STRUCTURE:
-// - Section 1: Amsterdam-specific EIP directory skips (can be individually enabled)
-// - Section 2: Legacy tests running on Amsterdam fork (skip until ALL Amsterdam EIPs done)
-//
-// HOW TO TEST AN INDIVIDUAL EIP (e.g., EIP-7708):
-// 1. Comment out BOTH:
-//    - The EIP's skip pattern (e.g., "eip7708_eth_transfer_logs")
-//    - The "fork_Amsterdam" pattern in Section 2
-// 2. Run with cargo test filter to only run that EIP's tests:
-//      cargo test eip7708 --profile release-with-debug
-// 3. Fix any test failures in your EIP implementation
-// 4. IMPORTANT: Restore both skip patterns before committing
-// 5. Update docs/eip.md to track progress
-//
-// WHY TWO SKIPS ARE NEEDED:
-// - EIP patterns skip by test directory (e.g., "eip7708_eth_transfer_logs")
-// - "fork_Amsterdam" skips by fork parameter in test name
-// - Tests have BOTH in their full name, so both must be commented to run
-//
-// HOW TO FULLY ENABLE AMSTERDAM:
-// 1. Implement ALL Amsterdam EIPs
-// 2. Remove/comment ALL entries in this list (both sections)
-// 3. Run: make test-levm
-// 4. Fix any remaining failures
-const SKIPPED_AMSTERDAM: &[&str] = &[
-    // EIP-7708: selfdestruct-related tests failing with BlockAccessListHashMismatch
-    "eip7708_eth_transfer_logs/test_selfdestruct_during_initcode",
-    "eip7708_eth_transfer_logs/test_selfdestruct_finalization_after_priority_fee",
-    "eip7708_eth_transfer_logs/test_selfdestruct_to_system_address",
-    "eip7708_eth_transfer_logs/test_selfdestruct_to_different_address_same_tx",
-    "eip7708_eth_transfer_logs/test_selfdestruct_to_self_same_tx",
-    "eip7708_eth_transfer_logs/test_finalization_selfdestruct_logs",
-    "eip7708_eth_transfer_logs/test_selfdestruct_log_at_fork_transition",
-    "eip7708_eth_transfer_logs/test_transfer_to_special_address",
-    "eip7708_eth_transfer_logs/test_selfdestruct_same_tx_via_call",
-    // EIP-7928: selfdestruct BAL tracking issue
-    "eip7928_block_level_access_lists/test_bal_create_selfdestruct_to_self_with_call",
-];
-
 // Select backend
 #[cfg(feature = "stateless")]
 const BACKEND: Option<BackendType> = Some(BackendType::Exec);
@@ -87,7 +45,6 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
         .iter()
         .copied()
         .chain(EXTRA_SKIPS.iter().copied())
-        .chain(SKIPPED_AMSTERDAM.iter().copied())
         .collect();
 
     parse_and_execute(path, Some(&skips), BACKEND)
