@@ -251,11 +251,17 @@ impl LEVM {
         }
 
         // Parallel across sender groups, sequential within each group
+        let one_eth = U256::from(10u64.pow(18));
         sender_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
+
+                // Give sender 1 ETH so speculative execution doesn't fail on balance checks
+                if let Ok(account) = group_db.get_account_mut(sender) {
+                    account.info.balance = account.info.balance.saturating_add(one_eth);
+                }
 
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
