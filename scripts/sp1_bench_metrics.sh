@@ -77,10 +77,51 @@ if [[ ${#batches[@]} -eq 0 ]]; then
     exit 0
 fi
 
+# Detect hardware specs.
+detect_cpu() {
+    if [[ -f /proc/cpuinfo ]]; then
+        grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs
+    elif command -v sysctl &>/dev/null; then
+        sysctl -n machdep.cpu.brand_string 2>/dev/null
+    fi
+}
+
+detect_ram() {
+    if [[ -f /proc/meminfo ]]; then
+        local kb
+        kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+        echo "$((kb / 1024 / 1024)) GB"
+    elif command -v sysctl &>/dev/null; then
+        local bytes
+        bytes=$(sysctl -n hw.memsize 2>/dev/null)
+        echo "$((bytes / 1024 / 1024 / 1024)) GB"
+    fi
+}
+
+detect_gpu() {
+    if command -v nvidia-smi &>/dev/null; then
+        nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null \
+            | head -1 \
+            | awk -F', ' '{printf "%s %d GB", $1, $2/1024}'
+    fi
+}
+
+cpu=$(detect_cpu)
+ram=$(detect_ram)
+gpu=$(detect_gpu)
+
 # Write markdown.
 {
     echo "# Proving Benchmark Results"
     echo ""
+    if [[ -n "$cpu" || -n "$ram" || -n "$gpu" ]]; then
+        echo "## Server Specs"
+        echo ""
+        [[ -n "$cpu" ]] && echo "- $cpu"
+        [[ -n "$ram" ]] && echo "- $ram RAM"
+        [[ -n "$gpu" ]] && echo "- $gpu"
+        echo ""
+    fi
     echo "| Batch | Time (s) | Time (ms) | Gas Used | Tx Count | Blocks |"
     echo "|-------|----------|-----------|----------|----------|--------|"
     for i in "${!batches[@]}"; do
