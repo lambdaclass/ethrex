@@ -514,6 +514,10 @@ pub struct BlockAccessListRecorder {
     /// Used for efficient checkpoint/restore without cloning storage_reads.
     /// On restore, we truncate this Vec and the slots go back to being reads.
     reads_promoted_to_writes: BTreeMap<Address, Vec<U256>>,
+    /// When true, SYSTEM_ADDRESS balance/nonce/touch changes are filtered out.
+    /// Set during system contract calls (EIP-2935, EIP-4788, etc.) where the
+    /// system address account is backed up and restored, so changes are transient.
+    in_system_call: bool,
 }
 
 impl BlockAccessListRecorder {
@@ -647,24 +651,40 @@ impl BlockAccessListRecorder {
         self.current_index
     }
 
+    /// Marks the recorder as being inside a system contract call.
+    /// While in this mode, SYSTEM_ADDRESS balance/nonce/touch changes are filtered out
+    /// because system calls backup and restore the system address account state.
+    pub fn enter_system_call(&mut self) {
+        self.in_system_call = true;
+    }
+
+    /// Marks the recorder as no longer inside a system contract call.
+    pub fn exit_system_call(&mut self) {
+        self.in_system_call = false;
+    }
+
     /// Records an address as touched during execution.
     /// The address will appear in the BAL even if it has no state changes.
     ///
-    /// Note: SYSTEM_ADDRESS is excluded unless it has actual state changes.
+    /// Note: SYSTEM_ADDRESS is excluded during system contract calls.
     pub fn record_touched_address(&mut self, address: Address) {
-        // SYSTEM_ADDRESS is only included if it has actual state changes
-        if address != SYSTEM_ADDRESS {
-            self.touched_addresses.insert(address);
+        if address == SYSTEM_ADDRESS && self.in_system_call {
+            return;
         }
+        self.touched_addresses.insert(address);
     }
 
     /// Records multiple addresses as touched during execution.
     /// More efficient than calling `record_touched_address` in a loop.
     ///
-    /// Note: SYSTEM_ADDRESS is filtered out.
+    /// Note: SYSTEM_ADDRESS is filtered out during system contract calls.
     pub fn extend_touched_addresses(&mut self, addresses: impl Iterator<Item = Address>) {
-        self.touched_addresses
-            .extend(addresses.filter(|addr| *addr != SYSTEM_ADDRESS));
+        if self.in_system_call {
+            self.touched_addresses
+                .extend(addresses.filter(|addr| *addr != SYSTEM_ADDRESS));
+        } else {
+            self.touched_addresses.extend(addresses);
+        }
     }
 
     /// Records a storage slot read.
@@ -745,7 +765,8 @@ impl BlockAccessListRecorder {
     /// Should be called after every balance modification.
     /// Per EIP-7928, only the final balance per (address, block_access_index) is recorded.
     /// If multiple balance changes occur within the same transaction, only the last one matters.
-    /// Note: SYSTEM_ADDRESS balance changes are excluded (system calls backup/restore it).
+    /// Note: SYSTEM_ADDRESS balance changes are excluded during system contract calls
+    /// (system calls backup/restore the system address account state).
     ///
     /// IMPORTANT: We always push new entries (never update in-place) to support checkpoint/restore.
     /// The checkpoint mechanism captures lengths, not values. If we updated in-place, the restored
@@ -754,7 +775,7 @@ impl BlockAccessListRecorder {
     pub fn record_balance_change(&mut self, address: Address, post_balance: U256) {
         // SYSTEM_ADDRESS balance changes from system contract calls should not be recorded
         // (system calls backup and restore SYSTEM_ADDRESS state)
-        if address == SYSTEM_ADDRESS {
+        if address == SYSTEM_ADDRESS && self.in_system_call {
             return;
         }
 
@@ -788,7 +809,7 @@ impl BlockAccessListRecorder {
     /// Note: SYSTEM_ADDRESS nonce changes from system calls are excluded.
     pub fn record_nonce_change(&mut self, address: Address, post_nonce: u64) {
         // SYSTEM_ADDRESS nonce changes from system contract calls should not be recorded
-        if address == SYSTEM_ADDRESS {
+        if address == SYSTEM_ADDRESS && self.in_system_call {
             return;
         }
         self.nonce_changes

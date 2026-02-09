@@ -751,10 +751,20 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
+    // EIP-7928: Mark BAL recorder as in system call mode to filter SYSTEM_ADDRESS changes
+    if let Some(recorder) = db.bal_recorder.as_mut() {
+        recorder.enter_system_call();
+    }
+
     let mut vm =
         VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
+
+    // EIP-7928: Exit system call mode before restoring accounts
+    if let Some(recorder) = db.bal_recorder.as_mut() {
+        recorder.exit_system_call();
+    }
 
     if let Some(system_account) = system_account_backup {
         db.current_accounts_state
