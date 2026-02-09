@@ -1140,14 +1140,13 @@ impl BlockAccessListRecorder {
         }
 
         // 2. Remove balance changes if pre-balance was 0 (round-trip: 0→X→0)
-        if let Some(&pre_balance) = self.initial_balances.get(&address) {
-            if pre_balance.is_zero() {
-                if let Some(changes) = self.balance_changes.get_mut(&address) {
-                    changes.retain(|(i, _)| *i != idx);
-                    if changes.is_empty() {
-                        self.balance_changes.remove(&address);
-                    }
-                }
+        if let Some(&pre_balance) = self.initial_balances.get(&address)
+            && pre_balance.is_zero()
+            && let Some(changes) = self.balance_changes.get_mut(&address)
+        {
+            changes.retain(|(i, _)| *i != idx);
+            if changes.is_empty() {
+                self.balance_changes.remove(&address);
             }
         }
 
