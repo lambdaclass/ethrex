@@ -4,7 +4,7 @@ use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_git_commit_hash;
 use bytes::Bytes;
 use ethrex_common::Address;
-use ethrex_l2_common::prover::{BatchProof, ProofData, ProofFormat, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProofData, ProofFormat, ProverInputData, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage_rollup::StoreRollup;
@@ -155,7 +155,7 @@ impl ProofCoordinator {
     async fn next_batch_to_assign(
         &self,
         commit_hash: &str,
-    ) -> Result<Option<u64>, ProofCoordinatorError> {
+    ) -> Result<Option<(u64, ProverInputData)>, ProofCoordinatorError> {
         let base_batch = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
 
         loop {
@@ -187,18 +187,16 @@ impl ProofCoordinator {
             };
 
             // No prover input for this version — nothing left to assign
-            let has_input = self
+            let Some(input) = self
                 .rollup_store
                 .get_prover_input_by_batch_and_version(candidate, commit_hash)
                 .await?
-                .is_some();
-
-            if !has_input {
+            else {
                 if let Ok(mut assignments) = self.assignments.lock() {
                     assignments.remove(&candidate);
                 }
                 return Ok(None);
-            }
+            };
 
             // Skip batches that already have all proofs (keep assignment so the
             // scan advances past it on next iteration)
@@ -207,7 +205,7 @@ impl ProofCoordinator {
                 continue;
             }
 
-            return Ok(Some(candidate));
+            return Ok(Some((candidate, input)));
         }
     }
 
@@ -225,26 +223,12 @@ impl ProofCoordinator {
             );
         }
 
-        let Some(batch_to_prove) = self.next_batch_to_assign(&commit_hash).await? else {
+        let Some((batch_to_prove, input)) = self.next_batch_to_assign(&commit_hash).await?
+        else {
             debug!("No batch available for this version, sending empty BatchResponse");
             let response = ProofData::empty_batch_response();
             send_response(stream, &response).await?;
             info!("Empty BatchResponse sent (no batch for version)");
-            return Ok(());
-        };
-
-        let Some(input) = self
-            .rollup_store
-            .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
-            .await?
-        else {
-            // Remove assignment since we can't serve this batch
-            if let Ok(mut assignments) = self.assignments.lock() {
-                assignments.remove(&batch_to_prove);
-            }
-            let response = ProofData::no_batch_for_version(commit_hash);
-            send_response(stream, &response).await?;
-            info!("No batch for version sent");
             return Ok(());
         };
 
