@@ -467,7 +467,13 @@ impl<'a> VM<'a> {
         value: U256,
     ) -> Result<(), InternalError> {
         if value != U256::zero() {
-            self.decrease_account_balance(from, value)?;
+            if self.env.disable_balance_check {
+                // Best-effort decrease: saturate to zero instead of failing
+                let account = self.get_account_mut(from)?;
+                account.info.balance = account.info.balance.saturating_sub(value);
+            } else {
+                self.decrease_account_balance(from, value)?;
+            }
             self.increase_account_balance(to, value)?;
         }
 

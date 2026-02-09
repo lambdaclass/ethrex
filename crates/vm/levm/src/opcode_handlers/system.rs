@@ -766,7 +766,7 @@ impl<'a> VM<'a> {
         self.current_call_frame.sub_return_data.clear();
 
         // Validate sender has enough value
-        if should_transfer_value && !value.is_zero() {
+        if should_transfer_value && !value.is_zero() && !self.env.disable_balance_check {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
