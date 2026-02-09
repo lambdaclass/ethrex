@@ -1,26 +1,19 @@
 use super::utils::random_duration;
-use crate::based::sequencer_state::{SequencerState, SequencerStatus};
+use crate::sequencer::errors::L1WatcherError;
+use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
-use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
-use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::{Log, PrivilegedL2Transaction, TxKind, TxType};
+use ethrex_common::types::{Log, PrivilegedL2Transaction, Transaction, TxKind};
 use ethrex_common::utils::keccak;
-use ethrex_common::{H160, types::Transaction};
 use ethrex_l2_common::messages::{
     L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS, get_l2_message_hash,
 };
-use ethrex_l2_sdk::{
-    build_generic_tx, get_last_fetched_l1_block, get_pending_l1_messages, get_pending_l2_messages,
-};
-use ethrex_rpc::clients::EthClientError;
+use ethrex_l2_sdk::privileged_data::PrivilegedTransactionData;
+use ethrex_l2_sdk::{get_last_fetched_l1_block, get_pending_l1_messages, get_pending_l2_messages};
+use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcLog;
-use ethrex_rpc::{
-    clients::eth::{EthClient, Overrides},
-    types::receipt::RpcLogInfo,
-};
 use ethrex_storage::Store;
 use reqwest::Url;
 use serde::Serialize;
@@ -144,7 +137,7 @@ impl L1Watcher {
         })
     }
 
-    pub async fn spawn(
+    pub fn spawn(
         store: Store,
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
@@ -261,8 +254,12 @@ impl L1Watcher {
     ) -> Result<Vec<H256>, L1WatcherError> {
         let mut privileged_txs = Vec::new();
 
+        let pending_privileged_transactions =
+            get_pending_l1_messages(&self.eth_client, self.bridge_address).await?;
+
         for log in logs {
-            let privileged_transaction_data = PrivilegedTransactionData::from_log(log.log)?;
+            let privileged_transaction_data = PrivilegedTransactionData::from_log(log.log)
+                .map_err(L1WatcherError::FailedToDeserializeLog)?;
 
             let chain_id = self.this_l2_client.get_chain_id().await?.as_u64();
 
@@ -280,7 +277,10 @@ impl L1Watcher {
             let tx = Transaction::PrivilegedL2Transaction(mint_transaction);
 
             if self
-                .privileged_transaction_already_processed(tx.hash())
+                .privileged_transaction_already_processed(
+                    tx.hash(),
+                    &pending_privileged_transactions,
+                )
                 .await?
             {
                 warn!(
@@ -380,6 +380,7 @@ impl L1Watcher {
     async fn privileged_transaction_already_processed(
         &self,
         tx_hash: H256,
+        pending_privileged_transactions: &[H256],
     ) -> Result<bool, L1WatcherError> {
         if self
             .store
@@ -393,8 +394,6 @@ impl L1Watcher {
 
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
-        let pending_privileged_transactions =
-            get_pending_l1_messages(&self.eth_client, self.bridge_address).await?;
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 
@@ -492,6 +491,12 @@ pub async fn filter_verified_messages(
     let mut verified_logs = Vec::new();
     debug!("Filtering L2 messages");
 
+    // Check if the transaction is marked as pending in the contract.
+    let pending_l2_messages =
+        get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
+
+    debug!("Pending l2 messages {:?}", pending_l2_messages);
+
     for rpc_log in logs {
         let log = Log {
             address: rpc_log.log.address,
@@ -506,12 +511,6 @@ pub async fn filter_verified_messages(
         };
 
         debug!("l2 message parsed from log: {:?}", l2_message);
-
-        // Check if the transaction is marked as pending in the contract.
-        let pending_l2_messages =
-            get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
-
-        debug!("Pending l2 messages {:?}", pending_l2_messages);
 
         let message_hash = get_l2_message_hash(&l2_message);
         if !pending_l2_messages.contains(&message_hash) {
@@ -633,125 +632,5 @@ impl GenServer for L1Watcher {
         match message {
             CallMessage::Health => self.health().await,
         }
-    }
-}
-
-pub struct PrivilegedTransactionData {
-    pub value: U256,
-    pub to_address: H160,
-    pub transaction_id: U256,
-    pub from: H160,
-    pub gas_limit: U256,
-    pub calldata: Vec<u8>,
-}
-
-impl PrivilegedTransactionData {
-    pub fn from_log(log: RpcLogInfo) -> Result<PrivilegedTransactionData, L1WatcherError> {
-        /*
-            event PrivilegedTxSent (
-                address indexed L1from, => part of topics, not data
-                address from, => 0..32
-                address to, => 32..64
-                uint256 transactionId, => 64..96
-                uint256 value, => 96..128
-                uint256 gasLimit, => 128..160
-                bytes data
-                    => offset_data => 160..192
-                    => length_data => 192..224
-                    => data => 224..
-            );
-            Any value that is not 32 bytes is padded with zeros.
-        */
-
-        let from = H256::from_slice(log.data.get(0..32).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse gas_limit from log: log.data[0..32] out of bounds".to_owned(),
-            ),
-        )?);
-        let from_address = hash_to_address(from);
-
-        let to = H256::from_slice(log.data.get(32..64).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse gas_limit from log: log.data[32..64] out of bounds".to_owned(),
-            ),
-        )?);
-        let to_address = hash_to_address(to);
-
-        let transaction_id = U256::from_big_endian(log.data.get(64..96).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse gas_limit from log: log.data[64..96] out of bounds".to_owned(),
-            ),
-        )?);
-
-        let value = U256::from_big_endian(log.data.get(96..128).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse gas_limit from log: log.data[96..128] out of bounds".to_owned(),
-            ),
-        )?);
-
-        let gas_limit = U256::from_big_endian(log.data.get(128..160).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse gas_limit from log: log.data[128..160] out of bounds".to_owned(),
-            ),
-        )?);
-
-        // 160..192 is taken by offset_data, which we do not need
-
-        let calldata_len = U256::from_big_endian(
-            log.data
-                .get(192..224)
-                .ok_or(L1WatcherError::FailedToDeserializeLog(
-                    "Failed to parse calldata_len from log: log.data[192..224] out of bounds"
-                        .to_owned(),
-                ))?,
-        );
-
-        let calldata = log
-            .data
-            .get(224..224 + calldata_len.as_usize())
-            .ok_or(L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse calldata from log: log.data[224..224 + calldata_len] out of bounds"
-                .to_owned(),
-        ))?;
-
-        Ok(Self {
-            value,
-            to_address,
-            transaction_id,
-            from: from_address,
-            gas_limit,
-            calldata: calldata.to_vec(),
-        })
-    }
-    pub async fn into_tx(
-        &self,
-        eth_client: &EthClient,
-        chain_id: u64,
-        gas_price: u64,
-    ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        let generic_tx = build_generic_tx(
-            eth_client,
-            TxType::Privileged,
-            self.to_address,
-            self.from,
-            Bytes::copy_from_slice(&self.calldata),
-            Overrides {
-                chain_id: Some(chain_id),
-                // Using the transaction_id as nonce.
-                // If we make a transaction on the L2 with this address, we may break the
-                // privileged transaction workflow.
-                nonce: Some(self.transaction_id.as_u64()),
-                value: Some(self.value),
-                gas_limit: Some(self.gas_limit.as_u64()),
-                // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
-                // Otherwise, the transaction is not included in the mempool.
-                // We should override the blockchain to always include the transaction.
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
-                ..Default::default()
-            },
-        )
-        .await?;
-        Ok(generic_tx.try_into()?)
     }
 }

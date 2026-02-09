@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -18,6 +18,7 @@ import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
 import {IRouter} from "./interfaces/IRouter.sol";
 import "../l2/interfaces/IFeeTokenRegistry.sol";
+import "../l2/interfaces/IFeeTokenPricer.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -67,6 +68,10 @@ contract CommonBridge is
     /// @dev It's used to allow new tokens to pay fees
     address public constant L2_FEE_TOKEN_REGISTRY = address(0xfffc);
 
+    /// @notice Address of the fee token pricer on the L2
+    /// @dev It's used to set ratios for the allowed fee tokens
+    address public constant L2_FEE_TOKEN_PRICER = address(0xfffb);
+
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
@@ -105,7 +110,7 @@ contract CommonBridge is
     uint256 private pendingPrivilegedTxIndex;
 
     /// @notice Address of the SharedBridgeRouter contract
-    address public SHARED_BRIDGE_ROUTER = address(0);
+    address public SHARED_BRIDGE_ROUTER;
 
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
@@ -455,26 +460,46 @@ contract CommonBridge is
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer nonReentrant {
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            IRouter(SHARED_BRIDGE_ROUTER).sendMessages{
+            // Send ETH value if any
+            IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{
                 value: balanceDiffs[i].value
-            }(balanceDiffs[i].chainId, balanceDiffs[i].message_hashes);
+            }(balanceDiffs[i].chainId);
+            deposits[ETH_TOKEN][ETH_TOKEN] -= balanceDiffs[i].value;
+
+            // Send ERC20 values if any
+            for (uint j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
+                AssetDiff memory tv = balanceDiffs[i].assetDiffs[j];
+                require(
+                    deposits[tv.tokenL1][tv.tokenL2] >= tv.value,
+                    "CommonBridge: trying to withdraw more tokens than were deposited"
+                );
+                deposits[tv.tokenL1][tv.tokenL2] -= tv.value;
+                IERC20(tv.tokenL1).forceApprove(SHARED_BRIDGE_ROUTER, tv.value);
+                IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
+                    CHAIN_ID,
+                    balanceDiffs[i].chainId,
+                    tv.tokenL1,
+                    tv.destTokenL2,
+                    tv.value
+                );
+            }
+            IRouter(SHARED_BRIDGE_ROUTER).injectMessageHashes(
+                balanceDiffs[i].chainId,
+                balanceDiffs[i].message_hashes
+            );
         }
     }
 
-    /// @inheritdoc ICommonBridge
-    function receiveFromSharedBridge(
-        uint256 senderChainId,
+    function pushMessageHashes(
+        uint256 chainId,
         bytes32[] calldata message_hashes
-    ) public payable override {
+    ) external override {
         require(
             msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"
         );
-        // Append new hashes instead of overwriting
         for (uint i = 0; i < message_hashes.length; i++) {
-            pendingMessagesHashesPerChain[senderChainId].push(
-                message_hashes[i]
-            );
+            pendingMessagesHashesPerChain[chainId].push(message_hashes[i]);
 
             privilegedTxDeadline[message_hashes[i]] =
                 block.timestamp +
@@ -483,12 +508,34 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
+    function receiveETHFromSharedBridge() public payable override {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+        deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
+    }
+
+    /// @inheritdoc ICommonBridge
+    function receiveERC20FromSharedBridge(
+        address tokenL1,
+        address tokenL2,
+        uint256 amount
+    ) public payable override {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+        deposits[tokenL1][tokenL2] += amount;
+    }
+
+    /// @inheritdoc ICommonBridge
     function claimWithdrawal(
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public override whenNotPaused {
+    ) public override whenNotPaused nonReentrant {
         _claimWithdrawal(
             ETH_TOKEN,
             ETH_TOKEN,
@@ -640,6 +687,39 @@ contract CommonBridge is
         );
         SendValues memory sendValues = SendValues({
             to: L2_FEE_TOKEN_REGISTRY,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function setFeeTokenRatio(
+        address feeToken,
+        uint256 ratio
+    ) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenPricer.setFeeTokenRatio,
+            (feeToken, ratio)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_PRICER,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function unsetFeeTokenRatio(address feeToken) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenPricer.unsetFeeTokenRatio,
+            (feeToken)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_PRICER,
             gasLimit: 21000 * 10,
             value: 0,
             data: callData

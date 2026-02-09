@@ -50,7 +50,7 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
         enode: enode_url,
         enr: enr_url,
         id: hex::encode(node_data.local_p2p_node.node_id()),
-        name: node_data.client_version.clone(),
+        name: node_data.client_version.to_string(),
         ip: node_data.local_p2p_node.ip.to_string(),
         ports: Ports {
             discovery: node_data.local_p2p_node.udp_port,
@@ -61,7 +61,7 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
     serde_json::to_value(node_info).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
-pub async fn set_log_level(
+pub fn set_log_level(
     req: &RpcRequest,
     log_filter_handler: &Option<reload::Handle<EnvFilter, Registry>>,
 ) -> Result<Value, RpcErr> {

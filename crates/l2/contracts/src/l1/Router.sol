@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IRouter} from "./interfaces/IRouter.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 
@@ -17,6 +19,7 @@ contract Router is
     Ownable2StepUpgradeable,
     PausableUpgradeable
 {
+    using SafeERC20 for IERC20;
     mapping(uint256 chainId => address bridge) public bridges;
 
     uint256[] public registeredChainIds;
@@ -62,10 +65,7 @@ contract Router is
     }
 
     /// @inheritdoc IRouter
-    function sendMessages(
-        uint256 chainId,
-        bytes32[] calldata message_hashes
-    ) public payable override {
+    function sendETHValue(uint256 chainId) public payable override whenNotPaused {
         uint256 senderChainId = registeredAddresses[msg.sender];
         if (senderChainId == 0) {
             revert CallerNotBridge(msg.sender);
@@ -75,10 +75,33 @@ contract Router is
             revert TransferToChainNotRegistered(chainId);
         }
 
-        ICommonBridge(receiverBridge).receiveFromSharedBridge{value: msg.value}(
-            senderChainId,
-            message_hashes
-        );
+        ICommonBridge(receiverBridge).receiveETHFromSharedBridge{
+            value: msg.value
+        }();
+    }
+
+    /// @inheritdoc IRouter
+    function sendERC20Message(
+        uint256 senderChainId,
+        uint256 chainId,
+        address tokenL1,
+        address destTokenL2,
+        uint256 amount
+    ) public payable override whenNotPaused {
+        if (bridges[senderChainId] != msg.sender) {
+            revert InvalidSender(senderChainId, msg.sender);
+        }
+        if (bridges[chainId] == address(0)) {
+            revert TransferToChainNotRegistered(chainId);
+        } else {
+            address receiverBridge = bridges[chainId];
+            ICommonBridge(receiverBridge).receiveERC20FromSharedBridge(
+                tokenL1,
+                destTokenL2,
+                amount
+            );
+            IERC20(tokenL1).safeTransferFrom(msg.sender, receiverBridge, amount);
+        }
     }
 
     function removeChainID(uint256 chainId) internal {
@@ -91,6 +114,26 @@ contract Router is
                 return;
             }
         }
+    }
+
+    /// @inheritdoc IRouter
+    function injectMessageHashes(
+        uint256 chainId,
+        bytes32[] calldata message_hashes
+    ) external override whenNotPaused {
+        uint256 senderChainId = registeredAddresses[msg.sender];
+        if (senderChainId == 0) {
+            revert CallerNotBridge(msg.sender);
+        }
+        address receiverBridge = bridges[chainId];
+        if (receiverBridge == address(0)) {
+            revert TransferToChainNotRegistered(chainId);
+        }
+
+        ICommonBridge(receiverBridge).pushMessageHashes(
+            senderChainId,
+            message_hashes
+        );
     }
 
     /// @inheritdoc IRouter

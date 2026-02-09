@@ -206,7 +206,7 @@ impl From<&EFTestPreValue> for GenesisAccount {
     fn from(value: &EFTestPreValue) -> Self {
         Self {
             code: value.code.clone(),
-            storage: value.storage.clone(),
+            storage: value.storage.iter().map(|(k, v)| (*k, *v)).collect(),
             balance: value.balance,
             nonce: value.nonce,
         }

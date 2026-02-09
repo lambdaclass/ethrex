@@ -2,6 +2,7 @@
 
 # Introduction
 
+- [Overview](./landing.md)
 - [Getting started](./getting-started/README.md)
   - [Hardware requirements](./getting-started/hardware_requirements.md)
   - [Installation](./getting-started/installation/README.md)
@@ -17,6 +18,11 @@
   - [Node startup](./l1/running/startup.md)
   - [Configuration](./l1/running/configuration.md)
   - [Monitoring and metrics](./l1/running/monitoring.md)
+- [Architecture](./l1/architecture/README.md)
+  - [System Overview](./l1/architecture/overview.md)
+  - [Block Execution Pipeline](./l1/architecture/block_execution.md)
+  - [Sync State Machine](./l1/architecture/sync_state_machine.md)
+  - [Crate Map](./l1/architecture/crate_map.md)
 - [Fundamentals](./l1/fundamentals/README.md)
   - [Metrics]()
   - [Logs]()
@@ -24,8 +30,11 @@
   - [Databases](./l1/fundamentals/databases.md)
   - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
-  - [Snap sync internals](./internal/l1/healing.md)
+  - [Snap sync internals](./l1/fundamentals/snap_sync.md)
     - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
+    - [Future Rewrite Concerns](./l1/fundamentals/snap_sync_concerns.md)
+    - [Sorted Trie Insertion](./internal/l1/sorted_trie_insert.md)
+    - [Healing Explanation](./internal/l1/healing.md)
   - [Pruning]()
 
 # Ethrex for L2 chains
@@ -36,9 +45,12 @@
   - [Deploying a vanilla ethrex L2](./l2/deployment/vanilla.md)
   - [Deploying a validium ethrex L2](./l2/deployment/validium.md)
   - [Deploying a based ethrex L2](./l2/deployment/based.md)
+  - [Ethrex <> Aligned](./l2/deployment/aligned.md)
+  - [Ethrex <> Aligned | Failure Recovery Guide](./l2/deployment/aligned_failure_recovery.md)
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
   - [Deploying a shared bridge enabled L2](./l2/deployment/shared_bridge.md)
-  - [Migrations](./l2/deployment/migrations.md)
+  - [Deploying a fee token](./l2/deployment/fee_token.md)
+  - [Upgrades](./l2/deployment/upgrades.md)
 - [Run a prover](./l2/deployment/prover/README.md)
   - [Overview](./l2/deployment/prover/overview.md)
   - [Run an ethrex SP1 prover](./l2/deployment/prover/sp1.md)
@@ -47,7 +59,7 @@
   - [Run multiple provers](./l2/deployment/prover/multi-prover.md)
 - [Monitoring and metrics](./l2/monitoring.md)
 - [Admin server](./l2/admin.md)
-- [Ethrex <> Aligned](./l2/aligned_integration.md)
+- [Ethrex Rollup Stages](./l2/stages.md)
 - [Architecture](./l2/architecture/README.md)
   - [Overview](./l2/architecture/overview.md)
   - [Sequencer](./l2/architecture/sequencer.md)
@@ -66,6 +78,7 @@
   - [Block vs StateDiff](./l2/fundamentals/block_vs_state_diff_measurements.md)
   - [Data availability](./l2/fundamentals/data_availability.md)
   - [Execution witness](./l2/fundamentals/execution_witness.md)
+  - [Execution witness measurements](./l2/fundamentals/execution_witness_measurements.md)
   - [Deposits](./l2/fundamentals/deposits.md)
   - [Withdrawals](./l2/fundamentals/withdrawals.md)
   - [Smart contracts](./l2/fundamentals/contracts.md)
@@ -74,6 +87,11 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Exit Window](./l2/fundamentals/exit_window.md)
+  - [Timelock](./l2/fundamentals/timelock.md)
+  - [Fee token](./l2/fundamentals/fee_token.md)
+  - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
+  - [Aligned Layer Integration](./l2/fundamentals/ethrex_l2_aligned_integration.md)
 
 # Ethrex for developers
 
@@ -109,7 +127,14 @@
 
 # Roadmap
 
-- [Roadmap](./roadmap.md)
+- [Roadmap](../ROADMAP.md)
+
+# Why ethrex
+
+- [zkVM Integrations](./zkvm-integrations.md)
+- [Benchmark Comparisons](./l2/bench/zkvm_comparison.md)
+  - [Prover Performance](./l2/bench/prover_performance.md)
+- [Case Studies](./case-studies.md)
 
 # Other resources
 

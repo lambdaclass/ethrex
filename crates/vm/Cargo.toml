@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 ethrex-common = { workspace = true, default-features = false }
@@ -19,6 +20,8 @@ lazy_static.workspace = true
 tracing.workspace = true
 serde.workspace = true
 rkyv.workspace = true
+rayon.workspace = true
+rustc-hash.workspace = true
 
 bincode = "1"
 dyn-clone = "1.0"
@@ -38,6 +41,7 @@ sp1 = ["ethrex-levm/sp1", "ethrex-common/sp1"]
 risc0 = ["ethrex-levm/risc0", "ethrex-common/risc0", "c-kzg"]
 zisk = ["ethrex-levm/zisk", "ethrex-common/zisk"]
 openvm = ["ethrex-levm/openvm", "ethrex-common/openvm"]
+perf_opcode_timings = ["ethrex-levm/perf_opcode_timings"]
 
 debug = ["ethrex-levm/debug"]
 
