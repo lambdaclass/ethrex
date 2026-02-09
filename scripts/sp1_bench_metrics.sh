@@ -9,7 +9,7 @@
 # The script also fetches batch_gas_used, batch_tx_count, and batch_size
 # from the L2 metrics endpoint (default localhost:3702/metrics).
 #
-# Outputs a summary table to stdout and writes a CSV to sp1_bench_results.csv.
+# Outputs a markdown file (sp1_bench_results.md) with a results table and summary.
 
 set -euo pipefail
 
@@ -22,9 +22,7 @@ fi
 
 LOG_FILE="$1"
 METRICS_URL="${2:-http://localhost:3702/metrics}"
-OUTPUT="sp1_bench_results.csv"
-
-echo "batch,proving_time_s,proving_time_ms,gas_used,tx_count,blocks" > "$OUTPUT"
+OUTPUT="sp1_bench_results.md"
 
 # Fetch a metric value for a given batch from the Prometheus endpoint.
 fetch_metric() {
@@ -36,8 +34,15 @@ fetch_metric() {
         | head -1
 }
 
-# Parse all proving_time lines from the log file.
+# Collect rows into arrays.
 declare -A seen
+batches=()
+secs_arr=()
+ms_arr=()
+gas_arr=()
+txs_arr=()
+blocks_arr=()
+
 while read -r line; do
     if echo "$line" | grep -q 'proving_time_ms='; then
         batch=$(echo "$line" | grep -o 'batch=[0-9]*' | head -1 | cut -d= -f2)
@@ -56,47 +61,62 @@ while read -r line; do
         gas=$(fetch_metric "batch_gas_used" "$batch" 2>/dev/null || true)
         txs=$(fetch_metric "batch_tx_count" "$batch" 2>/dev/null || true)
         blocks=$(fetch_metric "batch_size" "$batch" 2>/dev/null || true)
-        gas="${gas:-"-"}"
-        txs="${txs:-"-"}"
-        blocks="${blocks:-"-"}"
 
-        echo "$batch,$secs,$ms,$gas,$txs,$blocks" >> "$OUTPUT"
+        batches+=("$batch")
+        secs_arr+=("${secs:-"-"}")
+        ms_arr+=("$ms")
+        gas_arr+=("${gas:-"-"}")
+        txs_arr+=("${txs:-"-"}")
+        blocks_arr+=("${blocks:-"-"}")
         seen["$batch"]=1
     fi
 done < "$LOG_FILE"
 
-# Print table.
-if [[ $(wc -l < "$OUTPUT") -le 1 ]]; then
+if [[ ${#batches[@]} -eq 0 ]]; then
     echo "(no batches found in $LOG_FILE)"
     exit 0
 fi
 
-echo ""
-echo "===== SP1 Proving Benchmark Results ====="
-echo ""
-printf "%-7s %12s %14s %14s %10s %8s\n" "Batch" "Time (s)" "Time (ms)" "Gas Used" "Tx Count" "Blocks"
-printf "%-7s %12s %14s %14s %10s %8s\n" "-----" "--------" "---------" "--------" "--------" "------"
-tail -n +2 "$OUTPUT" | sort -t, -k1 -n | while IFS=, read -r batch secs ms gas txs blocks; do
-    printf "%-7s %12s %14s %14s %10s %8s\n" "$batch" "$secs" "$ms" "$gas" "$txs" "$blocks"
-done
-echo ""
+# Write markdown.
+{
+    echo "# Proving Benchmark Results"
+    echo ""
+    echo "| Batch | Time (s) | Time (ms) | Gas Used | Tx Count | Blocks |"
+    echo "|-------|----------|-----------|----------|----------|--------|"
+    for i in "${!batches[@]}"; do
+        echo "| ${batches[$i]} | ${secs_arr[$i]} | ${ms_arr[$i]} | ${gas_arr[$i]} | ${txs_arr[$i]} | ${blocks_arr[$i]} |"
+    done
 
-# Summary stats.
-count=0; total=0; min=999999999; max=0; total_gas=0; total_txs=0
-while IFS=, read -r _b _s ms gas txs _blocks; do
-    [[ "$_b" == "batch" ]] && continue
-    count=$((count + 1))
-    total=$((total + ms))
-    ((ms < min)) && min=$ms
-    ((ms > max)) && max=$ms
-    [[ "$gas" != "-" && -n "$gas" ]] && total_gas=$((total_gas + ${gas%%.*}))
-    [[ "$txs" != "-" && -n "$txs" ]] && total_txs=$((total_txs + ${txs%%.*}))
-done < "$OUTPUT"
+    # Summary stats.
+    count=0; total=0; min=999999999; max=0; total_gas=0; total_txs=0
+    for i in "${!batches[@]}"; do
+        ms=${ms_arr[$i]}
+        gas=${gas_arr[$i]}
+        txs=${txs_arr[$i]}
+        count=$((count + 1))
+        total=$((total + ms))
+        ((ms < min)) && min=$ms
+        ((ms > max)) && max=$ms
+        [[ "$gas" != "-" && -n "$gas" ]] && total_gas=$((total_gas + ${gas%%.*}))
+        [[ "$txs" != "-" && -n "$txs" ]] && total_txs=$((total_txs + ${txs%%.*}))
+    done
 
-if [[ $count -gt 0 ]]; then
-    avg=$((total / count))
-    echo "Batches: $count | Avg: $((avg/1000))s (${avg}ms) | Min: $((min/1000))s | Max: $((max/1000))s"
-    echo "Total gas: $total_gas | Total txs: $total_txs"
-fi
+    if [[ $count -gt 0 ]]; then
+        avg=$((total / count))
+        echo ""
+        echo "## Summary"
+        echo ""
+        echo "| Metric | Value |"
+        echo "|--------|-------|"
+        echo "| Batches | $count |"
+        echo "| Avg | $((avg/1000))s (${avg}ms) |"
+        echo "| Min | $((min/1000))s (${min}ms) |"
+        echo "| Max | $((max/1000))s (${max}ms) |"
+        echo "| Total gas | $total_gas |"
+        echo "| Total txs | $total_txs |"
+    fi
+} > "$OUTPUT"
+
+cat "$OUTPUT"
 echo ""
 echo "Results written to $OUTPUT"

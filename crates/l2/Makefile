@@ -2,7 +2,7 @@
 	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
 	init-prover-sp1 init-prover-risc0 init-prover-exec build-prover clean-tee clean-tee-contract-deps \
-	test integration-test integration-test-gpu state-diff-test
+	test integration-test integration-test-gpu state-diff-test load-test
 
 .DEFAULT_GOAL := help
 
@@ -216,6 +216,15 @@ init-prover-exec:
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend exec
 
+# ==============================================================================
+# Load Test
+# ==============================================================================
+
+LOAD_TEST_PKEYS ?= test_data/private_keys.txt
+
+load-test: ## 🔥 Run load test against the L2
+	cargo run --release --manifest-path ../../tooling/load_test/Cargo.toml -- \
+	-k $(LOAD_TEST_PKEYS)
 
 # ==============================================================================
 # TEE

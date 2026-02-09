@@ -73,29 +73,17 @@ PROVER_CLIENT_TIMED=true make init-prover-sp1 2>&1 | tee ~/prover.log
 # Detach: Ctrl+B, D
 ```
 
-The `--timed` flag enables structured proving time logs that the benchmark script parses.
+The `PROVER_CLIENT_TIMED` env var enables structured proving time logs that the benchmark script parses.
 
 ### 4. Generate Load
 
 ```bash
 # Terminal 3 (tmux session "loadtest")
 tmux new -s loadtest
-cd tooling/load_test
-cargo run --release -- \
-    -k ../../crates/l2/test_data/private_keys.txt \
-    -n http://localhost:1729 \
-    -N <tx_amount>
-# Add --endless for continuous load
+cd ~/ethrex/crates/l2
+LOAD_TEST_TX_AMOUNT=<tx_amount> make load-test
+# For continuous load: LOAD_TEST_TX_AMOUNT=<tx_amount> LOAD_TEST_ENDLESS=true make load-test
 # Detach: Ctrl+B, D
-```
-
-Alternatively, use env vars:
-
-```bash
-export LOAD_TEST_RPC_URL=http://localhost:1729
-export LOAD_TEST_TX_AMOUNT=500
-export LOAD_TEST_ENDLESS=true
-cargo run --release -- -k ../../crates/l2/test_data/private_keys.txt
 ```
 
 ### 5. Wait for Batches
@@ -114,10 +102,10 @@ Wait until the desired number of batches have been proved.
 ssh <server> "cd ~/ethrex && ./scripts/sp1_bench_metrics.sh ~/prover.log"
 ```
 
-This outputs a summary table and writes `sp1_bench_results.csv`. Copy the CSV locally if needed:
+This outputs a markdown file (`sp1_bench_results.md`) with a results table and summary. Copy it locally if needed:
 
 ```bash
-scp <server>:~/ethrex/sp1_bench_results.csv .
+scp <server>:~/ethrex/sp1_bench_results.md .
 ```
 
 ### 7. Teardown

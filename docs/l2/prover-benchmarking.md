@@ -25,40 +25,32 @@ PROVER_CLIENT_TIMED=true make init-prover-sp1
 # PROVER_CLIENT_TIMED=true make init-prover-sp1 GPU=true
 ```
 
-The prover connects to the proof coordinator and begins polling for batches. The `--timed` flag wraps each `prove()` call with timing instrumentation and logs structured fields:
+The prover connects to the proof coordinator and begins polling for batches. The `PROVER_CLIENT_TIMED` env var wraps each `prove()` call with timing instrumentation and logs structured fields:
 
 ```
 batch=3 proving_time_s=47 proving_time_ms=47123 Proved batch 3 in 47.12s
 ```
 
-Without `--timed`, the prover runs normally without timing overhead.
-
 ### 3. Generate Transactions
 
 ```bash
-# Terminal 3 — load test
-cd tooling/load_test
-cargo run -- -k ../../crates/l2/test_data/private_keys.txt -N 500
+# Terminal 3 — load test (from crates/l2/)
+make load-test
+
+# Customize with env vars:
+# LOAD_TEST_TX_AMOUNT=50 LOAD_TEST_ENDLESS=true make load-test
 ```
 
-This sends 500 transactions per account using the test private keys. The sequencer will include them in blocks and batch them for proving.
+This sends transactions per account using the test private keys. The sequencer will include them in blocks and batch them for proving.
 
-**Env var alternative** (useful for scripts or CI):
+> **Warning:** Keep the transaction count below the node's mempool limit. If the mempool fills up, the node will evict the oldest transactions, which removes the lowest nonces and causes all subsequent transactions from that account to become stuck (nonce gap).
 
-```bash
-export LOAD_TEST_RPC_URL=http://localhost:1729
-export LOAD_TEST_TX_AMOUNT=500
-export LOAD_TEST_ENDLESS=true
-cargo run -- -k ../../crates/l2/test_data/private_keys.txt
-```
-
-| Env Var | CLI Flag | Default |
-|---------|----------|---------|
-| `LOAD_TEST_RPC_URL` | `--node` / `-n` | `http://localhost:8545` |
-| `LOAD_TEST_TX_AMOUNT` | `--tx-amount` / `-N` | `1000` |
-| `LOAD_TEST_ENDLESS` | `--endless` | `false` |
-
-The `--endless` flag restarts the load test after each round, useful for continuous benchmarking sessions.
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `LOAD_TEST_RPC_URL` | `http://localhost:8545` | RPC URL of the node |
+| `LOAD_TEST_TX_AMOUNT` | `1000` | Transactions per account |
+| `LOAD_TEST_ENDLESS` | `false` | Restart load test after each round |
+| `LOAD_TEST_PKEYS` | `test_data/private_keys.txt` | Path to private keys file (Makefile variable) |
 
 ### 4. Collect Results
 
@@ -69,61 +61,16 @@ Once batches have been proved, redirect the prover output to a file (or use `tee
 make init-prover-sp1 2>&1 | tee prover.log
 ```
 
-Then run the benchmark script:
+Then run the benchmark script. The L2 must still be running, since the script fetches batch metadata from its Prometheus metrics endpoint:
 
 ```bash
 ./scripts/sp1_bench_metrics.sh prover.log
 ```
 
-**Example output:**
-
-```
-===== SP1 Proving Benchmark Results =====
-
-Batch       Time (s)      Time (ms)       Gas Used   Tx Count   Blocks
------       --------      ---------       --------   --------   ------
-1              47          47123          1234567        50        3
-2              52          52456          2345678        75        4
-3              39          39012           987654        30        2
-
-Batches: 3 | Avg: 46s (46197ms) | Min: 39s | Max: 52s
-Total gas: 4567899 | Total txs: 155
-
-Results written to sp1_bench_results.csv
-```
+The script outputs a markdown file (`sp1_bench_results.md`) with a results table and summary, and prints it to stdout.
 
 The script fetches batch metadata (gas used, tx count, block count) from the Prometheus metrics endpoint at `localhost:3702/metrics`. Pass a custom URL as the second argument if your metrics are elsewhere:
 
 ```bash
 ./scripts/sp1_bench_metrics.sh prover.log http://myserver:3702/metrics
 ```
-
-## Reference
-
-### Prover `--timed` Flag
-
-| Flag | Env Var | Default | Effect |
-|------|---------|---------|--------|
-| `--timed` | `PROVER_CLIENT_TIMED` | `false` | Measure and log proving time per batch |
-
-When timed, each batch proof logs structured fields (`proving_time_s`, `proving_time_ms`) that the benchmark script parses.
-
-### Metrics
-
-The L2 sequencer exposes Prometheus metrics on port 3702 (configurable with `--metrics.port`). Relevant metrics for benchmarking:
-
-| Metric | Description |
-|--------|-------------|
-| `batch_gas_used{batch_number="N"}` | Total gas used in batch N |
-| `batch_tx_count{batch_number="N"}` | Transaction count in batch N |
-| `batch_size{batch_number="N"}` | Number of blocks in batch N |
-
-### Benchmark Script
-
-```
-./scripts/sp1_bench_metrics.sh <PROVER_LOG_FILE> [METRICS_URL]
-```
-
-Outputs:
-- A summary table to stdout
-- A CSV file (`sp1_bench_results.csv`) with columns: `batch,proving_time_s,proving_time_ms,gas_used,tx_count,blocks`
