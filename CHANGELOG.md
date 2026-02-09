@@ -2,6 +2,12 @@
 
 ## Perf
 
+### 2026-02-09
+
+- Replace O(depth) linked-list access tracking with O(1) flat FxHashSet [#6161](https://github.com/lambdaclass/ethrex/pull/6161)
+- Use FxHashMap for storage_original_values instead of BTreeMap [#6161](https://github.com/lambdaclass/ethrex/pull/6161)
+- Add #[inline] hints to EIP-2929 hot-path access methods [#6161](https://github.com/lambdaclass/ethrex/pull/6161)
+
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)

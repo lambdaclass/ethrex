@@ -22,7 +22,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -70,8 +70,9 @@ pub struct Substate {
     selfdestruct_set: FxHashSet<Address>,
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
     accessed_addresses: FxHashSet<Address>,
-    /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
-    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    /// Storage slots accessed during execution (for EIP-2929 warm/cold gas costs).
+    /// Flat set for O(1) lookup — child substates inherit the parent's set on push_backup.
+    accessed_storage_slots: FxHashSet<(Address, H256)>,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -85,7 +86,7 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         accessed_addresses: FxHashSet<Address>,
-        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+        accessed_storage_slots: FxHashSet<(Address, H256)>,
     ) -> Self {
         Self {
             parent: None,
@@ -105,6 +106,9 @@ impl Substate {
     pub fn push_backup(&mut self) {
         let parent = mem::take(self);
         self.refunded_gas = parent.refunded_gas;
+        // Inherit access lists so lookups are O(1) without parent chain walks.
+        self.accessed_addresses = parent.accessed_addresses.clone();
+        self.accessed_storage_slots = parent.accessed_storage_slots.clone();
         self.parent = Some(Box::new(parent));
     }
 
@@ -117,13 +121,9 @@ impl Substate {
             mem::swap(self, &mut delta);
 
             self.selfdestruct_set.extend(delta.selfdestruct_set);
-            self.accessed_addresses.extend(delta.accessed_addresses);
-            for (address, slot_set) in delta.accessed_storage_slots {
-                self.accessed_storage_slots
-                    .entry(address)
-                    .or_default()
-                    .extend(slot_set);
-            }
+            // Child's access sets already contain parent's + new, so replace.
+            self.accessed_addresses = delta.accessed_addresses;
+            self.accessed_storage_slots = delta.accessed_storage_slots;
             self.created_accounts.extend(delta.created_accounts);
             self.refunded_gas = delta.refunded_gas;
             self.transient_storage.extend(delta.transient_storage);
@@ -194,21 +194,11 @@ impl Substate {
 
     /// Build an access list from all accessed storage slots.
     pub fn make_access_list(&self) -> Vec<AccessListEntry> {
+        // Reconstruct sorted map from flat set for deterministic output.
         let mut entries = BTreeMap::<Address, BTreeSet<H256>>::new();
 
-        let mut current = self;
-        loop {
-            for (address, slot_set) in &current.accessed_storage_slots {
-                entries
-                    .entry(*address)
-                    .or_default()
-                    .extend(slot_set.iter().copied());
-            }
-
-            current = match current.parent.as_deref() {
-                Some(x) => x,
-                None => break,
-            };
+        for &(address, key) in &self.accessed_storage_slots {
+            entries.entry(address).or_default().insert(key);
         }
 
         entries
@@ -220,54 +210,32 @@ impl Substate {
             .collect()
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Mark a storage slot as accessed and return whether it was already marked.
+    /// Returns true if warm (already accessed), false if cold (first access).
+    #[inline]
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
-        let is_present = self
-            .parent
-            .as_ref()
-            .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or_default();
-
-        is_present
-            || !self
-                .accessed_storage_slots
-                .entry(address)
-                .or_default()
-                .insert(key)
+        // O(1): flat set already contains inherited parent entries.
+        !self.accessed_storage_slots.insert((address, key))
     }
 
-    /// Return whether an address has already been accessed.
+    /// Return whether a storage slot has already been accessed.
+    #[inline]
     pub fn is_slot_accessed(&self, address: &Address, key: &H256) -> bool {
-        self.accessed_storage_slots
-            .get(address)
-            .map(|slot_set| slot_set.contains(key))
-            .unwrap_or_default()
-            || self
-                .parent
-                .as_ref()
-                .map(|parent| parent.is_slot_accessed(address, key))
-                .unwrap_or_default()
+        self.accessed_storage_slots.contains(&(*address, *key))
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Mark an address as accessed and return whether it was already marked.
+    /// Returns true if warm (already accessed), false if cold (first access).
+    #[inline]
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
-        let is_present = self
-            .parent
-            .as_ref()
-            .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or_default();
-
-        is_present || !self.accessed_addresses.insert(address)
+        // O(1): flat set already contains inherited parent entries.
+        !self.accessed_addresses.insert(address)
     }
 
     /// Return whether an address has already been accessed.
+    #[inline]
     pub fn is_address_accessed(&self, address: &Address) -> bool {
         self.accessed_addresses.contains(address)
-            || self
-                .parent
-                .as_ref()
-                .map(|parent| parent.is_address_accessed(address))
-                .unwrap_or_default()
     }
 
     /// Mark an address as a new account and return whether is was already marked.
@@ -382,7 +350,7 @@ pub struct VM<'a> {
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation).
-    pub storage_original_values: BTreeMap<(Address, H256), U256>,
+    pub storage_original_values: FxHashMap<(Address, H256), U256>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Debug mode for development diagnostics.
@@ -417,7 +385,7 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            storage_original_values: BTreeMap::new(),
+            storage_original_values: FxHashMap::default(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
@@ -713,7 +681,7 @@ impl Substate {
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = FxHashSet::default();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        let mut initial_accessed_storage_slots: FxHashSet<(Address, H256)> = FxHashSet::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
@@ -743,10 +711,8 @@ impl Substate {
         // Add access lists contents to accessed accounts and accessed storage slots.
         for (address, keys) in tx.access_list().clone() {
             initial_accessed_addresses.insert(address);
-            // Access lists can have different entries even for the same address, that's why we check if there's an existing set instead of considering it empty
-            let warm_slots = initial_accessed_storage_slots.entry(address).or_default();
             for slot in keys {
-                warm_slots.insert(slot);
+                initial_accessed_storage_slots.insert((address, slot));
             }
         }
 
