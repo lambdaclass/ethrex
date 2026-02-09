@@ -100,7 +100,7 @@ go tool pprof -http=:8080 -focus=execute_block profile.pb
 
 ## Memory Profiling with jemalloc
 
-Ethrex supports memory profiling through jemalloc, gated behind the `jemalloc_profiling` feature flag. This enables jemalloc's built-in heap profiling (`prof:true`) and exposes a `/debug/heap_profile` RPC endpoint for on-demand heap dumps.
+Ethrex supports memory profiling through jemalloc, gated behind the `jemalloc_profiling` feature flag. This enables jemalloc's built-in heap profiling (`prof:true`) and exposes `/debug/pprof/allocs` and `/debug/pprof/allocs/flamegraph` RPC endpoints for on-demand heap dumps.
 
 ### Building with memory profiling
 

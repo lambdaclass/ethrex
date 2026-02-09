@@ -58,7 +58,7 @@ fn write_cpu_profile(guard: pprof::ProfilerGuard<'_>) -> eyre::Result<()> {
     let report = guard.report().build()?;
     let profile = report.pprof()?;
     let mut content = Vec::new();
-    profile.write_to_vec(&mut content)?;
+    profile.encode(&mut content)?;
     std::fs::write("profile.pb", &content)?;
     info!("CPU profile written to profile.pb");
     Ok(())
