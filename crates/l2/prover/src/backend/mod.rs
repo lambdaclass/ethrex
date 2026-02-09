@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_l2_common::prover::{BatchProof, ProofFormat};
+use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 use serde::{Deserialize, Serialize};
 
 pub mod error;
@@ -84,6 +84,9 @@ pub trait ProverBackend {
 
     /// The serialized input type specific to this backend.
     type SerializedInput;
+
+    /// Returns the prover type this backend produces.
+    fn prover_type(&self) -> ProverType;
 
     /// Serialize the program input into the backend-specific format.
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError>;

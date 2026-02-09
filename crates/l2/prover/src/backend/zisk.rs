@@ -5,7 +5,7 @@ use std::{
 };
 
 use ethrex_guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput};
-use ethrex_l2_common::prover::{BatchProof, ProofFormat};
+use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 
 use crate::backend::{BackendError, ProverBackend};
 
@@ -112,6 +112,10 @@ impl ZiskBackend {
 impl ProverBackend for ZiskBackend {
     type ProofOutput = ZiskProveOutput;
     type SerializedInput = ();
+
+    fn prover_type(&self) -> ProverType {
+        ProverType::Exec
+    }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
         let input_bytes =

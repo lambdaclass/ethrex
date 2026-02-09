@@ -43,13 +43,15 @@ pub struct ProofCoordinator {
     rollup_store: StoreRollup,
     rpc_url: String,
     tdx_private_key: Option<SecretKey>,
+    #[allow(dead_code)]
     needed_proof_types: Vec<ProverType>,
     aligned: bool,
     git_commit_hash: String,
     qpl_tool_path: Option<String>,
-    /// Tracks batch assignments to provers: batch_number -> assignment time.
-    /// In-memory only; lost on restart.
-    assignments: Arc<std::sync::Mutex<HashMap<u64, Instant>>>,
+    /// Tracks batch assignments to provers: (batch_number, prover_type) -> assignment time.
+    /// In-memory only; lost on restart. Keyed per proof type so that e.g. a RISC0
+    /// assignment doesn't block an SP1 prover from working on the same batch.
+    assignments: Arc<std::sync::Mutex<HashMap<(u64, ProverType), Instant>>>,
     prover_timeout: Duration,
 }
 
@@ -137,24 +139,10 @@ impl ProofCoordinator {
         }
     }
 
-    /// Checks whether all needed proof types already exist for the given batch.
-    async fn all_proofs_exist(&self, batch_number: u64) -> Result<bool, ProofCoordinatorError> {
-        for proof_type in &self.needed_proof_types {
-            if self
-                .rollup_store
-                .get_proof_by_batch_and_type(batch_number, *proof_type)
-                .await?
-                .is_none()
-            {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
     async fn next_batch_to_assign(
         &self,
         commit_hash: &str,
+        prover_type: ProverType,
     ) -> Result<Option<(u64, ProverInputData)>, ProofCoordinatorError> {
         let base_batch = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
 
@@ -165,13 +153,14 @@ impl ProofCoordinator {
                     ProofCoordinatorError::Custom("Assignment lock poisoned".to_string())
                 })?;
 
-                assignments.retain(|&batch, _| batch >= base_batch);
+                assignments.retain(|&(batch, _), _| batch >= base_batch);
 
                 let now = Instant::now();
                 let mut batch = base_batch;
 
+                let key = |b| (b, prover_type);
                 loop {
-                    match assignments.get(&batch) {
+                    match assignments.get(&key(batch)) {
                         None => break,
                         Some(&assigned_at)
                             if now.duration_since(assigned_at) > self.prover_timeout =>
@@ -182,7 +171,7 @@ impl ProofCoordinator {
                     }
                 }
 
-                assignments.insert(batch, now);
+                assignments.insert(key(batch), now);
                 batch
             };
 
@@ -193,15 +182,20 @@ impl ProofCoordinator {
                 .await?
             else {
                 if let Ok(mut assignments) = self.assignments.lock() {
-                    assignments.remove(&candidate);
+                    assignments.remove(&(candidate, prover_type));
                 }
                 return Ok(None);
             };
 
-            // Skip batches that already have all proofs (keep assignment so the
-            // scan advances past it on next iteration)
-            if self.all_proofs_exist(candidate).await? {
-                debug!("All proofs already exist for batch {candidate}, skipping");
+            // Skip batches where this proof type already exists (keep assignment
+            // so the scan advances past it on next iteration)
+            if self
+                .rollup_store
+                .get_proof_by_batch_and_type(candidate, prover_type)
+                .await?
+                .is_some()
+            {
+                debug!("Proof for {prover_type} already exists for batch {candidate}, skipping");
                 continue;
             }
 
@@ -213,8 +207,9 @@ impl ProofCoordinator {
         &self,
         stream: &mut TcpStream,
         commit_hash: String,
+        prover_type: ProverType,
     ) -> Result<(), ProofCoordinatorError> {
-        info!("BatchRequest received");
+        info!("BatchRequest received from {prover_type} prover");
 
         if commit_hash != self.git_commit_hash {
             debug!(
@@ -223,7 +218,8 @@ impl ProofCoordinator {
             );
         }
 
-        let Some((batch_to_prove, input)) = self.next_batch_to_assign(&commit_hash).await?
+        let Some((batch_to_prove, input)) =
+            self.next_batch_to_assign(&commit_hash, prover_type).await?
         else {
             debug!("No batch available for this version, sending empty BatchResponse");
             let response = ProofData::empty_batch_response();
@@ -269,7 +265,7 @@ impl ProofCoordinator {
             );
         } else {
             metrics!(if let Ok(assignments) = self.assignments.lock() {
-                if let Some(&assigned_at) = assignments.get(&batch_number) {
+                if let Some(&assigned_at) = assignments.get(&(batch_number, prover_type)) {
                     let proving_time: i64 =
                         assigned_at.elapsed().as_secs().try_into().map_err(|_| {
                             ProofCoordinatorError::InternalError(
@@ -285,21 +281,9 @@ impl ProofCoordinator {
                 .await?;
         }
 
-        // Check if all needed proof types now exist for this batch
-        let mut all_complete = true;
-        for pt in &self.needed_proof_types {
-            if self
-                .rollup_store
-                .get_proof_by_batch_and_type(batch_number, *pt)
-                .await?
-                .is_none()
-            {
-                all_complete = false;
-                break;
-            }
-        }
-        if all_complete && let Ok(mut assignments) = self.assignments.lock() {
-            assignments.remove(&batch_number);
+        // Remove the assignment for this (batch, prover_type)
+        if let Ok(mut assignments) = self.assignments.lock() {
+            assignments.remove(&(batch_number, prover_type));
         }
 
         let response = ProofData::proof_submit_ack(batch_number);
@@ -415,10 +399,13 @@ impl ConnectionHandler {
 
             let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
             match data {
-                Ok(ProofData::BatchRequest { commit_hash }) => {
+                Ok(ProofData::BatchRequest {
+                    commit_hash,
+                    prover_type,
+                }) => {
                     if let Err(e) = self
                         .proof_coordinator
-                        .handle_request(&mut stream, commit_hash)
+                        .handle_request(&mut stream, commit_hash, prover_type)
                         .await
                     {
                         error!("Failed to handle BatchRequest: {e}");

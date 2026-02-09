@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_l2_common::prover::{BatchProof, ProofFormat};
+use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 use openvm_continuations::verifier::internal::types::VmStarkProof;
 use openvm_sdk::{Sdk, StdIn, types::EvmProof};
 use openvm_stark_sdk::config::baby_bear_poseidon2::BabyBearPoseidon2Config;
@@ -63,6 +63,10 @@ impl OpenVmBackend {
 impl ProverBackend for OpenVmBackend {
     type ProofOutput = OpenVmProveOutput;
     type SerializedInput = StdIn;
+
+    fn prover_type(&self) -> ProverType {
+        ProverType::Exec
+    }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
         let mut stdin = StdIn::default();
