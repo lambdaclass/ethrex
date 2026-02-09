@@ -205,4 +205,7 @@ impl Evm {
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
+    /// Block gas used (PRE-REFUND for Amsterdam+ per EIP-7778).
+    /// This differs from receipt cumulative_gas_used which is POST-REFUND.
+    pub block_gas_used: u64,
 }

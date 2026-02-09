@@ -80,6 +80,11 @@ pub const ADDRESS_ALIASING: Address = H160([
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
 
+/// Verifier ID for SP1 proofs in the OnChainProposer verificationKeys mapping.
+pub const SP1_VERIFIER_ID: u8 = 1;
+/// Verifier ID for RISC0 proofs in the OnChainProposer verificationKeys mapping.
+pub const RISC0_VERIFIER_ID: u8 = 2;
+
 pub const REGISTER_FEE_TOKEN_SIGNATURE: &str = "registerNewFeeToken(address)";
 pub const SET_FEE_TOKEN_RATIO_SIGNATURE: &str = "setFeeTokenRatio(address,uint256)";
 
@@ -109,9 +114,25 @@ pub async fn wait_for_transaction_receipt(
     client: &EthClient,
     max_retries: u64,
 ) -> Result<RpcReceipt, EthClientError> {
-    let mut receipt = client.get_transaction_receipt(tx_hash).await?;
     let mut r#try = 1;
-    while receipt.is_none() {
+    loop {
+        match client.get_transaction_receipt(tx_hash).await {
+            Ok(Some(receipt)) => return Ok(receipt),
+            Ok(None) => {
+                // Receipt not yet available, retry
+            }
+            Err(e) => {
+                // Geth 1.14+ returns "transaction indexing is in progress" error instead of null
+                // when the transaction indexer hasn't caught up yet. We should retry in this case.
+                // See: https://github.com/ethereum/go-ethereum/issues/29956
+                let error_msg = e.to_string();
+                if !error_msg.contains("transaction indexing is in progress") {
+                    return Err(e);
+                }
+                // Indexing in progress, retry
+            }
+        }
+
         println!("[{try}/{max_retries}] Retrying to get transaction receipt for {tx_hash:#x}");
 
         if max_retries == r#try {
@@ -122,12 +143,7 @@ pub async fn wait_for_transaction_receipt(
         r#try += 1;
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        receipt = client.get_transaction_receipt(tx_hash).await?;
     }
-    receipt.ok_or(EthClientError::Custom(
-        "Transaction receipt is None".to_owned(),
-    ))
 }
 
 pub async fn transfer(
@@ -428,18 +444,11 @@ pub async fn create_deploy(
     .await?;
     let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
 
-    let nonce = client
-        .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
-        .await?;
-    let mut encode = vec![];
-    (deployer.address(), nonce).encode(&mut encode);
+    let receipt = wait_for_transaction_receipt(deploy_tx_hash, client, 1000).await?;
 
-    //Taking the last 20bytes so it matches an H160 == Address length
-    let deployed_address = Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
-        EthClientError::Custom("Failed to get deployed_address".to_owned()),
-    )?);
-
-    wait_for_transaction_receipt(deploy_tx_hash, client, 1000).await?;
+    let deployed_address = receipt.tx_info.contract_address.ok_or_else(|| {
+        EthClientError::Custom("Deploy transaction did not create a contract".to_owned())
+    })?;
 
     Ok((deploy_tx_hash, deployed_address))
 }
@@ -1128,23 +1137,126 @@ pub async fn get_last_verified_batch(
     _call_u64_variable(client, b"lastVerifiedBatch()", on_chain_proposer_address).await
 }
 
-pub async fn get_sp1_vk(
+/// Gets the SP1 verification key for a specific batch from the verificationKeys mapping.
+/// This fetches the commit hash from batchCommitments and then gets the VK.
+pub async fn get_sp1_vk_for_batch(
     client: &EthClient,
     on_chain_proposer_address: Address,
+    batch_number: u64,
 ) -> Result<[u8; 32], EthClientError> {
-    _call_bytes32_variable(client, b"SP1_VERIFICATION_KEY()", on_chain_proposer_address).await
-}
-
-pub async fn get_risc0_vk(
-    client: &EthClient,
-    on_chain_proposer_address: Address,
-) -> Result<[u8; 32], EthClientError> {
-    _call_bytes32_variable(
+    get_verification_key_for_batch(
         client,
-        b"RISC0_VERIFICATION_KEY()",
         on_chain_proposer_address,
+        batch_number,
+        SP1_VERIFIER_ID,
     )
     .await
+}
+
+/// Gets the RISC0 verification key for a specific batch from the verificationKeys mapping.
+/// This fetches the commit hash from batchCommitments and then gets the VK.
+pub async fn get_risc0_vk_for_batch(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+    batch_number: u64,
+) -> Result<[u8; 32], EthClientError> {
+    get_verification_key_for_batch(
+        client,
+        on_chain_proposer_address,
+        batch_number,
+        RISC0_VERIFIER_ID,
+    )
+    .await
+}
+
+/// Gets the verification key from the verificationKeys mapping for a given batch.
+/// First fetches the commit hash from batchCommitments, then uses it to get the VK.
+async fn get_verification_key_for_batch(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+    batch_number: u64,
+    verifier_id: u8,
+) -> Result<[u8; 32], EthClientError> {
+    let commit_hash =
+        get_batch_commit_hash(client, on_chain_proposer_address, batch_number).await?;
+    get_verification_key(client, on_chain_proposer_address, commit_hash, verifier_id).await
+}
+
+/// Gets the commit hash for a batch from the batchCommitments mapping.
+pub async fn get_batch_commit_hash(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+    batch_number: u64,
+) -> Result<[u8; 32], EthClientError> {
+    // batchCommitments(uint256) returns the BatchCommitmentInfo struct
+    // The auto-generated getter returns: (newStateRoot, blobKZGVersionedHash,
+    // processedPrivilegedTransactionsRollingHash, withdrawalsLogsMerkleRoot, lastBlockHash,
+    // nonPrivilegedTransactions, commitHash) - arrays are not included
+    let values = vec![Value::Uint(U256::from(batch_number))];
+    let calldata = encode_calldata("batchCommitments(uint256)", &values)?;
+
+    let response = client
+        .call(
+            on_chain_proposer_address,
+            calldata.into(),
+            Default::default(),
+        )
+        .await?;
+
+    // The response contains multiple 32-byte values. commitHash is at index 6 (7th value).
+    // Each value is 32 bytes (64 hex chars), so commitHash starts at offset 6*64 = 384
+    let hex = response.strip_prefix("0x").ok_or(EthClientError::Custom(
+        "Couldn't strip '0x' prefix from response".to_owned(),
+    ))?;
+
+    // commitHash is the 7th field (index 6), at offset 6*64 = 384, length 64
+    let commit_hash_hex = hex.get(384..448).ok_or(EthClientError::Custom(
+        "Response too short to contain commitHash".to_owned(),
+    ))?;
+
+    let bytes = hex::decode(commit_hash_hex)
+        .map_err(|e| EthClientError::Custom(format!("Failed to decode commit hash hex: {e}")))?;
+
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+        EthClientError::Custom("Failed to convert commit hash bytes to [u8; 32]".to_owned())
+    })?;
+
+    Ok(arr)
+}
+
+/// Gets the verification key from the verificationKeys(commitHash, verifierId) mapping.
+pub async fn get_verification_key(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+    commit_hash: [u8; 32],
+    verifier_id: u8,
+) -> Result<[u8; 32], EthClientError> {
+    let values = vec![
+        Value::FixedBytes(commit_hash.to_vec().into()),
+        Value::Uint(U256::from(verifier_id)),
+    ];
+    let calldata = encode_calldata("verificationKeys(bytes32,uint8)", &values)?;
+
+    let response = client
+        .call(
+            on_chain_proposer_address,
+            calldata.into(),
+            Default::default(),
+        )
+        .await?;
+
+    let hex = response.strip_prefix("0x").ok_or(EthClientError::Custom(
+        "Couldn't strip '0x' prefix from response".to_owned(),
+    ))?;
+
+    let bytes = hex::decode(hex)
+        .map_err(|e| EthClientError::Custom(format!("Failed to decode VK hex: {e}")))?;
+
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| EthClientError::Custom("Failed to convert VK bytes to [u8; 32]".to_owned()))?;
+
+    Ok(arr)
 }
 
 pub async fn get_last_fetched_l1_block(

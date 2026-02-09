@@ -257,7 +257,6 @@ pub struct ChainConfig {
     pub bpo3_time: Option<u64>,
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
-
     pub amsterdam_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.

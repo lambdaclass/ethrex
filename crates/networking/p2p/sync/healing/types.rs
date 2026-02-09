@@ -6,7 +6,7 @@ use ethrex_trie::{Nibbles, Node};
 #[derive(Debug, Clone)]
 pub struct HealingQueueEntry {
     pub node: Node,
-    pub missing_children_count: usize,
+    pub pending_children_count: usize,
     pub parent_path: Nibbles,
 }
 

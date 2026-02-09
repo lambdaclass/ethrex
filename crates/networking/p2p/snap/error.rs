@@ -129,22 +129,11 @@ impl From<tokio::task::JoinError> for SnapError {
 }
 
 /// Error that occurs when dumping snapshots to disk
-#[derive(thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[error("Failed to dump snapshot to {}: {:?}", path.display(), error)]
 pub struct DumpError {
     pub path: PathBuf,
-    pub contents: Vec<u8>,
     pub error: ErrorKind,
-}
-
-impl core::fmt::Debug for DumpError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("DumpError")
-            .field("path", &self.path)
-            .field("contents_len", &self.contents.len())
-            .field("error", &self.error)
-            .finish()
-    }
 }
 
 impl From<DumpError> for SnapError {
