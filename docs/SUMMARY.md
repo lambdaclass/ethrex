@@ -103,6 +103,7 @@
   - [Kurtosis localnet](./developers/l1/kurtosis-localnet.md)
   - [Metrics](./developers/l1/metrics.md)
   - [Dashboards](./developers/l1/dashboards.md)
+  - [Profiling](./developers/l1/profiling.md)
   - [Integrating with other DBs](./developers/l1/storage_api.md)
   - [Testing](./developers/l1/testing/README.md)
     - [Ethereum foundation tests](./developers/l1/testing/ef-tests.md)
