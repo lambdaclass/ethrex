@@ -6,14 +6,25 @@ How to measure proving performance on a running L2 localnet.
 
 ### 1. Start the L2 Localnet
 
-From the `crates/l2/` directory:
+From the `crates/l2/` directory, start the localnet in three stages:
 
 ```bash
-# Terminal 1 — L1 + deploy contracts + metrics + L2 sequencer
-make init
+# Terminal 1 — Start L1 (Docker). Only needed once; skip if already running.
+make init-l1-docker
+
+# Deploy contracts. Use ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT to avoid
+# address collisions with previous deployments on the same L1.
+ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true make deploy-l1
+
+# For SP1 benchmarks, use deploy-l1-sp1 instead to deploy the SP1 verifier:
+# ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true make deploy-l1-sp1
+
+# Start the L2 sequencer. Use ETHREX_NO_MONITOR=true to disable the TUI monitor
+# and get plain log output (useful for log files and remote runs).
+ETHREX_NO_MONITOR=true make init-l2
 ```
 
-This starts the L1 (Docker), deploys contracts, starts Prometheus/Grafana, and runs the L2 sequencer with metrics on port 3702.
+This starts the L1 (Docker), deploys contracts, and runs the L2 sequencer.
 
 ### 2. Start the Prover
 
@@ -60,7 +71,7 @@ Once batches have been proved, redirect the prover output to a file (or use `tee
 make init-prover-sp1 2>&1 | tee prover.log
 ```
 
-Then run the benchmark script. The L2 must still be running, since the script fetches batch metadata from its Prometheus metrics endpoint:
+Then run the benchmark script. The L2 must still be running, since the script fetches batch metadata from its metrics endpoint (`localhost:3702/metrics`):
 
 ```bash
 ./scripts/sp1_bench_metrics.sh prover.log
@@ -68,8 +79,8 @@ Then run the benchmark script. The L2 must still be running, since the script fe
 
 The script outputs a markdown file (`sp1_bench_results.md`) with a results table and summary, and prints it to stdout.
 
-The script fetches batch metadata (gas used, tx count, block count) from the Prometheus metrics endpoint at `localhost:3702/metrics`. Pass a custom URL as the second argument if your metrics are elsewhere:
+The script fetches batch metadata (gas used, tx count, block count) from the L2 metrics endpoint at `localhost:3702/metrics` (exposed by `make init-l2` via `--metrics.port`). Pass a custom URL as the second argument if the L2 is on a different host or port:
 
 ```bash
-./scripts/sp1_bench_metrics.sh prover.log http://localhost:3702/metrics
+./scripts/sp1_bench_metrics.sh prover.log http://myhost:3702/metrics
 ```

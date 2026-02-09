@@ -4,7 +4,7 @@ use crate::{
 };
 use ethrex_guest_program::input::ProgramInput;
 use ethrex_l2::sequencer::utils::get_git_commit_hash;
-use ethrex_l2_common::prover::{BatchProof, ProofData, ProofFormat};
+use ethrex_l2_common::prover::{BatchProof, ProofData, ProofFormat, ProverType};
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -59,6 +59,7 @@ struct ProverData {
 
 struct Prover<B: ProverBackend> {
     backend: B,
+    prover_type: ProverType,
     proof_coordinator_endpoints: Vec<Url>,
     proving_time_ms: u64,
     timed: bool,
@@ -67,8 +68,10 @@ struct Prover<B: ProverBackend> {
 
 impl<B: ProverBackend> Prover<B> {
     pub fn new(backend: B, cfg: &ProverConfig) -> Self {
+        let prover_type = backend.prover_type();
         Self {
             backend,
+            prover_type,
             proof_coordinator_endpoints: cfg.proof_coordinators.clone(),
             proving_time_ms: cfg.proving_time_ms,
             timed: cfg.timed,
@@ -141,7 +144,7 @@ impl<B: ProverBackend> Prover<B> {
 
     async fn request_new_input(&self, endpoint: &Url) -> Result<Option<ProverData>, String> {
         // Request the input with the correct batch_number
-        let request = ProofData::batch_request(self.commit_hash.clone());
+        let request = ProofData::batch_request(self.commit_hash.clone(), self.prover_type);
         let response = connect_to_prover_server_wr(endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;

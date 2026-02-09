@@ -179,7 +179,12 @@ pub enum ProofData {
     /// The Client initiates the connection with a BatchRequest.
     /// Asking for the ProverInputData the prover_server considers/needs.
     /// The commit hash is used to ensure the client and server are compatible.
-    BatchRequest { commit_hash: String },
+    /// The prover_type tells the coordinator which backend the client runs,
+    /// so it can skip batches that already have a proof for that type.
+    BatchRequest {
+        commit_hash: String,
+        prover_type: ProverType,
+    },
 
     /// 4.
     /// The Server responds with a NoBatchForVersion if the code version is not the same as the one
@@ -224,8 +229,11 @@ impl ProofData {
     }
 
     /// Builder function for creating a BatchRequest
-    pub fn batch_request(commit_hash: String) -> Self {
-        ProofData::BatchRequest { commit_hash }
+    pub fn batch_request(commit_hash: String, prover_type: ProverType) -> Self {
+        ProofData::BatchRequest {
+            commit_hash,
+            prover_type,
+        }
     }
 
     /// Builder function for creating a NoBatchForVersion
