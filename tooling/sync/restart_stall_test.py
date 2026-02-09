@@ -185,6 +185,31 @@ def docker_compose_in_ethd(eth_docker_dir: str, *args, check: bool = False) -> s
     return result
 
 
+def wipe_data_volumes(eth_docker_dir: str):
+    """Remove and recreate containers and their data volumes for a fresh start.
+
+    Stops and removes the execution and consensus containers, then removes all
+    data volumes (EL, consensus, validator) while preserving the JWT secret.
+    """
+    docker_compose_in_ethd(eth_docker_dir, "rm", "-f", "-s", "execution", "consensus", check=True)
+
+    project = os.path.basename(eth_docker_dir)
+    volumes = [
+        f"{project}_ethrex-el-data",
+        f"{project}_prysmconsensus-data",
+        f"{project}_prysmvalidator-data",
+    ]
+    for volume in volumes:
+        print(f"  Removing volume {volume}...")
+        result = subprocess.run(
+            ["docker", "volume", "rm", volume],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            # Volume may not exist yet on first run; warn but don't fail
+            print(f"  Warning: could not remove {volume}: {result.stderr.strip()}")
+
+
 def slack_notify(message: str, success: bool, details: str = "", ethrex_dir: str = None):
     """Send a Slack notification using the configured webhooks."""
     url = os.environ.get("SLACK_WEBHOOK_URL_SUCCESS" if success else "SLACK_WEBHOOK_URL_FAILED")
@@ -431,38 +456,75 @@ def phase1_fresh_sync(eth_docker_dir: str, rpc_url: str) -> bool:
     return True
 
 
-def phase2_restart_test(eth_docker_dir: str, rpc_url: str, restart_num: int) -> tuple[str, str]:
-    """Phase 2: Stop only execution client, restart it, monitor for stall."""
+def phase2_restart_test(eth_docker_dir: str, rpc_url: str, restart_num: int, wipe_data: bool = False) -> tuple[str, str]:
+    """Phase 2: Stop execution client, restart it, monitor for stall.
+
+    When wipe_data=True, removes containers and all data volumes (EL +
+    consensus + validator) before restarting, forcing a full snap sync from
+    scratch.
+    """
+    mode = "wipe + fresh sync" if wipe_data else "restart"
     print(f"\n{'='*60}")
-    print(f"PHASE 2: Restart test #{restart_num}")
+    print(f"PHASE 2: Restart test #{restart_num} ({mode})")
     print(f"{'='*60}\n")
 
-    # Stop only the execution client (keep consensus + volumes)
-    print("Stopping execution client (keeping consensus + volumes)...")
-    docker_compose_in_ethd(eth_docker_dir, "stop", "execution", check=True)
-    time.sleep(10)
+    if wipe_data:
+        print("Wiping data volumes (EL + consensus + validator)...")
+        wipe_data_volumes(eth_docker_dir)
+        time.sleep(5)
 
-    # Restart execution client
-    print("Restarting execution client...")
-    docker_compose_in_ethd(eth_docker_dir, "start", "execution", check=True)
-    time.sleep(5)
+        print("Starting containers with fresh volumes...")
+        docker_compose_in_ethd(eth_docker_dir, "up", "-d", "execution", "consensus", check=True)
+        time.sleep(30)
 
-    # Monitor for stall
-    result, details = monitor_restart_for_stall(
-        rpc_url,
-        timeout=RESTART_STALL_TIMEOUT * 2,
-        stall_timeout=RESTART_STALL_TIMEOUT,
-    )
+        # Wait for node to come up
+        if not wait_for_node(rpc_url, NODE_STARTUP_TIMEOUT):
+            print(f"\n  Restart #{restart_num} result: NODE UNRESPONSIVE")
+            return "unresponsive", "Node never responded after wipe"
 
-    status_str = {
-        "ok": "PASS",
-        "stall": "STALL DETECTED",
-        "timeout": "TIMEOUT (still progressing)",
-        "unresponsive": "NODE UNRESPONSIVE",
-    }.get(result, result.upper())
+        # Wait for full snap sync
+        synced, sync_time = wait_for_sync(rpc_url, SYNC_TIMEOUT)
+        if not synced:
+            details = f"Sync timed out after {fmt_time(sync_time)}"
+            print(f"\n  Restart #{restart_num} result: TIMEOUT - {details}")
+            return "timeout", details
 
-    print(f"\n  Restart #{restart_num} result: {status_str} - {details}")
-    return result, details
+        # Verify block progress
+        print(f"\n  Sync complete. Verifying block progress...")
+        progress_ok, blocks = wait_for_block_progress(rpc_url, BLOCK_PROCESSING_DURATION, BLOCK_STALL_TIMEOUT)
+        if not progress_ok:
+            details = f"No block progress after sync (processed {blocks} blocks, sync took {fmt_time(sync_time)})"
+            print(f"\n  Restart #{restart_num} result: FAIL - {details}")
+            return "stall", details
+
+        details = f"Synced in {fmt_time(sync_time)}, processed +{blocks} blocks"
+        print(f"\n  Restart #{restart_num} result: PASS - {details}")
+        return "ok", details
+    else:
+        # Original behavior: stop/start, monitor for stall
+        print("Stopping execution client (keeping consensus + volumes)...")
+        docker_compose_in_ethd(eth_docker_dir, "stop", "execution", check=True)
+        time.sleep(10)
+
+        print("Restarting execution client...")
+        docker_compose_in_ethd(eth_docker_dir, "start", "execution", check=True)
+        time.sleep(5)
+
+        result, details = monitor_restart_for_stall(
+            rpc_url,
+            timeout=RESTART_STALL_TIMEOUT * 2,
+            stall_timeout=RESTART_STALL_TIMEOUT,
+        )
+
+        status_str = {
+            "ok": "PASS",
+            "stall": "STALL DETECTED",
+            "timeout": "TIMEOUT (still progressing)",
+            "unresponsive": "NODE UNRESPONSIVE",
+        }.get(result, result.upper())
+
+        print(f"\n  Restart #{restart_num} result: {status_str} - {details}")
+        return result, details
 
 
 def main():
@@ -483,6 +545,8 @@ def main():
                         help="Disable Slack notifications")
     parser.add_argument("--skip-phase1", action="store_true",
                         help="Skip fresh sync (assume node is already synced)")
+    parser.add_argument("--wipe-el-data", action="store_true",
+                        help="Wipe all data volumes on each restart (forces fresh snap sync)")
     parser.add_argument("--ethrex-dir", default=None,
                         help="Path to ethrex repo (for git info in Slack). Auto-detected if not set.")
     args = parser.parse_args()
@@ -535,6 +599,7 @@ def main():
     print(f"  Branch:     {branch}")
     print(f"  Commit:     {commit}")
     print(f"  Restarts:   {args.restart_count}")
+    print(f"  Wipe data:  {args.wipe_el_data}")
     print(f"  Logs:       {run_dir}")
     print()
 
@@ -564,7 +629,7 @@ def main():
     # Phase 2: Restart cycles
     results = []
     for i in range(1, args.restart_count + 1):
-        result, details = phase2_restart_test(eth_docker_dir, rpc_url, i)
+        result, details = phase2_restart_test(eth_docker_dir, rpc_url, i, wipe_data=args.wipe_el_data)
         results.append((i, result, details))
 
         save_ethd_logs(eth_docker_dir, run_dir, suffix=f"_restart{i}")

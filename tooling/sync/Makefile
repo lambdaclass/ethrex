@@ -5,7 +5,7 @@ start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-do
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
 multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto \
-restart-stall-test restart-stall-test-skip-sync
+restart-stall-test restart-stall-test-skip-sync restart-stall-test-wipe
 
 ETHREX_DIR ?= "../.."
 
@@ -373,5 +373,15 @@ restart-stall-test-skip-sync: ## Run restart stall test, skip initial sync (node
 		--network $(RESTART_TEST_NETWORK) \
 		--restart-count $(RESTART_TEST_COUNT) \
 		--skip-phase1 \
+		$(if $(RESTART_TEST_FEE_RECIPIENT),--fee-recipient $(RESTART_TEST_FEE_RECIPIENT)) \
+		--ethrex-dir $(ETHREX_DIR)
+
+restart-stall-test-wipe: ## Run restart stall test with data wipe (full snap sync each cycle).
+	PYTHONUNBUFFERED=1 python3 restart_stall_test.py \
+		--eth-docker-dir $(ETH_DOCKER_DIR) \
+		--network $(RESTART_TEST_NETWORK) \
+		--restart-count $(RESTART_TEST_COUNT) \
+		--configure \
+		--wipe-el-data \
 		$(if $(RESTART_TEST_FEE_RECIPIENT),--fee-recipient $(RESTART_TEST_FEE_RECIPIENT)) \
 		--ethrex-dir $(ETHREX_DIR)
