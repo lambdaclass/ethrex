@@ -14,6 +14,8 @@ Usage:
     python run-ef-tests.py --save-output f.log # Save raw cargo output
     python run-ef-tests.py --count-by-eip      # Break down failures by EIP
     python run-ef-tests.py --list-categories   # Show failure category definitions
+    python run-ef-tests.py --state --forks Amsterdam  # Run state tests for Amsterdam fork
+    python run-ef-tests.py --state --summary-only     # State tests, summary only
 """
 
 import argparse
@@ -190,6 +192,14 @@ RE_TEST_KEY_IN_ERROR = re.compile(r"test:(\S+)")
 # Separator used when test_runner.rs joins multiple errors
 ERROR_SEPARATOR = "     -------     "
 
+# Regex to strip ANSI escape sequences
+RE_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+# State test patterns
+RE_STATE_SUMMARY = re.compile(r"Summary:\s*(\d+)/(\d+)")
+RE_STATE_DIR_RESULT = re.compile(r"(state_tests/\S+|GeneralStateTests/\S+|LegacyTests/\S+):\s*(\d+)/(\d+)\s*\(([\d.]+)%\)")
+RE_STATE_DURATION = re.compile(r"real\s+(\d+)m([\d.]+)s")
+
 
 def parse_output(raw: str) -> TestResults:
     """Parse cargo test output into structured results."""
@@ -210,12 +220,17 @@ def parse_output(raw: str) -> TestResults:
                 failed_paths.add(path)
 
     # --- Pass 2: Extract summary line ---
+    # Keep the result line with the highest total (avoids doc-test "0 passed; 0 failed")
+    best_total = -1
     for line in lines:
         m = RE_SUMMARY.search(line)
         if m:
-            results.passed = int(m.group(1))
-            results.failed = int(m.group(2))
-            results.ignored = int(m.group(3))
+            p, f, ig = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if p + f + ig > best_total:
+                best_total = p + f + ig
+                results.passed = p
+                results.failed = f
+                results.ignored = ig
         m = RE_DURATION.search(line)
         if m:
             results.duration_secs = float(m.group(1))
@@ -306,6 +321,176 @@ def parse_output(raw: str) -> TestResults:
     return results
 
 
+def parse_state_output(raw: str) -> TestResults:
+    """Parse state test runner output into structured results."""
+    results = TestResults(
+        raw_output=raw,
+        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+    # Strip ANSI codes for reliable matching
+    clean = RE_ANSI.sub("", raw)
+    lines = clean.split("\n")
+
+    # Extract summary line (first match of "Summary: N/M")
+    for line in lines:
+        m = RE_STATE_SUMMARY.search(line)
+        if m:
+            results.passed = int(m.group(1))
+            total = int(m.group(2))
+            results.failed = total - results.passed
+            break
+
+    # Extract duration from `time` output: real XmY.Zs
+    for line in lines:
+        m = RE_STATE_DURATION.search(line)
+        if m:
+            minutes = int(m.group(1))
+            seconds = float(m.group(2))
+            results.duration_secs = minutes * 60 + seconds
+
+    # Parse "Failed tests:" section for individual failure blocks
+    in_failed_section = False
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+
+        if stripped == "Failed tests:":
+            in_failed_section = True
+            i += 1
+            continue
+
+        if not in_failed_section:
+            i += 1
+            continue
+
+        # Each failure block starts with "Test:"
+        if stripped == "Test:":
+            # Collect block: Test name, Test path, description, then fork/vector/error lines
+            test_name = ""
+            test_path = ""
+            test_description = ""
+            i += 1
+
+            # Read test metadata lines
+            while i < len(lines):
+                stripped = lines[i].strip()
+                if stripped.startswith("Test name:"):
+                    test_name = stripped[len("Test name:"):].strip()
+                elif stripped.startswith("Test path:"):
+                    test_path = stripped[len("Test path:"):].strip()
+                elif stripped.startswith("Test description:"):
+                    test_description = stripped[len("Test description:"):].strip()
+                elif stripped.startswith("Fork:") or stripped == "Test:" or stripped == "":
+                    if stripped.startswith("Fork:") or stripped == "Test:":
+                        break
+                    # Skip blank lines within the metadata
+                elif stripped.startswith("Note:") or stripped.startswith("- http") or stripped.startswith("- Test"):
+                    pass  # Skip note/link lines
+                i += 1
+
+            # Now parse Fork/Failed Vector/Error blocks
+            while i < len(lines):
+                stripped = lines[i].strip()
+                if stripped == "Test:" or stripped == "":
+                    # Check if this blank line is followed by another Test: block
+                    if stripped == "":
+                        # Look ahead for Test: or end
+                        j = i + 1
+                        while j < len(lines) and lines[j].strip() == "":
+                            j += 1
+                        if j >= len(lines) or lines[j].strip() == "Test:":
+                            break
+                        # Otherwise it might be within the block, keep going
+                        i += 1
+                        continue
+                    break
+
+                if stripped.startswith("Fork:"):
+                    current_fork = stripped[len("Fork:"):].strip()
+                    i += 1
+                    # Read Failed Vector / Error pairs
+                    while i < len(lines):
+                        stripped = lines[i].strip()
+                        if stripped.startswith("Fork:") or stripped == "Test:" or (stripped == "" and _is_block_end(lines, i)):
+                            break
+                        if stripped.startswith("Failed Vector:"):
+                            vector_text = stripped
+                            error_text = ""
+                            category = ""
+                            i += 1
+                            # Read Error and other detail lines
+                            while i < len(lines):
+                                stripped = lines[i].strip()
+                                if stripped.startswith("Error:"):
+                                    error_text = stripped[len("Error:"):].strip()
+                                    category = _categorize_state_error(error_text)
+                                elif (stripped.startswith("Failed Vector:") or
+                                      stripped.startswith("Fork:") or
+                                      stripped == "Test:" or
+                                      (stripped == "" and _is_block_end(lines, i))):
+                                    break
+                                # Other detail lines (execution result mismatch, gas mismatch, etc.) - skip
+                                i += 1
+
+                            results.failures.append(TestFailure(
+                                file_path=test_path,
+                                test_key=test_name,
+                                error_text=error_text or vector_text,
+                                category=category or "Unknown",
+                            ))
+                            continue
+                        i += 1
+                    continue
+                i += 1
+            continue
+        i += 1
+
+    return results
+
+
+def _is_block_end(lines: list[str], i: int) -> bool:
+    """Check if a blank line signals the end of a failure block."""
+    j = i + 1
+    while j < len(lines) and lines[j].strip() == "":
+        j += 1
+    if j >= len(lines):
+        return True
+    next_line = lines[j].strip()
+    return next_line == "Test:" or next_line == ""
+
+
+def _categorize_state_error(error_text: str) -> str:
+    """Extract a short category from state test error text."""
+    # Common patterns in state test errors
+    if "Post-state root mismatch" in error_text or "post-state" in error_text.lower():
+        return "Post-state root mismatch"
+    if "Logs mismatch" in error_text or "logs mismatch" in error_text.lower():
+        return "Logs mismatch"
+    if "Gas used mismatch" in error_text or "gas used" in error_text.lower():
+        return "Gas used mismatch"
+    if "Gas refunded mismatch" in error_text or "gas refunded" in error_text.lower():
+        return "Gas refunded mismatch"
+    if "Execution result mismatch" in error_text:
+        return "Execution result mismatch"
+    if "execution failed when it was not expected" in error_text.lower():
+        return "Unexpected execution failure"
+    if "Exception does not match" in error_text:
+        return "Exception mismatch"
+    if "Failed to ensure pre-state" in error_text:
+        return "Pre-state validation failure"
+    if "Failed to ensure post-state" in error_text:
+        return "Post-state validation failure"
+    if "VM initialization failed" in error_text:
+        return "VM initialization failure"
+    # For more specific errors, use the first significant phrase
+    if error_text:
+        # Truncate long errors to a reasonable category name
+        short = error_text[:80]
+        return short
+    return "Unknown"
+
+
 # ---------------------------------------------------------------------------
 # Test execution
 # ---------------------------------------------------------------------------
@@ -324,12 +509,32 @@ def run_tests(filter_pattern: Optional[str] = None) -> str:
     else:
         cmd = ["make", "test-levm"]
 
+    blockchain_dir = SCRIPT_DIR / "blockchain"
     print(f"Running: {' '.join(cmd)}", file=sys.stderr)
-    print(f"Working directory: {SCRIPT_DIR}", file=sys.stderr)
+    print(f"Working directory: {blockchain_dir}", file=sys.stderr)
 
     proc = subprocess.run(
         cmd,
-        cwd=str(SCRIPT_DIR),
+        cwd=str(blockchain_dir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return proc.stdout
+
+
+def run_state_tests(forks: Optional[str] = None) -> str:
+    """Run EF state tests and return combined stdout+stderr."""
+    flags = "--summary"
+    if forks:
+        flags = f"--forks {forks} --summary"
+    cmd = ["make", "run-evm-ef-tests", f"flags={flags}"]
+    state_dir = SCRIPT_DIR / "state"
+    print(f"Running: {' '.join(cmd)}", file=sys.stderr)
+    print(f"Working directory: {state_dir}", file=sys.stderr)
+    proc = subprocess.run(
+        cmd,
+        cwd=str(state_dir),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -341,7 +546,7 @@ def run_tests(filter_pattern: Optional[str] = None) -> str:
 # JSON test lookup
 # ---------------------------------------------------------------------------
 
-VECTORS_DIR = SCRIPT_DIR / "vectors"
+VECTORS_DIR = SCRIPT_DIR / "blockchain" / "vectors"
 
 
 def get_json(search_term: str) -> None:
@@ -583,6 +788,14 @@ def main() -> None:
         "--list-categories", action="store_true",
         help="Show all failure category definitions and exit",
     )
+    parser.add_argument(
+        "--state", action="store_true",
+        help="Run state tests instead of blockchain tests",
+    )
+    parser.add_argument(
+        "--forks", metavar="FORKS",
+        help="Comma-separated fork list for state tests (e.g., Amsterdam)",
+    )
 
     args = parser.parse_args()
 
@@ -601,7 +814,10 @@ def main() -> None:
         with open(args.from_file) as f:
             raw = f.read()
     else:
-        raw = run_tests(args.filter)
+        if args.state:
+            raw = run_state_tests(args.forks)
+        else:
+            raw = run_tests(args.filter)
 
     # Save output if requested
     if args.save_output:
@@ -610,7 +826,10 @@ def main() -> None:
         print(f"Saved raw output to {args.save_output}", file=sys.stderr)
 
     # Parse and report
-    results = parse_output(raw)
+    if args.state:
+        results = parse_state_output(raw)
+    else:
+        results = parse_output(raw)
 
     if args.json_output:
         print_json_output(results)
