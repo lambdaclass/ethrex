@@ -8,8 +8,8 @@ use crate::errors::InvalidBlockError;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
     Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    compute_receipts_root_from_encoded, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
 use ethrex_rlp::encode::RLPEncode;
 
@@ -75,6 +75,21 @@ pub fn validate_receipts_root(
     receipts: &[Receipt],
 ) -> Result<(), InvalidBlockError> {
     let receipts_root = compute_receipts_root(receipts);
+
+    if receipts_root == block_header.receipts_root {
+        Ok(())
+    } else {
+        Err(InvalidBlockError::ReceiptsRootMismatch)
+    }
+}
+
+/// Validates the receipts root using pre-encoded receipt bytes, avoiding
+/// redundant bloom computation and RLP encoding.
+pub fn validate_receipts_root_from_encoded(
+    block_header: &BlockHeader,
+    encoded_receipts: &[Vec<u8>],
+) -> Result<(), InvalidBlockError> {
+    let receipts_root = compute_receipts_root_from_encoded(encoded_receipts);
 
     if receipts_root == block_header.receipts_root {
         Ok(())
