@@ -283,8 +283,10 @@ async fn heal_state_trie(
             // PERF: reuse buffers?
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
-            // Allow up to 2 tasks in flight to overlap encoding with DB commit
-            while db_joinset.len() >= 2 {
+            // NOTE: we keep only a single task in the background to avoid out of order deletes.
+            // Parent-path empty markers from batch N could overwrite real node data from batch N+1
+            // if commits happen out of order.
+            if !db_joinset.is_empty() {
                 db_joinset
                     .join_next()
                     .await

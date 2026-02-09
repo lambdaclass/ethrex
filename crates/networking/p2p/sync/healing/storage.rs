@@ -212,8 +212,10 @@ pub async fn heal_storage_trie(
         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
             let to_write: Vec<_> = nodes_to_write.drain().collect();
             let store = state.store.clone();
-            // Allow up to 2 tasks in flight to overlap encoding with DB commit
-            while db_joinset.len() >= 2 {
+            // NOTE: we keep only a single task in the background to avoid out of order deletes.
+            // Parent-path empty markers from batch N could overwrite real node data from batch N+1
+            // if commits happen out of order.
+            if !db_joinset.is_empty() {
                 db_joinset.join_next().await;
             }
             db_joinset.spawn_blocking(move || {
