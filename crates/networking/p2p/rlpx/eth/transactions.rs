@@ -287,6 +287,9 @@ impl PooledTransactions {
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
+                    if matches!(e, MempoolError::BlobsBundleError(_)) {
+                        return Err(e);
+                    }
                     debug!(
                         peer=%node,
                         error=%e,
