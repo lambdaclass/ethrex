@@ -821,6 +821,7 @@ impl L1Committer {
                         requests: vec![],
                         // Use the block header's gas_used
                         block_gas_used: potential_batch_block.header.gas_used,
+                        encoded_receipts: vec![],
                     },
                 )?;
             } else {

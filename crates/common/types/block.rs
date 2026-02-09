@@ -349,6 +349,16 @@ pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
+/// Computes the receipts root from pre-encoded receipt bytes, avoiding
+/// redundant bloom computation and RLP encoding.
+pub fn compute_receipts_root_from_encoded(encoded_receipts: &[Vec<u8>]) -> H256 {
+    let iter = encoded_receipts
+        .iter()
+        .enumerate()
+        .map(|(idx, encoded)| (idx.encode_to_vec(), encoded.clone()));
+    Trie::compute_hash_from_unsorted_iter(iter)
+}
+
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
     let iter = withdrawals
