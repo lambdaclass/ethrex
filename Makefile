@@ -1,6 +1,9 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io run-hive-eels-blobs
+		load-test-fibonacci load-test-io run-hive-eels-blobs \
+		build-bolt bolt-check bolt-instrument bolt-optimize bolt-clean \
+		bolt-perf2bolt bolt-profile bolt-verify bolt-full bolt-bench \
+		pgo-bolt-build pgo-bolt-optimize pgo-full-build pgo-full-optimize
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -14,6 +17,152 @@ endif
 
 build: ## 🔨 Build the client
 	cargo build $(PROFILING_CFG) --workspace
+
+# BOLT optimization targets (Linux x86-64 only)
+# Prerequisites: llvm-bolt from LLVM 19+
+# See docs/developers/bolt-optimization.md for full setup instructions.
+#
+# BOLT flags (--emit-relocs, frame pointers) are isolated in .cargo/bolt.toml
+# and only loaded by the build-bolt target, so normal builds are unaffected.
+#
+BOLT_PROFILE_DIR ?= /tmp/bolt-profiles
+BOLT_BINARY := target/release-bolt/ethrex
+BOLT_GENESIS ?= fixtures/genesis/perf-ci.json
+BOLT_BLOCKS ?= fixtures/blockchain/l2-1k-erc20.rlp
+PERF_DATA ?= perf.data
+
+# Verify BOLT prerequisites before doing anything
+bolt-check:
+	@uname -m | grep -q x86_64 || { echo "ERROR: BOLT requires x86_64 (current: $$(uname -m))"; exit 1; }
+	@uname -s | grep -q Linux || { echo "ERROR: BOLT requires Linux (current: $$(uname -s))"; exit 1; }
+	@command -v llvm-bolt >/dev/null 2>&1 || { echo "ERROR: llvm-bolt not found. See docs/developers/bolt-optimization.md for install instructions."; exit 1; }
+	@if [ ! -s $(BOLT_BLOCKS) ]; then \
+		echo "ERROR: $(BOLT_BLOCKS) missing or empty. Run 'git lfs pull' to fetch fixture files."; \
+		exit 1; \
+	fi
+	@if [ ! -s $(BOLT_GENESIS) ]; then \
+		echo "ERROR: $(BOLT_GENESIS) missing or empty."; \
+		exit 1; \
+	fi
+
+build-bolt: bolt-check ## 🔨 Build release binary for BOLT optimization (with relocations)
+	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo build --profile release-bolt --config .cargo/bolt.toml
+
+bolt-perf2bolt: bolt-check ## 📊 Convert perf.data to BOLT profile format
+	@test -f $(BOLT_BINARY) || { echo "ERROR: $(BOLT_BINARY) not found. Run 'make build-bolt' first."; exit 1; }
+	@mkdir -p $(BOLT_PROFILE_DIR)
+	perf2bolt -p $(PERF_DATA) -o $(BOLT_PROFILE_DIR)/perf.fdata $(BOLT_BINARY)
+
+bolt-optimize: ## ⚡ Apply BOLT optimization using collected profiles
+	@test -f $(BOLT_BINARY) || { echo "ERROR: $(BOLT_BINARY) not found. Run 'make build-bolt' first."; exit 1; }
+	@if [ -f $(BOLT_PROFILE_DIR)/perf.fdata ]; then \
+		llvm-bolt $(BOLT_BINARY) -o ethrex-bolt-optimized \
+			-data=$(BOLT_PROFILE_DIR)/perf.fdata \
+			-reorder-blocks=ext-tsp \
+			-reorder-functions=cdsort \
+			-split-functions \
+			-split-all-cold \
+			-split-eh \
+			-icf=1 \
+			-use-gnu-stack \
+			-dyno-stats; \
+	elif ls $(BOLT_PROFILE_DIR)/prof.* 1>/dev/null 2>&1; then \
+		merge-fdata $(BOLT_PROFILE_DIR)/prof.* > $(BOLT_PROFILE_DIR)/merged.fdata && \
+		llvm-bolt $(BOLT_BINARY) -o ethrex-bolt-optimized \
+			-data=$(BOLT_PROFILE_DIR)/merged.fdata \
+			-reorder-blocks=ext-tsp \
+			-reorder-functions=cdsort \
+			-split-functions \
+			-split-all-cold \
+			-split-eh \
+			-icf=1 \
+			-use-gnu-stack \
+			-dyno-stats; \
+	else \
+		echo "No profile data found. Run perf profiling first:"; \
+		echo "  perf record -e cycles:u -j any,u -o perf.data -- $(BOLT_BINARY) ..."; \
+		echo "  make bolt-perf2bolt"; \
+		exit 1; \
+	fi
+
+bolt-verify: ## 🔍 Verify binary was processed by BOLT
+	@if readelf -S ethrex-bolt-optimized 2>/dev/null | grep -q '\.note\.bolt_info'; then \
+		echo "✓ Binary contains BOLT markers"; \
+		readelf -p .note.bolt_info ethrex-bolt-optimized 2>/dev/null || true; \
+	else \
+		echo "✗ Binary does not contain BOLT markers"; \
+		exit 1; \
+	fi
+
+bolt-clean: ## 🧹 Clean BOLT profiles and artifacts
+	rm -rf $(BOLT_PROFILE_DIR)
+	rm -f ethrex-instrumented ethrex-bolt-optimized $(PERF_DATA)
+
+# BOLT instrumentation (creates instrumented binary for profiling)
+bolt-instrument: build-bolt ## 🔧 Create BOLT-instrumented binary for profiling
+	@mkdir -p $(BOLT_PROFILE_DIR)
+	llvm-bolt \
+		$(BOLT_BINARY) \
+		-o ethrex-instrumented \
+		-instrument \
+		--instrumentation-file-append-pid \
+		--instrumentation-file=$(BOLT_PROFILE_DIR)/prof
+	@echo "Instrumented binary created: ethrex-instrumented"
+	@echo "Run 'make bolt-profile' to collect profile data, or run the binary manually."
+
+bolt-profile: ## 📊 Run instrumented binary with benchmark blocks to collect profile data
+	@test -f ethrex-instrumented || { echo "ERROR: Run 'make bolt-instrument' first."; exit 1; }
+	@rm -rf /tmp/bolt-data $(BOLT_PROFILE_DIR)/prof.*
+	@echo "Profiling with $(BOLT_BLOCKS) (this may take a few minutes)..."
+	./ethrex-instrumented \
+		--network $(BOLT_GENESIS) \
+		--datadir /tmp/bolt-data \
+		import $(BOLT_BLOCKS)
+	@rm -rf /tmp/bolt-data
+	@echo "Profile data collected:"
+	@ls -lh $(BOLT_PROFILE_DIR)/prof.*
+
+bolt-full: bolt-instrument bolt-profile bolt-optimize bolt-verify ## 🚀 Full BOLT workflow: build → instrument → profile → optimize → verify
+	@echo ""
+	@echo "BOLT optimization complete. Optimized binary: ethrex-bolt-optimized"
+	@echo "Benchmark with: make bolt-bench"
+
+bolt-bench: ## 📈 Benchmark baseline vs BOLT-optimized binary
+	@test -f ethrex-bolt-optimized || { echo "ERROR: Run 'make bolt-full' or 'make bolt-optimize' first."; exit 1; }
+	@echo "=== Baseline (3 runs) ==="
+	@for i in 1 2 3; do \
+		rm -rf /tmp/bolt-bench-db; \
+		$(BOLT_BINARY) \
+			--network $(BOLT_GENESIS) \
+			--datadir /tmp/bolt-bench-db \
+			import $(BOLT_BLOCKS) 2>&1 | grep "Import completed"; \
+	done
+	@echo ""
+	@echo "=== BOLT-optimized (3 runs) ==="
+	@for i in 1 2 3; do \
+		rm -rf /tmp/bolt-bench-db; \
+		./ethrex-bolt-optimized \
+			--network $(BOLT_GENESIS) \
+			--datadir /tmp/bolt-bench-db \
+			import $(BOLT_BLOCKS) 2>&1 | grep "Import completed"; \
+	done
+	@rm -rf /tmp/bolt-bench-db
+
+# cargo-pgo workflow (requires: cargo install cargo-pgo)
+# NOTE: cargo-pgo doesn't pass CXXFLAGS, so use the manual Makefile targets instead
+pgo-bolt-build: ## 🔨 Build with cargo-pgo for BOLT instrumentation (use build-bolt instead)
+	@echo "NOTE: cargo-pgo doesn't pass CXXFLAGS. Use 'make build-bolt' then 'make bolt-instrument' instead."
+	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo pgo bolt build --release
+
+pgo-bolt-optimize: ## ⚡ Build BOLT-optimized binary with cargo-pgo
+	cargo pgo bolt optimize --release
+
+pgo-full-build: ## 🔨 Build with PGO instrumentation
+	cargo pgo build
+
+pgo-full-optimize: ## ⚡ Build PGO+BOLT optimized binary
+	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo pgo bolt build --with-pgo
+	@echo "Run profiling workload, then: cargo pgo bolt optimize --with-pgo"
 
 lint-l1:
 	cargo clippy --lib --bins -F debug,sync-test \

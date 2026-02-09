@@ -223,7 +223,7 @@ impl LEVM {
         })
     }
 
-    /// Pre-warms state by executing all transactions in parallel, grouped by sender.
+    /// Pre-heats state by executing all transactions in parallel, grouped by sender.
     ///
     /// Transactions from the same sender are executed sequentially within their group
     /// to ensure correct nonce and balance propagation. Different sender groups run
@@ -233,7 +233,10 @@ impl LEVM {
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
-    pub fn warm_block(
+    ///
+    /// Named `preheat_block` instead of `warm_block` because BOLT's split-function
+    /// regex matches `.warm` inside Rust's mangled `::warm_block` symbol name.
+    pub fn preheat_block(
         block: &Block,
         store: Arc<dyn Database>,
         vm_type: VMType,

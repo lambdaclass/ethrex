@@ -26,12 +26,17 @@ type Proof = Bytes48;
 pub fn warm_up_trusted_setup() {
     #[cfg(feature = "c-kzg")]
     {
+        // Uses a function pointer instead of a closure to produce a simpler symbol
+        // that BOLT can analyze without hitting split-function detection errors.
         let _ = std::thread::Builder::new()
             .name("kzg-warmup".into())
-            .spawn(|| {
-                std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
-            });
+            .spawn(do_kzg_warmup);
     }
+}
+
+#[cfg(feature = "c-kzg")]
+fn do_kzg_warmup() {
+    std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
 }
 
 #[derive(thiserror::Error, Debug)]

@@ -1,0 +1,18 @@
+# BOLT compatibility flags for post-link optimization (x86_64 Linux only)
+# Loaded via: cargo build --profile release-bolt --config .cargo/bolt.toml
+#
+# These flags preserve relocation info needed by BOLT and enable frame
+# pointers for better profiling accuracy. They increase binary size and
+# use an extra register, so they should NOT be used for regular builds.
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-Ctarget-cpu=x86-64-v3",
+    "-Ctarget-feature=+avx2,+sse2,+ssse3,+sse4.1,+sse4.2,+bmi1,+lzcnt,+pclmulqdq",
+    "-Clink-arg=-Wl,--emit-relocs",
+    "-Clink-arg=-Wl,-q",
+    "-Cforce-frame-pointers=yes",
+    # Disable LLVM hot-cold function splitting. Without this, LLVM creates
+    # .cold fragments for drop_in_place specializations that BOLT 19 can't
+    # match to their parent functions, causing "parent function not found" errors.
+    "-Cllvm-args=-hot-cold-split=false",
+]

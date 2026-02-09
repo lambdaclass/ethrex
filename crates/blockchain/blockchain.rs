@@ -371,7 +371,7 @@ impl Blockchain {
                 .spawn_scoped(s, move || {
                     // Warming uses the same caching store, sharing cached state with execution
                     let start = Instant::now();
-                    let _ = LEVM::warm_block(block, caching_store, vm_type);
+                    let _ = LEVM::preheat_block(block, caching_store, vm_type);
                     start.elapsed()
                 })
                 .expect("Failed to spawn block_executor warmer thread");
