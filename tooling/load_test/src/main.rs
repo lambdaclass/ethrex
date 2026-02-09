@@ -46,6 +46,7 @@ struct Cli {
         long,
         short = 'n',
         default_value = "http://localhost:8545",
+        env = "LOAD_TEST_RPC_URL",
         help = "URL of the node being tested."
     )]
     node: Url,
@@ -60,6 +61,7 @@ struct Cli {
         short = 'N',
         long,
         default_value_t = 1000,
+        env = "LOAD_TEST_TX_AMOUNT",
         help = "Number of transactions to send for each account."
     )]
     tx_amount: u64,
@@ -76,6 +78,7 @@ struct Cli {
     #[arg(
         long,
         default_value_t = false,
+        env = "LOAD_TEST_ENDLESS",
         help = "Run the load test in an infinite loop, restarting after each round finishes."
     )]
     endless: bool,
