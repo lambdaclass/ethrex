@@ -22,9 +22,10 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
+use rustc_hash::FxHashSet;
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     mem,
     rc::Rc,
 };
@@ -66,13 +67,13 @@ pub struct Substate {
     /// Parent checkpoint for reverting on failure.
     parent: Option<Box<Self>>,
     /// Accounts marked for self-destruction (deleted at end of transaction).
-    selfdestruct_set: HashSet<Address>,
+    selfdestruct_set: FxHashSet<Address>,
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
-    accessed_addresses: HashSet<Address>,
+    accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
     accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     /// Accounts created during this transaction.
-    created_accounts: HashSet<Address>,
+    created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
     pub refunded_gas: u64,
     /// Transient storage (EIP-1153), cleared at end of transaction.
@@ -83,16 +84,16 @@ pub struct Substate {
 
 impl Substate {
     pub fn from_accesses(
-        accessed_addresses: HashSet<Address>,
+        accessed_addresses: FxHashSet<Address>,
         accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
 
-            selfdestruct_set: HashSet::new(),
+            selfdestruct_set: FxHashSet::default(),
             accessed_addresses,
             accessed_storage_slots,
-            created_accounts: HashSet::new(),
+            created_accounts: FxHashSet::default(),
             refunded_gas: 0,
             transient_storage: TransientStorage::new(),
             logs: Vec::new(),
@@ -531,10 +532,86 @@ impl<'a> VM<'a> {
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
 
-            // Call the opcode, using the opcode function lookup table.
-            // Indexing will not panic as all the opcode values fit within the table.
+            // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = self.opcode_table[opcode as usize].call(self);
+            let op_result = match opcode {
+                0x5d if self.env.config.fork >= Fork::Cancun => self.op_tstore(),
+                0x60 => self.op_push::<1>(),
+                0x61 => self.op_push::<2>(),
+                0x62 => self.op_push::<3>(),
+                0x63 => self.op_push::<4>(),
+                0x64 => self.op_push::<5>(),
+                0x65 => self.op_push::<6>(),
+                0x66 => self.op_push::<7>(),
+                0x67 => self.op_push::<8>(),
+                0x68 => self.op_push::<9>(),
+                0x69 => self.op_push::<10>(),
+                0x6a => self.op_push::<11>(),
+                0x6b => self.op_push::<12>(),
+                0x6c => self.op_push::<13>(),
+                0x6d => self.op_push::<14>(),
+                0x6e => self.op_push::<15>(),
+                0x6f => self.op_push::<16>(),
+                0x70 => self.op_push::<17>(),
+                0x71 => self.op_push::<18>(),
+                0x72 => self.op_push::<19>(),
+                0x73 => self.op_push::<20>(),
+                0x74 => self.op_push::<21>(),
+                0x75 => self.op_push::<22>(),
+                0x76 => self.op_push::<23>(),
+                0x77 => self.op_push::<24>(),
+                0x78 => self.op_push::<25>(),
+                0x79 => self.op_push::<26>(),
+                0x7a => self.op_push::<27>(),
+                0x7b => self.op_push::<28>(),
+                0x7c => self.op_push::<29>(),
+                0x7d => self.op_push::<30>(),
+                0x7e => self.op_push::<31>(),
+                0x7f => self.op_push::<32>(),
+                0x80 => self.op_dup::<0>(),
+                0x81 => self.op_dup::<1>(),
+                0x82 => self.op_dup::<2>(),
+                0x83 => self.op_dup::<3>(),
+                0x84 => self.op_dup::<4>(),
+                0x85 => self.op_dup::<5>(),
+                0x86 => self.op_dup::<6>(),
+                0x87 => self.op_dup::<7>(),
+                0x88 => self.op_dup::<8>(),
+                0x89 => self.op_dup::<9>(),
+                0x8a => self.op_dup::<10>(),
+                0x8b => self.op_dup::<11>(),
+                0x8c => self.op_dup::<12>(),
+                0x8d => self.op_dup::<13>(),
+                0x8e => self.op_dup::<14>(),
+                0x8f => self.op_dup::<15>(),
+                0x90 => self.op_swap::<1>(),
+                0x91 => self.op_swap::<2>(),
+                0x92 => self.op_swap::<3>(),
+                0x93 => self.op_swap::<4>(),
+                0x94 => self.op_swap::<5>(),
+                0x95 => self.op_swap::<6>(),
+                0x96 => self.op_swap::<7>(),
+                0x97 => self.op_swap::<8>(),
+                0x98 => self.op_swap::<9>(),
+                0x99 => self.op_swap::<10>(),
+                0x9a => self.op_swap::<11>(),
+                0x9b => self.op_swap::<12>(),
+                0x9c => self.op_swap::<13>(),
+                0x9d => self.op_swap::<14>(),
+                0x9e => self.op_swap::<15>(),
+                0x9f => self.op_swap::<16>(),
+                0x01 => self.op_add(),
+                0x39 => self.op_codecopy(),
+                0x51 => self.op_mload(),
+                0x56 => self.op_jump(),
+                0x57 => self.op_jumpi(),
+                0x5b => self.op_jumpdest(),
+                _ => {
+                    // Call the opcode, using the opcode function lookup table.
+                    // Indexing will not panic as all the opcode values fit within the table.
+                    self.opcode_table[opcode as usize].call(self)
+                }
+            };
 
             #[cfg(feature = "perf_opcode_timings")]
             {
@@ -610,12 +687,21 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_context(&ctx_result, true)?;
 
+        // Only include logs if transaction succeeded. When a transaction reverts,
+        // no logs should be emitted (including EIP-7708 Transfer logs).
+        let logs = if ctx_result.is_success() {
+            self.substate.extract_logs()
+        } else {
+            Vec::new()
+        };
+
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
             gas_used: ctx_result.gas_used,
+            gas_spent: ctx_result.gas_spent,
             gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut ctx_result.output),
-            logs: self.substate.extract_logs(),
+            logs,
         };
 
         Ok(report)
@@ -626,7 +712,7 @@ impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = HashSet::new();
+        let mut initial_accessed_addresses = FxHashSet::default();
         let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
 
         // Add Tx sender to accessed accounts

@@ -1,8 +1,8 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, init_datadir, is_memory_datadir,
-        parse_socket_addr, read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_client_version, get_client_version_string, init_datadir,
+        is_memory_datadir, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -14,9 +14,9 @@ use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_process
 use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
+    peer_table::PeerTable,
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -476,6 +476,7 @@ pub async fn init_l1(
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
+            precompute_witnesses: opts.precompute_witnesses,
         },
     );
 
@@ -487,7 +488,7 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.target_peers);
+    let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -501,7 +502,7 @@ pub async fn init_l1(
         peer_table.clone(),
         store.clone(),
         blockchain.clone(),
-        get_client_version(),
+        get_client_version_string(),
         None,
         opts.tx_broadcasting_time_interval,
         opts.lookup_interval,

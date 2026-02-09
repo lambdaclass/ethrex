@@ -4,7 +4,7 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
 };
-use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
+use ethrex_p2p::{peer_table::PeerTable, types::NodeRecord};
 use serde::Deserialize;
 use std::{path::Path, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};

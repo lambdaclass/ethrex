@@ -5,6 +5,15 @@ on:
     # Every day at UTC midnight
     - cron: "0 0 * * 1,2,3,4,5"
   workflow_dispatch:
+    inputs:
+      slack_channel:
+        description: "Slack channel to post to"
+        required: true
+        default: "test"
+        type: choice
+        options:
+          - test
+          - prod
 
 permissions:
   contents: read
@@ -27,12 +36,12 @@ jobs:
 
       - name: Restore cache
         id: cache-loc-report
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: tooling/loc/loc_report.json
-          key: loc-report-${{ github.ref_name }}
+          key: loc-report-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            loc-report-
+            loc-report-${{ github.ref_name }}-
 
       - name: Rename cached loc_report.json to loc_report.json.old
         if: steps.cache-loc-report.outputs.cache-hit != ''
@@ -63,8 +72,7 @@ jobs:
           PERF_PROMETHEUS_RANGE: 24h
           PERF_PROMETHEUS_QUERY: >-
             label_replace(avg_over_time(gigagas{instance=~"ethrex-mainnet-1(:[0-9]+)?"}[24h]), "client", "ethrex", "", "")
-            or label_replace(avg_over_time(reth_engine_rpc_new_payload_gas_per_second{instance=~"reth-mainnet-1(:[0-9]+)?",quantile="0.5"}[24h]) / 1e9, "client", "reth", "", "")
-            or label_replace(avg_over_time(reth_engine_rpc_new_payload_gas_per_second{instance=~"reth-mainnet-1(:[0-9]+)?",quantile="0.999"}[24h]) / 1e9, "client", "reth", "", "")
+            or label_replace(rate(reth_consensus_engine_beacon_new_payload_gas_per_second_sum{instance=~"reth-mainnet-1(:[0-9]+)?"}[24h]) / rate(reth_consensus_engine_beacon_new_payload_gas_per_second_count{instance=~"reth-mainnet-1(:[0-9]+)?"}[24h]) / 1e9, "client", "reth", "", "")
             or label_replace(avg_over_time(nethermind_mgas_per_sec{instance=~"nethermind-mainnet-1(:[0-9]+)?"}[24h]) / 1000, "client", "nethermind", "", "")
             or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.5"}[24h]) / 1000, "client", "geth", "", "")
             or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.999"}[24h]) / 1000, "client", "geth", "", "")
@@ -166,10 +174,10 @@ jobs:
 
       - name: Save new loc_report.json to cache
         if: success()
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         with:
           path: tooling/loc/loc_report.json
-          key: loc-report-${{ github.ref_name }}
+          key: loc-report-${{ github.ref_name }}-${{ github.run_id }}
 
       - name: Post results in summary
         run: |
@@ -185,9 +193,9 @@ jobs:
       - name: Post results to Slack
         env:
           SLACK_WEBHOOKS: >
-            ${{ github.event_name == 'workflow_dispatch'
-              && secrets.TEST_CHANNEL_SLACK
-              || secrets.ETHREX_GENERAL_SLACK_WEBHOOK
+            ${{ github.event_name == 'schedule' && secrets.ETHREX_GENERAL_SLACK_WEBHOOK
+              || (inputs.slack_channel == 'prod' && secrets.ETHREX_GENERAL_SLACK_WEBHOOK)
+              || secrets.ETHREX_TEST_SLACK_WEBHOOK
             }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
