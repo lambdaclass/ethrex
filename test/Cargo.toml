@@ -35,6 +35,7 @@ proptest = "1.0.0"
 cita_trie = "4.0.0"
 hasher = "0.1.4"
 tokio = { workspace = true, features = ["full", "test-util"] }
+lazy_static.workspace = true
 bytes.workspace = true
 serde_json.workspace = true
 ethrex.workspace = true
