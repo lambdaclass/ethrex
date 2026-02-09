@@ -2,6 +2,15 @@
 
 ## Perf
 
+### 2026-02-09
+
+- Arc-wrap bloom filter in TrieLayerCache to eliminate ~875KB deep copy per block
+- Add shared trie node read cache to avoid redundant RocksDB reads across threads
+- Pre-encode receipts during execution to avoid redundant bloom+RLP in validation
+- Replace O(depth) linked-list access tracking with O(1) flat FxHashSet
+- Use FxHashMap for storage_original_values instead of BTreeMap
+- Add #[inline] hints to EIP-2929 hot-path access methods
+
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
