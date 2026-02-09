@@ -6,11 +6,11 @@ This document tracks which eips we support for each hard fork.
 
 | Number | Title | Description | Status | devnet-bal | Supported |
 |--------|-------|-------------|--------|------------|-----------|
-| [7928](https://eips.ethereum.org/EIPS/eip-7928) | Block-Level Access Lists | Record all accessed accounts and storage slots during block execution | SFI | [x] | [ ] |
-| [7708](https://eips.ethereum.org/EIPS/eip-7708) | ETH Transfers Emit a Log | All ETH transfers emit Transfer/Selfdestruct logs automatically | CFI | [x] | [ ] |
-| [7778](https://eips.ethereum.org/EIPS/eip-7778) | Block Gas Accounting without Refunds | Gas refunds no longer reduce block gas accounting | CFI | [x] | [ ] |
+| [7928](https://eips.ethereum.org/EIPS/eip-7928) | Block-Level Access Lists | Record all accessed accounts and storage slots during block execution | SFI | [x] | [x] |
+| [7708](https://eips.ethereum.org/EIPS/eip-7708) | ETH Transfers Emit a Log | All ETH transfers emit Transfer/Selfdestruct logs automatically | CFI | [x] | [x] |
+| [7778](https://eips.ethereum.org/EIPS/eip-7778) | Block Gas Accounting without Refunds | Gas refunds no longer reduce block gas accounting | CFI | [x] | [x] |
 | [7843](https://eips.ethereum.org/EIPS/eip-7843) | SLOTNUM Opcode | New opcode (0x4b) returning beacon chain slot number | CFI | [x] | [ ] |
-| [8024](https://eips.ethereum.org/EIPS/eip-8024) | Backward Compatible SWAPN, DUPN, EXCHANGE | New opcodes for deeper stack access (0xe6, 0xe7, 0xe8) | CFI | [x] | [ ] |
+| [8024](https://eips.ethereum.org/EIPS/eip-8024) | Backward Compatible SWAPN, DUPN, EXCHANGE | New opcodes for deeper stack access (0xe6, 0xe7, 0xe8) | CFI | [x] | [x] |
 | [2780](https://eips.ethereum.org/EIPS/eip-2780) | Reduce Intrinsic Transaction Gas | Lower base transaction cost from 21,000 to 4,500 gas | CFI | [ ] | [ ] |
 | [7904](https://eips.ethereum.org/EIPS/eip-7904) | General Repricing | Gas cost repricing to reflect computational complexity | CFI | [ ] | [ ] |
 | [7954](https://eips.ethereum.org/EIPS/eip-7954) | Increase Maximum Contract Size | Raise contract size limit from 24KiB to 32KiB | CFI | [ ] | [ ] |

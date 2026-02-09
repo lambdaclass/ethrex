@@ -107,6 +107,83 @@ pub fn validate_requests_hash(
     Ok(())
 }
 
+/// Helper to validate that all indices in an iterator are within bounds.
+fn validate_bal_indices(
+    indices: impl Iterator<Item = u16>,
+    max_valid_index: u16,
+) -> Result<(), InvalidBlockError> {
+    for index in indices {
+        if index > max_valid_index {
+            return Err(InvalidBlockError::BlockAccessListIndexOutOfBounds {
+                index,
+                max: max_valid_index,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validates that the block access list hash matches the block header (Amsterdam+).
+/// Also validates that all BlockAccessIndex values are within valid bounds per EIP-7928.
+pub fn validate_block_access_list_hash(
+    header: &BlockHeader,
+    chain_config: &ChainConfig,
+    computed_bal: &crate::types::block_access_list::BlockAccessList,
+    transaction_count: usize,
+) -> Result<(), InvalidBlockError> {
+    // BAL validation only applies to Amsterdam+ forks
+    if !chain_config.is_amsterdam_activated(header.timestamp) {
+        return Ok(());
+    }
+
+    // Per EIP-7928: "Invalidate block if access list...contains indices exceeding len(transactions) + 1"
+    // Index semantics: 0=pre-exec, 1..n=tx indices, n+1=post-exec (withdrawals)
+    #[allow(clippy::cast_possible_truncation)]
+    let max_valid_index = transaction_count as u16 + 1;
+
+    // Validate all indices in the BAL
+    for account in computed_bal.accounts() {
+        // Check storage_changes indices
+        validate_bal_indices(
+            account
+                .storage_changes
+                .iter()
+                .flat_map(|slot| slot.slot_changes.iter().map(|c| c.block_access_index)),
+            max_valid_index,
+        )?;
+
+        // Check balance_changes indices
+        validate_bal_indices(
+            account.balance_changes.iter().map(|c| c.block_access_index),
+            max_valid_index,
+        )?;
+
+        // Check nonce_changes indices
+        validate_bal_indices(
+            account.nonce_changes.iter().map(|c| c.block_access_index),
+            max_valid_index,
+        )?;
+
+        // Check code_changes indices
+        validate_bal_indices(
+            account.code_changes.iter().map(|c| c.block_access_index),
+            max_valid_index,
+        )?;
+    }
+
+    let computed_hash = computed_bal.compute_hash();
+    let valid = header
+        .block_access_list_hash
+        .map(|expected_hash| expected_hash == computed_hash)
+        .unwrap_or(false);
+
+    if !valid {
+        return Err(InvalidBlockError::BlockAccessListHashMismatch);
+    }
+
+    Ok(())
+}
+
 /// Perform validations over the block's blob gas usage.
 /// Must be called only if the block has cancun activated.
 fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), InvalidBlockError> {

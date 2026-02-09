@@ -135,15 +135,20 @@ impl<'a> VM<'a> {
             (storage_slot_key, address)
         };
 
-        let storage_slot_key = u256_to_h256(storage_slot_key);
+        let key = u256_to_h256(storage_slot_key);
 
-        let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
+        // Note: access_storage_slot does NOT record to BAL per EIP-7928.
+        // BAL recording must happen AFTER gas check passes.
+        let (value, storage_slot_was_cold) = self.access_storage_slot(address, key)?;
 
-        let current_call_frame = &mut self.current_call_frame;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
+        // Record to BAL AFTER gas check passes per EIP-7928:
+        // "If pre-state validation fails, the target is never accessed and must not appear in BAL."
+        self.record_storage_slot_to_bal(address, storage_slot_key);
 
-        current_call_frame.stack.push(value)?;
+        self.current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -160,16 +165,28 @@ impl<'a> VM<'a> {
             (storage_slot_key, new_storage_slot_value, to)
         };
 
-        // EIP-2200
+        // EIP-2200: SSTORE_STIPEND check BEFORE accessing storage
+        // Per EIP-7928: "If SSTORE fails the GAS_CALL_STIPEND check, the storage slot MUST NOT
+        // appear in storage_reads or storage_changes."
         let gas_left = self.current_call_frame.gas_remaining;
         if gas_left <= SSTORE_STIPEND {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
         // Get current and original (pre-tx) values.
+        // Note: access_storage_slot does NOT record to BAL per EIP-7928.
+        // BAL recording happens AFTER the SSTORE_STIPEND check but BEFORE the main gas check.
         let key = u256_to_h256(storage_slot_key);
         let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
         let original_value = self.get_original_storage(to, key)?;
+
+        // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
+        // Per EIP-7928 test_bal_sstore_and_oog: if SSTORE passes the stipend check but fails the
+        // main gas charge (charge_gas), the slot MUST appear as a read because the implicit SLOAD
+        // has already happened (to get current_value and original_value).
+        // "If SSTORE fails the GAS_CALL_STIPEND check, the storage slot MUST NOT appear in BAL"
+        // only refers to the stipend check, NOT the main gas check.
+        self.record_storage_slot_to_bal(to, storage_slot_key);
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
@@ -213,6 +230,7 @@ impl<'a> VM<'a> {
 
         self.substate.refunded_gas = gas_refunds;
 
+        // Main gas check - if this fails, the storage read is already recorded above
         self.current_call_frame
             .increase_consumed_gas(gas_cost::sstore(
                 original_value,
@@ -221,8 +239,17 @@ impl<'a> VM<'a> {
                 storage_slot_was_cold,
             )?)?;
 
+        // Note: BAL read already recorded above (after stipend check, before gas check).
+        // If value changes, update_account_storage will record the write.
+
         if new_storage_slot_value != current_value {
-            self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
+            self.update_account_storage(
+                to,
+                key,
+                storage_slot_key,
+                new_storage_slot_value,
+                current_value,
+            )?;
         }
 
         Ok(OpcodeResult::Continue)
