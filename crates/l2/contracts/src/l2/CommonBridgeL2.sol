@@ -42,7 +42,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         );
     }
 
-    function mintETH(address to) external payable {
+    function mintETH(address to) external payable onlySelf {
         (bool success, ) = to.call{value: msg.value}("");
         if (!success) {
             this.withdraw{value: msg.value}(to);
@@ -75,7 +75,10 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         uint256 amount
     ) external onlySelf {
         IERC20L2 token = IERC20L2(tokenL2);
-        require(token.l1Address() == tokenL1);
+        require(
+            token.l1Address() == tokenL1,
+            "CommonBridgeL2: L1 address mismatch"
+        );
         token.crosschainMint(destination, amount);
     }
 
@@ -86,7 +89,12 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         uint256 amount
     ) external {
         require(amount > 0, "Withdrawal amount must be positive");
-        IERC20L2(tokenL2).crosschainBurn(msg.sender, amount);
+        IERC20L2 token = IERC20L2(tokenL2);
+        require(
+            token.l1Address() == tokenL1,
+            "CommonBridgeL2: L1 address mismatch"
+        );
+        token.crosschainBurn(msg.sender, amount);
         emit ERC20WithdrawalInitiated(tokenL1, tokenL2, destination, amount);
         _withdraw(tokenL1, tokenL2, destination, amount);
     }

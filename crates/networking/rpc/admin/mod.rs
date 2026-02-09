@@ -50,7 +50,7 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
         enode: enode_url,
         enr: enr_url,
         id: hex::encode(node_data.local_p2p_node.node_id()),
-        name: node_data.client_version.clone(),
+        name: node_data.client_version.to_string(),
         ip: node_data.local_p2p_node.ip.to_string(),
         ports: Ports {
             discovery: node_data.local_p2p_node.udp_port,

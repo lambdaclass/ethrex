@@ -22,50 +22,78 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
+use rustc_hash::FxHashSet;
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     mem,
     rc::Rc,
 };
 
+/// Storage mapping from slot key to value.
 pub type Storage = HashMap<U256, H256>;
 
+/// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
+    /// Standard Ethereum L1 execution.
     #[default]
     L1,
+    /// L2 rollup execution with additional fee handling.
     L2(FeeConfig),
 }
 
-/// Information that changes during transaction execution.
-// Most fields are private by design. The backup mechanism (`parent` field) will only work properly
-// if data is append-only.
+/// Execution substate that tracks changes during transaction execution.
+///
+/// The substate maintains all information that may need to be reverted if a
+/// call fails, including:
+/// - Self-destructed accounts
+/// - Accessed addresses and storage slots (for EIP-2929 gas accounting)
+/// - Created accounts
+/// - Gas refunds
+/// - Transient storage (EIP-1153)
+/// - Event logs
+///
+/// # Backup Mechanism
+///
+/// The substate supports checkpointing via [`push_backup`] and restoration via
+/// [`revert_backup`] or commitment via [`commit_backup`]. This is used to handle
+/// nested calls where inner calls may fail and need to be reverted.
+///
+/// Most fields are private by design. The backup mechanism only works correctly
+/// if data modifications are append-only.
 #[derive(Debug, Default)]
 pub struct Substate {
+    /// Parent checkpoint for reverting on failure.
     parent: Option<Box<Self>>,
-
-    selfdestruct_set: HashSet<Address>,
-    accessed_addresses: HashSet<Address>,
+    /// Accounts marked for self-destruction (deleted at end of transaction).
+    selfdestruct_set: FxHashSet<Address>,
+    /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
+    accessed_addresses: FxHashSet<Address>,
+    /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
     accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
-    created_accounts: HashSet<Address>,
+    /// Accounts created during this transaction.
+    created_accounts: FxHashSet<Address>,
+    /// Accumulated gas refund (e.g., from storage clears).
     pub refunded_gas: u64,
+    /// Transient storage (EIP-1153), cleared at end of transaction.
     transient_storage: TransientStorage,
+    /// Event logs emitted during execution.
     logs: Vec<Log>,
 }
 
 impl Substate {
     pub fn from_accesses(
-        accessed_addresses: HashSet<Address>,
+        accessed_addresses: FxHashSet<Address>,
         accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
 
-            selfdestruct_set: HashSet::new(),
+            selfdestruct_set: FxHashSet::default(),
             accessed_addresses,
             accessed_storage_slots,
-            created_accounts: HashSet::new(),
+            created_accounts: FxHashSet::default(),
             refunded_gas: 0,
             transient_storage: TransientStorage::new(),
             logs: Vec::new(),
@@ -303,29 +331,67 @@ impl Substate {
     }
 }
 
+/// The LEVM (Lambda EVM) execution engine.
+///
+/// The VM executes Ethereum transactions by processing EVM bytecode. It maintains
+/// a call stack, memory, and tracks all state changes during execution.
+///
+/// # Execution Model
+///
+/// 1. Transaction is validated (nonce, balance, gas limit)
+/// 2. Initial call frame is created with transaction data
+/// 3. Opcodes are executed sequentially until completion or error
+/// 4. State changes are committed or reverted based on success
+///
+/// # Call Stack
+///
+/// Nested calls (CALL, DELEGATECALL, etc.) push new frames onto `call_frames`.
+/// Each frame has its own memory, stack, and execution context. The `current_call_frame`
+/// is always the active frame being executed.
+///
+/// # Hooks
+///
+/// The VM supports hooks for extending functionality (e.g., tracing, debugging).
+/// Hooks are called at various points during execution and implement pre/post-execution
+/// logic. L2-specific behavior (such as fee handling) is implemented via hooks.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+/// let report = vm.execute()?;
+/// if report.is_success() {
+///     println!("Gas used: {}, Output: {:?}", report.gas_used, report.output);
+/// } else {
+///     println!("Transaction reverted");
+/// }
+/// ```
 pub struct VM<'a> {
-    /// Parent callframes.
+    /// Stack of parent call frames (for nested calls).
     pub call_frames: Vec<CallFrame>,
-    /// The current call frame.
+    /// The currently executing call frame.
     pub current_call_frame: CallFrame,
+    /// Block and transaction environment.
     pub env: Environment,
+    /// Execution substate (accessed addresses, logs, refunds, etc.).
     pub substate: Substate,
+    /// Database for reading/writing account state.
     pub db: &'a mut GeneralizedDatabase,
+    /// The transaction being executed.
     pub tx: Transaction,
+    /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
-    pub substate_backups: Vec<Substate>,
-    /// Original storage values before the transaction. Used for gas calculations in SSTORE.
+    /// Original storage values before transaction (for SSTORE gas calculation).
     pub storage_original_values: BTreeMap<(Address, H256), U256>,
-    /// When enabled, it "logs" relevant information during execution
+    /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
-    /// Mode for printing some useful stuff, only used in development!
+    /// Debug mode for development diagnostics.
     pub debug_mode: DebugMode,
-    /// A pool of stacks to avoid reallocating too much when creating new call frames.
+    /// Pool of reusable stacks to reduce allocations.
     pub stack_pool: Vec<Stack>,
+    /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
-
-    /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    /// Build dynamically according to the given fork config.
+    /// Opcode dispatch table, built dynamically per fork.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
 }
 
@@ -351,7 +417,6 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            substate_backups: Vec::new(),
             storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
@@ -467,10 +532,86 @@ impl<'a> VM<'a> {
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
 
-            // Call the opcode, using the opcode function lookup table.
-            // Indexing will not panic as all the opcode values fit within the table.
+            // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = self.opcode_table[opcode as usize].call(self);
+            let op_result = match opcode {
+                0x5d if self.env.config.fork >= Fork::Cancun => self.op_tstore(),
+                0x60 => self.op_push::<1>(),
+                0x61 => self.op_push::<2>(),
+                0x62 => self.op_push::<3>(),
+                0x63 => self.op_push::<4>(),
+                0x64 => self.op_push::<5>(),
+                0x65 => self.op_push::<6>(),
+                0x66 => self.op_push::<7>(),
+                0x67 => self.op_push::<8>(),
+                0x68 => self.op_push::<9>(),
+                0x69 => self.op_push::<10>(),
+                0x6a => self.op_push::<11>(),
+                0x6b => self.op_push::<12>(),
+                0x6c => self.op_push::<13>(),
+                0x6d => self.op_push::<14>(),
+                0x6e => self.op_push::<15>(),
+                0x6f => self.op_push::<16>(),
+                0x70 => self.op_push::<17>(),
+                0x71 => self.op_push::<18>(),
+                0x72 => self.op_push::<19>(),
+                0x73 => self.op_push::<20>(),
+                0x74 => self.op_push::<21>(),
+                0x75 => self.op_push::<22>(),
+                0x76 => self.op_push::<23>(),
+                0x77 => self.op_push::<24>(),
+                0x78 => self.op_push::<25>(),
+                0x79 => self.op_push::<26>(),
+                0x7a => self.op_push::<27>(),
+                0x7b => self.op_push::<28>(),
+                0x7c => self.op_push::<29>(),
+                0x7d => self.op_push::<30>(),
+                0x7e => self.op_push::<31>(),
+                0x7f => self.op_push::<32>(),
+                0x80 => self.op_dup::<0>(),
+                0x81 => self.op_dup::<1>(),
+                0x82 => self.op_dup::<2>(),
+                0x83 => self.op_dup::<3>(),
+                0x84 => self.op_dup::<4>(),
+                0x85 => self.op_dup::<5>(),
+                0x86 => self.op_dup::<6>(),
+                0x87 => self.op_dup::<7>(),
+                0x88 => self.op_dup::<8>(),
+                0x89 => self.op_dup::<9>(),
+                0x8a => self.op_dup::<10>(),
+                0x8b => self.op_dup::<11>(),
+                0x8c => self.op_dup::<12>(),
+                0x8d => self.op_dup::<13>(),
+                0x8e => self.op_dup::<14>(),
+                0x8f => self.op_dup::<15>(),
+                0x90 => self.op_swap::<1>(),
+                0x91 => self.op_swap::<2>(),
+                0x92 => self.op_swap::<3>(),
+                0x93 => self.op_swap::<4>(),
+                0x94 => self.op_swap::<5>(),
+                0x95 => self.op_swap::<6>(),
+                0x96 => self.op_swap::<7>(),
+                0x97 => self.op_swap::<8>(),
+                0x98 => self.op_swap::<9>(),
+                0x99 => self.op_swap::<10>(),
+                0x9a => self.op_swap::<11>(),
+                0x9b => self.op_swap::<12>(),
+                0x9c => self.op_swap::<13>(),
+                0x9d => self.op_swap::<14>(),
+                0x9e => self.op_swap::<15>(),
+                0x9f => self.op_swap::<16>(),
+                0x01 => self.op_add(),
+                0x39 => self.op_codecopy(),
+                0x51 => self.op_mload(),
+                0x56 => self.op_jump(),
+                0x57 => self.op_jumpi(),
+                0x5b => self.op_jumpdest(),
+                _ => {
+                    // Call the opcode, using the opcode function lookup table.
+                    // Indexing will not panic as all the opcode values fit within the table.
+                    self.opcode_table[opcode as usize].call(self)
+                }
+            };
 
             #[cfg(feature = "perf_opcode_timings")]
             {
@@ -546,12 +687,21 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_context(&ctx_result, true)?;
 
+        // Only include logs if transaction succeeded. When a transaction reverts,
+        // no logs should be emitted (including EIP-7708 Transfer logs).
+        let logs = if ctx_result.is_success() {
+            self.substate.extract_logs()
+        } else {
+            Vec::new()
+        };
+
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
             gas_used: ctx_result.gas_used,
+            gas_spent: ctx_result.gas_spent,
             gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut ctx_result.output),
-            logs: self.substate.extract_logs(),
+            logs,
         };
 
         Ok(report)
@@ -562,7 +712,7 @@ impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = HashSet::new();
+        let mut initial_accessed_addresses = FxHashSet::default();
         let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
 
         // Add Tx sender to accessed accounts

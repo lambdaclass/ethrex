@@ -5,10 +5,10 @@ use crate::{
     api::{
         StorageBackend,
         tables::{
-            ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-            CANONICAL_BLOCK_HASHES, CHAIN_DATA, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
-            MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE,
-            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
+            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
+            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
+            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -25,8 +25,9 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
-        Transaction,
+        BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
+        Receipt, Transaction,
+        block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
     },
     utils::keccak,
 };
@@ -47,16 +48,14 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
+    thread::JoinHandle,
 };
 use tracing::{debug, error, info};
-/// Number of state trie segments to fetch concurrently during state sync
-pub const STATE_TRIE_SEGMENTS: usize = 2;
-/// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
-/// This will always be the amount yielded by snapshot reads unless there are less elements left
-pub const MAX_SNAPSHOT_READS: usize = 100;
+
+/// Maximum number of execution witnesses to keep in the database
+pub const MAX_WITNESSES: u64 = 128;
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
@@ -75,106 +74,182 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
-// TODO: don't use atomic here, instead wrap in Mutex the whole cache
 #[derive(Debug)]
 struct CodeCache {
-    inner_cache: Mutex<LruCache<H256, Code, FxBuildHasher>>,
-    cache_size: AtomicU64,
+    inner_cache: LruCache<H256, Code, FxBuildHasher>,
+    cache_size: u64,
 }
 
 impl Default for CodeCache {
     fn default() -> Self {
         Self {
-            inner_cache: Mutex::new(LruCache::unbounded_with_hasher(FxBuildHasher)),
-            cache_size: AtomicU64::new(0),
+            inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+            cache_size: 0,
         }
     }
 }
 
 impl CodeCache {
-    fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        Ok(cache.get(code_hash).cloned())
+    fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
+        Ok(self.inner_cache.get(code_hash).cloned())
     }
 
-    fn insert(&self, code: &Code) -> Result<(), StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
+    fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
         let code_size = code.size();
-        self.cache_size
-            .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
-        let cache_len = cache.len() + 1;
-        let mut current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        let cache_len = self.inner_cache.len() + 1;
+        self.cache_size += code_size as u64;
+        let current_size = self.cache_size;
         debug!(
             "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
         );
 
-        while current_size > CODE_CACHE_MAX_SIZE {
-            if let Some((_, code)) = cache.pop_lru() {
-                self.cache_size
-                    .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
-                current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        while self.cache_size > CODE_CACHE_MAX_SIZE {
+            if let Some((_, code)) = self.inner_cache.pop_lru() {
+                self.cache_size -= code.size() as u64;
             } else {
                 break;
             }
         }
 
-        cache.get_or_insert(code.hash, || code.clone());
+        self.inner_cache.get_or_insert(code.hash, || code.clone());
         Ok(())
     }
 }
 
+/// Main storage interface for the ethrex client.
+///
+/// The `Store` provides a high-level API for all blockchain data operations:
+/// - Block storage and retrieval
+/// - State trie management
+/// - Account and storage queries
+/// - Transaction indexing
+///
+/// # Thread Safety
+///
+/// `Store` is `Clone` and thread-safe. All clones share the same underlying
+/// database connection and caches via `Arc`.
+///
+/// # Caching
+///
+/// The store maintains several caches for performance:
+/// - **Trie Layer Cache**: Recent trie nodes for fast state access
+/// - **Code Cache**: LRU cache for contract bytecode (64MB default)
+/// - **Latest Block Cache**: Cached latest block header for RPC
+///
+/// # Example
+///
+/// ```ignore
+/// let store = Store::new("./data", EngineType::RocksDB)?;
+///
+/// // Add a block
+/// store.add_block(block).await?;
+///
+/// // Query account balance
+/// let info = store.get_account_info(block_number, address)?;
+/// let balance = info.map(|a| a.balance).unwrap_or_default();
+/// ```
 #[derive(Debug, Clone)]
 pub struct Store {
+    /// Path to the database directory.
     db_path: PathBuf,
+    /// Storage backend (InMemory or RocksDB).
     backend: Arc<dyn StorageBackend>,
+    /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
+    /// Cache for trie nodes from recent blocks.
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
+    /// Channel for sending trie updates to the background worker.
     trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
-    /// Keeps the latest canonical block header
-    /// It's wrapped in an Arc to allow for cheap reads with infrequent writes
-    /// Reading an out-of-date value is acceptable, since it's only used as:
-    /// - a cache of the (frequently requested) header
-    /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
-    /// - sync-related operations, which must be idempotent in order to handle reorgs
+    /// Cached latest canonical block header.
+    ///
+    /// Wrapped in Arc for cheap reads with infrequent writes.
+    /// May be slightly out of date, which is acceptable for:
+    /// - Caching frequently requested headers
+    /// - RPC "latest" block queries (small delay acceptable)
+    /// - Sync operations (must be idempotent anyway)
     latest_block_header: LatestBlockHeaderCache,
+    /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
-    account_code_cache: Arc<CodeCache>,
+    account_code_cache: Arc<Mutex<CodeCache>>,
+
+    /// Cache for code metadata (code length), keyed by the bytecode hash.
+    /// Uses FxHashMap for efficient lookups, much smaller than code cache.
+    code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+
+    background_threads: Arc<ThreadList>,
 }
 
-pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+#[derive(Debug, Default)]
+struct ThreadList {
+    list: Vec<JoinHandle<()>>,
+}
 
+impl Drop for ThreadList {
+    fn drop(&mut self) {
+        for handle in self.list.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Storage trie nodes grouped by account address hash.
+///
+/// Each entry contains the hashed account address and the trie nodes
+/// for that account's storage trie.
+pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+type StorageTries = HashMap<Address, (TrieWitness, Trie)>;
+
+/// Storage backend type selection.
+///
+/// Used when creating a new [`Store`] to specify which backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
+    /// In-memory storage, non-persistent. Suitable for testing.
     InMemory,
+    /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
 
+/// Batch of updates to apply to the store atomically.
+///
+/// Used during block execution to collect all state changes before
+/// committing them to the database in a single transaction.
 pub struct UpdateBatch {
-    /// Nodes to be added to the state trie
+    /// New nodes to add to the state trie.
     pub account_updates: Vec<TrieNode>,
-    /// Storage tries updated and their new nodes
+    /// Storage trie updates per account (keyed by hashed address).
     pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
-    /// Blocks to be added
+    /// Blocks to store.
     pub blocks: Vec<Block>,
-    /// Receipts added per block
+    /// Receipts to store, grouped by block hash.
     pub receipts: Vec<(H256, Vec<Receipt>)>,
-    /// Code updates
+    /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
 }
 
+/// Storage trie updates grouped by account address hash.
 pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
+/// Collection of account state changes from block execution.
+///
+/// Contains all the data needed to update the state trie after
+/// executing a block: account updates, storage updates, and code deployments.
 pub struct AccountUpdatesList {
+    /// Root hash of the state trie after applying these updates.
     pub state_trie_hash: H256,
+    /// State trie node updates (path -> RLP-encoded node).
     pub state_updates: Vec<(Nibbles, Vec<u8>)>,
+    /// Storage trie updates per account.
     pub storage_updates: StorageUpdates,
+    /// New contract bytecode deployments.
     pub code_updates: Vec<(H256, Code)>,
 }
 
@@ -600,7 +675,12 @@ impl Store {
     /// reads the database, and if it exists, decodes and returns it.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         // check cache first
-        if let Some(code) = self.account_code_cache.get(&code_hash)? {
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+        {
             return Ok(Some(code));
         }
 
@@ -622,16 +702,101 @@ impl Store {
         };
 
         // insert into cache and evict if needed
-        self.account_code_cache.insert(&code)?;
+        self.account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(&code)?;
 
         Ok(Some(code))
+    }
+
+    /// Get code metadata (length) by its hash.
+    ///
+    /// Checks cache first, falls back to database. If metadata is missing,
+    /// falls back to loading full code and extracts length (auto-migration).
+    pub fn get_code_metadata(&self, code_hash: H256) -> Result<Option<CodeMetadata>, StoreError> {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        // Empty code special case
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Some(CodeMetadata { length: 0 }));
+        }
+
+        // Check cache first
+        if let Some(metadata) = self
+            .code_metadata_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)
+            .copied()
+        {
+            return Ok(Some(metadata));
+        }
+
+        // Try reading from metadata table
+        let metadata = if let Some(bytes) = self
+            .backend
+            .begin_read()?
+            .get(ACCOUNT_CODE_METADATA, code_hash.as_bytes())?
+        {
+            let length =
+                u64::from_be_bytes(bytes.try_into().map_err(|_| {
+                    StoreError::Custom("Invalid metadata length encoding".to_string())
+                })?);
+            CodeMetadata { length }
+        } else {
+            // Fallback: load full code and extract length (auto-migration)
+            let Some(code) = self.get_account_code(code_hash)? else {
+                return Ok(None);
+            };
+            let metadata = CodeMetadata {
+                length: code.bytecode.len() as u64,
+            };
+
+            // Write metadata for future use (async, fire and forget)
+            let metadata_buf = metadata.length.to_be_bytes().to_vec();
+            let hash_key = code_hash.0.to_vec();
+            let backend = self.backend.clone();
+            tokio::task::spawn(async move {
+                if let Err(e) = async {
+                    let mut tx = backend.begin_write()?;
+                    tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+                    tx.commit()
+                }
+                .await
+                {
+                    tracing::warn!("Failed to write code metadata during auto-migration: {}", e);
+                }
+            });
+
+            metadata
+        };
+
+        // Update cache
+        self.code_metadata_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(code_hash, metadata);
+
+        Ok(Some(metadata))
     }
 
     /// Add account code
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
-        self.write_async(ACCOUNT_CODES, hash_key, buf).await
+        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+
+        // Write both code and metadata atomically
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut tx = backend.begin_write()?;
+            tx.put(ACCOUNT_CODES, &hash_key, &buf)?;
+            tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+            tx.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Clears all checkpoint data created during the last snap sync
@@ -996,13 +1161,21 @@ impl Store {
         &self,
         account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
-        let mut batch_items = Vec::new();
+        let mut code_batch_items = Vec::new();
+        let mut metadata_batch_items = Vec::new();
+
         for (code_hash, code) in account_codes {
             let buf = encode_code(&code);
-            batch_items.push((code_hash.as_bytes().to_vec(), buf));
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+            code_batch_items.push((code_hash.as_bytes().to_vec(), buf));
+            metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
         }
 
-        self.write_batch_async(ACCOUNT_CODES, batch_items).await
+        // Write both batches
+        self.write_batch_async(ACCOUNT_CODES, code_batch_items)
+            .await?;
+        self.write_batch_async(ACCOUNT_CODE_METADATA, metadata_batch_items)
+            .await
     }
 
     // Helper methods for async operations with spawn_blocking
@@ -1217,7 +1390,9 @@ impl Store {
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
@@ -1273,7 +1448,8 @@ impl Store {
                 last_written
             }
         };
-        let store = Self {
+        let mut background_threads = Vec::new();
+        let mut store = Self {
             db_path,
             backend,
             chain_config: Default::default(),
@@ -1282,11 +1458,13 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
-            account_code_cache: Arc::new(CodeCache::default()),
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
-        std::thread::spawn(move || {
+        background_threads.push(std::thread::spawn(move || {
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
             loop {
@@ -1302,7 +1480,7 @@ impl Store {
 
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
-        });
+        }));
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
@@ -1326,7 +1504,7 @@ impl Store {
 
             - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
         */
-        std::thread::spawn(move || {
+        background_threads.push(std::thread::spawn(move || {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
@@ -1346,6 +1524,9 @@ impl Store {
                     }
                 }
             }
+        }));
+        store.background_threads = Arc::new(ThreadList {
+            list: background_threads,
         });
         Ok(store)
     }
@@ -1550,12 +1731,12 @@ impl Store {
 
     /// Performs the same actions as apply_account_updates_from_trie
     ///  but also returns the used storage tries with witness recorded
-    pub async fn apply_account_updates_from_trie_with_witness(
+    pub fn apply_account_updates_from_trie_with_witness(
         &self,
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
-        mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
-    ) -> Result<(HashMap<Address, (TrieWitness, Trie)>, AccountUpdatesList), StoreError> {
+        mut storage_tries: StorageTries,
+    ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
@@ -1699,6 +1880,126 @@ impl Store {
         tx.commit()?;
 
         Ok(state_root)
+    }
+
+    // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
+    fn make_witness_key(block_number: u64, block_hash: &BlockHash) -> Vec<u8> {
+        let mut composite_key = Vec::with_capacity(8 + 32);
+        composite_key.extend_from_slice(&block_number.to_be_bytes());
+        composite_key.extend_from_slice(block_hash.as_bytes());
+        composite_key
+    }
+
+    /// Stores a pre-serialized execution witness for a block.
+    ///
+    /// The witness is converted to RPC format (RpcExecutionWitness) before storage
+    /// to avoid expensive `encode_subtrie` traversal on every read. This pre-computes
+    /// the serialization at write time instead of read time.
+    pub fn store_witness(
+        &self,
+        block_hash: BlockHash,
+        block_number: u64,
+        witness: ExecutionWitness,
+    ) -> Result<(), StoreError> {
+        // Convert to RPC format once at storage time
+        let rpc_witness = RpcExecutionWitness::try_from(witness)?;
+        let key = Self::make_witness_key(block_number, &block_hash);
+        let value = serde_json::to_vec(&rpc_witness)?;
+        self.write(EXECUTION_WITNESSES, key, value)?;
+        // Clean up old witnesses (keep only last 128)
+        self.cleanup_old_witnesses(block_number)
+    }
+
+    fn cleanup_old_witnesses(&self, latest_block_number: u64) -> Result<(), StoreError> {
+        // If we have less than 128 blocks, no cleanup needed
+        if latest_block_number <= MAX_WITNESSES {
+            return Ok(());
+        }
+
+        let threshold = latest_block_number - MAX_WITNESSES;
+
+        if let Some(oldest_block_number) = self.get_oldest_witness_number()? {
+            let prefix = oldest_block_number.to_be_bytes();
+            let mut to_delete = Vec::new();
+
+            {
+                let read_txn = self.backend.begin_read()?;
+                let iter = read_txn.prefix_iterator(EXECUTION_WITNESSES, &prefix)?;
+
+                // We may have multiple witnesses for the same block number (forks)
+                for item in iter {
+                    let (key, _value) = item?;
+                    let mut block_number_bytes = [0u8; 8];
+                    block_number_bytes.copy_from_slice(&key[0..8]);
+                    let block_number = u64::from_be_bytes(block_number_bytes);
+                    if block_number > threshold {
+                        break;
+                    }
+                    to_delete.push(key.to_vec());
+                }
+            }
+
+            for key in to_delete {
+                self.delete(EXECUTION_WITNESSES, key)?;
+            }
+        };
+
+        self.update_oldest_witness_number(threshold + 1)?;
+
+        Ok(())
+    }
+
+    fn update_oldest_witness_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
+        self.write(
+            MISC_VALUES,
+            b"oldest_witness_block_number".to_vec(),
+            oldest_block_number.to_le_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    fn get_oldest_witness_number(&self) -> Result<Option<u64>, StoreError> {
+        let Some(value) = self.read(MISC_VALUES, b"oldest_witness_block_number".to_vec())? else {
+            return Ok(None);
+        };
+
+        let array: [u8; 8] = value.as_slice().try_into().map_err(|_| {
+            StoreError::Custom("Invalid oldest witness block number bytes".to_string())
+        })?;
+        Ok(Some(u64::from_le_bytes(array)))
+    }
+
+    /// Returns the raw JSON bytes of a cached witness for a block.
+    ///
+    /// This is the most efficient method for the RPC handler since it avoids
+    /// deserialization and re-serialization. The bytes can be parsed directly
+    /// as a JSON Value for the RPC response.
+    pub fn get_witness_json_bytes(
+        &self,
+        block_number: u64,
+        block_hash: BlockHash,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        self.read(EXECUTION_WITNESSES, key)
+    }
+
+    /// Returns the deserialized RpcExecutionWitness for a block.
+    ///
+    /// Prefer `get_witness_json_bytes` when you need to return the witness
+    /// as JSON (e.g., for RPC responses) to avoid re-serialization.
+    pub fn get_witness_by_number_and_hash(
+        &self,
+        block_number: u64,
+        block_hash: BlockHash,
+    ) -> Result<Option<RpcExecutionWitness>, StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        match self.read(EXECUTION_WITNESSES, key)? {
+            Some(value) => {
+                let witness: RpcExecutionWitness = serde_json::from_slice(&value)?;
+                Ok(Some(witness))
+            }
+            None => Ok(None),
+        }
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
@@ -2772,386 +3073,4 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
 fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     let is_empty = std::fs::read_dir(path)?.next().is_none();
     Ok(is_empty)
-}
-
-#[cfg(test)]
-mod tests {
-    use bytes::Bytes;
-    use ethereum_types::{H256, U256};
-    use ethrex_common::{
-        Bloom, H160,
-        constants::EMPTY_KECCACK_HASH,
-        types::{Transaction, TxType},
-        utils::keccak,
-    };
-    use ethrex_rlp::decode::RLPDecode;
-    use std::{fs, str::FromStr};
-
-    use super::*;
-
-    #[tokio::test]
-    async fn test_in_memory_store() {
-        test_store_suite(EngineType::InMemory).await;
-    }
-
-    #[cfg(feature = "rocksdb")]
-    #[tokio::test]
-    async fn test_rocksdb_store() {
-        test_store_suite(EngineType::RocksDB).await;
-    }
-
-    // Creates an empty store, runs the test and then removes the store (if needed)
-    async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
-    where
-        F: FnOnce(Store) -> Fut,
-        Fut: std::future::Future<Output = ()>,
-    {
-        let nonce: u64 = H256::random().to_low_u64_be();
-        let path = format!("store-test-db-{nonce}");
-        // Remove preexistent DBs in case of a failed previous test
-        if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs(&path);
-        };
-        // Build a new store
-        let store = Store::new(&path, engine_type).expect("Failed to create test db");
-        // Run the test
-        test_func(store).await;
-        // Remove store (if needed)
-        if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs(&path);
-        };
-    }
-
-    async fn test_store_suite(engine_type: EngineType) {
-        run_test(test_store_block, engine_type).await;
-        run_test(test_store_block_number, engine_type).await;
-        run_test(test_store_block_receipt, engine_type).await;
-        run_test(test_store_account_code, engine_type).await;
-        run_test(test_store_block_tags, engine_type).await;
-        run_test(test_chain_config_storage, engine_type).await;
-        run_test(test_genesis_block, engine_type).await;
-        run_test(test_iter_accounts, engine_type).await;
-        run_test(test_iter_storage, engine_type).await;
-    }
-
-    async fn test_iter_accounts(store: Store) {
-        let mut accounts: Vec<_> = (0u64..1_000)
-            .map(|i| {
-                (
-                    keccak(i.to_be_bytes()),
-                    AccountState {
-                        nonce: 2 * i,
-                        balance: U256::from(3 * i),
-                        code_hash: *EMPTY_KECCACK_HASH,
-                        storage_root: *EMPTY_TRIE_HASH,
-                    },
-                )
-            })
-            .collect();
-        accounts.sort_by_key(|a| a.0);
-        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
-        for (address, state) in &accounts {
-            trie.insert(address.0.to_vec(), state.encode_to_vec())
-                .unwrap();
-        }
-        let state_root = trie.hash().unwrap();
-        let pivot = H256::random();
-        let pos = accounts.partition_point(|(key, _)| key < &pivot);
-        let account_iter = store.iter_accounts_from(state_root, pivot).unwrap();
-        for (expected, actual) in std::iter::zip(accounts.drain(pos..), account_iter) {
-            assert_eq!(expected, actual);
-        }
-    }
-
-    async fn test_iter_storage(store: Store) {
-        let address = keccak(12345u64.to_be_bytes());
-        let mut slots: Vec<_> = (0u64..1_000)
-            .map(|i| (keccak(i.to_be_bytes()), U256::from(2 * i)))
-            .collect();
-        slots.sort_by_key(|a| a.0);
-        let mut trie = store
-            .open_direct_storage_trie(address, *EMPTY_TRIE_HASH)
-            .unwrap();
-        for (slot, value) in &slots {
-            trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
-        }
-        let storage_root = trie.hash().unwrap();
-        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
-        trie.insert(
-            address.0.to_vec(),
-            AccountState {
-                nonce: 1,
-                balance: U256::zero(),
-                storage_root,
-                code_hash: *EMPTY_KECCACK_HASH,
-            }
-            .encode_to_vec(),
-        )
-        .unwrap();
-        let state_root = trie.hash().unwrap();
-        let pivot = H256::random();
-        let pos = slots.partition_point(|(key, _)| key < &pivot);
-        let storage_iter = store
-            .iter_storage_from(state_root, address, pivot)
-            .unwrap()
-            .unwrap();
-        for (expected, actual) in std::iter::zip(slots.drain(pos..), storage_iter) {
-            assert_eq!(expected, actual);
-        }
-    }
-
-    async fn test_genesis_block(mut store: Store) {
-        const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
-        const GENESIS_HIVE: &str = include_str!("../../fixtures/genesis/hive.json");
-        assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
-        let genesis_kurtosis: Genesis =
-            serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
-        let genesis_hive: Genesis =
-            serde_json::from_str(GENESIS_HIVE).expect("deserialize hive.json");
-        store
-            .add_initial_state(genesis_kurtosis.clone())
-            .await
-            .expect("first genesis");
-        store
-            .add_initial_state(genesis_kurtosis)
-            .await
-            .expect("second genesis with same block");
-        let result = store.add_initial_state(genesis_hive).await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(StoreError::IncompatibleChainConfig)));
-    }
-
-    fn remove_test_dbs(path: &str) {
-        // Removes all test databases from filesystem
-        if std::path::Path::new(path).exists() {
-            fs::remove_dir_all(path).expect("Failed to clean test db dir");
-        }
-    }
-
-    async fn test_store_block(store: Store) {
-        let (block_header, block_body) = create_block_for_testing();
-        let block_number = 6;
-        let hash = block_header.hash();
-
-        store
-            .add_block_header(hash, block_header.clone())
-            .await
-            .unwrap();
-        store
-            .add_block_body(hash, block_body.clone())
-            .await
-            .unwrap();
-        store
-            .forkchoice_update(vec![], block_number, hash, None, None)
-            .await
-            .unwrap();
-
-        let stored_header = store.get_block_header(block_number).unwrap().unwrap();
-        let stored_body = store.get_block_body(block_number).await.unwrap().unwrap();
-
-        // Ensure both headers have their hashes computed for comparison
-        let _ = stored_header.hash();
-        let _ = block_header.hash();
-        assert_eq!(stored_header, block_header);
-        assert_eq!(stored_body, block_body);
-    }
-
-    fn create_block_for_testing() -> (BlockHeader, BlockBody) {
-        let block_header = BlockHeader {
-            parent_hash: H256::from_str(
-                "0x1ac1bf1eef97dc6b03daba5af3b89881b7ae4bc1600dc434f450a9ec34d44999",
-            )
-            .unwrap(),
-            ommers_hash: H256::from_str(
-                "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-            )
-            .unwrap(),
-            coinbase: Address::from_str("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba").unwrap(),
-            state_root: H256::from_str(
-                "0x9de6f95cb4ff4ef22a73705d6ba38c4b927c7bca9887ef5d24a734bb863218d9",
-            )
-            .unwrap(),
-            transactions_root: H256::from_str(
-                "0x578602b2b7e3a3291c3eefca3a08bc13c0d194f9845a39b6f3bcf843d9fed79d",
-            )
-            .unwrap(),
-            receipts_root: H256::from_str(
-                "0x035d56bac3f47246c5eed0e6642ca40dc262f9144b582f058bc23ded72aa72fa",
-            )
-            .unwrap(),
-            logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
-            number: 1,
-            gas_limit: 0x016345785d8a0000,
-            gas_used: 0xa8de,
-            timestamp: 0x03e8,
-            extra_data: Bytes::new(),
-            prev_randao: H256::zero(),
-            nonce: 0x0000000000000000,
-            base_fee_per_gas: Some(0x07),
-            withdrawals_root: Some(
-                H256::from_str(
-                    "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-                )
-                .unwrap(),
-            ),
-            blob_gas_used: Some(0x00),
-            excess_blob_gas: Some(0x00),
-            parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
-            ..Default::default()
-        };
-        let block_body = BlockBody {
-            transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),
-            Transaction::decode(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap()],
-            ommers: Default::default(),
-            withdrawals: Default::default(),
-        };
-        (block_header, block_body)
-    }
-
-    async fn test_store_block_number(store: Store) {
-        let block_hash = H256::random();
-        let block_number = 6;
-
-        store
-            .add_block_number(block_hash, block_number)
-            .await
-            .unwrap();
-
-        let stored_number = store.get_block_number(block_hash).await.unwrap().unwrap();
-
-        assert_eq!(stored_number, block_number);
-    }
-
-    async fn test_store_block_receipt(store: Store) {
-        let receipt = Receipt {
-            tx_type: TxType::EIP2930,
-            succeeded: true,
-            cumulative_gas_used: 1747,
-            logs: vec![],
-        };
-        let block_number = 6;
-        let index = 4;
-        let block_header = BlockHeader::default();
-
-        store
-            .add_receipt(block_header.hash(), index, receipt.clone())
-            .await
-            .unwrap();
-
-        store
-            .add_block_header(block_header.hash(), block_header.clone())
-            .await
-            .unwrap();
-
-        store
-            .forkchoice_update(vec![], block_number, block_header.hash(), None, None)
-            .await
-            .unwrap();
-
-        let stored_receipt = store
-            .get_receipt(block_number, index)
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(stored_receipt, receipt);
-    }
-
-    async fn test_store_account_code(store: Store) {
-        let code = Code::from_bytecode(Bytes::from("kiwi"));
-        let code_hash = code.hash;
-
-        store.add_account_code(code.clone()).await.unwrap();
-
-        let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
-
-        assert_eq!(stored_code, code);
-    }
-
-    async fn test_store_block_tags(store: Store) {
-        let earliest_block_number = 0;
-        let finalized_block_number = 7;
-        let safe_block_number = 6;
-        let latest_block_number = 8;
-        let pending_block_number = 9;
-
-        let (mut block_header, block_body) = create_block_for_testing();
-        block_header.number = latest_block_number;
-        let hash = block_header.hash();
-
-        store
-            .add_block_header(hash, block_header.clone())
-            .await
-            .unwrap();
-        store
-            .add_block_body(hash, block_body.clone())
-            .await
-            .unwrap();
-
-        store
-            .update_earliest_block_number(earliest_block_number)
-            .await
-            .unwrap();
-        store
-            .update_pending_block_number(pending_block_number)
-            .await
-            .unwrap();
-        store
-            .forkchoice_update(
-                vec![],
-                latest_block_number,
-                hash,
-                Some(safe_block_number),
-                Some(finalized_block_number),
-            )
-            .await
-            .unwrap();
-
-        let stored_earliest_block_number = store.get_earliest_block_number().await.unwrap();
-        let stored_finalized_block_number =
-            store.get_finalized_block_number().await.unwrap().unwrap();
-        let stored_latest_block_number = store.get_latest_block_number().await.unwrap();
-        let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
-        let stored_pending_block_number = store.get_pending_block_number().await.unwrap().unwrap();
-
-        assert_eq!(earliest_block_number, stored_earliest_block_number);
-        assert_eq!(finalized_block_number, stored_finalized_block_number);
-        assert_eq!(safe_block_number, stored_safe_block_number);
-        assert_eq!(latest_block_number, stored_latest_block_number);
-        assert_eq!(pending_block_number, stored_pending_block_number);
-    }
-
-    async fn test_chain_config_storage(mut store: Store) {
-        let chain_config = example_chain_config();
-        store.set_chain_config(&chain_config).await.unwrap();
-        let retrieved_chain_config = store.get_chain_config();
-        assert_eq!(chain_config, retrieved_chain_config);
-    }
-
-    fn example_chain_config() -> ChainConfig {
-        ChainConfig {
-            chain_id: 3151908_u64,
-            homestead_block: Some(0),
-            eip150_block: Some(0),
-            eip155_block: Some(0),
-            eip158_block: Some(0),
-            byzantium_block: Some(0),
-            constantinople_block: Some(0),
-            petersburg_block: Some(0),
-            istanbul_block: Some(0),
-            berlin_block: Some(0),
-            london_block: Some(0),
-            merge_netsplit_block: Some(0),
-            shanghai_time: Some(0),
-            cancun_time: Some(0),
-            prague_time: Some(1718232101),
-            terminal_total_difficulty: Some(58750000000000000000000),
-            terminal_total_difficulty_passed: true,
-            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
-                .unwrap(),
-            ..Default::default()
-        }
-    }
 }

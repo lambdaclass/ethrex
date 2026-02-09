@@ -3,9 +3,12 @@ name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
   pull_request:
     paths:
       - ".github/workflows/main_prover.yaml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -62,12 +65,12 @@ jobs:
       - name: Show vks
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
-          ls -lah crates/l2/prover/src/guest_program/src/sp1/out/
+          ls -lah crates/guest-program/bin/sp1/out/
 
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
-          cargo test l2 --features l2 --no-run --release
+          cargo test -p ethrex-test l2_integration_test --no-run --release
 
       - name: Start L1
         run: |
@@ -106,6 +109,7 @@ jobs:
           ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
           ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
           ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000 \
+          ETHREX_LOG_LEVEL=debug \
           ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec \
           docker compose up --build --detach --no-deps ethrex_l2
 
@@ -114,14 +118,37 @@ jobs:
           docker cp contract_deployer:/env/.env cmd/.env
           cat cmd/.env
 
+      - name: Wait for L2 deposits to be processed
+        run: |
+          # Wait until test account deposits are processed on L2
+          # Get the first test account private key (last line, since tests use pop())
+          FIRST_TEST_PK=$(tail -n1 fixtures/keys/private_keys_tests.txt)
+          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_TEST_PK")
+          echo "Waiting for test account $RICH_ADDRESS deposits to be processed on L2..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2 balance... (attempt $i)"
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Rich account has balance on L2: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2 deposits to be processed"
+          exit 1
+
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          make init-prover-sp1 GPU=true &
-          docker logs --follow ethrex_l2 & DOCKER_LOGS_L2_PID=$!
+          RUST_LOG=info,ethrex_prover_lib=debug ../../target/release/ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" & DOCKER_LOGS_L2_PID=$!
           docker logs --follow ethrex_l1 & DOCKER_LOGS_L1_PID=$!
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
           kill $DOCKER_LOGS_L2_PID || true
           kill $DOCKER_LOGS_L1_PID || true
