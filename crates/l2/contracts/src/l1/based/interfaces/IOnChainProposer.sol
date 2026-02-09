@@ -94,6 +94,18 @@ interface IOnChainProposer {
         bytes memory tdxSignature
     ) external;
 
+    /// @notice Method used to verify multiple consecutive L2 batches in a single transaction.
+    /// @param firstBatchNumber The batch number of the first batch to verify. Must be `lastVerifiedBatch + 1`.
+    /// @param risc0BlockProofs An array of RISC0 proofs, one per batch.
+    /// @param sp1ProofsBytes An array of SP1 proofs, one per batch.
+    /// @param tdxSignatures An array of TDX signatures, one per batch.
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] memory risc0BlockProofs,
+        bytes[] memory sp1ProofsBytes,
+        bytes[] memory tdxSignatures
+    ) external;
+
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
 

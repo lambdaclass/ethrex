@@ -11,8 +11,10 @@ use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -22,7 +24,7 @@ use tracing::{debug, error, info, warn};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;
 #[cfg(feature = "metrics")]
-use std::{collections::HashMap, time::SystemTime};
+use std::time::SystemTime;
 #[cfg(feature = "metrics")]
 use tokio::sync::Mutex;
 
@@ -51,6 +53,11 @@ pub struct ProofCoordinator {
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
     qpl_tool_path: Option<String>,
+    /// Tracks batch assignments to provers: batch_number -> assignment time.
+    /// In-memory only; lost on restart. Uses std::sync::Mutex (not tokio)
+    /// because lock is never held across .await points.
+    assignments: Arc<std::sync::Mutex<HashMap<u64, Instant>>>,
+    prover_timeout: Duration,
 }
 
 impl ProofCoordinator {
@@ -93,6 +100,8 @@ impl ProofCoordinator {
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
             qpl_tool_path: config.proof_coordinator.qpl_tool_path.clone(),
+            assignments: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            prover_timeout: Duration::from_millis(config.proof_coordinator.prover_timeout_ms),
         })
     }
 
@@ -137,23 +146,58 @@ impl ProofCoordinator {
         }
     }
 
-    async fn next_batch_to_prove_for_version(
+    async fn next_batch_to_assign(
         &self,
         commit_hash: &str,
-    ) -> Result<u64, ProofCoordinatorError> {
-        let mut batch_to_prove = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
+    ) -> Result<Option<u64>, ProofCoordinatorError> {
+        // Phase 1: Outside lock - fetch base batch from storage
+        let base_batch = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
 
-        while self
+        // Phase 2: Lock mutex BRIEFLY (no awaits while locked!)
+        let candidate = {
+            let mut assignments = self.assignments.lock().map_err(|_| {
+                ProofCoordinatorError::Custom("Assignment lock poisoned".to_string())
+            })?;
+
+            // Clean up assignments for already-verified batches
+            assignments.retain(|&batch, _| batch >= base_batch);
+
+            let now = Instant::now();
+            let mut batch = base_batch;
+
+            // Scan from base_batch upward for unassigned or timed-out batch
+            loop {
+                match assignments.get(&batch) {
+                    None => break,
+                    Some(&assigned_at) if now.duration_since(assigned_at) > self.prover_timeout => {
+                        break;
+                    }
+                    Some(_) => batch += 1,
+                }
+            }
+
+            // Mark as assigned atomically (still under lock)
+            assignments.insert(batch, now);
+            batch
+        };
+        // Lock dropped here
+
+        // Phase 3: Outside lock - verify batch exists and has prover input
+        let has_input = self
             .rollup_store
-            .get_prover_input_by_batch_and_version(batch_to_prove, commit_hash)
+            .get_prover_input_by_batch_and_version(candidate, commit_hash)
             .await?
-            .is_none()
-            && self.rollup_store.contains_batch(&batch_to_prove).await?
-        {
-            batch_to_prove += 1;
+            .is_some();
+
+        if !has_input {
+            // No input for this version - remove assignment
+            if let Ok(mut assignments) = self.assignments.lock() {
+                assignments.remove(&candidate);
+            }
+            return Ok(None);
         }
 
-        Ok(batch_to_prove)
+        Ok(Some(candidate))
     }
 
     async fn handle_request(
@@ -162,7 +206,6 @@ impl ProofCoordinator {
         commit_hash: String,
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received");
-        let batch_to_prove = self.next_batch_to_prove_for_version(&commit_hash).await?;
 
         if commit_hash != self.git_commit_hash {
             debug!(
@@ -171,6 +214,15 @@ impl ProofCoordinator {
             );
         }
 
+        let Some(batch_to_prove) = self.next_batch_to_assign(&commit_hash).await? else {
+            debug!("No batch available for this version, sending empty BatchResponse");
+            let response = ProofData::empty_batch_response();
+            send_response(stream, &response).await?;
+            info!("Empty BatchResponse sent (no batch for version)");
+            return Ok(());
+        };
+
+        // Check if all needed proofs already exist for this batch
         let mut all_proofs_exist = true;
         for proof_type in &self.needed_proof_types {
             if self
@@ -184,40 +236,52 @@ impl ProofCoordinator {
             }
         }
 
-        let response =
-            if all_proofs_exist || !self.rollup_store.contains_batch(&batch_to_prove).await? {
-                debug!("Sending empty BatchResponse");
-                ProofData::empty_batch_response()
-            } else {
-                let Some(input) = self
-                    .rollup_store
-                    .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
-                    .await?
-                else {
-                    let response = ProofData::no_batch_for_version(commit_hash);
-                    send_response(stream, &response).await?;
-                    info!("No batch for version sent");
-                    return Ok(());
-                };
-                debug!("Sending BatchResponse for block_number: {batch_to_prove}");
-                let format = if self.aligned {
-                    ProofFormat::Compressed
-                } else {
-                    ProofFormat::Groth16
-                };
-                metrics!(
-                    // First request starts a timer until a proof is received. The elapsed time will be
-                    // the estimated proving time.
-                    // This should be used for development only and runs on the assumption that:
-                    //   1. There's a single prover
-                    //   2. Communication does not fail
-                    //   3. Communication adds negligible overhead in comparison with proving time
-                    let mut lock = self.request_timestamp.lock().await;
-                    lock.entry(batch_to_prove).or_insert(SystemTime::now());
-                );
-                debug!("Sending BatchResponse for block_number: {batch_to_prove}");
-                ProofData::batch_response(batch_to_prove, input, format)
-            };
+        if all_proofs_exist {
+            // All proofs exist, remove from assignments and send empty response
+            if let Ok(mut assignments) = self.assignments.lock() {
+                assignments.remove(&batch_to_prove);
+            }
+            debug!(
+                "All proofs already exist for batch {batch_to_prove}, sending empty BatchResponse"
+            );
+            let response = ProofData::empty_batch_response();
+            send_response(stream, &response).await?;
+            info!("Empty BatchResponse sent (all proofs exist for batch {batch_to_prove})");
+            return Ok(());
+        }
+
+        let Some(input) = self
+            .rollup_store
+            .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
+            .await?
+        else {
+            // Remove assignment since we can't serve this batch
+            if let Ok(mut assignments) = self.assignments.lock() {
+                assignments.remove(&batch_to_prove);
+            }
+            let response = ProofData::no_batch_for_version(commit_hash);
+            send_response(stream, &response).await?;
+            info!("No batch for version sent");
+            return Ok(());
+        };
+
+        debug!("Sending BatchResponse for block_number: {batch_to_prove}");
+        let format = if self.aligned {
+            ProofFormat::Compressed
+        } else {
+            ProofFormat::Groth16
+        };
+        metrics!(
+            // First request starts a timer until a proof is received. The elapsed time will be
+            // the estimated proving time.
+            // This should be used for development only and runs on the assumption that:
+            //   1. There's a single prover
+            //   2. Communication does not fail
+            //   3. Communication adds negligible overhead in comparison with proving time
+            let mut lock = self.request_timestamp.lock().await;
+            lock.entry(batch_to_prove).or_insert(SystemTime::now());
+        );
+        let response = ProofData::batch_response(batch_to_prove, input, format);
 
         send_response(stream, &response).await?;
         info!("BatchResponse sent for batch number: {batch_to_prove}");
@@ -267,6 +331,24 @@ impl ProofCoordinator {
                 .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)
                 .await?;
         }
+
+        // Check if all needed proof types now exist for this batch
+        let mut all_complete = true;
+        for pt in &self.needed_proof_types {
+            if self
+                .rollup_store
+                .get_proof_by_batch_and_type(batch_number, *pt)
+                .await?
+                .is_none()
+            {
+                all_complete = false;
+                break;
+            }
+        }
+        if all_complete && let Ok(mut assignments) = self.assignments.lock() {
+            assignments.remove(&batch_number);
+        }
+
         let response = ProofData::proof_submit_ack(batch_number);
         send_response(stream, &response).await?;
         info!("ProofSubmit ACK sent");

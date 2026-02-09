@@ -123,6 +123,21 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
     }
 
     /// @custom:access Restricted to accounts with the `SEQUENCER` role.
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] memory risc0BlockProofs,
+        bytes[] memory sp1ProofsBytes,
+        bytes[] memory tdxSignatures
+    ) external onlyRole(SEQUENCER) {
+        onChainProposer.verifyBatches(
+            firstBatchNumber,
+            risc0BlockProofs,
+            sp1ProofsBytes,
+            tdxSignatures
+        );
+    }
+
+    /// @custom:access Restricted to accounts with the `SEQUENCER` role.
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
         uint256 lastBatchNumber,

@@ -50,6 +50,7 @@ use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
 use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
+const VERIFY_BATCHES_FUNCTION_SIGNATURE: &str = "verifyBatches(uint256,bytes[],bytes[],bytes[])";
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -188,19 +189,101 @@ impl L1ProofSender {
         let last_verified_batch =
             get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
-        let batch_to_send = if self.aligned_mode {
-            std::cmp::max(latest_sent_batch_db, last_verified_batch) + 1
-        } else {
-            if latest_sent_batch_db < last_verified_batch {
-                // hotfix: in case the latest sent batch in DB is less than the last verified on-chain,
-                // we update the db to avoid stalling the proof_coordinator.
-                self.rollup_store
-                    .set_latest_sent_batch_proof(last_verified_batch)
-                    .await?;
+
+        if self.aligned_mode {
+            let batch_to_send = std::cmp::max(latest_sent_batch_db, last_verified_batch) + 1;
+            return self.verify_and_send_proof_aligned(batch_to_send).await;
+        }
+
+        // Non-aligned path: preserve hotfix for DB < on-chain
+        if latest_sent_batch_db < last_verified_batch {
+            self.rollup_store
+                .set_latest_sent_batch_proof(last_verified_batch)
+                .await?;
+        }
+
+        let first_batch = last_verified_batch + 1;
+
+        let last_committed_batch =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+
+        if last_committed_batch < first_batch {
+            info!("Next batch to send ({first_batch}) is not yet committed");
+            return Ok(());
+        }
+
+        // Collect consecutive proven batches starting from first_batch
+        let mut ready_batches: Vec<(u64, HashMap<ProverType, BatchProof>)> = Vec::new();
+        for batch in first_batch..=last_committed_batch {
+            let mut proofs = HashMap::new();
+            let mut all_present = true;
+            for proof_type in &self.needed_proof_types {
+                if let Some(proof) = self
+                    .rollup_store
+                    .get_proof_by_batch_and_type(batch, *proof_type)
+                    .await?
+                {
+                    proofs.insert(*proof_type, proof);
+                } else {
+                    all_present = false;
+                    break;
+                }
             }
-            last_verified_batch + 1
+            if !all_present {
+                break;
+            }
+            ready_batches.push((batch, proofs));
+        }
+
+        if ready_batches.is_empty() {
+            info!(
+                ?first_batch,
+                "No consecutive batches ready to send starting from first_batch"
+            );
+            return Ok(());
+        }
+
+        // safe: we checked non-empty above
+        let last_batch_sent = match ready_batches.last() {
+            Some((batch, _)) => *batch,
+            None => return Ok(()),
         };
 
+        if ready_batches.len() == 1 {
+            // Single batch: use existing send_proof_to_contract for backward compat
+            let Some((batch_number, proofs)) = ready_batches.into_iter().next() else {
+                return Ok(());
+            };
+            self.send_proof_to_contract(batch_number, proofs).await?;
+        } else {
+            // Multiple batches: use verifyBatches
+            self.send_batches_proof_to_contract(first_batch, &ready_batches)
+                .await?;
+        }
+
+        self.rollup_store
+            .set_latest_sent_batch_proof(last_batch_sent)
+            .await?;
+
+        // Clean up checkpoints for each batch in range
+        for batch in first_batch..=last_batch_sent {
+            let checkpoint_path = self.checkpoints_dir.join(batch_checkpoint_name(batch - 1));
+            if checkpoint_path.exists() {
+                let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
+                    error!(
+                        "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {e}"
+                    )
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn verify_and_send_proof_aligned(
+        &self,
+        batch_to_send: u64,
+    ) -> Result<(), ProofSenderError> {
         let last_committed_batch =
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
@@ -224,19 +307,12 @@ impl L1ProofSender {
         }
 
         if missing_proof_types.is_empty() {
-            if self.aligned_mode {
-                self.send_proof_to_aligned(batch_to_send, proofs.values())
-                    .await?;
-            } else {
-                self.send_proof_to_contract(batch_to_send, proofs).await?;
-            }
+            self.send_proof_to_aligned(batch_to_send, proofs.values())
+                .await?;
             self.rollup_store
                 .set_latest_sent_batch_proof(batch_to_send)
                 .await?;
 
-            // Remove checkpoint from batch sent - 1.
-            // That checkpoint was needed to generate the proof for the batch we just sent.
-            // The checkpoint for the batch we have just sent is needed for the next batch.
             let checkpoint_path = self
                 .checkpoints_dir
                 .join(batch_checkpoint_name(batch_to_send - 1));
@@ -479,6 +555,110 @@ impl L1ProofSender {
             ?batch_number,
             ?verify_tx_hash,
             "Sent batch verification transaction to L1"
+        );
+
+        Ok(())
+    }
+
+    /// Sends multiple consecutive batch proofs in a single verifyBatches transaction.
+    /// On revert with an invalid proof message, falls back to single-batch sending
+    /// to identify which batch has the bad proof.
+    pub async fn send_batches_proof_to_contract(
+        &self,
+        first_batch: u64,
+        batches: &[(u64, HashMap<ProverType, BatchProof>)],
+    ) -> Result<(), ProofSenderError> {
+        let batch_count = batches.len();
+        info!(
+            first_batch,
+            batch_count, "Sending multi-batch verification transaction to L1"
+        );
+
+        // Build three Value::Array of Value::Bytes for risc0, sp1, tdx
+        let mut risc0_array = Vec::with_capacity(batch_count);
+        let mut sp1_array = Vec::with_capacity(batch_count);
+        let mut tdx_array = Vec::with_capacity(batch_count);
+
+        for (_batch_number, proofs) in batches {
+            // Each proof type's calldata is a Vec<Value> with one element: Value::Bytes.
+            // For missing proofs, use empty bytes.
+            let risc0_bytes = proofs
+                .get(&ProverType::RISC0)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::RISC0.empty_calldata())
+                .into_iter()
+                .next()
+                .unwrap_or(Value::Bytes(vec![].into()));
+            risc0_array.push(risc0_bytes);
+
+            let sp1_bytes = proofs
+                .get(&ProverType::SP1)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::SP1.empty_calldata())
+                .into_iter()
+                .next()
+                .unwrap_or(Value::Bytes(vec![].into()));
+            sp1_array.push(sp1_bytes);
+
+            let tdx_bytes = proofs
+                .get(&ProverType::TDX)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::TDX.empty_calldata())
+                .into_iter()
+                .next()
+                .unwrap_or(Value::Bytes(vec![].into()));
+            tdx_array.push(tdx_bytes);
+        }
+
+        let calldata_values = vec![
+            Value::Uint(U256::from(first_batch)),
+            Value::Array(risc0_array),
+            Value::Array(sp1_array),
+            Value::Array(tdx_array),
+        ];
+
+        let calldata = encode_calldata(VERIFY_BATCHES_FUNCTION_SIGNATURE, &calldata_values)?;
+
+        let target_address = self
+            .timelock_address
+            .unwrap_or(self.on_chain_proposer_address);
+
+        let send_verify_tx_result =
+            send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await;
+
+        // On revert with invalid proof message, fall back to single-batch sending
+        // to identify which batch has the bad proof.
+        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
+            ref message, ..
+        })) = send_verify_tx_result
+            && (message.contains("Invalid TDX proof")
+                || message.contains("Invalid RISC0 proof")
+                || message.contains("Invalid SP1 proof"))
+        {
+            warn!(
+                "Multi-batch verify reverted with invalid proof, falling back to single-batch sending"
+            );
+            for (batch_number, proofs) in batches {
+                self.send_proof_to_contract(*batch_number, proofs.clone())
+                    .await?;
+            }
+            return Ok(());
+        }
+
+        let verify_tx_hash = send_verify_tx_result?;
+
+        // Store verify tx hash for all batches
+        for (batch_number, _) in batches {
+            self.rollup_store
+                .store_verify_tx_by_batch(*batch_number, verify_tx_hash)
+                .await?;
+        }
+
+        info!(
+            first_batch,
+            batch_count,
+            ?verify_tx_hash,
+            "Sent multi-batch verification transaction to L1"
         );
 
         Ok(())
