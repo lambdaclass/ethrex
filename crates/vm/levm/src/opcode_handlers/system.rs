@@ -100,9 +100,18 @@ impl<'a> VM<'a> {
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
         callframe.memory.resize(new_memory_size)?;
 
+        // Record address touch for BAL (after gas checks pass per EIP-7928)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(callee);
+            // If EIP-7702 delegation, also record the delegation target (code source)
+            if is_delegation_7702 {
+                recorder.record_touched_address(code_address);
+            }
+        }
+
         // OPERATION
         let from = callframe.to; // The new sender will be the current contract.
-        let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
+        let to = callee; // Sub-context account. Note: code_address may differ if EIP-7702 delegation is active.
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_offset, args_size)?;
 
@@ -196,6 +205,15 @@ impl<'a> VM<'a> {
         // Make sure we have enough memory to write the return data
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
         callframe.memory.resize(new_memory_size)?;
+
+        // Record address touch for BAL (after gas checks pass per EIP-7928)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+            // If EIP-7702 delegation, also record the delegation target (code source)
+            if is_delegation_7702 {
+                recorder.record_touched_address(code_address);
+            }
+        }
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let from = callframe.to;
@@ -313,6 +331,15 @@ impl<'a> VM<'a> {
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
         callframe.memory.resize(new_memory_size)?;
 
+        // Record address touch for BAL (after gas checks pass per EIP-7928)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+            // If EIP-7702 delegation, also record the delegation target (code source)
+            if is_delegation_7702 {
+                recorder.record_touched_address(code_address);
+            }
+        }
+
         // OPERATION
         let from = callframe.msg_sender;
         let value = callframe.msg_value;
@@ -378,7 +405,7 @@ impl<'a> VM<'a> {
         };
 
         // CHECK EIP7702
-        let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, address)?;
 
         // GAS
@@ -410,10 +437,19 @@ impl<'a> VM<'a> {
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
         callframe.memory.resize(new_memory_size)?;
 
+        // Record address touch for BAL (after gas checks pass per EIP-7928)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+            // If EIP-7702 delegation, also record the delegation target (code source)
+            if is_delegation_7702 {
+                recorder.record_touched_address(code_address);
+            }
+        }
+
         // OPERATION
         let value = U256::zero();
         let from = callframe.to; // The new sender will be the current contract.
-        let to = address; // In this case address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
+        let to = address; // Sub-context account. Note: code_address may differ if EIP-7702 delegation is active.
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
@@ -558,6 +594,25 @@ impl<'a> VM<'a> {
                 balance,
             )?)?;
 
+        // Record beneficiary and destroyed account for BAL per EIP-7928
+        // Also record any previously-accessed storage slots as reads per EIP-7928:
+        // "SELFDESTRUCT: Include modified/read storage keys as storage_read"
+        let accessed_slots = self.substate.get_accessed_storage_slots(&to);
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(beneficiary);
+            // Also record the destroyed account (source) as touched
+            recorder.record_touched_address(to);
+            // Record initial balance for the destroyed account if it has balance
+            if balance > U256::zero() {
+                recorder.set_initial_balance(to, balance);
+            }
+            // Record any previously-accessed storage slots as reads
+            for key in &accessed_slots {
+                let slot = U256::from_big_endian(key.as_bytes());
+                recorder.record_storage_read(to, slot);
+            }
+        }
+
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.config.fork >= Fork::Cancun {
             self.transfer(to, beneficiary, balance)?;
@@ -566,6 +621,11 @@ impl<'a> VM<'a> {
             if self.substate.is_account_created(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.get_account_mut(to)?.info.balance = U256::zero();
+
+                // Record balance change to zero for destroyed account in BAL
+                if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                    recorder.record_balance_change(to, U256::zero());
+                }
 
                 self.substate.add_selfdestruct(to);
             }
@@ -584,6 +644,11 @@ impl<'a> VM<'a> {
         } else {
             self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
+
+            // Record balance change to zero for destroyed account in BAL
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_balance_change(to, U256::zero());
+            }
 
             self.substate.add_selfdestruct(to);
 
@@ -655,6 +720,11 @@ impl<'a> VM<'a> {
         // Add new contract to accessed addresses
         self.substate.add_accessed_address(new_address);
 
+        // Record address touch for BAL (after address is calculated per EIP-7928)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(new_address);
+        }
+
         // Log CREATE in tracer
         let call_type = match salt {
             Some(_) => CallType::CREATE2,
@@ -697,12 +767,15 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
+        // Create BAL checkpoint before entering create call for potential revert per EIP-7928
+        let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
         let next_memory = self.current_call_frame.memory.next_memory();
 
-        let new_call_frame = CallFrame::new(
+        let mut new_call_frame = CallFrame::new(
             deployer,
             new_address,
             new_address,
@@ -720,6 +793,9 @@ impl<'a> VM<'a> {
             stack,
             next_memory,
         );
+        // Store BAL checkpoint in the call frame's backup for restoration on revert
+        new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+
         self.add_callframe(new_call_frame);
 
         // Changes that revert in case the Create fails.
@@ -788,6 +864,11 @@ impl<'a> VM<'a> {
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
             && !is_delegation_7702
         {
+            // Record precompile address touch for BAL per EIP-7928
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(code_address);
+            }
+
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
                 code_address,
@@ -846,12 +927,15 @@ impl<'a> VM<'a> {
 
             self.tracer.exit_context(&ctx_result, false)?;
         } else {
+            // Create BAL checkpoint before entering nested call for potential revert per EIP-7928
+            let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
 
             let next_memory = self.current_call_frame.memory.next_memory();
 
-            let new_call_frame = CallFrame::new(
+            let mut new_call_frame = CallFrame::new(
                 msg_sender,
                 to,
                 code_address,
@@ -868,6 +952,9 @@ impl<'a> VM<'a> {
                 stack,
                 next_memory,
             );
+            // Store BAL checkpoint in the call frame's backup for restoration on revert
+            new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+
             self.add_callframe(new_call_frame);
 
             // Transfer value from caller to callee.

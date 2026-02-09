@@ -403,10 +403,11 @@ async fn re_run_stateless(
     let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
 
     let witness = blockchain.generate_witness_for_blocks(&blocks).await;
-    if test_should_fail && witness.is_err() {
-        // We can't generate witness for a test that should fail.
+    if test_should_fail {
+        // The normal run() already verified this test fails correctly.
+        // The stateless prover proves valid block execution, not invalid block rejection.
         return Ok(());
-    } else if !test_should_fail && let Err(err) = witness {
+    } else if let Err(err) = witness {
         return Err(format!(
             "Failed to create witness for a test that should not fail: {err}"
         ));
