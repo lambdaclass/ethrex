@@ -23,7 +23,7 @@ use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
 };
-use ethrex_levm::db::Database;
+use ethrex_levm::db::{Database, SharedPrewarmDB};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
@@ -230,6 +230,10 @@ impl LEVM {
     /// in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
     /// improves warmup accuracy by avoiding nonce mismatches within sender groups.
     ///
+    /// All sender groups share a `SharedPrewarmDB` so that state changes from one
+    /// group (e.g. contract writes) are visible to other groups on subsequent loads.
+    /// This reduces reverts caused by cross-group state dependencies.
+    ///
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
@@ -238,6 +242,11 @@ impl LEVM {
         store: Arc<dyn Database>,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
+        // Shared database layer: sits between per-thread GeneralizedDatabase and CachingDatabase.
+        // Prewarm threads merge their execution state here after each tx so other threads
+        // can see cross-group modifications (e.g. DEX reserve changes).
+        let shared_db = Arc::new(SharedPrewarmDB::new(store.clone()));
+
         let mut db = GeneralizedDatabase::new(store.clone());
 
         let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
@@ -254,8 +263,8 @@ impl LEVM {
         sender_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
-                // Each sender group gets its own db instance for state propagation
-                let mut group_db = GeneralizedDatabase::new(store.clone());
+                // Each sender group gets its own db instance backed by the shared prewarm state
+                let mut group_db = GeneralizedDatabase::new(shared_db.clone());
 
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
@@ -268,6 +277,8 @@ impl LEVM {
                         vm_type,
                         stack_pool,
                     );
+                    // Merge this thread's state changes so other groups can see them
+                    shared_db.merge_from(&group_db);
                 }
             },
         );
