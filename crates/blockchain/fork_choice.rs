@@ -120,7 +120,7 @@ pub async fn apply_fork_choice(
 
     store
         .forkchoice_update(
-            Some(new_canonical_blocks),
+            new_canonical_blocks,
             head.number,
             head_hash,
             safe_res.map(|h| h.number),

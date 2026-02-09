@@ -133,7 +133,7 @@ async fn migrate_libmdbx_to_rocksdb(
         .expect("Cannot get last block from libmdbx store");
     new_store
         .forkchoice_update(
-            Some(added_blocks),
+            added_blocks,
             last_block.number,
             last_block.hash(),
             None,

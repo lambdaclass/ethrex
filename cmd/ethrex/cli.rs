@@ -15,10 +15,8 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discv4::{peer_table::TARGET_PEERS, server::INITIAL_LOOKUP_INTERVAL_MS},
-    sync::SyncMode,
-    tx_broadcaster::BROADCAST_INTERVAL_MS,
-    types::Node,
+    discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
+    tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -29,7 +27,10 @@ use crate::{
     initializers::{
         get_network, init_blockchain, init_store, init_tracing, load_store, regenerate_head_state,
     },
-    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
+    utils::{
+        self, default_datadir, get_client_version, get_client_version_string,
+        get_minimal_client_version, init_datadir,
+    },
 };
 
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
@@ -40,7 +41,7 @@ use ethrex_config::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -117,6 +118,7 @@ pub struct Options {
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
+        env = "ETHREX_LOG_LEVEL",
         help = "The verbosity level used for logs.",
         long_help = "Possible values: info, debug, trace, warn, error",
         help_heading = "Node options")]
@@ -129,6 +131,13 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub log_color: LogColor,
+    #[arg(
+        long = "log.dir",
+        value_name = "LOG_DIR",
+        help = "Directory to store log files.",
+        help_heading = "Node options"
+    )]
+    pub log_dir: Option<PathBuf>,
     #[arg(
         help = "Maximum size of the mempool in number of transactions",
         long = "mempool.maxsize",
@@ -272,6 +281,22 @@ pub struct Options {
         help_heading = "Block building options"
     )]
     pub gas_limit: u64,
+    #[arg(
+        long = "builder.max-blobs",
+        value_name = "MAX_BLOBS",
+        help = "EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.",
+        help_heading = "Block building options",
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub max_blobs_per_block: Option<u32>,
+    #[arg(
+        long = "precompute-witnesses",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage",
+        help_heading = "Node options"
+    )]
+    pub precompute_witnesses: bool,
 }
 
 impl Options {
@@ -324,6 +349,7 @@ impl Default for Options {
             ws_port: Default::default(),
             log_level: Level::INFO,
             log_color: Default::default(),
+            log_dir: None,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
@@ -346,6 +372,8 @@ impl Default for Options {
             lookup_interval: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
+            max_blobs_per_block: None,
+            precompute_witnesses: false,
         }
     }
 }
@@ -434,13 +462,15 @@ pub enum Subcommand {
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
-        match self {
+        let _guard = match &self {
             #[cfg(feature = "l2")]
-            Self::L2(_) => {}
+            Self::L2(_) => None,
             _ => {
-                init_tracing(opts);
+                let (_, guard) = init_tracing(opts);
+                guard
             }
-        }
+        };
+
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
@@ -671,7 +701,7 @@ pub async fn import_blocks(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),
@@ -786,7 +816,7 @@ pub async fn import_blocks_bench(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),
@@ -822,6 +852,7 @@ pub async fn export_blocks(
         Ok(store) => store,
     };
     let start = first_number.unwrap_or_default();
+
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {
         Ok(number) => number,
@@ -831,6 +862,20 @@ pub async fn export_blocks(
         }
         Err(_) => panic!("Internal DB Error"),
     };
+
+    // Get the earliest available block number to detect pruned blocks
+    let earliest_number = match store.get_earliest_block_number().await {
+        Ok(number) => number,
+        Err(StoreError::MissingEarliestBlockNumber) => {
+            // No earliest block set means everything from genesis is available
+            0
+        }
+        Err(err) => {
+            error!("Failed to get earliest block number: {err}");
+            return;
+        }
+    };
+
     // Check that the requested range doesn't exceed our current chain length
     if last_number.is_some_and(|number| number > latest_number) {
         warn!(
@@ -839,34 +884,73 @@ pub async fn export_blocks(
         return;
     }
     let end = last_number.unwrap_or(latest_number);
+
+    // Check if start is before earliest available block (pruned data)
+    let adjusted_start = if start < earliest_number {
+        warn!(
+            requested_start = start,
+            earliest_available = earliest_number,
+            "Requested start block has been pruned, adjusting to earliest available block"
+        );
+        earliest_number
+    } else {
+        start
+    };
+
     // Check that the requested range makes sense
-    if start > end {
-        warn!("Cannot export block range [{start}..{end}], please input a valid range");
+    if adjusted_start > end {
+        warn!("Cannot export block range [{adjusted_start}..{end}], please input a valid range");
         return;
     }
+
     // Fetch blocks from the store and export them to the file
     let mut file = File::create(path).expect("Failed to open file");
     let mut buffer = vec![];
     let mut last_output = Instant::now();
+    let mut exported_count: u64 = 0;
+
     // Denominator for percent completed; avoid division by zero
-    let denom = end.saturating_sub(start) + 1;
-    for n in start..=end {
-        let block = store
-            .get_block_by_number(n)
-            .await
-            .ok()
-            .flatten()
-            .expect("Failed to read block from DB");
+    let denom = end.saturating_sub(adjusted_start) + 1;
+    for n in adjusted_start..=end {
+        let block = match store.get_block_by_number(n).await {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                error!(
+                    block_number = n,
+                    earliest_available = earliest_number,
+                    latest_available = latest_number,
+                    "Block is missing within the available range - this indicates database corruption or unexpected state"
+                );
+                return;
+            }
+            Err(err) => {
+                error!(block_number = n, error = %err, "Failed to read block from DB");
+                return;
+            }
+        };
         block.encode(&mut buffer);
-        // Exporting the whole chain can take a while, so we need to show some output in the meantime
-        if last_output.elapsed() > Duration::from_secs(5) {
-            let completed = n.saturating_sub(start) + 1;
-            let percent = (completed * 100) / denom;
-            info!(n, end, percent, "Exporting blocks");
-            last_output = Instant::now();
-        }
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
+        exported_count += 1;
+
+        // Exporting the whole chain can take a while, so we need to show some output in the meantime
+        if last_output.elapsed() > Duration::from_secs(5) {
+            let percent = (exported_count * 100) / denom;
+            info!(
+                current_block = n,
+                end_block = end,
+                percent_complete = percent,
+                blocks_exported = exported_count,
+                "Exporting blocks"
+            );
+            last_output = Instant::now();
+        }
     }
-    info!(blocks = end.saturating_sub(start) + 1, path = %path, "Exported blocks to file");
+
+    info!(
+        blocks_exported = exported_count,
+        blocks_requested = end.saturating_sub(start) + 1,
+        path = %path,
+        "Exported blocks to file"
+    );
 }

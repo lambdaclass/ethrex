@@ -19,6 +19,9 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   PROVER_REPRODUCIBLE_BUILD: true
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   build-ethrex:
@@ -114,15 +117,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc
-        run: |
-          if [[ "${{ matrix.os }}" == "linux" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-static-linux
-            sudo chmod +x /usr/local/bin/solc
-          elif [[ "${{ matrix.os }}" == "macos" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-macos
-            sudo chmod +x /usr/local/bin/solc
-          fi
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Build ethrex
         run: |
@@ -134,9 +129,9 @@ jobs:
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         run: |
           mkdir -p ./verification_keys
-          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
-          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-bn254
-          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-u32
+          mv crates/guest-program/bin/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
+          mv crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-bn254
+          mv crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-u32
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -198,21 +193,25 @@ jobs:
           echo "$HOME/.zisk/bin" >> $GITHUB_PATH
 
       - name: Build ethrex elf - ${{ matrix.zkvm }}
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          cargo build --release --package guest_program --features "${{ matrix.zkvm }},ci"
+          # Sanitize ref name by replacing '/' with '-' for valid file names
+          SANITIZED_REF=$(echo "$REF_NAME" | tr '/' '-')
+          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }},ci"
           mkdir -p ${{ matrix.zkvm }}_verification_keys
           if [ "${{ matrix.zkvm }}" = "sp1" ]; then
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-bn254-${{ github.ref_name }}
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-u32-${{ github.ref_name }}
-            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-bn254-$SANITIZED_REF
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-u32-$SANITIZED_REF
+            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
           elif [ "${{ matrix.zkvm }}" = "risc0" ]; then
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name}}
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-${{ github.ref_name}}
-            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-risc0-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-$SANITIZED_REF
+            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
           elif [ "${{ matrix.zkvm }}" = "zisk" ]; then
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv64ima-zisk-elf ethrex-riscv64ima-${{ matrix.zkvm }}-elf-${{ github.ref_name}}
-            echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv64ima-zisk-elf ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF
+            echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
           fi
 
       - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
@@ -233,11 +232,19 @@ jobs:
     needs:
       - build-ethrex-guest
     runs-on: ubuntu-latest
+    env:
+      # Sanitize ref name by replacing '/' with '-' to match artifact names
+      SANITIZED_REF: ${{ github.ref_name }}
     steps:
+      - name: Sanitize ref name
+        run: |
+          SANITIZED=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SANITIZED_REF=$SANITIZED" >> $GITHUB_ENV
+
       - name: Download SP1 elf artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
+          name: ethrex-riscv32im-sp1-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/sp1/
 
       - name: Download SP1 verification keys artifacts
@@ -249,7 +256,7 @@ jobs:
       - name: Download RISC0 elf artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex-riscv32im-risc0-elf-${{ github.ref_name }}
+          name: ethrex-riscv32im-risc0-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/risc0/
 
       - name: Download RISC0 verification keys artifacts
@@ -261,7 +268,7 @@ jobs:
       - name: Download ZisK elf artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex-riscv64ima-zisk-elf-${{ github.ref_name }}
+          name: ethrex-riscv64ima-zisk-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/zisk/
 
       - name: Archive ethrex guests
@@ -330,15 +337,19 @@ jobs:
 
       - name: Determine tag version
         id: tag_version
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
           # For branch builds (main) we want docker images tagged as 'main'. For tag pushes
           # use the tag name (stripped of a leading 'v').
+          # Replace '/' with '-' to make branch names valid Docker tags.
           if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
             echo "TAG_VERSION=main" >> $GITHUB_ENV
             echo "tag=main" >> $GITHUB_OUTPUT
           else
-            echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
-            echo "tag=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_OUTPUT
+            SANITIZED_REF=$(echo "$REF_NAME" | tr -d v | tr '/' '-')
+            echo "TAG_VERSION=$SANITIZED_REF" >> $GITHUB_ENV
+            echo "tag=$SANITIZED_REF" >> $GITHUB_OUTPUT
           fi
 
       - name: Build L1 Docker image
@@ -348,9 +359,12 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-${{ matrix.arch }}
           platforms: linux/${{ matrix.arch }}
+          variant: l1
 
       - name: Build L2 Docker image
         id: build_l2
@@ -359,10 +373,13 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2-${{ matrix.arch }}
           build_args: BUILD_FLAGS=--features l2,l2-sql
           platforms: linux/${{ matrix.arch }}
+          variant: l2
 
   publish-docker:
     name: "Create and push multi-arch Docker manifests"

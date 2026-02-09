@@ -1,22 +1,28 @@
-curl -X POST $1 \
--H 'Content-Type: application/json; charset=utf-8' \
---data @- <<EOF
-$(jq -n --arg text "$(cat "$2")" '{
-    "blocks": [
+#!/usr/bin/env bash
+set -euo pipefail
+
+WEBHOOK_URL="$1"
+BLOCKS_FILE="$2"
+RUN_URL="${3:-}"
+
+PAYLOAD=$(jq -c --arg run_url "$RUN_URL" '
+  .blocks += (if ($run_url | length) > 0 then [
+    {
+      "type": "actions",
+      "elements": [
         {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": "Daily Hive Coverage report"
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": $text
-            }
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "View full breakdown"
+          },
+          "url": $run_url
         }
-    ]
-}')
-EOF
+      ]
+    }
+  ] else [] end)
+' "$BLOCKS_FILE")
+
+printf '%s' "$PAYLOAD" | curl -X POST "$WEBHOOK_URL" \
+-H 'Content-Type: application/json; charset=utf-8' \
+--data @-

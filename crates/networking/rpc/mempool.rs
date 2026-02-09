@@ -24,7 +24,7 @@ struct MempoolStatus {
 }
 
 /// Handling of rpc endpoint `mempool_content`
-pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
     let transactions = context.blockchain.mempool.content()?;
     // Group transactions by sender and nonce and map them to rpc transactions
     let mut mempool_content = MempoolContentEntry::new();
@@ -40,7 +40,7 @@ pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
     Ok(serde_json::to_value(response)?)
 }
 
-pub async fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
     let pending = context.blockchain.mempool.status()?;
     // We have no concept of "queued" transactions yet so we will leave this as 0
     let queued = 0;

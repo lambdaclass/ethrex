@@ -172,7 +172,7 @@ impl BatchesTable {
         BatchLine {
             number: batch.number,
             block_count: batch.last_block - batch.first_block + 1,
-            message_count: batch.l1_message_hashes.len(),
+            message_count: batch.l1_out_message_hashes.len(),
             commit_tx: batch.commit_tx,
             verify_tx: batch.verify_tx,
         }
