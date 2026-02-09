@@ -10,10 +10,11 @@ const WEI_PER_ETH: u64 = 1_000_000_000_000_000_000;
 // ANSI color codes
 const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";
-const CYAN: &str = "\x1b[96m";
+const RED: &str = "\x1b[91m";
+const ORANGE: &str = "\x1b[38;5;208m";
 const YELLOW: &str = "\x1b[93m";
-const GREEN: &str = "\x1b[92m";
-const GRAY: &str = "\x1b[90m";
+const LIGHT_BLUE: &str = "\x1b[94m";
+const BLUE: &str = "\x1b[34m";
 
 struct AccountInfo {
     address: Address,
@@ -82,91 +83,99 @@ pub fn display_banner(host: &str, port: u16, use_color: bool) -> Result<(), Bloc
 }
 
 fn print_colored_banner(genesis: &Genesis, accounts: &[AccountInfo], host: &str, port: u16) {
+    // ASCII logo
     println!();
-    println!("{CYAN}{BOLD}       _____ _____ _   _ ____  _______  __{RESET}");
-    println!("{CYAN}{BOLD}      | ____|_   _| | | |  _ \\| ____\\ \\/ /{RESET}");
-    println!("{CYAN}{BOLD}      |  _|   | | | |_| | |_) |  _|  \\  /{RESET}");
-    println!("{CYAN}{BOLD}      | |___  | | |  _  |  _ <| |___ /  \\{RESET}");
-    println!("{CYAN}{BOLD}      |_____| |_| |_| |_|_| \\_\\_____/_/\\_\\{RESET}");
+    println!("  {RED}{BOLD} _____ _____ _   _ ____  _______  __{RESET}");
+    println!("  {RED}{BOLD}| ____|_   _| | | |  _ \\| ____\\ \\/ /{RESET}");
+    println!("  {RED}{BOLD}|  _|   | | | |_| | |_) |  _|  \\  /{RESET}");
+    println!("  {RED}{BOLD}| |___  | | |  _  |  _ <| |___ /  \\{RESET}");
+    println!("  {RED}{BOLD}|_____| |_| |_| |_|_| \\_\\_____/_/\\_\\{RESET}");
     println!();
-    println!("            {YELLOW}{BOLD}[ Development Node ]{RESET}");
+    println!("          {ORANGE}{BOLD}Development Node{RESET}");
     println!();
 
-    println!("{BOLD}Available Accounts{RESET}");
-    println!("{GRAY}=================={RESET}");
+    // Info panel
+    let url = format!("http://{host}:{port}");
+    let info_line = format!(
+        "  {BOLD}Chain ID:{RESET} {}  {BLUE}\u{00b7}{RESET}  {BOLD}Gas Limit:{RESET} {}  {BLUE}\u{00b7}{RESET}  {BOLD}Base Fee:{RESET} 1 gwei",
+        genesis.config.chain_id, genesis.gas_limit
+    );
+    let url_line = format!("  Listening on {LIGHT_BLUE}{BOLD}{url}{RESET}");
+
+    let box_width = 64;
+    let rule: String = "\u{2500}".repeat(box_width);
+
+    println!("{BLUE}\u{256d}{rule}\u{256e}{RESET}");
+    println!("{BLUE}\u{2502}{RESET}{info_line}");
+    println!("{BLUE}\u{2502}{RESET}{url_line}");
+    println!("{BLUE}\u{2570}{rule}\u{256f}{RESET}");
+    println!();
+
+    // Accounts section
+    let section_rule: String = "\u{2500}".repeat(box_width - 11);
+    println!("{BLUE}\u{2500}\u{2500} {RESET}{BOLD}Accounts{RESET} {BLUE}{section_rule}{RESET}");
+    println!();
+
     for (i, account) in accounts.iter().enumerate() {
         let eth = account.balance / U256::from(WEI_PER_ETH);
-        println!("({i}) {GREEN}{:#x}{RESET} ({eth} ETH)", account.address);
+        println!(
+            "({i}) {LIGHT_BLUE}{:#x}{RESET} ({eth} ETH)",
+            account.address
+        );
+        println!("    {YELLOW}{}{RESET}", account.private_key);
+        if i < accounts.len() - 1 {
+            println!();
+        }
     }
-    println!();
 
-    println!("{BOLD}Private Keys{RESET}");
-    println!("{GRAY}=================={RESET}");
-    for (i, account) in accounts.iter().enumerate() {
-        println!("({i}) {YELLOW}{}{RESET}", account.private_key);
-    }
     println!();
-
-    println!("{BOLD}Chain ID{RESET}");
-    println!("{GRAY}=================={RESET}");
-    println!("{}", genesis.config.chain_id);
-    println!();
-
-    println!("{BOLD}Base Fee{RESET}");
-    println!("{GRAY}=================={RESET}");
-    println!("1 gwei");
-    println!();
-
-    println!("{BOLD}Gas Limit{RESET}");
-    println!("{GRAY}=================={RESET}");
-    println!("{}", genesis.gas_limit);
-    println!();
-
-    println!("Listening on {GREEN}{BOLD}http://{host}:{port}{RESET}");
+    println!(
+        "{YELLOW}{BOLD}\u{26a0} These accounts and keys are publicly known. Do not use on mainnet.{RESET}"
+    );
     println!();
 }
 
 fn print_plain_banner(genesis: &Genesis, accounts: &[AccountInfo], host: &str, port: u16) {
+    let box_width = 64;
+
+    // ASCII logo
     println!();
-    println!("       _____ _____ _   _ ____  _______  __");
-    println!("      | ____|_   _| | | |  _ \\| ____\\ \\/ /");
-    println!("      |  _|   | | | |_| | |_) |  _|  \\  /");
-    println!("      | |___  | | |  _  |  _ <| |___ /  \\");
-    println!("      |_____| |_| |_| |_|_| \\_\\_____/_/\\_\\");
+    println!("   _____ _____ _   _ ____  _______  __");
+    println!("  | ____|_   _| | | |  _ \\| ____\\ \\/ /");
+    println!("  |  _|   | | | |_| | |_) |  _|  \\  /");
+    println!("  | |___  | | |  _  |  _ <| |___ /  \\");
+    println!("  |_____| |_| |_| |_|_| \\_\\_____/_/\\_\\");
     println!();
-    println!("            [ Development Node ]");
+    println!("          Development Node");
     println!();
 
-    println!("Available Accounts");
-    println!("==================");
+    // Info panel
+    let url = format!("http://{host}:{port}");
+    let rule: String = "─".repeat(box_width);
+    println!("╭{rule}╮");
+    println!(
+        "│  Chain ID: {}  ·  Gas Limit: {}  ·  Base Fee: 1 gwei",
+        genesis.config.chain_id, genesis.gas_limit
+    );
+    println!("│  Listening on {url}");
+    println!("╰{rule}╯");
+    println!();
+
+    // Accounts section
+    let section_rule: String = "─".repeat(box_width - 11);
+    println!("── Accounts {section_rule}");
+    println!();
+
     for (i, account) in accounts.iter().enumerate() {
         let eth = account.balance / U256::from(WEI_PER_ETH);
         println!("({i}) {:#x} ({eth} ETH)", account.address);
+        println!("    {}", account.private_key);
+        if i < accounts.len() - 1 {
+            println!();
+        }
     }
-    println!();
 
-    println!("Private Keys");
-    println!("==================");
-    for (i, account) in accounts.iter().enumerate() {
-        println!("({i}) {}", account.private_key);
-    }
     println!();
-
-    println!("Chain ID");
-    println!("==================");
-    println!("{}", genesis.config.chain_id);
-    println!();
-
-    println!("Base Fee");
-    println!("==================");
-    println!("1 gwei");
-    println!();
-
-    println!("Gas Limit");
-    println!("==================");
-    println!("{}", genesis.gas_limit);
-    println!();
-
-    println!("Listening on http://{host}:{port}");
+    println!("⚠ These accounts and keys are publicly known. Do not use on mainnet.");
     println!();
 }
