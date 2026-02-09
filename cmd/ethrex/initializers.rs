@@ -273,7 +273,19 @@ pub async fn init_l1_dev(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    info!("Running in DEV_MODE (GenServer block builder)");
+    let use_color = match opts.log_color {
+        LogColor::Always => true,
+        LogColor::Never => false,
+        LogColor::Auto => std::io::stdout().is_terminal(),
+    };
+    let http_port: u16 = opts.http_port.parse().unwrap_or(8545);
+    ethrex_dev::display_banner(&opts.http_addr, http_port, use_color)
+        .map_err(|e| eyre::eyre!("Failed to display banner: {e}"))?;
+
+    // Suppress tracing logs — the banner replaces them in dev mode.
+    if let Some(ref handler) = log_filter_handler {
+        let _ = handler.reload(EnvFilter::new("off"));
+    }
 
     let coinbase = opts
         .dev_coinbase
@@ -352,11 +364,6 @@ pub async fn init_l1_dev(
         let network = get_network(&opts);
         init_metrics(&opts, &network, tracker);
     }
-
-    info!(
-        "Dev node listening on http://{}",
-        get_http_socket_addr(&opts)
-    );
 
     Ok((
         opts.datadir.clone(),
