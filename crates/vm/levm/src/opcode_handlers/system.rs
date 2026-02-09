@@ -81,15 +81,26 @@ impl<'a> VM<'a> {
             )?;
 
         // Record addresses for BAL per EIP-7928
-        let value_cost = if !value.is_zero() { gas_cost::CALL_POSITIVE_VALUE } else { 0 };
+        let value_cost = if !value.is_zero() {
+            gas_cost::CALL_POSITIVE_VALUE
+        } else {
+            0
+        };
         let create_cost = if account_is_empty && !value.is_zero() {
             gas_cost::CALL_TO_EMPTY_ACCOUNT
         } else {
             0
         };
         self.record_bal_call_touch(
-            callee, code_address, is_delegation_7702, eip7702_gas_consumed,
-            new_memory_size, current_memory_size, address_was_cold, value_cost, create_cost,
+            callee,
+            code_address,
+            is_delegation_7702,
+            eip7702_gas_consumed,
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            value_cost,
+            create_cost,
         );
 
         let (cost, gas_limit) = gas_cost::call(
@@ -190,10 +201,21 @@ impl<'a> VM<'a> {
             )?;
 
         // Record addresses for BAL per EIP-7928
-        let value_cost = if !value.is_zero() { gas_cost::CALLCODE_POSITIVE_VALUE } else { 0 };
+        let value_cost = if !value.is_zero() {
+            gas_cost::CALLCODE_POSITIVE_VALUE
+        } else {
+            0
+        };
         self.record_bal_call_touch(
-            address, code_address, is_delegation_7702, eip7702_gas_consumed,
-            new_memory_size, current_memory_size, address_was_cold, value_cost, 0,
+            address,
+            code_address,
+            is_delegation_7702,
+            eip7702_gas_consumed,
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            value_cost,
+            0,
         );
 
         let (cost, gas_limit) = gas_cost::callcode(
@@ -313,8 +335,15 @@ impl<'a> VM<'a> {
 
         // Record addresses for BAL per EIP-7928
         self.record_bal_call_touch(
-            address, code_address, is_delegation_7702, eip7702_gas_consumed,
-            new_memory_size, current_memory_size, address_was_cold, 0, 0,
+            address,
+            code_address,
+            is_delegation_7702,
+            eip7702_gas_consumed,
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            0,
+            0,
         );
 
         let (cost, gas_limit) = gas_cost::delegatecall(
@@ -414,8 +443,15 @@ impl<'a> VM<'a> {
 
         // Record addresses for BAL per EIP-7928
         self.record_bal_call_touch(
-            address, code_address, is_delegation_7702, eip7702_gas_consumed,
-            new_memory_size, current_memory_size, address_was_cold, 0, 0,
+            address,
+            code_address,
+            is_delegation_7702,
+            eip7702_gas_consumed,
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            0,
+            0,
         );
 
         let (cost, gas_limit) = gas_cost::staticcall(
