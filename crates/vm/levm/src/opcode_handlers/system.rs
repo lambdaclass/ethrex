@@ -1045,9 +1045,7 @@ impl<'a> VM<'a> {
 
             // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
             // Must be after push_backup() so the log reverts if the child context reverts
-            if should_transfer_value
-                && self.env.config.fork >= Fork::Amsterdam
-                && !value.is_zero()
+            if should_transfer_value && self.env.config.fork >= Fork::Amsterdam && !value.is_zero()
             {
                 let log = create_eth_transfer_log(msg_sender, to, value);
                 self.substate.add_log(log);
