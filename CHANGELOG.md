@@ -6,6 +6,10 @@
 
 - Optimize snap sync insertion and healing write paths: eliminate per-key Vec allocations in trie batch writes, merge two-pass account iteration into one, remove double thread hop in storage healing, fix data loss from parent-path marker overwrites, and add proper error propagation in background DB tasks [#6159](https://github.com/lambdaclass/ethrex/pull/6159)
 
+### 2026-02-06
+
+- Cache ECDSA sender recovery in transaction structs [#6153](https://github.com/lambdaclass/ethrex/pull/6153)
+
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
