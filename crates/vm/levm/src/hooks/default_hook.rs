@@ -50,7 +50,9 @@ impl Hook for DefaultHook {
             .checked_mul(vm.env.gas_limit.into())
             .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
-        validate_sender_balance(vm, sender_info.balance)?;
+        if !vm.env.disable_balance_check {
+            validate_sender_balance(vm, sender_info.balance)?;
+        }
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
@@ -58,7 +60,9 @@ impl Hook for DefaultHook {
         }
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        deduct_caller(vm, gaslimit_price_product, sender_address)?;
+        if !vm.env.disable_balance_check {
+            deduct_caller(vm, gaslimit_price_product, sender_address)?;
+        }
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         validate_sufficient_max_fee_per_gas(vm)?;
