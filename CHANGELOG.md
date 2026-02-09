@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-06
+
+- Cache ECDSA sender recovery in transaction structs [#6153](https://github.com/lambdaclass/ethrex/pull/6153)
+
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
