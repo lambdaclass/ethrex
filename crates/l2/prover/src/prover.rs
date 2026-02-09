@@ -106,7 +106,8 @@ impl<B: ProverBackend> Prover<B> {
                             info!(
                                 batch = prover_data.batch_number,
                                 proving_time_s = elapsed.as_secs(),
-                                proving_time_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                                proving_time_ms =
+                                    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
                                 "Proved batch {} in {:.2?}",
                                 prover_data.batch_number,
                                 elapsed
