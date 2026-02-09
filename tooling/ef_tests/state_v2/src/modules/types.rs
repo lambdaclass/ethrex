@@ -27,7 +27,7 @@ use std::{
     path::PathBuf,
 };
 
-const DEFAULT_FORKS: [&str; 4] = ["Merge", "Shanghai", "Cancun", "Prague"];
+const DEFAULT_FORKS: [&str; 5] = ["Merge", "Shanghai", "Cancun", "Prague", "Amsterdam"];
 
 /// `Tests` structure is the result of parsing a whole `.json` file from the EF tests. This file includes at
 /// least one general test enviroment and different test cases inside each enviroment.

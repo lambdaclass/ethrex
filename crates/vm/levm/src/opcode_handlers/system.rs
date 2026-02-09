@@ -715,8 +715,7 @@ impl<'a> VM<'a> {
                 if to != beneficiary {
                     let log = create_eth_transfer_log(to, beneficiary, balance);
                     self.substate.add_log(log);
-                } else if self.substate.is_account_created(&to) {
-                    // Selfdestruct to self - only log when account is actually being destroyed
+                } else {
                     let log = create_selfdestruct_log(to, balance);
                     self.substate.add_log(log);
                 }
@@ -998,9 +997,8 @@ impl<'a> VM<'a> {
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
 
-                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE to DIFFERENT accounts
-                // Self-transfers should NOT emit a log per the EIP spec
-                if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() && msg_sender != to {
+                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+                if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
                     let log = create_eth_transfer_log(msg_sender, to, value);
                     self.substate.add_log(log);
                 }
@@ -1045,13 +1043,11 @@ impl<'a> VM<'a> {
 
             self.substate.push_backup();
 
-            // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE to DIFFERENT accounts
+            // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
             // Must be after push_backup() so the log reverts if the child context reverts
-            // Self-transfers should NOT emit a log per the EIP spec
             if should_transfer_value
                 && self.env.config.fork >= Fork::Amsterdam
                 && !value.is_zero()
-                && msg_sender != to
             {
                 let log = create_eth_transfer_log(msg_sender, to, value);
                 self.substate.add_log(log);
