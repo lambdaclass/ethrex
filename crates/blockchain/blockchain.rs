@@ -360,11 +360,10 @@ impl Blockchain {
         // The prewarm channel streams cache-miss hints to drive trie-node preloading.
         let original_store = vm.db.store.clone();
         let (prewarm_tx, prewarm_rx) = channel();
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
-            Arc::new(CachingDatabase::new_with_prewarm(original_store, prewarm_tx));
+        let caching_db = Arc::new(CachingDatabase::new_with_prewarm(original_store, prewarm_tx));
 
         // Replace the VM's store with the caching version
-        vm.db.store = caching_store.clone();
+        vm.db.store = caching_db.clone();
 
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
             // Spawn prewarm thread first so it's ready to receive hints from warming.
@@ -377,12 +376,13 @@ impl Blockchain {
                 .expect("Failed to spawn merkle prewarmer thread");
 
             let vm_type = vm.vm_type;
+            let warm_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = caching_db.clone();
             let warm_handle = std::thread::Builder::new()
                 .name("block_executor_warmer".to_string())
                 .spawn_scoped(s, move || {
                     // Warming uses the same caching store, sharing cached state with execution
                     let start = Instant::now();
-                    let _ = LEVM::warm_block(block, caching_store, vm_type);
+                    let _ = LEVM::warm_block(block, warm_store, vm_type);
                     start.elapsed()
                 })
                 .expect("Failed to spawn block_executor warmer thread");
@@ -431,20 +431,19 @@ impl Blockchain {
                 .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                 .ok()
                 .unwrap_or(Duration::ZERO);
-            // Prewarm thread ends naturally when all Senders drop (warming + execution finish).
-            // Join to ensure it completes before the scope exits.
+            let execution_result = execution_handle.join().unwrap_or_else(|_| {
+                Err(ChainError::Custom("execution thread panicked".to_string()))
+            });
+            // Execution is done — no more cache-miss hints will be sent.
+            // Drop the sender so the prewarm receiver loop terminates.
+            caching_db.close_prewarm();
             let _ = merkle_prewarm_handle.join();
-            (
-                execution_handle.join().unwrap_or_else(|_| {
-                    Err(ChainError::Custom("execution thread panicked".to_string()))
-                }),
-                merkleize_handle.join().unwrap_or_else(|_| {
-                    Err(StoreError::Custom(
-                        "merklization thread panicked".to_string(),
-                    ))
-                }),
-                warmer_duration,
-            )
+            let merkleization_result = merkleize_handle.join().unwrap_or_else(|_| {
+                Err(StoreError::Custom(
+                    "merklization thread panicked".to_string(),
+                ))
+            });
+            (execution_result, merkleization_result, warmer_duration)
         });
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
