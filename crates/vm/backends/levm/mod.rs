@@ -60,6 +60,7 @@ impl LEVM {
         Self::prepare_block(block, db, vm_type)?;
 
         let mut receipts = Vec::new();
+        let mut encoded_receipts = Vec::new();
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
@@ -92,6 +93,8 @@ impl LEVM {
                 report.logs,
             );
 
+            // Pre-encode receipt (bloom + RLP) while merkleizer is still busy
+            encoded_receipts.push(receipt.encode_inner_with_bloom());
             receipts.push(receipt);
         }
 
@@ -111,6 +114,7 @@ impl LEVM {
             receipts,
             requests,
             block_gas_used,
+            encoded_receipts,
         })
     }
 
@@ -126,6 +130,7 @@ impl LEVM {
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
+        let mut encoded_receipts = Vec::new();
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
@@ -175,6 +180,8 @@ impl LEVM {
                 report.logs,
             );
 
+            // Pre-encode receipt (bloom + RLP) while merkleizer is still busy
+            encoded_receipts.push(receipt.encode_inner_with_bloom());
             receipts.push(receipt);
         }
 
@@ -220,6 +227,7 @@ impl LEVM {
             receipts,
             requests,
             block_gas_used,
+            encoded_receipts,
         })
     }
 
