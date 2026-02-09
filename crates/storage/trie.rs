@@ -5,8 +5,10 @@ use crate::api::{StorageBackend, StorageLockedView};
 use crate::error::StoreError;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use std::sync::Arc;
+use std::time::Instant;
 
 /// StorageWriteBatch implementation for the TrieDB trait
 /// Wraps a transaction to allow multiple trie operations on the same transaction
@@ -101,17 +103,52 @@ impl TrieDB for BackendTrieDB {
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        let start = Instant::now();
+        let item_count = key_values.len();
         let mut tx = self.db.begin_write().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
         })?;
         for (key, value) in key_values {
             let prefixed_key = self.make_key(key);
             let table = self.table_for_key(&prefixed_key);
-            tx.put_batch(table, vec![(prefixed_key, value)])
+            tx.put(table, &prefixed_key, &value)
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
+        let commit_start = Instant::now();
         tx.commit()
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
+        tracing::debug!(
+            items = item_count,
+            total_ms = start.elapsed().as_millis() as u64,
+            commit_ms = commit_start.elapsed().as_millis() as u64,
+            "BackendTrieDB::put_batch"
+        );
+        Ok(())
+    }
+
+    fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
+        let start = Instant::now();
+        let item_count = key_values.len();
+        let mut tx = self.db.begin_write().map_err(|e| {
+            TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
+        })?;
+        for (path, node) in key_values {
+            let prefixed_key = self.make_key(path.clone());
+            let table = self.table_for_key(&prefixed_key);
+            let encoded = node.encode_to_vec();
+            tx.put(table, &prefixed_key, &encoded)
+                .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
+        }
+        let commit_start = Instant::now();
+        tx.commit()
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
+        tracing::debug!(
+            items = item_count,
+            total_ms = start.elapsed().as_millis() as u64,
+            commit_ms = commit_start.elapsed().as_millis() as u64,
+            "BackendTrieDB::put_batch_no_alloc"
+        );
+        Ok(())
     }
 }
 

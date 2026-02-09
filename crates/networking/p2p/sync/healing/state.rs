@@ -283,28 +283,37 @@ async fn heal_state_trie(
             // PERF: reuse buffers?
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
-            // NOTE: we keep only a single task in the background to avoid out of order deletes
-            if !db_joinset.is_empty() {
+            // Allow up to 2 tasks in flight to overlap encoding with DB commit
+            while db_joinset.len() >= 2 {
                 db_joinset
                     .join_next()
                     .await
-                    .expect("we just checked joinset is not empty")?;
+                    .expect("joinset is not empty")?;
             }
             db_joinset.spawn_blocking(move || {
+                let encode_start = std::time::Instant::now();
+                let node_count = to_write.len();
                 let mut encoded_to_write = BTreeMap::new();
                 for (path, node) in to_write {
                     for i in 0..path.len() {
-                        encoded_to_write.insert(path.slice(0, i), vec![]);
+                        encoded_to_write.entry(path.slice(0, i)).or_insert(vec![]);
                     }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
+                let encode_ms = encode_start.elapsed().as_millis() as u64;
+                let db_start = std::time::Instant::now();
                 let trie_db = store
                     .open_direct_state_trie(*EMPTY_TRIE_HASH)
                     .expect("Store should open");
                 let db = trie_db.db();
-                // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
                 db.put_batch(encoded_to_write.into_iter().collect())
                     .expect("The put batch on the store failed");
+                debug!(
+                    node_count,
+                    encode_ms,
+                    db_write_ms = db_start.elapsed().as_millis() as u64,
+                    "state healing batch write"
+                );
             });
         }
 
