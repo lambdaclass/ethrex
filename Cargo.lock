@@ -4360,6 +4360,7 @@ dependencies = [
  "hasher",
  "hex",
  "hex-literal 0.4.1",
+ "lazy_static",
  "proptest",
  "rand 0.8.5",
  "reqwest",
