@@ -539,8 +539,8 @@ def main():
                         help="Ethereum address for EL rewards (FEE_RECIPIENT in eth-docker)")
     parser.add_argument("--rpc-port", type=int, default=8545,
                         help="RPC port for ethrex (default: 8545)")
-    parser.add_argument("--restart-count", type=int, default=3,
-                        help="Number of restart cycles to test (default: 3)")
+    parser.add_argument("--restart-count", type=int, default=0,
+                        help="Number of restart cycles (0 = infinite, stop with Ctrl+C)")
     parser.add_argument("--no-slack", action="store_true",
                         help="Disable Slack notifications")
     parser.add_argument("--skip-phase1", action="store_true",
@@ -598,7 +598,7 @@ def main():
     print(f"  RPC:        {rpc_url}")
     print(f"  Branch:     {branch}")
     print(f"  Commit:     {commit}")
-    print(f"  Restarts:   {args.restart_count}")
+    print(f"  Restarts:   {'infinite (Ctrl+C to stop)' if args.restart_count == 0 else args.restart_count}")
     print(f"  Wipe data:  {not args.keep_data}")
     print(f"  Logs:       {run_dir}")
     print()
@@ -626,67 +626,84 @@ def main():
                 ethrex_dir=ethrex_dir,
             )
 
-    # Phase 2: Restart cycles
+    # Phase 2: Restart cycles (infinite by default, Ctrl+C to stop)
     results = []
-    for i in range(1, args.restart_count + 1):
-        result, details = phase2_restart_test(eth_docker_dir, rpc_url, i, wipe_data=not args.keep_data)
-        results.append((i, result, details))
+    i = 0
+    max_restarts = args.restart_count  # 0 = infinite
 
-        save_ethd_logs(eth_docker_dir, run_dir, suffix=f"_restart{i}")
+    def print_summary():
+        stalls = [(n, r, d) for n, r, d in results if r not in ("ok", "timeout")]
+        all_ok = len(stalls) == 0
+        print(f"\n{'='*60}")
+        print(f"RESULTS ({len(results)} cycles)")
+        print(f"{'='*60}")
+        for n, result, details in results:
+            status = "PASS" if result == "ok" else ("TIMEOUT" if result == "timeout" else "FAIL")
+            print(f"  Cycle #{n}: {status} - {details}")
+        print(f"\n  Overall: {'ALL PASSED' if all_ok else f'{len(stalls)}/{len(results)} FAILED'}")
 
-        if result not in ("ok", "timeout") and not args.no_slack:
-            slack_notify(
-                f"Restart Stall Test - STALL on restart #{i}",
-                success=False,
-                details=(
-                    f"*Network:* `{network}`\n"
-                    f"*Restart:* #{i} of {args.restart_count}\n"
-                    f"*Result:* {details}\n"
-                    f"*Logs:* `{run_dir}`\n\n"
-                    "Containers are still running for inspection."
-                ),
-                ethrex_dir=ethrex_dir,
-            )
+        # Save summary
+        summary_lines = [
+            f"Restart Stall Test - {run_id}",
+            f"Network: {network}",
+            f"Branch: {branch}",
+            f"Commit: {commit}",
+            f"Host: {socket.gethostname()}",
+            f"eth-docker: {eth_docker_dir}",
+            "",
+        ]
+        for n, r, d in results:
+            summary_lines.append(f"Cycle #{n}: {r} - {d}")
+        summary_lines.append(f"\nOverall: {'ALL PASSED' if all_ok else f'{len(stalls)}/{len(results)} FAILED'}")
+        (run_dir / "summary.txt").write_text("\n".join(summary_lines))
+        return all_ok, stalls
 
-    # Final summary
-    stalls = [(i, r, d) for i, r, d in results if r not in ("ok", "timeout")]
-    all_ok = len(stalls) == 0
+    try:
+        while True:
+            i += 1
+            if max_restarts > 0 and i > max_restarts:
+                break
 
-    print(f"\n{'='*60}")
-    print(f"FINAL RESULTS")
-    print(f"{'='*60}")
-    for i, result, details in results:
-        status = "PASS" if result == "ok" else ("TIMEOUT" if result == "timeout" else "FAIL")
-        print(f"  Restart #{i}: {status} - {details}")
-    print(f"\n  Overall: {'ALL PASSED' if all_ok else f'{len(stalls)}/{len(results)} STALLED'}")
+            result, details = phase2_restart_test(eth_docker_dir, rpc_url, i, wipe_data=not args.keep_data)
+            results.append((i, result, details))
 
-    # Save summary
-    summary_lines = [
-        f"Restart Stall Test - {run_id}",
-        f"Network: {network}",
-        f"Branch: {branch}",
-        f"Commit: {commit}",
-        f"Host: {socket.gethostname()}",
-        f"eth-docker: {eth_docker_dir}",
-        "",
-    ]
-    for i, result, details in results:
-        summary_lines.append(f"Restart #{i}: {result} - {details}")
-    summary_lines.append(f"\nOverall: {'ALL PASSED' if all_ok else f'{len(stalls)}/{len(results)} STALLED'}")
-    (run_dir / "summary.txt").write_text("\n".join(summary_lines))
+            save_ethd_logs(eth_docker_dir, run_dir, suffix=f"_restart{i}")
+
+            if result not in ("ok", "timeout") and not args.no_slack:
+                slack_notify(
+                    f"Restart Stall Test - FAIL on cycle #{i}",
+                    success=False,
+                    details=(
+                        f"*Network:* `{network}`\n"
+                        f"*Cycle:* #{i}\n"
+                        f"*Result:* {details}\n"
+                        f"*Logs:* `{run_dir}`\n\n"
+                        "Containers are still running for inspection."
+                    ),
+                    ethrex_dir=ethrex_dir,
+                )
+
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user (Ctrl+C)")
+
+    if not results:
+        print("No cycles completed.")
+        sys.exit(0)
+
+    all_ok, stalls = print_summary()
 
     # Final Slack notification
     if not args.no_slack:
         result_lines = "\n".join(
-            f"{'PASS' if r == 'ok' else ('TIMEOUT' if r == 'timeout' else 'FAIL')} Restart #{i}: {d}" for i, r, d in results
+            f"{'PASS' if r == 'ok' else ('TIMEOUT' if r == 'timeout' else 'FAIL')} Cycle #{n}: {d}" for n, r, d in results
         )
         slack_notify(
-            f"Restart Stall Test - {'ALL PASSED' if all_ok else 'STALL DETECTED'}",
+            f"Restart Stall Test - {'ALL PASSED' if all_ok else 'FAILURE DETECTED'} ({len(results)} cycles)",
             success=all_ok,
             details=(
                 f"*Network:* `{network}`\n"
-                f"*Restarts:* {args.restart_count}\n"
-                f"*Stalls:* {len(stalls)}/{len(results)}\n\n"
+                f"*Cycles completed:* {len(results)}\n"
+                f"*Failures:* {len(stalls)}/{len(results)}\n\n"
                 f"```\n{result_lines}\n```\n"
                 f"*Logs:* `{run_dir}`"
             ),

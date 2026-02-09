@@ -354,7 +354,7 @@ multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, an
 # ==============================================================================
 
 RESTART_TEST_NETWORK ?= hoodi
-RESTART_TEST_COUNT ?= 3
+RESTART_TEST_COUNT ?= 0
 RESTART_TEST_FEE_RECIPIENT ?=
 ETH_DOCKER_DIR ?= $(HOME)/eth-docker
 
