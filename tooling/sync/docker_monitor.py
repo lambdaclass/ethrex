@@ -50,14 +50,14 @@ STATUS_EMOJI = {
 
 # Phase completion patterns for parsing sync logs
 PHASE_COMPLETION_PATTERNS = {
-    "Block Headers": r"✓ BLOCK HEADERS complete: ([\d,]+) headers in (\d+:\d+:\d+)",
-    "Account Ranges": r"✓ ACCOUNT RANGES complete: ([\d,]+) accounts in (\d+:\d+:\d+)",
-    "Account Insertion": r"✓ ACCOUNT INSERTION complete: ([\d,]+) accounts inserted in (\d+:\d+:\d+)",
-    "Storage Ranges": r"✓ STORAGE RANGES complete: ([\d,]+) storage slots in (\d+:\d+:\d+)",
-    "Storage Insertion": r"✓ STORAGE INSERTION complete: ([\d,]+) storage slots inserted in (\d+:\d+:\d+)",
-    "State Healing": r"✓ STATE HEALING complete: ([\d,]+) state paths healed in (\d+:\d+:\d+)",
-    "Storage Healing": r"✓ STORAGE HEALING complete: ([\d,]+) storage accounts healed in (\d+:\d+:\d+)",
-    "Bytecodes": r"✓ BYTECODES complete: ([\d,]+) bytecodes in (\d+:\d+:\d+)",
+    "Block Headers": r"✓ BLOCK HEADERS complete: ([\d,]+) headers in (\d+:\d{2}:\d{2})",
+    "Account Ranges": r"✓ ACCOUNT RANGES complete: ([\d,]+) accounts in (\d+:\d{2}:\d{2})",
+    "Account Insertion": r"✓ ACCOUNT INSERTION complete: ([\d,]+) accounts inserted in (\d+:\d{2}:\d{2})",
+    "Storage Ranges": r"✓ STORAGE RANGES complete: ([\d,]+) storage slots in (\d+:\d{2}:\d{2})",
+    "Storage Insertion": r"✓ STORAGE INSERTION complete: ([\d,]+) storage slots inserted in (\d+:\d{2}:\d{2})",
+    "State Healing": r"✓ STATE HEALING complete: ([\d,]+) state paths healed in (\d+:\d{2}:\d{2})",
+    "Storage Healing": r"✓ STORAGE HEALING complete: ([\d,]+) storage accounts healed in (\d+:\d{2}:\d{2})",
+    "Bytecodes": r"✓ BYTECODES complete: ([\d,]+) bytecodes in (\d+:\d{2}:\d{2})",
 }
 
 
