@@ -19,10 +19,10 @@ This starts the L1 (Docker), deploys contracts, starts Prometheus/Grafana, and r
 
 ```bash
 # Terminal 2 — SP1 prover with timing enabled
-make init-prover-sp1 TIMED=true
+PROVER_CLIENT_TIMED=true make init-prover-sp1
 
 # With GPU acceleration:
-# make init-prover-sp1 GPU=true TIMED=true
+# PROVER_CLIENT_TIMED=true make init-prover-sp1 GPU=true
 ```
 
 The prover connects to the proof coordinator and begins polling for batches. The `--timed` flag wraps each `prove()` call with timing instrumentation and logs structured fields:

@@ -68,8 +68,8 @@ Wait for the L2 to start (look for "Started L2 node" or similar in logs).
 ```bash
 # Terminal 2 (tmux session "prover") — redirect output to file for later parsing
 tmux new -s prover
-make init-prover-sp1 TIMED=true 2>&1 | tee ~/prover.log
-# For GPU: make init-prover-sp1 GPU=true TIMED=true 2>&1 | tee ~/prover.log
+PROVER_CLIENT_TIMED=true make init-prover-sp1 2>&1 | tee ~/prover.log
+# For GPU: PROVER_CLIENT_TIMED=true make init-prover-sp1 GPU=true 2>&1 | tee ~/prover.log
 # Detach: Ctrl+B, D
 ```
 
