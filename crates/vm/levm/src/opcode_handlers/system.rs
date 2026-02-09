@@ -80,46 +80,17 @@ impl<'a> VM<'a> {
                 callee,
             )?;
 
-        // Record addresses for BAL per EIP-7928, gated on intermediate gas checks
-        // matching the reference: check_gas(access+transfer+memory) before callee,
-        // check_gas(delegation+memory) before delegation target.
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            let mem_cost =
-                memory::expansion_cost(new_memory_size, current_memory_size).unwrap_or(u64::MAX);
-            let access_cost = if address_was_cold {
-                gas_cost::COLD_ADDRESS_ACCESS_COST
-            } else {
-                gas_cost::WARM_ADDRESS_ACCESS_COST
-            };
-            let value_cost = if !value.is_zero() {
-                gas_cost::CALL_POSITIVE_VALUE
-            } else {
-                0
-            };
-            let basic_cost = mem_cost
-                .saturating_add(access_cost)
-                .saturating_add(value_cost);
-            let gas_remaining = self.current_call_frame.gas_remaining;
-
-            if gas_remaining >= i64::try_from(basic_cost).unwrap_or(i64::MAX) {
-                recorder.record_touched_address(callee);
-
-                if is_delegation_7702 {
-                    // Reference check 2: gas >= access + transfer + create + delegation + memory
-                    let create_gas_cost = if account_is_empty && !value.is_zero() {
-                        gas_cost::CALL_TO_EMPTY_ACCOUNT
-                    } else {
-                        0
-                    };
-                    let delegation_check = basic_cost
-                        .saturating_add(create_gas_cost)
-                        .saturating_add(eip7702_gas_consumed);
-                    if gas_remaining >= i64::try_from(delegation_check).unwrap_or(i64::MAX) {
-                        recorder.record_touched_address(code_address);
-                    }
-                }
-            }
-        }
+        // Record addresses for BAL per EIP-7928
+        let value_cost = if !value.is_zero() { gas_cost::CALL_POSITIVE_VALUE } else { 0 };
+        let create_cost = if account_is_empty && !value.is_zero() {
+            gas_cost::CALL_TO_EMPTY_ACCOUNT
+        } else {
+            0
+        };
+        self.record_bal_call_touch(
+            callee, code_address, is_delegation_7702, eip7702_gas_consumed,
+            new_memory_size, current_memory_size, address_was_cold, value_cost, create_cost,
+        );
 
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
@@ -218,37 +189,12 @@ impl<'a> VM<'a> {
                 address,
             )?;
 
-        // Record addresses for BAL per EIP-7928, gated on intermediate gas checks
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            let mem_cost =
-                memory::expansion_cost(new_memory_size, current_memory_size).unwrap_or(u64::MAX);
-            let access_cost = if address_was_cold {
-                gas_cost::COLD_ADDRESS_ACCESS_COST
-            } else {
-                gas_cost::WARM_ADDRESS_ACCESS_COST
-            };
-            let value_cost = if !value.is_zero() {
-                gas_cost::CALLCODE_POSITIVE_VALUE
-            } else {
-                0
-            };
-            let basic_cost = mem_cost
-                .saturating_add(access_cost)
-                .saturating_add(value_cost);
-            let gas_remaining = self.current_call_frame.gas_remaining;
-
-            if gas_remaining >= i64::try_from(basic_cost).unwrap_or(i64::MAX) {
-                recorder.record_touched_address(address);
-
-                if is_delegation_7702 {
-                    // Reference check 2: gas >= access + transfer + delegation + memory
-                    let delegation_check = basic_cost.saturating_add(eip7702_gas_consumed);
-                    if gas_remaining >= i64::try_from(delegation_check).unwrap_or(i64::MAX) {
-                        recorder.record_touched_address(code_address);
-                    }
-                }
-            }
-        }
+        // Record addresses for BAL per EIP-7928
+        let value_cost = if !value.is_zero() { gas_cost::CALLCODE_POSITIVE_VALUE } else { 0 };
+        self.record_bal_call_touch(
+            address, code_address, is_delegation_7702, eip7702_gas_consumed,
+            new_memory_size, current_memory_size, address_was_cold, value_cost, 0,
+        );
 
         let (cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
@@ -365,30 +311,11 @@ impl<'a> VM<'a> {
                 address,
             )?;
 
-        // Record addresses for BAL per EIP-7928, gated on intermediate gas checks
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            let mem_cost =
-                memory::expansion_cost(new_memory_size, current_memory_size).unwrap_or(u64::MAX);
-            let access_cost = if address_was_cold {
-                gas_cost::COLD_ADDRESS_ACCESS_COST
-            } else {
-                gas_cost::WARM_ADDRESS_ACCESS_COST
-            };
-            let basic_cost = mem_cost.saturating_add(access_cost);
-            let gas_remaining = self.current_call_frame.gas_remaining;
-
-            if gas_remaining >= i64::try_from(basic_cost).unwrap_or(i64::MAX) {
-                recorder.record_touched_address(address);
-
-                if is_delegation_7702 {
-                    // Reference check 2: gas >= access + delegation + memory
-                    let delegation_check = basic_cost.saturating_add(eip7702_gas_consumed);
-                    if gas_remaining >= i64::try_from(delegation_check).unwrap_or(i64::MAX) {
-                        recorder.record_touched_address(code_address);
-                    }
-                }
-            }
-        }
+        // Record addresses for BAL per EIP-7928
+        self.record_bal_call_touch(
+            address, code_address, is_delegation_7702, eip7702_gas_consumed,
+            new_memory_size, current_memory_size, address_was_cold, 0, 0,
+        );
 
         let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
@@ -485,30 +412,11 @@ impl<'a> VM<'a> {
                 address,
             )?;
 
-        // Record addresses for BAL per EIP-7928, gated on intermediate gas checks
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            let mem_cost =
-                memory::expansion_cost(new_memory_size, current_memory_size).unwrap_or(u64::MAX);
-            let access_cost = if address_was_cold {
-                gas_cost::COLD_ADDRESS_ACCESS_COST
-            } else {
-                gas_cost::WARM_ADDRESS_ACCESS_COST
-            };
-            let basic_cost = mem_cost.saturating_add(access_cost);
-            let gas_remaining = self.current_call_frame.gas_remaining;
-
-            if gas_remaining >= i64::try_from(basic_cost).unwrap_or(i64::MAX) {
-                recorder.record_touched_address(address);
-
-                if is_delegation_7702 {
-                    // Reference check 2: gas >= access + delegation + memory
-                    let delegation_check = basic_cost.saturating_add(eip7702_gas_consumed);
-                    if gas_remaining >= i64::try_from(delegation_check).unwrap_or(i64::MAX) {
-                        recorder.record_touched_address(code_address);
-                    }
-                }
-            }
-        }
+        // Record addresses for BAL per EIP-7928
+        self.record_bal_call_touch(
+            address, code_address, is_delegation_7702, eip7702_gas_consumed,
+            new_memory_size, current_memory_size, address_was_cold, 0, 0,
+        );
 
         let (cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
@@ -895,13 +803,57 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue)
     }
 
+    /// Record BAL touched addresses for CALL-family opcodes per EIP-7928.
+    /// Gated on intermediate gas checks matching the EELS reference.
     #[allow(clippy::too_many_arguments)]
+    fn record_bal_call_touch(
+        &mut self,
+        target: Address,
+        code_address: Address,
+        is_delegation_7702: bool,
+        eip7702_gas_consumed: u64,
+        new_memory_size: usize,
+        current_memory_size: usize,
+        address_was_cold: bool,
+        value_cost: u64,
+        create_cost: u64,
+    ) {
+        let Some(recorder) = self.db.bal_recorder.as_mut() else {
+            return;
+        };
+        let mem_cost =
+            memory::expansion_cost(new_memory_size, current_memory_size).unwrap_or(u64::MAX);
+        let access_cost = if address_was_cold {
+            gas_cost::COLD_ADDRESS_ACCESS_COST
+        } else {
+            gas_cost::WARM_ADDRESS_ACCESS_COST
+        };
+        let basic_cost = mem_cost
+            .saturating_add(access_cost)
+            .saturating_add(value_cost);
+        let gas_remaining = self.current_call_frame.gas_remaining;
+
+        if gas_remaining >= i64::try_from(basic_cost).unwrap_or(i64::MAX) {
+            recorder.record_touched_address(target);
+
+            if is_delegation_7702 {
+                let delegation_check = basic_cost
+                    .saturating_add(create_cost)
+                    .saturating_add(eip7702_gas_consumed);
+                if gas_remaining >= i64::try_from(delegation_check).unwrap_or(i64::MAX) {
+                    recorder.record_touched_address(code_address);
+                }
+            }
+        }
+    }
+
     /// This (should) be the only function where gas is used as a
     /// U256. This is because we have to use the values that are
     /// pushed to the stack.
     ///
     // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
     // because passing so much data is costly. Verified with samply.
+    #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     pub fn generic_call(
         &mut self,
