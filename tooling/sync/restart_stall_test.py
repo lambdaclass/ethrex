@@ -545,8 +545,8 @@ def main():
                         help="Disable Slack notifications")
     parser.add_argument("--skip-phase1", action="store_true",
                         help="Skip fresh sync (assume node is already synced)")
-    parser.add_argument("--wipe-el-data", action="store_true",
-                        help="Wipe all data volumes on each restart (forces fresh snap sync)")
+    parser.add_argument("--keep-data", action="store_true",
+                        help="Keep data volumes on restart (skip wipe, just stop/start)")
     parser.add_argument("--ethrex-dir", default=None,
                         help="Path to ethrex repo (for git info in Slack). Auto-detected if not set.")
     args = parser.parse_args()
@@ -599,7 +599,7 @@ def main():
     print(f"  Branch:     {branch}")
     print(f"  Commit:     {commit}")
     print(f"  Restarts:   {args.restart_count}")
-    print(f"  Wipe data:  {args.wipe_el_data}")
+    print(f"  Wipe data:  {not args.keep_data}")
     print(f"  Logs:       {run_dir}")
     print()
 
@@ -629,7 +629,7 @@ def main():
     # Phase 2: Restart cycles
     results = []
     for i in range(1, args.restart_count + 1):
-        result, details = phase2_restart_test(eth_docker_dir, rpc_url, i, wipe_data=args.wipe_el_data)
+        result, details = phase2_restart_test(eth_docker_dir, rpc_url, i, wipe_data=not args.keep_data)
         results.append((i, result, details))
 
         save_ethd_logs(eth_docker_dir, run_dir, suffix=f"_restart{i}")
