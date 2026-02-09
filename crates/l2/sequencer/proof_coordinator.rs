@@ -48,8 +48,7 @@ pub struct ProofCoordinator {
     git_commit_hash: String,
     qpl_tool_path: Option<String>,
     /// Tracks batch assignments to provers: batch_number -> assignment time.
-    /// In-memory only; lost on restart. Uses std::sync::Mutex (not tokio)
-    /// because lock is never held across .await points.
+    /// In-memory only; lost on restart.
     assignments: Arc<std::sync::Mutex<HashMap<u64, Instant>>>,
     prover_timeout: Duration,
 }
@@ -138,58 +137,78 @@ impl ProofCoordinator {
         }
     }
 
+    /// Checks whether all needed proof types already exist for the given batch.
+    async fn all_proofs_exist(&self, batch_number: u64) -> Result<bool, ProofCoordinatorError> {
+        for proof_type in &self.needed_proof_types {
+            if self
+                .rollup_store
+                .get_proof_by_batch_and_type(batch_number, *proof_type)
+                .await?
+                .is_none()
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     async fn next_batch_to_assign(
         &self,
         commit_hash: &str,
     ) -> Result<Option<u64>, ProofCoordinatorError> {
-        // Phase 1: Outside lock - fetch base batch from storage
         let base_batch = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
 
-        // Phase 2: Lock mutex BRIEFLY (no awaits while locked!)
-        let candidate = {
-            let mut assignments = self.assignments.lock().map_err(|_| {
-                ProofCoordinatorError::Custom("Assignment lock poisoned".to_string())
-            })?;
+        loop {
+            // Lock briefly to find and claim a candidate
+            let candidate = {
+                let mut assignments = self.assignments.lock().map_err(|_| {
+                    ProofCoordinatorError::Custom("Assignment lock poisoned".to_string())
+                })?;
 
-            // Clean up assignments for already-verified batches
-            assignments.retain(|&batch, _| batch >= base_batch);
+                assignments.retain(|&batch, _| batch >= base_batch);
 
-            let now = Instant::now();
-            let mut batch = base_batch;
+                let now = Instant::now();
+                let mut batch = base_batch;
 
-            // Scan from base_batch upward for unassigned or timed-out batch
-            loop {
-                match assignments.get(&batch) {
-                    None => break,
-                    Some(&assigned_at) if now.duration_since(assigned_at) > self.prover_timeout => {
-                        break;
+                loop {
+                    match assignments.get(&batch) {
+                        None => break,
+                        Some(&assigned_at)
+                            if now.duration_since(assigned_at) > self.prover_timeout =>
+                        {
+                            break;
+                        }
+                        Some(_) => batch += 1,
                     }
-                    Some(_) => batch += 1,
                 }
+
+                assignments.insert(batch, now);
+                batch
+            };
+
+            // No prover input for this version — nothing left to assign
+            let has_input = self
+                .rollup_store
+                .get_prover_input_by_batch_and_version(candidate, commit_hash)
+                .await?
+                .is_some();
+
+            if !has_input {
+                if let Ok(mut assignments) = self.assignments.lock() {
+                    assignments.remove(&candidate);
+                }
+                return Ok(None);
             }
 
-            // Mark as assigned atomically (still under lock)
-            assignments.insert(batch, now);
-            batch
-        };
-        // Lock dropped here
-
-        // Phase 3: Outside lock - verify batch exists and has prover input
-        let has_input = self
-            .rollup_store
-            .get_prover_input_by_batch_and_version(candidate, commit_hash)
-            .await?
-            .is_some();
-
-        if !has_input {
-            // No input for this version - remove assignment
-            if let Ok(mut assignments) = self.assignments.lock() {
-                assignments.remove(&candidate);
+            // Skip batches that already have all proofs (keep assignment so the
+            // scan advances past it on next iteration)
+            if self.all_proofs_exist(candidate).await? {
+                debug!("All proofs already exist for batch {candidate}, skipping");
+                continue;
             }
-            return Ok(None);
+
+            return Ok(Some(candidate));
         }
-
-        Ok(Some(candidate))
     }
 
     async fn handle_request(
@@ -213,34 +232,6 @@ impl ProofCoordinator {
             info!("Empty BatchResponse sent (no batch for version)");
             return Ok(());
         };
-
-        // Check if all needed proofs already exist for this batch
-        let mut all_proofs_exist = true;
-        for proof_type in &self.needed_proof_types {
-            if self
-                .rollup_store
-                .get_proof_by_batch_and_type(batch_to_prove, *proof_type)
-                .await?
-                .is_none()
-            {
-                all_proofs_exist = false;
-                break;
-            }
-        }
-
-        if all_proofs_exist {
-            // All proofs exist, remove from assignments and send empty response
-            if let Ok(mut assignments) = self.assignments.lock() {
-                assignments.remove(&batch_to_prove);
-            }
-            debug!(
-                "All proofs already exist for batch {batch_to_prove}, sending empty BatchResponse"
-            );
-            let response = ProofData::empty_batch_response();
-            send_response(stream, &response).await?;
-            info!("Empty BatchResponse sent (all proofs exist for batch {batch_to_prove})");
-            return Ok(());
-        }
 
         let Some(input) = self
             .rollup_store
@@ -293,17 +284,17 @@ impl ProofCoordinator {
                 "A proof was received for a batch and type that is already stored"
             );
         } else {
-            metrics!(
-                if let Ok(assignments) = self.assignments.lock() {
-                    if let Some(&assigned_at) = assignments.get(&batch_number) {
-                        let proving_time: i64 = assigned_at.elapsed().as_secs().try_into()
-                            .map_err(|_| ProofCoordinatorError::InternalError(
+            metrics!(if let Ok(assignments) = self.assignments.lock() {
+                if let Some(&assigned_at) = assignments.get(&batch_number) {
+                    let proving_time: i64 =
+                        assigned_at.elapsed().as_secs().try_into().map_err(|_| {
+                            ProofCoordinatorError::InternalError(
                                 "failed to convert proving time to i64".to_string(),
-                            ))?;
-                        METRICS.set_batch_proving_time(batch_number, proving_time)?;
-                    }
+                            )
+                        })?;
+                    METRICS.set_batch_proving_time(batch_number, proving_time)?;
                 }
-            );
+            });
             // If not, store it
             self.rollup_store
                 .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)
