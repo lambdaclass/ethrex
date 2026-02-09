@@ -199,22 +199,25 @@ build-prover-exec:
 	cargo build --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml --bin ethrex
 
 init-prover-sp1:
+	PROVER_CLIENT_TIMED=$(TIMED?) \
 	cargo run --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
-	--backend sp1 $(PROVER_ARGS)
+	--backend sp1
 
 init-prover-risc0:
+	PROVER_CLIENT_TIMED=$(TIMED?) \
 	cargo run --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
-	--backend risc0 $(PROVER_ARGS)
+	--backend risc0
 
 init-prover-exec:
+	PROVER_CLIENT_TIMED=$(TIMED?) \
 	cargo run --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
-	--backend exec $(PROVER_ARGS)
+	--backend exec
 
 
 # ==============================================================================
