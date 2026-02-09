@@ -39,7 +39,8 @@ RESTART_STALL_TIMEOUT = int(os.environ.get("RESTART_STALL_TIMEOUT", 15 * 60))  #
 NODE_STARTUP_TIMEOUT = int(os.environ.get("NODE_STARTUP_TIMEOUT", 5 * 60))  # default 5m
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", 10))
 
-LOGS_DIR = Path(__file__).resolve().parent / "restart_stall_logs"
+SCRIPT_DIR = Path(__file__).resolve().parent
+LOGS_DIR = SCRIPT_DIR / "restart_stall_logs"
 
 
 def configure_eth_docker(eth_docker_dir: str, network: str, fee_recipient: str = "", slack_success: str = "", slack_failed: str = ""):
@@ -497,7 +498,7 @@ def main():
         sys.exit(1)
 
     # Load our local .env first (for Slack webhooks)
-    load_env_file(".env")
+    load_env_file(str(SCRIPT_DIR / ".env"))
 
     # Configure eth-docker .env if requested
     if args.configure:
