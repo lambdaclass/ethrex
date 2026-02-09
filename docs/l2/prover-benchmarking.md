@@ -34,7 +34,7 @@ batch=3 proving_time_s=47 proving_time_ms=47123 Proved batch 3 in 47.12s
 ### 3. Generate Transactions
 
 ```bash
-# Terminal 3 — load test (from crates/l2/)
+# Terminal 3 — load test (from repo root)
 make load-test
 
 # Customize with env vars:
@@ -50,7 +50,6 @@ This sends transactions per account using the test private keys. The sequencer w
 | `LOAD_TEST_RPC_URL` | `http://localhost:8545` | RPC URL of the node |
 | `LOAD_TEST_TX_AMOUNT` | `1000` | Transactions per account |
 | `LOAD_TEST_ENDLESS` | `false` | Restart load test after each round |
-| `LOAD_TEST_PKEYS` | `test_data/private_keys.txt` | Path to private keys file (Makefile variable) |
 
 ### 4. Collect Results
 

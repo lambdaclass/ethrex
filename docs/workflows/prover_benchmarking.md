@@ -80,7 +80,7 @@ The `PROVER_CLIENT_TIMED` env var enables structured proving time logs that the 
 ```bash
 # Terminal 3 (tmux session "loadtest")
 tmux new -s loadtest
-cd ~/ethrex/crates/l2
+cd ~/ethrex
 LOAD_TEST_TX_AMOUNT=<tx_amount> make load-test
 # For continuous load: LOAD_TEST_TX_AMOUNT=<tx_amount> LOAD_TEST_ENDLESS=true make load-test
 # Detach: Ctrl+B, D
