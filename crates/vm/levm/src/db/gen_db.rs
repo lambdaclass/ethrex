@@ -518,6 +518,7 @@ impl<'a> VM<'a> {
     ///
     /// Accessed storage slots are stored in the `accessed_storage_slots` set.
     /// Accessed storage slots take place in some gas cost computation.
+    #[inline]
     pub fn access_storage_slot(
         &mut self,
         address: Address,

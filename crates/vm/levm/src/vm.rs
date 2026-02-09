@@ -221,6 +221,7 @@ impl Substate {
     }
 
     /// Mark an address as accessed and return whether is was already marked.
+    #[inline]
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
         let is_present = self
             .parent
@@ -237,6 +238,7 @@ impl Substate {
     }
 
     /// Return whether an address has already been accessed.
+    #[inline]
     pub fn is_slot_accessed(&self, address: &Address, key: &H256) -> bool {
         self.accessed_storage_slots
             .get(address)
@@ -250,6 +252,7 @@ impl Substate {
     }
 
     /// Mark an address as accessed and return whether is was already marked.
+    #[inline]
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
         let is_present = self
             .parent
@@ -261,6 +264,7 @@ impl Substate {
     }
 
     /// Return whether an address has already been accessed.
+    #[inline]
     pub fn is_address_accessed(&self, address: &Address) -> bool {
         self.accessed_addresses.contains(address)
             || self
