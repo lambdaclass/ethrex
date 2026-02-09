@@ -114,7 +114,7 @@ impl ProverBackend for ZiskBackend {
     type SerializedInput = ();
 
     fn prover_type(&self) -> ProverType {
-        ProverType::Exec
+        todo!("No ProverType variant exists for ZisK yet")
     }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
