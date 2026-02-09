@@ -1102,4 +1102,66 @@ impl BlockAccessListRecorder {
         // Note: touched_addresses is intentionally NOT restored - per EIP-7928,
         // accessed addresses must be included even from reverted calls
     }
+
+    /// Handles BAL cleanup for a self-destructed account per EIP-7928/EIP-6780.
+    /// Called after destroy_account for contracts created and destroyed in the same tx.
+    /// Removes nonce/code changes, converts storage writes to reads.
+    /// Matches EELS `track_selfdestruct` in state_tracker.py:315.
+    pub fn track_selfdestruct(&mut self, address: Address) {
+        let idx = self.current_index;
+
+        // 1. Remove nonce changes for this address at current tx index
+        if let Some(changes) = self.nonce_changes.get_mut(&address) {
+            changes.retain(|(i, _)| *i != idx);
+            if changes.is_empty() {
+                self.nonce_changes.remove(&address);
+            }
+        }
+
+        // 2. Remove balance changes if pre-balance was 0 (round-trip: 0→X→0)
+        if let Some(&pre_balance) = self.initial_balances.get(&address) {
+            if pre_balance.is_zero() {
+                if let Some(changes) = self.balance_changes.get_mut(&address) {
+                    changes.retain(|(i, _)| *i != idx);
+                    if changes.is_empty() {
+                        self.balance_changes.remove(&address);
+                    }
+                }
+            }
+        }
+
+        // 3. Remove code changes for this address at current tx index
+        if let Some(changes) = self.code_changes.get_mut(&address) {
+            changes.retain(|(i, _)| *i != idx);
+            if changes.is_empty() {
+                self.code_changes.remove(&address);
+            }
+        }
+
+        // 4. Convert storage writes from current tx to reads
+        if let Some(slots) = self.storage_writes.get_mut(&address) {
+            let mut slots_to_read: Vec<U256> = Vec::new();
+            for (slot, changes) in slots.iter_mut() {
+                if changes.iter().any(|(i, _)| *i == idx) {
+                    slots_to_read.push(*slot);
+                }
+                changes.retain(|(i, _)| *i != idx);
+            }
+            slots.retain(|_, changes| !changes.is_empty());
+            if slots.is_empty() {
+                self.storage_writes.remove(&address);
+            }
+
+            for slot in slots_to_read {
+                self.storage_reads.entry(address).or_default().insert(slot);
+                // Undo read-to-write promotion for these slots
+                if let Some(promoted) = self.reads_promoted_to_writes.get_mut(&address) {
+                    promoted.retain(|s| *s != slot);
+                    if promoted.is_empty() {
+                        self.reads_promoted_to_writes.remove(&address);
+                    }
+                }
+            }
+        }
+    }
 }

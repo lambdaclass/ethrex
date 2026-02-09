@@ -302,6 +302,11 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         *account_to_remove = LevmAccount::default();
         account_to_remove.mark_destroyed();
+
+        // EIP-7928: Clean up BAL for selfdestructed account
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.track_selfdestruct(*address);
+        }
     }
 
     Ok(())
