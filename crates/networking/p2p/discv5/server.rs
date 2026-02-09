@@ -31,7 +31,7 @@ use spawned_concurrency::{
     },
 };
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -56,6 +56,9 @@ const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 /// Per spec, good timeout is 500ms for single requests, 1s for handshakes.
 /// Using 2s to be conservative.
 const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Minimum interval between WHOAREYOU packets to the same IP address.
+/// Prevents amplification attacks where attackers spoof source IPs.
+const WHOAREYOU_RATE_LIMIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -111,6 +114,8 @@ pub struct DiscoveryServer {
     pending_by_nonce: FxHashMap<[u8; 12], (Node, Message, Instant)>,
     /// Pending WhoAreYou challenges awaiting Handshake response, keyed by src_id.
     pending_challenges: FxHashMap<H256, (Vec<u8>, Instant)>,
+    /// Tracks last WHOAREYOU send time per source IP to prevent amplification attacks.
+    whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
 }
 
 impl DiscoveryServer {
@@ -144,6 +149,7 @@ impl DiscoveryServer {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -616,6 +622,23 @@ impl DiscoveryServer {
         src_id: H256,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
+        // Rate limit: prevent amplification attacks by limiting WHOAREYOU per IP
+        let ip = addr.ip();
+        let now = Instant::now();
+
+        if let Some(last_sent) = self.whoareyou_rate_limit.get(&ip)
+            && now.duration_since(*last_sent) < WHOAREYOU_RATE_LIMIT
+        {
+            trace!(
+                to_ip = %ip,
+                "Rate limiting WHOAREYOU packet (amplification attack prevention)"
+            );
+            return Ok(());
+        }
+
+        // Update rate limit tracker
+        self.whoareyou_rate_limit.insert(ip, now);
+
         let mut rng = OsRng;
 
         // Get the ENR sequence number we have for this node (or 0 if unknown)
@@ -675,9 +698,9 @@ impl DiscoveryServer {
         nonce
     }
 
-    /// Remove stale entries from the pending_by_nonce cache.
+    /// Remove stale entries from caches.
     /// Called periodically to prevent unbounded growth.
-    fn cleanup_pending_cache(&mut self) {
+    fn cleanup_stale_entries(&mut self) {
         let now = Instant::now();
 
         // Clean pending outgoing messages
@@ -696,11 +719,17 @@ impl DiscoveryServer {
             });
         let removed_challenges = before_challenges - self.pending_challenges.len();
 
-        let total_removed = removed_messages + removed_challenges;
+        // Clean stale WHOAREYOU rate limit entries
+        let before_rate_limits = self.whoareyou_rate_limit.len();
+        self.whoareyou_rate_limit
+            .retain(|_ip, timestamp| now.duration_since(*timestamp) < WHOAREYOU_RATE_LIMIT);
+        let removed_rate_limits = before_rate_limits - self.whoareyou_rate_limit.len();
+
+        let total_removed = removed_messages + removed_challenges + removed_rate_limits;
         if total_removed > 0 {
             trace!(
-                "Cleaned up {} stale entries from pending cache ({} messages, {} challenges)",
-                total_removed, removed_messages, removed_challenges
+                "Cleaned up {} stale entries ({} messages, {} challenges, {} rate limits)",
+                total_removed, removed_messages, removed_challenges, removed_rate_limits
             );
         }
     }
@@ -816,7 +845,7 @@ impl GenServer for DiscoveryServer {
                     .prune()
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
-                self.cleanup_pending_cache();
+                self.cleanup_stale_entries();
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }
@@ -857,10 +886,11 @@ mod tests {
         peer_table::PeerTable,
         types::{Node, NodeRecord},
     };
+    use ethrex_common::H256;
     use ethrex_storage::{EngineType, Store};
     use rand::{SeedableRng, rngs::StdRng};
     use secp256k1::SecretKey;
-    use std::sync::Arc;
+    use std::{net::SocketAddr, sync::Arc};
     use tokio::net::UdpSocket;
 
     #[tokio::test]
@@ -884,6 +914,7 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
         };
 
         let n1 = server.next_nonce(&mut rng);
@@ -892,5 +923,62 @@ mod tests {
         assert_eq!(&n1[..4], &[0, 0, 0, 0]);
         assert_eq!(&n2[..4], &[0, 0, 0, 1]);
         assert_ne!(&n1[4..], &n2[4..]);
+    }
+
+    #[tokio::test]
+    async fn test_whoareyou_rate_limiting() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        // Use port 0 to let the OS assign an available port
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+        };
+
+        let nonce = [0u8; 12];
+        let addr: SocketAddr = "192.168.1.1:30303".parse().unwrap();
+        let src_id1 = H256::from_low_u64_be(1);
+        let src_id2 = H256::from_low_u64_be(2);
+        let src_id3 = H256::from_low_u64_be(3);
+
+        // Initially, rate limit map should be empty
+        assert!(server.whoareyou_rate_limit.is_empty());
+
+        // First call should NOT be rate limited
+        let _ = server.send_who_are_you(nonce, src_id1, addr).await;
+
+        // Should have recorded the IP in rate limit map
+        assert!(server.whoareyou_rate_limit.contains_key(&addr.ip()));
+        // Should have added a pending challenge (proves packet was processed)
+        assert!(server.pending_challenges.contains_key(&src_id1));
+
+        // Second call with SAME IP should be rate limited
+        let _ = server.send_who_are_you(nonce, src_id2, addr).await;
+
+        // Should NOT have added a pending challenge for src_id2 (rate limited)
+        assert!(!server.pending_challenges.contains_key(&src_id2));
+
+        // Call with DIFFERENT IP should NOT be rate limited
+        let addr2: SocketAddr = "192.168.1.2:30303".parse().unwrap();
+        let _ = server.send_who_are_you(nonce, src_id3, addr2).await;
+
+        // Should have added a pending challenge for the different IP
+        assert!(server.pending_challenges.contains_key(&src_id3));
+        // Both IPs should now be in the rate limit map
+        assert_eq!(server.whoareyou_rate_limit.len(), 2);
     }
 }
