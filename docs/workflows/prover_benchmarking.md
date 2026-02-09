@@ -83,10 +83,13 @@ The `PROVER_CLIENT_TIMED` env var enables structured proving time logs that the 
 # Terminal 3 (tmux session "loadtest")
 tmux new -s loadtest
 cd ~/ethrex
-LOAD_TEST_TX_AMOUNT=<tx_amount> make load-test
-# For continuous load: LOAD_TEST_TX_AMOUNT=<tx_amount> LOAD_TEST_ENDLESS=true make load-test
+LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> make load-test
+# For continuous load:
+# LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> LOAD_TEST_ENDLESS=true make load-test
 # Detach: Ctrl+B, D
 ```
+
+> **Important:** `LOAD_TEST_RPC_URL` must point to the L2 node RPC (port 1729 by default), not the L1.
 
 ### 5. Wait for Batches
 
