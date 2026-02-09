@@ -286,12 +286,7 @@ async fn heal_state_trie(
             // NOTE: we keep only a single task in the background to avoid out of order deletes.
             // Parent-path empty markers from batch N could overwrite real node data from batch N+1
             // if commits happen out of order.
-            if !db_joinset.is_empty() {
-                db_joinset
-                    .join_next()
-                    .await
-                    .expect("joinset is not empty")?;
-            }
+            super::wait_for_pending_task(&mut db_joinset).await?;
             db_joinset.spawn_blocking(move || {
                 let encode_start = std::time::Instant::now();
                 let node_count = to_write.len();
