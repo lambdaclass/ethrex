@@ -16,9 +16,6 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};
-#[cfg(feature = "metrics")]
-use ethrex_metrics::l2::metrics::METRICS;
-use ethrex_metrics::metrics;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, eth::errors::RpcRequestError},
@@ -49,7 +46,6 @@ use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
 #[cfg(feature = "sp1")]
 use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
-const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
 const VERIFY_BATCHES_FUNCTION_SIGNATURE: &str = "verifyBatches(uint256,bytes[],bytes[],bytes[])";
 
 #[derive(Clone)]
@@ -243,23 +239,14 @@ impl L1ProofSender {
             return Ok(());
         }
 
-        // safe: we checked non-empty above
-        let last_batch_sent = match ready_batches.last() {
-            Some((batch, _)) => *batch,
-            None => return Ok(()),
+        let Some((last_batch_sent, _)) = ready_batches.last() else {
+            // Unreachable: we checked non-empty above
+            return Ok(());
         };
+        let last_batch_sent = *last_batch_sent;
 
-        if ready_batches.len() == 1 {
-            // Single batch: use existing send_proof_to_contract for backward compat
-            let Some((batch_number, proofs)) = ready_batches.into_iter().next() else {
-                return Ok(());
-            };
-            self.send_proof_to_contract(batch_number, proofs).await?;
-        } else {
-            // Multiple batches: use verifyBatches
-            self.send_batches_proof_to_contract(first_batch, &ready_batches)
-                .await?;
-        }
+        self.send_batches_proof_to_contract(first_batch, &ready_batches)
+            .await?;
 
         self.rollup_store
             .set_latest_sent_batch_proof(last_batch_sent)
@@ -474,114 +461,20 @@ impl L1ProofSender {
         ))
     }
 
-    pub async fn send_proof_to_contract(
-        &self,
-        batch_number: u64,
-        proofs: HashMap<ProverType, BatchProof>,
-    ) -> Result<(), ProofSenderError> {
-        info!(
-            ?batch_number,
-            "Sending batch verification transaction to L1"
-        );
-
-        let calldata_values = [
-            &[Value::Uint(U256::from(batch_number))],
-            proofs
-                .get(&ProverType::RISC0)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::RISC0.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::SP1)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::SP1.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::TDX)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::TDX.empty_calldata())
-                .as_slice(),
-        ]
-        .concat();
-
-        let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
-
-        // Based won't have timelock address until we implement it on it. For the meantime if it's None (only happens in based) we use the OCP
-        let target_address = self
-            .timelock_address
-            .unwrap_or(self.on_chain_proposer_address);
-
-        let send_verify_tx_result =
-            send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await;
-
-        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. })) =
-            send_verify_tx_result.as_ref()
-        {
-            if message.contains("Invalid TDX proof") {
-                warn!("Deleting invalid TDX proof");
-                self.rollup_store
-                    .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
-                    .await?;
-            } else if message.contains("Invalid RISC0 proof") {
-                warn!("Deleting invalid RISC0 proof");
-                self.rollup_store
-                    .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
-                    .await?;
-            } else if message.contains("Invalid SP1 proof") {
-                warn!("Deleting invalid SP1 proof");
-                self.rollup_store
-                    .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
-                    .await?;
-            }
-        }
-
-        let verify_tx_hash = send_verify_tx_result?;
-
-        metrics!(
-            let verify_tx_receipt = self
-                .eth_client
-                .get_transaction_receipt(verify_tx_hash)
-                .await?
-                .ok_or(ProofSenderError::UnexpectedError("no verify tx receipt".to_string()))?;
-            let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()?;
-            METRICS.set_batch_verification_gas(batch_number, verify_gas_used)?;
-        );
-
-        self.rollup_store
-            .store_verify_tx_by_batch(batch_number, verify_tx_hash)
-            .await?;
-
-        info!(
-            ?batch_number,
-            ?verify_tx_hash,
-            "Sent batch verification transaction to L1"
-        );
-
-        Ok(())
-    }
-
-    /// Sends multiple consecutive batch proofs in a single verifyBatches transaction.
-    /// On revert with an invalid proof message, falls back to single-batch sending
-    /// to identify which batch has the bad proof.
-    pub async fn send_batches_proof_to_contract(
+    /// Builds calldata and sends a verifyBatches transaction for the given batches.
+    /// Returns the tx result without any fallback logic.
+    async fn send_verify_batches_tx(
         &self,
         first_batch: u64,
         batches: &[(u64, HashMap<ProverType, BatchProof>)],
-    ) -> Result<(), ProofSenderError> {
+    ) -> Result<ethrex_common::H256, EthClientError> {
         let batch_count = batches.len();
-        info!(
-            first_batch,
-            batch_count, "Sending multi-batch verification transaction to L1"
-        );
 
-        // Build three Value::Array of Value::Bytes for risc0, sp1, tdx
         let mut risc0_array = Vec::with_capacity(batch_count);
         let mut sp1_array = Vec::with_capacity(batch_count);
         let mut tdx_array = Vec::with_capacity(batch_count);
 
         for (_batch_number, proofs) in batches {
-            // Each proof type's calldata is a Vec<Value> with one element: Value::Bytes.
-            // For missing proofs, use empty bytes.
             let risc0_bytes = proofs
                 .get(&ProverType::RISC0)
                 .map(|proof| proof.calldata())
@@ -617,32 +510,105 @@ impl L1ProofSender {
             Value::Array(tdx_array),
         ];
 
-        let calldata = encode_calldata(VERIFY_BATCHES_FUNCTION_SIGNATURE, &calldata_values)?;
+        let calldata = encode_calldata(VERIFY_BATCHES_FUNCTION_SIGNATURE, &calldata_values)
+            .map_err(|e| {
+                EthClientError::Custom(format!("Failed to encode verifyBatches calldata: {e}"))
+            })?;
 
         let target_address = self
             .timelock_address
             .unwrap_or(self.on_chain_proposer_address);
 
-        let send_verify_tx_result =
-            send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await;
+        send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await
+    }
 
-        // On revert with invalid proof message, fall back to single-batch sending
-        // to identify which batch has the bad proof.
+    /// Sends one or more consecutive batch proofs in a single verifyBatches transaction.
+    /// On revert with an invalid proof message, falls back to sending each batch
+    /// individually to identify which batch has the bad proof.
+    pub async fn send_batches_proof_to_contract(
+        &self,
+        first_batch: u64,
+        batches: &[(u64, HashMap<ProverType, BatchProof>)],
+    ) -> Result<(), ProofSenderError> {
+        let batch_count = batches.len();
+        info!(
+            first_batch,
+            batch_count, "Sending batch verification transaction to L1"
+        );
+
+        let send_verify_tx_result = self.send_verify_batches_tx(first_batch, batches).await;
+
+        // On revert with invalid proof message and multiple batches, fall back to
+        // sending each batch individually to identify which has the bad proof.
         if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
             ref message, ..
         })) = send_verify_tx_result
             && (message.contains("Invalid TDX proof")
                 || message.contains("Invalid RISC0 proof")
                 || message.contains("Invalid SP1 proof"))
+            && batch_count > 1
         {
             warn!(
                 "Multi-batch verify reverted with invalid proof, falling back to single-batch sending"
             );
             for (batch_number, proofs) in batches {
-                self.send_proof_to_contract(*batch_number, proofs.clone())
+                let single_batch = [(*batch_number, proofs.clone())];
+                let single_result = self
+                    .send_verify_batches_tx(*batch_number, &single_batch)
+                    .await;
+
+                if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
+                    ref message,
+                    ..
+                })) = single_result
+                {
+                    if message.contains("Invalid TDX proof") {
+                        warn!("Deleting invalid TDX proof for batch {batch_number}");
+                        self.rollup_store
+                            .delete_proof_by_batch_and_type(*batch_number, ProverType::TDX)
+                            .await?;
+                    } else if message.contains("Invalid RISC0 proof") {
+                        warn!("Deleting invalid RISC0 proof for batch {batch_number}");
+                        self.rollup_store
+                            .delete_proof_by_batch_and_type(*batch_number, ProverType::RISC0)
+                            .await?;
+                    } else if message.contains("Invalid SP1 proof") {
+                        warn!("Deleting invalid SP1 proof for batch {batch_number}");
+                        self.rollup_store
+                            .delete_proof_by_batch_and_type(*batch_number, ProverType::SP1)
+                            .await?;
+                    }
+                }
+                let verify_tx_hash = single_result?;
+                self.rollup_store
+                    .store_verify_tx_by_batch(*batch_number, verify_tx_hash)
                     .await?;
             }
             return Ok(());
+        }
+
+        // Single-batch path: detect and delete the invalid proof
+        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
+            ref message, ..
+        })) = send_verify_tx_result
+            && let Some((batch_number, _)) = batches.first()
+        {
+            if message.contains("Invalid TDX proof") {
+                warn!("Deleting invalid TDX proof for batch {batch_number}");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(*batch_number, ProverType::TDX)
+                    .await?;
+            } else if message.contains("Invalid RISC0 proof") {
+                warn!("Deleting invalid RISC0 proof for batch {batch_number}");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(*batch_number, ProverType::RISC0)
+                    .await?;
+            } else if message.contains("Invalid SP1 proof") {
+                warn!("Deleting invalid SP1 proof for batch {batch_number}");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(*batch_number, ProverType::SP1)
+                    .await?;
+            }
         }
 
         let verify_tx_hash = send_verify_tx_result?;
@@ -658,7 +624,7 @@ impl L1ProofSender {
             first_batch,
             batch_count,
             ?verify_tx_hash,
-            "Sent multi-batch verification transaction to L1"
+            "Sent batch verification transaction to L1"
         );
 
         Ok(())

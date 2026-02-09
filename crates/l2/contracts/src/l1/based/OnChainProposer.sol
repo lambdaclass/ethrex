@@ -332,7 +332,7 @@ contract OnChainProposer is
         );
     }
 
-    /// @notice Internal batch verification logic shared by verifyBatch and verifyBatches.
+    /// @notice Internal batch verification logic used by verifyBatches.
     function _verifyBatchInternal(
         uint256 batchNumber,
         bytes memory risc0BlockProof,
@@ -429,29 +429,6 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
-    /// @notice The first `require` checks that the batch number is the subsequent block.
-    /// @notice The second `require` checks if the batch has been committed.
-    /// @notice The order of these `require` statements is important.
-    /// Ordering Reason: After the verification process, we delete the `batchCommitments` for `batchNumber - 1`. This means that when checking the batch,
-    /// we might get an error indicating that the batch hasn't been committed, even though it was committed but deleted. Therefore, it has already been verified.
-    function verifyBatch(
-        uint256 batchNumber,
-        //risc0
-        bytes memory risc0BlockProof,
-        //sp1
-        bytes memory sp1ProofBytes,
-        //tdx
-        bytes memory tdxSignature
-    ) external {
-        require(
-            !ALIGNED_MODE,
-            "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead."
-        );
-        _verifyBatchInternal(batchNumber, risc0BlockProof, sp1ProofBytes, tdxSignature);
-        emit BatchVerified(lastVerifiedBatch);
-    }
-
-    /// @inheritdoc IOnChainProposer
     function verifyBatches(
         uint256 firstBatchNumber,
         bytes[] memory risc0BlockProofs,
@@ -489,7 +466,7 @@ contract OnChainProposer is
     ) external override {
         require(
             ALIGNED_MODE,
-            "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead."
+            "Batch verification should be done via smart contract verifiers. Call verifyBatches() instead."
         );
         require(
             firstBatchNumber == lastVerifiedBatch + 1,
