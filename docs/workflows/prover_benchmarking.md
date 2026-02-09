@@ -68,12 +68,13 @@ Wait for the L2 to start (look for "Started L2 node" or similar in logs).
 ```bash
 # Terminal 2 (tmux session "prover") — redirect output to file for later parsing
 tmux new -s prover
-make init-prover-sp1 2>&1 | tee ~/prover.log
-# For GPU: GPU=true make init-prover-sp1 2>&1 | tee ~/prover.log
+cargo run --release --features "l2,l2-sql,sp1" --manifest-path ../../Cargo.toml -- \
+    l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 --timed 2>&1 | tee ~/prover.log
+# For GPU: add "gpu" to --features
 # Detach: Ctrl+B, D
 ```
 
-The prover runs with `--timed` by default, which logs structured proving times.
+The `--timed` flag enables structured proving time logs that the benchmark script parses.
 
 ### 4. Generate Load
 
@@ -134,7 +135,7 @@ tmux kill-session -t loadtest
 
 | Issue | Solution |
 |-------|----------|
-| Prover log shows no `proving_time` lines | Ensure prover was started with `--timed` (default). Check `tmux attach -t prover` for errors. |
+| Prover log shows no `proving_time` lines | Ensure prover was started with `--timed`. Check `tmux attach -t prover` for errors. |
 | Benchmark script shows "(no batches found)" | Prover hasn't finished proving any batch yet. Wait longer or check prover logs for errors. |
 | Metrics show `-` for gas/tx/blocks | The Prometheus endpoint may be unreachable. Verify metrics are running: `curl localhost:3702/metrics` |
 | Load test can't connect | Verify L2 RPC is on the expected port (default 1729). Check with `curl http://localhost:1729` |

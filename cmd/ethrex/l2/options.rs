@@ -1083,7 +1083,7 @@ pub struct ProverClientOptions {
     pub log_level: Level,
     #[arg(
         long,
-        default_value_t = true,
+        default_value_t = false,
         env = "PROVER_CLIENT_TIMED",
         help = "Measure and log proving time for each batch",
         help_heading = "Prover client options"
@@ -1122,7 +1122,7 @@ impl Default for ProverClientOptions {
             proving_time_ms: 5000,
             log_level: Level::INFO,
             backend: BackendType::Exec,
-            timed: true,
+            timed: false,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }

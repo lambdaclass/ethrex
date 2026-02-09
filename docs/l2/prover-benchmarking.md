@@ -2,12 +2,6 @@
 
 How to measure proving performance on a running L2 localnet.
 
-## Prerequisites
-
-- ethrex repository cloned and buildable
-- Docker (for L1 and metrics containers)
-- `curl` and `bash` (for the benchmark script)
-
 ## Quick Start
 
 ### 1. Start the L2 Localnet
@@ -24,22 +18,18 @@ This starts the L1 (Docker), deploys contracts, starts Prometheus/Grafana, and r
 ### 2. Start the Prover
 
 ```bash
-# Terminal 2 — SP1 prover (default: --timed enabled)
-make init-prover-sp1
+# Terminal 2 — SP1 prover with timing enabled
+cargo run --release --features "l2,l2-sql,sp1" --manifest-path ../../Cargo.toml -- \
+    l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 --timed
 ```
 
-The prover connects to the proof coordinator and begins polling for batches. By default, the `--timed` flag is enabled, which wraps each `prove()` call with timing instrumentation and logs structured fields:
+The prover connects to the proof coordinator and begins polling for batches. The `--timed` flag wraps each `prove()` call with timing instrumentation and logs structured fields:
 
 ```
 batch=3 proving_time_s=47 proving_time_ms=47123 Proved batch 3 in 47.12s
 ```
 
-To disable timing (for production or to reduce overhead):
-
-```bash
-cargo run --release --features "l2,l2-sql,sp1" --manifest-path ../../Cargo.toml -- \
-    l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 --no-timed
-```
+Without `--timed`, the prover runs normally without timing overhead.
 
 ### 3. Generate Transactions
 
@@ -112,8 +102,7 @@ The script fetches batch metadata (gas used, tx count, block count) from the Pro
 
 | Flag | Env Var | Default | Effect |
 |------|---------|---------|--------|
-| `--timed` | `PROVER_CLIENT_TIMED` | `true` | Measure and log proving time per batch |
-| `--no-timed` | — | — | Skip timing measurement |
+| `--timed` | `PROVER_CLIENT_TIMED` | `false` | Measure and log proving time per batch |
 
 When timed, each batch proof logs structured fields (`proving_time_s`, `proving_time_ms`) that the benchmark script parses.
 
