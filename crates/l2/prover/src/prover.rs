@@ -61,6 +61,7 @@ struct Prover<B: ProverBackend> {
     backend: B,
     proof_coordinator_endpoints: Vec<Url>,
     proving_time_ms: u64,
+    timed: bool,
     commit_hash: String,
 }
 
@@ -70,6 +71,7 @@ impl<B: ProverBackend> Prover<B> {
             backend,
             proof_coordinator_endpoints: cfg.proof_coordinators.clone(),
             proving_time_ms: cfg.proving_time_ms,
+            timed: cfg.timed,
             commit_hash: get_git_commit_hash(),
         }
     }
@@ -97,22 +99,32 @@ impl<B: ProverBackend> Prover<B> {
 
                 // If we get the input
                 // Generate the Proof
-                let Ok(batch_proof) = self
-                    .backend
-                    .prove_timed(prover_data.input, prover_data.format)
-                    .and_then(|(output, elapsed)| {
-                        info!(
-                            batch = prover_data.batch_number,
-                            proving_time_s = elapsed.as_secs(),
-                            proving_time_ms = elapsed.as_millis() as u64,
-                            "Proved batch {} in {:.2?}",
-                            prover_data.batch_number,
-                            elapsed
-                        );
-                        self.backend.to_batch_proof(output, prover_data.format)
-                    })
-                    .inspect_err(|e| error!("{e}"))
-                else {
+                let batch_proof = if self.timed {
+                    self.backend
+                        .prove_timed(prover_data.input, prover_data.format)
+                        .and_then(|(output, elapsed)| {
+                            info!(
+                                batch = prover_data.batch_number,
+                                proving_time_s = elapsed.as_secs(),
+                                proving_time_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                                "Proved batch {} in {:.2?}",
+                                prover_data.batch_number,
+                                elapsed
+                            );
+                            self.backend.to_batch_proof(output, prover_data.format)
+                        })
+                } else {
+                    self.backend
+                        .prove(prover_data.input, prover_data.format)
+                        .and_then(|output| {
+                            info!(
+                                batch = prover_data.batch_number,
+                                "Proved batch {}", prover_data.batch_number
+                            );
+                            self.backend.to_batch_proof(output, prover_data.format)
+                        })
+                };
+                let Ok(batch_proof) = batch_proof.inspect_err(|e| error!("{e}")) else {
                     continue;
                 };
 
