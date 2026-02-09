@@ -522,6 +522,36 @@ impl L1ProofSender {
         send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await
     }
 
+    /// Returns the prover type whose proof is invalid based on the error message,
+    /// or `None` if the message doesn't indicate an invalid proof.
+    fn invalid_proof_type(message: &str) -> Option<ProverType> {
+        if message.contains("Invalid TDX proof") {
+            Some(ProverType::TDX)
+        } else if message.contains("Invalid RISC0 proof") {
+            Some(ProverType::RISC0)
+        } else if message.contains("Invalid SP1 proof") {
+            Some(ProverType::SP1)
+        } else {
+            None
+        }
+    }
+
+    /// If the error message indicates an invalid proof, deletes the offending
+    /// proof from the store.
+    async fn try_delete_invalid_proof(
+        &self,
+        message: &str,
+        batch_number: u64,
+    ) -> Result<(), ProofSenderError> {
+        if let Some(proof_type) = Self::invalid_proof_type(message) {
+            warn!("Deleting invalid {proof_type:?} proof for batch {batch_number}");
+            self.rollup_store
+                .delete_proof_by_batch_and_type(batch_number, proof_type)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Sends one or more consecutive batch proofs in a single verifyBatches transaction.
     /// On revert with an invalid proof message, falls back to sending each batch
     /// individually to identify which batch has the bad proof.
@@ -538,14 +568,12 @@ impl L1ProofSender {
 
         let send_verify_tx_result = self.send_verify_batches_tx(first_batch, batches).await;
 
-        // On revert with invalid proof message and multiple batches, fall back to
-        // sending each batch individually to identify which has the bad proof.
+        // On revert with invalid proof and multiple batches, fall back to sending
+        // each batch individually to identify which has the bad proof.
         if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
             ref message, ..
         })) = send_verify_tx_result
-            && (message.contains("Invalid TDX proof")
-                || message.contains("Invalid RISC0 proof")
-                || message.contains("Invalid SP1 proof"))
+            && Self::invalid_proof_type(message).is_some()
             && batch_count > 1
         {
             warn!(
@@ -558,26 +586,11 @@ impl L1ProofSender {
                     .await;
 
                 if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
-                    ref message,
-                    ..
+                    ref message, ..
                 })) = single_result
                 {
-                    if message.contains("Invalid TDX proof") {
-                        warn!("Deleting invalid TDX proof for batch {batch_number}");
-                        self.rollup_store
-                            .delete_proof_by_batch_and_type(*batch_number, ProverType::TDX)
-                            .await?;
-                    } else if message.contains("Invalid RISC0 proof") {
-                        warn!("Deleting invalid RISC0 proof for batch {batch_number}");
-                        self.rollup_store
-                            .delete_proof_by_batch_and_type(*batch_number, ProverType::RISC0)
-                            .await?;
-                    } else if message.contains("Invalid SP1 proof") {
-                        warn!("Deleting invalid SP1 proof for batch {batch_number}");
-                        self.rollup_store
-                            .delete_proof_by_batch_and_type(*batch_number, ProverType::SP1)
-                            .await?;
-                    }
+                    self.try_delete_invalid_proof(message, *batch_number)
+                        .await?;
                 }
                 let verify_tx_hash = single_result?;
                 self.rollup_store
@@ -587,28 +600,14 @@ impl L1ProofSender {
             return Ok(());
         }
 
-        // Single-batch path: detect and delete the invalid proof
+        // Single-batch or non-proof error: detect and delete the invalid proof
         if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
             ref message, ..
         })) = send_verify_tx_result
             && let Some((batch_number, _)) = batches.first()
         {
-            if message.contains("Invalid TDX proof") {
-                warn!("Deleting invalid TDX proof for batch {batch_number}");
-                self.rollup_store
-                    .delete_proof_by_batch_and_type(*batch_number, ProverType::TDX)
-                    .await?;
-            } else if message.contains("Invalid RISC0 proof") {
-                warn!("Deleting invalid RISC0 proof for batch {batch_number}");
-                self.rollup_store
-                    .delete_proof_by_batch_and_type(*batch_number, ProverType::RISC0)
-                    .await?;
-            } else if message.contains("Invalid SP1 proof") {
-                warn!("Deleting invalid SP1 proof for batch {batch_number}");
-                self.rollup_store
-                    .delete_proof_by_batch_and_type(*batch_number, ProverType::SP1)
-                    .await?;
-            }
+            self.try_delete_invalid_proof(message, *batch_number)
+                .await?;
         }
 
         let verify_tx_hash = send_verify_tx_result?;
