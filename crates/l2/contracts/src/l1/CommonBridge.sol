@@ -464,6 +464,7 @@ contract CommonBridge is
             IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{
                 value: balanceDiffs[i].value
             }(balanceDiffs[i].chainId);
+            deposits[ETH_TOKEN][ETH_TOKEN] -= balanceDiffs[i].value;
 
             // Send ERC20 values if any
             for (uint j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
@@ -507,7 +508,13 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveETHFromSharedBridge() public payable override {}
+    function receiveETHFromSharedBridge() public payable override {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+        deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
+    }
 
     /// @inheritdoc ICommonBridge
     function receiveERC20FromSharedBridge(
@@ -528,7 +535,7 @@ contract CommonBridge is
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public override whenNotPaused {
+    ) public override whenNotPaused nonReentrant {
         _claimWithdrawal(
             ETH_TOKEN,
             ETH_TOKEN,

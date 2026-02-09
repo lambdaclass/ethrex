@@ -101,6 +101,7 @@ pub struct L1Committer {
     eth_client: EthClient,
     blockchain: Arc<Blockchain>,
     on_chain_proposer_address: Address,
+    timelock_address: Option<Address>,
     store: Store,
     rollup_store: StoreRollup,
     commit_time_ms: u64,
@@ -205,6 +206,7 @@ impl L1Committer {
             eth_client,
             blockchain,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
+            timelock_address: committer_config.timelock_address,
             store,
             rollup_store,
             commit_time_ms: committer_config.commit_time_ms,
@@ -817,6 +819,8 @@ impl L1Committer {
                     BlockExecutionResult {
                         receipts,
                         requests: vec![],
+                        // Use the block header's gas_used
+                        block_gas_used: potential_batch_block.header.gas_used,
                     },
                 )?;
             } else {
@@ -1272,6 +1276,15 @@ impl L1Committer {
                 CommitterError::ConversionError("Failed to convert gas_price to a u64".to_owned())
             })?;
 
+        let target_address = if !self.based {
+            self.timelock_address
+                .ok_or(CommitterError::UnexpectedError(
+                    "Timelock address is not set".to_string(),
+                ))?
+        } else {
+            self.on_chain_proposer_address
+        };
+
         // Validium: EIP1559 Transaction.
         // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
         let tx = if !self.validium {
@@ -1289,7 +1302,7 @@ impl L1Committer {
             build_generic_tx(
                 &self.eth_client,
                 TxType::EIP4844,
-                self.on_chain_proposer_address,
+                target_address,
                 self.signer.address(),
                 calldata.into(),
                 Overrides {
@@ -1309,7 +1322,7 @@ impl L1Committer {
             build_generic_tx(
                 &self.eth_client,
                 TxType::EIP1559,
-                self.on_chain_proposer_address,
+                target_address,
                 self.signer.address(),
                 calldata.into(),
                 Overrides {

@@ -4,16 +4,14 @@ use crate::{
 };
 use clap::Parser;
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
-    sequencer::{
-        configs::{AdminConfig, AlignedConfig, MonitorConfig},
-        utils::resolve_aligned_network,
-    },
+    sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backend::Backend, config::ProverConfig};
+use ethrex_prover_lib::{backend::BackendType, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -174,6 +172,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .committer_opts
                     .on_chain_proposer_address
                     .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
+                timelock_address: opts.committer_opts.timelock_address,
                 first_wake_up_time_ms: opts.committer_opts.first_wake_up_time_ms.unwrap_or(0),
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 batch_gas_limit: opts.committer_opts.batch_gas_limit,
@@ -231,7 +230,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 network: resolve_aligned_network(
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
-                fee_estimate: opts.aligned_opts.fee_estimate,
+                from_block: opts.aligned_opts.from_block,
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -611,6 +610,13 @@ pub struct CommitterOptions {
     )]
     pub on_chain_proposer_address: Option<Address>,
     #[arg(
+        long = "l1.timelock-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_TIMELOCK_ADDRESS",
+        help_heading = "L1 Committer options"
+    )]
+    pub timelock_address: Option<Address>,
+    #[arg(
         long = "committer.commit-time",
         default_value = "60000",
         value_name = "UINT64",
@@ -653,6 +659,7 @@ impl Default for CommitterOptions {
             )
             .ok(),
             on_chain_proposer_address: None,
+            timelock_address: None,
             commit_time_ms: 60000,
             batch_gas_limit: None,
             first_wake_up_time_ms: None,
@@ -680,6 +687,7 @@ impl CommitterOptions {
         self.on_chain_proposer_address = self
             .on_chain_proposer_address
             .or(defaults.on_chain_proposer_address);
+        self.timelock_address = self.timelock_address.or(defaults.timelock_address);
         self.batch_gas_limit = self.batch_gas_limit.or(defaults.batch_gas_limit);
         self.first_wake_up_time_ms = self
             .first_wake_up_time_ms
@@ -852,16 +860,14 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub aligned_network: Option<String>,
-
     #[arg(
-        long = "aligned.fee-estimate",
-        default_value = "instant",
-        value_name = "FEE_ESTIMATE",
-        env = "ETHREX_ALIGNED_FEE_ESTIMATE",
-        help = "Fee estimate for Aligned sdk",
+        long = "aligned.from-block",
+        value_name = "BLOCK_NUMBER",
+        env = "ETHREX_ALIGNED_FROM_BLOCK",
+        help = "Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.",
         help_heading = "Aligned options"
     )]
-    pub fee_estimate: String,
+    pub from_block: Option<u64>,
 }
 
 impl Default for AlignedOptions {
@@ -871,7 +877,7 @@ impl Default for AlignedOptions {
             aligned_verifier_interval_ms: 5000,
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
-            fee_estimate: "instant".to_string(),
+            from_block: None,
         }
     }
 }
@@ -883,6 +889,7 @@ impl AlignedOptions {
             .aligned_network
             .clone()
             .or(defaults.aligned_network.clone());
+        self.from_block = self.from_block.or(defaults.from_block);
     }
 }
 
@@ -1045,7 +1052,7 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options",
         value_enum
     )]
-    pub backend: Backend,
+    pub backend: BackendType,
     #[arg(
         long = "proof-coordinators",
         value_name = "URL",
@@ -1105,7 +1112,7 @@ impl Default for ProverClientOptions {
             ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
-            backend: Backend::Exec,
+            backend: BackendType::Exec,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }
