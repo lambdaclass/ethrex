@@ -6,6 +6,12 @@
 
 - Optimize storage layer for block execution by reducing lock contention and allocations [#6207](https://github.com/lambdaclass/ethrex/pull/6207)
 
+### 2026-02-09
+
+- Arc-wrap bloom filter in TrieLayerCache to eliminate ~875KB deep copy per block [#6163](https://github.com/lambdaclass/ethrex/pull/6163)
+- Add shared trie node read cache to avoid redundant RocksDB reads across threads [#6163](https://github.com/lambdaclass/ethrex/pull/6163)
+- Pre-encode receipts during execution to avoid redundant bloom+RLP in validation [#6163](https://github.com/lambdaclass/ethrex/pull/6163)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)
