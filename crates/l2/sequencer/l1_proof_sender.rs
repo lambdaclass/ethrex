@@ -593,31 +593,26 @@ impl L1ProofSender {
 
         let send_verify_tx_result = self.send_verify_batches_tx(first_batch, batches).await;
 
-        // On revert with invalid proof and multiple batches, fall back to sending
-        // each batch individually to identify which has the bad proof.
+        // On revert with invalid proof, either fall back to single-batch sending
+        // (to identify the bad proof) or delete the invalid proof directly.
         if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
             ref message, ..
         })) = send_verify_tx_result
             && Self::invalid_proof_type(message).is_some()
-            && batch_count > 1
         {
-            warn!(
-                "Multi-batch verify reverted with invalid proof, falling back to single-batch sending"
-            );
-            for (batch_number, proofs) in batches {
-                self.send_single_batch_proof(*batch_number, proofs).await?;
+            if batch_count > 1 {
+                warn!(
+                    "Multi-batch verify reverted with invalid proof, falling back to single-batch sending"
+                );
+                for (batch_number, proofs) in batches {
+                    self.send_single_batch_proof(*batch_number, proofs).await?;
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
-
-        // Single-batch or non-proof error: detect and delete the invalid proof
-        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
-            ref message, ..
-        })) = send_verify_tx_result
-            && let Some((batch_number, _)) = batches.first()
-        {
-            self.try_delete_invalid_proof(message, *batch_number)
-                .await?;
+            if let Some((batch_number, _)) = batches.first() {
+                self.try_delete_invalid_proof(message, *batch_number)
+                    .await?;
+            }
         }
 
         let verify_tx_hash = send_verify_tx_result?;
