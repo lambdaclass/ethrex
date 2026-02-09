@@ -90,9 +90,7 @@ impl TryFrom<&Path> for Genesis {
             || has_post_merge_fork;
 
         if !is_post_merge {
-            warn!(
-                "Invalid fork, only post-merge networks are supported. The client may not work correctly."
-            );
+            return Err(GenesisError::InvalidFork());
         }
 
         if genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
