@@ -2,9 +2,9 @@ use clap::Parser;
 use ethrex::{
     cli::CLI,
     initializers::{init_l1, init_tracing},
-    utils::{NodeConfigFile, get_client_version, store_node_config_file},
+    utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
 };
-use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
+use ethrex_p2p::{peer_table::PeerTable, types::NodeRecord};
 use serde::Deserialize;
 use std::{path::Path, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
@@ -39,12 +39,14 @@ async fn server_shutdown(
     local_node_record: NodeRecord,
 ) {
     info!("Server shut down started...");
-    let node_config_path = datadir.join("node_config.json");
-    info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
-    store_node_config_file(node_config, node_config_path);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    if !is_memory_datadir(datadir) {
+        let node_config_path = datadir.join("node_config.json");
+        info!("Storing config at {:?}...", node_config_path);
+        let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
+        store_node_config_file(node_config, node_config_path);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
     info!("Server shutting down!");
 }
 

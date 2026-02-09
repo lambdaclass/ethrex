@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
-ethrex-threadpool.workspace = true
 
 ethereum-types.workspace = true
 anyhow = "1.0.86"
@@ -27,17 +27,6 @@ rkyv.workspace = true
 
 [features]
 default = []
-
-
-[dev-dependencies]
-hex.workspace = true
-hex-literal.workspace = true
-proptest = "1.0.0"
-tempfile.workspace = true
-cita_trie = "4.0.0"          # used for proptest comparisons
-hasher = "0.1.4"             # cita_trie needs this
-criterion = "0.5.1"
-rand.workspace = true
 
 [lib]
 path = "./trie.rs"
