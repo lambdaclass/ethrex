@@ -38,7 +38,7 @@ batch=3 proving_time_s=47 proving_time_ms=47123 Proved batch 3 in 47.12s
 make load-test
 
 # Customize with env vars:
-# LOAD_TEST_TX_AMOUNT=50 LOAD_TEST_ENDLESS=true make load-test
+# LOAD_TEST_TX_AMOUNT=50 LOAD_TEST_ENDLESS=true LOAD_TEST_RPC_URL=http://localhost:1729 make load-test
 ```
 
 This sends transactions per account using the test private keys. The sequencer will include them in blocks and batch them for proving.
@@ -71,5 +71,5 @@ The script outputs a markdown file (`sp1_bench_results.md`) with a results table
 The script fetches batch metadata (gas used, tx count, block count) from the Prometheus metrics endpoint at `localhost:3702/metrics`. Pass a custom URL as the second argument if your metrics are elsewhere:
 
 ```bash
-./scripts/sp1_bench_metrics.sh prover.log http://myserver:3702/metrics
+./scripts/sp1_bench_metrics.sh prover.log http://localhost:3702/metrics
 ```

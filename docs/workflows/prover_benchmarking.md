@@ -13,10 +13,11 @@ For details on each tool see [Prover Benchmarking Guide](../l2/prover-benchmarki
 1. **Server hostname** — SSH alias or full hostname where the benchmark will run
 2. **Prover backend** — `sp1`, `risc0`, or `exec` (default: `sp1`)
 3. **GPU enabled?** — Whether to build with `GPU=true` (default: yes for sp1)
-4. **Transaction count** — Number of transactions per account to generate (default: 500)
-5. **Endless mode?** — Whether to run the load test continuously (default: no)
-6. **Branch/commit** — Git ref to benchmark (default: current branch on server)
-7. **Server already running?** — Skip setup steps if the L2 is already running
+4. **Transaction count** — Number of transactions per account to generate (default: 50)
+5. **Batches to prove** — How many batches to wait for before collecting results
+6. **Endless mode?** — Whether to run the load test continuously (default: no)
+7. **Branch/commit** — Git ref to benchmark (default: current branch on server)
+8. **Server already running?** — Skip setup steps if the L2 is already running
 
 Example prompt:
 ```
@@ -25,6 +26,7 @@ Before starting the prover benchmark, I need the following information:
 - Prover backend (sp1/risc0/exec):
 - GPU enabled? (yes/no):
 - Transaction count per account:
+- Number of batches to prove:
 - Run load test in endless mode? (yes/no):
 - Branch or commit to benchmark:
 - Is the L2 already running on this server? (yes/no)
