@@ -19,12 +19,10 @@ This starts the L1 (Docker), deploys contracts, starts Prometheus/Grafana, and r
 
 ```bash
 # Terminal 2 — SP1 prover with timing enabled
-cargo run --release --features "l2,l2-sql,sp1" --manifest-path ../../Cargo.toml -- \
-    l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 --timed
+make init-prover-sp1 PROVER_ARGS=--timed
 
-# With GPU acceleration, add the "gpu" feature:
-# cargo run --release --features "l2,l2-sql,gpu,sp1" --manifest-path ../../Cargo.toml -- \
-#     l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 --timed
+# With GPU acceleration:
+# make init-prover-sp1 GPU=true PROVER_ARGS=--timed
 ```
 
 The prover connects to the proof coordinator and begins polling for batches. The `--timed` flag wraps each `prove()` call with timing instrumentation and logs structured fields:

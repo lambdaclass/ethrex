@@ -68,9 +68,8 @@ Wait for the L2 to start (look for "Started L2 node" or similar in logs).
 ```bash
 # Terminal 2 (tmux session "prover") — redirect output to file for later parsing
 tmux new -s prover
-cargo run --release --features "l2,l2-sql,sp1" --manifest-path ../../Cargo.toml -- \
-    l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 --timed 2>&1 | tee ~/prover.log
-# For GPU: add "gpu" to --features
+make init-prover-sp1 PROVER_ARGS=--timed 2>&1 | tee ~/prover.log
+# For GPU: make init-prover-sp1 GPU=true PROVER_ARGS=--timed 2>&1 | tee ~/prover.log
 # Detach: Ctrl+B, D
 ```
 

@@ -202,19 +202,19 @@ init-prover-sp1:
 	cargo run --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
-	--backend sp1
+	--backend sp1 $(PROVER_ARGS)
 
 init-prover-risc0:
 	cargo run --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
-	--backend risc0
+	--backend risc0 $(PROVER_ARGS)
 
 init-prover-exec:
 	cargo run --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
-	--backend exec
+	--backend exec $(PROVER_ARGS)
 
 
 # ==============================================================================
