@@ -426,6 +426,8 @@ contract OnChainProposer is
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
+
+        emit BatchVerified(lastVerifiedBatch);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -454,7 +456,6 @@ contract OnChainProposer is
                 tdxSignatures[i]
             );
         }
-        emit BatchVerified(lastVerifiedBatch);
     }
 
     /// @inheritdoc IOnChainProposer
