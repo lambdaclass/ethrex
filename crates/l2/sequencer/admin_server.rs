@@ -14,11 +14,16 @@ use crate::sequencer::l1_watcher::{
 use crate::sequencer::metrics::{
     CallMessage as MetricsCallMessage, MetricsGatherer, OutMessage as MetricsOutMessage,
 };
+use crate::sequencer::state_updater::{CallMessage as StateUpdaterCallMessage, StateUpdater};
 use axum::extract::{Path, State};
 use axum::http::Uri;
 use axum::response::IntoResponse;
 use axum::serve::WithGracefulShutdown;
-use axum::{Json, Router, http::StatusCode, routing::get};
+use axum::{
+    Json, Router,
+    http::StatusCode,
+    routing::{get, post},
+};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use spawned_concurrency::error::GenServerError;
@@ -38,6 +43,7 @@ pub struct Admin {
     pub l1_watcher: Option<GenServerHandle<L1Watcher>>,
     pub l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
     pub block_producer: Option<GenServerHandle<BlockProducer>>,
+    pub state_updater: Option<GenServerHandle<StateUpdater>>,
     #[cfg(feature = "metrics")]
     pub metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
 }
@@ -74,6 +80,7 @@ pub async fn start_api(
     l1_watcher: Option<GenServerHandle<L1Watcher>>,
     l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
     block_producer: Option<GenServerHandle<BlockProducer>>,
+    state_updater: Option<GenServerHandle<StateUpdater>>,
     #[cfg(feature = "metrics")] metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
@@ -82,6 +89,7 @@ pub async fn start_api(
         l1_watcher,
         l1_proof_sender,
         block_producer,
+        state_updater,
         #[cfg(feature = "metrics")]
         metrics_gatherer,
     };
@@ -92,6 +100,10 @@ pub async fn start_api(
         .route("/committer/stop", get(stop_committer))
         .route("/admin/health", get(admin_health))
         .route("/health", get(health))
+        .route(
+            "/state-updater/stop-at/{block_number}",
+            post(set_sequencer_stop_at),
+        )
         .with_state(admin.clone())
         .fallback(not_found);
     let http_listener = TcpListener::bind(http_addr)
@@ -259,4 +271,21 @@ async fn not_found(uri: Uri) -> (StatusCode, String) {
         StatusCode::NOT_FOUND,
         format!("Method {uri} does not exist"),
     )
+}
+
+async fn set_sequencer_stop_at(
+    State(admin): State<Admin>,
+    Path(block_number): Path<u64>,
+) -> Result<Json<Value>, AdminErrorResponse> {
+    let Some(mut state_updater) = admin.state_updater else {
+        return Err(AdminErrorResponse::NoHandle);
+    };
+
+    match state_updater
+        .call(StateUpdaterCallMessage::StopAt(block_number))
+        .await
+    {
+        Ok(_) => Ok(Json::from(Value::String("ok".into()))),
+        Err(err) => Err(AdminErrorResponse::GenServerError(err)),
+    }
 }

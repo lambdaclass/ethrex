@@ -1,7 +1,7 @@
 use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
 
-use crate::{Nibbles, Node, NodeRLP, Trie, error::TrieError};
+use crate::{Nibbles, Node, Trie, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -25,11 +25,18 @@ pub trait TrieDB: Send + Sync {
     fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
+    /// Commits any pending changes to the underlying storage
+    /// For read-only or in-memory implementations, this is a no-op
+    fn commit(&self) -> Result<(), TrieError> {
+        Ok(())
+    }
+
     fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
         false
     }
 }
 
+// TODO: we should replace this with BackendTrieDB
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 #[derive(Default)]
 pub struct InMemoryTrieDB {
@@ -59,9 +66,10 @@ impl InMemoryTrieDB {
         }
     }
 
+    // Do not remove or make private as we use this in ethrex-replay
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
+        state_nodes: &BTreeMap<H256, Node>,
     ) -> Result<Self, TrieError> {
         let mut embedded_root = Trie::get_embedded_root(state_nodes, root_hash)?;
         let mut hashed_nodes = vec![];
@@ -81,6 +89,11 @@ impl InMemoryTrieDB {
             Some(prefix) => prefix.concat(&path),
             None => path,
         }
+    }
+
+    // Do not remove or make private as we use this in ethrex-replay
+    pub fn inner(&self) -> NodeMap {
+        Arc::clone(&self.inner)
     }
 }
 

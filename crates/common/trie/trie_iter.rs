@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 use crate::{
     PathRLP, Trie, TrieDB, TrieError, ValueRLP,
@@ -39,14 +39,17 @@ impl TrieIterator {
             db: &dyn TrieDB,
             prefix_nibbles: Nibbles,
             mut target_nibbles: Nibbles,
-            mut node: NodeRef,
+            node: NodeRef,
             new_stack: &mut Vec<(Nibbles, NodeRef)>,
         ) -> Result<(), TrieError> {
-            let Some(next_node) = node.get_node_mut(db, prefix_nibbles.clone()).ok().flatten()
+            let Some(mut next_node) = node
+                .get_node_checked(db, prefix_nibbles.clone())
+                .ok()
+                .flatten()
             else {
                 return Ok(());
             };
-            match &next_node {
+            match Arc::make_mut(&mut next_node) {
                 Node::Branch(branch_node) => {
                     // Add all children to the stack (in reverse order so we process first child frist)
                     let Some(choice) = target_nibbles.next_choice() else {
@@ -141,7 +144,7 @@ impl Iterator for TrieIterator {
         // Fetch the last node in the stack
         let (mut path, next_node_ref) = self.stack.pop()?;
         let next_node = next_node_ref
-            .get_node(self.db.as_ref(), path.clone())
+            .get_node_checked(self.db.as_ref(), path.clone())
             .ok()
             .flatten()?;
         match &(*next_node) {
@@ -180,72 +183,5 @@ impl TrieIterator {
             Node::Extension(_) => None,
             Node::Leaf(leaf_node) => Some((p.to_bytes(), leaf_node.value)),
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use proptest::{
-        collection::{btree_map, vec},
-        prelude::any,
-        proptest,
-    };
-
-    #[test]
-    fn trie_iter_content_advanced() {
-        let expected_content = vec![
-            (vec![0, 9], vec![3, 4]),
-            (vec![1, 2], vec![5, 6]),
-            (vec![2, 7], vec![7, 8]),
-        ];
-
-        let mut trie = Trie::new_temp();
-        for (path, value) in expected_content.clone() {
-            trie.insert(path, value).unwrap()
-        }
-        let mut iter = trie.into_iter();
-        iter.advance(vec![1, 2]).unwrap();
-        let content = iter.content().collect::<Vec<_>>();
-        assert_eq!(content, expected_content[1..]);
-
-        let mut trie = Trie::new_temp();
-        for (path, value) in expected_content.clone() {
-            trie.insert(path, value).unwrap()
-        }
-        let mut iter = trie.into_iter();
-        iter.advance(vec![1, 3]).unwrap();
-        let content = iter.content().collect::<Vec<_>>();
-        assert_eq!(content, expected_content[2..]);
-    }
-
-    #[test]
-    fn trie_iter_content() {
-        let expected_content = vec![
-            (vec![0, 9], vec![3, 4]),
-            (vec![1, 2], vec![5, 6]),
-            (vec![2, 7], vec![7, 8]),
-        ];
-        let mut trie = Trie::new_temp();
-        for (path, value) in expected_content.clone() {
-            trie.insert(path, value).unwrap()
-        }
-        let content = trie.into_iter().content().collect::<Vec<_>>();
-        assert_eq!(content, expected_content);
-    }
-
-    proptest! {
-
-        #[test]
-        fn proptest_trie_iter_content(data in btree_map(vec(any::<u8>(), 5..100), vec(any::<u8>(), 5..100), 5..100)) {
-            let expected_content = data.clone().into_iter().collect::<Vec<_>>();
-            let mut trie = Trie::new_temp();
-            for (path, value) in data.into_iter() {
-                trie.insert(path, value).unwrap()
-            }
-            let content = trie.into_iter().content().collect::<Vec<_>>();
-            assert_eq!(content, expected_content);
-        }
     }
 }

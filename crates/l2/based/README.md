@@ -135,7 +135,7 @@ COMPILE_CONTRACTS=true \
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-  --genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+  --genesis-l1-path ../../fixtures/genesis/l1.json \
   --genesis-l2-path ../../fixtures/genesis/l2.json \
   --contracts-path contracts \
   --bridge-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
@@ -183,7 +183,6 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 \
   --l1.on-chain-proposer-address $ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS \
   --l1.bridge-address $ETHREX_WATCHER_BRIDGE_ADDRESS \
   --based \
-  --p2p.enabled \
   --p2p.port 30303 \
   --discovery.port 30303
 ```

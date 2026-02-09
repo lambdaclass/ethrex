@@ -1,5 +1,6 @@
 name: L1
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
   merge_group:
@@ -9,34 +10,51 @@ on:
 permissions:
   contents: read
   actions: write
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   detect-changes:
-      runs-on: ubuntu-latest
-      outputs:
-        run_tests: ${{ steps.finish.outputs.run_tests }}
-      steps:
-        - uses: actions/checkout@v4
-        - uses: dorny/paths-filter@v3
-          id: filter
-          with:
-            filters: |
-              run_tests:
-                - '!crates/l2/**'
-        - name: finish
-          id: finish
-          run: |
-            if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
-                echo "run_tests=true" >> "$GITHUB_OUTPUT"
-            else
-                echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
-            fi
-        - name: Print result
-          run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
+    runs-on: ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.finish.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run_tests:
+              - '!crates/l2/**'
+            non_docs:
+              - "!docs/**"
+            code_changed:
+              - "**/*.rs"
+              - "**/*.toml"
+              - "**/*.lock"
+      - name: finish
+        id: finish
+        run: |
+          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+              # In merge queue, only run lint if code files changed
+              echo "run_tests=${{ steps.filter.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+              echo "run_tests=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Print result
+        run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
 
   lint:
     # "Lint" is a required check, don't change the name
@@ -82,11 +100,13 @@ jobs:
         working-directory: tooling
 
   test:
-    # "Test" is a required check, don't change the name
-    name: Test
+    name: Test - ${{ matrix.runner }}
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -99,7 +119,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          cargo test --workspace --exclude ethrex-l2
+          cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
@@ -121,8 +141,12 @@ jobs:
         name: Build Ethrex Docker Image
         uses: ./.github/actions/build-docker
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+          variant: l1
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -176,6 +200,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    env:
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -185,11 +211,10 @@ jobs:
             # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
             buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
             artifact_prefix: rpc_compat
-          # muted until further notice
-          # - name: "Devp2p tests"
-          #   simulation: devp2p
-          #   limit: discv4|eth|snap/Ping|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate|AccountRange|GetTrieNodes|GetByteCodes|GetStorageRanges|Findnode|BlobViolations
-          #   artifact_prefix: devp2p
+          - name: "Devp2p tests"
+            simulation: devp2p
+            limit: discv4|eth|snap
+            artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             limit: engine-(auth|exchange-capabilities)/
@@ -252,6 +277,13 @@ jobs:
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
+      - name: Log in to the Container registry
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
       - name: Run Hive Simulation
         id: run-hive-action
         uses: ethpandaops/hive-github-action@v0.5.0
@@ -278,11 +310,44 @@ jobs:
           if-no-files-found: warn
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  unit-tests:
+    # "Test" is a required check, don't change the name
+    name: Test
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Job Assertoor Tx Check failed"
+            exit 1
+          fi
+
+  check-cargo-locks:
+    name: Check Cargo.lock
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      # If this fails you should run `make update-cargo-lock`
+      - name: Check Cargo.lock files are committed
+        run: |
+          make check-cargo-lock
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [detect-changes, run-assertoor, run-hive]
+    needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
     steps:

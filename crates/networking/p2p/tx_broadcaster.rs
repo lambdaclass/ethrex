@@ -13,10 +13,10 @@ use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::{
-    discv4::peer_table::{PeerTable, PeerTableError},
+    peer_table::{PeerTable, PeerTableError},
     rlpx::{
         Message,
         connection::server::PeerConnection,
@@ -112,7 +112,7 @@ pub enum OutMessage {
 }
 
 impl TxBroadcaster {
-    pub async fn spawn(
+    pub fn spawn(
         kademlia: PeerTable,
         blockchain: Arc<Blockchain>,
         tx_broadcasting_time_interval: u64,
@@ -184,7 +184,7 @@ impl TxBroadcaster {
             .get_txs_for_broadcast()
             .map_err(|_| TxBroadcasterError::Broadcast)?;
         if txs_to_broadcast.is_empty() {
-            debug!("No transactions to broadcast");
+            trace!("No transactions to broadcast");
             return Ok(());
         }
         let peers = self.peer_table.get_peers_with_capabilities().await?;
@@ -321,7 +321,7 @@ impl GenServer for TxBroadcaster {
     ) -> CastResponse {
         match message {
             Self::CastMsg::BroadcastTxs => {
-                debug!(received = "BroadcastTxs");
+                trace!(received = "BroadcastTxs");
 
                 let _ = self.broadcast_txs().await.inspect_err(|_| {
                     error!("Failed to broadcast transactions");

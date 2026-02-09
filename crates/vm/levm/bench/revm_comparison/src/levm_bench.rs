@@ -57,7 +57,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
         state_root: *EMPTY_TRIE_HASH,
         ..Default::default()
     };
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header));
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header).unwrap());
 
     let mut cache = FxHashMap::default();
     cache.insert(

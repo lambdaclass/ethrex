@@ -5,11 +5,13 @@ use crate::{
     gas_cost::{self, max_message_call_gas},
     memory::calculate_memory_size,
     precompiles,
-    utils::{address_to_word, word_to_address, *},
+    utils::{
+        address_to_word, create_eth_transfer_log, create_selfdestruct_log, word_to_address, *,
+    },
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
+use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
 use ethrex_common::{
     tracing::CallType::{self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL},
     types::Code,
@@ -567,11 +569,33 @@ impl<'a> VM<'a> {
 
                 self.substate.add_selfdestruct(to);
             }
+
+            // EIP-7708: Emit appropriate log for ETH movement
+            if self.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
+                if to != beneficiary {
+                    let log = create_eth_transfer_log(to, beneficiary, balance);
+                    self.substate.add_log(log);
+                } else if self.substate.is_account_created(&to) {
+                    // Selfdestruct to self - only log when account is actually being destroyed
+                    let log = create_selfdestruct_log(to, balance);
+                    self.substate.add_log(log);
+                }
+            }
         } else {
             self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
             self.substate.add_selfdestruct(to);
+
+            // EIP-7708: Emit appropriate log for ETH movement
+            if self.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
+                let log = if to != beneficiary {
+                    create_eth_transfer_log(to, beneficiary, balance)
+                } else {
+                    create_selfdestruct_log(to, balance)
+                };
+                self.substate.add_log(log);
+            }
         }
 
         self.tracer
@@ -667,7 +691,7 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
-            self.current_call_frame.stack.push1(FAIL)?;
+            self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue);
@@ -682,7 +706,8 @@ impl<'a> VM<'a> {
             deployer,
             new_address,
             new_address,
-            Code::from_bytecode(code),
+            // SAFETY: init code hash is never used
+            Code::from_bytecode_unchecked(code, H256::zero()),
             value,
             Bytes::new(),
             false,
@@ -703,6 +728,13 @@ impl<'a> VM<'a> {
 
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
+
+        // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
+        // Must be after push_backup() so the log reverts if the child context reverts
+        if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
+            let log = create_eth_transfer_log(deployer, new_address, value);
+            self.substate.add_log(log);
+        }
 
         Ok(OpcodeResult::Continue)
     }
@@ -795,7 +827,7 @@ impl<'a> VM<'a> {
             call_frame.sub_return_data = ctx_result.output.clone();
 
             // What to do, depending on TxResult
-            call_frame.stack.push1(match &ctx_result.result {
+            call_frame.stack.push(match &ctx_result.result {
                 TxResult::Success => SUCCESS,
                 TxResult::Revert(_) => FAIL,
             })?;
@@ -803,6 +835,13 @@ impl<'a> VM<'a> {
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
+
+                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE to DIFFERENT accounts
+                // Self-transfers should NOT emit a log per the EIP spec
+                if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() && msg_sender != to {
+                    let log = create_eth_transfer_log(msg_sender, to, value);
+                    self.substate.add_log(log);
+                }
             }
 
             self.tracer.exit_context(&ctx_result, false)?;
@@ -837,6 +876,18 @@ impl<'a> VM<'a> {
             }
 
             self.substate.push_backup();
+
+            // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE to DIFFERENT accounts
+            // Must be after push_backup() so the log reverts if the child context reverts
+            // Self-transfers should NOT emit a log per the EIP spec
+            if should_transfer_value
+                && self.env.config.fork >= Fork::Amsterdam
+                && !value.is_zero()
+                && msg_sender != to
+            {
+                let log = create_eth_transfer_log(msg_sender, to, value);
+                self.substate.add_log(log);
+            }
         }
 
         Ok(OpcodeResult::Continue)
@@ -916,11 +967,11 @@ impl<'a> VM<'a> {
         // What to do, depending on TxResult
         match &ctx_result.result {
             TxResult::Success => {
-                self.current_call_frame.stack.push1(SUCCESS)?;
+                self.current_call_frame.stack.push(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
-                self.current_call_frame.stack.push1(FAIL)?;
+                self.current_call_frame.stack.push(FAIL)?;
             }
         };
 
@@ -963,7 +1014,7 @@ impl<'a> VM<'a> {
         // What to do, depending on TxResult
         match ctx_result.result.clone() {
             TxResult::Success => {
-                parent_call_frame.stack.push1(address_to_word(to))?;
+                parent_call_frame.stack.push(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
             }
             TxResult::Revert(err) => {
@@ -972,7 +1023,7 @@ impl<'a> VM<'a> {
                     parent_call_frame.sub_return_data = ctx_result.output.clone();
                 }
 
-                parent_call_frame.stack.push1(FAIL)?;
+                parent_call_frame.stack.push(FAIL)?;
             }
         };
 
@@ -1033,7 +1084,7 @@ impl<'a> VM<'a> {
             .gas_remaining
             .checked_add(gas_limit as i64)
             .ok_or(InternalError::Overflow)?;
-        callframe.stack.push1(FAIL)?; // It's the same as revert for CREATE
+        callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 
         self.tracer.exit_early(0, Some(reason))?;
         Ok(())

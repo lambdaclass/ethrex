@@ -1,15 +1,14 @@
 use crate::based::block_fetcher::BlockFetcherError;
-use crate::based::state_updater::StateUpdaterError;
 use crate::sequencer::admin_server::AdminError;
+use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
-use aligned_sdk::common::errors::SubmitError;
+use aligned_sdk::gateway::provider::GatewayError;
 use ethereum_types::FromStrRadixErr;
-use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
+use ethrex_blockchain::error::{ChainError, InvalidBlockError, InvalidForkChoice};
 use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
-use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_rpc::signer::SignerError;
 use ethrex_metrics::MetricsError;
 use ethrex_rpc::clients::EngineClientError;
@@ -108,8 +107,6 @@ pub enum ProofCoordinatorError {
     InternalError(String),
     #[error("ProofCoordinator failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("ProofCoordinator encountered a StateDiffError")]
-    StateDiffError(#[from] StateDiffError),
     #[error("ProofCoordinator encountered a ExecutionCacheError")]
     ExecutionCacheError(#[from] ExecutionCacheError),
     #[error("ProofCoordinator encountered a BlobsBundleError: {0}")]
@@ -144,23 +141,23 @@ pub enum ProofSenderError {
     InternalError(#[from] GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
     RollUpStoreError(#[from] RollupStoreError),
-    #[error("Proof Sender failed to estimate Aligned fee: {0}")]
-    AlignedFeeEstimateError(String),
-    #[error("Proof Sender failed to get nonce from batcher: {0}")]
+    #[error("Proof Sender failed to get nonce from gateway: {0}")]
     AlignedGetNonceError(String),
-    #[error("Proof Sender failed to submit proof(s): {0}")]
-    AlignedSubmitProofError(Box<SubmitError>),
+    #[error("Proof Sender failed to submit proof(s): {0:?}")]
+    AlignedSubmitProofError(GatewayError),
     #[error("Wrong batch proof format; should be compressed but found groth16 instead")]
     AlignedWrongProofFormat,
+    #[error("Aligned mode only supports SP1 proofs, got {0}")]
+    AlignedUnsupportedProverType(String),
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
     #[error("Failed to convert integer")]
     TryIntoError(#[from] std::num::TryFromIntError),
 }
 
-impl From<SubmitError> for ProofSenderError {
-    fn from(value: SubmitError) -> Self {
-        ProofSenderError::AlignedSubmitProofError(value.into())
+impl From<GatewayError> for ProofSenderError {
+    fn from(value: GatewayError) -> Self {
+        ProofSenderError::AlignedSubmitProofError(value)
     }
 }
 
@@ -229,6 +226,14 @@ pub enum BlockProducerError {
     InternalError(#[from] GenServerError),
     #[error("EthClientError error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
+}
+
+impl From<InvalidBlockError> for BlockProducerError {
+    fn from(err: InvalidBlockError) -> Self {
+        BlockProducerError::ChainError(ChainError::from(err))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -237,7 +242,7 @@ pub enum CommitterError {
     EthClientError(#[from] EthClientError),
     #[error("Committer failed to  {0}")]
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
-    #[error("Committer failed retrieve block from storage: {0}")]
+    #[error("Committer Store Error: {0}")]
     StoreError(#[from] StoreError),
     #[error("Committer failed retrieve block from rollup storage: {0}")]
     RollupStoreError(#[from] RollupStoreError),
@@ -249,8 +254,6 @@ pub enum CommitterError {
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage: {0}")]
     FailedToGetInformationFromStorage(String),
-    #[error("Committer failed to encode state diff: {0}")]
-    FailedToEncodeStateDiff(#[from] StateDiffError),
     #[error("Committer failed to open Points file: {0}")]
     FailedToOpenPointsFile(#[from] std::io::Error),
     #[error("Committer failed to re-execute block: {0}")]
@@ -295,6 +298,8 @@ pub enum CommitterError {
     ChainError(#[from] ChainError),
     #[error("Failed due to invalid fork choice: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
+    #[error("Privileged transaction hash could not be computed")]
+    InvalidPrivilegedTransaction,
 }
 
 #[derive(Debug, thiserror::Error)]

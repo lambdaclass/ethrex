@@ -1,13 +1,13 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_rlp::decode::RLPDecode;
 
-use crate::{Nibbles, Node, Trie, TrieDB, TrieError};
+use crate::{Nibbles, Node, NodeHash, Trie, TrieDB, TrieError};
 
-pub type TrieWitness = Arc<Mutex<HashSet<Vec<u8>>>>;
+pub type TrieWitness = Arc<Mutex<HashMap<NodeHash, Node>>>;
 
 pub struct TrieLogger {
     inner_db: Box<dyn TrieDB>,
@@ -15,7 +15,7 @@ pub struct TrieLogger {
 }
 
 impl TrieLogger {
-    pub fn get_witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
+    pub fn get_witness(&self) -> Result<HashMap<NodeHash, Node>, TrieError> {
         let lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
         Ok(lock.clone())
     }
@@ -23,7 +23,7 @@ impl TrieLogger {
     pub fn open_trie(trie: Trie) -> (TrieWitness, Trie) {
         let root = trie.hash_no_commit();
         let db = trie.db;
-        let witness = Arc::new(Mutex::new(HashSet::new()));
+        let witness = Arc::new(Mutex::new(HashMap::new()));
         let logger = TrieLogger {
             inner_db: db,
             witness: witness.clone(),
@@ -39,7 +39,7 @@ impl TrieDB for TrieLogger {
             && let Ok(decoded) = Node::decode(result)
         {
             let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-            lock.insert(decoded.encode_to_vec());
+            lock.insert(decoded.compute_hash(), decoded);
         }
         Ok(result)
     }

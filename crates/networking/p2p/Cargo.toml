@@ -4,18 +4,21 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
-ethrex-threadpool.workspace = true
+ethrex-l2-common = { workspace = true, optional = true }
 ethereum-types.workspace = true
+ethrex-metrics = { workspace = true, features = ["metrics"], optional = true }
 
 async-trait.workspace = true
 tracing.workspace = true
@@ -33,11 +36,11 @@ spawned-concurrency.workspace = true
 sha2.workspace = true
 futures.workspace = true
 indexmap.workspace = true
+rustc-hash.workspace = true
 rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
-sha3 = "0.10.8"
 
 serde_json = "1.0.117"
 
@@ -48,11 +51,15 @@ aes = "0.8.4"
 ctr = "0.9.2"
 rand = "0.8.5"
 
+# discv5
+aes-gcm = { version = "0.10.3", optional = true }
+hkdf = { version = "0.12.4", optional = true }
+
 rayon = "1.10.0"
 crossbeam.workspace = true
 
 [dev-dependencies]
-hex-literal = "0.4.1"
+hex-literal.workspace = true
 
 [lib]
 path = "./p2p.rs"
@@ -61,7 +68,11 @@ path = "./p2p.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
-l2 = ["dep:ethrex-storage-rollup"]
+l2 = ["dep:ethrex-storage-rollup", "dep:ethrex-l2-common"]
+test-utils = []
+metrics = ["dep:ethrex-metrics"]
+# discv5 is currently experimental and should only be enabled for development purposes
+experimental-discv5 = ["dep:aes-gcm", "dep:hkdf"]
 
 [lints.clippy]
 unwrap_used = "deny"

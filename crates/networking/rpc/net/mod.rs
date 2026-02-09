@@ -13,8 +13,10 @@ pub fn version(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcEr
 }
 
 pub async fn peer_count(_req: &RpcRequest, mut context: RpcApiContext) -> Result<Value, RpcErr> {
-    let total_peers = context
-        .peer_handler
+    let Some(peer_handler) = &mut context.peer_handler else {
+        return Err(RpcErr::Internal("Peer handler not initialized".to_string()));
+    };
+    let total_peers = peer_handler
         .count_total_peers()
         .await
         .map_err(|e| RpcErr::Internal(format!("Could not retrieve peer count: {e}")))?;

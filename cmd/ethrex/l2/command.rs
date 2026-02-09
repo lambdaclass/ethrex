@@ -8,15 +8,21 @@ use crate::{
     },
     utils::{self, default_datadir, init_datadir, parse_private_key},
 };
+use bytes::Bytes;
 use clap::{FromArgMatches, Parser, Subcommand};
-use ethrex_common::utils::keccak;
-use ethrex_common::{
-    Address, H256, U256,
-    types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
+use ethrex_blockchain::{
+    Blockchain, BlockchainOptions, BlockchainType, L2Config, fork_choice::apply_fork_choice,
 };
+use ethrex_common::{
+    Address, U256,
+    types::{BYTES_PER_BLOB, Block, blobs_bundle, bytes_from_blob, fee_config::FeeConfig},
+};
+use ethrex_common::{types::BlobsBundle, utils::keccak};
 use ethrex_config::networks::Network;
-use ethrex_l2_common::{calldata::Value, l1_messages::get_l1_message_hash, state_diff::StateDiff};
+use ethrex_l2::utils::state_reconstruct::get_batch;
+use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::call_contract;
+use ethrex_rlp::decode::RLPDecode as _;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
@@ -66,7 +72,7 @@ impl L2Command {
 
         let matches = app.try_get_matches_from(args_with_program)?;
         let init_options = Options::from_arg_matches(&matches)?;
-        let log_filter_handler = l2::init_tracing(&init_options);
+        let (log_filter_handler, _guard) = l2::init_tracing(&init_options);
         let mut l2_options = init_options;
 
         if l2_options.node_opts.dev {
@@ -89,6 +95,8 @@ impl L2Command {
                 .sequencer_opts
                 .committer_opts
                 .on_chain_proposer_address = Some(contract_addresses.on_chain_proposer_address);
+            l2_options.sequencer_opts.committer_opts.timelock_address =
+                contract_addresses.timelock_address;
             l2_options.sequencer_opts.watcher_opts.bridge_address =
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");
@@ -138,12 +146,16 @@ pub enum Command {
         blobs_dir: PathBuf,
         #[arg(short = 's', long, help = "The path to the store.")]
         store_path: PathBuf,
-        #[arg(short = 'c', long, help = "Address of the L2 proposer coinbase")]
-        coinbase: Address,
+        #[arg(
+            short = 'o',
+            long,
+            help = "Whether Osaka fork is activated or not. If None, it assumes it is active."
+        )]
+        osaka_activated: Option<bool>,
     },
     #[command(about = "Reverts unverified batches.")]
     RevertBatch {
-        #[arg(help = "ID of the batch to revert to")]
+        #[arg(help = "ID of the batch to revert. This and all following batches will be removed.")]
         batch: u64,
         #[arg(
             long = "datadir",
@@ -370,7 +382,7 @@ impl Command {
                 genesis,
                 blobs_dir,
                 store_path,
-                coinbase,
+                osaka_activated,
             } => {
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
@@ -388,21 +400,15 @@ impl Command {
                 )
                 .await?;
 
+                let chain_id = store.get_chain_config().chain_id;
+
                 let rollup_store =
-                    StoreRollup::new(&store_path.join("./rollup_store"), rollup_store_type)?;
+                    StoreRollup::new(&store_path.join("rollup_store"), rollup_store_type)?;
                 rollup_store
                     .init()
                     .await
                     .map_err(|e| format!("Failed to init rollup store: {e}"))
                     .unwrap();
-
-                // Get genesis
-                let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
-
-                let mut current_state_root = genesis_header.state_root;
-
-                let mut last_block_number = 0;
-                let mut new_canonical_blocks = vec![];
 
                 // Iterate over each blob
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
@@ -418,100 +424,117 @@ impl Command {
                         panic!("Invalid blob size");
                     }
 
-                    // Decode state diff from blob
                     let blob = bytes_from_blob(blob.into());
-                    let state_diff = StateDiff::decode(&blob)?;
 
-                    // Apply all account updates to trie
-                    let mut trie = store.open_direct_state_trie(current_state_root)?;
-
-                    let account_updates = state_diff.to_account_updates(&trie)?;
-
-                    let account_updates_list = store
-                        .apply_account_updates_from_trie_batch(&mut trie, account_updates.values())
-                        .map_err(|e| format!("Error applying account updates: {e}"))
-                        .unwrap();
-
-                    store
-                        .open_direct_state_trie(current_state_root)?
-                        .db()
-                        .put_batch(account_updates_list.state_updates)?;
-
-                    current_state_root = account_updates_list.state_trie_hash;
-
-                    store
-                        .write_storage_trie_nodes_batch(account_updates_list.storage_updates)
-                        .await?;
-
-                    store
-                        .write_account_code_batch(account_updates_list.code_updates)
-                        .await?;
-
-                    // Get withdrawal hashes
-                    let message_hashes = state_diff
-                        .l1_messages
-                        .iter()
-                        .map(get_l1_message_hash)
-                        .collect();
-
-                    // Get the first block of the batch
-                    let first_block_number = last_block_number + 1;
-
-                    // Build the header of the last block.
-                    // Note that its state_root is the root of new_trie.
-                    let new_block = BlockHeader {
-                        coinbase,
-                        state_root: account_updates_list.state_trie_hash,
-                        ..state_diff.last_header
-                    };
-
-                    // Store last block.
-                    let new_block_hash = new_block.hash();
-                    store
-                        .add_block_header(new_block_hash, new_block.clone())
-                        .await?;
-                    store
-                        .add_block_number(new_block_hash, state_diff.last_header.number)
-                        .await?;
-                    new_canonical_blocks.push((state_diff.last_header.number, new_block_hash));
-                    println!(
-                        "Stored last block of blob. Block {}. State root {}",
-                        new_block.number, new_block.state_root
+                    // Decode blocks
+                    let blocks_count = u64::from_be_bytes(
+                        blob[0..8].try_into().expect("Failed to get blob length"),
                     );
 
-                    last_block_number = new_block.number;
+                    let mut buf = &blob[8..];
+                    let mut blocks = Vec::new();
+                    for _ in 0..blocks_count {
+                        let (item, rest) = Block::decode_unfinished(buf)?;
+                        blocks.push(item);
+                        buf = rest;
+                    }
 
-                    let batch = Batch {
-                        number: batch_number,
-                        first_block: first_block_number,
-                        last_block: new_block.number,
-                        state_root: new_block.state_root,
-                        privileged_transactions_hash: H256::zero(),
-                        message_hashes,
-                        blobs_bundle: BlobsBundle::empty(),
-                        commit_tx: None,
-                        verify_tx: None,
+                    // Decode fee configs
+                    let mut fee_configs = Vec::new();
+
+                    for _ in 0..blocks_count {
+                        let (consumed, fee_config) = FeeConfig::decode(buf)?;
+                        fee_configs.push(fee_config);
+                        buf = &buf[consumed..];
+                    }
+
+                    // Create blockchain to execute blocks
+                    let blockchain_type =
+                        ethrex_blockchain::BlockchainType::L2(L2Config::default());
+                    let opts = BlockchainOptions {
+                        r#type: blockchain_type,
+                        ..Default::default()
                     };
+                    let blockchain = Blockchain::new(store.clone(), opts);
 
-                    // Store batch info in L2 storage
-                    rollup_store
-                        .seal_batch(batch)
-                        .await
-                        .map_err(|e| format!("Error storing batch: {e}"))
-                        .unwrap();
-                }
-                let Some((last_number, last_hash)) = new_canonical_blocks.pop() else {
-                    return Err(eyre::eyre!("No blocks found in blobs directory"));
-                };
-                store
-                    .forkchoice_update(
-                        Some(new_canonical_blocks),
-                        last_number,
-                        last_hash,
-                        None,
-                        None,
+                    for (i, block) in blocks.iter().enumerate() {
+                        // Update blockchain with the block's fee config
+                        let fee_config = fee_configs
+                            .get(i)
+                            .cloned()
+                            .ok_or_eyre("Fee config not found for block")?;
+
+                        let BlockchainType::L2(l2_config) = &blockchain.options.r#type else {
+                            panic!("Invalid blockchain type. Expected L2.");
+                        };
+
+                        {
+                            let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
+                                panic!("Fee config lock was poisoned.");
+                            };
+
+                            *fee_config_guard = fee_config;
+                        }
+
+                        // Execute block
+                        blockchain.add_block_pipeline(block.clone())?;
+
+                        // Add fee config to rollup store
+                        rollup_store
+                            .store_fee_config_by_block(block.header.number, fee_config)
+                            .await?;
+
+                        info!(
+                            "Added block {} with hash {:#x}",
+                            block.header.number,
+                            block.hash(),
+                        );
+                    }
+                    // Apply fork choice
+                    let latest_hash_on_batch = blocks.last().ok_or_eyre("Batch is empty")?.hash();
+                    apply_fork_choice(
+                        &store,
+                        latest_hash_on_batch,
+                        latest_hash_on_batch,
+                        latest_hash_on_batch,
                     )
                     .await?;
+
+                    // Prepare batch sealing
+                    let blob = blobs_bundle::blob_from_bytes(Bytes::copy_from_slice(&blob))
+                        .expect("Failed to create blob from bytes; blob was just read from file");
+
+                    let wrapper_version = if let Some(activated) = osaka_activated
+                        && !activated
+                    {
+                        None
+                    } else {
+                        Some(1)
+                    };
+
+                    let blobs_bundle =
+                        BlobsBundle::create_from_blobs(&vec![blob], wrapper_version)?;
+
+                    let batch = get_batch(
+                        &store,
+                        &blocks,
+                        U256::from(batch_number),
+                        None,
+                        blobs_bundle,
+                        chain_id,
+                    )
+                    .await?;
+
+                    // Seal batch
+                    rollup_store.seal_batch(batch).await?;
+
+                    // Create checkpoint
+                    let checkpoint_path =
+                        store_path.join(format!("checkpoint_batch_{batch_number}"));
+                    store.create_checkpoint(&checkpoint_path)?;
+
+                    info!("Sealed batch {batch_number}.");
+                }
             }
             Command::RevertBatch {
                 batch,
@@ -562,7 +585,7 @@ impl Command {
                     contract_opts
                         .call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
                         .await?;
-                    info!("Reverted to batch {batch} on OnChainProposer")
+                    info!("Reverted batch {batch} on OnChainProposer")
                 } else {
                     info!("Private key not given, not updating contract.");
                 }
@@ -679,7 +702,7 @@ async fn delete_blocks_from_batch(
     let genesis = network.get_genesis()?;
 
     let mut block_to_delete = last_kept_block + 1;
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis).await?;
 
     while store
         .get_canonical_block_hash(block_to_delete)
@@ -694,7 +717,7 @@ async fn delete_blocks_from_batch(
         .get_block_header(last_kept_block)?
         .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
     store
-        .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
+        .forkchoice_update(vec![], last_kept_block, last_kept_header.hash(), None, None)
         .await?;
     Ok(())
 }

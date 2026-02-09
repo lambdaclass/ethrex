@@ -147,7 +147,7 @@ fn main() {
         state_root: *EMPTY_TRIE_HASH,
         ..Default::default()
     };
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header));
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header).unwrap());
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
 
     // Initialize VM
@@ -164,7 +164,7 @@ fn main() {
     info!("Setting initial stack: {:?}", runner_input.initial_stack);
     let stack = &mut vm.current_call_frame.stack;
     for elem in runner_input.initial_stack {
-        stack.push(&[elem]).expect("Stack Overflow");
+        stack.push(elem).expect("Stack Overflow");
     }
     info!(
         "Setting initial memory: 0x{:x}",

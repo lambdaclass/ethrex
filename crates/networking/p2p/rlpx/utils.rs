@@ -1,13 +1,12 @@
-use ethrex_common::{H256, H512};
+use ethrex_common::H512;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use secp256k1::ecdh::shared_secret_point;
 use secp256k1::{PublicKey, SecretKey};
-use sha3::{Digest, Keccak256};
+use sha2::{Digest, Sha256};
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder, max_compress_len};
 use std::array::TryFromSliceError;
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
     Sha256::digest(data).into()
 }
 use crate::rlpx::error::CryptographyError;
@@ -45,11 +44,6 @@ pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), CryptographyError> {
         .map_err(|error| CryptographyError::CouldNotGetKeyFromSecret(error.to_string()))
 }
 
-/// Cpmputes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
-pub fn node_id(public_key: &H512) -> H256 {
-    H256(Keccak256::new_with_prefix(public_key).finalize().into())
-}
-
 /// Decompresses the received public key
 pub fn decompress_pubkey(pk: &PublicKey) -> H512 {
     let bytes = pk.serialize_uncompressed();
@@ -78,35 +72,4 @@ pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError>
 pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     let mut snappy_decoder = SnappyDecoder::new();
     Ok(snappy_decoder.decompress_vec(msg_data)?)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ecdh_xchng_smoke_test() {
-        use rand::rngs::OsRng;
-
-        let a_sk = SecretKey::new(&mut OsRng);
-        let b_sk = SecretKey::new(&mut OsRng);
-
-        let a_sk_b_pk = ecdh_xchng(&a_sk, &b_sk.public_key(secp256k1::SECP256K1)).unwrap();
-        let b_sk_a_pk = ecdh_xchng(&b_sk, &a_sk.public_key(secp256k1::SECP256K1)).unwrap();
-
-        // The shared secrets should be the same.
-        // The operation done is:
-        //   a_sk * b_pk = a * (b * G) = b * (a * G) = b_sk * a_pk
-        assert_eq!(a_sk_b_pk, b_sk_a_pk);
-    }
-
-    #[test]
-    fn compress_pubkey_decompress_pubkey_smoke_test() {
-        use rand::rngs::OsRng;
-
-        let sk = SecretKey::new(&mut OsRng);
-        let pk = sk.public_key(secp256k1::SECP256K1);
-        let id = decompress_pubkey(&pk);
-        let _pk2 = compress_pubkey(id).unwrap();
-    }
 }

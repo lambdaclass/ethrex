@@ -18,10 +18,12 @@ version = "4.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "../crates/blockchain" }
 ethrex-common = { path = "../crates/common" }
+ethrex-crypto = { path = "../crates/common/crypto" }
 ethrex-config = { path = "../crates/common/config" }
 ethrex-p2p = { path = "../crates/networking/p2p" }
 ethrex-rpc = { path = "../crates/networking/rpc" }
@@ -30,7 +32,6 @@ ethrex-vm = { path = "../crates/vm", default-features = false }
 ethrex-levm = { path = "../crates/vm/levm" }
 ethrex-trie = { path = "../crates/common/trie" }
 ethrex-rlp = { path = "../crates/common/rlp" }
-ethrex-crypto = { path = "../crates/common/crypto" }
 ethrex-l2 = { path = "../crates/l2" }
 ethrex-l2-common = { path = "../crates/l2/common" }
 ethrex-sdk = { path = "../crates/l2/sdk" }
@@ -38,7 +39,6 @@ ethrex-prover = { path = "../crates/l2/prover" }
 ethrex-storage-rollup = { path = "../crates/l2/storage" }
 ethrex = { path = "../cmd/ethrex" }
 ethrex-l2-rpc = { path = "../crates/l2/networking/rpc" }
-ethrex-threadpool = { path = "../crates/concurrency" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -56,7 +56,6 @@ hex-literal = "0.4.1"
 crc32fast = "1.4.2"
 lazy_static = "1.5.0"
 sha2 = "0.10.8"
-sha3 = "0.10.8"
 tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
@@ -78,7 +77,7 @@ libsql = "0.9.10"
 futures = "0.3.31"
 spawned-concurrency = "0.4.2"
 spawned-rt = "0.4.2"
-lambdaworks-crypto = "0.11.0"
+lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
 rayon = "1.10.0"

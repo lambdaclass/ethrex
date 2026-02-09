@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "./interfaces/ICommonBridgeL2.sol";
-import "./interfaces/IL2ToL1Messenger.sol";
+import "./interfaces/IMessenger.sol";
 import "./interfaces/IERC20L2.sol";
 
 /// @title CommonBridge L2 contract.
@@ -12,9 +12,11 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         0x000000000000000000000000000000000000FFFE;
     address public constant BURN_ADDRESS =
         0x0000000000000000000000000000000000000000;
-    /// @notice Token address used to represent the token of the L2
-    address public constant NATIVE_TOKEN_L2 =
+    /// @notice Token address used to represent ETH
+    address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+    mapping(uint256 chainId => uint256 txId) public transactionIds;
 
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
     modifier onlySelf() {
@@ -33,19 +35,14 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
 
         emit WithdrawalInitiated(msg.sender, _receiverOnL1, msg.value);
 
-        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(
+        IMessenger(L1_MESSENGER).sendMessageToL1(
             keccak256(
-                abi.encodePacked(
-                    NATIVE_TOKEN_L2,
-                    NATIVE_TOKEN_L2,
-                    _receiverOnL1,
-                    msg.value
-                )
+                abi.encodePacked(ETH_TOKEN, ETH_TOKEN, _receiverOnL1, msg.value)
             )
         );
     }
 
-    function mintETH(address to) external payable {
+    function mintETH(address to) external payable onlySelf {
         (bool success, ) = to.call{value: msg.value}("");
         if (!success) {
             this.withdraw{value: msg.value}(to);
@@ -78,7 +75,10 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         uint256 amount
     ) external onlySelf {
         IERC20L2 token = IERC20L2(tokenL2);
-        require(token.l1Address() == tokenL1);
+        require(
+            token.l1Address() == tokenL1,
+            "CommonBridgeL2: L1 address mismatch"
+        );
         token.crosschainMint(destination, amount);
     }
 
@@ -89,7 +89,12 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         uint256 amount
     ) external {
         require(amount > 0, "Withdrawal amount must be positive");
-        IERC20L2(tokenL2).crosschainBurn(msg.sender, amount);
+        IERC20L2 token = IERC20L2(tokenL2);
+        require(
+            token.l1Address() == tokenL1,
+            "CommonBridgeL2: L1 address mismatch"
+        );
+        token.crosschainBurn(msg.sender, amount);
         emit ERC20WithdrawalInitiated(tokenL1, tokenL2, destination, amount);
         _withdraw(tokenL1, tokenL2, destination, amount);
     }
@@ -100,8 +105,77 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         address destination,
         uint256 amount
     ) private {
-        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(
+        IMessenger(L1_MESSENGER).sendMessageToL1(
             keccak256(abi.encodePacked(tokenL1, tokenL2, destination, amount))
         );
+    }
+
+    /// @inheritdoc ICommonBridgeL2
+    function transferERC20(
+        uint256 chainId,
+        address to,
+        uint256 amount,
+        address tokenL2,
+        address destTokenL2,
+        uint256 destGasLimit
+    ) external override {
+        IERC20L2 token = IERC20L2(tokenL2);
+        token.crosschainBurn(msg.sender, amount);
+        address tokenL1 = token.l1Address();
+        bytes memory data = abi.encodeCall(
+            ICommonBridgeL2.crosschainMintERC20,
+            (tokenL1, tokenL2, destTokenL2, to, amount)
+        );
+        this.sendToL2(chainId, address(this), destGasLimit, data);
+    }
+
+    function crosschainMintERC20(
+        address tokenL1,
+        address tokenL2,
+        address destTokenL2,
+        address to,
+        uint256 amount
+    ) external onlySelf {
+        this.tryMintERC20(tokenL1, destTokenL2, to, amount);
+    }
+
+    /// @inheritdoc ICommonBridgeL2
+    function sendToL2(
+        uint256 chainId,
+        address to,
+        uint256 destGasLimit,
+        bytes calldata data
+    ) external payable override {
+        _burnGas(destGasLimit);
+        if (msg.value > 0) {
+            IMessenger(L1_MESSENGER).sendMessageToL2(
+                chainId,
+                address(this),
+                address(this),
+                destGasLimit,
+                transactionIds[chainId],
+                msg.value,
+                abi.encodeCall(ICommonBridgeL2.mintETH, (msg.sender))
+            );
+            transactionIds[chainId] += 1;
+        }
+        IMessenger(L1_MESSENGER).sendMessageToL2(
+            chainId,
+            msg.sender,
+            to,
+            destGasLimit,
+            transactionIds[chainId],
+            msg.value,
+            data
+        );
+        transactionIds[chainId] += 1;
+        (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
+        require(success, "Failed to burn Ether");
+    }
+
+    /// Burns at least {amount} gas
+    function _burnGas(uint256 amount) private view {
+        uint256 startingGas = gasleft();
+        while (startingGas - gasleft() < amount) {}
     }
 }

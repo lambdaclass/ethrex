@@ -8,23 +8,71 @@ pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
+use rkyv::{
+    de::Pooling,
+    rancor::Source,
+    ser::{Allocator, Sharing, Writer},
+    validation::{ArchiveContext, SharedContext},
+    with::Skip,
+};
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
 /// A reference to a node.
-#[derive(Clone, Debug)]
+///
+/// Explicit rkyv bounds are needed because this is a recursive type, whose
+/// bounds can't be automatically resolved.
+#[derive(
+    Clone,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
+#[rkyv(serialize_bounds(__S: Writer + Allocator + Sharing, __S::Error: Source))]
+#[rkyv(deserialize_bounds(__D: Pooling, __D::Error: Source))]
+#[rkyv(bytecheck(bounds(__C: ArchiveContext + SharedContext)))]
 pub enum NodeRef {
     /// The node is embedded within the reference.
-    Node(Arc<Node>, OnceLock<NodeHash>),
+    Node(
+        #[rkyv(omit_bounds)] Arc<Node>,
+        #[rkyv(with = Skip)]
+        #[serde(skip)]
+        OnceLock<NodeHash>,
+    ),
     /// The node is in the database, referenced by its hash.
     Hash(NodeHash),
 }
 
 impl NodeRef {
     /// Gets a shared reference to the inner node.
+    /// Requires that the trie is in a consistent state, ie that all leaves being pointed are in the database.
+    /// Outside of snapsync this should always be the case.
     pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+        match self {
+            NodeRef::Node(node, _) => Ok(Some(node.clone())),
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
+            }
+            NodeRef::Hash(_) => db
+                .get(path)?
+                .filter(|rlp| !rlp.is_empty())
+                .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
+                .transpose(),
+        }
+    }
+
+    /// Gets a shared reference to the inner node, checking it's hash.
+    /// Returns `Ok(None)` if the hash is invalid.
+    pub fn get_node_checked(
+        &self,
+        db: &dyn TrieDB,
+        path: Nibbles,
+    ) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
@@ -63,10 +111,7 @@ impl NodeRef {
                 let Some(node) = db
                     .get(path.clone())?
                     .filter(|rlp| !rlp.is_empty())
-                    .and_then(|rlp| match Node::decode(&rlp) {
-                        Ok(node) => (node.compute_hash() == *hash).then_some(Ok(node)),
-                        Err(err) => Some(Err(TrieError::RLPDecode(err))),
-                    })
+                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                     .transpose()?
                 else {
                     return Ok(None);
@@ -116,9 +161,29 @@ impl NodeRef {
     }
 
     pub fn compute_hash(&self) -> NodeHash {
+        *self.compute_hash_ref()
+    }
+
+    pub fn compute_hash_ref(&self) -> &NodeHash {
         match self {
-            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
-            NodeRef::Hash(hash) => *hash,
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash()),
+            NodeRef::Hash(hash) => hash,
+        }
+    }
+
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> &NodeHash {
+        match self {
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash_no_alloc(buf)),
+            NodeRef::Hash(hash) => hash,
+        }
+    }
+
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
+        if let NodeRef::Node(node, hash) = &self
+            && hash.get().is_none()
+        {
+            node.memoize_hashes(buf);
+            let _ = hash.set(node.compute_hash_no_alloc(buf));
         }
     }
 
@@ -126,7 +191,7 @@ impl NodeRef {
     ///
     /// This is used when mutating a node in place, in which case the memoized hash
     /// is not valid anymore.
-    pub(crate) fn clear_hash(&mut self) {
+    pub fn clear_hash(&mut self) {
         if let NodeRef::Node(_, hash) = self {
             hash.take();
         }
@@ -151,9 +216,16 @@ impl From<NodeHash> for NodeRef {
     }
 }
 
+impl From<Arc<Node>> for NodeRef {
+    fn from(value: Arc<Node>) -> Self {
+        Self::Node(value, OnceLock::new())
+    }
+}
+
 impl PartialEq for NodeRef {
     fn eq(&self, other: &Self) -> bool {
-        self.compute_hash() == other.compute_hash()
+        let mut buf = Vec::new();
+        self.compute_hash_no_alloc(&mut buf) == other.compute_hash_no_alloc(&mut buf)
     }
 }
 
@@ -174,12 +246,31 @@ impl From<NodeHash> for ValueOrHash {
     }
 }
 
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    rkyv::Archive,
+)]
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
-#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Branch(Box<BranchNode>),
     Extension(ExtensionNode),
     Leaf(LeafNode),
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        // empty leaf node as a placeholder
+        Self::Leaf(LeafNode {
+            partial: Nibbles::from_bytes(&[]),
+            value: Vec::new(),
+        })
+    }
 }
 
 impl From<Box<BranchNode>> for Node {
@@ -275,11 +366,62 @@ impl Node {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
+        let mut buf = Vec::new();
+        self.memoize_hashes(&mut buf);
         match self {
-            Node::Branch(n) => n.compute_hash(),
-            Node::Extension(n) => n.compute_hash(),
-            Node::Leaf(n) => n.compute_hash(),
+            Node::Branch(n) => n.compute_hash_no_alloc(&mut buf),
+            Node::Extension(n) => n.compute_hash_no_alloc(&mut buf),
+            Node::Leaf(n) => n.compute_hash_no_alloc(&mut buf),
         }
+    }
+
+    /// Computes the node's hash
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+        self.memoize_hashes(buf);
+        match self {
+            Node::Branch(n) => n.compute_hash_no_alloc(buf),
+            Node::Extension(n) => n.compute_hash_no_alloc(buf),
+            Node::Leaf(n) => n.compute_hash_no_alloc(buf),
+        }
+    }
+
+    /// Recursively memoizes the hashes of all nodes of the subtrie that has
+    /// `self` as root (post-order traversal)
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
+        match self {
+            Node::Branch(n) => {
+                for child in &n.choices {
+                    child.memoize_hashes(buf);
+                }
+            }
+            Node::Extension(n) => n.child.memoize_hashes(buf),
+            _ => {}
+        }
+    }
+
+    /// Recursively encodes all embedded nodes of the subtrie that has
+    /// `self` as root.
+    ///
+    /// This won't encode nodes which are not embedded in `self`.
+    pub fn encode_subtrie(&self, encoded: &mut Vec<NodeRLP>) -> Result<(), TrieError> {
+        match self {
+            Node::Branch(node) => {
+                for choice in &node.choices {
+                    if let NodeRef::Node(choice, _) = choice {
+                        choice.encode_subtrie(encoded)?;
+                    }
+                }
+            }
+            Node::Extension(node) => {
+                if let NodeRef::Node(child, _) = &node.child {
+                    child.encode_subtrie(encoded)?;
+                }
+            }
+            Node::Leaf(_) => {}
+        };
+
+        encoded.push(self.encode_to_vec());
+        Ok(())
     }
 }
 

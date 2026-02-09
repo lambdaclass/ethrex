@@ -2,7 +2,7 @@ use crate::types::Genesis;
 use serde_json::{Map, Value};
 use std::path::Path;
 
-fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value>, String> {
+fn sort_config(genesis_map: &Map<String, Value>) -> Result<Map<String, Value>, String> {
     let config_keys_order = [
         "chainId",
         "homesteadBlock",
@@ -64,7 +64,7 @@ fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value
 pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String> {
     let genesis_json = serde_json::to_string(&genesis)
         .map_err(|e| format!("Could not convert genesis to string: {e}"))?;
-    let mut genesis_as_map: Map<String, Value> = serde_json::from_str(&genesis_json)
+    let genesis_as_map: Map<String, Value> = serde_json::from_str(&genesis_json)
         .map_err(|e| format!("Failed to de-serialize genesis file: {e}"))?;
     // Keys sorting based off this ethpandaops example:
     // https://github.com/ethpandaops/ethereum-genesis-generator/blob/master/apps/el-gen/mainnet/genesis.json
@@ -80,7 +80,7 @@ pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String
         "coinbase",
         "alloc",
     ];
-    let ordered_config = sort_config(&mut genesis_as_map)?;
+    let ordered_config = sort_config(&genesis_as_map)?;
     // Some keys that are in our genesis file,
     // but are not in the example above or
     // viceversa.

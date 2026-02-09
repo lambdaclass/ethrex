@@ -14,7 +14,7 @@ on:
       - L2 TDX build
       - LEVM
       - Publish Docker
-      - Publish Ethrex docs page
+      - Publish Ethrex docs to https://docs.ethrex.xyz/
     branches:
       - main
     types:
@@ -50,31 +50,10 @@ jobs:
         id: failed_jobs
         uses: actions/github-script@v7
         with:
+          result-encoding: string
           script: |
-            const runId = context.payload.workflow_run.id;
-            const { owner, repo } = context.repo;
-            const failingConclusions = new Set(['failure', 'timed_out', 'action_required']);
-            const failedJobs = await github.paginate(
-              github.rest.actions.listJobsForWorkflowRun,
-              {
-                owner,
-                repo,
-                run_id: runId,
-                per_page: 100,
-              },
-              response => {
-                const jobs = Array.isArray(response?.data?.jobs) ? response.data.jobs : [];
-                return jobs.filter(
-                  job => job.conclusion && failingConclusions.has(job.conclusion)
-                );
-              }
-            );
-            const ignoredJobs = new Set(['Integration Test']);
-            const relevantJobs = failedJobs
-              .map(job => job.name)
-              .filter(name => !ignoredJobs.has(name));
-            const names = relevantJobs.length > 0 ? relevantJobs.join('\n- ') : 'Unknown job';
-            core.setOutput('names', relevantJobs.length > 0 ? `- ${names}` : names);
+            const collectFailedJobs = require('./scripts/collect_failed_jobs');
+            await collectFailedJobs({ github, core, context });
 
       - name: Post failure to Slack
         env:

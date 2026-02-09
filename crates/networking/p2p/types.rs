@@ -1,15 +1,15 @@
 use bytes::{BufMut, Bytes};
 use ethrex_common::types::ForkId;
 use ethrex_common::{H256, H264, H512};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
-use secp256k1::{PublicKey, SecretKey};
+use secp256k1::{PublicKey, SecretKey, ecdsa::Signature};
 use serde::{Deserialize, Serialize, ser::Serializer};
-use sha3::{Digest, Keccak256};
 use std::net::Ipv6Addr;
 use std::{
     fmt::Display,
@@ -42,12 +42,6 @@ pub struct Endpoint {
     pub ip: IpAddr,
     pub udp_port: u16,
     pub tcp_port: u16,
-}
-
-impl Endpoint {
-    pub fn tcp_address(&self) -> Option<SocketAddr> {
-        (self.tcp_port != 0).then_some(SocketAddr::new(self.ip, self.tcp_port))
-    }
 }
 
 impl RLPEncode for Endpoint {
@@ -190,6 +184,10 @@ impl Node {
     pub fn from_enr_url(enr: &str) -> Result<Self, NodeError> {
         let base64_decoded = ethrex_common::base64::decode(&enr.as_bytes()[4..]);
         let record = NodeRecord::decode(&base64_decoded).map_err(NodeError::from)?;
+        Node::from_enr(&record)
+    }
+
+    pub fn from_enr(record: &NodeRecord) -> Result<Self, NodeError> {
         let pairs = record.decode_pairs();
         let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
             "public key not found in record".into(),
@@ -271,6 +269,7 @@ pub struct NodeRecord {
     pub seq: u64,
     // holds optional values in (key, value) format
     // value represents the rlp encoded bytes
+    // The key/value pairs must be sorted by key and must be unique
     pub pairs: Vec<(Bytes, Bytes)>,
 }
 
@@ -310,7 +309,7 @@ impl NodeRecord {
                     let Ok(bytes) = Bytes::decode(&value) else {
                         continue;
                     };
-                    if bytes.len() < 33 {
+                    if bytes.len() != 33 {
                         continue;
                     }
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
@@ -377,6 +376,23 @@ impl NodeRecord {
         Ok(record)
     }
 
+    pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SecretKey) -> Result<(), NodeError> {
+        // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+        // [forkHash, forkNext]
+        // But the spec requires nested lists:
+        // [[forkHash, forkNext]]
+        let eth = vec![fork_id];
+        self.pairs.push(("eth".into(), eth.encode_to_vec().into()));
+
+        //Pairs need to be sorted by their key.
+        //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
+        //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
+        self.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+        self.signature = self.sign_record(signer)?;
+        Ok(())
+    }
+
     fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
         let digest = &self.get_signature_digest();
         let msg = secp256k1::Message::from_digest_slice(digest)
@@ -388,14 +404,39 @@ impl NodeRecord {
         Ok(H512::from_slice(&signature_bytes))
     }
 
-    pub fn get_signature_digest(&self) -> Vec<u8> {
+    pub fn get_signature_digest(&self) -> [u8; 32] {
         let mut rlp = vec![];
         structs::Encoder::new(&mut rlp)
             .encode_field(&self.seq)
             .encode_key_value_list::<Bytes>(&self.pairs)
             .finish();
-        let digest = Keccak256::digest(&rlp);
-        digest.to_vec()
+        keccak_hash(&rlp)
+    }
+
+    /// Verifies the ENR signature using the embedded public key.
+    /// Returns true if the signature is valid, false otherwise.
+    pub fn verify_signature(&self) -> bool {
+        let pairs = self.decode_pairs();
+        let Some(pubkey_bytes) = pairs.secp256k1 else {
+            return false;
+        };
+
+        let Ok(pubkey) = PublicKey::from_slice(pubkey_bytes.as_bytes()) else {
+            return false;
+        };
+
+        let digest = self.get_signature_digest();
+        let Ok(message) = secp256k1::Message::from_digest_slice(&digest) else {
+            return false;
+        };
+
+        let Ok(signature) = Signature::from_compact(self.signature.as_bytes()) else {
+            return false;
+        };
+
+        secp256k1::SECP256K1
+            .verify_ecdsa(&message, &signature, &pubkey)
+            .is_ok()
     }
 }
 
@@ -403,6 +444,11 @@ impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
     fn from(value: NodeRecordPairs) -> Self {
         let mut pairs = vec![];
         if let Some(eth) = value.eth {
+            // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+            // [forkHash, forkNext]
+            // But the spec requires nested lists:
+            // [[forkHash, forkNext]]
+            let eth = vec![eth];
             pairs.push(("eth".into(), eth.encode_to_vec().into()));
         }
         if let Some(id) = value.id {
@@ -429,10 +475,10 @@ impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
 
 impl RLPDecode for NodeRecord {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if rlp.len() > MAX_NODE_RECORD_ENCODED_SIZE {
+        let decoder = Decoder::new(rlp)?;
+        if decoder.get_payload_len() > MAX_NODE_RECORD_ENCODED_SIZE {
             return Err(RLPDecodeError::InvalidLength);
         }
-        let decoder = Decoder::new(rlp)?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (seq, decoder) = decoder.decode_field("seq")?;
         let (pairs, decoder) = decode_node_record_optional_fields(vec![], decoder)?;
@@ -501,6 +547,7 @@ mod tests {
         utils::public_key_from_signing_key,
     };
     use ethrex_common::H512;
+    use ethrex_rlp::decode::RLPDecode;
     use ethrex_storage::{EngineType, Store};
     use secp256k1::SecretKey;
     use std::{net::SocketAddr, str::FromStr};
@@ -590,5 +637,62 @@ mod tests {
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);
+    }
+
+    #[tokio::test]
+    async fn encode_decode_node_record_with_forkid() {
+        let signer = SecretKey::from_slice(&[
+            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
+            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+        ])
+        .unwrap();
+        let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
+
+        let mut storage =
+            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        storage
+            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
+            .await
+            .expect("Failed to build test genesis");
+
+        let node = Node::new(
+            addr.ip(),
+            addr.port(),
+            addr.port(),
+            public_key_from_signing_key(&signer),
+        );
+        let fork_id = storage.get_fork_id().await.unwrap();
+
+        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        record.set_fork_id(fork_id.clone(), &signer).unwrap();
+
+        record.sign_record(&signer).unwrap();
+
+        let enr_url = record.enr_url().unwrap();
+        let base64_decoded = ethrex_common::base64::decode(&enr_url.as_bytes()[4..]);
+        let parsed_record = NodeRecord::decode(&base64_decoded).unwrap();
+        let pairs = parsed_record.decode_pairs();
+
+        assert_eq!(pairs.eth, Some(fork_id));
+    }
+
+    #[test]
+    fn verify_enr_signature_valid() {
+        // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
+        let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
+        let base64_decoded = ethrex_common::base64::decode(&enr_string.as_bytes()[4..]);
+        let record = NodeRecord::decode(&base64_decoded).unwrap();
+        assert!(record.verify_signature());
+    }
+
+    #[test]
+    fn verify_enr_signature_invalid() {
+        // Use a valid ENR and tamper with the signature
+        let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
+        let base64_decoded = ethrex_common::base64::decode(&enr_string.as_bytes()[4..]);
+        let mut record = NodeRecord::decode(&base64_decoded).unwrap();
+        // Tamper with the signature
+        record.signature = ethrex_common::H512::zero();
+        assert!(!record.verify_signature());
     }
 }

@@ -1,9 +1,14 @@
 use ethrex_common::{
     H256,
-    types::{BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError},
+    types::{BlobsBundleError, BlockHash},
 };
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
+use ethrex_trie::TrieError;
 use ethrex_vm::EvmError;
+
+// Re-export InvalidBlockError from ethrex-common for backwards compatibility
+pub use ethrex_common::InvalidBlockError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChainError {
@@ -17,6 +22,10 @@ pub enum ChainError {
     ParentStateNotFound,
     #[error("DB error: {0}")]
     StoreError(#[from] StoreError),
+    #[error("Trie error: {0}")]
+    TrieError(#[from] TrieError),
+    #[error("RLP decode error: {0}")]
+    RLPDecodeError(#[from] RLPDecodeError),
     #[error("EVM error: {0}")]
     EvmError(EvmError),
     #[error("Invalid Transaction: {0}")]
@@ -51,6 +60,8 @@ impl ChainError {
             ChainError::ParentNotFound => "parent_not_found",
             ChainError::ParentStateNotFound => "parent_state_not_found",
             ChainError::StoreError(_) => "store_error",
+            ChainError::TrieError(_) => "trie_error",
+            ChainError::RLPDecodeError(_) => "rlp_decode_error",
             ChainError::EvmError(_) => "evm_error",
             ChainError::InvalidTransaction(_) => "invalid_transaction",
             ChainError::WitnessGeneration(_) => "witness_generation",
@@ -58,32 +69,6 @@ impl ChainError {
             ChainError::UnknownPayload => "unknown_payload",
         }
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum InvalidBlockError {
-    #[error("Requests hash does not match the one in the header after executing")]
-    RequestsHashMismatch,
-    #[error("World State Root does not match the one in the header after executing")]
-    StateRootMismatch,
-    #[error("Receipts Root does not match the one in the header after executing")]
-    ReceiptsRootMismatch,
-    #[error("Invalid Header, validation failed pre-execution: {0}")]
-    InvalidHeader(#[from] InvalidBlockHeaderError),
-    #[error("Invalid Body, validation failed pre-execution: {0}")]
-    InvalidBody(#[from] InvalidBlockBodyError),
-    #[error("Exceeded MAX_BLOB_GAS_PER_BLOCK")]
-    ExceededMaxBlobGasPerBlock,
-    #[error("Exceeded MAX_BLOB_NUMBER_PER_BLOCK")]
-    ExceededMaxBlobNumberPerBlock,
-    #[error("Gas used doesn't match value in header. Used: {0}, Expected: {1}")]
-    GasUsedMismatch(u64, u64),
-    #[error("Blob gas used doesn't match value in header")]
-    BlobGasUsedMismatch,
-    #[error("Invalid transaction: {0}")]
-    InvalidTransaction(String),
-    #[error("Maximum block size exceeded: Maximum is {0} MiB, but block was {1} MiB")]
-    MaximumRlpSizeExceeded(u64, u64),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -131,7 +116,7 @@ pub enum MempoolError {
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
     #[error("Transaction sender is invalid {0}")]
-    InvalidTxSender(#[from] secp256k1::Error),
+    InvalidTxSender(#[from] ethrex_common::EcdsaError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
 }
@@ -167,4 +152,8 @@ pub enum InvalidForkChoice {
     InvalidAncestor(BlockHash),
     #[error("Cannot find link between Head and the canonical chain")]
     UnlinkedHead,
+
+    // TODO(#5564): handle arbitrary reorgs
+    #[error("State root of the new head is not reachable from the database")]
+    StateNotReachable,
 }

@@ -10,6 +10,11 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   build-binaries:
     if: contains(github.event.pull_request.labels.*.name, 'performance')
@@ -24,7 +29,7 @@ jobs:
         id: cache
         with:
           path: bin/ethrex-${{ matrix.branch }}
-          key: binary-${{ github.event.pull_request[matrix.branch].sha }}
+          key: binary-${{ matrix.branch }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -67,13 +72,13 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: bin/ethrex-base
-          key: binary-${{ github.event.pull_request.base.sha }}
+          key: binary-base-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Fetch HEAD binary
         uses: actions/cache/restore@v3
         with:
           path: bin/ethrex-head
-          key: binary-${{ github.event.pull_request.head.sha }}
+          key: binary-head-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Benchmark against main
         id: run-benchmarks

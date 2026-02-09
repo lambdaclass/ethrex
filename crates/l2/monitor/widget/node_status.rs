@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::{based::sequencer_state::SequencerState, sequencer::errors::MonitorError};
+use crate::sequencer::{errors::MonitorError, sequencer_state::SequencerState};
 
 #[derive(Clone)]
 pub struct NodeStatusTable {
@@ -51,7 +51,11 @@ impl NodeStatusTable {
             .get_latest_block_number()
             .await
             .map_err(|_| MonitorError::GetLatestBlock)?;
-        let active_peers = l2_client.peer_count().await?;
+        let peers = if is_based {
+            Some(l2_client.peer_count().await?)
+        } else {
+            None
+        };
 
         Ok([
             ("Last Update:".to_string(), last_update),
@@ -64,10 +68,9 @@ impl NodeStatusTable {
                 "Last Known Block:".to_string(),
                 last_known_block.to_string(),
             ),
-            if is_based {
-                ("Peers:".to_string(), active_peers.to_string())
-            } else {
-                ("".to_string(), "".to_string())
+            match peers {
+                Some(peer_count) => ("Peers:".to_string(), peer_count.to_string()),
+                None => ("".to_string(), "".to_string()),
             },
         ])
     }

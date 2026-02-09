@@ -15,6 +15,7 @@ use crate::{
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
 use ethrex_common::{H128, H256, H512, Signature};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -27,7 +28,6 @@ use secp256k1::{
     PublicKey, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha3::{Digest, Keccak256};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -78,7 +78,7 @@ pub(crate) async fn perform(
             // Local node is initator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
-                Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
+                keccak_hash([remote_state.nonce.0, local_state.nonce.0].concat());
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             trace!(peer=%node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec))
@@ -98,7 +98,7 @@ pub(crate) async fn perform(
             // Remote node is initiator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
-                Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
+                keccak_hash([local_state.nonce.0, remote_state.nonce.0].concat());
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             let node = Node::new(
                 peer_addr.ip(),
@@ -144,6 +144,8 @@ pub(crate) async fn perform(
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
             tx_broadcaster: context.tx_broadcaster,
             current_requests: HashMap::new(),
+            disconnect_reason: None,
+            is_validated: false,
         },
         stream,
     ))

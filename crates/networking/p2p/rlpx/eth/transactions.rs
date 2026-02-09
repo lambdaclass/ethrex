@@ -224,7 +224,7 @@ pub struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
-    pooled_transactions: Vec<P2PTransaction>,
+    pub pooled_transactions: Vec<P2PTransaction>,
 }
 
 impl PooledTransactions {
@@ -236,7 +236,7 @@ impl PooledTransactions {
     }
 
     /// validates if the received TXs match the request
-    pub async fn validate_requested(
+    pub fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes,
         fork: Fork,

@@ -10,4 +10,5 @@ This section provides information about the internals of the L1 side of the proj
 - [Kurtosis localnet](./kurtosis-localnet.md)
 - [Importing blocks](./importing-blocks.md)
 - [Metrics](./metrics.md)
+- [Dashboards](./dashboards.md)
 - [Testing](./testing/README.md)

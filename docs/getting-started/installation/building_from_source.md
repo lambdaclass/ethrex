@@ -7,11 +7,11 @@ Build ethrex yourself for maximum flexibility and experimental features.
 - [Rust toolchain](https://www.rust-lang.org/tools/install) (use `rustup` for easiest setup)
 - [libclang](https://clang.llvm.org/docs/index.html) (for RocksDB)
 - [Git](https://git-scm.com/downloads)
-- [solc](https://docs.soliditylang.org/en/v0.8.30/installing-solidity.html) (for L2 development)
+- [solc (v0.8.31)](https://docs.soliditylang.org/en/v0.8.31/installing-solidity.html) (for L2 development)
 
 ### L2 contracts
 
-If you want to install ethrex for L2 development, you may set the `COMPILE_CONTRACTS` env var, so the binary have the necessary contract code.
+If you want to install ethrex for L2 development, you may set the `COMPILE_CONTRACTS` env var, so the binary has the necessary contract code.
 
 ```sh
 export COMPILE_CONTRACTS=true

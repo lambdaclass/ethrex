@@ -1084,10 +1084,11 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "5.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
@@ -1095,8 +1096,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "rustc-hash",
- "secp256k1 0.30.0",
- "sha3",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -1105,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "5.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1114,6 +1113,9 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "hex-literal",
+ "hex-simd",
+ "k256",
  "kzg-rs",
  "lazy_static",
  "libc",
@@ -1134,15 +1136,16 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "5.0.0"
+version = "9.0.0"
 dependencies = [
  "kzg-rs",
  "thiserror",
+ "tiny-keccak",
 ]
 
 [[package]]
 name = "ethrex-levm"
-version = "5.0.0"
+version = "9.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1174,7 +1177,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "5.0.0"
+version = "9.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1185,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "5.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1198,48 +1201,45 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "5.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
+ "fastbloom",
  "hex",
+ "lru",
+ "rayon",
  "rustc-hash",
  "serde",
  "serde_json",
- "sha3",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 
 [[package]]
-name = "ethrex-threadpool"
-version = "0.1.0"
-dependencies = [
- "crossbeam",
-]
-
-[[package]]
 name = "ethrex-trie"
-version = "5.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "bytes",
  "crossbeam",
  "digest 0.10.7",
  "ethereum-types",
+ "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-threadpool",
  "hex",
  "lazy_static",
+ "rkyv",
+ "rustc-hash",
  "serde",
  "serde_json",
- "sha3",
  "smallvec",
  "thiserror",
  "tracing",
@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "5.0.0"
+version = "9.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -1255,14 +1255,15 @@ dependencies = [
  "dyn-clone",
  "ethereum-types",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp",
  "ethrex-trie",
- "hex",
  "lazy_static",
+ "rayon",
  "rkyv",
+ "rustc-hash",
  "serde",
- "sha3",
  "thiserror",
  "tracing",
 ]
@@ -1276,6 +1277,18 @@ dependencies = [
  "bit-set",
  "regex-automata",
  "regex-syntax",
+]
+
+[[package]]
+name = "fastbloom"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e7f34442dbe69c60fe8eaf58a8cafff81a1f278816d8ab4db255b3bef4ac3c4"
+dependencies = [
+ "getrandom 0.3.4",
+ "libm",
+ "rand 0.9.2",
+ "siphasher",
 ]
 
 [[package]]
@@ -1365,6 +1378,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1446,8 +1465,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "335ff9f135e4384c8150d6f27c6daed433577f86b4750418338c01a1a2528592"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1496,7 +1517,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
- "foldhash",
+ "foldhash 0.1.5",
 ]
 
 [[package]]
@@ -1504,6 +1525,11 @@ name = "hashbrown"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heck"
@@ -1537,6 +1563,16 @@ name = "hex-literal"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+
+[[package]]
+name = "hex-simd"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f7685beb53fc20efc2605f32f5d51e9ba18b8ef237961d1760169d2290d3bee"
+dependencies = [
+ "outref",
+ "vsimd",
+]
 
 [[package]]
 name = "hmac"
@@ -1818,10 +1854,14 @@ dependencies = [
 
 [[package]]
 name = "lambdaworks-math"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "708d148956bcdc21ae5c432b4e20bbaa26fd68d5376a3a6c461f41095abea0ba"
+checksum = "018a95aa873eb49896a858dee0d925c33f3978d073c64b08dd4f2c9b35a017c6"
 dependencies = [
+ "getrandom 0.2.16",
+ "num-bigint 0.4.6",
+ "num-traits",
+ "rand 0.8.5",
  "rayon",
  "serde",
  "serde_json",
@@ -1877,6 +1917,15 @@ name = "log"
 version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+
+[[package]]
+name = "lru"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96051b46fc183dc9cd4a223960ef37b9af631b55191852a8274bfef064cda20f"
+dependencies = [
+ "hashbrown 0.16.0",
+]
 
 [[package]]
 name = "malachite"
@@ -2074,6 +2123,12 @@ name = "once_cell_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
+
+[[package]]
+name = "outref"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "p256"
@@ -2619,13 +2674,13 @@ dependencies = [
  "bytes",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-levm",
  "ethrex-storage",
  "ethrex-vm",
  "hex",
  "revm",
  "rustc-hash",
- "sha3",
 ]
 
 [[package]]
@@ -2998,6 +3053,12 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "siphasher"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
 
 [[package]]
 name = "slab"
@@ -3481,6 +3542,12 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vsimd"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
 name = "wait-timeout"

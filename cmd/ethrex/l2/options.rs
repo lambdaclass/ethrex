@@ -4,16 +4,14 @@ use crate::{
 };
 use clap::Parser;
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
-    sequencer::{
-        configs::{AdminConfig, AlignedConfig, MonitorConfig},
-        utils::resolve_aligned_network,
-    },
+    sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backend::Backend, config::ProverConfig};
+use ethrex_prover_lib::{backend::BackendType, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -80,13 +78,15 @@ pub struct SequencerOptions {
     pub monitor_opts: MonitorOptions,
     #[command(flatten)]
     pub admin_opts: AdminOptions,
+    #[clap(flatten)]
+    pub state_updater_opts: StateUpdaterOptions,
     #[arg(
         long = "validium",
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_L2_VALIDIUM",
         help_heading = "L2 options",
-        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
+        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1."
     )]
     pub validium: bool,
     #[clap(
@@ -172,6 +172,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .committer_opts
                     .on_chain_proposer_address
                     .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
+                timelock_address: opts.committer_opts.timelock_address,
                 first_wake_up_time_ms: opts.committer_opts.first_wake_up_time_ms.unwrap_or(0),
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 batch_gas_limit: opts.committer_opts.batch_gas_limit,
@@ -200,6 +201,9 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
                 l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
+                l2_rpc_urls: opts.watcher_opts.l2_rpc_urls.unwrap_or_default(),
+                l2_chain_ids: opts.watcher_opts.l2_chain_ids.unwrap_or_default(),
+                router_address: opts.watcher_opts.router_address.unwrap_or_default(),
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -214,14 +218,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             },
             based: BasedConfig {
                 enabled: opts.based,
-                state_updater: StateUpdaterConfig {
-                    sequencer_registry: opts
-                        .based_opts
-                        .state_updater_opts
-                        .sequencer_registry
-                        .unwrap_or_default(),
-                    check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
-                },
                 block_fetcher: BlockFetcherConfig {
                     fetch_interval_ms: opts.based_opts.block_fetcher.fetch_interval_ms,
                     fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step,
@@ -234,7 +230,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 network: resolve_aligned_network(
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
-                fee_estimate: opts.aligned_opts.fee_estimate,
+                from_block: opts.aligned_opts.from_block,
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -244,6 +240,15 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             admin_server: AdminConfig {
                 listen_ip: opts.admin_opts.admin_listen_ip,
                 listen_port: opts.admin_opts.admin_listen_port,
+            },
+            state_updater: StateUpdaterConfig {
+                sequencer_registry: opts
+                    .state_updater_opts
+                    .sequencer_registry
+                    .unwrap_or_default(),
+                check_interval_ms: opts.state_updater_opts.check_interval_ms,
+                start_at: opts.state_updater_opts.start_at,
+                l2_head_check_rpc_url: opts.state_updater_opts.l2_head_check_rpc_url,
             },
         })
     }
@@ -277,6 +282,8 @@ impl SequencerOptions {
             .populate_with_defaults(&defaults.aligned_opts);
         self.monitor_opts
             .populate_with_defaults(&defaults.monitor_opts);
+        self.state_updater_opts
+            .populate_with_defaults(&defaults.state_updater_opts);
         // admin_opts contains only non-optional fields.
     }
 }
@@ -418,6 +425,27 @@ pub struct WatcherOptions {
         help_heading = "Block producer options"
     )]
     pub l1_fee_update_interval_ms: u64,
+    #[arg(
+        long = "l1.router-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_WATCHER_ROUTER_ADDRESS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub router_address: Option<Address>,
+    #[arg(
+        long = "watcher.l2-rpcs",
+        num_args = 1..,
+        env = "ETHREX_WATCHER_L2_RPCS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2_rpc_urls: Option<Vec<Url>>,
+    #[arg(
+        long = "watcher.l2-chain-ids",
+        num_args = 1..,
+        env = "ETHREX_WATCHER_L2_CHAIN_IDS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2_chain_ids: Option<Vec<u64>>,
 }
 
 impl Default for WatcherOptions {
@@ -428,6 +456,9 @@ impl Default for WatcherOptions {
             max_block_step: 5000,
             watcher_block_delay: 0,
             l1_fee_update_interval_ms: 60000,
+            router_address: None,
+            l2_rpc_urls: None,
+            l2_chain_ids: None,
         }
     }
 }
@@ -435,6 +466,9 @@ impl Default for WatcherOptions {
 impl WatcherOptions {
     fn populate_with_defaults(&mut self, defaults: &Self) {
         self.bridge_address = self.bridge_address.or(defaults.bridge_address);
+        self.router_address = self.router_address.or(defaults.router_address);
+        self.l2_rpc_urls = self.l2_rpc_urls.clone().or(defaults.l2_rpc_urls.clone());
+        self.l2_chain_ids = self.l2_chain_ids.clone().or(defaults.l2_chain_ids.clone());
     }
 }
 
@@ -576,6 +610,13 @@ pub struct CommitterOptions {
     )]
     pub on_chain_proposer_address: Option<Address>,
     #[arg(
+        long = "l1.timelock-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_TIMELOCK_ADDRESS",
+        help_heading = "L1 Committer options"
+    )]
+    pub timelock_address: Option<Address>,
+    #[arg(
         long = "committer.commit-time",
         default_value = "60000",
         value_name = "UINT64",
@@ -618,6 +659,7 @@ impl Default for CommitterOptions {
             )
             .ok(),
             on_chain_proposer_address: None,
+            timelock_address: None,
             commit_time_ms: 60000,
             batch_gas_limit: None,
             first_wake_up_time_ms: None,
@@ -645,6 +687,7 @@ impl CommitterOptions {
         self.on_chain_proposer_address = self
             .on_chain_proposer_address
             .or(defaults.on_chain_proposer_address);
+        self.timelock_address = self.timelock_address.or(defaults.timelock_address);
         self.batch_gas_limit = self.batch_gas_limit.or(defaults.batch_gas_limit);
         self.first_wake_up_time_ms = self
             .first_wake_up_time_ms
@@ -817,16 +860,14 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub aligned_network: Option<String>,
-
     #[arg(
-        long = "aligned.fee-estimate",
-        default_value = "instant",
-        value_name = "FEE_ESTIMATE",
-        env = "ETHREX_ALIGNED_FEE_ESTIMATE",
-        help = "Fee estimate for Aligned sdk",
+        long = "aligned.from-block",
+        value_name = "BLOCK_NUMBER",
+        env = "ETHREX_ALIGNED_FROM_BLOCK",
+        help = "Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.",
         help_heading = "Aligned options"
     )]
-    pub fee_estimate: String,
+    pub from_block: Option<u64>,
 }
 
 impl Default for AlignedOptions {
@@ -836,7 +877,7 @@ impl Default for AlignedOptions {
             aligned_verifier_interval_ms: 5000,
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
-            fee_estimate: "instant".to_string(),
+            from_block: None,
         }
     }
 }
@@ -848,23 +889,18 @@ impl AlignedOptions {
             .aligned_network
             .clone()
             .or(defaults.aligned_network.clone());
+        self.from_block = self.from_block.or(defaults.from_block);
     }
 }
 
 #[derive(Parser, Default, Debug)]
 pub struct BasedOptions {
     #[clap(flatten)]
-    pub state_updater_opts: StateUpdaterOptions,
-    #[clap(flatten)]
     pub block_fetcher: BlockFetcherOptions,
 }
 
 impl BasedOptions {
-    fn populate_with_defaults(&mut self, defaults: &Self) {
-        self.state_updater_opts
-            .populate_with_defaults(&defaults.state_updater_opts);
-        // block fetcher contains only non-optional fields.
-    }
+    fn populate_with_defaults(&mut self, _defaults: &Self) {}
 }
 
 #[derive(Parser, Debug)]
@@ -885,6 +921,26 @@ pub struct StateUpdaterOptions {
         help_heading = "Based options"
     )]
     pub check_interval_ms: u64,
+
+    #[arg(
+        long = "admin.start-at",
+        default_value = "0",
+        value_name = "UINT64",
+        env = "ETHREX_ADMIN_START_AT",
+        requires = "l2_head_check_rpc_url",
+        help = "Starting L2 block to start producing blocks",
+        help_heading = "Admin server options"
+    )]
+    pub start_at: u64,
+    #[arg(
+        long = "admin.l2-head-check-rpc-url",
+        value_name = "URL",
+        env = "ETHREX_ADMIN_L2_HEAD_CHECK_RPC_URL",
+        requires = "start_at",
+        help = "L2 JSON-RPC endpoint used only to query the L2 head when `--admin.start-at` is set",
+        help_heading = "Admin server options"
+    )]
+    pub l2_head_check_rpc_url: Option<Url>,
 }
 
 impl Default for StateUpdaterOptions {
@@ -892,6 +948,8 @@ impl Default for StateUpdaterOptions {
         Self {
             sequencer_registry: None,
             check_interval_ms: 1000,
+            start_at: 0,
+            l2_head_check_rpc_url: None,
         }
     }
 }
@@ -994,7 +1052,7 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options",
         value_enum
     )]
-    pub backend: Backend,
+    pub backend: BackendType,
     #[arg(
         long = "proof-coordinators",
         value_name = "URL",
@@ -1054,7 +1112,7 @@ impl Default for ProverClientOptions {
             ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
-            backend: Backend::Exec,
+            backend: BackendType::Exec,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }

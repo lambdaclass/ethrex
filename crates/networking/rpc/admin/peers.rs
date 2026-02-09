@@ -1,9 +1,16 @@
+use crate::utils::RpcRequest;
 use crate::{rpc::RpcApiContext, utils::RpcErr};
 use core::net::SocketAddr;
 use ethrex_common::H256;
-use ethrex_p2p::{discv4::peer_table::PeerData, rlpx::p2p::Capability};
+use ethrex_p2p::{
+    peer_handler::PeerHandler,
+    peer_table::PeerData,
+    rlpx::{initiator::InMessage, p2p::Capability},
+    types::Node,
+};
 use serde::Serialize;
 use serde_json::Value;
+use tokio::time::{Duration, Instant};
 
 /// Serializable peer data returned by the node's rpc
 #[derive(Serialize)]
@@ -79,14 +86,72 @@ impl From<PeerData> for RpcPeer {
 }
 
 pub async fn peers(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
-    let peers = context
-        .peer_handler
+    let Some(peer_handler) = &mut context.peer_handler else {
+        return Err(RpcErr::Internal("Peer handler not initialized".to_string()));
+    };
+
+    let peers = peer_handler
         .read_connected_peers()
         .await
         .into_iter()
         .map(RpcPeer::from)
         .collect::<Vec<_>>();
+
     Ok(serde_json::to_value(peers)?)
+}
+
+fn parse(request: &RpcRequest) -> Result<Node, RpcErr> {
+    let params = request
+        .params
+        .clone()
+        .ok_or(RpcErr::MissingParam("enode url".to_string()))?;
+
+    if params.len() != 1 {
+        return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+    };
+
+    let url = params
+        .first()
+        .ok_or(RpcErr::MissingParam("enode url".to_string()))?
+        .as_str()
+        .ok_or(RpcErr::WrongParam("Expected string".to_string()))?;
+
+    Node::from_enode_url(url).map_err(|error| RpcErr::BadParams(error.to_string()))
+}
+
+pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Result<Value, RpcErr> {
+    let Some(peer_handler) = context.peer_handler.as_mut() else {
+        return Err(RpcErr::Internal("Peer handler not initialized".to_string()));
+    };
+    let mut server = peer_handler.initiator.clone();
+    let node = parse(request)?;
+
+    let start = Instant::now();
+    let runtime = Duration::from_secs(10);
+
+    let cast_result = server
+        .cast(InMessage::Initiate { node: node.clone() })
+        .await;
+    // This loop is necessary because connections are asynchronous, so to check if the connection with the peer was actually
+    // established we need to wait.
+    loop {
+        if peer_is_connected(peer_handler, &node.enode_url()).await {
+            return Ok(serde_json::to_value(true)?);
+        }
+
+        if cast_result.is_err() || start.elapsed() >= runtime {
+            return Ok(serde_json::to_value(false)?);
+        }
+        let _ = tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn peer_is_connected(peer_handler: &mut PeerHandler, enode_url: &str) -> bool {
+    peer_handler
+        .read_connected_peers()
+        .await
+        .iter()
+        .any(|peer| peer.node.enode_url() == *enode_url)
 }
 
 // TODO: Adapt the test to the new P2P architecture.

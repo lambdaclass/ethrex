@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -20,7 +21,9 @@ ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-blockchain.workspace = true
-ethrex-p2p.workspace = true
+ethrex-metrics.workspace = true
+ethrex-crypto.workspace = true
+ethrex-p2p = { workspace = true, features = ["test-utils"] }
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
@@ -32,15 +35,20 @@ jsonwebtoken.workspace = true
 rand.workspace = true
 tokio-util = { workspace = true, features = ["codec"] }
 reqwest.workspace = true
-sha3 = "0.10.8"
 sha2.workspace = true
-jemalloc_pprof = { version = "0.8.0", optional = true, features = ["flamegraph", "symbolize"] }
+jemalloc_pprof = { version = "0.8.0", optional = true, features = [
+    "flamegraph",
+    "symbolize",
+] }
+spawned-rt.workspace = true
+spawned-concurrency.workspace = true
 
 # Clients
 envy = "0.4.2"
 thiserror.workspace = true
 secp256k1.workspace = true
 uuid.workspace = true
+hex-literal = "0.4.1"
 
 [dev-dependencies]
 hex-literal = "0.4.1"
