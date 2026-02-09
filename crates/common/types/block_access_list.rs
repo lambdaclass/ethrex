@@ -749,9 +749,6 @@ impl BlockAccessListRecorder {
             return;
         }
 
-        // Track initial balance for round-trip detection
-        self.initial_balances.entry(address).or_insert(post_balance);
-
         // Always push new entries to support checkpoint/restore.
         // The last entry for each transaction will be used in build().
         let changes = self.balance_changes.entry(address).or_default();

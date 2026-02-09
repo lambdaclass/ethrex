@@ -513,40 +513,23 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
     ) -> Result<(), EvmError> {
-        let record_bal = db.is_bal_recording_enabled();
-
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
             .iter()
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            // Only fetch initial balance when BAL recording is enabled (Amsterdam+)
-            let initial_balance = if record_bal {
-                Some(
-                    db.get_account(address)
-                        .map_err(|_| {
-                            EvmError::DB(format!("Withdrawal account {address} not found"))
-                        })?
-                        .info
-                        .balance,
-                )
-            } else {
-                None
-            };
-
             let account = db
                 .get_account_mut(address)
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
+            let initial_balance = account.info.balance;
             account.info.balance += increment.into();
             let new_balance = account.info.balance;
 
             // Record balance change for BAL (EIP-7928)
             if let Some(recorder) = db.bal_recorder_mut() {
-                if let Some(initial) = initial_balance {
-                    recorder.set_initial_balance(address, initial);
-                }
+                recorder.set_initial_balance(address, initial_balance);
                 recorder.record_balance_change(address, new_balance);
             }
         }

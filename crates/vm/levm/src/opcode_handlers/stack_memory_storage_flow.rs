@@ -243,7 +243,13 @@ impl<'a> VM<'a> {
         // If value changes, update_account_storage will record the write.
 
         if new_storage_slot_value != current_value {
-            self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
+            self.update_account_storage(
+                to,
+                key,
+                storage_slot_key,
+                new_storage_slot_value,
+                current_value,
+            )?;
         }
 
         Ok(OpcodeResult::Continue)

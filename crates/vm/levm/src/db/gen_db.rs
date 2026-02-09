@@ -60,11 +60,6 @@ impl GeneralizedDatabase {
         self.bal_recorder = None;
     }
 
-    /// Returns true if BAL recording is enabled.
-    pub fn is_bal_recording_enabled(&self) -> bool {
-        self.bal_recorder.is_some()
-    }
-
     /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
     /// Call this before each transaction or phase.
     pub fn set_bal_index(&mut self, index: u16) {
@@ -680,26 +675,26 @@ impl<'a> VM<'a> {
         &mut self,
         address: Address,
         key: H256,
+        slot_key: U256,
         new_value: U256,
         current_value: U256,
     ) -> Result<(), InternalError> {
         self.backup_storage_slot(address, key, current_value)?;
 
-        // Record storage write for BAL
-        // Per EIP-7928: actual writes (post != pre) are recorded as writes
-        // No-op writes (post == pre) are recorded as reads
+        // Record storage change for BAL (EIP-7928).
+        // SSTORE that changes the value (new != current) → storage write.
+        // SSTORE with same value (new == current) → storage read (no actual mutation).
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            let slot = U256::from_big_endian(key.as_bytes());
             if new_value != current_value {
                 // Record original value before first write. If final value equals original
                 // after all tx operations, the slot becomes a read per EIP-7928 net-zero filtering.
                 // This captures the value BEFORE the first write in this transaction
-                recorder.capture_pre_storage(address, slot, current_value);
+                recorder.capture_pre_storage(address, slot_key, current_value);
                 // Actual write
-                recorder.record_storage_write(address, slot, new_value);
+                recorder.record_storage_write(address, slot_key, new_value);
             } else {
                 // No-op write (post == pre) - record as read per EIP-7928
-                recorder.record_storage_read(address, slot);
+                recorder.record_storage_read(address, slot_key);
             }
         }
 
