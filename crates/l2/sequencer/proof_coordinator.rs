@@ -23,10 +23,6 @@ use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;
-#[cfg(feature = "metrics")]
-use std::time::SystemTime;
-#[cfg(feature = "metrics")]
-use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub enum ProofCordInMessage {
@@ -50,8 +46,6 @@ pub struct ProofCoordinator {
     needed_proof_types: Vec<ProverType>,
     aligned: bool,
     git_commit_hash: String,
-    #[cfg(feature = "metrics")]
-    request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
     qpl_tool_path: Option<String>,
     /// Tracks batch assignments to provers: batch_number -> assignment time.
     /// In-memory only; lost on restart. Uses std::sync::Mutex (not tokio)
@@ -97,8 +91,6 @@ impl ProofCoordinator {
             needed_proof_types,
             git_commit_hash: get_git_commit_hash(),
             aligned: config.aligned.aligned_mode,
-            #[cfg(feature = "metrics")]
-            request_timestamp: Arc::new(Mutex::new(HashMap::new())),
             qpl_tool_path: config.proof_coordinator.qpl_tool_path.clone(),
             assignments: Arc::new(std::sync::Mutex::new(HashMap::new())),
             prover_timeout: Duration::from_millis(config.proof_coordinator.prover_timeout_ms),
@@ -271,16 +263,6 @@ impl ProofCoordinator {
         } else {
             ProofFormat::Groth16
         };
-        metrics!(
-            // First request starts a timer until a proof is received. The elapsed time will be
-            // the estimated proving time.
-            // This should be used for development only and runs on the assumption that:
-            //   1. There's a single prover
-            //   2. Communication does not fail
-            //   3. Communication adds negligible overhead in comparison with proving time
-            let mut lock = self.request_timestamp.lock().await;
-            lock.entry(batch_to_prove).or_insert(SystemTime::now());
-        );
         let response = ProofData::batch_response(batch_to_prove, input, format);
 
         send_response(stream, &response).await?;
@@ -312,19 +294,15 @@ impl ProofCoordinator {
             );
         } else {
             metrics!(
-                let mut request_timestamps = self.request_timestamp.lock().await;
-                let request_timestamp = request_timestamps.get(&batch_number).ok_or(
-                    ProofCoordinatorError::InternalError(
-                        "request timestamp could not be found".to_string(),
-                    ),
-                )?;
-                let proving_time = request_timestamp
-                    .elapsed()
-                    .map_err(|_| ProofCoordinatorError::InternalError("failed to compute proving time".to_string()))?
-                    .as_secs().try_into()
-                    .map_err(|_| ProofCoordinatorError::InternalError("failed to convert proving time to i64".to_string()))?;
-                METRICS.set_batch_proving_time(batch_number, proving_time)?;
-                let _ = request_timestamps.remove(&batch_number);
+                if let Ok(assignments) = self.assignments.lock() {
+                    if let Some(&assigned_at) = assignments.get(&batch_number) {
+                        let proving_time: i64 = assigned_at.elapsed().as_secs().try_into()
+                            .map_err(|_| ProofCoordinatorError::InternalError(
+                                "failed to convert proving time to i64".to_string(),
+                            ))?;
+                        METRICS.set_batch_proving_time(batch_number, proving_time)?;
+                    }
+                }
             );
             // If not, store it
             self.rollup_store
