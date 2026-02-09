@@ -24,7 +24,8 @@ async fn wait_for_pending_task(
 ) -> Result<(), SyncError> {
     if !joinset.is_empty() {
         match joinset.join_next().await {
-            Some(Ok(Ok(()))) | None => {}
+            Some(Ok(Ok(()))) => {}
+            None => unreachable!("join_next returned None after is_empty check"),
             Some(Ok(Err(e))) => return Err(e),
             Some(Err(e)) => return Err(SyncError::JoinHandle(e)),
         }
