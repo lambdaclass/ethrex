@@ -2,6 +2,12 @@
 
 ## Perf
 
+
+### 2026-02-06
+
+- Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)
+- Cache ECDSA sender recovery in transaction structs [#6153](https://github.com/lambdaclass/ethrex/pull/6153)
+
 ### 2026-01-30
 
 - Parallelize header download with state download during snap sync [#6059](https://github.com/lambdaclass/ethrex/pull/6059)

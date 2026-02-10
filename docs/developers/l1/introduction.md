@@ -11,4 +11,5 @@ This section provides information about the internals of the L1 side of the proj
 - [Importing blocks](./importing-blocks.md)
 - [Metrics](./metrics.md)
 - [Dashboards](./dashboards.md)
+- [Profiling](./profiling.md)
 - [Testing](./testing/README.md)
