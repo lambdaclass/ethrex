@@ -182,9 +182,11 @@ pub fn refund_sender(
 
     // EIP-7778: Separate block vs user gas accounting for Amsterdam+
     if vm.env.config.fork >= Fork::Amsterdam {
-        // Block accounting uses pre-refund gas
-        ctx_result.gas_used = gas_used_pre_refund;
-        // User pays post-refund gas
+        // Block accounting uses max(pre-refund gas, calldata floor)
+        // This prevents gas smuggling via refunds (EIP-7778)
+        let floor = vm.get_min_gas_used()?;
+        ctx_result.gas_used = gas_used_pre_refund.max(floor);
+        // User pays post-refund gas (with floor)
         ctx_result.gas_spent = gas_spent;
     } else {
         // Pre-Amsterdam: both use post-refund value
@@ -300,6 +302,11 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         *account_to_remove = LevmAccount::default();
         account_to_remove.mark_destroyed();
+
+        // EIP-7928: Clean up BAL for selfdestructed account
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.track_selfdestruct(*address);
+        }
     }
 
     Ok(())

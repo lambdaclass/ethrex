@@ -322,6 +322,7 @@ fn test_system_address_filtering() {
     // SYSTEM_ADDRESS should be excluded from BAL unless it has actual state changes
     let mut recorder = BlockAccessListRecorder::new();
     recorder.set_block_access_index(0); // System contract phase
+    recorder.enter_system_call();
 
     // Just touch SYSTEM_ADDRESS (no actual changes)
     recorder.record_touched_address(SYSTEM_ADDRESS);
@@ -786,6 +787,7 @@ fn test_recorder_code_change() {
 #[test]
 fn test_recorder_system_address_excluded_when_only_touched() {
     let mut recorder = BlockAccessListRecorder::new();
+    recorder.enter_system_call();
     // Just touch SYSTEM_ADDRESS without actual state changes
     recorder.record_touched_address(SYSTEM_ADDRESS);
 
