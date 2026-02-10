@@ -43,6 +43,7 @@ pub struct ProofCoordinator {
     rollup_store: StoreRollup,
     rpc_url: String,
     tdx_private_key: Option<SecretKey>,
+    // Used again in PR #6157; kept here to simplify merge conflicts.
     #[allow(dead_code)]
     needed_proof_types: Vec<ProverType>,
     aligned: bool,
