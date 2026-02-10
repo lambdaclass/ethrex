@@ -16,6 +16,9 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};
+#[cfg(feature = "metrics")]
+use ethrex_metrics::l2::metrics::METRICS;
+use ethrex_metrics::metrics;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, eth::errors::RpcRequestError},
@@ -525,11 +528,12 @@ impl L1ProofSender {
     /// Returns the prover type whose proof is invalid based on the error message,
     /// or `None` if the message doesn't indicate an invalid proof.
     fn invalid_proof_type(message: &str) -> Option<ProverType> {
-        if message.contains("Invalid TDX proof") {
+        // Match both full error messages (based contract) and error codes (standard contract)
+        if message.contains("Invalid TDX proof") || message.contains("00g") {
             Some(ProverType::TDX)
-        } else if message.contains("Invalid RISC0 proof") {
+        } else if message.contains("Invalid RISC0 proof") || message.contains("00c") {
             Some(ProverType::RISC0)
-        } else if message.contains("Invalid SP1 proof") {
+        } else if message.contains("Invalid SP1 proof") || message.contains("00e") {
             Some(ProverType::SP1)
         } else {
             None
@@ -616,6 +620,16 @@ impl L1ProofSender {
         }
 
         let verify_tx_hash = send_verify_tx_result?;
+
+        metrics!(
+            let verify_tx_receipt = self
+                .eth_client
+                .get_transaction_receipt(verify_tx_hash)
+                .await?
+                .ok_or(ProofSenderError::UnexpectedError("no verify tx receipt".to_string()))?;
+            let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()?;
+            METRICS.set_batch_verification_gas(first_batch, verify_gas_used)?;
+        );
 
         // Store verify tx hash for all batches
         for (batch_number, _) in batches {

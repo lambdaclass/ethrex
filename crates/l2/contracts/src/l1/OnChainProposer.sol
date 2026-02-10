@@ -485,7 +485,6 @@ contract OnChainProposer is
             sp1ProofsBytes.length == batchCount && tdxSignatures.length == batchCount,
             "OnChainProposer: array length mismatch"
         );
-        require(firstBatchNumber == lastVerifiedBatch + 1, "009");
         for (uint256 i = 0; i < batchCount; i++) {
             _verifyBatchInternal(
                 firstBatchNumber + i,
