@@ -384,7 +384,9 @@ fn commit_node(
         return Ok(()); // Case where we're saving the root
     }
 
-    let mut healing_queue_entry = healing_queue.remove(parent_path).ok_or(SyncError::CorruptPath)?;
+    let mut healing_queue_entry = healing_queue
+        .remove(parent_path)
+        .ok_or(SyncError::CorruptPath)?;
 
     healing_queue_entry.pending_children_count -= 1;
     if healing_queue_entry.pending_children_count == 0 {
