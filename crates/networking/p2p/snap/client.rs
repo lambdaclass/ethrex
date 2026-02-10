@@ -584,10 +584,10 @@ pub async fn request_storage_ranges(
         }
     }
 
-    // channel to send the tasks to the peers
-    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<StorageTaskResult>(1000);
+    let mut worker_joinset: tokio::task::JoinSet<StorageTaskResult> =
+        tokio::task::JoinSet::new();
 
-    // channel to send the result of dumping storages
+    // joinset to send the result of dumping storages
     let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> = tokio::task::JoinSet::new();
 
     let mut task_count = tasks_queue_not_started.len();
@@ -642,7 +642,7 @@ pub async fn request_storage_ranges(
             chunk_index += 1;
         }
 
-        if let Ok(result) = task_receiver.try_recv() {
+        if let Some(Ok(result)) = worker_joinset.try_join_next() {
             completed_tasks += 1;
 
             match result {
@@ -856,16 +856,14 @@ pub async fn request_storage_ranges(
             continue;
         };
 
-        let tx = task_sender.clone();
         let peer_table = peers.peer_table.clone();
 
-        tokio::spawn(request_storage_ranges_worker(
+        worker_joinset.spawn(request_storage_ranges_worker(
             task,
             peer_id,
             connection,
             peer_table,
             pivot_header.state_root,
-            tx,
         ));
     }
 
@@ -896,9 +894,6 @@ pub async fn request_storage_ranges(
         })
         .collect::<Result<Vec<()>, DumpError>>()
         .map_err(SnapError::from)?;
-
-    // Dropping the task sender so that the recv returns None
-    drop(task_sender);
 
     Ok(chunk_index + 1)
 }
@@ -1109,12 +1104,10 @@ async fn request_storage_ranges_worker(
     mut connection: PeerConnection,
     mut peer_table: PeerTable,
     state_root: H256,
-    tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
-) -> Result<(), SnapError> {
+) -> StorageTaskResult {
     match task {
         StorageTask::SmallBatch { tries } => {
-            handle_small_batch(tries, peer_id, &mut connection, &mut peer_table, state_root, tx)
-                .await
+            handle_small_batch(tries, peer_id, &mut connection, &mut peer_table, state_root).await
         }
         StorageTask::BigInterval {
             root,
@@ -1129,7 +1122,6 @@ async fn request_storage_ranges_worker(
                 &mut connection,
                 &mut peer_table,
                 state_root,
-                tx,
             )
             .await
         }
@@ -1142,8 +1134,7 @@ async fn handle_small_batch(
     connection: &mut PeerConnection,
     peer_table: &mut PeerTable,
     state_root: H256,
-    tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
-) -> Result<(), SnapError> {
+) -> StorageTaskResult {
     // Derive account_hashes (first account per trie) and storage_roots
     let chunk_account_hashes: Vec<H256> = tries
         .iter()
@@ -1169,17 +1160,11 @@ async fn handle_small_batch(
         .await
     else {
         tracing::debug!("Failed to get storage range for small batch");
-        tx.send(StorageTaskResult::SmallFailed { tries, peer_id })
-            .await
-            .ok();
-        return Ok(());
+        return StorageTaskResult::SmallFailed { tries, peer_id };
     };
 
     if (slots.is_empty() && proof.is_empty()) || slots.is_empty() || slots.len() > tries.len() {
-        tx.send(StorageTaskResult::SmallFailed { tries, peer_id })
-            .await
-            .ok();
-        return Ok(());
+        return StorageTaskResult::SmallFailed { tries, peer_id };
     }
 
     // Validate each storage range
@@ -1190,10 +1175,7 @@ async fn handle_small_batch(
     for (i, next_account_slots) in slots.iter().enumerate() {
         if next_account_slots.is_empty() {
             error!("Received empty storage range in small batch, skipping");
-            tx.send(StorageTaskResult::SmallFailed { tries, peer_id })
-                .await
-                .ok();
-            return Ok(());
+            return StorageTaskResult::SmallFailed { tries, peer_id };
         }
 
         let encoded_values = next_account_slots
@@ -1211,10 +1193,7 @@ async fn handle_small_batch(
                 &encoded_values,
                 &proof,
             ) else {
-                tx.send(StorageTaskResult::SmallFailed { tries, peer_id })
-                    .await
-                    .ok();
-                return Ok(());
+                return StorageTaskResult::SmallFailed { tries, peer_id };
             };
             should_continue = sc;
         } else if verify_range(
@@ -1226,10 +1205,7 @@ async fn handle_small_batch(
         )
         .is_err()
         {
-            tx.send(StorageTaskResult::SmallFailed { tries, peer_id })
-                .await
-                .ok();
-            return Ok(());
+            return StorageTaskResult::SmallFailed { tries, peer_id };
         }
     }
 
@@ -1255,33 +1231,26 @@ async fn handle_small_batch(
             .expect("tries should not be empty after split_off");
         let completed = tries;
 
-        tx.send(StorageTaskResult::SmallPromotedToBig {
+        StorageTaskResult::SmallPromotedToBig {
             completed,
             remaining,
             big_root,
             big_trie,
             peer_id,
-        })
-        .await
-        .ok();
+        }
     } else {
         // Split tries: completed (slots populated) vs remaining (not reached)
         let remaining = tries.split_off(slots_count);
         let completed = tries;
 
-        tx.send(StorageTaskResult::SmallComplete {
+        StorageTaskResult::SmallComplete {
             completed,
             remaining,
             peer_id,
-        })
-        .await
-        .ok();
+        }
     }
-
-    Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn handle_big_interval(
     root: H256,
     accounts: Vec<H256>,
@@ -1290,9 +1259,16 @@ async fn handle_big_interval(
     connection: &mut PeerConnection,
     peer_table: &mut PeerTable,
     state_root: H256,
-    tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
-) -> Result<(), SnapError> {
+) -> StorageTaskResult {
     let account_hash = *accounts.first().unwrap_or(&H256::zero());
+
+    let fail = |interval| StorageTaskResult::BigIntervalResult {
+        root,
+        accounts: accounts.clone(),
+        slots: Vec::new(),
+        remaining_interval: Some(interval),
+        peer_id,
+    };
 
     let request_id = rand::random();
     let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
@@ -1312,45 +1288,18 @@ async fn handle_big_interval(
         .await
     else {
         tracing::debug!("Failed to get storage range for big interval");
-        tx.send(StorageTaskResult::BigIntervalResult {
-            root,
-            accounts,
-            slots: Vec::new(),
-            remaining_interval: Some(interval),
-            peer_id,
-        })
-        .await
-        .ok();
-        return Ok(());
+        return fail(interval);
     };
 
     if slots.is_empty() && proof.is_empty() {
-        tx.send(StorageTaskResult::BigIntervalResult {
-            root,
-            accounts,
-            slots: Vec::new(),
-            remaining_interval: Some(interval),
-            peer_id,
-        })
-        .await
-        .ok();
-        return Ok(());
+        return fail(interval);
     }
 
     // For big intervals we get exactly one account's slots
     let account_slots = slots.into_iter().next().unwrap_or_default();
 
     if account_slots.is_empty() {
-        tx.send(StorageTaskResult::BigIntervalResult {
-            root,
-            accounts,
-            slots: Vec::new(),
-            remaining_interval: Some(interval),
-            peer_id,
-        })
-        .await
-        .ok();
-        return Ok(());
+        return fail(interval);
     }
 
     // Validate
@@ -1364,34 +1313,12 @@ async fn handle_big_interval(
     let should_continue = if !proof.is_empty() {
         match verify_range(root, &interval.start, &hashed_keys, &encoded_values, &proof) {
             Ok(sc) => sc,
-            Err(_) => {
-                tx.send(StorageTaskResult::BigIntervalResult {
-                    root,
-                    accounts,
-                    slots: Vec::new(),
-                    remaining_interval: Some(interval),
-                    peer_id,
-                })
-                .await
-                .ok();
-                return Ok(());
-            }
+            Err(_) => return fail(interval),
         }
     } else {
         match verify_range(root, &interval.start, &hashed_keys, &encoded_values, &[]) {
             Ok(sc) => sc,
-            Err(_) => {
-                tx.send(StorageTaskResult::BigIntervalResult {
-                    root,
-                    accounts,
-                    slots: Vec::new(),
-                    remaining_interval: Some(interval),
-                    peer_id,
-                })
-                .await
-                .ok();
-                return Ok(());
-            }
+            Err(_) => return fail(interval),
         }
     };
 
@@ -1419,15 +1346,11 @@ async fn handle_big_interval(
         None
     };
 
-    tx.send(StorageTaskResult::BigIntervalResult {
+    StorageTaskResult::BigIntervalResult {
         root,
         accounts,
         slots: result_slots,
         remaining_interval,
         peer_id,
-    })
-    .await
-    .ok();
-
-    Ok(())
+    }
 }
