@@ -462,12 +462,6 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
     // NOT CHECKED: the blob price does not matter, fee token transactions do not support blobs
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // IMPORTANT: All validations that can fail MUST happen BEFORE fee deduction.
-    // Fee token storage changes via `transfer_fee_token` bypass the backup
-    // mechanism, so they cannot be rolled back if validation fails later.
-    // ═══════════════════════════════════════════════════════════════════════════
-
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
     default_hook::validate_sufficient_max_fee_per_gas(vm)?;
 
@@ -518,37 +512,26 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // Transaction is type 4 if authorization_list is Some
     // NOT CHECKED: fee token transactions are not type 4
 
-    // (3) INSUFFICIENT_ACCOUNT_FUNDS
-    // NOTE: Fee deduction is intentionally placed AFTER all validations above.
-    // This ensures that if any validation fails, fee tokens are never locked.
-    deduct_caller_fee_token(vm, gaslimit_price_product.saturating_mul(fee_token_ratio))?;
+    // INSUFFICIENT_ACCOUNT_FUNDS
+    // NOTE: ETH value deduction and fee token locking are intentionally placed
+    // AFTER all validations above, and fee token locking AFTER transfer_value.
+    // Fee token storage changes via `lock_fee_token` bypass the backup mechanism,
+    // so they cannot be rolled back by `restore_cache_state`.
+    vm.decrease_account_balance(sender_address, vm.current_call_frame.msg_value)
+        .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
     default_hook::transfer_value(vm)?;
+
+    lock_fee_token(
+        vm,
+        sender_address,
+        gaslimit_price_product.saturating_mul(fee_token_ratio),
+    )?;
 
     default_hook::set_bytecode_and_code_address(vm)?;
     Ok(())
 }
 
-/// Deducts the caller's balance in the fee token for the upfront gas cost.
-/// This is calculated as gas_limit * gas_price.
-/// This is done through a call to the fee token contract's lockFee function.
-pub fn deduct_caller_fee_token(
-    vm: &mut VM<'_>,
-    gas_limit_price_product: U256,
-) -> Result<(), VMError> {
-    // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice (in ERC20) + value
-    let sender_address = vm.env.origin;
-    let value = vm.current_call_frame.msg_value;
-
-    // First, try to deduct the value sent
-    vm.decrease_account_balance(sender_address, value)
-        .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
-
-    // Then, deduct the gas cost in the fee token by locking it in the l2 bridge
-    lock_fee_token(vm, sender_address, gas_limit_price_product)?;
-
-    Ok(())
-}
 
 /// Helper function to encode the calldata for the fee token contract calls.
 /// <function>(address,uint256)
