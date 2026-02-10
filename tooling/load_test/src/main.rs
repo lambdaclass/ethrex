@@ -401,11 +401,29 @@ async fn main() {
     if cli.endless {
         let mut round = 1;
         loop {
-            run_round(round, cli.tx_amount, &accounts, &client, chain_id, &tx_builder, wait_time).await;
+            run_round(
+                round,
+                cli.tx_amount,
+                &accounts,
+                &client,
+                chain_id,
+                &tx_builder,
+                wait_time,
+            )
+            .await;
             round += 1;
         }
     } else {
-        run_round(1, cli.tx_amount, &accounts, &client, chain_id, &tx_builder, wait_time).await;
+        run_round(
+            1,
+            cli.tx_amount,
+            &accounts,
+            &client,
+            chain_id,
+            &tx_builder,
+            wait_time,
+        )
+        .await;
     }
 }
 
@@ -421,15 +439,9 @@ async fn run_round(
     println!("Starting load test round {round} with {tx_amount} transactions per account...");
     let time_now = tokio::time::Instant::now();
 
-    let targets = load_test(
-        tx_amount,
-        accounts,
-        client,
-        chain_id,
-        tx_builder,
-    )
-    .await
-    .expect("Failed to load test");
+    let targets = load_test(tx_amount, accounts, client, chain_id, tx_builder)
+        .await
+        .expect("Failed to load test");
 
     println!("Waiting for all transactions to be included in blocks...");
     wait_until_all_included(client, wait_time, targets)
