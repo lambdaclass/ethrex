@@ -9,7 +9,7 @@ This document tracks which eips we support for each hard fork.
 | [7928](https://eips.ethereum.org/EIPS/eip-7928) | Block-Level Access Lists | Record all accessed accounts and storage slots during block execution | SFI | [x] | [x] |
 | [7708](https://eips.ethereum.org/EIPS/eip-7708) | ETH Transfers Emit a Log | All ETH transfers emit Transfer/Selfdestruct logs automatically | CFI | [x] | [x] |
 | [7778](https://eips.ethereum.org/EIPS/eip-7778) | Block Gas Accounting without Refunds | Gas refunds no longer reduce block gas accounting | CFI | [x] | [x] |
-| [7843](https://eips.ethereum.org/EIPS/eip-7843) | SLOTNUM Opcode | New opcode (0x4b) returning beacon chain slot number | CFI | [x] | [ ] |
+| [7843](https://eips.ethereum.org/EIPS/eip-7843) | SLOTNUM Opcode | New opcode (0x4b) returning beacon chain slot number | CFI | [x] | [x] |
 | [8024](https://eips.ethereum.org/EIPS/eip-8024) | Backward Compatible SWAPN, DUPN, EXCHANGE | New opcodes for deeper stack access (0xe6, 0xe7, 0xe8) | CFI | [x] | [x] |
 | [2780](https://eips.ethereum.org/EIPS/eip-2780) | Reduce Intrinsic Transaction Gas | Lower base transaction cost from 21,000 to 4,500 gas | CFI | [ ] | [ ] |
 | [7904](https://eips.ethereum.org/EIPS/eip-7904) | General Repricing | Gas cost repricing to reflect computational complexity | CFI | [ ] | [ ] |
@@ -21,7 +21,7 @@ This document tracks which eips we support for each hard fork.
 | [8038](https://eips.ethereum.org/EIPS/eip-8038) | State-Access Gas Cost Update | Updated gas costs for SSTORE, SLOAD, and account access | CFI | [ ] | [ ] |
 | [8070](https://eips.ethereum.org/EIPS/eip-8070) | Sparse Blobpool | Custody-aligned sampling to reduce blob bandwidth | CFI | [ ] | [ ] |
 | [7610](https://eips.ethereum.org/EIPS/eip-7610) | Revert Creation in Case of Non-empty Storage | Prevent contract creation at addresses with existing storage | PFI | [ ] | [ ] |
-| [7872](https://eips.ethereum.org/EIPS/eip-7872) | Max Blob Flag for Local Builders | Configurable maximum blobs per block for builders | PFI | [ ] | [ ] |
+| [7872](https://eips.ethereum.org/EIPS/eip-7872) | Max Blob Flag for Local Builders | Configurable maximum blobs per block for builders | PFI | [x] | [x] |
 
 ### Status Legend
 - **SFI**: Scheduled for Inclusion
