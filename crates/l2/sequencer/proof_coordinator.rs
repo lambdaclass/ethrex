@@ -158,9 +158,13 @@ impl ProofCoordinator {
 
                 let now = Instant::now();
                 let mut batch = base_batch;
+                // Upper bound: there can be at most assignments.len() consecutive
+                // assigned batches for this prover type.
+                let max_batch =
+                    base_batch.saturating_add(u64::try_from(assignments.len()).unwrap_or(u64::MAX));
 
                 let key = |b| (b, prover_type);
-                loop {
+                while batch <= max_batch {
                     match assignments.get(&key(batch)) {
                         None => break,
                         Some(&assigned_at)

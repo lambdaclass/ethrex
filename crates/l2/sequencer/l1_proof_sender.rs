@@ -575,6 +575,17 @@ impl L1ProofSender {
             self.try_delete_invalid_proof(message, batch_number).await?;
         }
         let verify_tx_hash = result?;
+
+        metrics!(
+            let verify_tx_receipt = self
+                .eth_client
+                .get_transaction_receipt(verify_tx_hash)
+                .await?
+                .ok_or(ProofSenderError::UnexpectedError("no verify tx receipt".to_string()))?;
+            let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()?;
+            METRICS.set_batch_verification_gas(batch_number, verify_gas_used)?;
+        );
+
         self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)
             .await?;
@@ -627,8 +638,11 @@ impl L1ProofSender {
                 .get_transaction_receipt(verify_tx_hash)
                 .await?
                 .ok_or(ProofSenderError::UnexpectedError("no verify tx receipt".to_string()))?;
-            let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()?;
-            METRICS.set_batch_verification_gas(first_batch, verify_gas_used)?;
+            let total_gas: i64 = verify_tx_receipt.tx_info.gas_used.try_into()?;
+            let per_batch_gas = total_gas / batch_count as i64;
+            for (batch_number, _) in batches {
+                METRICS.set_batch_verification_gas(*batch_number, per_batch_gas)?;
+            }
         );
 
         // Store verify tx hash for all batches
