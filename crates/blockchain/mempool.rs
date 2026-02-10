@@ -78,13 +78,19 @@ impl MempoolInner {
 #[derive(Debug, Default)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
+    tx_added: tokio::sync::Notify,
 }
 
 impl Mempool {
     pub fn new(max_mempool_size: usize) -> Self {
         Mempool {
             inner: RwLock::new(MempoolInner::new(max_mempool_size)),
+            tx_added: tokio::sync::Notify::new(),
         }
+    }
+
+    pub fn tx_added(&self) -> &tokio::sync::Notify {
+        &self.tx_added
     }
 
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, MempoolInner>, StoreError> {
@@ -123,6 +129,9 @@ impl Mempool {
             .insert((sender, transaction.nonce()), hash);
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
+        // Drop the write lock before notifying to avoid holding it while waking waiters
+        drop(inner);
+        self.tx_added.notify_one();
 
         Ok(())
     }
