@@ -20,11 +20,11 @@
 
 | EIP | Title | Code Status | Tests | devnet-bal | SFI/CFI | Owner |
 |-----|-------|-------------|-------|------------|---------|-------|
-| **7928** | Block-Level Access Lists | ⚠️ Types + engine_newPayloadV5 merged; execution integration PR [#6024] in review | Unit tests passing | ✅ | SFI | Edgar |
-| **7708** | ETH Transfers Emit Logs | ✅ Merged ([#6074], fix [#6104]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1879) | 100+ tests | ✅ | CFI | Edgar |
+| **7928** | Block-Level Access Lists | ✅ Merged ([#6020], [#6024], fix [#6149]) · Types, engine_newPayloadV5, execution tracking, hash validation, recorder fixes | Amsterdam state tests: 250/250 | ✅ | SFI | Edgar |
+| **7708** | ETH Transfers Emit Logs | ✅ Merged ([#6074], fix [#6104], fix [#6149]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1879) | Amsterdam state tests: 250/250 | ✅ | CFI | Edgar |
 | **7778** | Block Gas Accounting without Refunds | ✅ Merged ([#5996], fix [#6128]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1940) | 7 unit tests in `eip7778_tests.rs` | ✅ | CFI | Edgar |
 | **7843** | SLOTNUM Opcode | ✅ Merged ([#5973]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2028) | ~7 tests (skipped) | ✅ | CFI | Esteve |
-| **8024** | DUPN/SWAPN/EXCHANGE | ✅ Merged ([#5970], fix [#6118]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1942) | ~400 tests (skipped due to gas cost deps) | ✅ | CFI | Esteve |
+| **8024** | DUPN/SWAPN/EXCHANGE | ✅ Merged ([#5970], fix [#6118]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1942) | Blockchain tests passing ✅ | ✅ | CFI | Esteve |
 
 ### Gas Repricing EIPs (New - not on devnet-bal yet)
 
@@ -38,7 +38,7 @@
 | **8037** | State Creation Gas Cost Increase | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2040) | 🔴 | 🔴 | CFI |
 | **8038** | State-Access Gas Cost Update | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1941) | 🔴 | 🔴 | CFI |
 
-> **Priority note:** Gas repricing EIPs are **low priority** — no other client has started them. EIP-7904 and EIP-7954 are **medium priority** (Nethermind has draft PRs). Focus on finishing SFI EIPs first (EIP-7928 BAL), then monitor CFI decisions at ACDE calls. If getting ahead, EIP-7954 is simplest (just a constant change: 24KiB → 32KiB).
+> **Priority note:** All core devnet EIPs are merged and EF state tests pass. **Up next: hive testing for Amsterdam** (PR [#6009](https://github.com/lambdaclass/ethrex/pull/6009)) — this is the current blocker before Amsterdam can be considered fully validated in ethrex. Gas repricing EIPs are **low priority** — no other client has started them. EIP-7904 and EIP-7954 are **medium priority** (Nethermind has draft PRs). Monitor CFI decisions at ACDE calls. If getting ahead, EIP-7954 is simplest (just a constant change: 24KiB → 32KiB).
 
 ### Other Amsterdam EIPs
 
@@ -51,30 +51,31 @@
 
 ---
 
-## February 6 Status Update
+## February 10 Status Update
 
-### Merged ✅
-- [x] **EIP-7778** (Gas Accounting) - [#5996](https://github.com/lambdaclass/ethrex/pull/5996), fix [#6128](https://github.com/lambdaclass/ethrex/pull/6128) merged → Edgar
-- [x] **EIP-7708** (ETH Transfer Logs) - [#6074](https://github.com/lambdaclass/ethrex/pull/6074), fix [#6104](https://github.com/lambdaclass/ethrex/pull/6104) merged → Edgar
-- [x] **EIP-8024** (DUPN/SWAPN/EXCHANGE) - [#5970](https://github.com/lambdaclass/ethrex/pull/5970), bugfix [#6118](https://github.com/lambdaclass/ethrex/pull/6118) merged → Esteve
-- [x] **EIP-7843** (SLOTNUM) - [#5973](https://github.com/lambdaclass/ethrex/pull/5973) merged → Esteve
-- [x] **EIP-7872** (Max Blob Flag) - [#5769](https://github.com/lambdaclass/ethrex/pull/5769) merged → Edgar
+### All Core Devnet EIPs Merged ✅
+- [x] **EIP-7928** (Block-Level Access Lists) - [#6020](https://github.com/lambdaclass/ethrex/pull/6020), [#6024](https://github.com/lambdaclass/ethrex/pull/6024), fix [#6149](https://github.com/lambdaclass/ethrex/pull/6149) → Edgar
+  - Types + `engine_newPayloadV5` (Part 1)
+  - Execution tracking + hash validation (Part 2, merged Feb 9)
+  - BAL recorder fixes: SYSTEM_ADDRESS handling, selfdestruct cleanup, storage write-to-read reversion, gas-check gating for CALL/CREATE opcodes ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
+- [x] **EIP-7708** (ETH Transfer Logs) - [#6074](https://github.com/lambdaclass/ethrex/pull/6074), fix [#6104](https://github.com/lambdaclass/ethrex/pull/6104), fix [#6149](https://github.com/lambdaclass/ethrex/pull/6149) → Edgar
+  - Fix: selfdestruct-to-self and CALLCODE self-transfer log emission ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
+- [x] **EIP-7778** (Gas Accounting) - [#5996](https://github.com/lambdaclass/ethrex/pull/5996), fix [#6128](https://github.com/lambdaclass/ethrex/pull/6128) → Edgar
+- [x] **EIP-8024** (DUPN/SWAPN/EXCHANGE) - [#5970](https://github.com/lambdaclass/ethrex/pull/5970), fix [#6118](https://github.com/lambdaclass/ethrex/pull/6118) → Esteve
+- [x] **EIP-7843** (SLOTNUM) - [#5973](https://github.com/lambdaclass/ethrex/pull/5973) → Esteve
+- [x] **EIP-7872** (Max Blob Flag) - [#5769](https://github.com/lambdaclass/ethrex/pull/5769) → Edgar
 
-### In Progress
-- [ ] **Complete EIP-7928 integration** (BAL part 2) - execution hook needed → Edgar
-  - Types + `engine_newPayloadV5` merged (PR [#6020](https://github.com/lambdaclass/ethrex/pull/6020))
-  - Execution integration PR [#6024](https://github.com/lambdaclass/ethrex/pull/6024) in review
-  - Recent: removed dead code, fixed comments (ce8754cf3)
-  - Missing: block execution integration to populate the access list
+### EF Tests ✅
+- [x] **Amsterdam state tests: 250/250 passing**
+- [x] **Prague, Cancun, Shanghai, Paris state tests: 51,728/51,728 passing**
+- [x] Removed 150+ line Amsterdam skip list from `tooling/ef_tests/blockchain/tests/all.rs` ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
+- [x] Added `run-ef-tests.py` script for running EF state tests across forks ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
+- [x] Added Amsterdam to default forks in state test runner ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
 
-### Documentation
-- [ ] **Update `docs/eip.md`** - Mark EIP-7708, EIP-7778, EIP-8024, EIP-7843, and EIP-7872 as "Supported [x]"
-
-### Testing
-- [ ] Update hive tests for Amsterdam
+### Remaining
+- [ ] Update hive tests for Amsterdam (PR [#6009](https://github.com/lambdaclass/ethrex/pull/6009) open)
 - [ ] Monitor EEST test changes / EIP spec changes
-- [ ] Address ~31,000 skipped Amsterdam legacy tests in `tooling/ef_tests/blockchain/tests/all.rs`
-- [ ] Enable EIP-specific tests as implementations complete (currently all skipped in `SKIPPED_AMSTERDAM`)
+- [ ] Start gas repricing EIPs (low priority, no other client has started)
 
 ---
 
@@ -132,10 +133,12 @@ Post-Glamsterdam fork, execution layer = **Bogota**
 
 | Item | Location | Priority | Status |
 |------|----------|----------|--------|
-| Update `docs/eip.md` supported status | `docs/eip.md` | High | Pending |
-| Complete BAL execution integration | PR [#6024](https://github.com/lambdaclass/ethrex/pull/6024) | High | In progress |
-| Enable Amsterdam EIP tests | `tooling/ef_tests/blockchain/tests/all.rs` | Medium | Blocked by EIP impls |
-| Address 31k skipped Amsterdam legacy tests | `SKIPPED_AMSTERDAM` in ef_tests | Medium | Blocked by all EIPs |
+| Update `docs/eip.md` supported status | `docs/eip.md` | High | ✅ Done |
+| Complete BAL execution integration | PR [#6024](https://github.com/lambdaclass/ethrex/pull/6024) | High | ✅ Merged |
+| BAL recorder + EIP-7708 fixes | PR [#6149](https://github.com/lambdaclass/ethrex/pull/6149) | High | ✅ Done |
+| Enable Amsterdam EIP tests | `tooling/ef_tests/blockchain/tests/all.rs` | Medium | ✅ Done (skip list removed) |
+| Update hive tests for Amsterdam | PR [#6009](https://github.com/lambdaclass/ethrex/pull/6009) | Medium | In progress |
+| Gas repricing EIPs | Various | Low | Not started (no other client has either) |
 
 ---
 
@@ -173,3 +176,4 @@ Meetings on **Thursdays**. Track agendas and notes at [ethereum/pm](https://gith
 [#6104]: https://github.com/lambdaclass/ethrex/pull/6104
 [#6118]: https://github.com/lambdaclass/ethrex/pull/6118
 [#6128]: https://github.com/lambdaclass/ethrex/pull/6128
+[#6149]: https://github.com/lambdaclass/ethrex/pull/6149
