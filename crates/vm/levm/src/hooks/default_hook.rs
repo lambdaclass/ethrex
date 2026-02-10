@@ -246,7 +246,19 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
+    // even if the priority fee is zero. System contract calls have gas_price = 0,
+    // so we use this to distinguish them from user transactions.
+    if !vm.env.gas_price.is_zero()
+        && let Some(recorder) = vm.db.bal_recorder.as_mut()
+    {
+        recorder.record_touched_address(vm.env.coinbase);
+    }
+
+    // Only pay coinbase if there's actually a fee to pay.
+    if !coinbase_fee.is_zero() {
+        vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    }
 
     Ok(())
 }
@@ -563,8 +575,19 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;
-        let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
+
+        // Record tx.to as touched in BAL (the target of message call transaction)
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(to);
+        }
+
+        let (is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, to)?;
+
+        // If EIP-7702 delegation, also record the delegation target (code source) in BAL
+        if is_delegation && let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(code_address);
+        }
 
         (bytecode, code_address)
     };

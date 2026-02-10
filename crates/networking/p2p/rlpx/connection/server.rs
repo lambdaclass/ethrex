@@ -1085,8 +1085,24 @@ async fn handle_incoming_message(
 
                 #[cfg(not(feature = "l2"))]
                 let is_l2_mode = false;
-                msg.handle(&state.node, &state.blockchain, is_l2_mode)
-                    .await?;
+                if let Err(error) = msg.handle(&state.node, &state.blockchain, is_l2_mode).await {
+                    if matches!(
+                        error,
+                        ethrex_blockchain::error::MempoolError::BlobsBundleError(_)
+                    ) {
+                        warn!(
+                            peer=%state.node,
+                            reason=%error,
+                            "disconnected from peer",
+                        );
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
+                        return Err(PeerConnectionError::DisconnectSent(
+                            DisconnectReason::SubprotocolError,
+                        ));
+                    }
+                    return Err(error.into());
+                }
             }
         }
         Message::GetStorageRanges(req) => {
@@ -1095,11 +1111,13 @@ async fn handle_incoming_message(
         }
         Message::GetByteCodes(req) => {
             let storage_clone = state.storage.clone();
-            let response = process_byte_codes_request(req, storage_clone).map_err(|_| {
-                PeerConnectionError::InternalError(
-                    "Failed to execute bytecode retrieval task".to_string(),
-                )
-            })?;
+            let response = process_byte_codes_request(req, storage_clone)
+                .await
+                .map_err(|_| {
+                    PeerConnectionError::InternalError(
+                        "Failed to execute bytecode retrieval task".to_string(),
+                    )
+                })?;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
