@@ -165,4 +165,155 @@ mod tests {
             "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
         );
     }
+
+    // --- Additional namehash tests ---
+
+    #[test]
+    fn namehash_single_label_com() {
+        // namehash("com") should be a non-zero hash, different from namehash("eth")
+        let result = namehash("com");
+        assert_ne!(result, [0u8; 32]);
+        assert_ne!(result, namehash("eth"));
+    }
+
+    #[test]
+    fn namehash_deep_nesting() {
+        let deep = namehash("sub.domain.eth");
+        let mid = namehash("domain.eth");
+        let top = namehash("eth");
+        // All three should be different
+        assert_ne!(deep, mid);
+        assert_ne!(deep, top);
+        assert_ne!(mid, top);
+    }
+
+    #[test]
+    fn namehash_case_sensitive() {
+        // ENS namehash operates on raw bytes — different case produces different hashes
+        let lower = namehash("eth");
+        let upper = namehash("ETH");
+        assert_ne!(lower, upper);
+    }
+
+    #[test]
+    fn namehash_trailing_dot() {
+        // Trailing dot creates an extra empty label at the start of rsplit
+        let with_dot = namehash("eth.");
+        let without_dot = namehash("eth");
+        // The trailing dot splits into ["", "eth"], so the hash differs
+        assert_ne!(with_dot, without_dot);
+    }
+
+    #[test]
+    fn namehash_unicode_no_panic() {
+        // Should not panic on unicode input
+        let _ = namehash("🦀.eth");
+        let _ = namehash("café.eth");
+        let _ = namehash("日本語.eth");
+    }
+
+    // --- Additional looks_like_ens_name tests ---
+
+    #[test]
+    fn ens_name_empty_string() {
+        assert!(!looks_like_ens_name(""));
+    }
+
+    #[test]
+    fn ens_name_just_dot() {
+        // Contains '.' and doesn't start with 0x
+        assert!(looks_like_ens_name("."));
+    }
+
+    #[test]
+    fn ens_name_starts_with_dot() {
+        assert!(looks_like_ens_name(".eth"));
+    }
+
+    #[test]
+    fn ens_name_0x_prefix_with_dot() {
+        // Starts with 0x, so not an ENS name even though it contains a dot
+        assert!(!looks_like_ens_name("0x.eth"));
+    }
+
+    #[test]
+    fn ens_name_no_dot() {
+        assert!(!looks_like_ens_name("foo"));
+    }
+
+    #[test]
+    fn ens_name_deeply_nested() {
+        assert!(looks_like_ens_name("foo.bar.baz.eth"));
+    }
+
+    // --- Additional parse_address_from_abi_word tests ---
+
+    #[test]
+    fn parse_address_valid_64_char_hex() {
+        // 64 hex chars (32 bytes), address in last 20 bytes
+        let word = "000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+        let addr = parse_address_from_abi_word(word).unwrap();
+        assert_eq!(addr, "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
+    }
+
+    #[test]
+    fn parse_address_shorter_than_40_chars() {
+        let word = "0xabcdef";
+        assert!(parse_address_from_abi_word(word).is_err());
+    }
+
+    #[test]
+    fn parse_address_without_0x_prefix() {
+        let word = "000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045";
+        let addr = parse_address_from_abi_word(word).unwrap();
+        assert_eq!(addr, "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+    }
+
+    #[test]
+    fn parse_address_exactly_40_chars() {
+        // Exactly 40 hex chars = 20 bytes address, no leading zeros
+        let word = "d8da6bf26964af9d7eed9e03e53415d37aa96045";
+        let addr = parse_address_from_abi_word(word).unwrap();
+        assert_eq!(addr, "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+    }
+
+    // --- Additional to_checksum_address tests ---
+
+    #[test]
+    fn checksum_all_lowercase_input() {
+        let addr = "0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359";
+        let checksummed = to_checksum_address(addr);
+        // Should produce a deterministic EIP-55 result
+        assert!(checksummed.starts_with("0x"));
+        assert_eq!(checksummed.len(), 42);
+    }
+
+    #[test]
+    fn checksum_all_uppercase_input() {
+        // Uppercase input should produce the same result as lowercase
+        let addr_upper = "0xD8DA6BF26964AF9D7EED9E03E53415D37AA96045";
+        let addr_lower = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
+        assert_eq!(to_checksum_address(addr_upper), to_checksum_address(addr_lower));
+    }
+
+    #[test]
+    fn checksum_already_checksummed() {
+        let addr = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+        assert_eq!(to_checksum_address(addr), addr);
+    }
+
+    #[test]
+    fn checksum_zero_address() {
+        let addr = "0x0000000000000000000000000000000000000000";
+        let checksummed = to_checksum_address(addr);
+        // Zero address has no alpha chars, so it stays all lowercase
+        assert_eq!(checksummed, "0x0000000000000000000000000000000000000000");
+    }
+
+    #[test]
+    fn checksum_without_0x_prefix() {
+        let addr = "d8da6bf26964af9d7eed9e03e53415d37aa96045";
+        let checksummed = to_checksum_address(addr);
+        assert_eq!(checksummed, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045");
+    }
 }

@@ -231,3 +231,256 @@ pub fn command_usage(cmd: &CommandDef) -> String {
     }
     usage
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::{ParamDef, ParamType};
+    use serde_json::json;
+
+    // --- hex_to_decimal ---
+
+    #[test]
+    fn test_hex_to_decimal_zero() {
+        assert_eq!(hex_to_decimal("0x0"), Some("0".to_string()));
+    }
+
+    #[test]
+    fn test_hex_to_decimal_a() {
+        assert_eq!(hex_to_decimal("0xa"), Some("10".to_string()));
+    }
+
+    #[test]
+    fn test_hex_to_decimal_ff() {
+        assert_eq!(hex_to_decimal("0xff"), Some("255".to_string()));
+    }
+
+    #[test]
+    fn test_hex_to_decimal_empty_hex() {
+        assert_eq!(hex_to_decimal("0x"), None);
+    }
+
+    #[test]
+    fn test_hex_to_decimal_non_hex() {
+        assert_eq!(hex_to_decimal("0xzz"), None);
+    }
+
+    #[test]
+    fn test_hex_to_decimal_too_long() {
+        let long = format!("0x{}", "f".repeat(33));
+        assert_eq!(hex_to_decimal(&long), None);
+    }
+
+    #[test]
+    fn test_hex_to_decimal_no_prefix() {
+        assert_eq!(hex_to_decimal("ff"), None);
+    }
+
+    // --- truncate_middle ---
+
+    #[test]
+    fn test_truncate_short_string() {
+        assert_eq!(truncate_middle("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exact_max() {
+        assert_eq!(truncate_middle("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_longer_than_max() {
+        let result = truncate_middle("0123456789abcdef", 10);
+        assert!(result.contains("..."));
+        assert!(result.len() <= 10);
+    }
+
+    #[test]
+    fn test_truncate_max_lt_7_unchanged() {
+        assert_eq!(truncate_middle("long string here", 6), "long string here");
+    }
+
+    // --- inline_value ---
+
+    #[test]
+    fn test_inline_null() {
+        assert_eq!(inline_value(&json!(null)), "null");
+    }
+
+    #[test]
+    fn test_inline_bool_true() {
+        assert_eq!(inline_value(&json!(true)), "true");
+    }
+
+    #[test]
+    fn test_inline_bool_false() {
+        assert_eq!(inline_value(&json!(false)), "false");
+    }
+
+    #[test]
+    fn test_inline_number() {
+        assert_eq!(inline_value(&json!(42)), "42");
+    }
+
+    #[test]
+    fn test_inline_hex_string_to_decimal() {
+        assert_eq!(inline_value(&json!("0xa")), "10");
+    }
+
+    #[test]
+    fn test_inline_address_unchanged() {
+        let addr = "0x1234567890abcdef1234567890abcdef12345678";
+        assert_eq!(inline_value(&json!(addr)), addr);
+    }
+
+    #[test]
+    fn test_inline_hash_unchanged() {
+        let hash = format!("0x{}", "ab".repeat(32));
+        assert_eq!(inline_value(&json!(hash)), hash);
+    }
+
+    #[test]
+    fn test_inline_nested_array() {
+        assert_eq!(inline_value(&json!([1, 2])), "[1, 2]");
+    }
+
+    #[test]
+    fn test_inline_nested_object() {
+        let result = inline_value(&json!({"a": 1}));
+        assert!(result.contains("a: 1"));
+    }
+
+    #[test]
+    fn test_inline_plain_string() {
+        assert_eq!(inline_value(&json!("hello")), "hello");
+    }
+
+    // --- flatten_object ---
+
+    #[test]
+    fn test_flatten_simple() {
+        let map = serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"a":"1","b":"2"}"#)
+            .unwrap();
+        let rows = flatten_object(&map, "");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|(k, _)| k == "a"));
+        assert!(rows.iter().any(|(k, _)| k == "b"));
+    }
+
+    #[test]
+    fn test_flatten_nested() {
+        let map =
+            serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"a":{"b":"1"}}"#).unwrap();
+        let rows = flatten_object(&map, "");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "a.b");
+        assert_eq!(rows[0].1, "1");
+    }
+
+    #[test]
+    fn test_flatten_array_values() {
+        let map =
+            serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"tags":[1,2,3]}"#).unwrap();
+        let rows = flatten_object(&map, "");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "tags");
+        assert_eq!(rows[0].1, "1, 2, 3");
+    }
+
+    #[test]
+    fn test_flatten_empty_nested_object() {
+        let map =
+            serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"a":{}}"#).unwrap();
+        let rows = flatten_object(&map, "");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "a");
+        assert_eq!(rows[0].1, "{}");
+    }
+
+    #[test]
+    fn test_flatten_with_prefix() {
+        let map =
+            serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"x":"1"}"#).unwrap();
+        let rows = flatten_object(&map, "parent");
+        assert_eq!(rows[0].0, "parent.x");
+    }
+
+    // --- is_decimal_float ---
+
+    #[test]
+    fn test_is_decimal_float_valid() {
+        assert!(is_decimal_float("1.5"));
+    }
+
+    #[test]
+    fn test_is_decimal_float_integer() {
+        assert!(!is_decimal_float("1"));
+    }
+
+    #[test]
+    fn test_is_decimal_float_double_dot() {
+        assert!(!is_decimal_float("1.2.3"));
+    }
+
+    #[test]
+    fn test_is_decimal_float_dot_prefix() {
+        assert!(is_decimal_float(".1"));
+    }
+
+    #[test]
+    fn test_is_decimal_float_empty() {
+        assert!(!is_decimal_float(""));
+    }
+
+    #[test]
+    fn test_is_decimal_float_only_dot() {
+        assert!(!is_decimal_float("."));
+    }
+
+    // --- command_usage ---
+
+    fn make_params(defs: Vec<ParamDef>) -> &'static [ParamDef] {
+        Box::leak(defs.into_boxed_slice())
+    }
+
+    #[test]
+    fn test_command_usage_required_and_optional() {
+        let cmd = CommandDef {
+            namespace: "eth",
+            name: "getBalance",
+            rpc_method: "eth_getBalance",
+            params: make_params(vec![
+                ParamDef {
+                    name: "address",
+                    param_type: ParamType::Address,
+                    required: true,
+                    default_value: None,
+                    description: "address",
+                },
+                ParamDef {
+                    name: "block",
+                    param_type: ParamType::BlockId,
+                    required: false,
+                    default_value: Some("latest"),
+                    description: "block id",
+                },
+            ]),
+            description: "get balance",
+        };
+        let usage = command_usage(&cmd);
+        assert_eq!(usage, "eth.getBalance <address> [block]");
+    }
+
+    #[test]
+    fn test_command_usage_no_params() {
+        let cmd = CommandDef {
+            namespace: "eth",
+            name: "blockNumber",
+            rpc_method: "eth_blockNumber",
+            params: &[],
+            description: "block number",
+        };
+        let usage = command_usage(&cmd);
+        assert_eq!(usage, "eth.blockNumber");
+    }
+}

@@ -256,3 +256,533 @@ impl Default for CommandRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_params(defs: Vec<ParamDef>) -> &'static [ParamDef] {
+        Box::leak(defs.into_boxed_slice())
+    }
+
+    fn make_cmd(params: &'static [ParamDef]) -> CommandDef {
+        CommandDef {
+            namespace: "test",
+            name: "test",
+            rpc_method: "test_test",
+            params,
+            description: "test command",
+        }
+    }
+
+    // --- build_params ---
+
+    #[test]
+    fn test_build_params_correct_number() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "addr",
+            param_type: ParamType::Address,
+            required: true,
+            default_value: None,
+            description: "address",
+        }]));
+        let result = cmd
+            .build_params(&[json!("0x1234567890abcdef1234567890abcdef12345678")])
+            .unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_build_params_too_few_required() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "addr",
+            param_type: ParamType::Address,
+            required: true,
+            default_value: None,
+            description: "address",
+        }]));
+        let err = cmd.build_params(&[]).unwrap_err();
+        assert!(err.contains("requires at least 1"));
+    }
+
+    #[test]
+    fn test_build_params_too_many_args() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "addr",
+            param_type: ParamType::Address,
+            required: true,
+            default_value: None,
+            description: "address",
+        }]));
+        let err = cmd
+            .build_params(&[
+                json!("0x1234567890abcdef1234567890abcdef12345678"),
+                json!("extra"),
+            ])
+            .unwrap_err();
+        assert!(err.contains("accepts at most 1"));
+    }
+
+    #[test]
+    fn test_build_params_optional_with_default() {
+        let cmd = make_cmd(make_params(vec![
+            ParamDef {
+                name: "addr",
+                param_type: ParamType::Address,
+                required: true,
+                default_value: None,
+                description: "address",
+            },
+            ParamDef {
+                name: "block",
+                param_type: ParamType::BlockId,
+                required: false,
+                default_value: Some("latest"),
+                description: "block id",
+            },
+        ]));
+        let result = cmd
+            .build_params(&[json!("0x1234567890abcdef1234567890abcdef12345678")])
+            .unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[1], json!("latest"));
+    }
+
+    #[test]
+    fn test_build_params_optional_without_default_stops() {
+        let cmd = make_cmd(make_params(vec![
+            ParamDef {
+                name: "addr",
+                param_type: ParamType::Address,
+                required: true,
+                default_value: None,
+                description: "address",
+            },
+            ParamDef {
+                name: "extra",
+                param_type: ParamType::StringParam,
+                required: false,
+                default_value: None,
+                description: "extra",
+            },
+        ]));
+        let result = cmd
+            .build_params(&[json!("0x1234567890abcdef1234567890abcdef12345678")])
+            .unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    // --- validate_and_convert via build_params ---
+
+    #[test]
+    fn test_address_valid() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "addr",
+            param_type: ParamType::Address,
+            required: true,
+            default_value: None,
+            description: "address",
+        }]));
+        let result = cmd
+            .build_params(&[json!("0x1234567890abcdef1234567890abcdef12345678")])
+            .unwrap();
+        assert_eq!(
+            result[0],
+            json!("0x1234567890abcdef1234567890abcdef12345678")
+        );
+    }
+
+    #[test]
+    fn test_address_invalid_length() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "addr",
+            param_type: ParamType::Address,
+            required: true,
+            default_value: None,
+            description: "address",
+        }]));
+        let err = cmd.build_params(&[json!("0x1234")]).unwrap_err();
+        assert!(err.contains("20-byte hex address"));
+    }
+
+    #[test]
+    fn test_address_no_0x_prefix() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "addr",
+            param_type: ParamType::Address,
+            required: true,
+            default_value: None,
+            description: "address",
+        }]));
+        let err = cmd
+            .build_params(&[json!("1234567890abcdef1234567890abcdef12345678")])
+            .unwrap_err();
+        assert!(err.contains("20-byte hex address"));
+    }
+
+    #[test]
+    fn test_hash_valid() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "hash",
+            param_type: ParamType::Hash,
+            required: true,
+            default_value: None,
+            description: "hash",
+        }]));
+        let valid_hash = "0x".to_string() + &"ab".repeat(32);
+        let result = cmd.build_params(&[json!(valid_hash)]).unwrap();
+        assert_eq!(result[0], json!(valid_hash));
+    }
+
+    #[test]
+    fn test_hash_invalid() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "hash",
+            param_type: ParamType::Hash,
+            required: true,
+            default_value: None,
+            description: "hash",
+        }]));
+        let err = cmd.build_params(&[json!("0x1234")]).unwrap_err();
+        assert!(err.contains("32-byte hex hash"));
+    }
+
+    #[test]
+    fn test_block_id_named_tags() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "block",
+            param_type: ParamType::BlockId,
+            required: true,
+            default_value: None,
+            description: "block",
+        }]));
+        for tag in &["latest", "earliest", "pending", "finalized", "safe"] {
+            let result = cmd.build_params(&[json!(tag)]).unwrap();
+            assert_eq!(result[0], json!(tag));
+        }
+    }
+
+    #[test]
+    fn test_block_id_decimal_to_hex() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "block",
+            param_type: ParamType::BlockId,
+            required: true,
+            default_value: None,
+            description: "block",
+        }]));
+        let result = cmd.build_params(&[json!("100")]).unwrap();
+        assert_eq!(result[0], json!("0x64"));
+    }
+
+    #[test]
+    fn test_block_id_hex_passthrough() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "block",
+            param_type: ParamType::BlockId,
+            required: true,
+            default_value: None,
+            description: "block",
+        }]));
+        let result = cmd.build_params(&[json!("0x64")]).unwrap();
+        assert_eq!(result[0], json!("0x64"));
+    }
+
+    #[test]
+    fn test_hex_data_valid() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "data",
+            param_type: ParamType::HexData,
+            required: true,
+            default_value: None,
+            description: "data",
+        }]));
+        let result = cmd.build_params(&[json!("0xdeadbeef")]).unwrap();
+        assert_eq!(result[0], json!("0xdeadbeef"));
+    }
+
+    #[test]
+    fn test_hex_data_missing_prefix() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "data",
+            param_type: ParamType::HexData,
+            required: true,
+            default_value: None,
+            description: "data",
+        }]));
+        let err = cmd.build_params(&[json!("deadbeef")]).unwrap_err();
+        assert!(err.contains("0x-prefixed hex data"));
+    }
+
+    #[test]
+    fn test_uint_decimal_to_hex() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "val",
+            param_type: ParamType::Uint,
+            required: true,
+            default_value: None,
+            description: "uint",
+        }]));
+        let result = cmd.build_params(&[json!("255")]).unwrap();
+        assert_eq!(result[0], json!("0xff"));
+    }
+
+    #[test]
+    fn test_uint_hex_passthrough() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "val",
+            param_type: ParamType::Uint,
+            required: true,
+            default_value: None,
+            description: "uint",
+        }]));
+        let result = cmd.build_params(&[json!("0xff")]).unwrap();
+        assert_eq!(result[0], json!("0xff"));
+    }
+
+    #[test]
+    fn test_uint_invalid() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "val",
+            param_type: ParamType::Uint,
+            required: true,
+            default_value: None,
+            description: "uint",
+        }]));
+        let err = cmd.build_params(&[json!("abc")]).unwrap_err();
+        assert!(err.contains("invalid uint"));
+    }
+
+    #[test]
+    fn test_bool_true_string() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "flag",
+            param_type: ParamType::Bool,
+            required: true,
+            default_value: None,
+            description: "bool",
+        }]));
+        let result = cmd.build_params(&[json!("true")]).unwrap();
+        assert_eq!(result[0], json!(true));
+    }
+
+    #[test]
+    fn test_bool_false_string() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "flag",
+            param_type: ParamType::Bool,
+            required: true,
+            default_value: None,
+            description: "bool",
+        }]));
+        let result = cmd.build_params(&[json!("false")]).unwrap();
+        assert_eq!(result[0], json!(false));
+    }
+
+    #[test]
+    fn test_bool_actual_bool() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "flag",
+            param_type: ParamType::Bool,
+            required: true,
+            default_value: None,
+            description: "bool",
+        }]));
+        let result = cmd.build_params(&[json!(true)]).unwrap();
+        assert_eq!(result[0], json!(true));
+    }
+
+    #[test]
+    fn test_bool_invalid() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "flag",
+            param_type: ParamType::Bool,
+            required: true,
+            default_value: None,
+            description: "bool",
+        }]));
+        let err = cmd.build_params(&[json!("maybe")]).unwrap_err();
+        assert!(err.contains("expected true or false"));
+    }
+
+    #[test]
+    fn test_object_from_json_string() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "obj",
+            param_type: ParamType::Object,
+            required: true,
+            default_value: None,
+            description: "object",
+        }]));
+        let result = cmd
+            .build_params(&[json!(r#"{"to":"0xabc"}"#)])
+            .unwrap();
+        assert!(result[0].is_object());
+        assert_eq!(result[0]["to"], json!("0xabc"));
+    }
+
+    #[test]
+    fn test_object_passthrough() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "obj",
+            param_type: ParamType::Object,
+            required: true,
+            default_value: None,
+            description: "object",
+        }]));
+        let obj = json!({"to": "0xabc"});
+        let result = cmd.build_params(&[obj.clone()]).unwrap();
+        assert_eq!(result[0], obj);
+    }
+
+    #[test]
+    fn test_object_invalid_json() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "obj",
+            param_type: ParamType::Object,
+            required: true,
+            default_value: None,
+            description: "object",
+        }]));
+        let err = cmd.build_params(&[json!("not json")]).unwrap_err();
+        assert!(err.contains("invalid JSON object"));
+    }
+
+    #[test]
+    fn test_array_from_json_string() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "arr",
+            param_type: ParamType::Array,
+            required: true,
+            default_value: None,
+            description: "array",
+        }]));
+        let result = cmd.build_params(&[json!(r#"[1, 2, 3]"#)]).unwrap();
+        assert!(result[0].is_array());
+    }
+
+    #[test]
+    fn test_array_passthrough() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "arr",
+            param_type: ParamType::Array,
+            required: true,
+            default_value: None,
+            description: "array",
+        }]));
+        let arr = json!([1, 2, 3]);
+        let result = cmd.build_params(&[arr.clone()]).unwrap();
+        assert_eq!(result[0], arr);
+    }
+
+    #[test]
+    fn test_string_param_any_value() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "s",
+            param_type: ParamType::StringParam,
+            required: true,
+            default_value: None,
+            description: "string",
+        }]));
+        let result = cmd.build_params(&[json!("anything")]).unwrap();
+        assert_eq!(result[0], json!("anything"));
+    }
+
+    #[test]
+    fn test_string_param_number_converted() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "s",
+            param_type: ParamType::StringParam,
+            required: true,
+            default_value: None,
+            description: "string",
+        }]));
+        let result = cmd.build_params(&[json!(42)]).unwrap();
+        assert_eq!(result[0], json!("42"));
+    }
+
+    // --- CommandRegistry ---
+
+    #[test]
+    fn test_registry_find_known_command() {
+        let registry = CommandRegistry::new();
+        let cmd = registry.find("eth", "blockNumber");
+        assert!(cmd.is_some());
+        assert_eq!(cmd.unwrap().rpc_method, "eth_blockNumber");
+    }
+
+    #[test]
+    fn test_registry_find_unknown_command() {
+        let registry = CommandRegistry::new();
+        assert!(registry.find("eth", "nonExistentMethod").is_none());
+    }
+
+    #[test]
+    fn test_registry_namespaces() {
+        let registry = CommandRegistry::new();
+        let ns = registry.namespaces();
+        assert!(ns.contains(&"eth"));
+        assert!(ns.contains(&"net"));
+        assert!(ns.contains(&"web3"));
+    }
+
+    #[test]
+    fn test_registry_methods_in_namespace() {
+        let registry = CommandRegistry::new();
+        let methods = registry.methods_in_namespace("eth");
+        assert!(methods.len() > 1);
+        assert!(methods.iter().all(|c| c.namespace == "eth"));
+    }
+
+    #[test]
+    fn test_registry_all_commands_non_empty() {
+        let registry = CommandRegistry::new();
+        assert!(!registry.all_commands().is_empty());
+    }
+
+    // --- CommandDef helpers ---
+
+    #[test]
+    fn test_full_name() {
+        let cmd = make_cmd(&[]);
+        assert_eq!(cmd.full_name(), "test.test");
+    }
+
+    #[test]
+    fn test_usage_format() {
+        let cmd = make_cmd(make_params(vec![
+            ParamDef {
+                name: "addr",
+                param_type: ParamType::Address,
+                required: true,
+                default_value: None,
+                description: "address",
+            },
+            ParamDef {
+                name: "block",
+                param_type: ParamType::BlockId,
+                required: false,
+                default_value: Some("latest"),
+                description: "block id",
+            },
+        ]));
+        let usage = cmd.usage();
+        assert!(usage.contains("<addr>"));
+        assert!(usage.contains("[block=latest]"));
+    }
+
+    #[test]
+    fn test_usage_optional_no_default() {
+        let cmd = make_cmd(make_params(vec![ParamDef {
+            name: "extra",
+            param_type: ParamType::StringParam,
+            required: false,
+            default_value: None,
+            description: "extra",
+        }]));
+        let usage = cmd.usage();
+        assert!(usage.contains("[extra]"));
+        assert!(!usage.contains("="));
+    }
+}

@@ -447,4 +447,277 @@ mod tests {
             _ => panic!("expected RpcCall"),
         }
     }
+
+    // --- Tokenizer edge cases ---
+
+    #[test]
+    fn test_hex_address_as_bare_arg() {
+        let result = parse("eth.getBalance 0x1234567890abcdef1234567890abcdef12345678 latest").unwrap();
+        match result {
+            ParsedCommand::RpcCall { args, .. } => {
+                assert_eq!(args.len(), 2);
+                assert_eq!(
+                    args[0],
+                    Value::String("0x1234567890abcdef1234567890abcdef12345678".to_string())
+                );
+            }
+            _ => panic!("expected RpcCall"),
+        }
+    }
+
+    #[test]
+    fn test_number_with_0x_prefix() {
+        let mut tokenizer = Tokenizer::new("0xff");
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(tokens, vec![Token::Number("0xff".to_string())]);
+    }
+
+    #[test]
+    fn test_escape_sequences_in_strings() {
+        let mut tokenizer = Tokenizer::new(r#""hello\nworld\t!\\\"""#);
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(tokens, vec![Token::String("hello\nworld\t!\\\"".to_string())]);
+    }
+
+    #[test]
+    fn test_single_quoted_strings() {
+        let mut tokenizer = Tokenizer::new("'hello world'");
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(tokens, vec![Token::String("hello world".to_string())]);
+    }
+
+    #[test]
+    fn test_single_quoted_escape() {
+        let mut tokenizer = Tokenizer::new(r"'it\'s'");
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(tokens, vec![Token::String("it's".to_string())]);
+    }
+
+    // --- Multi-line JSON ---
+
+    #[test]
+    fn test_nested_json_object() {
+        let input = r#"eth.call({"a": {"b": 1}}, "latest")"#;
+        let result = parse(input).unwrap();
+        match result {
+            ParsedCommand::RpcCall { args, .. } => {
+                assert_eq!(args.len(), 2);
+                assert!(args[0].is_object());
+                assert_eq!(args[0]["a"]["b"], Value::Number(1.into()));
+            }
+            _ => panic!("expected RpcCall"),
+        }
+    }
+
+    #[test]
+    fn test_json_array_with_objects() {
+        let input = r#"eth.call([{"x":1}], "latest")"#;
+        let result = parse(input).unwrap();
+        match result {
+            ParsedCommand::RpcCall { args, .. } => {
+                assert_eq!(args.len(), 2);
+                assert!(args[0].is_array());
+            }
+            _ => panic!("expected RpcCall"),
+        }
+    }
+
+    // --- Error cases ---
+
+    #[test]
+    fn test_unterminated_string() {
+        let err = parse(r#"eth.call("hello"#).unwrap_err();
+        assert!(matches!(err, ParseError::UnterminatedString));
+    }
+
+    #[test]
+    fn test_unterminated_json() {
+        let err = parse(r#"eth.call({"a": 1)"#).unwrap_err();
+        assert!(matches!(err, ParseError::UnterminatedJson));
+    }
+
+    #[test]
+    fn test_unexpected_char() {
+        let err = parse("@invalid").unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedChar('@')));
+    }
+
+    #[test]
+    fn test_unexpected_char_hash() {
+        let err = parse("#comment").unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedChar('#')));
+    }
+
+    // --- Builtin commands with args ---
+
+    #[test]
+    fn test_builtin_help_with_arg() {
+        let result = parse(".help eth.getBalance").unwrap();
+        match result {
+            ParsedCommand::BuiltinCommand { name, args } => {
+                assert_eq!(name, "help");
+                assert_eq!(args, vec!["eth.getBalance"]);
+            }
+            _ => panic!("expected BuiltinCommand"),
+        }
+    }
+
+    #[test]
+    fn test_builtin_connect_with_url() {
+        let result = parse(".connect http://localhost:8545").unwrap();
+        match result {
+            ParsedCommand::BuiltinCommand { name, args } => {
+                assert_eq!(name, "connect");
+                assert_eq!(args, vec!["http://localhost:8545"]);
+            }
+            _ => panic!("expected BuiltinCommand"),
+        }
+    }
+
+    // --- RPC call variants ---
+
+    #[test]
+    fn test_rpc_call_parenthesized_with_commas() {
+        let result = parse(r#"eth.call("arg1", "arg2")"#).unwrap();
+        match result {
+            ParsedCommand::RpcCall { args, .. } => {
+                assert_eq!(args.len(), 2);
+                assert_eq!(args[0], Value::String("arg1".to_string()));
+                assert_eq!(args[1], Value::String("arg2".to_string()));
+            }
+            _ => panic!("expected RpcCall"),
+        }
+    }
+
+    #[test]
+    fn test_rpc_call_mixed_types() {
+        let result = parse("eth.getBlockByNumber 0x1 true").unwrap();
+        match result {
+            ParsedCommand::RpcCall { args, .. } => {
+                assert_eq!(args.len(), 2);
+                assert_eq!(args[0], Value::String("0x1".to_string()));
+                assert_eq!(args[1], Value::Bool(true));
+            }
+            _ => panic!("expected RpcCall"),
+        }
+    }
+
+    // --- Utility calls ---
+
+    #[test]
+    fn test_all_utility_names_recognized() {
+        let utility_names = [
+            "toWei", "fromWei", "toHex", "fromHex", "keccak256", "toChecksumAddress", "isAddress",
+        ];
+        for name in &utility_names {
+            let result = parse(name).unwrap();
+            match result {
+                ParsedCommand::UtilityCall {
+                    name: parsed_name, ..
+                } => {
+                    assert_eq!(&parsed_name, name);
+                }
+                _ => panic!("expected UtilityCall for {name}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_unknown_ident_falls_through_to_utility_call() {
+        let result = parse("unknownFunc arg1").unwrap();
+        match result {
+            ParsedCommand::UtilityCall { name, args } => {
+                assert_eq!(name, "unknownFunc");
+                assert_eq!(args, vec!["arg1"]);
+            }
+            _ => panic!("expected UtilityCall"),
+        }
+    }
+
+    // --- Empty / whitespace ---
+
+    #[test]
+    fn test_whitespace_only() {
+        let result = parse("   ").unwrap();
+        assert!(matches!(result, ParsedCommand::Empty));
+    }
+
+    #[test]
+    fn test_tabs_and_newlines_only() {
+        let result = parse("\t\n\r\n").unwrap();
+        assert!(matches!(result, ParsedCommand::Empty));
+    }
+
+    #[test]
+    fn test_decimal_number_token() {
+        let mut tokenizer = Tokenizer::new("12345");
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(tokens, vec![Token::Number("12345".to_string())]);
+    }
+
+    #[test]
+    fn test_decimal_float_token() {
+        let mut tokenizer = Tokenizer::new("1.5");
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(tokens, vec![Token::Number("1.5".to_string())]);
+    }
+
+    #[test]
+    fn test_colon_token() {
+        let mut tokenizer = Tokenizer::new(":");
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(tokens, vec![Token::Colon]);
+    }
+
+    #[test]
+    fn test_false_bool_token() {
+        let mut tokenizer = Tokenizer::new("false");
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(tokens, vec![Token::Bool(false)]);
+    }
+
+    #[test]
+    fn test_rpc_call_with_json_array_arg() {
+        let result = parse(r#"eth.call(["0x1", "0x2"])"#).unwrap();
+        match result {
+            ParsedCommand::RpcCall { args, .. } => {
+                assert_eq!(args.len(), 1);
+                assert!(args[0].is_array());
+            }
+            _ => panic!("expected RpcCall"),
+        }
+    }
+
+    #[test]
+    fn test_utility_call_with_parens() {
+        let result = parse("toHex(255)").unwrap();
+        match result {
+            ParsedCommand::UtilityCall { name, args } => {
+                assert_eq!(name, "toHex");
+                assert_eq!(args, vec!["255"]);
+            }
+            _ => panic!("expected UtilityCall"),
+        }
+    }
+
+    #[test]
+    fn test_token_to_value_conversions() {
+        assert_eq!(token_to_value(&Token::String("hi".to_string())), Value::String("hi".to_string()));
+        assert_eq!(token_to_value(&Token::Number("42".to_string())), Value::String("42".to_string()));
+        assert_eq!(token_to_value(&Token::Bool(true)), Value::Bool(true));
+        assert_eq!(token_to_value(&Token::Ident("foo".to_string())), Value::String("foo".to_string()));
+        assert_eq!(token_to_value(&Token::Dot), Value::Null);
+        assert_eq!(token_to_value(&Token::Comma), Value::Null);
+    }
+
+    #[test]
+    fn test_token_to_string_conversions() {
+        assert_eq!(token_to_string(&Token::Dot), ".");
+        assert_eq!(token_to_string(&Token::LParen), "(");
+        assert_eq!(token_to_string(&Token::RParen), ")");
+        assert_eq!(token_to_string(&Token::Comma), ",");
+        assert_eq!(token_to_string(&Token::Colon), ":");
+        assert_eq!(token_to_string(&Token::Bool(true)), "true");
+        assert_eq!(token_to_string(&Token::Bool(false)), "false");
+    }
 }

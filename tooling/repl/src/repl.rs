@@ -481,3 +481,276 @@ fn ensure_parent_dir(path: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- execute_utility: toWei ---
+
+    #[test]
+    fn to_wei_ether() {
+        let result = execute_utility("toWei", &["1".into(), "ether".into()]);
+        assert_eq!(result, "1000000000000000000");
+    }
+
+    #[test]
+    fn to_wei_gwei() {
+        let result = execute_utility("toWei", &["1".into(), "gwei".into()]);
+        assert_eq!(result, "1000000000");
+    }
+
+    #[test]
+    fn to_wei_wei() {
+        let result = execute_utility("toWei", &["1".into(), "wei".into()]);
+        assert_eq!(result, "1");
+    }
+
+    #[test]
+    fn to_wei_eth_alias() {
+        let result = execute_utility("toWei", &["1".into(), "eth".into()]);
+        assert_eq!(result, "1000000000000000000");
+    }
+
+    #[test]
+    fn to_wei_unknown_unit() {
+        let result = execute_utility("toWei", &["1".into(), "finney".into()]);
+        assert!(result.contains("Error"), "expected error for unknown unit, got: {result}");
+    }
+
+    #[test]
+    fn to_wei_missing_args() {
+        let result = execute_utility("toWei", &["1".into()]);
+        assert!(result.contains("Error"), "expected error for missing args");
+    }
+
+    #[test]
+    fn to_wei_invalid_number() {
+        let result = execute_utility("toWei", &["abc".into(), "ether".into()]);
+        assert!(result.contains("Error"), "expected error for invalid number");
+    }
+
+    // --- execute_utility: fromWei ---
+
+    #[test]
+    fn from_wei_ether() {
+        let result = execute_utility("fromWei", &["1000000000000000000".into(), "ether".into()]);
+        assert_eq!(result, "1");
+    }
+
+    #[test]
+    fn from_wei_gwei() {
+        let result = execute_utility("fromWei", &["1000000000".into(), "gwei".into()]);
+        assert_eq!(result, "1");
+    }
+
+    #[test]
+    fn from_wei_missing_args() {
+        let result = execute_utility("fromWei", &["1000".into()]);
+        assert!(result.contains("Error"));
+    }
+
+    #[test]
+    fn from_wei_invalid_number() {
+        let result = execute_utility("fromWei", &["notanumber".into(), "ether".into()]);
+        assert!(result.contains("Error"));
+    }
+
+    // --- execute_utility: toHex ---
+
+    #[test]
+    fn to_hex_255() {
+        let result = execute_utility("toHex", &["255".into()]);
+        assert_eq!(result, "0xff");
+    }
+
+    #[test]
+    fn to_hex_zero() {
+        let result = execute_utility("toHex", &["0".into()]);
+        assert_eq!(result, "0x0");
+    }
+
+    #[test]
+    fn to_hex_invalid() {
+        let result = execute_utility("toHex", &["xyz".into()]);
+        assert!(result.contains("Error"));
+    }
+
+    #[test]
+    fn to_hex_missing_arg() {
+        let result = execute_utility("toHex", &[]);
+        assert!(result.contains("Error"));
+    }
+
+    // --- execute_utility: fromHex ---
+
+    #[test]
+    fn from_hex_0xff() {
+        let result = execute_utility("fromHex", &["0xff".into()]);
+        assert_eq!(result, "255");
+    }
+
+    #[test]
+    fn from_hex_without_0x() {
+        let result = execute_utility("fromHex", &["ff".into()]);
+        assert_eq!(result, "255");
+    }
+
+    #[test]
+    fn from_hex_invalid() {
+        let result = execute_utility("fromHex", &["zzz".into()]);
+        assert!(result.contains("Error"));
+    }
+
+    #[test]
+    fn from_hex_missing_arg() {
+        let result = execute_utility("fromHex", &[]);
+        assert!(result.contains("Error"));
+    }
+
+    // --- execute_utility: keccak256 ---
+
+    #[test]
+    fn keccak256_empty_input() {
+        // keccak256 of empty data (0 bytes)
+        let result = execute_utility("keccak256", &["0x".into()]);
+        assert_eq!(
+            result,
+            "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+        );
+    }
+
+    #[test]
+    fn keccak256_invalid_hex() {
+        let result = execute_utility("keccak256", &["0xZZZZ".into()]);
+        assert!(result.contains("Error"));
+    }
+
+    #[test]
+    fn keccak256_missing_arg() {
+        let result = execute_utility("keccak256", &[]);
+        assert!(result.contains("Error"));
+    }
+
+    // --- execute_utility: toChecksumAddress ---
+
+    #[test]
+    fn to_checksum_address_well_known() {
+        let result = execute_utility(
+            "toChecksumAddress",
+            &["0xd8da6bf26964af9d7eed9e03e53415d37aa96045".into()],
+        );
+        assert_eq!(result, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045");
+    }
+
+    #[test]
+    fn to_checksum_address_invalid_length() {
+        let result = execute_utility("toChecksumAddress", &["0xabcdef".into()]);
+        assert!(result.contains("Error"), "expected error for invalid length");
+    }
+
+    #[test]
+    fn to_checksum_address_missing_arg() {
+        let result = execute_utility("toChecksumAddress", &[]);
+        assert!(result.contains("Error"));
+    }
+
+    // --- execute_utility: isAddress ---
+
+    #[test]
+    fn is_address_valid() {
+        let result = execute_utility(
+            "isAddress",
+            &["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045".into()],
+        );
+        assert_eq!(result, "true");
+    }
+
+    #[test]
+    fn is_address_wrong_length() {
+        let result = execute_utility("isAddress", &["0xabcdef".into()]);
+        assert_eq!(result, "false");
+    }
+
+    #[test]
+    fn is_address_no_0x_prefix() {
+        let result = execute_utility(
+            "isAddress",
+            &["d8da6bf26964af9d7eed9e03e53415d37aa96045".into()],
+        );
+        assert_eq!(result, "false");
+    }
+
+    #[test]
+    fn is_address_missing_arg() {
+        let result = execute_utility("isAddress", &[]);
+        assert!(result.contains("Error"));
+    }
+
+    // --- execute_utility: unknown ---
+
+    #[test]
+    fn unknown_utility() {
+        let result = execute_utility("nonexistent", &[]);
+        assert!(result.contains("Error"));
+    }
+
+    // --- is_balanced ---
+
+    #[test]
+    fn balanced_braces() {
+        assert!(is_balanced("{}"));
+    }
+
+    #[test]
+    fn balanced_brackets() {
+        assert!(is_balanced("[]"));
+    }
+
+    #[test]
+    fn balanced_nested() {
+        assert!(is_balanced("{ [ ] }"));
+    }
+
+    #[test]
+    fn balanced_empty_string() {
+        assert!(is_balanced(""));
+    }
+
+    #[test]
+    fn balanced_json_object() {
+        assert!(is_balanced(r#"{"a": "b"}"#));
+    }
+
+    #[test]
+    fn unbalanced_open_brace() {
+        assert!(!is_balanced("{"));
+    }
+
+    #[test]
+    fn unbalanced_open_bracket_brace() {
+        assert!(!is_balanced("[{"));
+    }
+
+    #[test]
+    fn unbalanced_close_brace() {
+        assert!(!is_balanced("}"));
+    }
+
+    #[test]
+    fn balanced_brace_inside_string() {
+        // The "}" inside the string value should not break balance
+        assert!(is_balanced(r#"{"a": "}"}"#));
+    }
+
+    #[test]
+    fn balanced_escaped_quote_in_string() {
+        // Escaped quote inside string should not end the string early
+        assert!(is_balanced(r#"{"a": "he said \"hi\""}"#));
+    }
+
+    #[test]
+    fn balanced_no_delimiters() {
+        assert!(is_balanced("eth.getBalance 0xabc"));
+    }
+}
