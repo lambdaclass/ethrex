@@ -87,7 +87,7 @@ fn parse_address_from_abi_word(hex_str: &str) -> Result<String, String> {
 }
 
 /// EIP-55 checksum encoding.
-fn to_checksum_address(addr: &str) -> String {
+pub fn to_checksum_address(addr: &str) -> String {
     let addr_lower = addr
         .strip_prefix("0x")
         .unwrap_or(addr)
@@ -166,8 +166,6 @@ mod tests {
         );
     }
 
-    // --- Additional namehash tests ---
-
     #[test]
     fn namehash_single_label_com() {
         // namehash("com") should be a non-zero hash, different from namehash("eth")
@@ -212,8 +210,6 @@ mod tests {
         let _ = namehash("日本語.eth");
     }
 
-    // --- Additional looks_like_ens_name tests ---
-
     #[test]
     fn ens_name_empty_string() {
         assert!(!looks_like_ens_name(""));
@@ -246,8 +242,6 @@ mod tests {
         assert!(looks_like_ens_name("foo.bar.baz.eth"));
     }
 
-    // --- Additional parse_address_from_abi_word tests ---
-
     #[test]
     fn parse_address_valid_64_char_hex() {
         // 64 hex chars (32 bytes), address in last 20 bytes
@@ -276,8 +270,6 @@ mod tests {
         let addr = parse_address_from_abi_word(word).unwrap();
         assert_eq!(addr, "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
     }
-
-    // --- Additional to_checksum_address tests ---
 
     #[test]
     fn checksum_all_lowercase_input() {

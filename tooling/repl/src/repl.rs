@@ -398,31 +398,11 @@ fn execute_utility(name: &str, args: &[String]) -> String {
             if args.is_empty() {
                 return formatter::format_error("Usage: toChecksumAddress <address>");
             }
-            let addr = args[0]
-                .strip_prefix("0x")
-                .unwrap_or(&args[0])
-                .to_lowercase();
-            if addr.len() != 40 {
+            let raw = args[0].strip_prefix("0x").unwrap_or(&args[0]);
+            if raw.len() != 40 {
                 return formatter::format_error("invalid address length");
             }
-            use sha3::{Digest, Keccak256};
-            let hash = Keccak256::digest(addr.as_bytes());
-            let hash_hex = hex::encode(hash);
-            let mut checksummed = String::from("0x");
-            for (i, c) in addr.chars().enumerate() {
-                if c.is_ascii_alphabetic() {
-                    let hash_nibble =
-                        u8::from_str_radix(&hash_hex[i..i + 1], 16).unwrap_or(0);
-                    if hash_nibble >= 8 {
-                        checksummed.push(c.to_ascii_uppercase());
-                    } else {
-                        checksummed.push(c);
-                    }
-                } else {
-                    checksummed.push(c);
-                }
-            }
-            checksummed
+            ens::to_checksum_address(&args[0])
         }
         "isAddress" => {
             if args.is_empty() {

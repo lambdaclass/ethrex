@@ -7,16 +7,7 @@ use rustyline::validate::Validator;
 use rustyline::{Context, Helper};
 
 use crate::commands::CommandRegistry;
-
-const UTILITY_NAMES: &[&str] = &[
-    "toWei",
-    "fromWei",
-    "toHex",
-    "fromHex",
-    "keccak256",
-    "toChecksumAddress",
-    "isAddress",
-];
+use crate::parser::UTILITY_NAMES;
 
 pub struct ReplHelper {
     registry: Arc<CommandRegistry>,
@@ -142,11 +133,9 @@ mod tests {
         ReplHelper::new(Arc::new(CommandRegistry::new()))
     }
 
-    // Helper to get completions without needing a rustyline Context.
-    // We replicate the completion logic since Context is hard to construct.
+    /// Get completions without needing a rustyline Context.
+    /// Replicates the completion logic since Context is hard to construct.
     fn get_completions(helper: &ReplHelper, input: &str) -> Vec<String> {
-        let _pos = input.len();
-
         // Dot commands
         if input.starts_with('.') {
             let builtins = [".help", ".exit", ".quit", ".clear", ".connect", ".history"];
@@ -186,7 +175,7 @@ mod tests {
         matches
     }
 
-    // Helper to get hints without needing a rustyline Context.
+    /// Get hints without needing a rustyline Context.
     fn get_hint(helper: &ReplHelper, line: &str) -> Option<String> {
         if let Some(dot_pos) = line.rfind('.') {
             let namespace = &line[..dot_pos];

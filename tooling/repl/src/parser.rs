@@ -32,7 +32,7 @@ pub enum Token {
     Colon,
 }
 
-const UTILITY_NAMES: &[&str] = &[
+pub const UTILITY_NAMES: &[&str] = &[
     "toWei",
     "fromWei",
     "toHex",
