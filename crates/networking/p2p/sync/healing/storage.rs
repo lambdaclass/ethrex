@@ -13,7 +13,7 @@ use crate::{
         },
         request_storage_trienodes,
     },
-    sync::{AccountStorageRoots, SyncError},
+    sync::{StorageTrieTracker, SyncError},
     utils::current_unix_time,
 };
 
@@ -122,7 +122,7 @@ pub struct NodeRequest {
 ///    - if the node has missing children, we store it in our healing_queue, which is preserved between calls
 pub async fn heal_storage_trie(
     state_root: H256,
-    storage_accounts: &AccountStorageRoots,
+    tracker: &StorageTrieTracker,
     peers: &mut PeerHandler,
     store: Store,
     healing_queue: StorageHealingQueue,
@@ -130,7 +130,7 @@ pub async fn heal_storage_trie(
     global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
     METRICS.current_step.set(CurrentStepValue::HealingStorage);
-    let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
+    let download_queue = get_initial_downloads(&store, state_root, tracker);
     debug!(
         initial_accounts_count = download_queue.len(),
         "Started Storage Healing",
@@ -570,14 +570,14 @@ fn process_node_responses(
 fn get_initial_downloads(
     store: &Store,
     state_root: H256,
-    account_paths: &AccountStorageRoots,
+    tracker: &StorageTrieTracker,
 ) -> VecDeque<NodeRequest> {
     let trie = store
         .open_locked_state_trie(state_root)
         .expect("We should be able to open the store");
     let mut initial_requests: VecDeque<NodeRequest> = VecDeque::new();
     initial_requests.extend(
-        account_paths
+        tracker
             .healed_accounts
             .par_iter()
             .filter_map(|acc_path| {
