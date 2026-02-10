@@ -430,13 +430,13 @@ impl RpcHandler for GetPayloadV4Request {
         let chain_config = &context.storage.get_chain_config();
 
         if !chain_config.is_prague_activated(payload_bundle.block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
+            return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
         if chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!("{:?}", Fork::Osaka)));
+            return Err(RpcErr::UnsupportedFork(format!("{:?}", Fork::Osaka)));
         }
 
         // V4 doesn't support BAL (Prague fork, pre-EIP-7928)
@@ -483,7 +483,7 @@ impl RpcHandler for GetPayloadV5Request {
         let chain_config = &context.storage.get_chain_config();
 
         if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
+            return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
@@ -771,7 +771,7 @@ fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcEr
 fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
     let chain_config = &context.storage.get_chain_config();
     if chain_config.is_cancun_activated(block.header.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
+        return Err(RpcErr::UnsupportedFork(
             "Cancun payload received".to_string(),
         ));
     }
@@ -1044,7 +1044,7 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     let current_fork = chain_config.get_fork(block.header.timestamp);
 
     if current_fork != fork {
-        return Err(RpcErr::UnsuportedFork(format!("{current_fork:?}")));
+        return Err(RpcErr::UnsupportedFork(format!("{current_fork:?}")));
     }
     Ok(())
 }
