@@ -184,14 +184,14 @@ impl L1ProofSender {
         Ok(l1_proof_sender)
     }
 
-    async fn verify_and_send_proof(&self) -> Result<(), ProofSenderError> {
+    async fn verify_and_send_proofs(&self) -> Result<(), ProofSenderError> {
         let last_verified_batch =
             get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
 
         if self.aligned_mode {
             let batch_to_send = std::cmp::max(latest_sent_batch_db, last_verified_batch) + 1;
-            return self.verify_and_send_proof_aligned(batch_to_send).await;
+            return self.verify_and_send_proofs_aligned(batch_to_send).await;
         }
 
         // If the DB is behind on-chain, sync it up to avoid stalling the proof coordinator
@@ -242,35 +242,11 @@ impl L1ProofSender {
             return Ok(());
         }
 
-        let Some((last_batch_sent, _)) = ready_batches.last() else {
-            // Unreachable: we checked non-empty above
-            return Ok(());
-        };
-        let last_batch_sent = *last_batch_sent;
-
         self.send_batches_proof_to_contract(first_batch, &ready_batches)
-            .await?;
-
-        self.rollup_store
-            .set_latest_sent_batch_proof(last_batch_sent)
-            .await?;
-
-        // Clean up checkpoints for each batch in range
-        for batch in first_batch..=last_batch_sent {
-            let checkpoint_path = self.checkpoints_dir.join(batch_checkpoint_name(batch - 1));
-            if checkpoint_path.exists() {
-                let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
-                    error!(
-                        "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {e}"
-                    )
-                });
-            }
-        }
-
-        Ok(())
+            .await
     }
 
-    async fn verify_and_send_proof_aligned(
+    async fn verify_and_send_proofs_aligned(
         &self,
         batch_to_send: u64,
     ) -> Result<(), ProofSenderError> {
@@ -299,20 +275,7 @@ impl L1ProofSender {
         if missing_proof_types.is_empty() {
             self.send_proof_to_aligned(batch_to_send, proofs.values())
                 .await?;
-            self.rollup_store
-                .set_latest_sent_batch_proof(batch_to_send)
-                .await?;
-
-            let checkpoint_path = self
-                .checkpoints_dir
-                .join(batch_checkpoint_name(batch_to_send - 1));
-            if checkpoint_path.exists() {
-                let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
-                    error!(
-                        "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {e}"
-                    )
-                });
-            }
+            self.finalize_batch_proof(batch_to_send).await?;
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
                 .iter()
@@ -556,8 +519,28 @@ impl L1ProofSender {
         Ok(())
     }
 
+    /// Updates `latest_sent_batch_proof` in the store and removes the
+    /// checkpoint directory for the given batch.
+    async fn finalize_batch_proof(&self, batch_number: u64) -> Result<(), ProofSenderError> {
+        self.rollup_store
+            .set_latest_sent_batch_proof(batch_number)
+            .await?;
+        let checkpoint_path = self
+            .checkpoints_dir
+            .join(batch_checkpoint_name(batch_number - 1));
+        if checkpoint_path.exists() {
+            let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
+                error!(
+                    "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {e}"
+                )
+            });
+        }
+        Ok(())
+    }
+
     /// Sends a single batch proof via verifyBatches, deleting the invalid proof
-    /// from the store if the transaction reverts.
+    /// from the store if the transaction reverts. On success, updates progress
+    /// and cleans up the checkpoint.
     async fn send_single_batch_proof(
         &self,
         batch_number: u64,
@@ -590,6 +573,7 @@ impl L1ProofSender {
         self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)
             .await?;
+        self.finalize_batch_proof(batch_number).await?;
         Ok(())
     }
 
@@ -643,11 +627,12 @@ impl L1ProofSender {
             }
         );
 
-        // Store verify tx hash for all batches
+        // Store verify tx hash and finalize each batch
         for (batch_number, _) in batches {
             self.rollup_store
                 .store_verify_tx_by_batch(*batch_number, verify_tx_hash)
                 .await?;
+            self.finalize_batch_proof(*batch_number).await?;
         }
 
         info!(
@@ -696,7 +681,7 @@ impl GenServer for L1ProofSender {
         // Right now we only have the Send message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let _ = self
-                .verify_and_send_proof()
+                .verify_and_send_proofs()
                 .await
                 .inspect_err(|err| error!("L1 Proof Sender: {err}"));
         }
