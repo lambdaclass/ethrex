@@ -331,6 +331,8 @@ pub async fn snap_sync(
             "Finished inserting account ranges, total storage accounts: {}",
             storage_accounts.accounts_with_storage_root.len()
         );
+        // Invalidate trie node read cache after mutating the trie
+        store.clear_trie_node_cache();
         *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
         info!("Original state root: {state_root:?}");
@@ -368,6 +370,8 @@ pub async fn snap_sync(
                 continue;
             };
 
+            // Invalidate trie node read cache after state healing mutated the trie
+            store.clear_trie_node_cache();
             info!(
                 "Started request_storage_ranges with {} accounts with storage root unchanged",
                 storage_accounts.accounts_with_storage_root.len()
@@ -439,6 +443,8 @@ pub async fn snap_sync(
         .await?;
 
         *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
+        // Invalidate trie node read cache after storage insertion
+        store.clear_trie_node_cache();
 
         info!("Finished storing storage tries");
     }

@@ -2450,6 +2450,14 @@ impl Store {
     // Methods exclusive for trie management during snap-syncing
 
     /// Obtain a state trie from the given state root
+    /// Clear the shared trie node read cache.
+    /// Must be called between snap sync phases to avoid serving stale trie
+    /// nodes after the trie has been mutated (e.g. after account insertion
+    /// or state healing).
+    pub fn clear_trie_node_cache(&self) {
+        self.trie_node_cache.clear();
+    }
+
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
