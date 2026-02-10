@@ -609,23 +609,20 @@ impl L1ProofSender {
 
         let send_verify_tx_result = self.send_verify_batches_tx(first_batch, batches).await;
 
-        // On revert with invalid proof, either fall back to single-batch sending
-        // (to identify the bad proof) or delete the invalid proof directly.
-        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
-            ref message, ..
-        })) = send_verify_tx_result
-            && Self::invalid_proof_type(message).is_some()
-        {
+        // On any error with multiple batches, fall back to single-batch sending
+        // so that a gas limit / calldata issue doesn't block the sequencer.
+        // For single-batch failures, try to delete the invalid proof if applicable.
+        if let Err(ref err) = send_verify_tx_result {
             if batch_count > 1 {
-                warn!(
-                    "Multi-batch verify reverted with invalid proof, falling back to single-batch sending"
-                );
+                warn!("Multi-batch verify failed ({err}), falling back to single-batch sending");
                 for (batch_number, proofs) in batches {
                     self.send_single_batch_proof(*batch_number, proofs).await?;
                 }
                 return Ok(());
             }
-            if let Some((batch_number, _)) = batches.first() {
+            if let EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. }) = err
+                && let Some((batch_number, _)) = batches.first()
+            {
                 self.try_delete_invalid_proof(message, *batch_number)
                     .await?;
             }
