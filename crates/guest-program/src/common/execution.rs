@@ -114,7 +114,7 @@ where
         let mut vm = report_cycles("setup_evm", || vm_factory(&wrapped_db, i))?;
 
         // Execute block
-        let result = report_cycles("execute_block", || {
+        let (result, _bal) = report_cycles("execute_block", || {
             vm.execute_block(block).map_err(ExecutionError::Evm)
         })?;
 
