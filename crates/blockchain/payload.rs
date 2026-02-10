@@ -389,7 +389,7 @@ impl Blockchain {
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         // TODO(#4997): start with an empty block
         let mut res = self.build_payload(payload.clone())?;
-        let mut last_mempool_gen = self.mempool.generation();
+        let mut last_mempool_gen = self.mempool.generation().wrapping_sub(1);
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Only rebuild when the mempool has received new transactions
             let current_gen = self.mempool.generation();
