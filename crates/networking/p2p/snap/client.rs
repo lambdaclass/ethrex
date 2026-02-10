@@ -540,6 +540,35 @@ pub async fn request_bytecodes(
     Ok(Some(all_bytecodes))
 }
 
+/// Records metrics and writes completed small tries into the disk buffer.
+fn flush_completed_tries(
+    completed: Vec<(H256, SmallTrie)>,
+    current_account_storages: &mut BTreeMap<H256, AccountsWithStorage>,
+) {
+    let effective_slots: usize = completed
+        .iter()
+        .map(|(_, t)| t.accounts.len() * t.slots.len())
+        .sum();
+    METRICS
+        .storage_leaves_downloaded
+        .inc_by(effective_slots as u64);
+
+    for (root, trie) in completed {
+        let storages: Vec<(H256, U256)> = trie
+            .slots
+            .into_iter()
+            .map(|s| (s.hash, s.value))
+            .collect();
+        current_account_storages.insert(
+            root,
+            AccountsWithStorage {
+                accounts: trie.accounts,
+                storages,
+            },
+        );
+    }
+}
+
 /// Requests storage ranges for accounts given their hashed address and storage roots, and the root of their state trie
 /// Uses StorageTrieTracker to manage small/big tries and their download state.
 pub async fn request_storage_ranges(
@@ -652,30 +681,7 @@ pub async fn request_storage_ranges(
                     peer_id,
                 } => {
                     peers.peer_table.record_success(&peer_id).await?;
-
-                    let effective_slots: usize = completed
-                        .iter()
-                        .map(|(_, t)| t.accounts.len() * t.slots.len())
-                        .sum();
-                    METRICS
-                        .storage_leaves_downloaded
-                        .inc_by(effective_slots as u64);
-
-                    // Write completed tries to disk buffer
-                    for (root, trie) in completed {
-                        let storages: Vec<(H256, U256)> = trie
-                            .slots
-                            .into_iter()
-                            .map(|s| (s.hash, s.value))
-                            .collect();
-                        current_account_storages.insert(
-                            root,
-                            AccountsWithStorage {
-                                accounts: trie.accounts,
-                                storages,
-                            },
-                        );
-                    }
+                    flush_completed_tries(completed, &mut current_account_storages);
 
                     // Re-queue remaining tries
                     if !remaining.is_empty() {
@@ -698,30 +704,7 @@ pub async fn request_storage_ranges(
                     peer_id,
                 } => {
                     peers.peer_table.record_success(&peer_id).await?;
-
-                    let effective_slots: usize = completed
-                        .iter()
-                        .map(|(_, t)| t.accounts.len() * t.slots.len())
-                        .sum();
-                    METRICS
-                        .storage_leaves_downloaded
-                        .inc_by(effective_slots as u64);
-
-                    // Write completed small tries to disk buffer
-                    for (root, trie) in completed {
-                        let storages: Vec<(H256, U256)> = trie
-                            .slots
-                            .into_iter()
-                            .map(|s| (s.hash, s.value))
-                            .collect();
-                        current_account_storages.insert(
-                            root,
-                            AccountsWithStorage {
-                                accounts: trie.accounts,
-                                storages,
-                            },
-                        );
-                    }
+                    flush_completed_tries(completed, &mut current_account_storages);
 
                     // Re-queue remaining small tries
                     if !remaining.is_empty() {
@@ -743,7 +726,8 @@ pub async fn request_storage_ranges(
                     let intervals =
                         BigTrie::compute_intervals(last_hash, slot_count, 10_000);
 
-                    // Mark accounts for healing
+                    // Precautionary: mark promoted accounts for storage healing
+                    // in case the storage root becomes stale before download completes
                     tracker.healed_accounts.extend(big_trie.accounts.iter());
 
                     // Store the initial slots in current_account_storages
