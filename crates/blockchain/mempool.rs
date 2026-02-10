@@ -91,7 +91,7 @@ impl Mempool {
         }
     }
 
-    pub fn tx_added(&self) -> &tokio::sync::Notify {
+    pub(crate) fn tx_added(&self) -> &tokio::sync::Notify {
         &self.tx_added
     }
 

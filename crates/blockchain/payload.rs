@@ -390,10 +390,13 @@ impl Blockchain {
         // TODO(#4997): start with an empty block
         let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
-            // Wait for new transactions or cancellation before rebuilding
+            // Wait for new transactions, cancellation, or slot deadline before rebuilding
+            let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
+            let notified = self.mempool.tx_added().notified();
             tokio::select! {
-                _ = self.mempool.tx_added().notified() => {}
+                _ = notified => {}
                 _ = cancel_token.cancelled() => break,
+                _ = tokio::time::sleep(remaining) => break,
             }
             let payload = payload.clone();
             let self_clone = self.clone();
