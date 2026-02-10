@@ -476,14 +476,12 @@ impl DiscoveryServer {
             .record_pong_received(&sender_id, pong_message.req_id)
             .await?;
 
-        // If sender's enr_seq differs from our cached version, request updated ENR.
-        // The spec says to check for `>`, but we use `!=` to be more defensive
-        // (e.g. handle rollbacks or resets).
+        // If sender's enr_seq is higher than our cached version, request updated ENR.
         if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
             // If we have no cached record, default to 0 so any PONG with enr_seq > 0
             // triggers a FINDNODE to fetch the ENR we're missing.
             let cached_seq = contact.record.as_ref().map_or(0, |r| r.seq);
-            if pong_message.enr_seq != cached_seq {
+            if pong_message.enr_seq > cached_seq {
                 trace!(
                     from = %sender_id,
                     cached_seq,
@@ -1090,17 +1088,30 @@ mod tests {
         // No new message should be pending (no FINDNODE sent)
         assert_eq!(server.pending_by_nonce.len(), initial_pending_count);
 
-        // Test 2: PONG with different enr_seq should trigger FINDNODE
-        let pong_different_seq = PongMessage {
+        // Test 2: PONG with higher enr_seq should trigger FINDNODE
+        let pong_higher_seq = PongMessage {
             req_id: Bytes::from(vec![4, 5, 6]),
-            enr_seq: 10, // Different from cached (5)
+            enr_seq: 10, // Higher than cached (5)
             recipient_addr: "127.0.0.1:30303".parse().unwrap(),
         };
         server
-            .handle_pong(pong_different_seq, remote_node_id)
+            .handle_pong(pong_higher_seq, remote_node_id)
             .await
-            .expect("handle_pong failed for different enr_seq");
+            .expect("handle_pong failed for higher enr_seq");
         // A new message should be pending (FINDNODE sent)
+        assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
+
+        // Test 3: PONG with lower enr_seq should NOT trigger FINDNODE
+        let pong_lower_seq = PongMessage {
+            req_id: Bytes::from(vec![7, 8, 9]),
+            enr_seq: 3, // Lower than cached (5)
+            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
+        };
+        server
+            .handle_pong(pong_lower_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for lower enr_seq");
+        // No new message should be pending
         assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
     }
 }
