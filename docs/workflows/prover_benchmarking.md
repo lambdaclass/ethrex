@@ -136,6 +136,8 @@ Replace `<backend-verifier-flag>` based on the prover backend. This tells the de
 | RISC0 | `--risc0 true` | Deploys RISC0 verifier, requires RISC0 proofs |
 | Exec | *(omit flag)* | No on-chain verifier, exec proofs only |
 
+The private keys and addresses above are the default test keys from `fixtures/`. They are hardcoded in the L1 genesis and have no value outside the local devnet.
+
 `ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT` randomizes the CREATE2 salt so that contracts are deployed to fresh addresses on every run, avoiding collisions with previous deployments on the same L1.
 
 #### 2c. Start the L2
@@ -193,13 +195,13 @@ ssh <server> "bash -l -c 'cd ~/ethrex && nohup env LOAD_TEST_RPC_URL=http://loca
 
 > **Important:** `LOAD_TEST_RPC_URL` must point to the L2 node RPC (port 1729 by default), not the L1.
 
-Available load test targets:
-| Target | Description |
-|--------|-------------|
-| `load-test` | ETH transfers |
-| `load-test-erc20` | ERC20 token transfers |
-| `load-test-fibonacci` | Fibonacci computation transactions |
-| `load-test-io` | IO-heavy transactions |
+Available transaction types (passed via `-t`):
+| `-t` flag | Description |
+|-----------|-------------|
+| `eth-transfers` | ETH transfers |
+| `erc20` | ERC20 token transfers |
+| `fibonacci` | Fibonacci computation transactions |
+| `io-heavy` | IO-heavy transactions |
 
 ### 4. Start the Prover
 
@@ -243,13 +245,13 @@ Wait until the desired number of batches have been proved.
 ### 6. Collect Results
 
 ```bash
-ssh <server> "bash -l -c 'cd ~/ethrex && ./scripts/sp1_bench_metrics.sh ~/prover.log'"
+ssh <server> "bash -l -c 'cd ~/ethrex && ./scripts/bench_metrics.sh ~/prover.log'"
 ```
 
-This outputs a markdown file (`sp1_bench_results.md`) with a results table and summary. Copy it locally if needed:
+This outputs a markdown file (`bench_results.md`) with a results table and summary. Copy it locally if needed:
 
 ```bash
-scp <server>:~/ethrex/sp1_bench_results.md .
+scp <server>:~/ethrex/bench_results.md .
 ```
 
 ### 7. Teardown

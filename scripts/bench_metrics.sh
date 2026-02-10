@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Parses a prover log file and enriches batch data from Prometheus metrics.
 #
-# Usage: ./scripts/sp1_bench_metrics.sh <PROVER_LOG_FILE> [METRICS_URL]
+# Usage: ./scripts/bench_metrics.sh <PROVER_LOG_FILE> [METRICS_URL]
 #
 # The prover logs lines like:
 #   batch=3 proving_time_s=47 proving_time_ms=47123 Proved batch 3 in 47.12s
@@ -9,20 +9,20 @@
 # The script also fetches batch_gas_used, batch_tx_count, and batch_size
 # from the L2 metrics endpoint (default localhost:3702/metrics).
 #
-# Outputs a markdown file (sp1_bench_results.md) with a results table and summary.
+# Outputs a markdown file (bench_results.md) with a results table and summary.
 
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <prover_log_file> [metrics_url]"
-    echo "  Example: ./scripts/sp1_bench_metrics.sh prover.log"
-    echo "           ./scripts/sp1_bench_metrics.sh prover.log http://myhost:3702/metrics"
+    echo "  Example: ./scripts/bench_metrics.sh prover.log"
+    echo "           ./scripts/bench_metrics.sh prover.log http://myhost:3702/metrics"
     exit 1
 fi
 
 LOG_FILE="$1"
 METRICS_URL="${2:-http://localhost:3702/metrics}"
-OUTPUT="sp1_bench_results.md"
+OUTPUT="bench_results.md"
 
 # Fetch a metric value for a given batch from the Prometheus endpoint.
 fetch_metric() {

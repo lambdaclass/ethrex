@@ -74,13 +74,13 @@ PROVER_CLIENT_TIMED=true make init-prover-<backend> 2>&1 | tee prover.log
 Then run the benchmark script. The L2 must still be running, since the script fetches batch metadata from its metrics endpoint (`localhost:3702/metrics`):
 
 ```bash
-./scripts/sp1_bench_metrics.sh prover.log
+./scripts/bench_metrics.sh prover.log
 ```
 
-The script outputs a markdown file (`sp1_bench_results.md`) with a results table and summary, and prints it to stdout.
+The script outputs a markdown file (`bench_results.md`) with a results table and summary, and prints it to stdout.
 
 The script fetches batch metadata (gas used, tx count, block count) from the L2 metrics endpoint at `localhost:3702/metrics` (exposed by `make init-l2` via `--metrics.port`). Pass a custom URL as the second argument if the L2 is on a different host or port:
 
 ```bash
-./scripts/sp1_bench_metrics.sh prover.log http://myhost:3702/metrics
+./scripts/bench_metrics.sh prover.log http://myhost:3702/metrics
 ```
