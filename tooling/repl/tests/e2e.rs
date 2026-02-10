@@ -203,7 +203,9 @@ async fn test_parenthesized_syntax() {
     let server = MockServer::start().await;
     let result = server
         .repl()
-        .execute_command(r#"eth.getBalance("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "latest")"#)
+        .execute_command(
+            r#"eth.getBalance("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "latest")"#,
+        )
         .await;
     assert!(
         result.contains("1000000000000000000"),

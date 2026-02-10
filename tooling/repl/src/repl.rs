@@ -151,7 +151,7 @@ impl Repl {
         let cmd = match self.registry.find(namespace, method) {
             Some(c) => c,
             None => {
-                return formatter::format_error(&format!("unknown command: {namespace}.{method}"))
+                return formatter::format_error(&format!("unknown command: {namespace}.{method}"));
             }
         };
 
@@ -166,7 +166,7 @@ impl Repl {
                 return formatter::format_error(&format!(
                     "{e}\nUsage: {}",
                     formatter::command_usage(cmd)
-                ))
+                ));
             }
         };
 
@@ -317,9 +317,7 @@ fn execute_utility(name: &str, args: &[String]) -> String {
             }
             let amount: f64 = match args[0].parse() {
                 Ok(v) => v,
-                Err(_) => {
-                    return formatter::format_error(&format!("invalid number: {}", args[0]))
-                }
+                Err(_) => return formatter::format_error(&format!("invalid number: {}", args[0])),
             };
             let multiplier: f64 = match args[1].to_lowercase().as_str() {
                 "wei" => 1.0,
@@ -328,7 +326,7 @@ fn execute_utility(name: &str, args: &[String]) -> String {
                 other => {
                     return formatter::format_error(&format!(
                         "unknown unit: {other}. Use: wei, gwei, ether"
-                    ))
+                    ));
                 }
             };
             let wei = (amount * multiplier) as u128;
@@ -342,9 +340,7 @@ fn execute_utility(name: &str, args: &[String]) -> String {
             }
             let wei: u128 = match args[0].parse() {
                 Ok(v) => v,
-                Err(_) => {
-                    return formatter::format_error(&format!("invalid number: {}", args[0]))
-                }
+                Err(_) => return formatter::format_error(&format!("invalid number: {}", args[0])),
             };
             let divisor: f64 = match args[1].to_lowercase().as_str() {
                 "wei" => 1.0,
@@ -353,7 +349,7 @@ fn execute_utility(name: &str, args: &[String]) -> String {
                 other => {
                     return formatter::format_error(&format!(
                         "unknown unit: {other}. Use: wei, gwei, ether"
-                    ))
+                    ));
                 }
             };
             let result = wei as f64 / divisor;
@@ -387,7 +383,7 @@ fn execute_utility(name: &str, args: &[String]) -> String {
             let data = match hex::decode(input) {
                 Ok(d) => d,
                 Err(_) => {
-                    return formatter::format_error(&format!("invalid hex data: {}", args[0]))
+                    return formatter::format_error(&format!("invalid hex data: {}", args[0]));
                 }
             };
             use sha3::{Digest, Keccak256};
@@ -495,7 +491,10 @@ mod tests {
     #[test]
     fn to_wei_unknown_unit() {
         let result = execute_utility("toWei", &["1".into(), "finney".into()]);
-        assert!(result.contains("Error"), "expected error for unknown unit, got: {result}");
+        assert!(
+            result.contains("Error"),
+            "expected error for unknown unit, got: {result}"
+        );
     }
 
     #[test]
@@ -507,7 +506,10 @@ mod tests {
     #[test]
     fn to_wei_invalid_number() {
         let result = execute_utility("toWei", &["abc".into(), "ether".into()]);
-        assert!(result.contains("Error"), "expected error for invalid number");
+        assert!(
+            result.contains("Error"),
+            "expected error for invalid number"
+        );
     }
 
     // --- execute_utility: fromWei ---
@@ -626,7 +628,10 @@ mod tests {
     #[test]
     fn to_checksum_address_invalid_length() {
         let result = execute_utility("toChecksumAddress", &["0xabcdef".into()]);
-        assert!(result.contains("Error"), "expected error for invalid length");
+        assert!(
+            result.contains("Error"),
+            "expected error for invalid length"
+        );
     }
 
     #[test]

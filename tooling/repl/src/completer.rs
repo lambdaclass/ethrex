@@ -79,9 +79,7 @@ impl Completer for ReplHelper {
         }
 
         for name in UTILITY_NAMES {
-            if name.starts_with(input)
-                || name.to_lowercase().starts_with(&input.to_lowercase())
-            {
+            if name.starts_with(input) || name.to_lowercase().starts_with(&input.to_lowercase()) {
                 matches.push(Pair {
                     display: name.to_string(),
                     replacement: name.to_string(),
@@ -166,9 +164,7 @@ mod tests {
             }
         }
         for name in UTILITY_NAMES {
-            if name.starts_with(input)
-                || name.to_lowercase().starts_with(&input.to_lowercase())
-            {
+            if name.starts_with(input) || name.to_lowercase().starts_with(&input.to_lowercase()) {
                 matches.push(name.to_string());
             }
         }
@@ -332,7 +328,10 @@ mod tests {
         // eth.getBalance takes <address> [block], so hint should be present
         assert!(hint.is_some());
         let hint_str = hint.unwrap();
-        assert!(hint_str.contains("address"), "hint should contain address param");
+        assert!(
+            hint_str.contains("address"),
+            "hint should contain address param"
+        );
     }
 
     #[test]

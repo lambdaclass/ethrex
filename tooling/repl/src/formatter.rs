@@ -144,7 +144,9 @@ fn inline_value(value: &Value) -> String {
         Value::Number(n) => n.to_string(),
         Value::String(s) => {
             // Convert hex quantities to decimal
-            if s.starts_with("0x") && s.len() != 42 && s.len() != 66
+            if s.starts_with("0x")
+                && s.len() != 42
+                && s.len() != 66
                 && let Some(decimal) = hex_to_decimal(s)
             {
                 return decimal;
@@ -359,8 +361,8 @@ mod tests {
 
     #[test]
     fn test_flatten_simple() {
-        let map = serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"a":"1","b":"2"}"#)
-            .unwrap();
+        let map =
+            serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"a":"1","b":"2"}"#).unwrap();
         let rows = flatten_object(&map, "");
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().any(|(k, _)| k == "a"));
@@ -389,8 +391,7 @@ mod tests {
 
     #[test]
     fn test_flatten_empty_nested_object() {
-        let map =
-            serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"a":{}}"#).unwrap();
+        let map = serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"a":{}}"#).unwrap();
         let rows = flatten_object(&map, "");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, "a");
@@ -399,8 +400,7 @@ mod tests {
 
     #[test]
     fn test_flatten_with_prefix() {
-        let map =
-            serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"x":"1"}"#).unwrap();
+        let map = serde_json::from_str::<serde_json::Map<String, Value>>(r#"{"x":"1"}"#).unwrap();
         let rows = flatten_object(&map, "parent");
         assert_eq!(rows[0].0, "parent.x");
     }

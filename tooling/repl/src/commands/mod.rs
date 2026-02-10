@@ -494,9 +494,7 @@ mod tests {
     #[test]
     fn test_object_from_json_string() {
         let cmd = cmd_with_param("obj", ParamType::Object);
-        let result = cmd
-            .build_params(&[json!(r#"{"to":"0xabc"}"#)])
-            .unwrap();
+        let result = cmd.build_params(&[json!(r#"{"to":"0xabc"}"#)]).unwrap();
         assert!(result[0].is_object());
         assert_eq!(result[0]["to"], json!("0xabc"));
     }

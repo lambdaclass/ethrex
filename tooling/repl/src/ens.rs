@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha3::{Digest, Keccak256};
 
 use crate::client::RpcClient;
@@ -88,10 +88,7 @@ fn parse_address_from_abi_word(hex_str: &str) -> Result<String, String> {
 
 /// EIP-55 checksum encoding.
 pub fn to_checksum_address(addr: &str) -> String {
-    let addr_lower = addr
-        .strip_prefix("0x")
-        .unwrap_or(addr)
-        .to_lowercase();
+    let addr_lower = addr.strip_prefix("0x").unwrap_or(addr).to_lowercase();
     let hash = Keccak256::digest(addr_lower.as_bytes());
     let hash_hex = hex::encode(hash);
 
@@ -144,7 +141,9 @@ mod tests {
     fn ens_name_detection() {
         assert!(looks_like_ens_name("vitalik.eth"));
         assert!(looks_like_ens_name("foo.bar.eth"));
-        assert!(!looks_like_ens_name("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"));
+        assert!(!looks_like_ens_name(
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+        ));
         assert!(!looks_like_ens_name("latest"));
         assert!(!looks_like_ens_name("12345"));
     }
@@ -285,7 +284,10 @@ mod tests {
         // Uppercase input should produce the same result as lowercase
         let addr_upper = "0xD8DA6BF26964AF9D7EED9E03E53415D37AA96045";
         let addr_lower = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
-        assert_eq!(to_checksum_address(addr_upper), to_checksum_address(addr_lower));
+        assert_eq!(
+            to_checksum_address(addr_upper),
+            to_checksum_address(addr_lower)
+        );
     }
 
     #[test]

@@ -425,8 +425,7 @@ mod tests {
 
     #[test]
     fn test_json_object_arg() {
-        let result =
-            parse(r#"eth.call({"to": "0xabc", "data": "0x1234"}, "latest")"#).unwrap();
+        let result = parse(r#"eth.call({"to": "0xabc", "data": "0x1234"}, "latest")"#).unwrap();
         match result {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 2);
@@ -452,7 +451,8 @@ mod tests {
 
     #[test]
     fn test_hex_address_as_bare_arg() {
-        let result = parse("eth.getBalance 0x1234567890abcdef1234567890abcdef12345678 latest").unwrap();
+        let result =
+            parse("eth.getBalance 0x1234567890abcdef1234567890abcdef12345678 latest").unwrap();
         match result {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 2);
@@ -476,7 +476,10 @@ mod tests {
     fn test_escape_sequences_in_strings() {
         let mut tokenizer = Tokenizer::new(r#""hello\nworld\t!\\\"""#);
         let tokens = tokenizer.tokenize().unwrap();
-        assert_eq!(tokens, vec![Token::String("hello\nworld\t!\\\"".to_string())]);
+        assert_eq!(
+            tokens,
+            vec![Token::String("hello\nworld\t!\\\"".to_string())]
+        );
     }
 
     #[test]
@@ -607,7 +610,13 @@ mod tests {
     #[test]
     fn test_all_utility_names_recognized() {
         let utility_names = [
-            "toWei", "fromWei", "toHex", "fromHex", "keccak256", "toChecksumAddress", "isAddress",
+            "toWei",
+            "fromWei",
+            "toHex",
+            "fromHex",
+            "keccak256",
+            "toChecksumAddress",
+            "isAddress",
         ];
         for name in &utility_names {
             let result = parse(name).unwrap();
@@ -702,10 +711,19 @@ mod tests {
 
     #[test]
     fn test_token_to_value_conversions() {
-        assert_eq!(token_to_value(&Token::String("hi".to_string())), Value::String("hi".to_string()));
-        assert_eq!(token_to_value(&Token::Number("42".to_string())), Value::String("42".to_string()));
+        assert_eq!(
+            token_to_value(&Token::String("hi".to_string())),
+            Value::String("hi".to_string())
+        );
+        assert_eq!(
+            token_to_value(&Token::Number("42".to_string())),
+            Value::String("42".to_string())
+        );
         assert_eq!(token_to_value(&Token::Bool(true)), Value::Bool(true));
-        assert_eq!(token_to_value(&Token::Ident("foo".to_string())), Value::String("foo".to_string()));
+        assert_eq!(
+            token_to_value(&Token::Ident("foo".to_string())),
+            Value::String("foo".to_string())
+        );
         assert_eq!(token_to_value(&Token::Dot), Value::Null);
         assert_eq!(token_to_value(&Token::Comma), Value::Null);
     }

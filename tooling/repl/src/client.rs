@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -37,11 +37,7 @@ impl RpcClient {
         self.endpoint = endpoint;
     }
 
-    pub async fn send_request(
-        &self,
-        method: &str,
-        params: Vec<Value>,
-    ) -> Result<Value, RpcError> {
+    pub async fn send_request(&self, method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
         let id = self.request_id.fetch_add(1, Ordering::Relaxed);
 
         let request_body = json!({
@@ -66,10 +62,7 @@ impl RpcClient {
             .map_err(|e| RpcError::Parse(e.to_string()))?;
 
         if let Some(error) = response_body.get("error") {
-            let code = error
-                .get("code")
-                .and_then(Value::as_i64)
-                .unwrap_or(-1);
+            let code = error.get("code").and_then(Value::as_i64).unwrap_or(-1);
             let message = error
                 .get("message")
                 .and_then(Value::as_str)
