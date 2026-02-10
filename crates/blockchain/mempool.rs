@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    sync::RwLock,
+    sync::{
+        RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::{
@@ -78,19 +81,22 @@ impl MempoolInner {
 #[derive(Debug, Default)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
-    tx_added: tokio::sync::Notify,
+    generation: AtomicU64,
 }
 
 impl Mempool {
     pub fn new(max_mempool_size: usize) -> Self {
         Mempool {
             inner: RwLock::new(MempoolInner::new(max_mempool_size)),
-            tx_added: tokio::sync::Notify::new(),
+            generation: AtomicU64::new(0),
         }
     }
 
-    pub fn tx_added(&self) -> &tokio::sync::Notify {
-        &self.tx_added
+    /// Returns a monotonically increasing counter that increments on every
+    /// transaction insertion. Useful for detecting mempool changes without
+    /// holding any lock.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
     }
 
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, MempoolInner>, StoreError> {
@@ -129,9 +135,7 @@ impl Mempool {
             .insert((sender, transaction.nonce()), hash);
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
-        // Drop the write lock before notifying to avoid holding it while waking waiters
-        drop(inner);
-        self.tx_added.notify_one();
+        self.generation.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
     }
