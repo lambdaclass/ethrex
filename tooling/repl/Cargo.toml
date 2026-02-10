@@ -1,0 +1,28 @@
+[package]
+name = "ethrex-repl"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[lib]
+name = "ethrex_repl"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ethrex-repl"
+path = "src/main.rs"
+
+[dependencies]
+rustyline = { version = "15", features = ["derive"] }
+reqwest.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+colored = "3"
+sha3.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+ethereum-types.workspace = true
