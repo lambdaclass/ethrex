@@ -78,6 +78,8 @@ impl MempoolInner {
 #[derive(Debug, Default)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
+    /// Signaled on every transaction insertion so the payload builder can
+    /// await new work instead of busy-looping.
     tx_added: tokio::sync::Notify,
 }
 
