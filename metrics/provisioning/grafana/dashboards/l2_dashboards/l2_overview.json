@@ -461,31 +461,14 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "orange",
-            "mode": "fixed"
+            "mode": "thresholds"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 10,
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
             },
-            "lineWidth": 1,
-            "pointShape": "circle",
-            "pointSize": {
-              "fixed": 5
-            },
-            "pointStrokeWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "show": "points+lines"
+            "inspect": false
           },
           "mappings": [],
           "thresholds": {
@@ -493,15 +476,10 @@
             "steps": [
               {
                 "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
+                "value": null
               }
             ]
-          },
-          "unit": "short"
+          }
         },
         "overrides": [
           {
@@ -513,18 +491,38 @@
               {
                 "id": "decimals",
                 "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 120
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_verification_gas (lastNotNull)"
+              "options": "tx_gas"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "sishort"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tx_hash"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 420
               }
             ]
           }
@@ -538,39 +536,60 @@
       },
       "id": 104,
       "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
         },
-        "mapping": "auto",
-        "series": [
-          {}
-        ],
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "batch_number"
+          }
+        ]
       },
       "pluginVersion": "12.1.0",
       "targets": [
         {
           "expr": "batch_verification_gas",
-          "legendFormat": "Batch Verification Gas",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
           "refId": "A"
         }
       ],
       "title": "Batch Verification Gas",
       "transformations": [
         {
-          "id": "joinByLabels",
+          "id": "filterFieldsByName",
           "options": {
-            "join": [
-              "batch_number"
-            ],
-            "value": "__name__"
+            "include": {
+              "names": [
+                "batch_number",
+                "tx_hash",
+                "Value"
+              ]
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Value": "tx_gas",
+              "batch_number": "batch_number",
+              "tx_hash": "tx_hash"
+            },
+            "indexByName": {
+              "batch_number": 0,
+              "Value": 1,
+              "tx_hash": 2
+            }
           }
         },
         {
@@ -586,17 +605,6 @@
           }
         },
         {
-          "disabled": true,
-          "id": "reduce",
-          "options": {
-            "includeTimeField": false,
-            "mode": "reduceFields",
-            "reducers": [
-              "max"
-            ]
-          }
-        },
-        {
           "id": "sortBy",
           "options": {
             "fields": {},
@@ -606,26 +614,9 @@
               }
             ]
           }
-        },
-        {
-          "id": "groupBy",
-          "options": {
-            "fields": {
-              "batch_number": {
-                "aggregations": [],
-                "operation": "groupby"
-              },
-              "batch_verification_gas": {
-                "aggregations": [
-                  "lastNotNull"
-                ],
-                "operation": "aggregate"
-              }
-            }
-          }
         }
       ],
-      "type": "xychart"
+      "type": "table"
     },
     {
       "datasource": {

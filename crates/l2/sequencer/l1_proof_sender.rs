@@ -577,13 +577,14 @@ impl L1ProofSender {
         let verify_tx_hash = result?;
 
         metrics!(
+            let tx_hash_str = format!("{verify_tx_hash:?}");
             let verify_tx_receipt = self
                 .eth_client
                 .get_transaction_receipt(verify_tx_hash)
                 .await?
                 .ok_or(ProofSenderError::UnexpectedError("no verify tx receipt".to_string()))?;
             let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()?;
-            METRICS.set_batch_verification_gas(batch_number, verify_gas_used)?;
+            METRICS.set_batch_verification_gas(batch_number, verify_gas_used, &tx_hash_str)?;
         );
 
         self.rollup_store
@@ -633,15 +634,15 @@ impl L1ProofSender {
         let verify_tx_hash = send_verify_tx_result?;
 
         metrics!(
+            let tx_hash_str = format!("{verify_tx_hash:?}");
             let verify_tx_receipt = self
                 .eth_client
                 .get_transaction_receipt(verify_tx_hash)
                 .await?
                 .ok_or(ProofSenderError::UnexpectedError("no verify tx receipt".to_string()))?;
-            let total_gas: i64 = verify_tx_receipt.tx_info.gas_used.try_into()?;
-            let per_batch_gas = total_gas / batch_count as i64;
+            let tx_gas: i64 = verify_tx_receipt.tx_info.gas_used.try_into()?;
             for (batch_number, _) in batches {
-                METRICS.set_batch_verification_gas(*batch_number, per_batch_gas)?;
+                METRICS.set_batch_verification_gas(*batch_number, tx_gas, &tx_hash_str)?;
             }
         );
 
