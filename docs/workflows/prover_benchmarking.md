@@ -115,7 +115,7 @@ ssh <server> "bash -l -c 'tail -f ~/l2.log'" | grep --line-buffered -m1 'Blockch
 
 ### 3. Generate Load
 
-Start the load test **before** the prover to ensure batches contain transactions. If the prover starts first, it will prove empty batches.
+Start the load test **immediately after the L2 is up** and **before** the prover to ensure batches contain transactions. The prover proves batches much faster than the sequencer creates them with transactions, so if the load test isn't running continuously, the prover will catch up and prove empty batches.
 
 Use the appropriate load test target depending on the transaction type:
 
