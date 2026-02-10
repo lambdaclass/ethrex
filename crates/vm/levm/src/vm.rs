@@ -249,6 +249,25 @@ impl Substate {
                 .unwrap_or_default()
     }
 
+    /// Returns all accessed storage slots for a given address.
+    /// Used by SELFDESTRUCT to record storage reads in BAL per EIP-7928:
+    /// "SELFDESTRUCT: Include modified/read storage keys as storage_read"
+    pub fn get_accessed_storage_slots(&self, address: &Address) -> BTreeSet<H256> {
+        let mut slots = BTreeSet::new();
+
+        // Collect from current substate
+        if let Some(slot_set) = self.accessed_storage_slots.get(address) {
+            slots.extend(slot_set.iter().copied());
+        }
+
+        // Collect from parent substates recursively
+        if let Some(parent) = self.parent.as_ref() {
+            slots.extend(parent.get_accessed_storage_slots(address));
+        }
+
+        slots
+    }
+
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
         let is_present = self
@@ -481,6 +500,13 @@ impl<'a> VM<'a> {
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
+
+        // EIP-7928: Take a BAL checkpoint AFTER clearing the backup. This captures the state
+        // after prepare_execution (nonce increment, etc.) but before actual execution.
+        // When the top-level call fails, we restore to this checkpoint so that inner call
+        // state changes (like value transfers) are reverted from the BAL.
+        self.current_call_frame.call_frame_backup.bal_checkpoint =
+            self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
         if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
