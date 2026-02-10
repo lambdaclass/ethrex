@@ -5,8 +5,9 @@ use rustyline::history::DefaultHistory;
 use rustyline::{Config, Editor};
 
 use crate::client::RpcClient;
-use crate::commands::CommandRegistry;
+use crate::commands::{CommandDef, CommandRegistry, ParamType};
 use crate::completer::ReplHelper;
+use crate::ens;
 use crate::formatter;
 use crate::parser::{self, ParsedCommand};
 
@@ -154,7 +155,12 @@ impl Repl {
             }
         };
 
-        let params = match cmd.build_params(args) {
+        let resolved_args = match self.resolve_ens_in_args(cmd, args).await {
+            Ok(a) => a,
+            Err(e) => return formatter::format_error(&e),
+        };
+
+        let params = match cmd.build_params(&resolved_args) {
             Ok(p) => p,
             Err(e) => {
                 return formatter::format_error(&format!(
@@ -168,6 +174,37 @@ impl Repl {
             Ok(result) => formatter::format_value(&result),
             Err(e) => formatter::format_error(&e.to_string()),
         }
+    }
+
+    /// Resolve ENS names in arguments that expect an address.
+    async fn resolve_ens_in_args(
+        &self,
+        cmd: &CommandDef,
+        args: &[serde_json::Value],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let mut resolved = args.to_vec();
+
+        for (i, param_def) in cmd.params.iter().enumerate() {
+            if param_def.param_type != ParamType::Address {
+                continue;
+            }
+            let Some(value) = resolved.get(i) else {
+                continue;
+            };
+            let Some(s) = value.as_str() else {
+                continue;
+            };
+            if !ens::looks_like_ens_name(s) {
+                continue;
+            }
+
+            let name = s.to_string();
+            let address = ens::resolve(&self.client, &name).await?;
+            println!("Resolved {name} -> {address}");
+            resolved[i] = serde_json::Value::String(address);
+        }
+
+        Ok(resolved)
     }
 
     fn execute_builtin(&self, name: &str, args: &[String]) {

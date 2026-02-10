@@ -1,6 +1,7 @@
 pub mod client;
 pub mod commands;
 pub mod completer;
+mod ens;
 pub mod formatter;
 pub mod parser;
 pub mod repl;
