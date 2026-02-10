@@ -50,7 +50,10 @@ impl Hook for DefaultHook {
             .checked_mul(vm.env.gas_limit.into())
             .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
-        validate_sender_balance(vm, sender_info.balance)?;
+        // Skip balance validation during prewarming to allow cross-sender funded transactions
+        if !vm.env.is_warming {
+            validate_sender_balance(vm, sender_info.balance)?;
+        }
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
@@ -58,7 +61,10 @@ impl Hook for DefaultHook {
         }
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        deduct_caller(vm, gaslimit_price_product, sender_address)?;
+        // Skip balance deduction during prewarming
+        if !vm.env.is_warming {
+            deduct_caller(vm, gaslimit_price_product, sender_address)?;
+        }
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         validate_sufficient_max_fee_per_gas(vm)?;
@@ -75,13 +81,16 @@ impl Hook for DefaultHook {
         vm.increment_account_nonce(sender_address)
             .map_err(|_| TxValidationError::NonceIsMax)?;
 
-        // check for nonce mismatch
-        if sender_info.nonce != vm.env.tx_nonce {
-            return Err(TxValidationError::NonceMismatch {
-                expected: sender_info.nonce,
-                actual: vm.env.tx_nonce,
+        // Skip nonce mismatch check during prewarming to allow nonce gaps
+        if !vm.env.is_warming {
+            // check for nonce mismatch
+            if sender_info.nonce != vm.env.tx_nonce {
+                return Err(TxValidationError::NonceMismatch {
+                    expected: sender_info.nonce,
+                    actual: vm.env.tx_nonce,
+                }
+                .into());
             }
-            .into());
         }
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS

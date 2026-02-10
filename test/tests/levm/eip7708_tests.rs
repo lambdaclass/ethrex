@@ -199,6 +199,7 @@ impl TestBuilder {
             tx_nonce: 0,
             block_gas_limit: GAS_LIMIT * 2,
             is_privileged: false,
+            is_warming: false,
             fee_token: None,
         };
 

@@ -141,6 +141,7 @@ pub fn get_vm_env_for_test(
         tx_nonce: test_case.nonce,
         block_gas_limit: test_env.current_gas_limit,
         is_privileged: false,
+        is_warming: false,
         fee_token: None,
     })
 }

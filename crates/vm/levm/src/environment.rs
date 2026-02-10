@@ -40,6 +40,7 @@ pub struct Environment {
     pub tx_nonce: u64,
     pub block_gas_limit: u64,
     pub is_privileged: bool,
+    pub is_warming: bool,
     pub fee_token: Option<Address>,
 }
 

@@ -58,6 +58,7 @@ impl LEVM {
             block_header,
             db,
             vm_type,
+            false, // Tracing is not warming
         )?;
         let mut vm = VM::new(
             env,

@@ -444,28 +444,37 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
             "Fee token address not provided".to_owned(),
         )))?;
 
-    let (execution_result, _) = simulate_common_bridge_call(
-        vm,
-        FEE_TOKEN_REGISTRY_ADDRESS,
-        encode_is_fee_token_call(fee_token),
-    )?;
+    // Skip expensive fee token validation during prewarming
+    if !vm.env.is_warming {
+        let (execution_result, _) = simulate_common_bridge_call(
+            vm,
+            FEE_TOKEN_REGISTRY_ADDRESS,
+            encode_is_fee_token_call(fee_token),
+        )?;
 
-    if !execution_result.is_success() {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ));
+        if !execution_result.is_success() {
+            return Err(VMError::TxValidation(
+                TxValidationError::InsufficientAccountFunds,
+            ));
+        }
+        // Here we want to check if the token is actually registered as valid.
+        // To do this we see if the last byte is 1 or 0.
+        // The contract returns a bool that is padded to 32 bytes.
+        if execution_result.output.len() != 32
+            || execution_result.output.get(31).is_none_or(|&b| b == 0)
+        {
+            return Err(VMError::TxValidation(
+                TxValidationError::InsufficientAccountFunds,
+            ));
+        }
     }
-    // Here we want to check if the token is actually registered as valid.
-    // To do this we see if the last byte is 1 or 0.
-    // The contract returns a bool that is padded to 32 bytes.
-    if execution_result.output.len() != 32
-        || execution_result.output.get(31).is_none_or(|&b| b == 0)
-    {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ));
-    }
-    let fee_token_ratio = get_fee_token_ratio(vm, fee_token)?;
+
+    // Use default ratio during prewarming to avoid expensive lookup
+    let fee_token_ratio = if !vm.env.is_warming {
+        get_fee_token_ratio(vm, fee_token)?
+    } else {
+        U256::one()
+    };
 
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
@@ -493,7 +502,10 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // NOT CHECKED: the blob price does not matter, fee token transactions do not support blobs
 
     // (3) INSUFFICIENT_ACCOUNT_FUNDS
-    deduct_caller_fee_token(vm, gaslimit_price_product.saturating_mul(fee_token_ratio))?;
+    // Skip balance deduction during prewarming
+    if !vm.env.is_warming {
+        deduct_caller_fee_token(vm, gaslimit_price_product.saturating_mul(fee_token_ratio))?;
+    }
 
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
     default_hook::validate_sufficient_max_fee_per_gas(vm)?;
@@ -510,13 +522,16 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     vm.increment_account_nonce(sender_address)
         .map_err(|_| TxValidationError::NonceIsMax)?;
 
-    // check for nonce mismatch
-    if sender_info.nonce != vm.env.tx_nonce {
-        return Err(TxValidationError::NonceMismatch {
-            expected: sender_info.nonce,
-            actual: vm.env.tx_nonce,
+    // Skip nonce mismatch check during prewarming to allow nonce gaps
+    if !vm.env.is_warming {
+        // check for nonce mismatch
+        if sender_info.nonce != vm.env.tx_nonce {
+            return Err(TxValidationError::NonceMismatch {
+                expected: sender_info.nonce,
+                actual: vm.env.tx_nonce,
+            }
+            .into());
         }
-        .into());
     }
 
     // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS

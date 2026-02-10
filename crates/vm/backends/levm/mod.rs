@@ -232,6 +232,7 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                false, // NOT warming - full validation
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -351,6 +352,7 @@ impl LEVM {
                         &mut group_db,
                         vm_type,
                         stack_pool,
+                        true, // WARMING - skip balance/nonce checks
                     );
                 }
             },
@@ -392,6 +394,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &GeneralizedDatabase,
         vm_type: VMType,
+        is_warming: bool,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = calculate_gas_price_for_tx(
@@ -428,6 +431,7 @@ impl LEVM {
             block_gas_limit: block_header.gas_limit,
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
+            is_warming,
             fee_token: tx.fee_token(),
         };
 
@@ -444,7 +448,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, false)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -461,8 +465,9 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        is_warming: bool,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, is_warming)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
@@ -940,6 +945,7 @@ fn env_from_generic(
         block_gas_limit: header.gas_limit,
         difficulty: header.difficulty,
         is_privileged: false,
+        is_warming: false,
         fee_token: tx.fee_token,
     })
 }

@@ -221,6 +221,7 @@ pub fn prepare_vm_for_tx<'a>(
             tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
             is_privileged: false,
+            is_warming: false,
             fee_token: None,
         },
         db,
