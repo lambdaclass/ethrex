@@ -81,6 +81,8 @@ impl MempoolInner {
 #[derive(Debug, Default)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
+    /// Monotonically increasing counter, bumped on every transaction insertion.
+    /// The payload builder polls this to skip rebuilds when the mempool is unchanged.
     generation: AtomicU64,
 }
 
