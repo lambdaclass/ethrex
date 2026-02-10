@@ -619,9 +619,6 @@ pub async fn request_storage_ranges(
     // joinset to send the result of dumping storages
     let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> = tokio::task::JoinSet::new();
 
-    let mut task_count = tasks_queue_not_started.len();
-    let mut completed_tasks = 0;
-
     // Maps storage root to vector of hashed addresses matching that root and
     // vector of hashed storage keys and storage values.
     let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
@@ -672,8 +669,6 @@ pub async fn request_storage_ranges(
         }
 
         if let Some(Ok(result)) = worker_joinset.try_join_next() {
-            completed_tasks += 1;
-
             match result {
                 StorageTaskResult::SmallComplete {
                     completed,
@@ -687,14 +682,12 @@ pub async fn request_storage_ranges(
                     if !remaining.is_empty() {
                         tasks_queue_not_started
                             .push_back(StorageTask::SmallBatch { tries: remaining });
-                        task_count += 1;
                     }
                 }
                 StorageTaskResult::SmallFailed { tries, peer_id } => {
                     peers.peer_table.record_failure(&peer_id).await?;
                     // Re-queue all tries
                     tasks_queue_not_started.push_back(StorageTask::SmallBatch { tries });
-                    task_count += 1;
                 }
                 StorageTaskResult::SmallPromotedToBig {
                     completed,
@@ -710,7 +703,6 @@ pub async fn request_storage_ranges(
                     if !remaining.is_empty() {
                         tasks_queue_not_started
                             .push_back(StorageTask::SmallBatch { tries: remaining });
-                        task_count += 1;
                     }
 
                     // Compute intervals for the promoted big trie
@@ -760,7 +752,6 @@ pub async fn request_storage_ranges(
                             accounts: accounts.clone(),
                             interval,
                         });
-                        task_count += 1;
                     }
 
                     debug!("Promoted small trie to big trie for root {big_root:?}");
@@ -804,7 +795,6 @@ pub async fn request_storage_ranges(
                             accounts,
                             interval,
                         });
-                        task_count += 1;
                     }
                 }
             }
@@ -834,7 +824,7 @@ pub async fn request_storage_ranges(
         };
 
         let Some(task) = tasks_queue_not_started.pop_front() else {
-            if completed_tasks >= task_count {
+            if worker_joinset.is_empty() {
                 break;
             }
             continue;
