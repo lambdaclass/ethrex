@@ -203,7 +203,7 @@ fn normalize_uint(s: &str) -> Result<String, String> {
     if s.starts_with("0x") {
         // Already hex
         Ok(s.to_string())
-    } else if let Ok(n) = s.parse::<u64>() {
+    } else if let Ok(n) = s.parse::<u128>() {
         Ok(format!("0x{n:x}"))
     } else {
         Err(format!("invalid uint: {s}"))

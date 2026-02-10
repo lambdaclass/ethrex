@@ -13,8 +13,6 @@ pub enum ParseError {
     UnterminatedJson,
     #[error("invalid JSON: {0}")]
     InvalidJson(String),
-    #[error("expected method name after '.'")]
-    ExpectedMethod,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -304,7 +302,9 @@ pub fn parse(input: &str) -> Result<ParsedCommand, ParseError> {
         });
     }
 
-    Err(ParseError::UnexpectedChar(trimmed.chars().next().unwrap()))
+    Err(ParseError::UnexpectedChar(
+        trimmed.chars().next().unwrap_or('\0'),
+    ))
 }
 
 fn parse_rpc_args(tokens: &[Token]) -> Result<Vec<Value>, ParseError> {
@@ -316,12 +316,19 @@ fn parse_rpc_args(tokens: &[Token]) -> Result<Vec<Value>, ParseError> {
 
     // Parenthesized syntax: (arg1, arg2, ...)
     if tokens.first() == Some(&Token::LParen) {
+        let mut found_rparen = false;
         for token in &tokens[1..] {
             match token {
-                Token::RParen => break,
+                Token::RParen => {
+                    found_rparen = true;
+                    break;
+                }
                 Token::Comma => continue,
                 t => args.push(token_to_value(t)),
             }
+        }
+        if !found_rparen {
+            return Err(ParseError::UnexpectedEof);
         }
         return Ok(args);
     }

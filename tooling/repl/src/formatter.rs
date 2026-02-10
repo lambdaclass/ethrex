@@ -210,11 +210,20 @@ fn hex_to_decimal(s: &str) -> Option<String> {
 }
 
 fn truncate_middle(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len || max_len < 7 {
+    if s.chars().count() <= max_len || max_len < 7 {
         return s.to_string();
     }
     let keep = (max_len - 3) / 2;
-    format!("{}...{}", &s[..keep], &s[s.len() - keep..])
+    let start: String = s.chars().take(keep).collect();
+    let end: String = s
+        .chars()
+        .rev()
+        .take(keep)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{start}...{end}")
 }
 
 pub fn format_error(msg: &str) -> String {
