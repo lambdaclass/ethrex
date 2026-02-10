@@ -15,12 +15,12 @@ use crate::peer_table::PeerTableError;
 use crate::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
-use ethrex_common::H256;
+use ethrex_common::{H256, U256};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
     Arc,
@@ -171,6 +171,50 @@ pub struct AccountStorageRoots {
     /// If an account has been healed, it may return to a previous state, so we just store the account
     /// in a hashset
     pub healed_accounts: HashSet<H256>,
+}
+
+/// An inclusive hash range representing a portion of a storage trie that needs to be downloaded.
+#[derive(Debug, Clone)]
+pub struct Interval {
+    pub start: H256,
+    pub end: H256,
+}
+
+/// A single storage slot: a hashed key and its value.
+#[derive(Debug, Clone)]
+pub struct Slot {
+    pub hash: H256,
+    pub value: U256,
+}
+
+/// A storage trie that fits in a single `request_storage_ranges` request.
+#[derive(Debug, Clone)]
+pub struct SmallTrie {
+    pub accounts: Vec<H256>,
+    pub slots: Vec<Slot>,
+}
+
+/// A storage trie too large to fit in a single `request_storage_ranges` request.
+/// It is downloaded in multiple sub-range requests tracked by `intervals`.
+#[derive(Debug, Clone)]
+pub struct BigTrie {
+    pub accounts: Vec<H256>,
+    pub slots: Vec<Slot>,
+    pub intervals: Vec<Interval>,
+}
+
+/// Tracks the download state of storage tries during snap sync.
+///
+/// All tries start as small (in `small_tries`). When a request fails to download
+/// a trie in its entirety, it is promoted to big (moved to `big_tries`) and split
+/// into sub-range intervals that are downloaded independently.
+///
+/// Both maps are keyed by the storage trie root hash. A healing function is
+/// responsible for reconciling partially downloaded tries after the download phase.
+#[derive(Debug, Default)]
+pub struct StorageTrieTracker {
+    pub small_tries: HashMap<H256, SmallTrie>,
+    pub big_tries: HashMap<H256, BigTrie>,
 }
 
 #[derive(thiserror::Error, Debug)]
