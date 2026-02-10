@@ -2411,15 +2411,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "colored"
-version = "3.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
-dependencies = [
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "compact_str"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4135,7 +4126,7 @@ dependencies = [
  "bitvec",
  "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
  "bytes",
- "colored 2.2.0",
+ "colored",
  "datatest-stable",
  "derive_more 1.0.0",
  "ethrex-common",
@@ -4268,7 +4259,7 @@ name = "ethrex-repl"
 version = "9.0.0"
 dependencies = [
  "clap",
- "colored 3.1.1",
+ "colored",
  "ethereum-types 0.15.1",
  "hex",
  "reqwest",
@@ -12695,7 +12686,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20aa2ed67fbb202e7b716ff8bfc6571dd9301617767380197d701c31124e88f6"
 dependencies = [
- "colored 2.2.0",
+ "colored",
  "once_cell",
  "paste",
 ]

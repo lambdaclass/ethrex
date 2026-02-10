@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use reqwest::Client;
 use serde_json::{Value, json};
@@ -24,7 +25,10 @@ impl RpcClient {
     pub fn new(endpoint: String) -> Self {
         Self {
             endpoint,
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("Failed to build HTTP client"),
             request_id: AtomicU64::new(1),
         }
     }
@@ -54,6 +58,8 @@ impl RpcClient {
             .json(&request_body)
             .send()
             .await
+            .map_err(|e| RpcError::Transport(e.to_string()))?
+            .error_for_status()
             .map_err(|e| RpcError::Transport(e.to_string()))?;
 
         let response_body: Value = response

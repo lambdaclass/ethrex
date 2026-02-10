@@ -2012,15 +2012,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "colored"
-version = "3.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
-dependencies = [
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "compact_str"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2994,7 +2985,7 @@ dependencies = [
  "bytes",
  "clap 4.5.54",
  "clap_complete",
- "colored 2.2.0",
+ "colored",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
  "ethrex-levm",
@@ -3022,7 +3013,7 @@ dependencies = [
  "chrono",
  "clap 4.5.54",
  "clap_complete",
- "colored 2.2.0",
+ "colored",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
  "ethrex-l2-rpc",
@@ -3685,7 +3676,7 @@ name = "ethrex-repl"
 version = "4.0.0"
 dependencies = [
  "clap 4.5.54",
- "colored 3.1.1",
+ "colored",
  "ethereum-types",
  "hex",
  "reqwest",
@@ -5500,7 +5491,7 @@ version = "4.0.0"
 dependencies = [
  "clap 4.5.54",
  "clap_complete",
- "colored 2.2.0",
+ "colored",
  "prettytable",
  "serde",
  "serde_json",
@@ -9135,7 +9126,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20aa2ed67fbb202e7b716ff8bfc6571dd9301617767380197d701c31124e88f6"
 dependencies = [
- "colored 2.2.0",
+ "colored",
  "once_cell",
  "paste",
 ]
