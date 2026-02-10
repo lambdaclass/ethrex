@@ -21,7 +21,7 @@ fn namehash(name: &str) -> [u8; 32] {
         let mut data = [0u8; 64];
         data[..32].copy_from_slice(&node);
         data[32..].copy_from_slice(&label_hash);
-        node = Keccak256::digest(&data).into();
+        node = Keccak256::digest(data).into();
     }
     node
 }

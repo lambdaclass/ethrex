@@ -144,10 +144,10 @@ fn inline_value(value: &Value) -> String {
         Value::Number(n) => n.to_string(),
         Value::String(s) => {
             // Convert hex quantities to decimal
-            if s.starts_with("0x") && s.len() != 42 && s.len() != 66 {
-                if let Some(decimal) = hex_to_decimal(s) {
-                    return decimal;
-                }
+            if s.starts_with("0x") && s.len() != 42 && s.len() != 66
+                && let Some(decimal) = hex_to_decimal(s)
+            {
+                return decimal;
             }
             s.clone()
         }

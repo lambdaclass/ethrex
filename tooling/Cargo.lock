@@ -3277,6 +3277,7 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-prover",
+ "ethrex-repl",
  "ethrex-rlp 9.0.0",
  "ethrex-rpc",
  "ethrex-sdk",
