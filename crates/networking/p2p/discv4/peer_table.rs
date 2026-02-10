@@ -7,7 +7,7 @@ use crate::{
 use ethrex_common::{H256, U256};
 use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
-use rand::seq::SliceRandom;
+use rand::{Rng, seq::SliceRandom};
 use rustc_hash::FxHashSet;
 use spawned_concurrency::{
     error::GenServerError,
@@ -702,28 +702,33 @@ impl PeerTableServer {
     }
 
     fn get_contact_for_lookup(&self) -> Option<Contact> {
-        self.contacts
-            .values()
-            .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
-            .collect::<Vec<_>>()
-            .choose(&mut rand::rngs::OsRng)
-            .cloned()
-            .cloned()
+        self.random_contact(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
     }
 
     fn get_contact_for_enr_lookup(&mut self) -> Option<Contact> {
-        self.contacts
-            .values()
-            .filter(|c| {
-                c.was_validated()
-                    && !c.has_pending_enr_request()
-                    && c.record.is_none()
-                    && !c.disposable
-            })
-            .collect::<Vec<_>>()
-            .choose(&mut rand::rngs::OsRng)
-            .cloned()
-            .cloned()
+        self.random_contact(|c| {
+            c.was_validated()
+                && !c.has_pending_enr_request()
+                && c.record.is_none()
+                && !c.disposable
+        })
+    }
+
+    /// Pick a uniformly random contact matching `predicate` using reservoir sampling.
+    /// O(n) scan with O(1) extra memory (no intermediate Vec allocation).
+    fn random_contact(&self, predicate: impl Fn(&Contact) -> bool) -> Option<Contact> {
+        let mut rng = rand::rngs::OsRng;
+        let mut result: Option<&Contact> = None;
+        let mut count = 0u64;
+        for c in self.contacts.values() {
+            if predicate(c) {
+                count += 1;
+                if rng.gen_range(0..count) == 0 {
+                    result = Some(c);
+                }
+            }
+        }
+        result.cloned()
     }
 
     fn get_contacts_to_revalidate(&self, revalidation_interval: Duration) -> Vec<Contact> {

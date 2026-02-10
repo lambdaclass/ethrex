@@ -146,7 +146,7 @@ impl NodeRef {
                     }
                     Node::Leaf(_) => {}
                 }
-                let mut buf = Vec::new();
+                let mut buf = Vec::with_capacity(512);
                 node.encode(&mut buf);
                 let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
                 if let Node::Leaf(leaf) = node.as_ref() {

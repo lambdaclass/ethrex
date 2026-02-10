@@ -611,6 +611,7 @@ impl RpcHandler for SendRawTransactionRequest {
                 .add_blob_transaction_to_pool(
                     wrapped_blob_tx.tx.clone(),
                     wrapped_blob_tx.blobs_bundle.clone(),
+                    false,
                 )
                 .await
         } else {
