@@ -569,6 +569,126 @@ fn flush_completed_tries(
     }
 }
 
+/// Processes a storage task result: flushes completed data and re-queues remaining work.
+/// Returns (peer_id, success) for peer scoring by the caller.
+fn process_storage_task_result(
+    result: StorageTaskResult,
+    tracker: &mut StorageTrieTracker,
+    current_account_storages: &mut BTreeMap<H256, AccountsWithStorage>,
+    tasks_queue: &mut VecDeque<StorageTask>,
+) -> (H256, bool) {
+    match result {
+        StorageTaskResult::SmallComplete {
+            completed,
+            remaining,
+            peer_id,
+        } => {
+            flush_completed_tries(completed, current_account_storages);
+            if !remaining.is_empty() {
+                tasks_queue.push_back(StorageTask::SmallBatch { tries: remaining });
+            }
+            (peer_id, true)
+        }
+        StorageTaskResult::SmallFailed { tries, peer_id } => {
+            tasks_queue.push_back(StorageTask::SmallBatch { tries });
+            (peer_id, false)
+        }
+        StorageTaskResult::SmallPromotedToBig {
+            completed,
+            remaining,
+            big_root,
+            big_trie,
+            peer_id,
+        } => {
+            flush_completed_tries(completed, current_account_storages);
+            if !remaining.is_empty() {
+                tasks_queue.push_back(StorageTask::SmallBatch { tries: remaining });
+            }
+
+            let last_hash = big_trie
+                .slots
+                .last()
+                .map(|s| {
+                    let next = U256::from_big_endian(&s.hash.0).saturating_add(1.into());
+                    H256::from_uint(&next)
+                })
+                .unwrap_or(H256::zero());
+            let slot_count = big_trie.slots.len();
+            let intervals = BigTrie::compute_intervals(last_hash, slot_count, 10_000);
+
+            // Precautionary: mark promoted accounts for storage healing
+            // in case the storage root becomes stale before download completes
+            tracker.healed_accounts.extend(big_trie.accounts.iter());
+
+            // Store the initial slots
+            let storages: Vec<(H256, U256)> = big_trie
+                .slots
+                .iter()
+                .map(|s| (s.hash, s.value))
+                .collect();
+            current_account_storages
+                .entry(big_root)
+                .or_insert_with(|| AccountsWithStorage {
+                    accounts: big_trie.accounts.clone(),
+                    storages: Vec::new(),
+                })
+                .storages
+                .extend(storages);
+
+            tracker.promote_to_big(big_root, big_trie.slots, intervals.clone());
+
+            let accounts = tracker
+                .big_tries
+                .get(&big_root)
+                .map(|b| b.accounts.clone())
+                .unwrap_or_default();
+            for interval in intervals {
+                tasks_queue.push_back(StorageTask::BigInterval {
+                    root: big_root,
+                    accounts: accounts.clone(),
+                    interval,
+                });
+            }
+
+            debug!("Promoted small trie to big trie for root {big_root:?}");
+            (peer_id, true)
+        }
+        StorageTaskResult::BigIntervalResult {
+            root,
+            accounts,
+            slots,
+            remaining_interval,
+            peer_id,
+        } => {
+            let success = !slots.is_empty();
+            let effective_slots = accounts.len() * slots.len();
+            METRICS
+                .storage_leaves_downloaded
+                .inc_by(effective_slots as u64);
+
+            let storages: Vec<(H256, U256)> =
+                slots.into_iter().map(|s| (s.hash, s.value)).collect();
+            current_account_storages
+                .entry(root)
+                .or_insert_with(|| AccountsWithStorage {
+                    accounts: accounts.clone(),
+                    storages: Vec::new(),
+                })
+                .storages
+                .extend(storages);
+
+            if let Some(interval) = remaining_interval {
+                tasks_queue.push_back(StorageTask::BigInterval {
+                    root,
+                    accounts,
+                    interval,
+                });
+            }
+            (peer_id, success)
+        }
+    }
+}
+
 /// Requests storage ranges for accounts given their hashed address and storage roots, and the root of their state trie
 /// Uses StorageTrieTracker to manage small/big tries and their download state.
 pub async fn request_storage_ranges(
@@ -669,134 +789,16 @@ pub async fn request_storage_ranges(
         }
 
         if let Some(Ok(result)) = worker_joinset.try_join_next() {
-            match result {
-                StorageTaskResult::SmallComplete {
-                    completed,
-                    remaining,
-                    peer_id,
-                } => {
-                    peers.peer_table.record_success(&peer_id).await?;
-                    flush_completed_tries(completed, &mut current_account_storages);
-
-                    // Re-queue remaining tries
-                    if !remaining.is_empty() {
-                        tasks_queue_not_started
-                            .push_back(StorageTask::SmallBatch { tries: remaining });
-                    }
-                }
-                StorageTaskResult::SmallFailed { tries, peer_id } => {
-                    peers.peer_table.record_failure(&peer_id).await?;
-                    // Re-queue all tries
-                    tasks_queue_not_started.push_back(StorageTask::SmallBatch { tries });
-                }
-                StorageTaskResult::SmallPromotedToBig {
-                    completed,
-                    remaining,
-                    big_root,
-                    big_trie,
-                    peer_id,
-                } => {
-                    peers.peer_table.record_success(&peer_id).await?;
-                    flush_completed_tries(completed, &mut current_account_storages);
-
-                    // Re-queue remaining small tries
-                    if !remaining.is_empty() {
-                        tasks_queue_not_started
-                            .push_back(StorageTask::SmallBatch { tries: remaining });
-                    }
-
-                    // Compute intervals for the promoted big trie
-                    let last_hash = big_trie
-                        .slots
-                        .last()
-                        .map(|s| {
-                            let next = U256::from_big_endian(&s.hash.0).saturating_add(1.into());
-                            H256::from_uint(&next)
-                        })
-                        .unwrap_or(H256::zero());
-                    let slot_count = big_trie.slots.len();
-                    let intervals =
-                        BigTrie::compute_intervals(last_hash, slot_count, 10_000);
-
-                    // Precautionary: mark promoted accounts for storage healing
-                    // in case the storage root becomes stale before download completes
-                    tracker.healed_accounts.extend(big_trie.accounts.iter());
-
-                    // Store the initial slots in current_account_storages
-                    let storages: Vec<(H256, U256)> = big_trie
-                        .slots
-                        .iter()
-                        .map(|s| (s.hash, s.value))
-                        .collect();
-                    current_account_storages
-                        .entry(big_root)
-                        .or_insert_with(|| AccountsWithStorage {
-                            accounts: big_trie.accounts.clone(),
-                            storages: Vec::new(),
-                        })
-                        .storages
-                        .extend(storages);
-
-                    // Promote to big in the tracker
-                    tracker.promote_to_big(big_root, big_trie.slots, intervals.clone());
-
-                    // Queue BigInterval tasks
-                    let accounts = tracker
-                        .big_tries
-                        .get(&big_root)
-                        .map(|b| b.accounts.clone())
-                        .unwrap_or_default();
-                    for interval in intervals {
-                        tasks_queue_not_started.push_back(StorageTask::BigInterval {
-                            root: big_root,
-                            accounts: accounts.clone(),
-                            interval,
-                        });
-                    }
-
-                    debug!("Promoted small trie to big trie for root {big_root:?}");
-                }
-                StorageTaskResult::BigIntervalResult {
-                    root,
-                    accounts,
-                    slots,
-                    remaining_interval,
-                    peer_id,
-                } => {
-                    if slots.is_empty() {
-                        peers.peer_table.record_failure(&peer_id).await?;
-                    } else {
-                        peers.peer_table.record_success(&peer_id).await?;
-                    }
-
-                    let effective_slots = accounts.len() * slots.len();
-                    METRICS
-                        .storage_leaves_downloaded
-                        .inc_by(effective_slots as u64);
-
-                    // Append slots to current_account_storages
-                    let storages: Vec<(H256, U256)> = slots
-                        .into_iter()
-                        .map(|s| (s.hash, s.value))
-                        .collect();
-                    current_account_storages
-                        .entry(root)
-                        .or_insert_with(|| AccountsWithStorage {
-                            accounts: accounts.clone(),
-                            storages: Vec::new(),
-                        })
-                        .storages
-                        .extend(storages);
-
-                    // Re-queue remaining interval if partial
-                    if let Some(interval) = remaining_interval {
-                        tasks_queue_not_started.push_back(StorageTask::BigInterval {
-                            root,
-                            accounts,
-                            interval,
-                        });
-                    }
-                }
+            let (peer_id, success) = process_storage_task_result(
+                result,
+                tracker,
+                &mut current_account_storages,
+                &mut tasks_queue_not_started,
+            );
+            if success {
+                peers.peer_table.record_success(&peer_id).await?;
+            } else {
+                peers.peer_table.record_failure(&peer_id).await?;
             }
         }
 
@@ -839,6 +841,32 @@ pub async fn request_storage_ranges(
             peer_table,
             pivot_header.state_root,
         ));
+    }
+
+    // Drain remaining in-flight workers so their trie data is not lost
+    for result in worker_joinset.join_all().await {
+        process_storage_task_result(
+            result,
+            tracker,
+            &mut current_account_storages,
+            &mut tasks_queue_not_started,
+        );
+    }
+
+    // Return all queued tasks back to the tracker
+    for task in tasks_queue_not_started {
+        match task {
+            StorageTask::SmallBatch { tries } => {
+                tracker.return_small_tries(tries);
+            }
+            StorageTask::BigInterval {
+                root, interval, ..
+            } => {
+                if let Some(big) = tracker.big_tries.get_mut(&root) {
+                    big.intervals.push(interval);
+                }
+            }
+        }
     }
 
     {
