@@ -461,171 +461,6 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "batch_number"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 0
-              },
-              {
-                "id": "custom.width",
-                "value": 120
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "tx_gas"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "sishort"
-              },
-              {
-                "id": "custom.width",
-                "value": 120
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "tx_hash"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 280
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 0,
-        "y": 10
-      },
-      "id": 104,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "batch_number"
-          }
-        ]
-      },
-      "pluginVersion": "12.1.0",
-      "targets": [
-        {
-          "expr": "batch_verification_gas",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "",
-          "refId": "A"
-        }
-      ],
-      "title": "Batch Verification Gas",
-      "transformations": [
-        {
-          "id": "filterFieldsByName",
-          "options": {
-            "include": {
-              "names": [
-                "batch_number",
-                "tx_hash",
-                "Value"
-              ]
-            }
-          }
-        },
-        {
-          "id": "organize",
-          "options": {
-            "renameByName": {
-              "Value": "tx_gas",
-              "batch_number": "batch_number",
-              "tx_hash": "tx_hash"
-            },
-            "indexByName": {
-              "batch_number": 0,
-              "Value": 1,
-              "tx_hash": 2
-            }
-          }
-        },
-        {
-          "id": "convertFieldType",
-          "options": {
-            "conversions": [
-              {
-                "destinationType": "number",
-                "targetField": "batch_number"
-              }
-            ],
-            "fields": {}
-          }
-        },
-        {
-          "id": "sortBy",
-          "options": {
-            "fields": {},
-            "sort": [
-              {
-                "field": "batch_number"
-              }
-            ]
-          }
-        }
-      ],
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prom-001"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
             "fixedColor": "orange",
             "mode": "fixed"
           },
@@ -685,8 +520,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 6,
+        "w": 8,
+        "x": 0,
         "y": 10
       },
       "id": 115,
@@ -782,6 +617,18 @@
                 "operation": "aggregate"
               }
             }
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "string",
+                "targetField": "tx_hash (lastNotNull)"
+              }
+            ],
+            "fields": {}
           }
         }
       ],
@@ -885,8 +732,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 10
       },
       "id": 103,
@@ -1084,8 +931,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 18,
+        "w": 8,
+        "x": 16,
         "y": 10
       },
       "id": 102,
