@@ -851,17 +851,17 @@ impl PeerTableServer {
                 if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
                     continue;
                 }
-                let is_fork_id_valid =
-                    if let Some(remote_fork_id) = node_record.decode_pairs().eth {
-                        backend::is_fork_id_valid(&self.store, &remote_fork_id)
-                            .await
-                            .ok()
-                            .or(Some(false))
-                    } else {
-                        Some(false)
-                    };
                 match self.contacts.entry(node_id) {
                     Entry::Vacant(vacant_entry) => {
+                        let is_fork_id_valid =
+                            if let Some(remote_fork_id) = node_record.decode_pairs().eth {
+                                backend::is_fork_id_valid(&self.store, &remote_fork_id)
+                                    .await
+                                    .ok()
+                                    .or(Some(false))
+                            } else {
+                                Some(false)
+                            };
                         let mut contact = Contact::from(node);
                         contact.is_fork_id_valid = is_fork_id_valid;
                         contact.record = Some(node_record);
@@ -869,12 +869,20 @@ impl PeerTableServer {
                         METRICS.record_new_discovery().await;
                     }
                     Entry::Occupied(mut occupied_entry) => {
-                        let existing_seq = occupied_entry
-                            .get()
-                            .record
-                            .as_ref()
-                            .map_or(0, |r| r.seq);
-                        if node_record.seq > existing_seq {
+                        let should_update = match occupied_entry.get().record.as_ref() {
+                            None => true,
+                            Some(r) => node_record.seq > r.seq,
+                        };
+                        if should_update {
+                            let is_fork_id_valid =
+                                if let Some(remote_fork_id) = node_record.decode_pairs().eth {
+                                    backend::is_fork_id_valid(&self.store, &remote_fork_id)
+                                        .await
+                                        .ok()
+                                        .or(Some(false))
+                                } else {
+                                    Some(false)
+                                };
                             let contact = occupied_entry.get_mut();
                             contact.node = node;
                             contact.record = Some(node_record);
