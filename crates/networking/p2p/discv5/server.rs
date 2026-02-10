@@ -1083,7 +1083,10 @@ mod tests {
             recipient_addr: "127.0.0.1:30303".parse().unwrap(),
         };
         let initial_pending_count = server.pending_by_nonce.len();
-        server.handle_pong(pong_same_seq, remote_node_id).await.expect("handle_pong failed for matching enr_seq");
+        server
+            .handle_pong(pong_same_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for matching enr_seq");
         // No new message should be pending (no FINDNODE sent)
         assert_eq!(server.pending_by_nonce.len(), initial_pending_count);
 
@@ -1093,7 +1096,10 @@ mod tests {
             enr_seq: 10, // Different from cached (5)
             recipient_addr: "127.0.0.1:30303".parse().unwrap(),
         };
-        server.handle_pong(pong_different_seq, remote_node_id).await.expect("handle_pong failed for different enr_seq");
+        server
+            .handle_pong(pong_different_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for different enr_seq");
         // A new message should be pending (FINDNODE sent)
         assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
     }
