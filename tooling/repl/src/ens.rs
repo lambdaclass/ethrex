@@ -3,7 +3,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::client::RpcClient;
 
-/// ENS registry contract address (same on mainnet, Goerli, Sepolia).
+/// ENS registry contract address (same on mainnet and Sepolia).
 const ENS_REGISTRY: &str = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e";
 
 /// Compute the ENS namehash for a domain name.
@@ -17,7 +17,8 @@ fn namehash(name: &str) -> [u8; 32] {
 
     let mut node = [0u8; 32];
     for label in name.rsplit('.') {
-        let label_hash = Keccak256::digest(label.as_bytes());
+        let label_lower = label.to_lowercase();
+        let label_hash = Keccak256::digest(label_lower.as_bytes());
         let mut data = [0u8; 64];
         data[..32].copy_from_slice(&node);
         data[32..].copy_from_slice(&label_hash);
@@ -78,8 +79,10 @@ async fn eth_call(client: &RpcClient, to: &str, data: &str) -> Result<String, St
 /// Parse the last 20 bytes of a 32-byte ABI-encoded word as a `0x`-prefixed address.
 fn parse_address_from_abi_word(hex_str: &str) -> Result<String, String> {
     let hex = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    if hex.len() < 40 {
-        return Err(format!("unexpected response length: 0x{hex}"));
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "unexpected ABI word (expected 64 hex chars): 0x{hex}"
+        ));
     }
     // Last 40 hex chars = 20 bytes = address
     let addr = &hex[hex.len() - 40..];
@@ -185,11 +188,11 @@ mod tests {
     }
 
     #[test]
-    fn namehash_case_sensitive() {
-        // ENS namehash operates on raw bytes — different case produces different hashes
+    fn namehash_case_insensitive() {
+        // ENS namehash normalizes labels to lowercase before hashing
         let lower = namehash("eth");
         let upper = namehash("ETH");
-        assert_ne!(lower, upper);
+        assert_eq!(lower, upper);
     }
 
     #[test]
@@ -263,11 +266,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_address_exactly_40_chars() {
-        // Exactly 40 hex chars = 20 bytes address, no leading zeros
+    fn parse_address_exactly_40_chars_rejected() {
+        // Exactly 40 hex chars is not a valid ABI word (must be 64)
         let word = "d8da6bf26964af9d7eed9e03e53415d37aa96045";
-        let addr = parse_address_from_abi_word(word).unwrap();
-        assert_eq!(addr, "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+        assert!(parse_address_from_abi_word(word).is_err());
     }
 
     #[test]
