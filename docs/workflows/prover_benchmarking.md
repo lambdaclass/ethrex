@@ -73,6 +73,14 @@ ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && make down'"
 ssh <server> "bash -l -c 'cd ~/ethrex && git fetch origin && git checkout <branch> && git pull origin <branch>'"
 ```
 
+### 1b. Pre-compile Load Test Binary
+
+Build the load test binary **before** starting the L2. This avoids the sequencer producing empty blocks while the load test compiles.
+
+```bash
+ssh <server> "bash -l -c 'cd ~/ethrex && cargo build --release --manifest-path ./tooling/load_test/Cargo.toml'"
+```
+
 ### 2. Start the Localnet
 
 The localnet is started in three stages so that the L1 (Docker) stays up across re-deploys and L2 restarts.
@@ -115,16 +123,16 @@ ssh <server> "bash -l -c 'tail -f ~/l2.log'" | grep --line-buffered -m1 'Blockch
 
 ### 3. Generate Load
 
-Start the load test **immediately after the L2 is up** and **before** the prover to ensure batches contain transactions. The prover proves batches much faster than the sequencer creates them with transactions, so if the load test isn't running continuously, the prover will catch up and prove empty batches.
+Start the load test **immediately after the L2 is up** and **before** the prover to ensure batches contain transactions. The block producer and committer are fast — they will build and commit empty blocks and batches while the load test is not yet sending transactions. The prover then proves those empty batches instead of full ones.
 
-Use the appropriate load test target depending on the transaction type:
+Run the pre-compiled binary directly (built in step 1b) instead of `cargo run` to avoid compilation delays after the L2 is already producing blocks:
 
 ```bash
 # ETH transfers (default):
-ssh <server> "bash -l -c 'cd ~/ethrex && nohup env LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> make load-test > ~/loadtest.log 2>&1 &'"
+ssh <server> "bash -l -c 'cd ~/ethrex && nohup env LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> ./tooling/target/release/load_test -k ./fixtures/keys/private_keys.txt -t eth-transfers > ~/loadtest.log 2>&1 &'"
 
 # ERC20 transactions:
-ssh <server> "bash -l -c 'cd ~/ethrex && nohup env LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> make load-test-erc20 > ~/loadtest.log 2>&1 &'"
+ssh <server> "bash -l -c 'cd ~/ethrex && nohup env LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> ./tooling/target/release/load_test -k ./fixtures/keys/private_keys.txt -t erc20 > ~/loadtest.log 2>&1 &'"
 
 # For continuous load, add LOAD_TEST_ENDLESS=true to env vars.
 ```
