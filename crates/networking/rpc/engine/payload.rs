@@ -211,7 +211,7 @@ impl RpcHandler for NewPayloadV4Request {
         let chain_config = context.storage.get_chain_config();
 
         if !chain_config.is_prague_activated(block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
+            return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
             )));
@@ -301,7 +301,7 @@ impl RpcHandler for NewPayloadV5Request {
         let chain_config = context.storage.get_chain_config();
 
         if !chain_config.is_amsterdam_activated(block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
+            return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
             )));
