@@ -474,7 +474,7 @@ contract OnChainProposer is
         bytes[] memory risc0BlockProofs,
         bytes[] memory sp1ProofsBytes,
         bytes[] memory tdxSignatures
-    ) external onlyOwner whenNotPaused {
+    ) external override onlyOwner whenNotPaused {
         require(
             !ALIGNED_MODE,
             "008" // Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.
