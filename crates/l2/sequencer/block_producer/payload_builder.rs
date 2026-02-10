@@ -6,7 +6,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     U256,
-    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction},
+    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction, TxKind},
 };
 use ethrex_l2_common::{
     messages::get_block_l2_out_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
@@ -207,6 +207,19 @@ pub async fn fill_transactions(
             txs.pop();
             blockchain.remove_transaction_from_pool(&tx_hash)?;
             continue;
+        }
+
+        // Set BAL index for this transaction (1-indexed per EIP-7928)
+        #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
+        let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+        context.vm.set_bal_index(tx_index);
+
+        // Record tx sender and recipient for BAL
+        if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+            recorder.record_touched_address(head_tx.tx.sender());
+            if let TxKind::Call(to) = head_tx.to() {
+                recorder.record_touched_address(to);
+            }
         }
 
         // Execute tx
