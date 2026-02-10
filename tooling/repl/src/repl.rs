@@ -58,19 +58,22 @@ impl Repl {
                     let line = line.trim_end();
 
                     // Multi-line support: accumulate if braces/brackets are unbalanced
-                    if !multiline_buffer.is_empty() {
+                    let should_exit = if !multiline_buffer.is_empty() {
                         multiline_buffer.push(' ');
                         multiline_buffer.push_str(line);
                         if !is_balanced(&multiline_buffer) {
                             continue;
                         }
                         let full_input = std::mem::take(&mut multiline_buffer);
-                        self.execute_input(&full_input).await;
+                        self.execute_input(&full_input).await
                     } else if !is_balanced(line) {
                         multiline_buffer = line.to_string();
                         continue;
                     } else {
-                        self.execute_input(line).await;
+                        self.execute_input(line).await
+                    };
+                    if should_exit {
+                        break;
                     }
                 }
                 Err(ReadlineError::Interrupted) => {
@@ -113,12 +116,13 @@ impl Repl {
         }
     }
 
-    async fn execute_input(&self, input: &str) {
+    /// Execute a single input line. Returns `true` if the REPL should exit.
+    async fn execute_input(&self, input: &str) -> bool {
         let parsed = match parser::parse(input) {
             Ok(p) => p,
             Err(e) => {
                 println!("{}", formatter::format_error(&e.to_string()));
-                return;
+                return false;
             }
         };
 
@@ -133,13 +137,16 @@ impl Repl {
                 println!("{result}");
             }
             ParsedCommand::BuiltinCommand { name, args } => {
-                self.execute_builtin(&name, &args);
+                if self.execute_builtin(&name, &args) {
+                    return true;
+                }
             }
             ParsedCommand::UtilityCall { name, args } => {
                 let result = execute_utility(&name, &args);
                 println!("{result}");
             }
         }
+        false
     }
 
     async fn execute_rpc(
@@ -207,12 +214,13 @@ impl Repl {
         Ok(resolved)
     }
 
-    fn execute_builtin(&self, name: &str, args: &[String]) {
+    /// Execute a built-in command. Returns `true` if the REPL should exit.
+    fn execute_builtin(&self, name: &str, args: &[String]) -> bool {
         match name {
             "help" => self.show_help(args),
             "exit" | "quit" => {
                 println!("Bye!");
-                std::process::exit(0);
+                return true;
             }
             "clear" => {
                 print!("\x1b[2J\x1b[H");
@@ -238,6 +246,7 @@ impl Repl {
                 );
             }
         }
+        false
     }
 
     fn show_help(&self, args: &[String]) {
@@ -315,22 +324,14 @@ fn execute_utility(name: &str, args: &[String]) -> String {
                     "Usage: toWei <amount> <unit>\nUnits: wei, gwei, ether",
                 );
             }
-            let amount: f64 = match args[0].parse() {
-                Ok(v) => v,
-                Err(_) => return formatter::format_error(&format!("invalid number: {}", args[0])),
+            let decimals = match unit_decimals(&args[1]) {
+                Ok(d) => d,
+                Err(e) => return formatter::format_error(&e),
             };
-            let multiplier: f64 = match args[1].to_lowercase().as_str() {
-                "wei" => 1.0,
-                "gwei" => 1e9,
-                "ether" | "eth" => 1e18,
-                other => {
-                    return formatter::format_error(&format!(
-                        "unknown unit: {other}. Use: wei, gwei, ether"
-                    ));
-                }
-            };
-            let wei = (amount * multiplier) as u128;
-            format!("{wei}")
+            match parse_wei_amount(&args[0], decimals) {
+                Ok(wei) => format!("{wei}"),
+                Err(e) => formatter::format_error(&e),
+            }
         }
         "fromWei" => {
             if args.len() < 2 {
@@ -342,19 +343,11 @@ fn execute_utility(name: &str, args: &[String]) -> String {
                 Ok(v) => v,
                 Err(_) => return formatter::format_error(&format!("invalid number: {}", args[0])),
             };
-            let divisor: f64 = match args[1].to_lowercase().as_str() {
-                "wei" => 1.0,
-                "gwei" => 1e9,
-                "ether" | "eth" => 1e18,
-                other => {
-                    return formatter::format_error(&format!(
-                        "unknown unit: {other}. Use: wei, gwei, ether"
-                    ));
-                }
+            let decimals = match unit_decimals(&args[1]) {
+                Ok(d) => d,
+                Err(e) => return formatter::format_error(&e),
             };
-            let result = wei as f64 / divisor;
-            let s = format!("{result}");
-            s.trim_end_matches('0').trim_end_matches('.').to_string()
+            format_from_wei(wei, decimals)
         }
         "toHex" => {
             if args.is_empty() {
@@ -414,6 +407,72 @@ fn execute_utility(name: &str, args: &[String]) -> String {
     }
 }
 
+fn unit_decimals(unit: &str) -> Result<u32, String> {
+    match unit.to_lowercase().as_str() {
+        "wei" => Ok(0),
+        "gwei" => Ok(9),
+        "ether" | "eth" => Ok(18),
+        other => Err(format!("unknown unit: {other}. Use: wei, gwei, ether")),
+    }
+}
+
+/// Parse an amount string (possibly with decimals) and a unit's decimal count into wei.
+/// Uses pure integer arithmetic to avoid f64 precision loss.
+fn parse_wei_amount(amount: &str, decimals: u32) -> Result<u128, String> {
+    let parts: Vec<&str> = amount.split('.').collect();
+    if parts.len() > 2 {
+        return Err(format!("invalid number: {amount}"));
+    }
+
+    let whole: u128 = if parts[0].is_empty() {
+        0
+    } else {
+        parts[0]
+            .parse()
+            .map_err(|_| format!("invalid number: {amount}"))?
+    };
+
+    let multiplier = 10u128.pow(decimals);
+    let whole_wei = whole
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("value too large: {amount}"))?;
+
+    if parts.len() == 1 || parts[1].is_empty() {
+        return Ok(whole_wei);
+    }
+
+    let frac_str = parts[1];
+    if frac_str.len() > decimals as usize {
+        return Err(format!("too many decimal places for unit (max {decimals})"));
+    }
+
+    let padded = format!("{frac_str:0<width$}", width = decimals as usize);
+    let frac_wei: u128 = padded
+        .parse()
+        .map_err(|_| format!("invalid number: {amount}"))?;
+
+    whole_wei
+        .checked_add(frac_wei)
+        .ok_or_else(|| format!("value too large: {amount}"))
+}
+
+/// Format a wei amount into a human-readable string with the given unit's decimal count.
+/// Uses pure integer arithmetic to avoid f64 precision loss.
+fn format_from_wei(wei: u128, decimals: u32) -> String {
+    if decimals == 0 {
+        return wei.to_string();
+    }
+    let divisor = 10u128.pow(decimals);
+    let whole = wei / divisor;
+    let frac = wei % divisor;
+    if frac == 0 {
+        return whole.to_string();
+    }
+    let frac_str = format!("{frac:0>width$}", width = decimals as usize);
+    let trimmed = frac_str.trim_end_matches('0');
+    format!("{whole}.{trimmed}")
+}
+
 fn is_balanced(s: &str) -> bool {
     let mut brace_depth: i32 = 0;
     let mut bracket_depth: i32 = 0;
@@ -442,9 +501,19 @@ fn is_balanced(s: &str) -> bool {
                 string_char = c;
             }
             '{' => brace_depth += 1,
-            '}' => brace_depth -= 1,
+            '}' => {
+                brace_depth -= 1;
+                if brace_depth < 0 {
+                    return false;
+                }
+            }
             '[' => bracket_depth += 1,
-            ']' => bracket_depth -= 1,
+            ']' => {
+                bracket_depth -= 1;
+                if bracket_depth < 0 {
+                    return false;
+                }
+            }
             _ => {}
         }
     }
@@ -486,6 +555,24 @@ mod tests {
     fn to_wei_eth_alias() {
         let result = execute_utility("toWei", &["1".into(), "eth".into()]);
         assert_eq!(result, "1000000000000000000");
+    }
+
+    #[test]
+    fn to_wei_fractional_ether() {
+        let result = execute_utility("toWei", &["1.1".into(), "ether".into()]);
+        assert_eq!(result, "1100000000000000000");
+    }
+
+    #[test]
+    fn to_wei_fractional_gwei() {
+        let result = execute_utility("toWei", &["0.5".into(), "gwei".into()]);
+        assert_eq!(result, "500000000");
+    }
+
+    #[test]
+    fn from_wei_fractional_ether() {
+        let result = execute_utility("fromWei", &["1100000000000000000".into(), "ether".into()]);
+        assert_eq!(result, "1.1");
     }
 
     #[test]
