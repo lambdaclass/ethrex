@@ -11,12 +11,12 @@ For details on each tool see [Prover Benchmarking Guide](../l2/prover-benchmarki
 **Before starting any benchmark session, the agent MUST prompt the user for:**
 
 1. **Server hostname** — SSH alias or full hostname where the benchmark will run
-2. **Prover backend** — `sp1`, `risc0`, or `exec` (default: `sp1`)
+2. **Prover backend** — `sp1`, `risc0`, `exec`, etc. (default: `sp1`)
 3. **GPU enabled?** — Whether to build with `GPU=true` (default: yes for sp1)
 4. **Transaction count** — Number of transactions per account to generate (default: 50)
 5. **Batches to prove** — How many batches to wait for before collecting results
 6. **Endless mode?** — Whether to run the load test continuously (default: no)
-7. **Branch/commit** — Git ref to benchmark (default: current branch on server)
+7. **Branch/commit** — Git ref to benchmark (always ask, no default)
 8. **Server already running?** — Skip setup steps if the L2 is already running
 9. **Transaction type** — `eth-transfers`, `erc20`, `fibonacci`, or `io-heavy` (default: `eth-transfers`)
 
@@ -73,13 +73,29 @@ ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && make down'"
 ssh <server> "bash -l -c 'cd ~/ethrex && git fetch origin && git checkout <branch> && git pull origin <branch>'"
 ```
 
-### 1b. Pre-compile Load Test Binary
+### 1b. Pre-compile All Binaries
 
-Build the load test binary **before** starting the L2. This avoids the sequencer producing empty blocks while the load test compiles.
+Build **all** binaries before starting anything. This is the only compilation step in the entire workflow — every subsequent step uses the pre-built binaries directly, making them near-instant.
+
+Build the `ethrex` binary with the features needed for the chosen backend. The `l2,l2-sql` features are always required. Add the backend feature (`sp1`, `risc0`) and optionally `gpu`:
+
+| Backend | Features |
+|---------|----------|
+| SP1 with GPU | `l2,l2-sql,sp1,gpu` |
+| SP1 without GPU | `l2,l2-sql,sp1` |
+| RISC0 with GPU | `l2,l2-sql,risc0,gpu` |
+| RISC0 without GPU | `l2,l2-sql,risc0` |
+| Exec only | `l2,l2-sql` |
 
 ```bash
+# Build ethrex (adjust --features for your backend)
+ssh <server> "bash -l -c 'cd ~/ethrex && COMPILE_CONTRACTS=true cargo build --release --features <features> --bin ethrex'"
+
+# Build load test
 ssh <server> "bash -l -c 'cd ~/ethrex && cargo build --release --manifest-path ./tooling/load_test/Cargo.toml'"
 ```
+
+`COMPILE_CONTRACTS=true` compiles the Solidity contracts and embeds them in the binary. This only needs to happen once — the same binary is used for deploying, running the L2, and proving.
 
 ### 2. Start the Localnet
 
@@ -95,25 +111,63 @@ This only needs to run once. If the L1 container is already running, skip this s
 
 #### 2b. Deploy L1 Contracts
 
-```bash
-# Default deployment (exec prover only):
-ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && env ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true make deploy-l1'"
+Run the pre-built binary directly instead of `make deploy-l1` (which would trigger `cargo run` and recompile):
 
-# For SP1 benchmarks (deploys the SP1 verifier contract):
-ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && env ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true make deploy-l1-sp1'"
+```bash
+ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && env ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true \
+  ../../target/release/ethrex l2 deploy \
+  --eth-rpc-url http://localhost:8545 \
+  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  <backend-verifier-flag> \
+  --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --deposit-rich \
+  --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+  --genesis-l1-path ../../fixtures/genesis/l1.json \
+  --genesis-l2-path ../../fixtures/genesis/l2.json'"
 ```
 
-The `ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT` env var randomizes the CREATE2 salt so that contracts are deployed to fresh addresses on every run. This avoids collisions with previous deployments on the same L1.
+Replace `<backend-verifier-flag>` based on the prover backend. This tells the deployer to deploy the on-chain verifier contract and require that proof type:
 
-Use `deploy-l1-sp1` when benchmarking with the SP1 backend so that the SP1 on-chain verifier is deployed and the proof coordinator requires SP1 proofs.
+| Backend | Flag | Effect |
+|---------|------|--------|
+| SP1 | `--sp1 true` | Deploys SP1 verifier, requires SP1 proofs |
+| RISC0 | `--risc0 true` | Deploys RISC0 verifier, requires RISC0 proofs |
+| Exec | *(omit flag)* | No on-chain verifier, exec proofs only |
+
+`ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT` randomizes the CREATE2 salt so that contracts are deployed to fresh addresses on every run, avoiding collisions with previous deployments on the same L1.
 
 #### 2c. Start the L2
 
+Run the pre-built binary directly instead of `make init-l2` (which would trigger `cargo run` and recompile). The contract addresses are read from `cmd/.env` (written by the deployer in step 2b):
+
 ```bash
-ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && nohup env ETHREX_NO_MONITOR=true make init-l2 > ~/l2.log 2>&1 &'"
+ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && \
+  export \$(cat ../../cmd/.env | xargs) && \
+  nohup env ETHREX_NO_MONITOR=true ../../target/release/ethrex l2 \
+  --watcher.block-delay 0 \
+  --network ../../fixtures/genesis/l2.json \
+  --http.port 1729 \
+  --http.addr 0.0.0.0 \
+  --metrics \
+  --metrics.port 3702 \
+  --datadir dev_ethrex_l2 \
+  --l1.bridge-address \$ETHREX_WATCHER_BRIDGE_ADDRESS \
+  --l1.on-chain-proposer-address \$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS \
+  --eth.rpc-url http://localhost:8545 \
+  --osaka-activation-time 1761677592 \
+  --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+  --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+  --block-producer.operator-fee-per-gas 1000000000 \
+  --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 127.0.0.1 \
+  > ~/l2.log 2>&1 &'"
 ```
 
-`ETHREX_NO_MONITOR=true` disables the TUI monitor so that logs are written to stdout (and captured in the log file).
+`ETHREX_NO_MONITOR=true` disables the TUI monitor so that logs are written to stdout (and captured in the log file). The `export $(cat ../../cmd/.env | xargs)` loads the contract addresses that the deployer wrote in step 2b.
 
 Wait for the L2 to start:
 
@@ -149,12 +203,29 @@ Available load test targets:
 
 ### 4. Start the Prover
 
-```bash
-# SP1 without GPU:
-ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && nohup env PROVER_CLIENT_TIMED=true make init-prover-sp1 > ~/prover.log 2>&1 &'"
+Run the pre-built binary directly instead of `make init-prover-sp1` (which would trigger `cargo run` and recompile):
 
-# SP1 with GPU:
-ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && nohup env PROVER_CLIENT_TIMED=true GPU=true make init-prover-sp1 > ~/prover.log 2>&1 &'"
+```bash
+# SP1:
+ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && nohup env PROVER_CLIENT_TIMED=true \
+  ../../target/release/ethrex l2 prover \
+  --proof-coordinators tcp://127.0.0.1:3900 \
+  --backend sp1 \
+  > ~/prover.log 2>&1 &'"
+
+# RISC0:
+ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && nohup env PROVER_CLIENT_TIMED=true \
+  ../../target/release/ethrex l2 prover \
+  --proof-coordinators tcp://127.0.0.1:3900 \
+  --backend risc0 \
+  > ~/prover.log 2>&1 &'"
+
+# Exec:
+ssh <server> "bash -l -c 'cd ~/ethrex/crates/l2 && nohup env PROVER_CLIENT_TIMED=true \
+  ../../target/release/ethrex l2 prover \
+  --proof-coordinators tcp://127.0.0.1:3900 \
+  --backend exec \
+  > ~/prover.log 2>&1 &'"
 ```
 
 The `PROVER_CLIENT_TIMED` env var enables structured proving time logs that the benchmark script parses.
