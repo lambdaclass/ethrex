@@ -3,7 +3,7 @@
 //! This module contains the logic for snap synchronization mode where state is
 //! fetched via snap p2p requests while blocks and receipts are fetched in parallel.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 #[cfg(feature = "rocksdb")]
 use std::path::PathBuf;
@@ -69,7 +69,7 @@ impl DownloadStatus {
 
 /// Persisted State during the Block Sync phase for SnapSync
 pub struct SnapBlockSyncState {
-    pub block_hashes: Vec<H256>,
+    pub block_hashes: BTreeMap<u64, H256>,
     store: Store,
     /// Channel to receive headers from background download task
     header_receiver: Option<tokio::sync::mpsc::Receiver<Vec<BlockHeader>>>,
@@ -80,7 +80,7 @@ pub struct SnapBlockSyncState {
 impl SnapBlockSyncState {
     pub fn new(store: Store) -> Self {
         Self {
-            block_hashes: Vec::new(),
+            block_hashes: BTreeMap::new(),
             store,
             header_receiver: None,
             download_complete: None,
@@ -159,17 +159,18 @@ impl SnapBlockSyncState {
         block_headers: impl Iterator<Item = BlockHeader>,
     ) -> Result<(), SyncError> {
         let mut block_headers_vec = Vec::with_capacity(block_headers.size_hint().1.unwrap_or(0));
-        let mut block_hashes = Vec::with_capacity(block_headers.size_hint().1.unwrap_or(0));
+        let mut last_hash = None;
         for header in block_headers {
-            block_hashes.push(header.hash());
+            let hash = header.hash();
+            self.block_hashes.insert(header.number, hash);
+            last_hash = Some(hash);
             block_headers_vec.push(header);
         }
         self.store
             .set_header_download_checkpoint(
-                *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?,
+                last_hash.ok_or(SyncError::InvalidRangeReceived)?,
             )
             .await?;
-        self.block_hashes.extend_from_slice(&block_hashes);
         self.store.add_block_headers(block_headers_vec).await?;
         Ok(())
     }
@@ -456,7 +457,8 @@ pub async fn snap_sync(
 
     let pivot_hash = block_sync_state
         .block_hashes
-        .last()
+        .values()
+        .next_back()
         .ok_or(SyncError::NoBlockHeaders)?;
     let mut pivot_header = store
         .get_block_header_by_hash(*pivot_hash)?
@@ -801,13 +803,11 @@ pub async fn snap_sync(
     // Final processing of any remaining headers before forkchoice update
     process_pending_headers(block_sync_state).await?;
 
-    let numbers_and_hashes = block_sync_state
+    let numbers_and_hashes: Vec<(u64, H256)> = block_sync_state
         .block_hashes
         .iter()
-        .rev()
-        .enumerate()
-        .map(|(i, hash)| (pivot_header.number - i as u64, *hash))
-        .collect::<Vec<_>>();
+        .map(|(number, hash)| (*number, *hash))
+        .collect();
 
     store
         .forkchoice_update(
