@@ -6,7 +6,7 @@ use crate::modules::{
 };
 
 use clap::Parser;
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 /// Command line flags for runner execution.
 #[derive(Parser, Debug)]
@@ -74,8 +74,7 @@ pub fn parse_dir(
     let dir_entries: Vec<_> = std::fs::read_dir(path.clone()).unwrap().flatten().collect();
 
     // Process directory entries in parallel
-    let mut directory_tests_results = Vec::new();
-    dir_entries
+    let directory_tests_results: Vec<_> = dir_entries
         .into_par_iter()
         .map(|entry| -> Result<Option<Vec<Test>>, RunnerError> {
             // Check entry type
@@ -105,7 +104,7 @@ pub fn parse_dir(
             }
             Ok(None)
         })
-        .collect_into_vec(&mut directory_tests_results);
+        .collect();
 
     // Collect all results and flatten
     let tests: Vec<Test> = directory_tests_results
