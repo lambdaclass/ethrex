@@ -264,16 +264,16 @@ impl ProofCoordinator {
                 "A proof was received for a batch and type that is already stored"
             );
         } else {
-            metrics!(if let Ok(assignments) = self.assignments.lock() {
-                if let Some(&assigned_at) = assignments.get(&(batch_number, prover_type)) {
-                    let proving_time: i64 =
-                        assigned_at.elapsed().as_secs().try_into().map_err(|_| {
-                            ProofCoordinatorError::InternalError(
-                                "failed to convert proving time to i64".to_string(),
-                            )
-                        })?;
-                    METRICS.set_batch_proving_time(batch_number, proving_time)?;
-                }
+            metrics!(if let Ok(assignments) = self.assignments.lock()
+                && let Some(&assigned_at) = assignments.get(&(batch_number, prover_type))
+            {
+                let proving_time: i64 =
+                    assigned_at.elapsed().as_secs().try_into().map_err(|_| {
+                        ProofCoordinatorError::InternalError(
+                            "failed to convert proving time to i64".to_string(),
+                        )
+                    })?;
+                METRICS.set_batch_proving_time(batch_number, proving_time)?;
             });
             // If not, store it
             self.rollup_store
