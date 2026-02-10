@@ -226,10 +226,17 @@ impl ProofCoordinator {
         let Some((batch_to_prove, input)) =
             self.next_batch_to_assign(&commit_hash, prover_type).await?
         else {
-            debug!("No batch available for this version, sending empty BatchResponse");
-            let response = ProofData::empty_batch_response();
-            send_response(stream, &response).await?;
-            info!("Empty BatchResponse sent (no batch for version)");
+            // Distinguish "wrong version" from "no work available" so the
+            // prover client knows whether its binary is outdated.
+            if commit_hash != self.git_commit_hash {
+                let response = ProofData::no_batch_for_version(commit_hash);
+                send_response(stream, &response).await?;
+                info!("NoBatchForVersion sent");
+            } else {
+                let response = ProofData::empty_batch_response();
+                send_response(stream, &response).await?;
+                info!("Empty BatchResponse sent (no work available)");
+            }
             return Ok(());
         };
 
