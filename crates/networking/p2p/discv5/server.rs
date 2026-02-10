@@ -473,7 +473,7 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         // Validate and record PONG (clears ping_req_id if matches)
         self.peer_table
-            .record_pong_received(&sender_id, pong_message.req_id.clone())
+            .record_pong_received(&sender_id, pong_message.req_id)
             .await?;
 
         // If sender's enr_seq differs from our cached version, request updated ENR.
