@@ -78,8 +78,8 @@ impl MempoolInner {
 #[derive(Debug, Default)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
-    /// Signaled on every transaction insertion so the payload builder can
-    /// await new work instead of busy-looping.
+    /// Signaled on transaction and blobs bundle insertions so payload
+    /// builders can await new work instead of busy-looping.
     tx_added: tokio::sync::Notify,
 }
 
@@ -133,7 +133,7 @@ impl Mempool {
         inner.broadcast_pool.insert(hash);
         // Drop the write lock before notifying to avoid holding it while waking waiters
         drop(inner);
-        self.tx_added.notify_one();
+        self.tx_added.notify_waiters();
 
         Ok(())
     }
@@ -168,6 +168,9 @@ impl Mempool {
         self.write()?
             .blobs_bundle_pool
             .insert(tx_hash, blobs_bundle);
+        // Notify after the bundle is inserted so builders that woke up from
+        // add_transaction see the complete blob data.
+        self.tx_added.notify_waiters();
         Ok(())
     }
 
