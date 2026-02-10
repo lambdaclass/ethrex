@@ -1,6 +1,6 @@
 use super::utils::random_duration;
 use crate::sequencer::errors::L1WatcherError;
-use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
@@ -407,7 +407,7 @@ impl L1Watcher {
             last_block_fetched: self.last_block_fetched_l1.to_string(),
             check_interval: self.check_interval,
             l1_block_delay: self.l1_block_delay,
-            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
             bridge_address: self.bridge_address,
         }))
     }
@@ -565,7 +565,7 @@ impl GenServer for L1Watcher {
     ) -> CastResponse {
         match message {
             Self::CastMsg::WatchLogsL1 => {
-                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
                     self.watch_l1().await;
                 }
                 let check_interval = random_duration(self.check_interval);
@@ -574,7 +574,7 @@ impl GenServer for L1Watcher {
             }
             Self::CastMsg::WatchLogsL2 => {
                 info!("Watching L2 logs");
-                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
                     self.watch_l2s().await;
                 }
                 let check_interval = random_duration(self.check_interval);

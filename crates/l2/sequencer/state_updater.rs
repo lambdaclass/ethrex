@@ -14,12 +14,10 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     SequencerConfig,
-    sequencer::{
-        sequencer_state::{SequencerState, SequencerStatus},
-        utils::node_is_up_to_date,
-    },
+    sequencer::utils::node_is_up_to_date,
     utils::parse::hash_to_address,
 };
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateUpdaterError {
@@ -129,7 +127,7 @@ impl StateUpdater {
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
-        let current_state = self.sequencer_state.status().await;
+        let current_state = self.sequencer_state.status();
         if !self.based {
             let current_block: U256 = self.store.get_latest_block_number().await?.into();
             let mut new_state = current_state;
@@ -162,7 +160,7 @@ impl StateUpdater {
             }
 
             if current_state != new_state {
-                self.sequencer_state.new_status(new_state).await;
+                self.sequencer_state.new_status(new_state);
                 info!("The sequencer is now {new_state}");
             }
 
@@ -228,7 +226,7 @@ impl StateUpdater {
         }
 
         // Update the state
-        self.sequencer_state.new_status(new_status).await;
+        self.sequencer_state.new_status(new_status);
 
         Ok(())
     }
