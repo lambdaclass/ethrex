@@ -418,7 +418,7 @@ impl DiscoveryServer {
             }
         }
         Message::FindNode(FindNodeMessage {
-            req_id: Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec()),
+            req_id: generate_req_id(),
             distances,
         })
     }
@@ -476,8 +476,12 @@ impl DiscoveryServer {
             .record_pong_received(&sender_id, pong_message.req_id.clone())
             .await?;
 
-        // If sender's enr_seq > our cached version, request updated ENR
+        // If sender's enr_seq differs from our cached version, request updated ENR.
+        // The spec says to check for `>`, but we use `!=` to be more defensive
+        // (e.g. handle rollbacks or resets).
         if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
+            // If we have no cached record, default to 0 so any PONG with enr_seq > 0
+            // triggers a FINDNODE to fetch the ENR we're missing.
             let cached_seq = contact.record.as_ref().map_or(0, |r| r.seq);
             if pong_message.enr_seq != cached_seq {
                 trace!(
@@ -487,7 +491,7 @@ impl DiscoveryServer {
                     "ENR seq mismatch, requesting updated ENR (FINDNODE distance 0)"
                 );
                 let find_node = Message::FindNode(FindNodeMessage {
-                    req_id: pong_message.req_id,
+                    req_id: generate_req_id(),
                     distances: vec![0],
                 });
                 self.send_ordinary(find_node, &contact.node).await?;
@@ -550,8 +554,7 @@ impl DiscoveryServer {
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
-        let mut rng = OsRng;
-        let req_id = Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec());
+        let req_id = generate_req_id();
 
         let ping = Message::Ping(PingMessage {
             req_id: req_id.clone(),
@@ -893,6 +896,11 @@ pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f6
         // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
         (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
     )
+}
+
+fn generate_req_id() -> Bytes {
+    let mut rng = OsRng;
+    Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec())
 }
 
 #[cfg(test)]
