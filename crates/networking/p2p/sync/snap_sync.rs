@@ -5,8 +5,6 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
-#[cfg(feature = "rocksdb")]
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime};
@@ -37,9 +35,14 @@ use crate::snap::{
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
 use crate::utils::{
-    current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
-    get_code_hashes_snapshots_dir,
+    current_unix_time, get_code_hashes_snapshots_dir,
 };
+#[cfg(not(feature = "rocksdb"))]
+use crate::utils::{
+    get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
+};
+#[cfg(feature = "rocksdb")]
+use crate::utils::{get_rocksdb_temp_accounts_dir, get_rocksdb_temp_storage_dir};
 
 use super::{AccountStorageRoots, SyncError};
 
@@ -276,8 +279,32 @@ pub async fn snap_sync(
     );
 
     let state_root = pivot_header.state_root;
+
+    // On non-rocksdb builds, use snapshot directories for intermediate files
+    #[cfg(not(feature = "rocksdb"))]
     let account_state_snapshots_dir = get_account_state_snapshots_dir(datadir);
+    #[cfg(not(feature = "rocksdb"))]
     let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
+
+    // On rocksdb builds, create temp RocksDB instances before download so data goes directly into them
+    #[cfg(feature = "rocksdb")]
+    let temp_accounts_db = {
+        let mut db_options = rocksdb::Options::default();
+        db_options.create_if_missing(true);
+        Arc::new(
+            rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
+                .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?,
+        )
+    };
+    #[cfg(feature = "rocksdb")]
+    let temp_storages_db = {
+        let mut db_options = rocksdb::Options::default();
+        db_options.create_if_missing(true);
+        Arc::new(
+            rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
+                .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?,
+        )
+    };
 
     let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(datadir);
     std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
@@ -288,16 +315,27 @@ pub async fn snap_sync(
 
     let mut storage_accounts = AccountStorageRoots::default();
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
-        // We start by downloading all of the leafs of the trie of accounts
-        // The function request_account_range writes the leafs into files in
-        // account_state_snapshots_dir
+        // We start by downloading all of the leafs of the trie of accounts.
+        // On rocksdb builds, writes go directly to temp_accounts_db.
+        // On non-rocksdb builds, writes go to snapshot files.
 
         info!("Starting to download account ranges from peers");
+        #[cfg(feature = "rocksdb")]
         request_account_range(
             peers,
             H256::zero(),
             H256::repeat_byte(0xff),
-            account_state_snapshots_dir.as_ref(),
+            temp_accounts_db.clone(),
+            &mut pivot_header,
+            block_sync_state,
+        )
+        .await?;
+        #[cfg(not(feature = "rocksdb"))]
+        request_account_range(
+            peers,
+            H256::zero(),
+            H256::repeat_byte(0xff),
+            account_state_snapshots_dir.clone(),
             &mut pivot_header,
             block_sync_state,
         )
@@ -308,11 +346,22 @@ pub async fn snap_sync(
         METRICS
             .current_step
             .set(CurrentStepValue::InsertingAccountRanges);
-        // We read the account leafs from the files in account_state_snapshots_dir, write it into
-        // the trie to compute the nodes and stores the accounts with storages for later use
+        // We read the account leafs, write them into the trie to compute the nodes
+        // and store the accounts with storages for later use
 
         // Variable `accounts_with_storage` unused if not in rocksdb
         #[allow(unused_variables)]
+        #[cfg(feature = "rocksdb")]
+        let (computed_state_root, accounts_with_storage) = insert_accounts(
+            store.clone(),
+            &mut storage_accounts,
+            temp_accounts_db,
+            datadir,
+            &mut code_hash_collector,
+        )
+        .await?;
+        #[allow(unused_variables)]
+        #[cfg(not(feature = "rocksdb"))]
         let (computed_state_root, accounts_with_storage) = insert_accounts(
             store.clone(),
             &mut storage_accounts,
@@ -368,15 +417,30 @@ pub async fn snap_sync(
             );
             storage_range_request_attempts += 1;
             if storage_range_request_attempts < 5 {
-                chunk_index = request_storage_ranges(
-                    peers,
-                    &mut storage_accounts,
-                    account_storages_snapshots_dir.as_ref(),
-                    chunk_index,
-                    &mut pivot_header,
-                    store.clone(),
-                )
-                .await?;
+                #[cfg(feature = "rocksdb")]
+                {
+                    chunk_index = request_storage_ranges(
+                        peers,
+                        &mut storage_accounts,
+                        temp_storages_db.clone(),
+                        chunk_index,
+                        &mut pivot_header,
+                        store.clone(),
+                    )
+                    .await?;
+                }
+                #[cfg(not(feature = "rocksdb"))]
+                {
+                    chunk_index = request_storage_ranges(
+                        peers,
+                        &mut storage_accounts,
+                        account_storages_snapshots_dir.clone(),
+                        chunk_index,
+                        &mut pivot_header,
+                        store.clone(),
+                    )
+                    .await?;
+                }
             } else {
                 for (acc_hash, (maybe_root, old_intervals)) in
                     storage_accounts.accounts_with_storage_root.iter()
@@ -422,15 +486,26 @@ pub async fn snap_sync(
         METRICS
             .current_step
             .set(CurrentStepValue::InsertingStorageRanges);
-        let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
 
+        #[cfg(feature = "rocksdb")]
         insert_storages(
             store.clone(),
             accounts_with_storage,
-            &account_storages_snapshots_dir,
+            temp_storages_db,
             datadir,
         )
         .await?;
+        #[cfg(not(feature = "rocksdb"))]
+        {
+            let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
+            insert_storages(
+                store.clone(),
+                accounts_with_storage,
+                &account_storages_snapshots_dir,
+                datadir,
+            )
+            .await?;
+        }
 
         *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
@@ -935,42 +1010,27 @@ async fn insert_storages(
 async fn insert_accounts(
     store: Store,
     storage_accounts: &mut AccountStorageRoots,
-    account_state_snapshots_dir: &Path,
+    temp_accounts_db: Arc<rocksdb::DB>,
     datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
-    let mut db_options = rocksdb::Options::default();
-    db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
-    db.ingest_external_file(file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            code_hash_collector.add(account_state.code_hash);
-            code_hash_collector.flush_if_needed().await?;
-        }
-    }
+
+    // The temp DB was written to directly during download, so it's already ready to iterate.
+    // We unwrap the Arc to get the owned DB (all download tasks have completed by now).
+    let db = Arc::try_unwrap(temp_accounts_db)
+        .map_err(|_| SyncError::RocksDBError("Failed to unwrap temp accounts DB Arc".to_string()))?;
+
+    // Single pass: build the trie and collect code hashes + storage accounts in the .inspect() closure.
+    let mut collected_code_hashes: Vec<H256> = Vec::new();
 
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     let compute_state_root = trie_from_sorted_accounts_wrap(
         trie.db(),
         &mut iter
-            .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
+            .map(|k| k.expect("We shouldn't have a rocksdb error here"))
             .inspect(|(k, v)| {
                 METRICS
                     .account_tries_inserted
@@ -982,15 +1042,22 @@ async fn insert_accounts(
                         (Some(account_state.storage_root), Vec::new()),
                     );
                 }
+                if account_state.code_hash != *EMPTY_KECCACK_HASH {
+                    collected_code_hashes.push(account_state.code_hash);
+                }
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
     .map_err(SyncError::TrieGenerationError)?;
 
+    // Flush collected code hashes after trie building (can't call async in .inspect())
+    for hash in collected_code_hashes {
+        code_hash_collector.add(hash);
+    }
+    code_hash_collector.flush_if_needed().await?;
+
     drop(db); // close db before removing directory
 
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
 
@@ -1003,10 +1070,9 @@ async fn insert_accounts(
 async fn insert_storages(
     store: Store,
     accounts_with_storage: BTreeSet<H256>,
-    account_storages_snapshots_dir: &Path,
+    temp_storages_db: Arc<rocksdb::DB>,
     datadir: &Path,
 ) -> Result<(), SyncError> {
-    use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
     use ethrex_trie::{
         Nibbles, Node, ThreadPool,
@@ -1048,19 +1114,10 @@ async fn insert_storages(
         }
     }
 
-    let mut db_options = rocksdb::Options::default();
-    db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
-    db.ingest_external_file(file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    // The temp DB was written to directly during download, so it's already ready to iterate.
+    // Unwrap the Arc to get the owned DB (all download tasks have completed by now).
+    let db = Arc::try_unwrap(temp_storages_db)
+        .map_err(|_| SyncError::RocksDBError("Failed to unwrap temp storages DB Arc".to_string()))?;
     let snapshot = db.snapshot();
 
     let account_with_storage_and_tries = accounts_with_storage
@@ -1131,8 +1188,6 @@ async fn insert_storages(
     drop(snapshot);
     drop(db);
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
         .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
 
