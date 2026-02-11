@@ -179,6 +179,8 @@ pub struct Store {
     /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
 
+    block_hash_cache: Arc<Mutex<LruCache<BlockNumber, BlockHash>>>,
+
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
@@ -984,6 +986,15 @@ impl Store {
     ) -> Result<(), StoreError> {
         let latest = self.load_latest_block_number().await?.unwrap_or(0);
         let db = self.backend.clone();
+        let block_hash_cache = self.block_hash_cache.clone();
+
+        // Collect blocks to cache for updating after DB write
+        let blocks_to_cache: Vec<(BlockNumber, BlockHash)> = new_canonical_blocks
+            .iter()
+            .copied()
+            .chain(std::iter::once((head_number, head_hash)))
+            .collect();
+
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
@@ -1016,7 +1027,16 @@ impl Store {
                 txn.put(CHAIN_DATA, &finalized_key, &finalized.to_le_bytes())?;
             }
 
-            txn.commit()
+            txn.commit()?;
+
+            // Update block hash cache with new canonical blocks
+            if let Ok(mut cache) = block_hash_cache.lock() {
+                for (block_number, block_hash) in blocks_to_cache {
+                    cache.put(block_number, block_hash);
+                }
+            }
+
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1117,10 +1137,23 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let last = self.latest_block_header.get();
+        let last: Arc<BlockHeader> = self.latest_block_header.get();
         if last.number == block_number {
             return Ok(Some(last.hash()));
         }
+
+        // Check the LRU cache first
+        {
+            let mut cache = self
+                .block_hash_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            if let Some(hash) = cache.get(&block_number) {
+                return Ok(Some(*hash));
+            }
+        }
+
+        // Cache miss: read from database
         let txn = self.backend.begin_read()?;
         txn.get(
             CANONICAL_BLOCK_HASHES,
@@ -1459,6 +1492,7 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            block_hash_cache: Arc::new(Mutex::new(LruCache::new(std::num::NonZeroUsize::new(256).unwrap()))),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
         };
