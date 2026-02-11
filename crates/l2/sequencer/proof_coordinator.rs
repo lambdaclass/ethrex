@@ -183,29 +183,14 @@ impl ProofCoordinator {
             return Ok(());
         }
 
-        // Check if this specific prover type's proof already exists for the batch.
-        // Even if not all proofs exist, this prover may have already done its part.
+        // Check if this prover type's proof already exists for the batch.
         let prover_proof_exists = self
             .rollup_store
             .get_proof_by_batch_and_type(batch_to_prove, prover_type)
             .await?
             .is_some();
 
-        let mut all_proofs_exist = true;
-        for proof_type in &self.needed_proof_types {
-            if self
-                .rollup_store
-                .get_proof_by_batch_and_type(batch_to_prove, *proof_type)
-                .await?
-                .is_none()
-            {
-                all_proofs_exist = false;
-                break;
-            }
-        }
-
-        let response = if all_proofs_exist
-            || prover_proof_exists
+        let response = if prover_proof_exists
             || !self.rollup_store.contains_batch(&batch_to_prove).await?
         {
             if prover_proof_exists {
