@@ -1,4 +1,4 @@
-//! # LEVM - Lambda EVM
+//! # ethrex-levm - Lambda EVM
 //!
 //! A pure Rust implementation of the Ethereum Virtual Machine.
 //!
@@ -8,7 +8,7 @@
 //! - **Correctness**: Full compatibility with Ethereum consensus tests
 //! - **Performance**: Optimized opcode execution and memory management
 //! - **Readability**: Clean, well-documented Rust code
-//! - **Extensibility**: Modular design for easy feature additions
+//! - **Extensibility**: Modular design with hooks for L1/L2 customization
 //!
 //! ## Architecture
 //!
@@ -31,14 +31,32 @@
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! ## Key Components
+//! ## Core Types
 //!
 //! - [`vm::VM`]: Main EVM execution engine
 //! - [`call_frame::CallFrame`]: Execution context for each call
 //! - [`memory::Memory`]: EVM memory with expansion tracking
 //! - [`environment::Environment`]: Block and transaction context
-//! - [`precompiles`]: Native implementations of precompiled contracts
-//! - [`hooks`]: Execution hooks for pre/post-execution logic and L2-specific behavior
+//! - [`precompiles`]: Native implementations of precompiled contracts (17 total)
+//! - [`hooks`]: Execution hooks for L1/L2-specific behavior
+//! - [`db`]: Database trait and [`db::GeneralizedDatabase`] wrapper
+//!
+//! ## Modules
+//!
+//! | Module | Description |
+//! |--------|-------------|
+//! | [`vm`] | Main VM execution engine |
+//! | [`call_frame`] | CallFrame and Stack types |
+//! | [`memory`] | EVM memory with expansion tracking |
+//! | [`environment`] | Block and transaction context |
+//! | [`opcodes`] | Opcode enum (179 opcodes) |
+//! | [`opcode_handlers`] | Opcode execution logic by category |
+//! | [`precompiles`] | Native precompiled contracts |
+//! | [`hooks`] | L1/L2 execution hooks |
+//! | [`db`] | Database trait and GeneralizedDatabase |
+//! | [`errors`] | VMError, ExceptionalHalt, etc. |
+//! | [`gas_cost`] | Gas cost calculations |
+//! | [`tracing`] | Geth-compatible call tracer |
 //!
 //! ## Supported Forks
 //!
@@ -47,19 +65,31 @@
 //!
 //! Note: ethrex is a post-merge client and does not support pre-merge forks.
 //!
-//! ## Usage
+//! ## Feature Flags
+//!
+//! | Feature | Description |
+//! |---------|-------------|
+//! | `secp256k1` | Production ECDSA library (default) |
+//! | `c-kzg` | C KZG implementation |
+//! | `sp1` | Succinct SP1 zkVM support |
+//! | `risc0` | RISC Zero zkVM support |
+//! | `zisk` | Polygon ZisK zkVM support |
+//! | `openvm` | OpenVM zkVM support |
+//!
+//! ## Quick Start
 //!
 //! ```ignore
-//! use levm::{VM, Environment};
+//! use ethrex_levm::{vm::VM, Environment, VMType};
+//! use ethrex_levm::db::GeneralizedDatabase;
 //!
 //! // Create VM with database and environment
-//! let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+//! let mut vm = VM::new(env, &mut db, &tx, tracer, debug_mode, vm_type)?;
 //!
 //! // Execute the transaction
 //! let report = vm.execute()?;
 //!
 //! // Check execution result
-//! if report.is_success() {
+//! if report.result.is_success() {
 //!     println!("Gas used: {}", report.gas_used);
 //! }
 //! ```
