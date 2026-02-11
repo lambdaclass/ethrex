@@ -31,8 +31,18 @@ pub trait TrieDB: Send + Sync {
         Ok(())
     }
 
-    fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, _key: &Nibbles) -> bool {
         false
+    }
+
+    /// Combined FKV check + read. Avoids redundant prefix application
+    /// in TrieWrapper where both flatkeyvalue_computed and get need the
+    /// same prefixed key.
+    fn get_fkv(&self, key: &Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        if !self.flatkeyvalue_computed(key) {
+            return Ok(None);
+        }
+        self.get(key.clone())
     }
 }
 

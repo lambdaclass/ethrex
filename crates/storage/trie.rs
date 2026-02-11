@@ -85,8 +85,8 @@ impl BackendTrieDB {
 }
 
 impl TrieDB for BackendTrieDB {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        let key = apply_prefix(self.address_prefix, key);
+    fn flatkeyvalue_computed(&self, key: &Nibbles) -> bool {
+        let key = apply_prefix(self.address_prefix, key.clone());
         self.last_computed_flatkeyvalue >= key
     }
 
@@ -160,8 +160,8 @@ impl BackendTrieDBLocked {
 }
 
 impl TrieDB for BackendTrieDBLocked {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        self.last_computed_flatkeyvalue >= key
+    fn flatkeyvalue_computed(&self, key: &Nibbles) -> bool {
+        self.last_computed_flatkeyvalue >= *key
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {

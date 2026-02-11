@@ -6,9 +6,11 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
+use smallvec::SmallVec;
 
-// TODO: move path-tracking logic somewhere else
-// PERF: try using a stack-allocated array
+// Max nibble length: 65 (account key) + 1 (separator) + 65 (storage key) + 1 (leaf flag) = 132
+pub type NibbleVec = SmallVec<[u8; 132]>;
+
 /// Struct representing a list of nibbles (half-bytes)
 #[derive(
     Debug,
@@ -21,10 +23,12 @@ use ethrex_rlp::{
     rkyv::Archive,
 )]
 pub struct Nibbles {
-    data: Vec<u8>,
+    #[rkyv(with = crate::rkyv_utils::SmallVecAsVec)]
+    data: NibbleVec,
     /// Parts of the path that have already been consumed (used for tracking
     /// current position when visiting nodes). See `current()`.
-    already_consumed: Vec<u8>,
+    #[rkyv(with = crate::rkyv_utils::SmallVecAsVec)]
+    already_consumed: NibbleVec,
 }
 
 // NOTE: custom impls to ignore the `already_consumed` field
@@ -57,10 +61,10 @@ impl std::hash::Hash for Nibbles {
 
 impl Nibbles {
     /// Create `Nibbles` from  hex-encoded nibbles
-    pub const fn from_hex(hex: Vec<u8>) -> Self {
+    pub fn from_hex(hex: Vec<u8>) -> Self {
         Self {
-            data: hex,
-            already_consumed: vec![],
+            data: SmallVec::from_vec(hex),
+            already_consumed: SmallVec::new(),
         }
     }
 
@@ -71,7 +75,7 @@ impl Nibbles {
 
     /// Splits incoming bytes into nibbles and appends the leaf flag (a 16 nibble at the end) if is_leaf is true
     pub fn from_raw(bytes: &[u8], is_leaf: bool) -> Self {
-        let mut data: Vec<u8> = bytes
+        let mut data: NibbleVec = bytes
             .iter()
             .flat_map(|byte| [(byte >> 4 & 0x0F), byte & 0x0F])
             .collect();
@@ -81,12 +85,12 @@ impl Nibbles {
 
         Self {
             data,
-            already_consumed: vec![],
+            already_consumed: SmallVec::new(),
         }
     }
 
     pub fn into_vec(self) -> Vec<u8> {
-        self.data
+        self.data.into_vec()
     }
 
     /// Returns the amount of nibbles
@@ -103,8 +107,9 @@ impl Nibbles {
     /// the prefix and return true, otherwise return false.
     pub fn skip_prefix(&mut self, prefix: &Nibbles) -> bool {
         if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_ref() {
-            self.data = self.data[prefix.len()..].to_vec();
-            self.already_consumed.extend(&prefix.data);
+            let remaining = SmallVec::from_slice(&self.data[prefix.len()..]);
+            self.already_consumed.extend_from_slice(&prefix.data);
+            self.data = remaining;
             true
         } else {
             false
@@ -146,13 +151,18 @@ impl Nibbles {
     /// Returns the nibbles after the given offset
     pub fn offset(&self, offset: usize) -> Nibbles {
         let mut ret = self.slice(offset, self.len());
-        ret.already_consumed = [&self.already_consumed, &self.data[0..offset]].concat();
+        let mut consumed = self.already_consumed.clone();
+        consumed.extend_from_slice(&self.data[0..offset]);
+        ret.already_consumed = consumed;
         ret
     }
 
     /// Returns the nibbles beween the start and end indexes
     pub fn slice(&self, start: usize, end: usize) -> Nibbles {
-        Nibbles::from_hex(self.data[start..end].to_vec())
+        Nibbles {
+            data: SmallVec::from_slice(&self.data[start..end]),
+            already_consumed: SmallVec::new(),
+        }
     }
 
     /// Extends the nibbles with another list of nibbles
@@ -209,7 +219,10 @@ impl Nibbles {
 
     /// Encodes the nibbles in compact form
     pub fn decode_compact(compact: &[u8]) -> Self {
-        Self::from_hex(compact_to_hex(compact))
+        Nibbles {
+            data: compact_to_hex(compact),
+            already_consumed: SmallVec::new(),
+        }
     }
 
     /// Returns true if the nibbles contain the leaf flag (16) at the end
@@ -240,16 +253,20 @@ impl Nibbles {
 
     /// Concatenates self and another Nibbles returning a new Nibbles
     pub fn concat(&self, other: &Nibbles) -> Nibbles {
+        let mut data = self.data.clone();
+        data.extend_from_slice(&other.data);
         Nibbles {
-            data: [&self.data[..], &other.data[..]].concat(),
+            data,
             already_consumed: self.already_consumed.clone(),
         }
     }
 
-    /// Returns a copy of self with the nibble added at the and
+    /// Returns a copy of self with the nibble added at the end
     pub fn append_new(&self, nibble: u8) -> Nibbles {
+        let mut data = self.data.clone();
+        data.push(nibble);
         Nibbles {
-            data: [self.data.clone(), vec![nibble]].concat(),
+            data,
             already_consumed: self.already_consumed.clone(),
         }
     }
@@ -258,7 +275,7 @@ impl Nibbles {
     pub fn current(&self) -> Nibbles {
         Nibbles {
             data: self.already_consumed.clone(),
-            already_consumed: vec![],
+            already_consumed: SmallVec::new(),
         }
     }
 
@@ -279,18 +296,21 @@ impl AsRef<[u8]> for Nibbles {
 
 impl RLPEncode for Nibbles {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf).encode_field(&self.data).finish();
+        // SmallVec is not Sized-compatible with encode_field, so convert to Vec
+        // for RLP encoding (not on the hot SLOAD path).
+        let data: Vec<u8> = self.data.to_vec();
+        Encoder::new(buf).encode_field(&data).finish();
     }
 }
 
 impl RLPDecode for Nibbles {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        let (data, decoder) = decoder.decode_field("data")?;
+        let (data, decoder): (Vec<u8>, _) = decoder.decode_field("data")?;
         Ok((
             Self {
-                data,
-                already_consumed: vec![],
+                data: SmallVec::from_vec(data),
+                already_consumed: SmallVec::new(),
             },
             decoder.finish()?,
         ))
@@ -298,24 +318,25 @@ impl RLPDecode for Nibbles {
 }
 
 // Code taken from https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/trie/encoding.go#L82
-fn compact_to_hex(compact: &[u8]) -> Vec<u8> {
+fn compact_to_hex(compact: &[u8]) -> NibbleVec {
     if compact.is_empty() {
-        return vec![];
+        return SmallVec::new();
     }
     let mut base = keybytes_to_hex(compact);
     // delete terminator flag
     if base[0] < 2 {
-        base = base[..base.len() - 1].to_vec();
+        base.truncate(base.len() - 1);
     }
     // apply odd flag
     let chop = 2 - (base[0] & 1) as usize;
-    base[chop..].to_vec()
+    base.drain(0..chop);
+    base
 }
 
 // Code taken from https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/trie/encoding.go#L96
-fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
+fn keybytes_to_hex(keybytes: &[u8]) -> NibbleVec {
     let l = keybytes.len() * 2 + 1;
-    let mut nibbles = vec![0; l];
+    let mut nibbles = smallvec::smallvec![0u8; l];
     for (i, b) in keybytes.iter().enumerate() {
         nibbles[i * 2] = b / 16;
         nibbles[i * 2 + 1] = b % 16;

@@ -209,11 +209,11 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
 }
 
 impl TrieDB for TrieWrapper {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, key: &Nibbles) -> bool {
         // NOTE: we apply the prefix here, since the underlying TrieDB should
         // always be for the state trie.
-        let key = apply_prefix(self.prefix, key);
-        self.db.flatkeyvalue_computed(key)
+        let key = apply_prefix(self.prefix, key.clone());
+        self.db.flatkeyvalue_computed(&key)
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
@@ -222,6 +222,18 @@ impl TrieDB for TrieWrapper {
             return Ok(Some(value));
         }
         self.db.get(key)
+    }
+
+    fn get_fkv(&self, key: &Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        // Apply prefix once and reuse for both FKV check and get.
+        let prefixed = apply_prefix(self.prefix, key.clone());
+        if !self.db.flatkeyvalue_computed(&prefixed) {
+            return Ok(None);
+        }
+        if let Some(value) = self.inner.get(self.state_root, prefixed.as_ref()) {
+            return Ok(Some(value));
+        }
+        self.db.get(prefixed)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
