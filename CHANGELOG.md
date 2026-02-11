@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-11
+
+- Deduplicate trie nodes across layers before writing to RocksDB [#6177](https://github.com/lambdaclass/ethrex/pull/6177)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)
