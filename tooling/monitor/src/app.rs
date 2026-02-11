@@ -3,6 +3,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use ethrex_l2_common::sequencer_state::SequencerState;
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -30,18 +31,15 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
-use crate::monitor::widget::rich_accounts::RichAccountsTable;
-use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
-use crate::sequencer::configs::MonitorConfig;
-use crate::{
-    SequencerConfig,
-    monitor::widget::{
-        BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable,
-        L2ToL1MessagesTable, MempoolTable, NodeStatusTable, tabs::TabsState,
-    },
-    sequencer::errors::MonitorError,
+use crate::MonitorConfig;
+use crate::error::MonitorError;
+use crate::utils::SelectableScroller;
+use crate::widget::rich_accounts::RichAccountsTable;
+use crate::widget::{
+    BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable, L2ToL1MessagesTable,
+    MempoolTable, NodeStatusTable, tabs::TabsState,
 };
-use crate::{monitor::utils::SelectableScroller, sequencer::sequencer_state::SequencerState};
+use crate::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
@@ -52,7 +50,8 @@ pub struct EthrexMonitorWidget {
     pub title: String,
     pub should_quit: bool,
     pub tabs: TabsState,
-    pub cfg: MonitorConfig,
+    pub tick_rate: u64,
+    pub batch_widget_height: Option<u16>,
 
     pub logger: TuiWidgetState,
     pub node_status: NodeStatusTable,
@@ -96,7 +95,7 @@ impl EthrexMonitor {
         sequencer_state: SequencerState,
         store: Store,
         rollup_store: StoreRollup,
-        cfg: &SequencerConfig,
+        cfg: &MonitorConfig,
         cancellation_token: CancellationToken,
     ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
@@ -118,7 +117,7 @@ impl GenServer for EthrexMonitor {
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         // Tick handling
         send_interval(
-            Duration::from_millis(self.widget.cfg.tick_rate),
+            Duration::from_millis(self.widget.tick_rate),
             handle.clone(),
             Self::CastMsg::Tick,
         );
@@ -184,11 +183,10 @@ impl EthrexMonitorWidget {
         sequencer_state: SequencerState,
         store: Store,
         rollup_store: StoreRollup,
-        cfg: &SequencerConfig,
+        cfg: &MonitorConfig,
     ) -> Result<Self, MonitorError> {
         let eth_client = EthClient::new(
-            cfg.eth
-                .rpc_url
+            cfg.rpc_urls
                 .first()
                 .ok_or(MonitorError::RPCListEmpty)?
                 .clone(),
@@ -202,22 +200,23 @@ impl EthrexMonitorWidget {
         .map_err(MonitorError::EthClientError)?;
 
         let mut monitor_widget = EthrexMonitorWidget {
-            title: if cfg.based.enabled {
+            title: if cfg.is_based {
                 "Based Ethrex Monitor".to_string()
             } else {
                 "Ethrex Monitor".to_string()
             },
             should_quit: false,
             tabs: TabsState::default(),
-            cfg: cfg.monitor.clone(),
+            tick_rate: cfg.tick_rate,
+            batch_widget_height: cfg.batch_widget_height,
             global_chain_status: GlobalChainStatusTable::new(cfg),
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            node_status: NodeStatusTable::new(sequencer_state.clone(), cfg.based.enabled),
+            node_status: NodeStatusTable::new(sequencer_state.clone(), cfg.is_based),
             mempool: MempoolTable::new(),
-            batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),
+            batches_table: BatchesTable::new(cfg.on_chain_proposer_address),
             blocks_table: BlocksTable::new(),
-            l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.l1_watcher.bridge_address),
-            l2_to_l1_messages: L2ToL1MessagesTable::new(cfg.l1_watcher.bridge_address),
+            l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.bridge_address),
+            l2_to_l1_messages: L2ToL1MessagesTable::new(cfg.bridge_address),
             rich_accounts: RichAccountsTable::new(&rollup_client).await?,
             eth_client,
             rollup_client,
@@ -225,7 +224,7 @@ impl EthrexMonitorWidget {
             rollup_store,
             last_scroll: Instant::now(),
             overview_selected_widget: 0,
-            osaka_activation_time: cfg.eth.osaka_activation_time,
+            osaka_activation_time: cfg.osaka_activation_time,
         };
         monitor_widget.selected_table().selected(true);
         monitor_widget.on_tick().await?;
@@ -381,7 +380,7 @@ impl EthrexMonitorWidget {
             TabsState::Overview => {
                 let chunks = Layout::vertical([
                     Constraint::Length(10),
-                    if let Some(height) = self.cfg.batch_widget_height {
+                    if let Some(height) = self.batch_widget_height {
                         Constraint::Length(height)
                     } else {
                         Constraint::Fill(1)
