@@ -4,14 +4,10 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
 use rkyv::rancor::Error;
-use sp1_prover::components::CpuProverComponents;
-#[cfg(not(feature = "gpu"))]
-use sp1_sdk::CpuProver;
-#[cfg(feature = "gpu")]
-use sp1_sdk::cuda::builder::CudaProverBuilder;
 use sp1_sdk::{
-    HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
+    Elf, HashableKey, ProvingKey, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin,
     SP1VerifyingKey,
+    blocking::{self, ProveRequest, Prover},
 };
 use std::{
     fmt::Debug,
@@ -22,10 +18,12 @@ use url::Url;
 
 use crate::backend::{BackendError, ProverBackend};
 
+type EnvProvingKey = <blocking::EnvProver as blocking::Prover>::ProvingKey;
+
 /// Setup data for the SP1 prover (client, proving key, verifying key).
 pub struct ProverSetup {
-    client: Box<dyn Prover<CpuProverComponents>>,
-    pk: SP1ProvingKey,
+    client: blocking::EnvProver,
+    pk: EnvProvingKey,
     vk: SP1VerifyingKey,
 }
 
@@ -33,31 +31,15 @@ pub struct ProverSetup {
 pub static PROVER_SETUP: OnceLock<ProverSetup> = OnceLock::new();
 
 pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
-    #[cfg(feature = "gpu")]
-    let client = {
-        if let Some(endpoint) = _endpoint {
-            CudaProverBuilder::default()
-                .server(
-                    #[expect(clippy::expect_used)]
-                    endpoint
-                        .join("/twirp/")
-                        .expect("Failed to parse moongate server url")
-                        .as_ref(),
-                )
-                .build()
-        } else {
-            CudaProverBuilder::default().local().build()
-        }
-    };
-    #[cfg(not(feature = "gpu"))]
-    let client = { CpuProver::new() };
-    let (pk, vk) = client.setup(ZKVM_SP1_PROGRAM_ELF);
+    let client = blocking::ProverClient::from_env();
 
-    ProverSetup {
-        client: Box::new(client),
-        pk,
-        vk,
-    }
+    let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
+    let pk = client
+        .setup(elf)
+        .expect("Failed to setup SP1 prover");
+    let vk = pk.verifying_key().clone();
+
+    ProverSetup { client, pk, vk }
 }
 
 /// SP1-specific proof output containing the proof and verifying key.
@@ -116,9 +98,11 @@ impl Sp1Backend {
     /// Execute using already-serialized input.
     fn execute_with_stdin(&self, stdin: &SP1Stdin) -> Result<(), BackendError> {
         let setup = self.get_setup();
+        let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
         setup
             .client
-            .execute(ZKVM_SP1_PROGRAM_ELF, stdin)
+            .execute(elf, stdin.clone())
+            .run()
             .map_err(BackendError::execution)?;
         Ok(())
     }
@@ -133,7 +117,9 @@ impl Sp1Backend {
         let sp1_format = Self::convert_format(format);
         let proof = setup
             .client
-            .prove(&setup.pk, stdin, sp1_format)
+            .prove(&setup.pk, stdin.clone())
+            .mode(sp1_format)
+            .run()
             .map_err(BackendError::proving)?;
         Ok(Sp1ProveOutput::new(proof, setup.vk.clone()))
     }
@@ -172,7 +158,7 @@ impl ProverBackend for Sp1Backend {
         let setup = self.get_setup();
         setup
             .client
-            .verify(&proof.proof, &proof.vk)
+            .verify(&proof.proof, &proof.vk, None)
             .map_err(BackendError::verification)?;
 
         Ok(())

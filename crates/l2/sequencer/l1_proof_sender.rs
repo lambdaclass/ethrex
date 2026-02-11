@@ -5,8 +5,6 @@ use std::{
 };
 
 use aligned_sdk::gateway::provider::AggregationModeGatewayProvider;
-#[cfg(feature = "sp1")]
-use aligned_sdk::gateway::provider::GatewayError;
 use aligned_sdk::types::Network;
 use alloy::signers::local::PrivateKeySigner;
 use ethrex_common::{Address, U256};
@@ -47,7 +45,10 @@ use crate::{
 #[cfg(feature = "sp1")]
 use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
 #[cfg(feature = "sp1")]
-use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
+use sp1_sdk::{
+    Elf, HashableKey, ProvingKey, SP1VerifyingKey,
+    blocking::Prover,
+};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
 
@@ -152,8 +153,12 @@ impl L1ProofSender {
     #[cfg(feature = "sp1")]
     fn init_sp1_vk() -> Result<SP1VerifyingKey, ProofSenderError> {
         // Setup the prover client to get the verifying key
-        let client = sp1_sdk::CpuProver::new();
-        let (_pk, vk) = client.setup(ZKVM_SP1_PROGRAM_ELF);
+        let client = sp1_sdk::blocking::ProverClient::from_env();
+        let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
+        let pk = client.setup(elf).map_err(|e| {
+            ProofSenderError::UnexpectedError(format!("Failed to setup SP1 prover: {e}"))
+        })?;
+        let vk = pk.verifying_key().clone();
         info!("Initialized SP1 verifying key: {}", vk.bytes32());
         Ok(vk)
     }
@@ -319,70 +324,19 @@ impl L1ProofSender {
         Ok(())
     }
 
+    // TODO: aligned-sdk still depends on sp1-sdk v5. Once aligned updates to v6, restore the
+    // typed submission using gateway.submit_sp1_proof(&proof, sp1_vk).
     #[cfg(feature = "sp1")]
     async fn submit_sp1_proof_to_aligned(
         &self,
-        gateway: &AggregationModeGatewayProvider<PrivateKeySigner>,
-        sender_address: &str,
-        batch_number: u64,
-        batch_proof: &BatchProof,
+        _gateway: &AggregationModeGatewayProvider<PrivateKeySigner>,
+        _sender_address: &str,
+        _batch_number: u64,
+        _batch_proof: &BatchProof,
     ) -> Result<(), ProofSenderError> {
-        let prover_type = batch_proof.prover_type();
-
-        let sp1_vk = self.sp1_vk.as_ref().ok_or_else(|| {
-            ProofSenderError::UnexpectedError("SP1 verifying key not initialized".to_string())
-        })?;
-
-        let Some(proof_bytes) = batch_proof.compressed() else {
-            return Err(ProofSenderError::AlignedWrongProofFormat);
-        };
-
-        // Deserialize the proof from bincode format
-        let proof: SP1ProofWithPublicValues = bincode::deserialize(&proof_bytes).map_err(|e| {
-            ProofSenderError::UnexpectedError(format!("Failed to deserialize SP1 proof: {e}"))
-        })?;
-
-        // Get the nonce that will be used for this submission
-        let nonce = gateway
-            .get_nonce_for(sender_address.to_string())
-            .await
-            .map_err(|e| ProofSenderError::AlignedGetNonceError(format!("{e:?}")))?
-            .data
-            .nonce;
-
-        info!(
-            ?prover_type,
-            ?batch_number,
-            ?nonce,
-            "Submitting proof to Aligned"
-        );
-
-        let result = gateway.submit_sp1_proof(&proof, sp1_vk).await;
-
-        match result {
-            Ok(response) => {
-                info!(
-                    ?batch_number,
-                    ?nonce,
-                    task_id = ?response.data.task_id,
-                    "Submitted proof to Aligned"
-                );
-            }
-            Err(GatewayError::Api { status, message }) if message.contains("invalid") => {
-                warn!("Proof is invalid, will be deleted: {message}");
-                self.rollup_store
-                    .delete_proof_by_batch_and_type(batch_number, prover_type)
-                    .await?;
-                return Err(ProofSenderError::AlignedSubmitProofError(
-                    GatewayError::Api { status, message },
-                ));
-            }
-            Err(e) => {
-                return Err(ProofSenderError::AlignedSubmitProofError(e));
-            }
-        }
-
-        Ok(())
+        Err(ProofSenderError::UnexpectedError(
+            "Aligned SP1 proof submission is temporarily disabled: aligned-sdk depends on sp1-sdk v5 which is incompatible with v6 types".to_string(),
+        ))
     }
 
     #[cfg(not(feature = "sp1"))]
