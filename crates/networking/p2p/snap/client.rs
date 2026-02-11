@@ -10,7 +10,7 @@ use crate::{
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
-        p2p::SUPPORTED_SNAP_CAPABILITIES,
+        p2p::SUPPORTED_ETH_CAPABILITIES,
         snap::{
             AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
@@ -144,9 +144,11 @@ pub async fn request_account_range(
     let mut completed_tasks = 0;
     let mut chunk_file = 0;
     let mut last_update: SystemTime = SystemTime::now();
+    let mut last_diagnostic: SystemTime = SystemTime::now();
     let mut write_set = tokio::task::JoinSet::new();
 
     let mut logged_no_free_peers_count = 0;
+    let mut in_flight: usize = 0;
 
     loop {
         if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
@@ -191,6 +193,7 @@ pub async fn request_account_range(
         }
 
         if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
+            in_flight = in_flight.saturating_sub(1);
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
                 if chunk_start <= chunk_end {
                     tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -218,28 +221,28 @@ pub async fn request_account_range(
             all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
         }
 
-        // Check completion before waiting for a peer — otherwise the loop can spin
-        // forever when no snap-capable peer is immediately available.
+        // Check completion before waiting for a peer
         if tasks_queue_not_started.is_empty() && completed_tasks >= chunk_count {
-            info!("All account ranges downloaded successfully (early check)");
+            info!("All account ranges downloaded successfully");
             break;
         }
 
-        // Periodic diagnostics (every ~10s via the metrics update timer)
-        if last_update
+        // Periodic diagnostics every 30s (uses separate timer from metrics)
+        if last_diagnostic
             .elapsed()
             .expect("Time shouldn't be in the past")
-            >= Duration::from_secs(10)
+            >= Duration::from_secs(30)
         {
             info!(
-                "account_range loop: completed={completed_tasks}/{chunk_count}, queue={}, downloaded={downloaded_count}",
+                "account_range progress: completed={completed_tasks}/{chunk_count}, queue={}, in_flight={in_flight}, downloaded={downloaded_count}",
                 tasks_queue_not_started.len()
             );
+            last_diagnostic = SystemTime::now();
         }
 
         let Some((peer_id, connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
             .unwrap_or(None)
@@ -279,6 +282,7 @@ pub async fn request_account_range(
 
         let peer_table = peers.peer_table.clone();
 
+        in_flight += 1;
         tokio::spawn(request_account_range_worker(
             peer_id,
             connection,
@@ -438,7 +442,7 @@ pub async fn request_bytecodes(
 
         let Some((peer_id, mut connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
             .unwrap_or(None)
@@ -976,7 +980,7 @@ pub async fn request_storage_ranges(
 
         let Some((peer_id, connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
             .unwrap_or(None)
