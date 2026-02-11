@@ -148,7 +148,7 @@ impl OpcodeHandler for OpChainIdHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CHAINID)?;
 
-        vm.current_call_frame.stack.push(vm.env.chain_id.into())?;
+        vm.current_call_frame.stack.push(vm.env.chain_id)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -162,9 +162,16 @@ impl OpcodeHandler for OpSelfBalanceHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        vm.current_call_frame
-            .stack
-            .push(vm.db.get_account(vm.current_call_frame.to)?.info.balance)?;
+        let address = vm.current_call_frame.to;
+        let balance = vm.db.get_account(address)?.info.balance;
+
+        // Record address touch for BAL per EIP-7928
+        // SELFBALANCE has "Pre-state Cost: None" so always succeeds
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
+
+        vm.current_call_frame.stack.push(balance)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -179,9 +186,7 @@ impl OpcodeHandler for OpBaseFeeHandler {
             .increase_consumed_gas(gas_cost::BASEFEE)?;
 
         // https://eips.ethereum.org/EIPS/eip-3198
-        vm.current_call_frame
-            .stack
-            .push(vm.env.base_fee_per_gas.into())?;
+        vm.current_call_frame.stack.push(vm.env.base_fee_per_gas)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -223,9 +228,24 @@ impl OpcodeHandler for OpBlobBaseFeeHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
-        vm.current_call_frame.stack.push(
-            get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?,
-        )?;
+        vm.current_call_frame
+            .stack
+            .push(vm.env.base_blob_fee_per_gas)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SLOTNUM` opcode.
+pub struct OpSlotNumHandler;
+impl OpcodeHandler for OpSlotNumHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        // EIP-7843: Returns the slot number of the current block
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::SLOTNUM)?;
+
+        vm.current_call_frame.stack.push(vm.env.slot_number)?;
 
         Ok(OpcodeResult::Continue)
     }

@@ -509,6 +509,10 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function receiveETHFromSharedBridge() public payable override {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
         deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
     }
 

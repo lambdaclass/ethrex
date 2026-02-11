@@ -9,7 +9,7 @@ contract Messenger is IMessenger {
     /// @notice Id of the last emitted message.
     /// @dev Message Id that should be incremented before a message is sent
     uint256 public lastMessageId;
-    address public constant BRIDGE =  0x000000000000000000000000000000000000FFff;
+    address public constant BRIDGE = 0x000000000000000000000000000000000000FFff;
 
     modifier onlyBridge() {
         require(msg.sender == BRIDGE, "Only bridge can call this function");
@@ -17,7 +17,7 @@ contract Messenger is IMessenger {
     }
 
     /// @inheritdoc IMessenger
-    function sendMessageToL1(bytes32 data) external {
+    function sendMessageToL1(bytes32 data) external onlyBridge {
         // This event gets pushed to L1, the sequencer monitors
         // them on every block.
         lastMessageId += 1;

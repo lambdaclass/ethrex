@@ -60,9 +60,15 @@ impl OpcodeHandler for OpBalanceHandler {
                 vm.substate.add_accessed_address(address),
             )?)?;
 
-        vm.current_call_frame
-            .stack
-            .push(vm.db.get_account(address)?.info.balance)?;
+        // State access AFTER gas check passes
+        let account_balance = vm.db.get_account(address)?.info.balance;
+
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
+
+        vm.current_call_frame.stack.push(account_balance)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -279,9 +285,15 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
                 vm.substate.add_accessed_address(address),
             )?)?;
 
-        vm.current_call_frame
-            .stack
-            .push(vm.db.get_account_code(address)?.bytecode.len().into())?;
+        // State access AFTER gas check passes (using optimized code length lookup)
+        let account_code_length = vm.db.get_code_length(address)?.into();
+
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
+
+        vm.current_call_frame.stack.push(account_code_length)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -304,6 +316,11 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
                 vm.current_call_frame.memory.len(),
                 vm.substate.add_accessed_address(address),
             )?)?;
+
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
         if len > 0 {
             let data = vm
@@ -338,12 +355,20 @@ impl OpcodeHandler for OpExtCodeHashHandler {
             )?)?;
 
         let account = vm.db.get_account(address)?;
-        if account.is_empty() {
+        let account_is_empty = account.is_empty();
+        let account_code_hash = account.info.code_hash.0;
+
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
+
+        if account_is_empty {
             vm.current_call_frame.stack.push_zero()?;
         } else {
             #[expect(unsafe_code, reason = "safe")]
             vm.current_call_frame.stack.push(U256(unsafe {
-                let mut bytes = account.info.code_hash.0;
+                let mut bytes = account_code_hash;
                 bytes.reverse();
                 mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
             }))?;

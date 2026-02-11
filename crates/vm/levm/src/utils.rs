@@ -14,6 +14,8 @@ use crate::{
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
+use ethrex_common::constants::SYSTEM_ADDRESS;
+use ethrex_common::types::Log;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
@@ -69,6 +71,7 @@ pub fn calculate_create2_address(
 // ================== Backup related functions =======================
 
 /// Restore the state of the cache to the state it in the callframe backup.
+/// Also restores BAL recorder state changes (but not touched_addresses) per EIP-7928.
 pub fn restore_cache_state(
     db: &mut GeneralizedDatabase,
     callframe_backup: CallFrameBackup,
@@ -91,6 +94,13 @@ pub fn restore_cache_state(
         for (key, value) in storage {
             account.storage.insert(key, value);
         }
+    }
+
+    // Restore BAL recorder to checkpoint (but keep touched_addresses per EIP-7928)
+    if let Some(checkpoint) = callframe_backup.bal_checkpoint
+        && let Some(recorder) = db.bal_recorder.as_mut()
+    {
+        recorder.restore(checkpoint);
     }
 
     Ok(())
@@ -389,8 +399,18 @@ impl<'a> VM<'a> {
             self.substate.add_accessed_address(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
+            // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
             let empty_or_delegated = authority_code.bytecode.is_empty()
                 || code_has_delegation(&authority_code.bytecode)?;
+
+            // Record authority as touched for BAL per EIP-7928, even if validation fails later.
+            // This ensures authority appears in BAL with empty change set when:
+            // - Authority was loaded (above)
+            // - But validation fails (checks below)
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(authority_address);
+            }
+
             if !empty_or_delegated {
                 continue;
             }
@@ -431,7 +451,11 @@ impl<'a> VM<'a> {
                 .map_err(|_| TxValidationError::NonceIsMax)?;
         }
 
-        self.substate.refunded_gas = refunded_gas;
+        self.substate.refunded_gas = self
+            .substate
+            .refunded_gas
+            .checked_add(refunded_gas)
+            .ok_or(InternalError::Overflow)?;
 
         Ok(())
     }
@@ -610,5 +634,46 @@ pub fn size_offset_to_usize(size: U256, offset: U256) -> Result<(usize, usize), 
         Ok((0, 0))
     } else {
         Ok((u256_to_usize(size)?, u256_to_usize(offset)?))
+    }
+}
+
+// ==================== EIP-7708 Helper Functions ====================
+
+/// Creates EIP-7708 Transfer log (LOG3) for ETH transfers.
+/// Emitted from SYSTEM_ADDRESS when ETH is transferred.
+#[inline]
+pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
+    let mut from_topic = [0u8; 32];
+    from_topic[12..].copy_from_slice(from.as_bytes());
+
+    let mut to_topic = [0u8; 32];
+    to_topic[12..].copy_from_slice(to.as_bytes());
+
+    let data = value.to_big_endian();
+
+    Log {
+        address: SYSTEM_ADDRESS,
+        topics: vec![
+            TRANSFER_EVENT_TOPIC,
+            H256::from(from_topic),
+            H256::from(to_topic),
+        ],
+        data: Bytes::from(data.to_vec()),
+    }
+}
+
+/// Creates EIP-7708 Selfdestruct log (LOG2) for account destruction.
+/// Emitted from SYSTEM_ADDRESS when a contract is destroyed.
+#[inline]
+pub fn create_selfdestruct_log(contract: Address, balance: U256) -> Log {
+    let mut contract_topic = [0u8; 32];
+    contract_topic[12..].copy_from_slice(contract.as_bytes());
+
+    let data = balance.to_big_endian();
+
+    Log {
+        address: SYSTEM_ADDRESS,
+        topics: vec![SELFDESTRUCT_EVENT_TOPIC, H256::from(contract_topic)],
+        data: Bytes::from(data.to_vec()),
     }
 }

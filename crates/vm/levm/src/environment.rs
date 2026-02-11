@@ -26,8 +26,9 @@ pub struct Environment {
     pub timestamp: u64,
     pub prev_randao: Option<H256>,
     pub difficulty: U256,
-    pub chain_id: u64,
-    pub base_fee_per_gas: u64,
+    pub slot_number: U256,
+    pub chain_id: U256,
+    pub base_fee_per_gas: U256,
     pub base_blob_fee_per_gas: U256,
     pub gas_price: U256, // Effective gas price
     pub block_excess_blob_gas: Option<u64>,

@@ -116,7 +116,7 @@ pub fn get_vm_env_for_test(
     let config = EVMConfig::new(test_case.fork, blob_schedule);
     let gas_price = effective_gas_price(&test_env, test_case)?;
     let base_blob_fee_per_gas =
-        get_base_fee_per_blob_gas(test_env.current_excess_blob_gas, &config)
+        get_base_fee_per_blob_gas(test_env.current_excess_blob_gas.map(|x| x.try_into().unwrap()), &config)
             .map_err(|e| RunnerError::Custom(format!("Failed to get blob base fee: {e}")))?;
     Ok(Environment {
         origin: test_case.sender,
@@ -127,12 +127,9 @@ pub fn get_vm_env_for_test(
         timestamp: test_env.current_timestamp.try_into().unwrap(),
         prev_randao: test_env.current_random,
         difficulty: test_env.current_difficulty,
-        chain_id: 1,
-        base_fee_per_gas: test_env
-            .current_base_fee
-            .unwrap_or_default()
-            .try_into()
-            .unwrap(),
+        slot_number: test_env.slot_number.unwrap_or_default(),
+        chain_id: U256::from(1),
+        base_fee_per_gas: test_env.current_base_fee.unwrap_or_default(),
         base_blob_fee_per_gas,
         gas_price,
         block_excess_blob_gas: test_env

@@ -225,21 +225,26 @@ pub struct OpSLoadHandler;
 impl OpcodeHandler for OpSLoadHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let storage_slot_key = vm.current_call_frame.stack.pop1()?;
+        let address = vm.current_call_frame.to;
         let key = {
-            let key = vm.current_call_frame.stack.pop1()?;
             #[expect(unsafe_code)]
             unsafe {
-                let mut hash = mem::transmute::<U256, H256>(key);
+                let mut hash = mem::transmute::<U256, H256>(storage_slot_key);
                 hash.0.reverse();
                 hash
             }
         };
+
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::sload(
-                vm.substate.add_accessed_slot(vm.current_call_frame.to, key),
+                vm.substate.add_accessed_slot(address, key),
             )?)?;
 
-        let value = vm.get_storage_value(vm.current_call_frame.to, key)?;
+        // Record to BAL AFTER gas check passes per EIP-7928
+        vm.record_storage_slot_to_bal(address, storage_slot_key);
+
+        let value = vm.get_storage_value(address, key)?;
         vm.current_call_frame.stack.push(value)?;
 
         Ok(OpcodeResult::Continue)
@@ -260,22 +265,29 @@ impl OpcodeHandler for OpSStoreHandler {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
-        let [key, value] = *vm.current_call_frame.stack.pop()?;
+        let [storage_slot_key, value] = *vm.current_call_frame.stack.pop()?;
+        let to = vm.current_call_frame.to;
         #[expect(unsafe_code)]
         let key = unsafe {
-            let mut hash = mem::transmute::<U256, H256>(key);
+            let mut hash = mem::transmute::<U256, H256>(storage_slot_key);
             hash.0.reverse();
             hash
         };
 
-        let current_value = vm.get_storage_value(vm.current_call_frame.to, key)?;
-        let original_value = vm.get_original_storage(vm.current_call_frame.to, key)?;
+        let current_value = vm.get_storage_value(to, key)?;
+        let original_value = vm.get_original_storage(to, key)?;
+
+        // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
+        // Per EIP-7928: if SSTORE passes the stipend check but fails the main gas charge,
+        // the slot MUST appear as a read because the implicit SLOAD has already happened.
+        vm.record_storage_slot_to_bal(to, storage_slot_key);
+
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::sstore(
                 original_value,
                 current_value,
                 value,
-                vm.substate.add_accessed_slot(vm.current_call_frame.to, key),
+                vm.substate.add_accessed_slot(to, key),
             )?)?;
         if value != current_value {
             // EIP-2929
@@ -316,7 +328,7 @@ impl OpcodeHandler for OpSStoreHandler {
         }
 
         if value != current_value {
-            vm.update_account_storage(vm.current_call_frame.to, key, value, current_value)?;
+            vm.update_account_storage(to, key, storage_slot_key, value, current_value)?;
         }
 
         Ok(OpcodeResult::Continue)

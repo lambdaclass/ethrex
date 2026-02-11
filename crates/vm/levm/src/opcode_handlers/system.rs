@@ -16,10 +16,12 @@ use crate::{
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost,
-    memory::calculate_memory_size,
+    memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     precompiles,
-    utils::{address_to_word, word_to_address, *},
+    utils::{
+        address_to_word, create_eth_transfer_log, create_selfdestruct_log, word_to_address, *,
+    },
     vm::VM,
 };
 use bytes::Bytes;
@@ -58,6 +60,30 @@ impl OpcodeHandler for OpCallHandler {
         // Process gas usage.
         let (new_memory_size, address_is_empty, address_was_cold) =
             vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, callee)?;
+
+        // Record addresses for BAL per EIP-7928
+        let value_cost = if !value.is_zero() {
+            gas_cost::CALL_POSITIVE_VALUE
+        } else {
+            0
+        };
+        let create_cost = if address_is_empty && !value.is_zero() {
+            gas_cost::CALL_TO_EMPTY_ACCOUNT
+        } else {
+            0
+        };
+        vm.record_bal_call_touch(
+            callee,
+            code_address,
+            is_delegation_7702,
+            eip7702_gas_consumed,
+            new_memory_size,
+            vm.current_call_frame.memory.len(),
+            address_was_cold,
+            value_cost,
+            create_cost,
+        );
+
         let (gas_cost, gas_limit) = gas_cost::call(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -131,6 +157,25 @@ impl OpcodeHandler for OpCallCodeHandler {
         // Process gas usage.
         let (new_memory_size, _, address_was_cold) =
             vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
+
+        // Record addresses for BAL per EIP-7928
+        let value_cost = if !value.is_zero() {
+            gas_cost::CALLCODE_POSITIVE_VALUE
+        } else {
+            0
+        };
+        vm.record_bal_call_touch(
+            address,
+            code_address,
+            is_delegation_7702,
+            eip7702_gas_consumed,
+            new_memory_size,
+            vm.current_call_frame.memory.len(),
+            address_was_cold,
+            value_cost,
+            0,
+        );
+
         let (gas_cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -202,6 +247,20 @@ impl OpcodeHandler for OpDelegateCallHandler {
         // Process gas usage.
         let (new_memory_size, _, address_was_cold) =
             vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
+
+        // Record addresses for BAL per EIP-7928
+        vm.record_bal_call_touch(
+            address,
+            code_address,
+            is_delegation_7702,
+            eip7702_gas_consumed,
+            new_memory_size,
+            vm.current_call_frame.memory.len(),
+            address_was_cold,
+            0,
+            0,
+        );
+
         let (gas_cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -264,7 +323,7 @@ impl OpcodeHandler for OpStaticCallHandler {
 
         // Check and subtract EIP-7702.
         // Note: Do not reorder the gas increase after the `get_call_gas_params()`.
-        let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
         vm.current_call_frame
             .increase_consumed_gas(eip7702_gas_consumed)?;
@@ -272,6 +331,20 @@ impl OpcodeHandler for OpStaticCallHandler {
         // Process gas usage.
         let (new_memory_size, _, address_was_cold) =
             vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
+
+        // Record addresses for BAL per EIP-7928
+        vm.record_bal_call_touch(
+            address,
+            code_address,
+            is_delegation_7702,
+            eip7702_gas_consumed,
+            new_memory_size,
+            vm.current_call_frame.memory.len(),
+            address_was_cold,
+            0,
+            0,
+        );
+
         let (gas_cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -393,18 +466,76 @@ impl OpcodeHandler for OpSelfDestructHandler {
                 balance,
             )?)?;
 
-        // EIP-6780: Self-destruct only in the same transaction (CANCUN).
-        let do_selfdestruct = if vm.env.config.fork >= Fork::Cancun {
-            vm.transfer(vm.current_call_frame.to, beneficiary, balance)?;
-            vm.substate.is_account_created(&vm.current_call_frame.to)
+        let to = vm.current_call_frame.to;
+
+        // Record beneficiary and destroyed account for BAL per EIP-7928
+        // Also record any previously-accessed storage slots as reads per EIP-7928:
+        // "SELFDESTRUCT: Include modified/read storage keys as storage_read"
+        let accessed_slots = vm.substate.get_accessed_storage_slots(&to);
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(beneficiary);
+            // Also record the destroyed account (source) as touched
+            recorder.record_touched_address(to);
+            // Record initial balance for the destroyed account if it has balance
+            if balance > U256::zero() {
+                recorder.set_initial_balance(to, balance);
+            }
+            // Record any previously-accessed storage slots as reads
+            for key in &accessed_slots {
+                let slot = U256::from_big_endian(key.as_bytes());
+                recorder.record_storage_read(to, slot);
+            }
+        }
+
+        // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
+        if vm.env.config.fork >= Fork::Cancun {
+            vm.transfer(to, beneficiary, balance)?;
+
+            // Selfdestruct is executed in the same transaction as the contract was created
+            if vm.substate.is_account_created(&to) {
+                // If target is the same as the contract calling, Ether will be burnt.
+                vm.get_account_mut(to)?.info.balance = U256::zero();
+
+                // Record balance change to zero for destroyed account in BAL
+                if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                    recorder.record_balance_change(to, U256::zero());
+                }
+
+                vm.substate.add_selfdestruct(to);
+            }
+
+            // EIP-7708: Emit appropriate log for ETH movement
+            if vm.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
+                if to != beneficiary {
+                    let log = create_eth_transfer_log(to, beneficiary, balance);
+                    vm.substate.add_log(log);
+                } else if vm.substate.is_account_created(&to) {
+                    // Selfdestruct-to-self: only emit log when created in same tx (burns ETH)
+                    // Pre-existing contracts selfdestructing to self emit NO log
+                    let log = create_selfdestruct_log(to, balance);
+                    vm.substate.add_log(log);
+                }
+            }
         } else {
             vm.increase_account_balance(beneficiary, balance)?;
-            true
-        };
-        if do_selfdestruct {
-            // For `fork >= CANCUN`, if target is the same as caller, ether will be burnt.
-            vm.substate.add_selfdestruct(vm.current_call_frame.to);
-            vm.get_account_mut(vm.current_call_frame.to)?.info.balance = U256::zero();
+            vm.get_account_mut(to)?.info.balance = U256::zero();
+
+            // Record balance change to zero for destroyed account in BAL
+            if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                recorder.record_balance_change(to, U256::zero());
+            }
+
+            vm.substate.add_selfdestruct(to);
+
+            // EIP-7708: Emit appropriate log for ETH movement
+            if vm.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
+                let log = if to != beneficiary {
+                    create_eth_transfer_log(to, beneficiary, balance)
+                } else {
+                    create_selfdestruct_log(to, balance)
+                };
+                vm.substate.add_log(log);
+            }
         }
 
         vm.tracer.enter(
@@ -489,9 +620,6 @@ impl<'a> VM<'a> {
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
-        // Add new contract to accessed addresses
-        self.substate.add_accessed_address(new_address);
-
         // Log CREATE in tracer
         let call_type = match salt {
             Some(_) => CallType::CREATE2,
@@ -507,6 +635,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
 
         // Validations that push 0 (FAIL) to the stack and return reserved gas to deployer
+        // Per reference: these checks happen BEFORE the new address is tracked for BAL.
         // 1. Sender doesn't have enough balance to send value.
         // 2. Depth limit has been reached
         // 3. Sender nonce is max.
@@ -522,6 +651,14 @@ impl<'a> VM<'a> {
             }
         }
 
+        // Add new contract to accessed addresses (after early checks pass, per reference)
+        self.substate.add_accessed_address(new_address);
+
+        // Record address touch for BAL (after early checks pass per EIP-7928 reference)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(new_address);
+        }
+
         // Increment sender nonce (irreversible change)
         self.increment_account_nonce(deployer)?;
 
@@ -534,12 +671,15 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
+        // Create BAL checkpoint before entering create call for potential revert per EIP-7928
+        let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
         let next_memory = self.current_call_frame.memory.next_memory();
 
-        let new_call_frame = CallFrame::new(
+        let mut new_call_frame = CallFrame::new(
             deployer,
             new_address,
             new_address,
@@ -557,6 +697,9 @@ impl<'a> VM<'a> {
             stack,
             next_memory,
         );
+        // Store BAL checkpoint in the call frame's backup for restoration on revert
+        new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+
         self.add_callframe(new_call_frame);
 
         // Changes that revert in case the Create fails.
@@ -566,16 +709,70 @@ impl<'a> VM<'a> {
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
+        // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
+        // Must be after push_backup() so the log reverts if the child context reverts
+        if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
+            let log = create_eth_transfer_log(deployer, new_address, value);
+            self.substate.add_log(log);
+        }
+
         Ok(OpcodeResult::Continue)
     }
 
+    /// Record BAL touched addresses for CALL-family opcodes per EIP-7928.
+    /// Gated on intermediate gas checks matching the EELS reference.
     #[allow(clippy::too_many_arguments)]
+    fn record_bal_call_touch(
+        &mut self,
+        target: Address,
+        code_address: Address,
+        is_delegation_7702: bool,
+        eip7702_gas_consumed: u64,
+        new_memory_size: usize,
+        current_memory_size: usize,
+        address_was_cold: bool,
+        value_cost: u64,
+        create_cost: u64,
+    ) {
+        let Some(recorder) = self.db.bal_recorder.as_mut() else {
+            return;
+        };
+        // Safe: expansion_cost only fails on usize→u64 overflow, which is infallible
+        // (usize ≤ 64 bits). If it somehow did, u64::MAX makes the gas check fail
+        // conservatively, skipping the BAL touch — a non-consensus recording path.
+        let mem_cost =
+            memory::expansion_cost(new_memory_size, current_memory_size).unwrap_or(u64::MAX);
+        let access_cost = if address_was_cold {
+            gas_cost::COLD_ADDRESS_ACCESS_COST
+        } else {
+            gas_cost::WARM_ADDRESS_ACCESS_COST
+        };
+        let basic_cost = mem_cost
+            .saturating_add(access_cost)
+            .saturating_add(value_cost);
+        let gas_remaining = self.current_call_frame.gas_remaining;
+
+        if gas_remaining >= i64::try_from(basic_cost).unwrap_or(i64::MAX) {
+            recorder.record_touched_address(target);
+
+            if is_delegation_7702 {
+                let delegation_check = basic_cost
+                    .saturating_add(create_cost)
+                    .saturating_add(eip7702_gas_consumed);
+                if gas_remaining >= i64::try_from(delegation_check).unwrap_or(i64::MAX) {
+                    recorder.record_touched_address(code_address);
+                }
+            }
+        }
+    }
+
     /// This (should) be the only function where gas is used as a
     /// U256. This is because we have to use the values that are
     /// pushed to the stack.
     ///
     // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
     // because passing so much data is costly. Verified with samply.
+    #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     pub fn generic_call(
         &mut self,
@@ -618,6 +815,11 @@ impl<'a> VM<'a> {
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
             && !is_delegation_7702
         {
+            // Record precompile address touch for BAL per EIP-7928
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(code_address);
+            }
+
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
                 code_address,
@@ -665,16 +867,26 @@ impl<'a> VM<'a> {
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
+
+                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+                // Self-transfers (msg_sender == to) do NOT emit a log (includes CALLCODE)
+                if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() && msg_sender != to {
+                    let log = create_eth_transfer_log(msg_sender, to, value);
+                    self.substate.add_log(log);
+                }
             }
 
             self.tracer.exit_context(&ctx_result, false)?;
         } else {
+            // Create BAL checkpoint before entering nested call for potential revert per EIP-7928
+            let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
 
             let next_memory = self.current_call_frame.memory.next_memory();
 
-            let new_call_frame = CallFrame::new(
+            let mut new_call_frame = CallFrame::new(
                 msg_sender,
                 to,
                 code_address,
@@ -691,6 +903,9 @@ impl<'a> VM<'a> {
                 stack,
                 next_memory,
             );
+            // Store BAL checkpoint in the call frame's backup for restoration on revert
+            new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+
             self.add_callframe(new_call_frame);
 
             // Transfer value from caller to callee.
@@ -699,6 +914,18 @@ impl<'a> VM<'a> {
             }
 
             self.substate.push_backup();
+
+            // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+            // Must be after push_backup() so the log reverts if the child context reverts
+            // Self-transfers (msg_sender == to) do NOT emit a log (includes CALLCODE)
+            if should_transfer_value
+                && self.env.config.fork >= Fork::Amsterdam
+                && !value.is_zero()
+                && msg_sender != to
+            {
+                let log = create_eth_transfer_log(msg_sender, to, value);
+                self.substate.add_log(log);
+            }
         }
 
         Ok(OpcodeResult::Continue)

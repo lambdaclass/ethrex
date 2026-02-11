@@ -191,7 +191,7 @@ pub fn prepare_vm_for_tx<'a>(
         }),
     };
     let base_blob_fee_per_gas =
-        get_base_fee_per_blob_gas(test.env.current_excess_blob_gas, &config).map_err(|e| {
+        get_base_fee_per_blob_gas(test.env.current_excess_blob_gas.map(|x| x.try_into().unwrap()), &config).map_err(|e| {
             EFTestRunnerError::FailedToEnsurePreState(format!(
                 "Failed to calculate base blob fee: {e}"
             ))
@@ -207,8 +207,9 @@ pub fn prepare_vm_for_tx<'a>(
             timestamp: test.env.current_timestamp.try_into().unwrap(),
             prev_randao: test.env.current_random,
             difficulty: test.env.current_difficulty,
-            chain_id: 1,
-            base_fee_per_gas: test.env.current_base_fee.map(|x| x.try_into().unwrap()).unwrap_or_default(),
+            slot_number: test.env.slot_number.unwrap_or_default(),
+            chain_id: U256::from(1),
+            base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
             base_blob_fee_per_gas,
             gas_price: effective_gas_price(test, &test_tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas.map(|x| x.try_into().unwrap()),
