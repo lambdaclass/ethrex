@@ -17,9 +17,9 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info};
 
-use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use crate::utils::state_reconstruct::get_batch;
 use crate::{SequencerConfig, sequencer::utils::node_is_up_to_date};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlockFetcherError {

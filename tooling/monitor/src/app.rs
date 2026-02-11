@@ -35,11 +35,11 @@ use crate::MonitorConfig;
 use crate::error::MonitorError;
 use crate::utils::SelectableScroller;
 use crate::widget::rich_accounts::RichAccountsTable;
-use crate::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use crate::widget::{
-    BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable,
-    L2ToL1MessagesTable, MempoolTable, NodeStatusTable, tabs::TabsState,
+    BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable, L2ToL1MessagesTable,
+    MempoolTable, NodeStatusTable, tabs::TabsState,
 };
+use crate::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 

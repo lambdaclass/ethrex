@@ -8,7 +8,6 @@ use crate::{
         },
     },
 };
-use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError,
@@ -22,6 +21,7 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_common::{
     calldata::Value,
     merkle_tree::compute_merkle_root,

@@ -12,11 +12,7 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    SequencerConfig,
-    sequencer::utils::node_is_up_to_date,
-    utils::parse::hash_to_address,
-};
+use crate::{SequencerConfig, sequencer::utils::node_is_up_to_date, utils::parse::hash_to_address};
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
 #[derive(Debug, thiserror::Error)]

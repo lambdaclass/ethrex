@@ -13,11 +13,7 @@ use ratatui::{
 };
 use secp256k1::SecretKey;
 
-use crate::{
-    error::MonitorError,
-    utils::SelectableScroller,
-    widget::HASH_LENGTH_IN_DIGITS,
-};
+use crate::{error::MonitorError, utils::SelectableScroller, widget::HASH_LENGTH_IN_DIGITS};
 
 // address | private key | balance
 pub type RichAccountRow = (Address, SecretKey, U256);

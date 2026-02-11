@@ -1,6 +1,5 @@
 use super::utils::random_duration;
 use crate::sequencer::errors::L1WatcherError;
-use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
@@ -9,6 +8,7 @@ use ethrex_common::utils::keccak;
 use ethrex_l2_common::messages::{
     L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS, get_l2_message_hash,
 };
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_sdk::privileged_data::PrivilegedTransactionData;
 use ethrex_l2_sdk::{get_last_fetched_l1_block, get_pending_l1_messages, get_pending_l2_messages};
 use ethrex_rpc::clients::eth::EthClient;
