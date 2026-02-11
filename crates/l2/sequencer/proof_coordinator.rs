@@ -195,20 +195,12 @@ impl ProofCoordinator {
             return Ok(());
         }
 
-        if !self.rollup_store.contains_batch(&batch_to_prove).await? {
-            debug!("Batch {batch_to_prove} not found, sending empty BatchResponse");
-            send_response(stream, &ProofData::empty_batch_response()).await?;
-            return Ok(());
-        }
-
         let Some(input) = self
             .rollup_store
             .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
             .await?
         else {
-            let response = ProofData::no_batch_for_version(commit_hash);
-            send_response(stream, &response).await?;
-            info!("No batch for version sent");
+            send_response(stream, &ProofData::empty_batch_response()).await?;
             return Ok(());
         };
 
