@@ -61,10 +61,7 @@ impl RpcHandler for Syncing {
             let syncing_status = SyncingStatusRpc {
                 starting_block: context.storage.get_earliest_block_number().await?,
                 current_block: context.storage.get_latest_block_number().await?,
-                highest_block: syncer
-                    .get_last_fcu_head()
-                    .map_err(|error| RpcErr::Internal(error.to_string()))?
-                    .to_low_u64_be(),
+                highest_block: syncer.get_last_fcu_head().to_low_u64_be(),
             };
             serde_json::to_value(syncing_status)
                 .map_err(|error| RpcErr::Internal(error.to_string()))
