@@ -108,6 +108,8 @@ pub struct EFTestEnv {
     pub current_random: Option<H256>,
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub current_timestamp: U256,
+    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    pub slot_number: Option<U256>,
 }
 
 #[derive(Debug, Deserialize)]

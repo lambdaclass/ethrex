@@ -53,16 +53,16 @@ pub fn validate_block(
     Ok(())
 }
 
-/// Validates that the gas used in the receipts matches the block header.
+/// Validates that the block gas used matches the block header.
+/// For Amsterdam+ (EIP-7778), block_gas_used is PRE-REFUND and differs from
+/// receipt cumulative_gas_used which is POST-REFUND.
 pub fn validate_gas_used(
-    receipts: &[Receipt],
+    block_gas_used: u64,
     block_header: &BlockHeader,
 ) -> Result<(), InvalidBlockError> {
-    if let Some(last) = receipts.last()
-        && last.cumulative_gas_used != block_header.gas_used
-    {
+    if block_gas_used != block_header.gas_used {
         return Err(InvalidBlockError::GasUsedMismatch(
-            last.cumulative_gas_used,
+            block_gas_used,
             block_header.gas_used,
         ));
     }
@@ -102,6 +102,83 @@ pub fn validate_requests_hash(
 
     if !valid {
         return Err(InvalidBlockError::RequestsHashMismatch);
+    }
+
+    Ok(())
+}
+
+/// Helper to validate that all indices in an iterator are within bounds.
+fn validate_bal_indices(
+    indices: impl Iterator<Item = u16>,
+    max_valid_index: u16,
+) -> Result<(), InvalidBlockError> {
+    for index in indices {
+        if index > max_valid_index {
+            return Err(InvalidBlockError::BlockAccessListIndexOutOfBounds {
+                index,
+                max: max_valid_index,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validates that the block access list hash matches the block header (Amsterdam+).
+/// Also validates that all BlockAccessIndex values are within valid bounds per EIP-7928.
+pub fn validate_block_access_list_hash(
+    header: &BlockHeader,
+    chain_config: &ChainConfig,
+    computed_bal: &crate::types::block_access_list::BlockAccessList,
+    transaction_count: usize,
+) -> Result<(), InvalidBlockError> {
+    // BAL validation only applies to Amsterdam+ forks
+    if !chain_config.is_amsterdam_activated(header.timestamp) {
+        return Ok(());
+    }
+
+    // Per EIP-7928: "Invalidate block if access list...contains indices exceeding len(transactions) + 1"
+    // Index semantics: 0=pre-exec, 1..n=tx indices, n+1=post-exec (withdrawals)
+    #[allow(clippy::cast_possible_truncation)]
+    let max_valid_index = transaction_count as u16 + 1;
+
+    // Validate all indices in the BAL
+    for account in computed_bal.accounts() {
+        // Check storage_changes indices
+        validate_bal_indices(
+            account
+                .storage_changes
+                .iter()
+                .flat_map(|slot| slot.slot_changes.iter().map(|c| c.block_access_index)),
+            max_valid_index,
+        )?;
+
+        // Check balance_changes indices
+        validate_bal_indices(
+            account.balance_changes.iter().map(|c| c.block_access_index),
+            max_valid_index,
+        )?;
+
+        // Check nonce_changes indices
+        validate_bal_indices(
+            account.nonce_changes.iter().map(|c| c.block_access_index),
+            max_valid_index,
+        )?;
+
+        // Check code_changes indices
+        validate_bal_indices(
+            account.code_changes.iter().map(|c| c.block_access_index),
+            max_valid_index,
+        )?;
+    }
+
+    let computed_hash = computed_bal.compute_hash();
+    let valid = header
+        .block_access_list_hash
+        .map(|expected_hash| expected_hash == computed_hash)
+        .unwrap_or(false);
+
+    if !valid {
+        return Err(InvalidBlockError::BlockAccessListHashMismatch);
     }
 
     Ok(())

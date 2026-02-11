@@ -4,8 +4,12 @@ use std::{
     path::PathBuf,
 };
 
+use aligned_sdk::gateway::provider::AggregationModeGatewayProvider;
+#[cfg(feature = "sp1")]
+use aligned_sdk::gateway::provider::GatewayError;
+use aligned_sdk::types::Network;
+use alloy::signers::local::PrivateKeySigner;
 use ethrex_common::{Address, U256};
-use ethrex_guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
@@ -33,21 +37,14 @@ use super::{
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    sequencer::{
-        errors::ProofSenderError,
-        sequencer_state::{SequencerState, SequencerStatus},
-        utils::batch_checkpoint_name,
-    },
+    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
 };
-use aligned_sdk::{
-    common::{
-        errors,
-        types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
-    },
-    verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
-};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
-use ethers::signers::{Signer as EthersSigner, Wallet};
+#[cfg(feature = "sp1")]
+use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
+#[cfg(feature = "sp1")]
+use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
 
@@ -78,10 +75,12 @@ pub struct L1ProofSender {
     rollup_store: StoreRollup,
     l1_chain_id: u64,
     network: Network,
-    fee_estimate: FeeEstimationType,
     /// Directory where checkpoints are stored.
     checkpoints_dir: PathBuf,
     aligned_mode: bool,
+    /// Cached SP1 verifying key for aligned mode
+    #[cfg(feature = "sp1")]
+    sp1_vk: Option<SP1VerifyingKey>,
 }
 
 #[derive(Clone, Serialize)]
@@ -94,8 +93,6 @@ pub struct L1ProofSenderHealth {
     sequencer_state: String,
     l1_chain_id: u64,
     network: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fee_estimate: Option<FeeEstimationType>,
 }
 
 impl L1ProofSender {
@@ -122,7 +119,14 @@ impl L1ProofSender {
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
             ProofSenderError::UnexpectedError("Failed to convert chain ID to U256".to_owned())
         })?;
-        let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
+
+        // Initialize SP1 verifying key if in aligned mode with sp1 feature
+        #[cfg(feature = "sp1")]
+        let sp1_vk = if aligned_cfg.aligned_mode {
+            Some(Self::init_sp1_vk()?)
+        } else {
+            None
+        };
 
         Ok(Self {
             eth_client,
@@ -135,10 +139,20 @@ impl L1ProofSender {
             rollup_store,
             l1_chain_id,
             network: aligned_cfg.network.clone(),
-            fee_estimate,
             checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
+            #[cfg(feature = "sp1")]
+            sp1_vk,
         })
+    }
+
+    #[cfg(feature = "sp1")]
+    fn init_sp1_vk() -> Result<SP1VerifyingKey, ProofSenderError> {
+        // Setup the prover client to get the verifying key
+        let client = sp1_sdk::CpuProver::new();
+        let (_pk, vk) = client.setup(ZKVM_SP1_PROGRAM_ELF);
+        info!("Initialized SP1 verifying key: {}", vk.bytes32());
+        Ok(vk)
     }
 
     pub async fn spawn(
@@ -252,121 +266,132 @@ impl L1ProofSender {
     ) -> Result<(), ProofSenderError> {
         info!(?batch_number, "Sending batch proof(s) to Aligned Layer");
 
-        let fee_estimation = Self::estimate_fee(self).await?;
-
-        let mut nonce =
-            get_nonce_from_batcher(self.network.clone(), self.signer.address().0.into())
-                .await
-                .map_err(|err| {
-                    ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
-                })?;
-
         let Signer::Local(local_signer) = &self.signer else {
             return Err(ProofSenderError::UnexpectedError(
                 "Aligned mode only supports local signer".to_string(),
             ));
         };
 
-        let wallet = Wallet::from_bytes(local_signer.private_key.as_ref())
-            .map_err(|_| ProofSenderError::UnexpectedError("Failed to create wallet".to_owned()))?;
+        // Create alloy signer from private key
+        // Convert secp256k1::SecretKey to FixedBytes<32> for alloy signer
+        let private_key_bytes: [u8; 32] = local_signer.private_key.secret_bytes();
+        let signer = PrivateKeySigner::from_bytes(&private_key_bytes.into()).map_err(|e| {
+            ProofSenderError::UnexpectedError(format!("Failed to create signer: {e}"))
+        })?;
 
-        let wallet = wallet.with_chain_id(self.l1_chain_id);
+        let sender_address = format!("{:?}", self.signer.address());
+
+        // Create the gateway provider with signer
+        let gateway = AggregationModeGatewayProvider::new_with_signer(self.network.clone(), signer)
+            .map_err(|e| {
+                ProofSenderError::UnexpectedError(format!("Failed to create gateway: {e:?}"))
+            })?;
 
         for batch_proof in batch_proofs {
             let prover_type = batch_proof.prover_type();
-            let proving_system = match prover_type {
-                ProverType::RISC0 => ProvingSystemId::Risc0,
-                ProverType::SP1 => ProvingSystemId::SP1,
-                _ => continue,
-            };
 
-            let Some(proof) = batch_proof.compressed() else {
-                return Err(ProofSenderError::AlignedWrongProofFormat);
-            };
-
-            let vm_program_code = match prover_type {
-                ProverType::RISC0 => {
-                    if !cfg!(feature = "risc0") {
-                        return Err(ProofSenderError::UnexpectedError(
-                            "Trying to send RISC0 proof but RISC0 feature is disabled".to_string(),
-                        ));
-                    }
-
-                    let trimmed = ZKVM_RISC0_PROGRAM_VK.trim_start_matches("0x").trim();
-                    hex::decode(trimmed).map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
-                    })?
-                }
+            match prover_type {
                 ProverType::SP1 => {
-                    if !cfg!(feature = "sp1") {
-                        return Err(ProofSenderError::UnexpectedError(
-                            "Trying to send SP1 proof but SP1 feature is disabled".to_string(),
-                        ));
-                    }
-
-                    ZKVM_SP1_PROGRAM_ELF.to_vec()
-                }
-                _other => {
-                    return Err(ProofSenderError::UnexpectedError(format!(
-                        "no vm_program_code for {prover_type}"
-                    )));
-                }
-            };
-
-            let pub_input = Some(batch_proof.public_values());
-
-            let verification_data = VerificationData {
-                proving_system,
-                proof,
-                proof_generator_addr: self.signer.address().0.into(),
-                vm_program_code: Some(vm_program_code),
-                verification_key: None,
-                pub_input,
-            };
-
-            info!(?prover_type, ?batch_number, "Submitting proof to Aligned");
-            let aligned_verification_result = submit(
-                self.network.clone(),
-                &verification_data,
-                fee_estimation,
-                wallet.clone(),
-                nonce,
-            )
-            .await;
-
-            if let Err(errors::SubmitError::InvalidProof(_)) = aligned_verification_result.as_ref()
-            {
-                warn!("Proof is invalid, will be deleted");
-                self.rollup_store
-                    .delete_proof_by_batch_and_type(batch_number, prover_type)
+                    self.submit_sp1_proof_to_aligned(
+                        &gateway,
+                        &sender_address,
+                        batch_number,
+                        batch_proof,
+                    )
                     .await?;
+                }
+                // Future: Add risc0, zisk, etc. support here
+                _ => {
+                    warn!(
+                        ?prover_type,
+                        "Prover type not yet supported for Aligned, skipping"
+                    );
+                    return Err(ProofSenderError::AlignedUnsupportedProverType(
+                        prover_type.to_string(),
+                    ));
+                }
             }
-
-            aligned_verification_result?;
-
-            nonce = nonce
-                .checked_add(1.into())
-                .ok_or(ProofSenderError::UnexpectedError(
-                    "aligned batcher nonce overflow".to_string(),
-                ))?;
-
-            info!(?prover_type, ?batch_number, "Submitted proof to Aligned");
         }
 
         Ok(())
     }
 
-    /// Performs a call to aligned SDK estimate_fee function with retries over all RPC URLs.
-    async fn estimate_fee(&self) -> Result<ethers::types::U256, ProofSenderError> {
-        for rpc_url in &self.eth_client.urls {
-            if let Ok(estimation) =
-                aligned_estimate_fee(rpc_url.as_str(), self.fee_estimate.clone()).await
-            {
-                return Ok(estimation);
+    #[cfg(feature = "sp1")]
+    async fn submit_sp1_proof_to_aligned(
+        &self,
+        gateway: &AggregationModeGatewayProvider<PrivateKeySigner>,
+        sender_address: &str,
+        batch_number: u64,
+        batch_proof: &BatchProof,
+    ) -> Result<(), ProofSenderError> {
+        let prover_type = batch_proof.prover_type();
+
+        let sp1_vk = self.sp1_vk.as_ref().ok_or_else(|| {
+            ProofSenderError::UnexpectedError("SP1 verifying key not initialized".to_string())
+        })?;
+
+        let Some(proof_bytes) = batch_proof.compressed() else {
+            return Err(ProofSenderError::AlignedWrongProofFormat);
+        };
+
+        // Deserialize the proof from bincode format
+        let proof: SP1ProofWithPublicValues = bincode::deserialize(&proof_bytes).map_err(|e| {
+            ProofSenderError::UnexpectedError(format!("Failed to deserialize SP1 proof: {e}"))
+        })?;
+
+        // Get the nonce that will be used for this submission
+        let nonce = gateway
+            .get_nonce_for(sender_address.to_string())
+            .await
+            .map_err(|e| ProofSenderError::AlignedGetNonceError(format!("{e:?}")))?
+            .data
+            .nonce;
+
+        info!(
+            ?prover_type,
+            ?batch_number,
+            ?nonce,
+            "Submitting proof to Aligned"
+        );
+
+        let result = gateway.submit_sp1_proof(&proof, sp1_vk).await;
+
+        match result {
+            Ok(response) => {
+                info!(
+                    ?batch_number,
+                    ?nonce,
+                    task_id = ?response.data.task_id,
+                    "Submitted proof to Aligned"
+                );
+            }
+            Err(GatewayError::Api { status, message }) if message.contains("invalid") => {
+                warn!("Proof is invalid, will be deleted: {message}");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, prover_type)
+                    .await?;
+                return Err(ProofSenderError::AlignedSubmitProofError(
+                    GatewayError::Api { status, message },
+                ));
+            }
+            Err(e) => {
+                return Err(ProofSenderError::AlignedSubmitProofError(e));
             }
         }
-        Err(ProofSenderError::AlignedFeeEstimateError(
-            "All Ethereum RPC URLs failed".to_string(),
+
+        Ok(())
+    }
+
+    #[cfg(not(feature = "sp1"))]
+    async fn submit_sp1_proof_to_aligned(
+        &self,
+        _gateway: &AggregationModeGatewayProvider<PrivateKeySigner>,
+        _sender_address: &str,
+        _batch_number: u64,
+        _batch_proof: &BatchProof,
+    ) -> Result<(), ProofSenderError> {
+        Err(ProofSenderError::UnexpectedError(
+            "SP1 proofs require the 'sp1' feature to be enabled".to_string(),
         ))
     }
 
@@ -460,12 +485,6 @@ impl L1ProofSender {
         let rpc_healthcheck = self.eth_client.test_urls().await;
         let signer_status = self.signer.health().await;
 
-        let fee_estimate = if self.aligned_mode {
-            Some(self.fee_estimate.clone())
-        } else {
-            None
-        };
-
         CallResponse::Reply(OutMessage::Health(Box::new(L1ProofSenderHealth {
             rpc_healthcheck,
             signer_status,
@@ -476,10 +495,9 @@ impl L1ProofSender {
                 .map(|proof_type| format!("{:?}", proof_type))
                 .collect(),
             proof_send_interval_ms: self.proof_send_interval_ms,
-            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
             l1_chain_id: self.l1_chain_id,
             network: format!("{:?}", self.network),
-            fee_estimate,
         })))
     }
 }
@@ -497,7 +515,7 @@ impl GenServer for L1ProofSender {
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         // Right now we only have the Send message, so we ignore the message
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
             let _ = self
                 .verify_and_send_proof()
                 .await
@@ -516,15 +534,5 @@ impl GenServer for L1ProofSender {
         match message {
             CallMessage::Health => self.health().await,
         }
-    }
-}
-
-fn resolve_fee_estimate(fee_estimate: &str) -> Result<FeeEstimationType, ProofSenderError> {
-    match fee_estimate {
-        "instant" => Ok(FeeEstimationType::Instant),
-        "default" => Ok(FeeEstimationType::Default),
-        _ => Err(ProofSenderError::AlignedFeeEstimateError(
-            "Unsupported fee estimation type".to_string(),
-        )),
     }
 }

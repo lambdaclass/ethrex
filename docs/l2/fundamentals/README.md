@@ -23,7 +23,7 @@ At a high level, the following new parts are added to the node:
 For general documentation, see:
 
 - [Architecture overview](../architecture/overview.md) for a high-level view of the ethrex L2 stack.
-- [Smart contracts](./contracts.md) has information on L1 and L2 smart contracts including steps to upgrade and transfer ownserhip.
+- [Smart contracts](./contracts.md) has information on L1 and L2 smart contracts including steps to upgrade and transfer ownership.
 - [Based sequencing](./based.md) contains ethrex's roadmap for becoming based.
 - [State diffs](./state_diffs.md) explains the mechanism needed to provide data availability.
 - How asset [deposits](./deposits.md) and [withdrawals](./withdrawals.md) work.
