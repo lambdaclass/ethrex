@@ -4,7 +4,7 @@
 
 ### 2026-02-11
 
-- Reduce trie/FKV memtable size and raise L0 compaction trigger to reduce skiplist and compaction overhead [#6183](https://github.com/lambdaclass/ethrex/pull/6183)
+- Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet for EVM accessed storage slots [#6185](https://github.com/lambdaclass/ethrex/pull/6185)
 
 ### 2026-02-06
 
