@@ -12,6 +12,7 @@ use crate::{
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
     },
+    snap::RequestSizerMap,
 };
 use ethrex_common::{
     H256,
@@ -40,6 +41,7 @@ pub use crate::snap::{DumpError, RequestMetadata, RequestStorageTrieNodesError, 
 pub struct PeerHandler {
     pub peer_table: PeerTable,
     pub initiator: GenServerHandle<RLPxInitiator>,
+    pub request_sizer: RequestSizerMap,
 }
 
 pub enum BlockRequestOrder {
@@ -100,6 +102,7 @@ impl PeerHandler {
         Self {
             peer_table,
             initiator,
+            request_sizer: RequestSizerMap::new(),
         }
     }
 

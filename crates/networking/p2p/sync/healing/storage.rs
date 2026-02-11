@@ -8,8 +8,7 @@ use crate::{
     snap::{
         RequestStorageTrieNodesError,
         constants::{
-            MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, SHOW_PROGRESS_INTERVAL_DURATION,
-            STORAGE_BATCH_SIZE,
+            MAX_IN_FLIGHT_REQUESTS, SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE,
         },
         request_storage_trienodes,
     },
@@ -359,11 +358,13 @@ async fn ask_peers_for_nodes(
                 peer_id,
             },
         );
+        let request_sizer = peers.request_sizer.clone();
+        let response_bytes = request_sizer.response_bytes_for_peer(&peer_id);
         let gtn = GetTrieNodes {
             id: req_id,
             root_hash: state_root,
             paths,
-            bytes: MAX_RESPONSE_BYTES,
+            bytes: response_bytes,
         };
 
         let tx = task_sender.clone();
@@ -372,7 +373,9 @@ async fn ask_peers_for_nodes(
 
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
-            let response = request_storage_trienodes(peer_id, connection, peer_table, gtn).await;
+            let response =
+                request_storage_trienodes(peer_id, connection, peer_table, gtn, request_sizer)
+                    .await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(
                 |err| debug!(error=?err, "Failed to send state trie nodes response"),

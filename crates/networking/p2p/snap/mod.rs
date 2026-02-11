@@ -15,6 +15,7 @@
 pub mod client;
 pub mod constants;
 pub mod error;
+pub mod request_sizer;
 mod server;
 
 use bytes::Bytes;
@@ -27,6 +28,9 @@ pub use server::{
 
 // Re-export error types
 pub use error::{DumpError, SnapError};
+
+// Re-export adaptive request sizer
+pub use request_sizer::RequestSizerMap;
 
 // Re-export client types and functions
 pub use client::{
