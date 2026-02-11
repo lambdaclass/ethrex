@@ -50,18 +50,17 @@ impl OpcodeHandler for OpCallHandler {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        // Check and subtract EIP-7702.
-        // Note: Do not reorder the gas increase after the `get_call_gas_params()`.
+        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, callee)?;
-        vm.current_call_frame
-            .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
         let (new_memory_size, address_is_empty, address_was_cold) =
             vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, callee)?;
 
-        // Record addresses for BAL per EIP-7928
+        // Record addresses for BAL per EIP-7928.
+        // gas_remaining has NOT been reduced by eip7702_gas_consumed yet,
+        // matching the EELS reference where BAL recording sees pre-eip7702 gas.
         let value_cost = if !value.is_zero() {
             gas_cost::CALL_POSITIVE_VALUE
         } else {
@@ -84,7 +83,11 @@ impl OpcodeHandler for OpCallHandler {
             create_cost,
         );
 
+        // Compute gas_left after eip7702 consumption (without modifying gas_remaining yet).
         #[expect(clippy::as_conversions, reason = "safe")]
+        let gas_left = (vm.current_call_frame.gas_remaining as u64)
+            .checked_sub(eip7702_gas_consumed)
+            .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::call(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -92,9 +95,13 @@ impl OpcodeHandler for OpCallHandler {
             address_is_empty,
             value,
             gas,
-            vm.current_call_frame.gas_remaining as u64,
+            gas_left,
         )?;
-        vm.current_call_frame.increase_consumed_gas(gas_cost)?;
+        vm.current_call_frame.increase_consumed_gas(
+            gas_cost
+                .checked_add(eip7702_gas_consumed)
+                .ok_or(ExceptionalHalt::OutOfGas)?,
+        )?;
 
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
@@ -148,18 +155,15 @@ impl OpcodeHandler for OpCallCodeHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check and subtract EIP-7702.
-        // Note: Do not reorder the gas increase after the `get_call_gas_params()`.
+        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
-        vm.current_call_frame
-            .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
         let (new_memory_size, _, address_was_cold) =
             vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
 
-        // Record addresses for BAL per EIP-7928
+        // Record addresses for BAL per EIP-7928.
         let value_cost = if !value.is_zero() {
             gas_cost::CALLCODE_POSITIVE_VALUE
         } else {
@@ -178,15 +182,22 @@ impl OpcodeHandler for OpCallCodeHandler {
         );
 
         #[expect(clippy::as_conversions, reason = "safe")]
+        let gas_left = (vm.current_call_frame.gas_remaining as u64)
+            .checked_sub(eip7702_gas_consumed)
+            .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
             vm.current_call_frame.memory.len(),
             address_was_cold,
             value,
             gas,
-            vm.current_call_frame.gas_remaining as u64,
+            gas_left,
         )?;
-        vm.current_call_frame.increase_consumed_gas(gas_cost)?;
+        vm.current_call_frame.increase_consumed_gas(
+            gas_cost
+                .checked_add(eip7702_gas_consumed)
+                .ok_or(ExceptionalHalt::OutOfGas)?,
+        )?;
 
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
@@ -239,18 +250,15 @@ impl OpcodeHandler for OpDelegateCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check and subtract EIP-7702.
-        // Note: Do not reorder the gas increase after the `get_call_gas_params()`.
+        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
-        vm.current_call_frame
-            .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
         let (new_memory_size, _, address_was_cold) =
             vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
 
-        // Record addresses for BAL per EIP-7928
+        // Record addresses for BAL per EIP-7928.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -264,14 +272,21 @@ impl OpcodeHandler for OpDelegateCallHandler {
         );
 
         #[expect(clippy::as_conversions, reason = "safe")]
+        let gas_left = (vm.current_call_frame.gas_remaining as u64)
+            .checked_sub(eip7702_gas_consumed)
+            .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
             vm.current_call_frame.memory.len(),
             address_was_cold,
             gas,
-            vm.current_call_frame.gas_remaining as u64,
+            gas_left,
         )?;
-        vm.current_call_frame.increase_consumed_gas(gas_cost)?;
+        vm.current_call_frame.increase_consumed_gas(
+            gas_cost
+                .checked_add(eip7702_gas_consumed)
+                .ok_or(ExceptionalHalt::OutOfGas)?,
+        )?;
 
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
@@ -324,18 +339,15 @@ impl OpcodeHandler for OpStaticCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check and subtract EIP-7702.
-        // Note: Do not reorder the gas increase after the `get_call_gas_params()`.
+        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
-        vm.current_call_frame
-            .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
         let (new_memory_size, _, address_was_cold) =
             vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
 
-        // Record addresses for BAL per EIP-7928
+        // Record addresses for BAL per EIP-7928.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -349,14 +361,21 @@ impl OpcodeHandler for OpStaticCallHandler {
         );
 
         #[expect(clippy::as_conversions, reason = "safe")]
+        let gas_left = (vm.current_call_frame.gas_remaining as u64)
+            .checked_sub(eip7702_gas_consumed)
+            .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
             vm.current_call_frame.memory.len(),
             address_was_cold,
             gas,
-            vm.current_call_frame.gas_remaining as u64,
+            gas_left,
         )?;
-        vm.current_call_frame.increase_consumed_gas(gas_cost)?;
+        vm.current_call_frame.increase_consumed_gas(
+            gas_cost
+                .checked_add(eip7702_gas_consumed)
+                .ok_or(ExceptionalHalt::OutOfGas)?,
+        )?;
 
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
