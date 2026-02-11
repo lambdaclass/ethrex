@@ -221,8 +221,20 @@ pub async fn request_account_range(
         // Check completion before waiting for a peer — otherwise the loop can spin
         // forever when no snap-capable peer is immediately available.
         if tasks_queue_not_started.is_empty() && completed_tasks >= chunk_count {
-            info!("All account ranges downloaded successfully");
+            info!("All account ranges downloaded successfully (early check)");
             break;
+        }
+
+        // Periodic diagnostics (every ~10s via the metrics update timer)
+        if last_update
+            .elapsed()
+            .expect("Time shouldn't be in the past")
+            >= Duration::from_secs(10)
+        {
+            info!(
+                "account_range loop: completed={completed_tasks}/{chunk_count}, queue={}, downloaded={downloaded_count}",
+                tasks_queue_not_started.len()
+            );
         }
 
         let Some((peer_id, connection)) = peers
