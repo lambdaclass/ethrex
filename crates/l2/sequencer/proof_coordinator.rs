@@ -173,9 +173,15 @@ impl ProofCoordinator {
         }
 
         // Check if this prover's type is one of the needed proof types.
-        // If not, there's no point assigning a batch to it (e.g. an SP1 prover
-        // shouldn't be assigned a batch when only exec proofs are needed).
-        let prover_type_needed = self.needed_proof_types.contains(&prover_type);
+        // If not, tell the prover immediately — there's no point assigning
+        // any batch to it (e.g. an SP1 prover connecting when only exec
+        // proofs are needed).
+        if !self.needed_proof_types.contains(&prover_type) {
+            info!("{prover_type} proof is not needed, rejecting prover");
+            let response = ProofData::ProverTypeNotNeeded { prover_type };
+            send_response(stream, &response).await?;
+            return Ok(());
+        }
 
         // Check if this specific prover type's proof already exists for the batch.
         // Even if not all proofs exist, this prover may have already done its part.
@@ -199,15 +205,9 @@ impl ProofCoordinator {
         }
 
         let response = if all_proofs_exist
-            || !prover_type_needed
             || prover_proof_exists
             || !self.rollup_store.contains_batch(&batch_to_prove).await?
         {
-            if !prover_type_needed {
-                debug!(
-                    "{prover_type} proof is not needed, skipping batch {batch_to_prove} assignment"
-                );
-            }
             if prover_proof_exists {
                 debug!("{prover_type} proof already exists for batch {batch_to_prove}, skipping");
             }

@@ -160,6 +160,15 @@ impl<B: ProverBackend> Prover<B> {
                 );
                 return Ok(None);
             }
+            ProofData::ProverTypeNotNeeded { prover_type } => {
+                error!(
+                    "Proof coordinator does not need {prover_type} proofs. \
+                     This prover's backend is not in the required proof types for this deployment."
+                );
+                return Err(format!(
+                    "{prover_type} proofs are not needed by the proof coordinator"
+                ));
+            }
             _ => return Err("Expecting ProofData::Response".to_owned()),
         };
 
