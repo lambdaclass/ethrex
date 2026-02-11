@@ -4,7 +4,7 @@
 
 ### 2026-02-11
 
-- Use locked trie backend in merkleization workers to avoid per-read transaction overhead [#6182](https://github.com/lambdaclass/ethrex/pull/6182)
+- Reduce trie/FKV memtable size and raise L0 compaction trigger to reduce skiplist and compaction overhead [#6183](https://github.com/lambdaclass/ethrex/pull/6183)
 
 ### 2026-02-06
 
