@@ -1141,7 +1141,7 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let last: Arc<BlockHeader> = self.latest_block_header.get();
+        let last = self.latest_block_header.get();
         if last.number == block_number {
             return Ok(Some(last.hash()));
         }
@@ -1496,7 +1496,9 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
-            block_hash_cache: Arc::new(Mutex::new(LruCache::new(std::num::NonZeroUsize::new(BLOCK_HASH_CACHE_SIZE).unwrap()))),
+            block_hash_cache: Arc::new(Mutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(BLOCK_HASH_CACHE_SIZE).unwrap(),
+            ))),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
         };
