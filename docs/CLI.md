@@ -114,6 +114,13 @@ P2P options:
 
           [default: 100]
 
+Dev options:
+      --dev.block-time <MILLISECONDS>
+          When set, the dev block builder collects transactions and builds a block every <MILLISECONDS>. When omitted, blocks are built on-demand: each transaction triggers an immediate block.
+
+      --dev.coinbase <ADDRESS>
+          Sets the coinbase (fee recipient) address for blocks built in dev mode. Accepts a hex-encoded Ethereum address (e.g., 0x1234...). Defaults to the zero address.
+
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the http rpc server.

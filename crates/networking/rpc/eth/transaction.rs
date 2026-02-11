@@ -605,13 +605,16 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
+        // Extract blobs_bundle for EIP-4844 transactions (used both for mempool and dev forwarding).
+        let blobs_bundle = match self {
+            SendRawTransactionRequest::EIP4844(wrapped) => Some(wrapped.blobs_bundle.clone()),
+            _ => None,
+        };
+
+        let hash = if let SendRawTransactionRequest::EIP4844(wrapped) = self {
             context
                 .blockchain
-                .add_blob_transaction_to_pool(
-                    wrapped_blob_tx.tx.clone(),
-                    wrapped_blob_tx.blobs_bundle.clone(),
-                )
+                .add_blob_transaction_to_pool(wrapped.tx.clone(), wrapped.blobs_bundle.clone())
                 .await
         } else {
             context
@@ -619,6 +622,14 @@ impl RpcHandler for SendRawTransactionRequest {
                 .add_transaction_to_pool(self.to_transaction())
                 .await
         }?;
+
+        // In dev mode, forward to the block builder (fire-and-forget).
+        // The transaction is already in the mempool, so we don't fail the
+        // RPC call if the channel is closed.
+        if let Some(ref sender) = context.dev_tx_sender {
+            let _ = sender.send((Box::new(self.to_transaction()), blobs_bundle));
+        }
+
         serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }

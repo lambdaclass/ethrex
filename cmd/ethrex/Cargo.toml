@@ -14,7 +14,7 @@ ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-config.workspace = true
 ethrex-crypto.workspace = true
-ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
+ethrex-dev = { workspace = true, optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
 ethrex-l2-rpc = { workspace = true, optional = true }

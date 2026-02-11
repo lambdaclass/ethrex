@@ -6,26 +6,24 @@ authors.workspace = true
 documentation.workspace = true
 license.workspace = true
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-ethrex-rpc.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-common.workspace = true
+ethrex-storage.workspace = true
+ethrex-config.workspace = true
 
-tokio.workspace = true
+spawned-concurrency.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "sync"] }
 tracing.workspace = true
 thiserror.workspace = true
-jsonwebtoken.workspace = true
-serde_json.workspace = true
-serde.workspace = true
-bytes.workspace = true
 ethereum-types.workspace = true
+bytes.workspace = true
+serde_json.workspace = true
+secp256k1.workspace = true
 hex.workspace = true
-reqwest = { version = "0.12.7", features = ["json"] }
-envy = "0.4.2"
-sha2 = "0.10.8"
 
 [lib]
-path = "./dev.rs"
+path = "./lib.rs"
 
 [lints]
 workspace = true
