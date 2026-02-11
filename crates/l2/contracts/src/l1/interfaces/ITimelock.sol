@@ -57,9 +57,9 @@ interface ITimelock {
     /// @notice Verifies one or more consecutive batches through the timelock.
     function verifyBatches(
         uint256 firstBatchNumber,
-        bytes[] memory risc0BlockProofs,
-        bytes[] memory sp1ProofsBytes,
-        bytes[] memory tdxSignatures
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
     ) external;
 
     /// @notice Verifies multiple batches through the timelock using aligned proofs.

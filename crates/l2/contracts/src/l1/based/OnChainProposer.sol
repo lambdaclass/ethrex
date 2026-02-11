@@ -435,9 +435,9 @@ contract OnChainProposer is
     ///         advance verification once proofs are available.
     function verifyBatches(
         uint256 firstBatchNumber,
-        bytes[] memory risc0BlockProofs,
-        bytes[] memory sp1ProofsBytes,
-        bytes[] memory tdxSignatures
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
     ) external {
         require(
             !ALIGNED_MODE,

@@ -471,9 +471,9 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function verifyBatches(
         uint256 firstBatchNumber,
-        bytes[] memory risc0BlockProofs,
-        bytes[] memory sp1ProofsBytes,
-        bytes[] memory tdxSignatures
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
     ) external override onlyOwner whenNotPaused {
         require(
             !ALIGNED_MODE,

@@ -89,9 +89,9 @@ interface IOnChainProposer {
     /// @param tdxSignatures An array of TDX signatures, one per batch.
     function verifyBatches(
         uint256 firstBatchNumber,
-        bytes[] memory risc0BlockProofs,
-        bytes[] memory sp1ProofsBytes,
-        bytes[] memory tdxSignatures
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
     ) external;
 
     // TODO: imageid, programvkey and riscvvkey should be constants
