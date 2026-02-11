@@ -4,7 +4,7 @@
 
 ### 2026-02-11
 
-- Deduplicate trie nodes across layers before writing to RocksDB [#6179](https://github.com/lambdaclass/ethrex/pull/6179)
+- Use locked trie backend in merkleization workers to avoid per-read transaction overhead [#6182](https://github.com/lambdaclass/ethrex/pull/6182)
 
 ### 2026-02-06
 
