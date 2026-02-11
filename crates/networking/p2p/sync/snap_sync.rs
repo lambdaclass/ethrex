@@ -940,7 +940,7 @@ async fn insert_accounts(
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     use crate::utils::get_rocksdb_temp_accounts_dir;
-    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_parallel;
 
     let trie = store.open_direct_state_trie_no_wal(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
@@ -967,7 +967,7 @@ async fn insert_accounts(
     }
 
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    let compute_state_root = trie_from_sorted_accounts_wrap(
+    let compute_state_root = trie_from_sorted_accounts_parallel(
         trie.db(),
         &mut iter
             .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
