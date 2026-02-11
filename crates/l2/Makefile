@@ -105,7 +105,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts with SP1 verifier
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--sp1 \
+	--sp1 true \
 	--on-chain-proposer-owner ${L2_OWNER_ADDRESS} \
 	--bridge-owner ${L2_OWNER_ADDRESS} \
 	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \

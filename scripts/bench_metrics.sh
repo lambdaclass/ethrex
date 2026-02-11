@@ -27,10 +27,13 @@ LOG_FILE="$1"
 METRICS_URL="${2:-http://localhost:3702/metrics}"
 OUTPUT="bench_results.md"
 
-# Fetch a metric value for a given batch from the Prometheus endpoint.
+# Fetch all metrics once and cache them.
+METRICS_CACHE=$(curl -s "$METRICS_URL" 2>/dev/null || true)
+
+# Look up a metric value for a given batch from the cached metrics.
 fetch_metric() {
     local metric="$1" batch="$2"
-    curl -s "$METRICS_URL" 2>/dev/null \
+    echo "$METRICS_CACHE" \
         | grep "^${metric}{" \
         | grep "batch_number=\"${batch}\"" \
         | awk '{print $2}' \
