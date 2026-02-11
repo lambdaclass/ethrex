@@ -9,7 +9,7 @@ Supported:
 ```
 consensus
 discv4
-eels/consmume-engine
+eels/consume-engine
 eels/consume-rlp
 engine-api
 engine-auth

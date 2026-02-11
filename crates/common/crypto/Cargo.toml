@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [lib]
 path = "./lib.rs"
@@ -11,7 +12,7 @@ path = "./lib.rs"
 [dependencies]
 # TODO(#1102): Move to Lambdaworks in the future
 c-kzg = { version = "2.1.1", default-features = false, optional = true }
-kzg-rs.workspace = true
+kzg-rs = { workspace = true, optional = true }
 openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
 thiserror.workspace = true
 
@@ -19,9 +20,10 @@ thiserror.workspace = true
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
-default = []
+default = ["kzg-rs"]
 c-kzg = ["c-kzg/std", "c-kzg/ethereum_kzg_settings"]
 openvm-kzg = ["dep:openvm-kzg"]
+kzg-rs = ["dep:kzg-rs"]
 
 risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable"]
 openvm = ["openvm-kzg"]

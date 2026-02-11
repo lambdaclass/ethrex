@@ -6,15 +6,15 @@ use crate::rlpx::l2::{
     },
 };
 use crate::{
-    discv4::peer_table::PeerTable,
+    backend,
     metrics::METRICS,
     network::P2PContext,
+    peer_table::PeerTable,
     rlpx::{
         Message,
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
-            backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts68, Receipts69},
             status::{StatusMessage68, StatusMessage69},
@@ -397,10 +397,14 @@ impl GenServer for PeerConnectionServer {
                     );
                     match msg {
                         L2Cast::BatchBroadcast => {
-                            l2_connection::send_sealed_batch(established_state).await
+                            let res = l2_connection::send_sealed_batch(established_state).await;
+                            res.and(
+                                l2_connection::process_batches_on_queue(established_state).await,
+                            )
                         }
                         L2Cast::BlockBroadcast => {
-                            l2_connection::send_new_block(established_state).await
+                            let res = l2_connection::send_new_block(established_state).await;
+                            res.and(l2_connection::process_blocks_on_queue(established_state).await)
                         }
                     }
                 }
@@ -1081,8 +1085,24 @@ async fn handle_incoming_message(
 
                 #[cfg(not(feature = "l2"))]
                 let is_l2_mode = false;
-                msg.handle(&state.node, &state.blockchain, is_l2_mode)
-                    .await?;
+                if let Err(error) = msg.handle(&state.node, &state.blockchain, is_l2_mode).await {
+                    if matches!(
+                        error,
+                        ethrex_blockchain::error::MempoolError::BlobsBundleError(_)
+                    ) {
+                        warn!(
+                            peer=%state.node,
+                            reason=%error,
+                            "disconnected from peer",
+                        );
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
+                        return Err(PeerConnectionError::DisconnectSent(
+                            DisconnectReason::SubprotocolError,
+                        ));
+                    }
+                    return Err(error.into());
+                }
             }
         }
         Message::GetStorageRanges(req) => {
@@ -1091,11 +1111,13 @@ async fn handle_incoming_message(
         }
         Message::GetByteCodes(req) => {
             let storage_clone = state.storage.clone();
-            let response = process_byte_codes_request(req, storage_clone).map_err(|_| {
-                PeerConnectionError::InternalError(
-                    "Failed to execute bytecode retrieval task".to_string(),
-                )
-            })?;
+            let response = process_byte_codes_request(req, storage_clone)
+                .await
+                .map_err(|_| {
+                    PeerConnectionError::InternalError(
+                        "Failed to execute bytecode retrieval task".to_string(),
+                    )
+                })?;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {

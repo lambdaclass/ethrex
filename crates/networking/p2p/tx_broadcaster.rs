@@ -16,7 +16,7 @@ use spawned_concurrency::{
 use tracing::{debug, error, info, trace};
 
 use crate::{
-    discv4::peer_table::{PeerTable, PeerTableError},
+    peer_table::{PeerTable, PeerTableError},
     rlpx::{
         Message,
         connection::server::PeerConnection,

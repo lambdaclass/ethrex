@@ -2,9 +2,9 @@ use clap::Parser;
 use ethrex::{
     cli::CLI,
     initializers::{init_l1, init_tracing},
-    utils::{NodeConfigFile, get_client_version, store_node_config_file},
+    utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
 };
-use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
+use ethrex_p2p::{peer_table::PeerTable, types::NodeRecord};
 use serde::Deserialize;
 use std::{path::Path, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
@@ -39,13 +39,29 @@ async fn server_shutdown(
     local_node_record: NodeRecord,
 ) {
     info!("Server shut down started...");
-    let node_config_path = datadir.join("node_config.json");
-    info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
-    store_node_config_file(node_config, node_config_path);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    if !is_memory_datadir(datadir) {
+        let node_config_path = datadir.join("node_config.json");
+        info!("Storing config at {:?}...", node_config_path);
+        let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
+        store_node_config_file(node_config, node_config_path);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
     info!("Server shutting down!");
+}
+
+/// Builds the CPU profile report and writes it to `profile.pb` in the current directory.
+#[cfg(feature = "cpu_profiling")]
+fn write_cpu_profile(guard: pprof::ProfilerGuard<'_>) -> eyre::Result<()> {
+    use pprof::protos::Message;
+
+    let report = guard.report().build()?;
+    let profile = report.pprof()?;
+    let mut content = Vec::new();
+    profile.encode(&mut content)?;
+    std::fs::write("profile.pb", &content)?;
+    info!("CPU profile written to profile.pb");
+    Ok(())
 }
 
 /// Fetches the latest release version on github
@@ -137,6 +153,16 @@ async fn main() -> eyre::Result<()> {
 
     let (log_filter_handler, _guard) = init_tracing(&opts);
 
+    #[cfg(feature = "cpu_profiling")]
+    let profiler_guard = {
+        let guard = pprof::ProfilerGuardBuilder::default()
+            .frequency(1000)
+            .build()
+            .expect("failed to build CPU profiler");
+        info!("CPU profiling enabled (1000 Hz), will write profile.pb at shutdown");
+        guard
+    };
+
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
 
@@ -157,6 +183,11 @@ async fn main() -> eyre::Result<()> {
         _ = signal_terminate.recv() => {
             server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
+    }
+
+    #[cfg(feature = "cpu_profiling")]
+    if let Err(e) = write_cpu_profile(profiler_guard) {
+        tracing::error!("Failed to write CPU profile: {e}");
     }
 
     Ok(())

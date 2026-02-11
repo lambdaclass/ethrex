@@ -207,6 +207,7 @@ pub fn prepare_vm_for_tx<'a>(
             timestamp: test.env.current_timestamp,
             prev_randao: test.env.current_random,
             difficulty: test.env.current_difficulty,
+            slot_number: test.env.slot_number.unwrap_or_default(),
             chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
             base_blob_fee_per_gas,

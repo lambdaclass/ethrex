@@ -3,4 +3,3 @@ rustflags = [
     "-Ctarget-cpu=x86-64-v3",
     "-Ctarget-feature=+avx2,+sse2,+ssse3,+sse4.1,+sse4.2,+bmi1,+lzcnt,+pclmulqdq",
 ]
-

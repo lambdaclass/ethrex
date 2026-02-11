@@ -3,14 +3,21 @@ description: Builds the Ethrex docker image
 
 inputs:
   username:
-    description: "Username for docker registry login"
+    description: "Username for ghcr.io registry login"
     required: false
   password:
-    description: "Password or token for docker registry login"
+    description: "Password or token for ghcr.io registry login"
+    required: false
+  dockerhub_username:
+    description: "Username for DockerHub login (for rate limiting)"
+    required: false
+  dockerhub_password:
+    description: "Password or token for DockerHub login"
     required: false
   registry:
     description: "Docker registry to push the image to (if pushing)"
     required: false
+    default: ghcr.io
   tags:
     description: "Comma-separated list of tags to apply to the built image"
     required: false
@@ -31,6 +38,10 @@ inputs:
     description: "Comma-separated list of platforms to build for"
     required: false
     default: "linux/amd64"
+  variant:
+    description: "Build variant for cache separation (l1 or l2)"
+    required: false
+    default: "l1"
 
 outputs:
   artifact_path:
@@ -45,11 +56,43 @@ runs:
       run: |
         echo "artifact_path=/tmp/${{ inputs.artifact_path }}" >> $GITHUB_OUTPUT
 
-    - name: Login to Docker registry
+    - id: cache-config
+      shell: bash
+      run: |
+        # Sanitize platform for use in image tags (replace / with -)
+        PLATFORM_SAFE=$(echo "${{ inputs.platforms }}" | tr '/' '-')
+        echo "platform_safe=$PLATFORM_SAFE" >> $GITHUB_OUTPUT
+
+        # Determine cache scope based on GitHub context
+        # - PRs: use pr-<number> for isolation between PRs
+        # - Main branch: use 'main'
+        # - Tags/releases: use 'main' (read from main's cache)
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          CACHE_SCOPE="pr-${{ github.event.pull_request.number }}"
+        elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          CACHE_SCOPE="main"
+        else
+          # For tags and other refs, use main's cache
+          CACHE_SCOPE="main"
+        fi
+        echo "cache_scope=$CACHE_SCOPE" >> $GITHUB_OUTPUT
+
+        # Build cache tag components
+        VARIANT="${{ inputs.variant }}"
+        echo "Cache scope: $CACHE_SCOPE, variant: $VARIANT, platform: $PLATFORM_SAFE"
+
+    - name: Login to DockerHub (for rate limiting)
+      if: inputs.dockerhub_username != '' && inputs.dockerhub_password != ''
+      uses: docker/login-action@v3
+      with:
+        username: ${{ inputs.dockerhub_username }}
+        password: ${{ inputs.dockerhub_password }}
+
+    - name: Login to ghcr.io (for cache)
       if: inputs.username != '' && inputs.password != ''
       uses: docker/login-action@v3
       with:
-        registry: ${{ inputs.registry }}
+        registry: ghcr.io
         username: ${{ inputs.username }}
         password: ${{ inputs.password }}
 
@@ -65,8 +108,10 @@ runs:
         push: ${{ inputs.push }}
         tags: ${{ inputs.tags }}
         outputs: ${{ inputs.push == 'false' && format('type=docker,dest={0}', steps.vars.outputs.artifact_path) || '' }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-from: |
+          type=registry,ref=${{ inputs.registry }}/${{ github.repository }}:cache-${{ steps.cache-config.outputs.cache_scope }}-${{ inputs.variant }}-${{ steps.cache-config.outputs.platform_safe }}
+          type=registry,ref=${{ inputs.registry }}/${{ github.repository }}:cache-main-${{ inputs.variant }}-${{ steps.cache-config.outputs.platform_safe }}
+        cache-to: type=registry,ref=${{ inputs.registry }}/${{ github.repository }}:cache-${{ steps.cache-config.outputs.cache_scope }}-${{ inputs.variant }}-${{ steps.cache-config.outputs.platform_safe }},mode=max
         build-args: ${{ inputs.build_args }}
         platforms: ${{ inputs.platforms }}
 

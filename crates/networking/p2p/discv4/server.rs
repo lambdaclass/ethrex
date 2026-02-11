@@ -1,4 +1,5 @@
 use crate::{
+    backend,
     discv4::{
         codec::Discv4Codec,
         messages::{
@@ -98,7 +99,7 @@ impl DiscoveryServer {
         storage: Store,
         local_node: Node,
         signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
+        udp_socket: UdpSocket,
         mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
         initial_lookup_interval: f64,
@@ -117,7 +118,7 @@ impl DiscoveryServer {
             local_node: local_node.clone(),
             local_node_record,
             signer,
-            udp_socket,
+            udp_socket: Arc::new(udp_socket),
             store: storage.clone(),
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
@@ -574,13 +575,7 @@ impl DiscoveryServer {
             latest_block_number,
         );
 
-        if !local_fork_id.is_valid(
-            remote_fork_id.clone(),
-            latest_block_number,
-            latest_block_header.timestamp,
-            chain_config,
-            genesis_header,
-        ) {
+        if !backend::is_fork_id_valid(&self.store, &remote_fork_id).await? {
             self.peer_table
                 .set_is_fork_id_valid(&node_id, false)
                 .await?;
