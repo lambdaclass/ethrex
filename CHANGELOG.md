@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-11
+
+- Use locked trie backend in merkleization workers to avoid per-read transaction overhead [#6180](https://github.com/lambdaclass/ethrex/pull/6180)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)

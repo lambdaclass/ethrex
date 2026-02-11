@@ -774,7 +774,7 @@ impl Blockchain {
         index: u8,
     ) -> Result<(), StoreError> {
         let mut tree: FxHashMap<H256, Trie> = Default::default();
-        let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
+        let mut state_trie = self.storage.open_locked_state_trie(parent_header.state_root)?;
         let mut storage_nodes = vec![];
         let mut accounts: FxHashMap<H256, AccountState> = Default::default();
         for msg in rx {
@@ -804,7 +804,7 @@ impl Blockchain {
                                 Some(rlp) => AccountState::decode(&rlp)?.storage_root,
                                 None => *EMPTY_TRIE_HASH,
                             };
-                            vacant_entry.insert(self.storage.open_storage_trie(
+                            vacant_entry.insert(self.storage.open_locked_storage_trie(
                                 prefix,
                                 parent_header.state_root,
                                 storage_root,
