@@ -1,3 +1,11 @@
+//! Utility types and error handling for JSON-RPC.
+//!
+//! This module provides common types used across all RPC handlers:
+//! - [`RpcErr`]: Error type for RPC failures with proper JSON-RPC error codes
+//! - [`RpcRequest`]: Parsed JSON-RPC request
+//! - [`RpcNamespace`]: RPC method namespace (eth, engine, debug, etc.)
+//! - Response types for success and error cases
+
 use ethrex_common::U256;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
@@ -7,6 +15,15 @@ use serde_json::Value;
 use crate::{authentication::AuthenticationError, clients::EthClientError};
 use ethrex_blockchain::error::MempoolError;
 
+/// Error type for JSON-RPC method failures.
+///
+/// Each variant maps to a specific JSON-RPC error code when serialized:
+/// - `-32601`: Method not found
+/// - `-32602`: Invalid params
+/// - `-32603`: Internal error
+/// - `-32000`: Generic server error
+/// - `-38001` to `-38005`: Engine API specific errors
+/// - `3`: Execution reverted/halted
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
     #[error("Method not found: {0}")]
@@ -133,7 +150,7 @@ impl From<RpcErr> for RpcErrorMetadata {
             RpcErr::InvalidPayloadAttributes(data) => RpcErrorMetadata {
                 code: -38003,
                 data: Some(data),
-                message: "Invalid forkchoice state".to_string(),
+                message: "Invalid payload attributes".to_string(),
             },
             RpcErr::UnknownPayload(context) => RpcErrorMetadata {
                 code: -38001,
@@ -161,34 +178,67 @@ impl From<MempoolError> for RpcErr {
     }
 }
 
-impl From<secp256k1::Error> for RpcErr {
-    fn from(err: secp256k1::Error) -> Self {
+impl From<ethrex_common::EcdsaError> for RpcErr {
+    fn from(err: ethrex_common::EcdsaError) -> Self {
         Self::Internal(format!("Cryptography error: {err}"))
     }
 }
 
+/// JSON-RPC method namespace.
+///
+/// Methods are namespaced by prefix (e.g., `eth_getBalance` is in the `Eth` namespace).
+/// Different namespaces may have different authentication requirements.
 pub enum RpcNamespace {
+    /// Engine API methods for consensus client communication (requires JWT auth).
     Engine,
+    /// Standard Ethereum methods for querying state and sending transactions.
     Eth,
+    /// Node administration methods.
     Admin,
+    /// Debugging and tracing methods.
     Debug,
+    /// Web3 utility methods.
     Web3,
+    /// Network information methods.
     Net,
+    /// Transaction pool inspection methods (exposed as `txpool_*`).
     Mempool,
 }
 
+/// JSON-RPC request identifier.
+///
+/// Per the JSON-RPC 2.0 spec, request IDs can be either numbers or strings.
+/// The same ID must be returned in the response.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestId {
+    /// Numeric request ID.
     Number(u64),
+    /// String request ID.
     String(String),
 }
 
+/// A parsed JSON-RPC 2.0 request.
+///
+/// # Example
+///
+/// ```json
+/// {
+///     "jsonrpc": "2.0",
+///     "id": 1,
+///     "method": "eth_getBalance",
+///     "params": ["0x...", "latest"]
+/// }
+/// ```
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
+    /// Request identifier, echoed back in the response.
     pub id: RpcRequestId,
+    /// JSON-RPC version, must be "2.0".
     pub jsonrpc: String,
+    /// Method name (e.g., "eth_getBalance").
     pub method: String,
+    /// Optional array of method parameters.
     pub params: Option<Vec<Value>>,
 }
 
@@ -236,26 +286,49 @@ impl Default for RpcRequest {
     }
 }
 
+/// Error metadata for JSON-RPC error responses.
+///
+/// Contains the error code, message, and optional additional data.
+/// Error codes follow the JSON-RPC 2.0 and Ethereum conventions.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcErrorMetadata {
+    /// Numeric error code (negative for standard errors).
     pub code: i32,
+    /// Optional additional error data (e.g., revert reason).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    /// Human-readable error message.
     pub message: String,
 }
 
+/// A successful JSON-RPC 2.0 response.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcSuccessResponse {
+    /// Request identifier from the original request.
     pub id: RpcRequestId,
+    /// JSON-RPC version, always "2.0".
     pub jsonrpc: String,
+    /// The result value returned by the method.
     pub result: Value,
 }
 
+/// An error JSON-RPC 2.0 response.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcErrorResponse {
+    /// Request identifier from the original request.
     pub id: RpcRequestId,
+    /// JSON-RPC version, always "2.0".
     pub jsonrpc: String,
+    /// Error details including code and message.
     pub error: RpcErrorMetadata,
+}
+
+/// A JSON-RPC 2.0 response, either success or error.
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum RpcResponse {
+    Success(RpcSuccessResponse),
+    Error(RpcErrorResponse),
 }
 
 /// Failure to read from DB will always constitute an internal error

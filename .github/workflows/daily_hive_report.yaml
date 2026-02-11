@@ -14,6 +14,11 @@ permissions:
   contents: read
   actions: write
 
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
@@ -115,10 +120,21 @@ jobs:
             FLAGS+=" --sim.buildarg branch=forks/osaka"
             FLAGS+=" --client.checktimelimit=180s"
           fi
+
+          if [[ "$SIMULATION" == "ethereum/rpc-compat" ]]; then
+            FLAGS+=" --sim.buildarg branch=d08382ae5c808680e976fce4b73f4ba91647199b"
+          fi
+
           if [[ -n "$SIM_LIMIT" ]]; then
             FLAGS+=" --sim.limit \"$SIM_LIMIT\""
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Run Hive Simulation
         id: run-hive-action
@@ -192,7 +208,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: results_daily.md
-          path: results.md
+          path: |
+            results.md
+            hive_slack_blocks.json
           if-no-files-found: error
 
       - name: Post results in summary
@@ -224,8 +242,9 @@ jobs:
                 )
               || secrets.TEST_CHANNEL_SLACK
             }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
-            sh .github/scripts/publish_hive.sh "$webhook" results.md
+            bash .github/scripts/publish_hive.sh "$webhook" hive_slack_blocks.json "$RUN_URL"
           done
           echo "Sending Results" >> $GITHUB_STEP_SUMMARY

@@ -2,8 +2,97 @@
 
 ## Perf
 
+### 2026-02-06
+
+- Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)
+- Cache ECDSA sender recovery in transaction structs [#6153](https://github.com/lambdaclass/ethrex/pull/6153)
+
+### 2026-01-27
+
+- Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
+- Implement cache for `EXTCODESIZE` [#6034](https://github.com/lambdaclass/ethrex/pull/6034)
+
+### 2026-01-23
+
+- Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
+
+### 2026-01-21
+
+- Optimize `debug_executionWitness` by pre-serializing RPC format at storage time [#5956](https://github.com/lambdaclass/ethrex/pull/5956)
+- Use fastbloom as the bloom filter [#5968](https://github.com/lambdaclass/ethrex/pull/5968)
+- Improve snap sync logging with table format and visual progress bars [#5977](https://github.com/lambdaclass/ethrex/pull/5977)
+
+### 2026-01-20
+
+- Remove `ethrex-threadpool` crate and move `ThreadPool` to `ethrex-trie` [#5925](https://github.com/lambdaclass/ethrex/pull/5925)
+- Add frame pointers setting to makefiles [#5746](https://github.com/lambdaclass/ethrex/pull/5746)
+- Remove `Mutex<Box<_>>` from `DatabaseLogger::store` to reduce contention [#5930](https://github.com/lambdaclass/ethrex/pull/5930)
+
+### 2026-01-19
+
+- Use FxHashset for access lists [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
+- Prewarm cache by executing in parallel [#5906](https://github.com/lambdaclass/ethrex/pull/5906)
+
+### 2026-01-15
+
+- Reduce state iterated when calculating partial state transitions [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
+
+### 2026-01-13
+
+- Remove needless allocs in CALLDATACOPY/CODECOPY/EXTCODECOPY [#5810](https://github.com/lambdaclass/ethrex/pull/5810)
+- Inline common opcodes [#5761](https://github.com/lambdaclass/ethrex/pull/5761)
+- Improve ecrecover precompile by removing heap allocs and conversions [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
+
+### 2026-01-12
+
+- Refactor `ecpairing` using ark [#5792](https://github.com/lambdaclass/ethrex/pull/5792)
+
+### 2025-12-23
+
+- Remove needless allocs on store api [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
+
+### 2025-12-22
+
+- Avoid double parsing and extra clones in doc signature formatting [#9285](https://github.com/starkware-libs/cairo/pull/9285)
+
+### 2025-12-19
+
+- Make HashSet use fxhash in discv4 peer_table [#5688](https://github.com/lambdaclass/ethrex/pull/5688)
+- Validate tx blobs after checking if it's already in the mempool [#5686](https://github.com/lambdaclass/ethrex/pull/5686)
+
+### 2025-12-15
+
+- Parallelize storage merkelization [#6079](https://github.com/lambdaclass/ethrex/pull/6079)
+
+### 2025-12-02
+
+- Avoid unnecessary hashing of init codes and already hashed codes [#5397](https://github.com/lambdaclass/ethrex/pull/5397)
+
+### 2025-11-28
+
+- Change some calls from `encode_to_vec().len()` to `.length()` when wanting to get the rlp encoded length [#5374](https://github.com/lambdaclass/ethrex/pull/5374)
+- Use our keccak implementation for receipts bloom filter calculation [#5454](https://github.com/lambdaclass/ethrex/pull/5454)
+
+### 2025-11-27
+
+- Use unchecked swap for stack [#5439](https://github.com/lambdaclass/ethrex/pull/5439)
+
+### 2025-11-20
+
+- Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding a alloc-less length method the default trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
+
+### 2025-11-19
+
+- Parallelize merkleization [#5377](https://github.com/lambdaclass/ethrex/pull/5377)
+
+### 2025-11-17
+
+- Avoid temporary allocations when decoding and hashing trie nodes [#5353](https://github.com/lambdaclass/ethrex/pull/5353)
+
 ### 2025-11-13
 
+- Use specialized DUP implementation [#5324](https://github.com/lambdaclass/ethrex/pull/5324)
+- Avoid recalculating blob base fee while preparing transactions [#5328](https://github.com/lambdaclass/ethrex/pull/5328)
 - Use BlobDB for account_codes column family [#5300](https://github.com/lambdaclass/ethrex/pull/5300)
 
 ### 2025-11-12

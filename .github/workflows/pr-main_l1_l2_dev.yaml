@@ -1,5 +1,6 @@
 name: L2 Dev
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
   merge_group:
@@ -16,10 +17,32 @@ concurrency:
 
 env:
   DOCKER_ETHREX_WORKDIR: /usr/local/bin
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.finish.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run_tests:
+              - '!docs/**'
+      - name: finish
+        id: finish
+        run: echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+      - name: Print result
+        run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
+
   integration-test-l1-l2-dev:
-    if: ${{ github.event_name != 'merge_group' }}
+    needs: detect-changes
+    if: ${{ github.event_name != 'merge_group' && needs.detect-changes.outputs.run_tests == 'true' }}
     name: Integration Test
     runs-on: ubuntu-latest
     steps:
@@ -33,10 +56,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Start ethrex
         run: |
@@ -67,12 +87,12 @@ jobs:
       - name: Show ENVs
         run: |
           cat .env
+          cp .env cmd/.env
 
       - name: Run test
         run: |
           cd crates/l2
           tail -n +1 -f /tmp/ethrex.log &
           tail -n +1 -f /tmp/prover.log &
-          export $(xargs < .env)
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
-          cargo test l2 --release -- --nocapture --test-threads=1
+          cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1

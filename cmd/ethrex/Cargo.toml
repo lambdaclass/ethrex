@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -52,6 +53,8 @@ reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
+tracing-appender = "0.2"
+pprof = { version = "0.15", features = ["cpp", "prost-codec", "frame-pointer"], optional = true }
 
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
@@ -77,8 +80,13 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "metrics", "jemalloc", "dev"]
+default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev"]
 dev = ["dep:ethrex-dev"]
+secp256k1 = [
+  "ethrex-vm/secp256k1",
+  "ethrex-common/secp256k1",
+  "ethrex-blockchain/secp256k1",
+]
 c-kzg = [
   "ethrex-vm/c-kzg",
   "ethrex-common/c-kzg",
@@ -86,7 +94,7 @@ c-kzg = [
   "ethrex-p2p/c-kzg",
   "ethrex-crypto/c-kzg",
 ]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
+metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [
@@ -96,6 +104,8 @@ jemalloc_profiling = [
   "ethrex-rpc/jemalloc_profiling",
 ]
 sync-test = ["ethrex-p2p/sync-test"]
+# discv5 is currently experimental and should only be enabled for development purposes
+experimental-discv5 = ["ethrex-p2p/experimental-discv5"]
 
 l2 = [
   "ethrex-l2",
@@ -115,6 +125,9 @@ l2-sql = ["ethrex-storage-rollup/sql"]
 sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
+
+perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
+cpu_profiling = ["dep:pprof"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }

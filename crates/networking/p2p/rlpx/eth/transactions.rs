@@ -236,14 +236,14 @@ impl PooledTransactions {
     }
 
     /// validates if the received TXs match the request
-    pub async fn validate_requested(
+    pub fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes,
         fork: Fork,
     ) -> Result<(), MempoolError> {
         for tx in &self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate(&itx.tx, fork)?;
+                itx.blobs_bundle.validate_cheap(&itx.tx, fork)?;
             }
             let tx_hash = tx.compute_hash();
             let Some(pos) = requested
@@ -287,6 +287,9 @@ impl PooledTransactions {
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
+                    if matches!(e, MempoolError::BlobsBundleError(_)) {
+                        return Err(e);
+                    }
                     debug!(
                         peer=%node,
                         error=%e,

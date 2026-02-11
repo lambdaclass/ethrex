@@ -4,6 +4,7 @@ use levm::LEVM;
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
@@ -11,8 +12,8 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, types::fee_config::FeeConfig};
 pub use ethrex_levm::call_frame::CallFrameBackup;
-use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
+pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -73,17 +74,29 @@ impl Evm {
         }
     }
 
-    pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
+    /// Execute a block and return the execution result.
+    ///
+    /// Also records and returns the Block Access List (EIP-7928) for Amsterdam+ forks.
+    /// The BAL will be `None` for pre-Amsterdam forks.
+    pub fn execute_block(
+        &mut self,
+        block: &Block,
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block(block, &mut self.db, self.vm_type)
     }
 
-    #[instrument(level = "trace", name = "Block execution", skip_all)]
+    #[instrument(
+        level = "trace",
+        name = "Block execution",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
-    ) -> Result<BlockExecutionResult, EvmError> {
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
     }
 
@@ -153,6 +166,22 @@ impl Evm {
         levm::extract_all_requests_levm(receipts, &mut self.db, header, self.vm_type)
     }
 
+    /// Takes the Block Access List (BAL) from the database if recording was enabled.
+    /// Returns `None` if BAL recording was not enabled.
+    pub fn take_bal(&mut self) -> Option<BlockAccessList> {
+        self.db.take_bal()
+    }
+
+    /// Enables BAL (Block Access List) recording for EIP-7928.
+    pub fn enable_bal_recording(&mut self) {
+        self.db.enable_bal_recording();
+    }
+
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
+    pub fn set_bal_index(&mut self, index: u16) {
+        self.db.set_bal_index(index);
+    }
+
     pub fn simulate_tx_from_generic(
         &mut self,
         tx: &GenericTransaction,
@@ -200,4 +229,7 @@ impl Evm {
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
+    /// Block gas used (PRE-REFUND for Amsterdam+ per EIP-7778).
+    /// This differs from receipt cumulative_gas_used which is POST-REFUND.
+    pub block_gas_used: u64,
 }

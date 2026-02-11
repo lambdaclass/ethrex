@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::clients::auth::RpcResponse;
+use ethrex_rpc::utils::RpcResponse;
 use ethrex_storage::Store;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -333,7 +333,7 @@ impl DumpProcessor {
 
             store.add_block(block).await?;
             store
-                .forkchoice_update(Some(block_hashes), block_number, block_hash, None, None)
+                .forkchoice_update(block_hashes, block_number, block_hash, None, None)
                 .await?;
             info!("Head of local chain is now block {block_number} with hash {block_hash}");
         }
@@ -738,7 +738,7 @@ pub async fn main() -> eyre::Result<()> {
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
     init_datadir(&args.datadir);
-    let store = open_store(&args.datadir);
+    let store = open_store(&args.datadir).expect("Failed to open Store");
     archive_sync(
         args.ipc_path,
         args.block_number,

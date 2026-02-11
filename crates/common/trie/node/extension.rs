@@ -13,7 +13,16 @@ use super::{BranchNode, Node, NodeRef, ValueOrHash};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
-#[derive(Debug, Clone, PartialEq)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
 pub struct ExtensionNode {
     pub prefix: Nibbles,
     pub child: NodeRef,
@@ -21,7 +30,7 @@ pub struct ExtensionNode {
 
 impl ExtensionNode {
     /// Creates a new extension node given its child hash and prefix
-    pub(crate) const fn new(prefix: Nibbles, child: NodeRef) -> Self {
+    pub const fn new(prefix: Nibbles, child: NodeRef) -> Self {
         Self { prefix, child }
     }
 
@@ -206,7 +215,16 @@ impl ExtensionNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded(&self.encode_to_vec())
+        self.compute_hash_no_alloc(&mut vec![])
+    }
+
+    /// Computes the node's hash, using the provided buffer
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+        buf.clear();
+        self.encode(buf);
+        let hash = NodeHash::from_encoded(buf);
+        buf.clear();
+        hash
     }
 
     /// Traverses own subtrie until reaching the node containing `path`

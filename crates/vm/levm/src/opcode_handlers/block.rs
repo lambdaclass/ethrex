@@ -7,8 +7,8 @@ use crate::{
 };
 use ethrex_common::utils::u256_from_big_endian_const;
 
-// Block Information (11)
-// Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
+// Block Information (12)
+// Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE, SLOTNUM
 
 impl<'a> VM<'a> {
     // BLOCKHASH operation
@@ -113,11 +113,14 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        let balance = self
-            .db
-            .get_account(self.current_call_frame.to)?
-            .info
-            .balance;
+        let address = self.current_call_frame.to;
+        let balance = self.db.get_account(address)?.info.balance;
+
+        // Record address touch for BAL per EIP-7928
+        // SELFBALANCE has "Pre-state Cost: None" so always succeeds
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
         self.current_call_frame.stack.push(balance)?;
         Ok(OpcodeResult::Continue)
@@ -166,17 +169,20 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
-        let blob_base_fee = match self.blob_base_fee.get() {
-            Some(value) => *value,
-            None => {
-                let value =
-                    get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?;
-                _ = self.blob_base_fee.set(value);
-                value
-            }
-        };
+        self.current_call_frame
+            .stack
+            .push(self.env.base_blob_fee_per_gas)?;
 
-        self.current_call_frame.stack.push(blob_base_fee)?;
+        Ok(OpcodeResult::Continue)
+    }
+
+    // SLOTNUM operation
+    pub fn op_slotnum(&mut self) -> Result<OpcodeResult, VMError> {
+        // EIP-7843: Returns the slot number of the current block
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::SLOTNUM)?;
+
+        self.current_call_frame.stack.push(self.env.slot_number)?;
 
         Ok(OpcodeResult::Continue)
     }

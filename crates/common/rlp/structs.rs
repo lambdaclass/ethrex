@@ -68,16 +68,19 @@ impl<'a> Decoder<'a> {
 
     /// Returns the next field without decoding it, i.e. the payload bytes including its prefix.
     pub fn get_encoded_item(self) -> Result<(Vec<u8>, Self), RLPDecodeError> {
-        match get_item_with_prefix(self.payload) {
-            Ok((field, rest)) => {
-                let updated_self = Self {
-                    payload: rest,
-                    ..self
-                };
-                Ok((field.to_vec(), updated_self))
-            }
-            Err(err) => Err(err),
-        }
+        self.get_encoded_item_ref()
+            .map(|(field, updated_self)| (field.to_vec(), updated_self))
+    }
+
+    /// Returns the next field without decoding it, i.e. the payload bytes including its prefix.
+    pub fn get_encoded_item_ref(self) -> Result<(&'a [u8], Self), RLPDecodeError> {
+        get_item_with_prefix(self.payload).map(|(field, rest)| {
+            let updated_self = Self {
+                payload: rest,
+                ..self
+            };
+            (field, updated_self)
+        })
     }
 
     /// Returns Some(field) if there's some field to decode, otherwise returns None
@@ -113,6 +116,10 @@ impl<'a> Decoder<'a> {
     /// instead of failing.
     pub const fn finish_unchecked(self) -> &'a [u8] {
         self.remaining
+    }
+
+    pub const fn get_payload_len(&self) -> usize {
+        self.payload.len()
     }
 }
 
@@ -225,58 +232,5 @@ impl<'a> Encoder<'a> {
     pub fn encode_bytes(mut self, value: &[u8]) -> Self {
         <[u8] as RLPEncode>::encode(value, &mut self.temp_buf);
         self
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        decode::RLPDecode,
-        encode::RLPEncode,
-        structs::{Decoder, Encoder},
-    };
-
-    #[derive(Debug, PartialEq, Eq)]
-    struct Simple {
-        pub a: u8,
-        pub b: u16,
-    }
-
-    #[test]
-    fn test_decoder_simple_struct() {
-        let expected = Simple { a: 61, b: 75 };
-        let mut buf = Vec::new();
-        (expected.a, expected.b).encode(&mut buf);
-
-        let decoder = Decoder::new(&buf).unwrap();
-        let (a, decoder) = decoder.decode_field("a").unwrap();
-        let (b, decoder) = decoder.decode_field("b").unwrap();
-        let rest = decoder.finish().unwrap();
-
-        assert!(rest.is_empty());
-        let got = Simple { a, b };
-        assert_eq!(got, expected);
-
-        // Decoding the struct as a tuple should give the same result
-        let tuple_decode = <(u8, u16) as RLPDecode>::decode(&buf).unwrap();
-        assert_eq!(tuple_decode, (a, b));
-    }
-
-    #[test]
-    fn test_encoder_simple_struct() {
-        let input = Simple { a: 61, b: 75 };
-        let mut buf = Vec::new();
-
-        Encoder::new(&mut buf)
-            .encode_field(&input.a)
-            .encode_field(&input.b)
-            .finish();
-
-        assert_eq!(buf, vec![0xc2, 61, 75]);
-
-        // Encoding the struct from a tuple should give the same result
-        let mut tuple_encoded = Vec::new();
-        (input.a, input.b).encode(&mut tuple_encoded);
-        assert_eq!(buf, tuple_encoded);
     }
 }

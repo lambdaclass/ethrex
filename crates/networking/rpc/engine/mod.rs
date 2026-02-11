@@ -1,4 +1,5 @@
 pub mod blobs;
+pub mod client_version;
 pub mod exchange_transition_config;
 pub mod fork_choice;
 pub mod payload;
@@ -14,10 +15,11 @@ pub type ExchangeCapabilitiesRequest = Vec<String>;
 
 /// List of capabilities that the execution layer client supports. Add new capabilities here.
 /// More info: https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#engine_exchangecapabilities
-pub const CAPABILITIES: [&str; 17] = [
+pub const CAPABILITIES: [&str; 22] = [
     "engine_forkchoiceUpdatedV1",
     "engine_forkchoiceUpdatedV2",
     "engine_forkchoiceUpdatedV3",
+    "engine_forkchoiceUpdatedV4",
     "engine_newPayloadV1",
     "engine_newPayloadV2",
     "engine_newPayloadV3",
@@ -30,8 +32,12 @@ pub const CAPABILITIES: [&str; 17] = [
     "engine_exchangeTransitionConfigurationV1",
     "engine_getPayloadBodiesByHashV1",
     "engine_getPayloadBodiesByRangeV1",
+    "engine_getPayloadBodiesByHashV2",
+    "engine_getPayloadBodiesByRangeV2",
     "engine_getBlobsV1",
     "engine_getBlobsV2",
+    "engine_getBlobsV3",
+    "engine_getClientVersionV1",
 ];
 
 impl From<ExchangeCapabilitiesRequest> for RpcRequest {

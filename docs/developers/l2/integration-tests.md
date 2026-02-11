@@ -19,7 +19,7 @@ Our integration tests assume that there is an ethrex L1 node, an ethrex L2 node,
 
 For this, we are using the `ethrex l2 --dev` command, which does this job for us. In one console, run the following:
 
-```
+```shell
 ./ethrex l2 --dev \
 --committer.commit-time 150000 \
 --block-producer.block-time 1000 \
@@ -53,7 +53,7 @@ So far, we have an ethrex L1 and an ethrex L2 node up and running. We only miss 
 
 In another terminal, run the following to spin up an ethrex L2 prover in exec mode:
 
-```
+```shell
 ./ethrex l2 prover \
 --backend exec \
 --proof-coordinators http://localhost:3900
@@ -67,13 +67,13 @@ In another terminal, run the following to spin up an ethrex L2 prover in exec mo
 
 During the execution of `ethrex l2 --dev`, a `.env` file is created and filled with environment variables containing contract addresses. This `.env` file is always needed for dev environments, so we need it for running the integration tests. Therefore, before running the integration tests, copy the `.env` file into `ethrex/cmd`:
 
-```
+```shell
 cp .env ethrex/cmd
 ```
 
 Finally, in another terminal (should be a third one at this point), change your current directory to `ethrex/crates/l2` and run:
 
-```
+```shell
 make test
 ```
 
@@ -85,11 +85,11 @@ Once you run `make test`, you should see the output of the tests being executed 
 
 ### How long do the tests take to run?
 
-The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 to 45 minutes to complete, depending the timing in which you performed the steps.
+The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 to 45 minutes to complete, depending on the timing in which you performed the steps.
 
 ### I think my tests are taking too long, how can I debug this?
 
-If your tests are taking significantly longer than expected, you are likely watching the `Retrying to get message proof for tx ...` counter in the tests terminal increase without progressing. Let's unveil what is happening here. This message indicates that the transaction has been included in an L2 block, but that block has not yet been included in a batch. There's no current way to fairly estimate when the block including the transaction will be included in a batch, but we can see how far is the block from being included.
+If your tests are taking significantly longer than expected, you are likely watching the `Retrying to get message proof for tx ...` counter in the tests terminal increase without progressing. Let's unveil what is happening here. This message indicates that the transaction has been included in an L2 block, but that block has not yet been included in a batch. There's no current way to fairly estimate when the block including the transaction will be included in a batch, but we can see how far the block is from being included.
 
 Using the hash of the transaction shown in the log message, you can check the status of the transaction using an Ethereum utility tool like `rex`. Run the following commands in a new terminal:
 
@@ -128,6 +128,35 @@ Logs are being constantly improved to provide better clarity. However, during th
 ### The tests are failing, what should I do?
 
 If the tests are failing, first ensure that both the ethrex L2 node and the ethrex L2 prover are running correctly without any errors. Check their logs for any issues. If everything seems fine, try restarting both services and rerun the tests. Ensure that your configuration files (e.g., `.env`) are correctly set up and that all required environment variables are defined. If the problem persists, consider reaching out to the ethrex community or support channels for further assistance.
+
+### How do I run the tests with ethrex running from docker?
+
+To run the integration tests with ethrex running on Docker, pass `--net=host` to docker run so it binds all ports in `localhost`:
+
+```shell
+docker run --net=host <other_docker_flags> ghcr.io/lambdaclass/ethrex:<tag>-l2 <ethrex_flags>
+```
+
+For ["Running ethrex L2 dev node"](#running-ethrex-l2-dev-node), with the latest image, the full command would be:
+
+```shell
+docker run --net=host ghcr.io/lambdaclass/ethrex:latest-l2 l2 --dev \
+--committer.commit-time 150000 \
+--block-producer.block-time 1000 \
+--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+--block-producer.l1-fee-vault-address 0x45681AE1768a8936FB87aB11453B4755e322ceec \
+--block-producer.operator-fee-per-gas 1000000000 \
+--no-monitor
+```
+
+For ["Running ethrex L2 prover"](#running-ethrex-l2-prover), with the latest image, the full command would be:
+
+```shell
+docker run --net=host ghcr.io/lambdaclass/ethrex:latest-l2 l2 prover \
+--backend exec \
+--proof-coordinators http://localhost:3900
+```
 
 ## Troubleshooting
 

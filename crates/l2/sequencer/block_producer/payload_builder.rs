@@ -4,21 +4,24 @@ use ethrex_blockchain::{
     constants::TX_GAS_COST,
     payload::{PayloadBuildContext, PayloadBuildResult, TransactionQueue, apply_plain_transaction},
 };
-use ethrex_common::types::{
-    Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction,
+use ethrex_common::{
+    U256,
+    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction, TxKind},
 };
-use ethrex_l2_common::privileged_transactions::PRIVILEGED_TX_BUDGET;
+use ethrex_l2_common::{
+    messages::get_block_l2_out_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
+};
 use ethrex_levm::vm::VMType;
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
-    metrics_blocks::METRICS_BLOCKS,
-    metrics_transactions::{METRICS_TX, MetricsTxType},
+    blocks::METRICS_BLOCKS,
+    transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
-use std::ops::Div;
 use std::sync::Arc;
+use std::{collections::HashMap, ops::Div};
 use tokio::time::Instant;
 use tracing::debug;
 
@@ -29,8 +32,9 @@ pub async fn build_payload(
     blockchain: Arc<Blockchain>,
     payload: Block,
     store: &Store,
-    last_privileged_nonce: &mut Option<u64>,
+    privileged_nonces: &mut HashMap<u64, Option<u64>>,
     block_gas_limit: u64,
+    registered_chains: Vec<U256>,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -42,8 +46,9 @@ pub async fn build_payload(
         blockchain.clone(),
         &mut context,
         store,
-        last_privileged_nonce,
+        privileged_nonces,
         block_gas_limit,
+        registered_chains,
     )
     .await?;
     blockchain.finalize_payload(&mut context)?;
@@ -92,16 +97,18 @@ pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
-    last_privileged_nonce: &mut Option<u64>,
+    privileged_nonces: &mut HashMap<u64, Option<u64>>,
     configured_block_gas_limit: u64,
+    registered_chains: Vec<U256>,
 ) -> Result<(), BlockProducerError> {
     let mut privileged_tx_count = 0;
     let VMType::L2(fee_config) = context.vm.vm_type else {
         return Err(BlockProducerError::Custom("invalid VM type".to_string()));
     };
-    let mut acc_encoded_size = context.payload.encode_to_vec().len();
+    let mut acc_encoded_size = context.payload.length();
     let fee_config_len = fee_config.to_vec().len();
     let chain_config = store.get_chain_config();
+    let chain_id = chain_config.chain_id;
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
@@ -153,21 +160,23 @@ pub async fn fill_transactions(
 
         // Check if we have enough blob space to add this transaction
         let tx: Transaction = head_tx.clone().into();
-        let tx_size = tx.encode_to_vec().len();
+        let tx_size = tx.length();
         if acc_encoded_size + fee_config_len + tx_size > SAFE_BYTES_PER_BLOB {
             debug!("No more blob space to run transactions");
             break;
         };
 
-        // Check we don't have an excessive number of privileged transactions
-        if head_tx.is_privileged() {
+        if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
             if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
                 debug!("Ran out of space for privileged transactions");
                 txs.pop();
                 continue;
             }
             let id = head_tx.nonce();
-            if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
+            let entry = privileged_nonces
+                .entry(privileged_tx.chain_id)
+                .or_insert(None);
+            if (*entry).is_some_and(|last_nonce| id != last_nonce + 1) {
                 debug!("Ignoring out-of-order privileged transaction");
                 txs.pop();
                 continue;
@@ -200,7 +209,22 @@ pub async fn fill_transactions(
             continue;
         }
 
+        // Set BAL index for this transaction (1-indexed per EIP-7928)
+        #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
+        let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+        context.vm.set_bal_index(tx_index);
+
+        // Record tx sender and recipient for BAL
+        if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+            recorder.record_touched_address(head_tx.tx.sender());
+            if let TxKind::Call(to) = head_tx.to() {
+                recorder.record_touched_address(to);
+            }
+        }
+
         // Execute tx
+        let previous_remaining_gas = context.remaining_gas;
+        let previous_block_value = context.block_value;
         let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => receipt,
             Err(e) => {
@@ -212,9 +236,26 @@ pub async fn fill_transactions(
             }
         };
 
-        // Update last privileged nonce and count
-        if head_tx.is_privileged() {
-            last_privileged_nonce.replace(head_tx.nonce());
+        let l2_messages = get_block_l2_out_messages(std::slice::from_ref(&receipt), chain_id);
+        let mut found_invalid_message = false;
+        for msg in l2_messages {
+            if !registered_chains.contains(&msg.dest_chain_id) {
+                txs.pop();
+                context.vm.undo_last_tx()?;
+                context.remaining_gas = previous_remaining_gas;
+                context.block_value = previous_block_value;
+                found_invalid_message = true;
+                break;
+            }
+        }
+        if found_invalid_message {
+            continue;
+        }
+
+        if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
+            let id = head_tx.nonce();
+            privileged_nonces.insert(privileged_tx.chain_id, Some(id));
+
             privileged_tx_count += 1;
         }
 

@@ -17,6 +17,7 @@ use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     tracing::LevmCallTracer,
+    utils::get_base_fee_per_blob_gas,
     vm::{VM, VMType},
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -189,6 +190,12 @@ pub fn prepare_vm_for_tx<'a>(
             ..Default::default()
         }),
     };
+    let base_blob_fee_per_gas =
+        get_base_fee_per_blob_gas(test.env.current_excess_blob_gas, &config).map_err(|e| {
+            EFTestRunnerError::FailedToEnsurePreState(format!(
+                "Failed to calculate base blob fee: {e}"
+            ))
+        })?;
 
     VM::new(
         Environment {
@@ -200,8 +207,10 @@ pub fn prepare_vm_for_tx<'a>(
             timestamp: test.env.current_timestamp,
             prev_randao: test.env.current_random,
             difficulty: test.env.current_difficulty,
+            slot_number: test.env.slot_number.unwrap_or_default(),
             chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
+            base_blob_fee_per_gas,
             gas_price: effective_gas_price(test, &test_tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas,
             block_blob_gas_used: None,
