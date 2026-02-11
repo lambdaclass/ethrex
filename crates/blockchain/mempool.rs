@@ -12,7 +12,7 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, H160, H256,
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
 };
 use ethrex_storage::error::StoreError;
@@ -203,7 +203,9 @@ impl Mempool {
             // Filter by blob gas fee
             if is_blob_tx
                 && let Some(blob_fee) = filter.blob_fee
-                && tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee)
+                && tx
+                    .max_fee_per_blob_gas()
+                    .is_none_or(|fee| fee < blob_fee.into())
             {
                 return false;
             }
@@ -406,7 +408,7 @@ impl Mempool {
 pub struct PendingTxFilter {
     pub min_tip: Option<u64>,
     pub base_fee: Option<u64>,
-    pub blob_fee: Option<U256>,
+    pub blob_fee: Option<u64>,
     pub only_plain_txs: bool,
     pub only_blob_txs: bool,
 }
