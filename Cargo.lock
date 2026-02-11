@@ -6404,6 +6404,7 @@ dependencies = [
  "libc",
  "libz-sys",
  "lz4-sys",
+ "zstd-sys",
 ]
 
 [[package]]
@@ -14818,4 +14819,14 @@ dependencies = [
  "crc32fast",
  "log",
  "simd-adler32",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.0.16+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
+dependencies = [
+ "cc",
+ "pkg-config",
 ]
