@@ -179,6 +179,9 @@ pub struct Store {
     /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
 
+    /// Cache for block hashes, keyed by block number.
+    /// Stores up to 256 recently accessed entries to speed up block hash lookups.
+    /// Helps avoid repeated backend reads for frequently requested block hashes.
     block_hash_cache: Arc<Mutex<LruCache<BlockNumber, BlockHash>>>,
 
     /// Cache for code metadata (code length), keyed by the bytecode hash.
