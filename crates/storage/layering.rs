@@ -130,14 +130,15 @@ impl TrieLayerCache {
             return;
         }
 
-        // Add keys to the global bloom filter
+        // Add keys to the global bloom filter (using compact encoding)
         for (p, _) in &key_values {
-            self.bloom.insert(p.as_ref());
+            let compact = prefixed_to_compact_db_key(p);
+            self.bloom.insert(&compact);
         }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
+            .map(|(path, value)| (prefixed_to_compact_db_key(&path), value))
             .collect();
 
         self.last_id += 1;
@@ -205,6 +206,48 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
     }
 }
 
+/// Convert prefix + path to compact DB key for RocksDB.
+/// Used by BackendTrieDB which knows the prefix separately.
+pub fn to_compact_db_key(prefix: Option<H256>, path: &Nibbles) -> Vec<u8> {
+    match prefix {
+        Some(account_hash) => {
+            let compact_path = path.encode_compact();
+            let mut key = Vec::with_capacity(32 + 1 + compact_path.len());
+            key.extend_from_slice(account_hash.as_bytes());
+            key.push(0xFF);
+            key.extend_from_slice(&compact_path);
+            key
+        }
+        None => path.encode_compact(),
+    }
+}
+
+/// Convert already-prefixed Nibbles to compact DB key for RocksDB.
+/// Used by TrieWrapper and BackendTrieDBLocked which receive prefixed Nibbles.
+///
+/// Storage keys have the format: [a0..a63, 16, 17, s0..sK] where 16 is the
+/// leaf flag of the account hash nibbles and 17 is the separator. This function
+/// detects that pattern and packs the account hash + storage path separately.
+/// Account keys (< 66 nibbles) fall through to encode_compact().
+pub fn prefixed_to_compact_db_key(prefixed: &Nibbles) -> Vec<u8> {
+    let raw = prefixed.as_ref();
+    // Storage keys: [a0..a63][16][17][s0..sK] where 16=leaf flag, 17=separator
+    if raw.len() >= 66 && raw[64] == 16 && raw[65] == 17 {
+        let mut key = Vec::with_capacity(66);
+        // Pack account hash: 64 nibbles → 32 bytes
+        for i in (0..64).step_by(2) {
+            key.push(raw[i] << 4 | raw[i + 1]);
+        }
+        key.push(0xFF);
+        // Compact-encode storage path
+        let storage_path = Nibbles::from_hex(raw[66..].to_vec());
+        key.extend_from_slice(&storage_path.encode_compact());
+        key
+    } else {
+        prefixed.encode_compact()
+    }
+}
+
 impl TrieDB for TrieWrapper {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
         // NOTE: we apply the prefix here, since the underlying TrieDB should
@@ -215,7 +258,8 @@ impl TrieDB for TrieWrapper {
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+        let compact = prefixed_to_compact_db_key(&key);
+        if let Some(value) = self.inner.get(self.state_root, &compact) {
             return Ok(Some(value));
         }
         self.db.get(key)

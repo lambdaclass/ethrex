@@ -14,7 +14,7 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
-    layering::{TrieLayerCache, TrieWrapper},
+    layering::{TrieLayerCache, TrieWrapper, prefixed_to_compact_db_key, to_compact_db_key},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -1159,11 +1159,11 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             for (address_hash, nodes) in storage_trie_nodes {
                 for (node_path, node_data) in nodes {
-                    let key = apply_prefix(Some(address_hash), node_path);
+                    let compact_key = to_compact_db_key(Some(address_hash), &node_path);
                     if node_data.is_empty() {
-                        txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
+                        txn.delete(STORAGE_TRIE_NODES, &compact_key)?;
                     } else {
-                        txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node_data)?;
+                        txn.put(STORAGE_TRIE_NODES, &compact_key, &node_data)?;
                     }
                 }
             }
@@ -1922,7 +1922,7 @@ impl Store {
             storage_trie_nodes.extend(
                 storage_nodes
                     .into_iter()
-                    .map(|(path, n)| (apply_prefix(Some(h256_hashed_address), path).into_vec(), n)),
+                    .map(|(path, n)| (to_compact_db_key(Some(h256_hashed_address), &path), n)),
             );
 
             // Add account to trie
@@ -1938,7 +1938,7 @@ impl Store {
         let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
         let account_trie_nodes = account_trie_nodes
             .into_iter()
-            .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
+            .map(|(path, n)| (to_compact_db_key(None, &path), n))
             .collect::<Vec<_>>();
 
         let mut tx = self.backend.begin_write()?;
@@ -2821,19 +2821,28 @@ fn apply_trie_updates(
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
 
+    // Convert last_written (raw nibbles) to compact for comparison with compact layer cache keys
+    let last_written_compact = if last_written.is_empty() {
+        vec![]
+    } else if last_written == [0xff] {
+        // Sentinel: FKV complete. Use max-length value so no leaf is skipped.
+        vec![0xff; 66]
+    } else {
+        prefixed_to_compact_db_key(&Nibbles::from_hex(last_written))
+    };
+
     let mut write_tx = backend.begin_write()?;
 
-    // Before encoding, accounts have only the account address as their path, while storage keys have
-    // the account address (32 bytes) + storage path (up to 32 bytes).
-
     // Commit removes the bottom layer and returns it, this is the mutation step.
+    // Keys are in compact format (2 nibbles per byte).
     let nodes = trie_mut.commit(root).unwrap_or_default();
     let mut result = Ok(());
     for (key, value) in nodes {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
+        // Compact key lengths: account leaf = 33, storage leaf = 66
+        let is_leaf = key.len() == 33 || key.len() == 66;
+        let is_account = key.len() <= 33;
 
-        if is_leaf && key > last_written {
+        if is_leaf && key > last_written_compact {
             continue;
         }
         let table = if is_leaf {
@@ -2891,8 +2900,9 @@ fn flatkeyvalue_generator(
     }
 
     loop {
+        // Root node key in compact format: empty non-leaf path encodes to [0x00]
         let root = read_tx
-            .get(ACCOUNT_TRIE_NODES, &[])?
+            .get(ACCOUNT_TRIE_NODES, &[0x00])?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
         let root: Node = ethrex_trie::Node::decode(&root)?;
         let state_root = root.compute_hash().finalize();
@@ -2930,8 +2940,10 @@ fn flatkeyvalue_generator(
             };
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
+            // last_written stays in raw nibble format for MISC_VALUES
             write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-            write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
+            // FKV table uses compact keys
+            write_txn.put(ACCOUNT_FLATKEYVALUE, &path.encode_compact(), &node.value)?;
             ctr += 1;
             if ctr > 10_000 {
                 write_txn.commit()?;
@@ -2960,8 +2972,10 @@ fn flatkeyvalue_generator(
                     return Ok(());
                 };
                 let key = apply_prefix(Some(account_hash), path);
+                // last_written stays in raw nibble format for MISC_VALUES
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                // FKV table uses compact keys
+                write_txn.put(STORAGE_FLATKEYVALUE, &prefixed_to_compact_db_key(&key), &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;

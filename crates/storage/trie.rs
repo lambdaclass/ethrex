@@ -3,7 +3,7 @@ use crate::api::tables::{
 };
 use crate::api::{StorageBackend, StorageLockedView, StorageWriteBatch};
 use crate::error::StoreError;
-use crate::layering::apply_prefix;
+use crate::layering::{apply_prefix, prefixed_to_compact_db_key, to_compact_db_key};
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::sync::Arc;
@@ -81,17 +81,10 @@ impl BackendTrieDB {
         self
     }
 
-    fn make_key(&self, path: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, path).into_vec()
-    }
-
-    /// Key might be for an account or storage slot
-    fn table_for_key(&self, key: &[u8]) -> &'static str {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        if is_leaf {
-            self.fkv_table
-        } else {
-            self.nodes_table
+    fn make_key(&self, path: &Nibbles) -> Vec<u8> {
+        match self.address_prefix {
+            Some(_) => to_compact_db_key(self.address_prefix, path),
+            None => prefixed_to_compact_db_key(path),
         }
     }
 }
@@ -103,12 +96,16 @@ impl TrieDB for BackendTrieDB {
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let prefixed_key = self.make_key(key);
-        let table = self.table_for_key(&prefixed_key);
+        let table = if key.is_leaf() {
+            self.fkv_table
+        } else {
+            self.nodes_table
+        };
+        let compact_key = self.make_key(&key);
         let tx = self.db.begin_read().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
         })?;
-        tx.get(table, prefixed_key.as_ref())
+        tx.get(table, &compact_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
@@ -117,9 +114,13 @@ impl TrieDB for BackendTrieDB {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
         })?;
         for (key, value) in key_values {
-            let prefixed_key = self.make_key(key);
-            let table = self.table_for_key(&prefixed_key);
-            tx.put_batch(table, vec![(prefixed_key, value)])
+            let table = if key.is_leaf() {
+                self.fkv_table
+            } else {
+                self.nodes_table
+            };
+            let compact_key = self.make_key(&key);
+            tx.put_batch(table, vec![(compact_key, value)])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
         let commit_fn = if self.no_wal {
@@ -158,10 +159,12 @@ impl BackendTrieDBLocked {
         })
     }
 
-    /// Key is already prefixed
+    /// Key is already prefixed (raw nibbles from apply_prefix).
+    /// Uses is_leaf() and length threshold to select the correct table transaction.
     fn tx_for_key(&self, key: &Nibbles) -> &dyn StorageLockedView {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
+        let is_leaf = key.is_leaf();
+        // Storage keys have [64 nibbles][16][17][...], so len >= 66
+        let is_account = key.len() < 66;
         if is_leaf {
             if is_account {
                 &*self.account_fkv_tx
@@ -183,7 +186,8 @@ impl TrieDB for BackendTrieDBLocked {
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let tx = self.tx_for_key(&key);
-        tx.get(key.as_ref())
+        let compact = prefixed_to_compact_db_key(&key);
+        tx.get(&compact)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
