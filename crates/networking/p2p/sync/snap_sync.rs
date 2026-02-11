@@ -297,10 +297,12 @@ pub async fn snap_sync(
 
     let mut storage_accounts = AccountStorageRoots::default();
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
-        // We start by downloading all of the leafs of the trie of accounts
-        // The function request_account_range writes the leafs into files in
-        // account_state_snapshots_dir
+        // Create channel to stream storage roots during account download.
+        // This lets us start downloading storage ranges concurrently with account insertion.
+        let (storage_root_tx, mut storage_root_rx) =
+            mpsc::unbounded_channel::<Vec<(H256, H256)>>();
 
+        // Phase 1: Download all account trie leaves from peers
         info!("Starting to download account ranges from peers");
         request_account_range(
             peers,
@@ -309,16 +311,55 @@ pub async fn snap_sync(
             account_state_snapshots_dir.as_ref(),
             &mut pivot_header,
             block_sync_state,
+            Some(storage_root_tx),
         )
         .await?;
         info!("Finish downloading account ranges from peers");
 
+        // Collect all storage roots extracted during the download phase
+        while let Ok(roots) = storage_root_rx.try_recv() {
+            for (hash, root) in roots {
+                storage_accounts
+                    .accounts_with_storage_root
+                    .insert(hash, (Some(root), Vec::new()));
+            }
+        }
+        info!(
+            "Pre-populated {} storage accounts from download phase",
+            storage_accounts.accounts_with_storage_root.len()
+        );
+
+        // Phase 2+4 concurrent: insert_accounts (CPU) || request_storage_ranges (network)
+        // These don't conflict: insert_accounts writes account trie tables,
+        // request_storage_ranges writes storage SST files to a different directory.
+
+        // Clone data for the concurrent optimistic storage download task
+        let mut peers_for_storage = peers.clone();
+        let mut storage_accounts_for_download = storage_accounts.clone();
+        let storages_dir = account_storages_snapshots_dir.clone();
+        let mut pivot_for_storage = pivot_header.clone();
+        let store_for_storage = store.clone();
+
+        // Spawn optimistic storage download on a separate tokio task (network-bound)
+        info!("Spawning optimistic storage download concurrently with account insertion");
+        let storage_handle = tokio::spawn(async move {
+            request_storage_ranges(
+                &mut peers_for_storage,
+                &mut storage_accounts_for_download,
+                storages_dir.as_ref(),
+                0,
+                &mut pivot_for_storage,
+                store_for_storage,
+            )
+            .await
+            .map(|chunk_idx| (chunk_idx, storage_accounts_for_download))
+        });
+
+        // Run insert_accounts on current task (CPU-bound trie construction)
         *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
         METRICS
             .current_step
             .set(CurrentStepValue::InsertingAccountRanges);
-        // We read the account leafs from the files in account_state_snapshots_dir, write it into
-        // the trie to compute the nodes and stores the accounts with storages for later use
 
         // Variable `accounts_with_storage` unused if not in rocksdb
         #[allow(unused_variables)]
@@ -339,10 +380,29 @@ pub async fn snap_sync(
         info!("Original state root: {state_root:?}");
         info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
+        // Wait for optimistic storage download to complete
+        let (chunk_index_from_download, storage_accounts_downloaded) = storage_handle
+            .await
+            .map_err(|e| SyncError::BytecodeTaskPanicked(e.to_string()))??;
+
+        info!(
+            "Optimistic storage download complete: {} accounts remaining, {} healed accounts",
+            storage_accounts_downloaded.accounts_with_storage_root.len(),
+            storage_accounts_downloaded.healed_accounts.len()
+        );
+
+        // Merge download state: take the remaining accounts and healed set from the download
+        storage_accounts.accounts_with_storage_root =
+            storage_accounts_downloaded.accounts_with_storage_root;
+        storage_accounts
+            .healed_accounts
+            .extend(storage_accounts_downloaded.healed_accounts);
+
         *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
-        // We start downloading the storage leafs. To do so, we need to be sure that the storage root
-        // is correct. To do so, we always heal the state trie before requesting storage rates
-        let mut chunk_index = 0_u64;
+        // Healing loop: fix stale state trie nodes and download any remaining storage ranges.
+        // The optimistic download may have used pre-healing storage roots; healing fixes any
+        // that became stale. Accounts already downloaded with correct roots are skipped.
+        let mut chunk_index = chunk_index_from_download;
         let mut state_leafs_healed = 0_u64;
         let mut storage_range_request_attempts = 0;
         loop {
@@ -1102,21 +1162,16 @@ async fn insert_accounts(
     }
 
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    // Storage roots are pre-extracted during account download (via the storage_root_tx channel)
+    // so we only need to count metrics here, not re-extract storage roots.
     let compute_state_root = trie_from_sorted_accounts_parallel(
         trie.db(),
         &mut iter
             .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-            .inspect(|(k, v)| {
+            .inspect(|(_k, _v)| {
                 METRICS
                     .account_tries_inserted
                     .fetch_add(1, Ordering::Relaxed);
-                let account_state = AccountState::decode(v).expect("We should have accounts here");
-                if account_state.storage_root != *EMPTY_TRIE_HASH {
-                    storage_accounts.accounts_with_storage_root.insert(
-                        H256::from_slice(k),
-                        (Some(account_state.storage_root), Vec::new()),
-                    );
-                }
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )

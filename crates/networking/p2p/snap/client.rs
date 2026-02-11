@@ -30,6 +30,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
+use ethrex_trie::EMPTY_TRIE_HASH;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use std::{
@@ -97,6 +98,7 @@ pub async fn request_account_range(
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
+    storage_root_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<(H256, H256)>>>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -216,6 +218,18 @@ pub async fn request_account_range(
             );
             all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
             all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
+
+            // Stream storage roots to the concurrent storage download task
+            if let Some(tx) = &storage_root_tx {
+                let roots: Vec<(H256, H256)> = accounts
+                    .iter()
+                    .filter(|u| u.account.storage_root != *EMPTY_TRIE_HASH)
+                    .map(|u| (u.hash, u.account.storage_root))
+                    .collect();
+                if !roots.is_empty() {
+                    let _ = tx.send(roots);
+                }
+            }
         }
 
         let Some((peer_id, connection)) = peers

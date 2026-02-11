@@ -161,7 +161,7 @@ impl Syncer {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[allow(clippy::type_complexity)]
 /// We store for optimization the accounts that need to heal storage
 pub struct AccountStorageRoots {
