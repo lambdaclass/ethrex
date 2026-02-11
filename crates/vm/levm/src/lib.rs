@@ -82,5 +82,7 @@ pub mod utils;
 pub mod vm;
 pub use environment::*;
 pub mod account;
+#[cfg(feature = "native-rollups")]
+pub mod execute_precompile;
 #[cfg(feature = "perf_opcode_timings")]
 pub mod timings;
