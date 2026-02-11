@@ -90,6 +90,14 @@ pub trait StorageWriteBatch: Send {
 
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;
+
+    /// Commits all changes with WAL disabled.
+    ///
+    /// Use during snap sync where data can be re-downloaded on crash,
+    /// avoiding the double write I/O overhead of the write-ahead log.
+    fn commit_no_wal(&mut self) -> Result<(), StoreError> {
+        self.commit()
+    }
 }
 
 /// Locked snapshot interface for batch read operations.

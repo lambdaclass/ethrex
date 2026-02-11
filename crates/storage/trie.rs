@@ -1,7 +1,7 @@
 use crate::api::tables::{
     ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
 };
-use crate::api::{StorageBackend, StorageLockedView};
+use crate::api::{StorageBackend, StorageLockedView, StorageWriteBatch};
 use crate::error::StoreError;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
@@ -20,6 +20,9 @@ pub struct BackendTrieDB {
     /// Storage trie address prefix (for storage tries)
     /// None for state tries, Some(address) for storage tries
     address_prefix: Option<H256>,
+    /// When true, writes bypass the write-ahead log for higher throughput.
+    /// Use during snap sync where data can be re-downloaded on crash.
+    no_wal: bool,
 }
 
 impl BackendTrieDB {
@@ -35,6 +38,7 @@ impl BackendTrieDB {
             nodes_table: ACCOUNT_TRIE_NODES,
             fkv_table: ACCOUNT_FLATKEYVALUE,
             address_prefix: None,
+            no_wal: false,
         })
     }
 
@@ -50,6 +54,7 @@ impl BackendTrieDB {
             nodes_table: STORAGE_TRIE_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: None,
+            no_wal: false,
         })
     }
 
@@ -66,7 +71,14 @@ impl BackendTrieDB {
             nodes_table: STORAGE_TRIE_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: Some(address_prefix),
+            no_wal: false,
         })
+    }
+
+    /// Enable no-WAL mode for snap sync writes.
+    pub fn with_no_wal(mut self) -> Self {
+        self.no_wal = true;
+        self
     }
 
     fn make_key(&self, path: Nibbles) -> Vec<u8> {
@@ -110,7 +122,12 @@ impl TrieDB for BackendTrieDB {
             tx.put_batch(table, vec![(prefixed_key, value)])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
-        tx.commit()
+        let commit_fn = if self.no_wal {
+            StorageWriteBatch::commit_no_wal
+        } else {
+            StorageWriteBatch::commit
+        };
+        commit_fn(&mut *tx)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
     }
 }
