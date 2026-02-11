@@ -252,8 +252,8 @@ impl Substate {
     /// Returns all accessed storage slots for a given address.
     /// Used by SELFDESTRUCT to record storage reads in BAL per EIP-7928:
     /// "SELFDESTRUCT: Include modified/read storage keys as storage_read"
-    pub fn get_accessed_storage_slots(&self, address: &Address) -> BTreeSet<H256> {
-        let mut slots = BTreeSet::new();
+    pub fn get_accessed_storage_slots(&self, address: &Address) -> FxHashSet<H256> {
+        let mut slots = FxHashSet::default();
 
         // Collect from current substate
         if let Some(slot_set) = self.accessed_storage_slots.get(address) {

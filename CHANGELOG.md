@@ -6,6 +6,10 @@
 
 - Optimize storage layer for block execution by reducing lock contention and allocations [#6207](https://github.com/lambdaclass/ethrex/pull/6207)
 
+### 2026-02-11
+
+- Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet for EVM accessed storage slots [#6185](https://github.com/lambdaclass/ethrex/pull/6185)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)
