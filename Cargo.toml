@@ -130,6 +130,7 @@ anyhow = "1.0.86"
 rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
   "lz4",
+  "zstd",
 ] }
 
 [workspace.lints.clippy]
