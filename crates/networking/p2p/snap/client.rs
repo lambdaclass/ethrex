@@ -16,7 +16,7 @@ use crate::{
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
     },
-    snap::{constants::*, encodable_to_proof, error::SnapError},
+    snap::{constants::*, encodable_to_proof, error::SnapError, request_sizer::RequestSizerMap},
     sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
@@ -36,7 +36,7 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::Path,
     sync::atomic::Ordering,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
 
@@ -259,6 +259,7 @@ pub async fn request_account_range(
         }
 
         let peer_table = peers.peer_table.clone();
+        let request_sizer = peers.request_sizer.clone();
 
         tokio::spawn(request_account_range_worker(
             peer_id,
@@ -268,6 +269,7 @@ pub async fn request_account_range(
             chunk_end,
             pivot_header.state_root,
             tx,
+            request_sizer,
         ));
     }
 
@@ -448,6 +450,7 @@ pub async fn request_bytecodes(
             .collect();
 
         let mut peer_table = peers.peer_table.clone();
+        let request_sizer = peers.request_sizer.clone();
 
         tokio::spawn(async move {
             let empty_task_result = TaskResult {
@@ -460,12 +463,14 @@ pub async fn request_bytecodes(
             debug!(
                 "Requesting bytecode from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
             );
+            let response_bytes = request_sizer.response_bytes_for_peer(&peer_id);
             let request_id = rand::random();
             let request = RLPxMessage::GetByteCodes(GetByteCodes {
                 id: request_id,
                 hashes: hashes_to_request.clone(),
-                bytes: MAX_RESPONSE_BYTES,
+                bytes: response_bytes,
             });
+            let request_start = Instant::now();
             if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) =
                 PeerHandler::make_request(
                     &mut peer_table,
@@ -476,6 +481,7 @@ pub async fn request_bytecodes(
                 )
                 .await
             {
+                request_sizer.record_response(&peer_id, request_start.elapsed());
                 if codes.is_empty() {
                     tx.send(empty_task_result).await.ok();
                     // Too spammy
@@ -684,15 +690,6 @@ pub async fn request_storage_ranges(
                 } else if let Some(hash_end) = hash_end {
                     // Task was a big storage account result
                     if hash_start <= hash_end {
-                        let task = StorageTask {
-                            start_index: remaining_start,
-                            end_index: remaining_end,
-                            start_hash: hash_start,
-                            end_hash: Some(hash_end),
-                        };
-                        tasks_queue_not_started.push_back(task);
-                        task_count += 1;
-
                         let acc_hash = *accounts_by_root_hash[remaining_start]
                             .1
                             .first()
@@ -700,11 +697,65 @@ pub async fn request_storage_ranges(
                         let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&acc_hash).ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
-                        for (old_start, end) in old_intervals {
-                            if end == &hash_end {
-                                *old_start = hash_start;
+
+                        // Bisect: split remaining range into two sub-tasks for parallel download
+                        let start_u256 = U256::from_big_endian(&hash_start.0);
+                        let end_u256 = U256::from_big_endian(&hash_end.0);
+                        let range_size = end_u256.saturating_sub(start_u256);
+
+                        if range_size >= U256::from(2) {
+                            let midpoint_u256 = start_u256 + range_size / 2;
+                            let midpoint = H256::from_uint(&midpoint_u256);
+                            let midpoint_next_u256 = midpoint_u256 + 1;
+                            let midpoint_next = H256::from_uint(&midpoint_next_u256);
+
+                            tasks_queue_not_started.push_back(StorageTask {
+                                start_index: remaining_start,
+                                end_index: remaining_end,
+                                start_hash: hash_start,
+                                end_hash: Some(midpoint),
+                            });
+                            tasks_queue_not_started.push_back(StorageTask {
+                                start_index: remaining_start,
+                                end_index: remaining_end,
+                                start_hash: midpoint_next,
+                                end_hash: Some(hash_end),
+                            });
+                            task_count += 2;
+
+                            // Replace the old interval [_, hash_end] with two:
+                            // [hash_start, midpoint] and [midpoint+1, hash_end]
+                            for (old_start, end) in old_intervals.iter_mut() {
+                                if *end == hash_end {
+                                    *old_start = hash_start;
+                                    *end = midpoint;
+                                    break;
+                                }
+                            }
+                            old_intervals.push((midpoint_next, hash_end));
+
+                            debug!(
+                                "Bisected storage range for account {:x}: [{:x}..{:x}] -> [{:x}..{:x}] + [{:x}..{:x}]",
+                                acc_hash, hash_start, hash_end,
+                                hash_start, midpoint, midpoint_next, hash_end
+                            );
+                        } else {
+                            // Range too small to bisect, create single continuation task
+                            tasks_queue_not_started.push_back(StorageTask {
+                                start_index: remaining_start,
+                                end_index: remaining_end,
+                                start_hash: hash_start,
+                                end_hash: Some(hash_end),
+                            });
+                            task_count += 1;
+
+                            for (old_start, end) in old_intervals {
+                                if end == &hash_end {
+                                    *old_start = hash_start;
+                                }
                             }
                         }
+
                         account_storage_roots
                             .healed_accounts
                             .extend(accounts_by_root_hash[start_index].1.iter().copied());
@@ -988,6 +1039,7 @@ pub async fn request_storage_ranges(
             );
         }
         let peer_table = peers.peer_table.clone();
+        let request_sizer = peers.request_sizer.clone();
 
         tokio::spawn(request_storage_ranges_worker(
             task,
@@ -998,6 +1050,7 @@ pub async fn request_storage_ranges(
             chunk_account_hashes,
             chunk_storage_roots,
             tx,
+            request_sizer,
         ));
     }
 
@@ -1049,11 +1102,13 @@ pub async fn request_state_trienodes(
     mut peer_table: PeerTable,
     state_root: H256,
     paths: Vec<RequestMetadata>,
+    request_sizer: RequestSizerMap,
 ) -> Result<Vec<Node>, SnapError> {
     let expected_nodes = paths.len();
     // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
     // This is so we avoid penalizing peers due to requesting stale data
 
+    let response_bytes = request_sizer.response_bytes_for_peer(&peer_id);
     let request_id = rand::random();
     let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
         id: request_id,
@@ -1063,8 +1118,9 @@ pub async fn request_state_trienodes(
             .iter()
             .map(|vec| vec![Bytes::from(vec.path.encode_compact())])
             .collect(),
-        bytes: MAX_RESPONSE_BYTES,
+        bytes: response_bytes,
     });
+    let request_start = Instant::now();
     let nodes = match PeerHandler::make_request(
         &mut peer_table,
         peer_id,
@@ -1074,12 +1130,15 @@ pub async fn request_state_trienodes(
     )
     .await
     {
-        Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
-            .nodes
-            .iter()
-            .map(|node| Node::decode(node))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(SnapError::from),
+        Ok(RLPxMessage::TrieNodes(trie_nodes)) => {
+            request_sizer.record_response(&peer_id, request_start.elapsed());
+            trie_nodes
+                .nodes
+                .iter()
+                .map(|node| Node::decode(node))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(SnapError::from)
+        }
         Ok(other_msg) => Err(SnapError::Protocol(
             PeerConnectionError::UnexpectedResponse("TrieNodes".to_string(), other_msg.to_string()),
         )),
@@ -1113,11 +1172,13 @@ pub async fn request_storage_trienodes(
     mut connection: PeerConnection,
     mut peer_table: PeerTable,
     get_trie_nodes: GetTrieNodes,
+    request_sizer: RequestSizerMap,
 ) -> Result<TrieNodes, RequestStorageTrieNodesError> {
     // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
     // This is so we avoid penalizing peers due to requesting stale data
     let request_id = get_trie_nodes.id;
     let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
+    let request_start = Instant::now();
     match PeerHandler::make_request(
         &mut peer_table,
         peer_id,
@@ -1127,7 +1188,10 @@ pub async fn request_storage_trienodes(
     )
     .await
     {
-        Ok(RLPxMessage::TrieNodes(trie_nodes)) => Ok(trie_nodes),
+        Ok(RLPxMessage::TrieNodes(trie_nodes)) => {
+            request_sizer.record_response(&peer_id, request_start.elapsed());
+            Ok(trie_nodes)
+        }
         Ok(other_msg) => Err(RequestStorageTrieNodesError {
             request_id,
             source: SnapError::Protocol(PeerConnectionError::UnexpectedResponse(
@@ -1151,16 +1215,19 @@ async fn request_account_range_worker(
     chunk_end: H256,
     state_root: H256,
     tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
+    request_sizer: RequestSizerMap,
 ) -> Result<(), SnapError> {
     debug!("Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}");
+    let response_bytes = request_sizer.response_bytes_for_peer(&peer_id);
     let request_id = rand::random();
     let request = RLPxMessage::GetAccountRange(GetAccountRange {
         id: request_id,
         root_hash: state_root,
         starting_hash: chunk_start,
         limit_hash: chunk_end,
-        response_bytes: MAX_RESPONSE_BYTES,
+        response_bytes,
     });
+    let request_start = Instant::now();
     if let Ok(RLPxMessage::AccountRange(AccountRange {
         id: _,
         accounts,
@@ -1174,6 +1241,7 @@ async fn request_account_range_worker(
     )
     .await
     {
+        request_sizer.record_response(&peer_id, request_start.elapsed());
         if accounts.is_empty() {
             tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                 .await
@@ -1253,6 +1321,7 @@ async fn request_storage_ranges_worker(
     chunk_account_hashes: Vec<H256>,
     chunk_storage_roots: Vec<H256>,
     tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
+    request_sizer: RequestSizerMap,
 ) -> Result<(), SnapError> {
     let start = task.start_index;
     let end = task.end_index;
@@ -1266,6 +1335,7 @@ async fn request_storage_ranges_worker(
         remaining_end: task.end_index,
         remaining_hash_range: (start_hash, task.end_hash),
     };
+    let response_bytes = request_sizer.response_bytes_for_peer(&peer_id);
     let request_id = rand::random();
     let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
         id: request_id,
@@ -1273,8 +1343,9 @@ async fn request_storage_ranges_worker(
         account_hashes: chunk_account_hashes,
         starting_hash: start_hash,
         limit_hash: task.end_hash.unwrap_or(HASH_MAX),
-        response_bytes: MAX_RESPONSE_BYTES,
+        response_bytes,
     });
+    let request_start = Instant::now();
     let Ok(RLPxMessage::StorageRanges(StorageRanges {
         id: _,
         slots,
@@ -1292,6 +1363,7 @@ async fn request_storage_ranges_worker(
         tx.send(empty_task_result).await.ok();
         return Ok(());
     };
+    request_sizer.record_response(&peer_id, request_start.elapsed());
     if slots.is_empty() && proof.is_empty() {
         tx.send(empty_task_result).await.ok();
         tracing::debug!("Received empty storage range");

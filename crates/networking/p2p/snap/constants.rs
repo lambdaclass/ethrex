@@ -14,7 +14,18 @@ use std::time::Duration;
 ///
 /// This limits the amount of data a peer can return in a single response,
 /// preventing memory exhaustion and ensuring reasonable response times.
+/// Used on the server side for response capping. Client-side requests use
+/// adaptive sizing via [`super::request_sizer::RequestSizerMap`].
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
+
+/// Initial response bytes budget for adaptive request sizing (128 KB).
+pub const INITIAL_RESPONSE_BYTES: u64 = 128 * 1024;
+
+/// Minimum response bytes for adaptive sizing (50 KB).
+pub const MIN_RESPONSE_BYTES_ADAPTIVE: u64 = 50 * 1024;
+
+/// Maximum response bytes for adaptive sizing (2 MB).
+pub const MAX_RESPONSE_BYTES_ADAPTIVE: u64 = 2 * 1024 * 1024;
 
 /// Maximum number of accounts/items to request in a single snap request.
 ///

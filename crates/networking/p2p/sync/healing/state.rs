@@ -335,6 +335,7 @@ async fn dispatch_state_healing_batches(
         let tx = task_sender.clone();
         *inflight_tasks += 1;
         let peer_table = peers.peer_table.clone();
+        let request_sizer = peers.request_sizer.clone();
 
         tokio::spawn(async move {
             let response = request_state_trienodes(
@@ -343,6 +344,7 @@ async fn dispatch_state_healing_batches(
                 peer_table,
                 state_root,
                 batch.clone(),
+                request_sizer,
             )
             .await;
             let _ = tx
