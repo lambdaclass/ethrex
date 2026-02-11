@@ -114,7 +114,7 @@ impl ProverBackend for ZiskBackend {
     type SerializedInput = ();
 
     fn prover_type(&self) -> ProverType {
-        todo!("No ProverType variant exists for ZisK yet")
+        unimplemented!("ZisK is not yet enabled as a backend for the L2")
     }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {

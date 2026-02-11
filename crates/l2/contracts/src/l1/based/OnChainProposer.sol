@@ -431,6 +431,8 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
+    /// @notice Callable by anyone (no access control) so that any party can
+    ///         advance verification once proofs are available.
     function verifyBatches(
         uint256 firstBatchNumber,
         bytes[] memory risc0BlockProofs,

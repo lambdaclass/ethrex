@@ -65,7 +65,7 @@ impl ProverBackend for OpenVmBackend {
     type SerializedInput = StdIn;
 
     fn prover_type(&self) -> ProverType {
-        todo!("No ProverType variant exists for OpenVM yet")
+        unimplemented!("OpenVM is not yet enabled as a backend for the L2")
     }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {

@@ -282,24 +282,19 @@ mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
     public verificationKeys;
 ```
 
-**Standard Verification** (`verifyBatch`):
+**Standard Verification** (`verifyBatches`):
 
 ```solidity
-function verifyBatch(
-    uint256 batchNumber,
-    bytes memory risc0BlockProof,
-    bytes memory sp1ProofBytes,
-    bytes memory tdxSignature
+function verifyBatches(
+    uint256 firstBatchNumber,
+    bytes[] memory risc0BlockProofs,
+    bytes[] memory sp1ProofsBytes,
+    bytes[] memory tdxSignatures
 ) external onlyOwner whenNotPaused {
     require(!ALIGNED_MODE, "008");  // Use verifyBatchesAligned instead
 
-    // Verify proofs directly via verifier contracts
-    if (REQUIRE_SP1_PROOF) {
-        ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(sp1Vk, publicInputs, sp1ProofBytes);
-    }
-    if (REQUIRE_RISC0_PROOF) {
-        IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(risc0BlockProof, risc0Vk, sha256(publicInputs));
-    }
+    // Loops over _verifyBatchInternal() for each batch,
+    // verifying proofs directly via verifier contracts
 }
 ```
 
@@ -312,7 +307,7 @@ function verifyBatchesAligned(
     bytes32[][] calldata sp1MerkleProofsList,
     bytes32[][] calldata risc0MerkleProofsList
 ) external onlyOwner whenNotPaused {
-    require(ALIGNED_MODE, "00h");  // Use verifyBatch instead
+    require(ALIGNED_MODE, "00h");  // Use verifyBatches instead
 
     for (uint256 i = 0; i < batchesToVerify; i++) {
         bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
@@ -444,9 +439,9 @@ pub struct AlignedConfig {
 |--------|---------------|--------------|
 | **Proof Format** | Groth16 (EVM-friendly) | Compressed STARK |
 | **Submission Target** | OnChainProposer contract | Aligned Batcher (WebSocket) |
-| **Verification Method** | `verifyBatch()` | `verifyBatchesAligned()` |
+| **Verification Method** | `verifyBatches()` | `verifyBatchesAligned()` |
 | **Verifier Contract** | SP1Verifier/RISC0Verifier | AlignedProofAggregatorService |
-| **Batch Verification** | One batch per tx | Multiple batches per tx |
+| **Batch Verification** | Multiple batches per tx | Multiple batches per tx (aggregated) |
 | **Gas Cost** | Higher (per-proof verification) | Lower (amortized via aggregation) |
 | **Additional Component** | None | L1ProofVerifier process |
 | **Proof Tracking** | Via rollup store | Via Aligned SDK |
@@ -455,7 +450,7 @@ pub struct AlignedConfig {
 
 **Standard Mode**:
 - Generates Groth16 proof (calldata format)
-- Proof sent directly to `OnChainProposer.verifyBatch()`
+- Proof sent directly to `OnChainProposer.verifyBatches()`
 
 **Aligned Mode**:
 - Generates Compressed STARK proof (bytes format)
@@ -466,7 +461,7 @@ pub struct AlignedConfig {
 
 **Standard Mode**:
 ```
-Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatch()
+Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatches()
                                                     │
                                                     ▼
                                           SP1Verifier/RISC0Verifier

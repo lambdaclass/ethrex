@@ -580,7 +580,7 @@ impl L1ProofSender {
     /// Sends one or more consecutive batch proofs in a single verifyBatches transaction.
     /// On revert with an invalid proof message, falls back to sending each batch
     /// individually to identify which batch has the bad proof.
-    pub async fn send_batches_proof_to_contract(
+    async fn send_batches_proof_to_contract(
         &self,
         first_batch: u64,
         batches: &[(u64, HashMap<ProverType, BatchProof>)],
