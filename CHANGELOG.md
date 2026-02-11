@@ -4,7 +4,7 @@
 
 ### 2026-02-11
 
-- Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet for EVM accessed storage slots [#6184](https://github.com/lambdaclass/ethrex/pull/6184)
+- Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet for EVM accessed storage slots [#6185](https://github.com/lambdaclass/ethrex/pull/6185)
 
 ### 2026-02-06
 
