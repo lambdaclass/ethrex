@@ -116,6 +116,10 @@ pub struct NodeRequest {
 /// - When a node is downloaded:
 ///    - if it has no missing children, we store it in the db
 ///    - if the node has missing children, we store it in our healing_queue, which is preserved between calls
+///
+/// When `time_limit` is `Some(duration)`, healing will stop early after the duration elapses
+/// and return `Ok(false)`, allowing the caller to proceed with partial healing.
+/// `global_roots_healed` accumulates the number of account storage roots fully healed across calls.
 pub async fn heal_storage_trie(
     state_root: H256,
     storage_accounts: &AccountStorageRoots,
@@ -124,13 +128,17 @@ pub async fn heal_storage_trie(
     healing_queue: StorageHealingQueue,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
+    time_limit: Option<Duration>,
+    global_roots_healed: &mut u64,
 ) -> Result<bool, SyncError> {
     METRICS.current_step.set(CurrentStepValue::HealingStorage);
     let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
     debug!(
         initial_accounts_count = download_queue.len(),
+        ?time_limit,
         "Started Storage Healing",
     );
+    let healing_start_time = Instant::now();
     let mut state = StorageHealer {
         last_update: Instant::now(),
         download_queue,
@@ -203,8 +211,14 @@ pub async fn heal_storage_trie(
 
         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
         let is_stale = current_unix_time() > state.staleness_timestamp;
+        let time_limit_reached =
+            time_limit.is_some_and(|limit| healing_start_time.elapsed() >= limit);
 
-        if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
+        if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000
+            || is_done
+            || is_stale
+            || time_limit_reached
+        {
             let to_write: Vec<_> = nodes_to_write.drain().collect();
             let store = state.store.clone();
             // NOTE: we keep only a single task in the background to avoid out of order deletes
@@ -230,13 +244,24 @@ pub async fn heal_storage_trie(
         }
 
         if is_done {
+            *global_roots_healed += state.roots_healed as u64;
             db_joinset.join_all().await;
             return Ok(true);
         }
 
-        if is_stale {
+        if is_stale || time_limit_reached {
+            *global_roots_healed += state.roots_healed as u64;
             db_joinset.join_all().await;
-            state.healing_queue = HashMap::new();
+            if is_stale {
+                state.healing_queue = HashMap::new();
+            }
+            if time_limit_reached {
+                debug!(
+                    roots_healed = state.roots_healed,
+                    elapsed_ms = healing_start_time.elapsed().as_millis() as u64,
+                    "Storage healing stopped: time limit reached",
+                );
+            }
             return Ok(false);
         }
 

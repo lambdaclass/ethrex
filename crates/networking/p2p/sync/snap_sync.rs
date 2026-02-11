@@ -22,6 +22,7 @@ use ethrex_storage::Store;
 #[cfg(feature = "rocksdb")]
 use ethrex_trie::Trie;
 use rayon::iter::{ParallelBridge, ParallelIterator};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
@@ -286,6 +287,14 @@ pub async fn snap_sync(
     let mut code_hash_collector: CodeHashCollector =
         CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
+    // Set up channel to stream code hashes to a concurrent bytecode download task
+    let bytecode_rx = code_hash_collector.take_receiver();
+    let bytecode_handle = tokio::spawn(download_bytecodes_concurrent(
+        peers.clone(),
+        store.clone(),
+        bytecode_rx,
+    ));
+
     let mut storage_accounts = AccountStorageRoots::default();
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
         // We start by downloading all of the leafs of the trie of accounts
@@ -441,9 +450,18 @@ pub async fn snap_sync(
     info!("Starting Healing Process");
     let mut global_state_leafs_healed: u64 = 0;
     let mut global_storage_leafs_healed: u64 = 0;
-    let mut healing_done = false;
-    while !healing_done {
-        // This if is an edge case for the skip snap sync scenario
+    let mut global_roots_healed: u64 = 0;
+    let total_accounts_to_heal = storage_accounts.healed_accounts.len() as u64;
+    // Require >= 99% of storage account roots healed before proceeding to finalization.
+    // The remaining <1% will be healed in a background task while block execution starts.
+    let healing_threshold = (total_accounts_to_heal as f64 * 0.99).ceil() as u64;
+    info!(
+        "Storage healing target: {healing_threshold}/{total_accounts_to_heal} accounts (99% threshold)"
+    );
+
+    // Phase 1: Full state healing (must complete before storage healing)
+    let mut state_healing_done = false;
+    while !state_healing_done {
         if block_is_stale(&pivot_header) {
             pivot_header = update_pivot(
                 pivot_header.number,
@@ -453,7 +471,7 @@ pub async fn snap_sync(
             )
             .await?;
         }
-        healing_done = heal_state_trie_wrap(
+        state_healing_done = heal_state_trie_wrap(
             pivot_header.state_root,
             store.clone(),
             peers,
@@ -463,10 +481,23 @@ pub async fn snap_sync(
             &mut code_hash_collector,
         )
         .await?;
-        if !healing_done {
-            continue;
+    }
+    info!("State healing complete, starting storage healing");
+
+    // Phase 2: Storage healing until threshold is met
+    // First pass: run with a 5-minute time limit to catch the bulk
+    let mut storage_fully_done = false;
+    if !storage_fully_done && global_roots_healed < healing_threshold {
+        if block_is_stale(&pivot_header) {
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                peers,
+                block_sync_state,
+            )
+            .await?;
         }
-        healing_done = heal_storage_trie(
+        storage_fully_done = heal_storage_trie(
             pivot_header.state_root,
             &storage_accounts,
             peers,
@@ -474,89 +505,87 @@ pub async fn snap_sync(
             HashMap::new(),
             calculate_staleness_timestamp(pivot_header.timestamp),
             &mut global_storage_leafs_healed,
+            Some(Duration::from_secs(300)),
+            &mut global_roots_healed,
         )
         .await?;
+        info!(
+            "Initial storage healing pass: {global_roots_healed}/{total_accounts_to_heal} roots healed"
+        );
+    }
+
+    // Continue healing without time limit until threshold is reached or fully done
+    while !storage_fully_done && global_roots_healed < healing_threshold {
+        if block_is_stale(&pivot_header) {
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                peers,
+                block_sync_state,
+            )
+            .await?;
+        }
+        // Re-do state healing if pivot changed
+        let state_ok = heal_state_trie_wrap(
+            pivot_header.state_root,
+            store.clone(),
+            peers,
+            calculate_staleness_timestamp(pivot_header.timestamp),
+            &mut global_state_leafs_healed,
+            &mut storage_accounts,
+            &mut code_hash_collector,
+        )
+        .await?;
+        if !state_ok {
+            continue;
+        }
+        storage_fully_done = heal_storage_trie(
+            pivot_header.state_root,
+            &storage_accounts,
+            peers,
+            store.clone(),
+            HashMap::new(),
+            calculate_staleness_timestamp(pivot_header.timestamp),
+            &mut global_storage_leafs_healed,
+            None,
+            &mut global_roots_healed,
+        )
+        .await?;
+        info!(
+            "Storage healing progress: {global_roots_healed}/{total_accounts_to_heal} roots healed"
+        );
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
+    info!(
+        "Storage healing sufficient: {global_roots_healed}/{total_accounts_to_heal} roots healed (fully done: {storage_fully_done})"
+    );
 
     store.generate_flatkeyvalue()?;
 
     debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-    debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+    // Only validate storage root if healing fully completed — background healing
+    // handles the remaining <1% of accounts after snap sync finalization
+    if storage_fully_done {
+        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+    }
 
     info!("Finished healing");
 
-    // Finish code hash collection
+    // Finish code hash collection — this drops the channel sender, signaling
+    // the concurrent bytecode task to drain remaining hashes and complete
     code_hash_collector.finish().await?;
 
-    *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+    info!("Waiting for concurrent bytecode download to complete");
+    bytecode_handle
+        .await
+        .map_err(|e| SyncError::BytecodeTaskPanicked(e.to_string()))??;
 
+    // Clean up code hash snapshot files (written by CodeHashCollector as backup)
     let code_hashes_dir = get_code_hashes_snapshots_dir(datadir);
-    let mut seen_code_hashes = HashSet::new();
-    let mut code_hashes_to_download = Vec::new();
-
-    info!("Starting download code hashes from peers");
-    for entry in std::fs::read_dir(&code_hashes_dir)
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
-    {
-        let entry = entry.map_err(|_| SyncError::CorruptPath)?;
-        let snapshot_contents = std::fs::read(entry.path())
-            .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
-        let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
-
-        for hash in code_hashes {
-            // If we haven't seen the code hash yet, add it to the list of hashes to download
-            if seen_code_hashes.insert(hash) {
-                code_hashes_to_download.push(hash);
-
-                if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
-                    info!(
-                        "Starting bytecode download of {} hashes",
-                        code_hashes_to_download.len()
-                    );
-                    let bytecodes = request_bytecodes(peers, &code_hashes_to_download)
-                        .await?
-                        .ok_or(SyncError::BytecodesNotFound)?;
-
-                    store
-                        .write_account_code_batch_no_wal(
-                            code_hashes_to_download
-                                .drain(..)
-                                .zip(bytecodes)
-                                // SAFETY: hash already checked by the download worker
-                                .map(|(hash, code)| {
-                                    (hash, Code::from_bytecode_unchecked(code, hash))
-                                })
-                                .collect(),
-                        )
-                        .await?;
-                }
-            }
-        }
+    if code_hashes_dir.exists() {
+        std::fs::remove_dir_all(code_hashes_dir)
+            .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
     }
-
-    // Download remaining bytecodes if any
-    if !code_hashes_to_download.is_empty() {
-        let bytecodes = request_bytecodes(peers, &code_hashes_to_download)
-            .await?
-            .ok_or(SyncError::BytecodesNotFound)?;
-        store
-            .write_account_code_batch_no_wal(
-                code_hashes_to_download
-                    .drain(..)
-                    .zip(bytecodes)
-                    // SAFETY: hash already checked by the download worker
-                    .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
-                    .collect(),
-            )
-            .await?;
-    }
-
-    std::fs::remove_dir_all(code_hashes_dir)
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
-
-    *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
     debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
@@ -584,6 +613,112 @@ pub async fn snap_sync(
             pivot_header.hash(),
             None,
             None,
+        )
+        .await?;
+
+    // Spawn background storage healing for remaining un-healed accounts (<1%)
+    if !storage_fully_done {
+        let remaining = total_accounts_to_heal.saturating_sub(global_roots_healed);
+        info!(
+            "Spawning background storage healing for ~{remaining} remaining accounts"
+        );
+        let bg_state_root = pivot_header.state_root;
+        // Only clone the healed_accounts set — accounts_with_storage_root is not needed
+        // by heal_storage_trie (get_initial_downloads only reads healed_accounts)
+        let bg_storage_accounts = AccountStorageRoots {
+            accounts_with_storage_root: std::collections::BTreeMap::new(),
+            healed_accounts: storage_accounts.healed_accounts.clone(),
+        };
+        let mut bg_peers = peers.clone();
+        let bg_store = store.clone();
+        tokio::spawn(async move {
+            let mut bg_leafs_healed: u64 = 0;
+            let mut bg_roots_healed: u64 = 0;
+            match heal_storage_trie(
+                bg_state_root,
+                &bg_storage_accounts,
+                &mut bg_peers,
+                bg_store,
+                HashMap::new(),
+                u64::MAX, // no staleness limit for background healing
+                &mut bg_leafs_healed,
+                None, // no time limit
+                &mut bg_roots_healed,
+            )
+            .await
+            {
+                Ok(_) => info!(
+                    "Background storage healing completed: {bg_roots_healed} roots, {bg_leafs_healed} leaves healed"
+                ),
+                Err(e) => warn!("Background storage healing failed: {e}"),
+            }
+        });
+    }
+
+    Ok(())
+}
+
+/// Downloads bytecodes concurrently as code hashes arrive through the channel.
+/// Runs as a spawned task alongside phases 2-7 (insert accounts, healing, storage).
+/// Completes when the channel sender is dropped (via `CodeHashCollector::finish()`).
+async fn download_bytecodes_concurrent(
+    mut peers: PeerHandler,
+    store: Store,
+    mut rx: mpsc::UnboundedReceiver<Vec<H256>>,
+) -> Result<(), SyncError> {
+    let mut seen = HashSet::new();
+    let mut batch = Vec::new();
+    let mut total_downloaded: u64 = 0;
+
+    *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+
+    while let Some(hashes) = rx.recv().await {
+        for hash in hashes {
+            if hash != *EMPTY_KECCACK_HASH && seen.insert(hash) {
+                batch.push(hash);
+                if batch.len() >= BYTECODE_CHUNK_SIZE {
+                    download_and_store_bytecodes(&mut peers, &store, &mut batch, &mut total_downloaded).await?;
+                }
+            }
+        }
+    }
+
+    // Drain remaining batch after channel closed
+    if !batch.is_empty() {
+        download_and_store_bytecodes(&mut peers, &store, &mut batch, &mut total_downloaded).await?;
+    }
+
+    *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
+    info!("Concurrent bytecode download complete: {total_downloaded} bytecodes downloaded");
+    Ok(())
+}
+
+/// Helper to download a batch of bytecodes and write them to the store
+async fn download_and_store_bytecodes(
+    peers: &mut PeerHandler,
+    store: &Store,
+    batch: &mut Vec<H256>,
+    total_downloaded: &mut u64,
+) -> Result<(), SyncError> {
+    info!(
+        "Downloading bytecode batch of {} hashes (total so far: {})",
+        batch.len(),
+        *total_downloaded
+    );
+    let bytecodes = request_bytecodes(peers, batch)
+        .await?
+        .ok_or(SyncError::BytecodesNotFound)?;
+
+    *total_downloaded += bytecodes.len() as u64;
+
+    store
+        .write_account_code_batch_no_wal(
+            batch
+                .drain(..)
+                .zip(bytecodes)
+                // SAFETY: hash already checked by the download worker
+                .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
+                .collect(),
         )
         .await?;
     Ok(())

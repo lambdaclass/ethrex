@@ -233,6 +233,8 @@ pub enum SyncError {
     RocksDBError(String),
     #[error("Bytecode file error")]
     BytecodeFileError,
+    #[error("Concurrent bytecode download task panicked: {0}")]
+    BytecodeTaskPanicked(String),
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
     #[error("Missing fullsync batch")]
@@ -261,6 +263,7 @@ impl SyncError {
             | SyncError::StorageTempDBDirNotFound(_)
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
+            | SyncError::BytecodeTaskPanicked(_)
             | SyncError::NoLatestCanonical
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
