@@ -343,6 +343,7 @@ impl L1Watcher {
                 access_list: vec![],
                 from: tx.from,
                 inner_hash: Default::default(),
+                sender_cache: Default::default(),
             };
 
             let privileged_tx = Transaction::PrivilegedL2Transaction(mint_transaction);

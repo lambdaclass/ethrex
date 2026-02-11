@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    debug::execution_witness::RpcExecutionWitness,
     eth::client::EthConfigResponse,
     mempool::MempoolContent,
     types::{
@@ -16,7 +15,10 @@ use bytes::Bytes;
 use errors::{EthClientError, RpcRequestError};
 use ethrex_common::{
     Address, H256, U256,
-    types::{AuthorizationTupleEntry, BlobsBundle, Block, GenericTransaction, TxKind},
+    types::{
+        AuthorizationTupleEntry, BlobsBundle, Block, GenericTransaction, TxKind,
+        block_execution_witness::RpcExecutionWitness,
+    },
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -333,16 +335,20 @@ impl EthClient {
             gas_price: overrides.max_fee_per_gas.unwrap_or_default(),
             ..Default::default()
         };
+        let mut tx_json = json!({
+            "to": match tx.to {
+                TxKind::Call(addr) => format!("{addr:#x}"),
+                TxKind::Create => format!("{:#x}", Address::zero()),
+            },
+            "input": format!("0x{:#x}", tx.input),
+            "value": format!("{:#x}", tx.value),
+            "from": format!("{:#x}", tx.from),
+        });
+        if let Some(nonce) = overrides.nonce {
+            tx_json["nonce"] = json!(format!("{nonce:#x}"));
+        }
         let params = Some(vec![
-            json!({
-                "to": match tx.to {
-                    TxKind::Call(addr) => format!("{addr:#x}"),
-                    TxKind::Create => format!("{:#x}", Address::zero()),
-                },
-                "input": format!("0x{:#x}", tx.input),
-                "value": format!("{:#x}", tx.value),
-                "from": format!("{:#x}", tx.from),
-            }),
+            tx_json,
             overrides
                 .block
                 .map(Into::into)

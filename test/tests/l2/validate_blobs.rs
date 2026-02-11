@@ -2,7 +2,9 @@
 //!
 //! This test will fail fast when the genesis file is modified but the blobs haven't been regenerated.
 //!
-//! When this test fails, regenerate blobs following: docs/developers/l2/state-reconstruction-blobs.md
+//! When this test fails, regenerate blobs following:
+//! - docs/workflows/regenerate-blobs.md (agent workflow)
+//! - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
 
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
@@ -13,8 +15,7 @@ use ethrex_rlp::decode::RLPDecode;
 use std::fs::File;
 use std::io::BufReader;
 
-const GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
-const FIRST_BLOB_PATH: &str = "../../fixtures/blobs/1-1.blob";
+use super::utils::workspace_root;
 
 /// Validates that the fixture blobs are compatible with the current genesis file.
 ///
@@ -25,9 +26,11 @@ const FIRST_BLOB_PATH: &str = "../../fixtures/blobs/1-1.blob";
 /// This test catches stale blobs fast rather than waiting for the full state-diff-test workflow to fail.
 #[test]
 fn validate_blobs_match_genesis() {
+    let genesis_path = workspace_root().join("fixtures/genesis/l2.json");
+    let first_blob_path = workspace_root().join("fixtures/blobs/1-1.blob");
+
     // Load genesis file and compute the genesis block hash
-    let genesis_file =
-        File::open(GENESIS_PATH).expect("Failed to open genesis file. Run from crates/l2.");
+    let genesis_file = File::open(&genesis_path).expect("Failed to open genesis file");
     let reader = BufReader::new(genesis_file);
     let genesis: Genesis =
         serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
@@ -35,8 +38,7 @@ fn validate_blobs_match_genesis() {
     let genesis_hash = genesis_block.hash();
 
     // Read the first blob file
-    let blob_bytes = std::fs::read(FIRST_BLOB_PATH)
-        .expect("Failed to read first blob file. Run from crates/l2.");
+    let blob_bytes = std::fs::read(&first_blob_path).expect("Failed to read first blob file");
 
     assert_eq!(
         blob_bytes.len(),
@@ -79,7 +81,8 @@ fn validate_blobs_match_genesis() {
         Expected parent_hash: {genesis_hash:#x}\n\
         Found parent_hash:    {blob_parent_hash:#x}\n\n\
         To fix this, regenerate the blobs following:\n\
-        docs/developers/l2/state-reconstruction-blobs.md\n\
+        - docs/workflows/regenerate-blobs.md (agent workflow)\n\
+        - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)\n\
         ========================================================\n"
     );
 }

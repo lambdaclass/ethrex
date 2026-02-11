@@ -12,7 +12,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
-    ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
+    ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadBodyV2, ExecutionPayloadResponse,
+    PayloadStatus,
 };
 use crate::utils::RpcErr;
 use crate::utils::{RpcRequest, parse_json_hex};
@@ -36,7 +37,7 @@ impl RpcHandler for NewPayloadV1Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v1(&self.payload)?;
-        let block = match get_block_from_payload(&self.payload, None, None) {
+        let block = match get_block_from_payload(&self.payload, None, None, None) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -68,7 +69,7 @@ impl RpcHandler for NewPayloadV2Request {
             // Behave as a v1
             validate_execution_payload_v1(&self.payload)?;
         }
-        let block = match get_block_from_payload(&self.payload, None, None) {
+        let block = match get_block_from_payload(&self.payload, None, None, None) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -124,6 +125,7 @@ impl RpcHandler for NewPayloadV3Request {
             &self.payload,
             Some(self.parent_beacon_block_root),
             None,
+            None,
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -144,6 +146,7 @@ impl RpcHandler for NewPayloadV3Request {
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
+
 pub struct NewPayloadV4Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
@@ -195,6 +198,7 @@ impl RpcHandler for NewPayloadV4Request {
             &self.payload,
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
+            None,
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -225,6 +229,94 @@ impl RpcHandler for NewPayloadV4Request {
     }
 }
 
+pub struct NewPayloadV5Request {
+    pub payload: ExecutionPayload,
+    pub expected_blob_versioned_hashes: Vec<H256>,
+    pub parent_beacon_block_root: H256,
+    pub execution_requests: Vec<EncodedRequests>,
+}
+
+impl From<NewPayloadV5Request> for RpcRequest {
+    fn from(val: NewPayloadV5Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadV5".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.payload),
+                serde_json::json!(val.expected_blob_versioned_hashes),
+                serde_json::json!(val.parent_beacon_block_root),
+                serde_json::json!(val.execution_requests),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for NewPayloadV5Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 4 {
+            return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
+        }
+        Ok(Self {
+            payload: serde_json::from_value(params[0].clone())
+                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            execution_requests: serde_json::from_value(params[3].clone())
+                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        validate_execution_payload_v4(&self.payload)?;
+
+        // validate the received requests
+        validate_execution_requests(&self.execution_requests)?;
+
+        let requests_hash = compute_requests_hash(&self.execution_requests);
+        let block_access_list_hash = self
+            .payload
+            .block_access_list
+            .as_ref()
+            .map(|b| b.compute_hash());
+
+        let block = match get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            Some(requests_hash),
+            block_access_list_hash,
+        ) {
+            Ok(block) => block,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?);
+            }
+        };
+
+        let chain_config = context.storage.get_chain_config();
+
+        if !chain_config.is_amsterdam_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(block.header.timestamp)
+            )));
+        }
+        let payload_status = handle_new_payload_v4(
+            &self.payload,
+            context,
+            block,
+            self.expected_blob_versioned_hashes.clone(),
+        )
+        .await?;
+        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
 // GetPayload V1-V2-V3 implementations
 pub struct GetPayloadV1Request {
     pub payload_id: u64,
@@ -242,7 +334,8 @@ impl RpcHandler for GetPayloadV1Request {
         // necessary
         validate_payload_v1_v2(&payload_bundle.block, &context)?;
 
-        let response = ExecutionPayload::from_block(payload_bundle.block);
+        // V1 doesn't support BAL (pre-EIP-7928)
+        let response = ExecutionPayload::from_block(payload_bundle.block, None);
 
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -262,8 +355,9 @@ impl RpcHandler for GetPayloadV2Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         validate_payload_v1_v2(&payload_bundle.block, &context)?;
 
+        // V2 doesn't support BAL (pre-EIP-7928)
         let response = ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block, None),
             block_value: payload_bundle.block_value,
             blobs_bundle: None,
             should_override_builder: None,
@@ -298,8 +392,9 @@ impl RpcHandler for GetPayloadV3Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         validate_fork(&payload_bundle.block, Fork::Cancun, &context)?;
 
+        // V3 doesn't support BAL (Cancun fork, pre-EIP-7928)
         let response = ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block, None),
             block_value: payload_bundle.block_value,
             blobs_bundle: Some(payload_bundle.blobs_bundle),
             should_override_builder: Some(false),
@@ -344,8 +439,9 @@ impl RpcHandler for GetPayloadV4Request {
             return Err(RpcErr::UnsuportedFork(format!("{:?}", Fork::Osaka)));
         }
 
+        // V4 doesn't support BAL (Prague fork, pre-EIP-7928)
         let response = ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block, None),
             block_value: payload_bundle.block_value,
             blobs_bundle: Some(payload_bundle.blobs_bundle),
             should_override_builder: Some(false),
@@ -393,8 +489,12 @@ impl RpcHandler for GetPayloadV5Request {
             )));
         }
 
+        // V5 supports BAL (Amsterdam fork, EIP-7928)
         let response = ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            execution_payload: ExecutionPayload::from_block(
+                payload_bundle.block,
+                payload_bundle.block_access_list,
+            ),
             block_value: payload_bundle.block_value,
             blobs_bundle: Some(payload_bundle.blobs_bundle),
             should_override_builder: Some(false),
@@ -486,6 +586,119 @@ fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, 
     serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
+// ==================== V2 Body Methods (EIP-7928) ====================
+
+pub struct GetPayloadBodiesByHashV2Request {
+    pub hashes: Vec<BlockHash>,
+}
+
+impl RpcHandler for GetPayloadBodiesByHashV2Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+
+        Ok(GetPayloadBodiesByHashV2Request {
+            hashes: serde_json::from_value(params[0].clone())?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        if self.hashes.len() as u64 >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+
+        let mut bodies: Vec<Option<ExecutionPayloadBodyV2>> = Vec::new();
+        for hash in &self.hashes {
+            let block = context.storage.get_block_by_hash(*hash).await?;
+            let result = match block {
+                Some(block) => {
+                    let bal = context
+                        .blockchain
+                        .generate_bal_for_block(&block)
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
+                }
+                None => None,
+            };
+            bodies.push(result);
+        }
+
+        serde_json::to_value(bodies).map_err(|e| RpcErr::Internal(e.to_string()))
+    }
+}
+
+pub struct GetPayloadBodiesByRangeV2Request {
+    start: BlockNumber,
+    count: u64,
+}
+
+impl RpcHandler for GetPayloadBodiesByRangeV2Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        };
+        let start = parse_json_hex(&params[0]).map_err(|_| RpcErr::BadHexFormat(0))?;
+        let count = parse_json_hex(&params[1]).map_err(|_| RpcErr::BadHexFormat(1))?;
+        if start < 1 {
+            return Err(RpcErr::WrongParam("start".to_owned()));
+        }
+        if count < 1 {
+            return Err(RpcErr::WrongParam("count".to_owned()));
+        }
+        Ok(GetPayloadBodiesByRangeV2Request { start, count })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        if self.count >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+        let latest_block_number = context.storage.get_latest_block_number().await?;
+        // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
+        // null values if the request extends past the current latest known block"
+        let last = latest_block_number.min(self.start + self.count - 1);
+
+        // Bulk fetch bodies (like V1)
+        let block_bodies = context.storage.get_block_bodies(self.start, last).await?;
+
+        let mut bodies: Vec<Option<ExecutionPayloadBodyV2>> = Vec::new();
+        for (i, body_opt) in block_bodies.into_iter().enumerate() {
+            let block_number = self.start + i as u64;
+            let result = match body_opt {
+                Some(body) => {
+                    // Get header for this block
+                    let header =
+                        context
+                            .storage
+                            .get_block_header(block_number)?
+                            .ok_or_else(|| {
+                                RpcErr::Internal(format!(
+                                    "Header not found for block {block_number}"
+                                ))
+                            })?;
+                    let block = Block { header, body };
+
+                    let bal = context
+                        .blockchain
+                        .generate_bal_for_block(&block)
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
+                }
+                None => None,
+            };
+            bodies.push(result);
+        }
+
+        serde_json::to_value(bodies).map_err(|e| RpcErr::Internal(e.to_string()))
+    }
+}
+
 fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {
     let params = params
         .as_ref()
@@ -537,6 +750,20 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
     if payload.excess_blob_gas.is_none() {
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
+
+    Ok(())
+}
+
+#[inline]
+fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    // This method follows the same specification as `engine_newPayloadV4` additionally
+    // rejects payload without block access list
+
+    if payload.block_access_list.is_none() {
+        return Err(RpcErr::WrongParam("block_access_list".to_string()));
+    }
+
+    validate_execution_payload_v3(payload)?;
 
     Ok(())
 }
@@ -644,6 +871,16 @@ async fn handle_new_payload_v3(
     handle_new_payload_v1_v2(payload, block, context).await
 }
 
+async fn handle_new_payload_v4(
+    payload: &ExecutionPayload,
+    context: RpcApiContext,
+    block: Block,
+    expected_blob_versioned_hashes: Vec<H256>,
+) -> Result<PayloadStatus, RpcErr> {
+    // TODO: V4 specific: validate block access list
+    handle_new_payload_v3(payload, context, block, expected_blob_versioned_hashes).await
+}
+
 // Elements of the list MUST be ordered by request_type in ascending order.
 // Elements with empty request_data MUST be excluded from the list.
 fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result<(), RpcErr> {
@@ -665,14 +902,17 @@ fn get_block_from_payload(
     payload: &ExecutionPayload,
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
+    block_access_list_hash: Option<H256>,
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
     let block_number = payload.block_number;
     debug!(%block_hash, %block_number, "Received new payload");
 
-    payload
-        .clone()
-        .into_block(parent_beacon_block_root, requests_hash)
+    payload.clone().into_block(
+        parent_beacon_block_root,
+        requests_hash,
+        block_access_list_hash,
+    )
 }
 
 fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), RpcErr> {
@@ -814,12 +1054,13 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
         id = %format!("{:#018x}", payload_id),
         "Requested payload with"
     );
-    let (blobs_bundle, requests, block_value, block) = {
+    let (blobs_bundle, requests, block_value, block, block_access_list) = {
         let PayloadBuildResult {
             blobs_bundle,
             block_value,
             requests,
             payload,
+            block_access_list,
             ..
         } = context
             .blockchain
@@ -831,7 +1072,13 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
                 }
                 err => RpcErr::Internal(err.to_string()),
             })?;
-        (blobs_bundle, requests, block_value, payload)
+        (
+            blobs_bundle,
+            requests,
+            block_value,
+            payload,
+            block_access_list,
+        )
     };
 
     let new_payload = PayloadBundle {
@@ -839,6 +1086,7 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
         block_value,
         blobs_bundle,
         requests,
+        block_access_list,
     };
 
     Ok(new_payload)
