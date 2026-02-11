@@ -4,7 +4,9 @@ flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-d
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
-multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto
+multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto \
+benchmark-parse benchmark-compare benchmark-compare-csv benchmark-compare-md benchmark-diff benchmark-latest benchmark-help \
+benchmark-parse-prefix benchmark-merge
 
 ETHREX_DIR ?= "../.."
 
@@ -342,3 +344,66 @@ multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, an
 		--build-profile "$(MULTISYNC_BUILD_PROFILE)" \
 		--image-tag "$(MULTISYNC_LOCAL_IMAGE)" \
 		--ethrex-dir "$(ETHREX_DIR)"
+
+# ==============================================================================
+# Benchmark Tools
+# ==============================================================================
+# Tools for measuring and comparing snap sync performance across branches.
+# ==============================================================================
+
+.PHONY: benchmark-parse benchmark-compare benchmark-diff benchmark-help
+
+BENCHMARK_RESULTS ?= benchmark_results.json
+BENCHMARK_LOGS_DIR ?= ./multisync_logs
+
+benchmark-help: ## Show benchmark tool help.
+	python3 sync_benchmark.py --help
+
+benchmark-parse: ## Parse all runs and generate benchmark results JSON.
+	python3 sync_benchmark.py parse-all $(BENCHMARK_LOGS_DIR) --output $(BENCHMARK_RESULTS)
+
+benchmark-compare: ## Compare all benchmark results (table format).
+	@if [ -f $(BENCHMARK_RESULTS) ]; then \
+		python3 sync_benchmark.py compare $(BENCHMARK_RESULTS) --format table; \
+	else \
+		echo "No benchmark results found. Run 'make benchmark-parse' first."; \
+	fi
+
+benchmark-compare-csv: ## Compare all benchmark results (CSV format).
+	@if [ -f $(BENCHMARK_RESULTS) ]; then \
+		python3 sync_benchmark.py compare $(BENCHMARK_RESULTS) --format csv; \
+	else \
+		echo "No benchmark results found. Run 'make benchmark-parse' first."; \
+	fi
+
+benchmark-compare-md: ## Compare all benchmark results (Markdown format).
+	@if [ -f $(BENCHMARK_RESULTS) ]; then \
+		python3 sync_benchmark.py compare $(BENCHMARK_RESULTS) --format markdown; \
+	else \
+		echo "No benchmark results found. Run 'make benchmark-parse' first."; \
+	fi
+
+benchmark-diff: ## Diff two runs. Usage: make benchmark-diff RUN1=<id1> RUN2=<id2> [NETWORK=mainnet]
+ifndef RUN1
+	$(error RUN1 is required. Usage: make benchmark-diff RUN1=20260203_082422 RUN2=20260202_120000)
+endif
+ifndef RUN2
+	$(error RUN2 is required. Usage: make benchmark-diff RUN1=20260203_082422 RUN2=20260202_120000)
+endif
+	python3 sync_benchmark.py diff $(RUN1) $(RUN2) --results $(BENCHMARK_RESULTS) --network $(or $(NETWORK),mainnet)
+
+benchmark-latest: ## Parse logs and show comparison of recent runs.
+	@make benchmark-parse
+	@make benchmark-compare
+
+benchmark-parse-prefix: ## Parse all runs with a server prefix. Usage: make benchmark-parse-prefix PREFIX=server1
+ifndef PREFIX
+	$(error PREFIX is required. Usage: make benchmark-parse-prefix PREFIX=server1)
+endif
+	python3 sync_benchmark.py parse-all $(BENCHMARK_LOGS_DIR) --prefix $(PREFIX) --output $(PREFIX)_results.json
+
+benchmark-merge: ## Merge multiple result files. Usage: make benchmark-merge FILES="server1_results.json server2_results.json"
+ifndef FILES
+	$(error FILES is required. Usage: make benchmark-merge FILES="server1_results.json server2_results.json")
+endif
+	python3 sync_benchmark.py merge $(FILES) --output $(BENCHMARK_RESULTS)
