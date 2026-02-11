@@ -1606,8 +1606,11 @@ async fn estimate_blob_gas(
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
     // Check if we have an overflow when we take the headroom into account.
+    let gas_with_headroom_u64: u64 = gas_with_headroom
+        .try_into()
+        .map_err(|_| BlobEstimationError::OverflowError)?;
     let blob_gas = arbitrary_base_blob_gas_price
-        .checked_add(gas_with_headroom.try_into().unwrap())
+        .checked_add(gas_with_headroom_u64)
         .ok_or(BlobEstimationError::OverflowError)?;
 
     Ok(blob_gas.into())

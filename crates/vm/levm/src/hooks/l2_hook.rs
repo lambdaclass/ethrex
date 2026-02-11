@@ -237,7 +237,7 @@ fn validate_sufficient_max_fee_per_gas_l2(
         .checked_add(fee_config.operator_fee_per_gas.into())
         .ok_or(TxValidationError::InsufficientMaxFeePerGas)?;
 
-    if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee.into() {
+    if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee {
         return Err(TxValidationError::InsufficientMaxFeePerGas);
     }
     Ok(())
@@ -290,7 +290,7 @@ fn compute_priority_fee_per_gas(
     let priority_fee = vm
         .env
         .gas_price
-        .checked_sub(vm.env.base_fee_per_gas.into())
+        .checked_sub(vm.env.base_fee_per_gas)
         .ok_or(InternalError::Underflow)?;
 
     if let Some(fee_config) = operator_fee_config {
@@ -312,7 +312,7 @@ fn pay_base_fee_vault(
     use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
     let base_fee = U256::from(gas_to_pay)
-        .checked_mul(vm.env.base_fee_per_gas.into())
+        .checked_mul(vm.env.base_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
     if use_fee_token {

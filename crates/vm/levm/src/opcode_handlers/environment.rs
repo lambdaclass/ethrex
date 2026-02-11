@@ -155,6 +155,7 @@ impl OpcodeHandler for OpCallDataLoadHandler {
         let value_bytes = usize::try_from(vm.current_call_frame.stack.pop1()?)
             .ok()
             .and_then(|offset| vm.current_call_frame.calldata.get(offset..));
+        #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
         vm.current_call_frame.stack.push(match value_bytes {
             Some(data) if data.len() >= 32 => U256::from_big_endian(&data[..32]),
             Some(data) => {
@@ -211,6 +212,10 @@ impl OpcodeHandler for OpCallDataCopyHandler {
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
             if data.len() < len {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "data.len() < len guard ensures no underflow"
+                )]
                 vm.current_call_frame
                     .memory
                     .store_zeros(dst_offset + data.len(), len - data.len())?;
@@ -264,6 +269,10 @@ impl OpcodeHandler for OpCodeCopyHandler {
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
             if data.len() < len {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "data.len() < len guard ensures no underflow"
+                )]
                 vm.current_call_frame
                     .memory
                     .store_zeros(dst_offset + data.len(), len - data.len())?;
@@ -333,6 +342,10 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
             if data.len() < len {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "data.len() < len guard ensures no underflow"
+                )]
                 vm.current_call_frame
                     .memory
                     .store_zeros(dst_offset + data.len(), len - data.len())?;
@@ -410,6 +423,10 @@ impl OpcodeHandler for OpReturnDataCopyHandler {
                 len,
             )?)?;
 
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "src_offset and len are validated by memory expansion"
+        )]
         if src_offset + len > vm.current_call_frame.sub_return_data.len() {
             return Err(ExceptionalHalt::OutOfBounds.into());
         }
@@ -424,6 +441,10 @@ impl OpcodeHandler for OpReturnDataCopyHandler {
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
             if data.len() < len {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "data.len() < len guard ensures no underflow"
+                )]
                 vm.current_call_frame
                     .memory
                     .store_zeros(dst_offset + data.len(), len - data.len())?;

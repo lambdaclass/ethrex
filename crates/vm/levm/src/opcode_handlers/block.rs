@@ -36,6 +36,10 @@ impl OpcodeHandler for OpBlockHashHandler {
         // Some(_) if
         //   - is u64
         //   - 0 < current_number - block_number <= LAST_AVAILABLE_BLOCK_LIMIT
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "subtraction is guarded by take_if range check"
+        )]
         if let Some(block_number) = u64::try_from(vm.current_call_frame.stack.pop1()?)
             .ok()
             .take_if(|&mut block_number| {

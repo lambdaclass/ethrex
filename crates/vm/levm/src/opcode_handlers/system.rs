@@ -84,6 +84,7 @@ impl OpcodeHandler for OpCallHandler {
             create_cost,
         );
 
+        #[expect(clippy::as_conversions, reason = "safe")]
         let (gas_cost, gas_limit) = gas_cost::call(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -176,6 +177,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             0,
         );
 
+        #[expect(clippy::as_conversions, reason = "safe")]
         let (gas_cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -261,6 +263,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             0,
         );
 
+        #[expect(clippy::as_conversions, reason = "safe")]
         let (gas_cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -345,6 +348,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             0,
         );
 
+        #[expect(clippy::as_conversions, reason = "safe")]
         let (gas_cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -721,7 +725,10 @@ impl<'a> VM<'a> {
 
     /// Record BAL touched addresses for CALL-family opcodes per EIP-7928.
     /// Gated on intermediate gas checks matching the EELS reference.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "matches EIP-7928 EELS reference parameters"
+    )]
     fn record_bal_call_touch(
         &mut self,
         target: Address,
@@ -772,7 +779,10 @@ impl<'a> VM<'a> {
     ///
     // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
     // because passing so much data is costly. Verified with samply.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "inlined for performance, many args needed"
+    )]
     #[inline(always)]
     pub fn generic_call(
         &mut self,

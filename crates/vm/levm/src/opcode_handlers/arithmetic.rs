@@ -182,6 +182,10 @@ impl OpcodeHandler for OpAddModHandler {
         if r#mod.is_zero() || r#mod == U256::one() {
             vm.current_call_frame.stack.push_zero()?;
         } else {
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "mod is checked non-zero above"
+            )]
             let res = U512::from(lhs).overflowing_add(rhs.into()).0 % r#mod;
             vm.current_call_frame
                 .stack
@@ -213,6 +217,10 @@ impl OpcodeHandler for OpMulModHandler {
                 match res.cmp(&r#mod) {
                     Ordering::Less => res.try_into().unwrap(),
                     Ordering::Equal => U256::zero(),
+                    #[expect(
+                        clippy::arithmetic_side_effects,
+                        reason = "mod is checked non-zero above"
+                    )]
                     Ordering::Greater => (res % r#mod).try_into().unwrap(),
                 }
             };
@@ -267,6 +275,10 @@ impl OpcodeHandler for OpSignExtendHandler {
         vm.current_call_frame
             .stack
             .push(match usize::try_from(index) {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "x < 32 guard prevents overflow"
+                )]
                 Ok(x) if x < 32 => {
                     if value.bit(8 * x + 7) {
                         value |= U256::MAX << (8 * (x + 1));

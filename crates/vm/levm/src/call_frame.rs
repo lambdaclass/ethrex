@@ -224,6 +224,10 @@ impl fmt::Debug for Stack {
 }
 
 impl Hash for Stack {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "offset is always within bounds of values"
+    )]
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.values[self.offset..].hash(state);
     }
@@ -324,7 +328,10 @@ impl CallFrameBackup {
 }
 
 impl CallFrame {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "inlined constructor, many args needed for performance"
+    )]
     // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
     // because passing so much data is costly. Verified with samply.
     #[inline(always)]

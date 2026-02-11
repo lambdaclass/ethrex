@@ -32,6 +32,7 @@ impl OpcodeHandler for OpLtHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::LT)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        #[expect(clippy::as_conversions, reason = "safe")]
         vm.current_call_frame
             .stack
             .push(((lhs < rhs) as u64).into())?;
@@ -48,6 +49,7 @@ impl OpcodeHandler for OpGtHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::GT)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        #[expect(clippy::as_conversions, reason = "safe")]
         vm.current_call_frame
             .stack
             .push(((lhs > rhs) as u64).into())?;
@@ -72,6 +74,7 @@ impl OpcodeHandler for OpSLtHandler {
             .push(match (lhs_sign, rhs_sign) {
                 (false, true) => U256::zero(),
                 (true, false) => U256::one(),
+                #[expect(clippy::as_conversions, reason = "safe")]
                 _ => ((lhs < rhs) as u64).into(),
             })?;
 
@@ -95,6 +98,7 @@ impl OpcodeHandler for OpSGtHandler {
             .push(match (lhs_sign, rhs_sign) {
                 (false, true) => U256::one(),
                 (true, false) => U256::zero(),
+                #[expect(clippy::as_conversions, reason = "safe")]
                 _ => ((lhs > rhs) as u64).into(),
             })?;
 
@@ -110,6 +114,7 @@ impl OpcodeHandler for OpEqHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        #[expect(clippy::as_conversions, reason = "safe")]
         vm.current_call_frame
             .stack
             .push(((lhs == rhs) as u64).into())?;
@@ -127,6 +132,7 @@ impl OpcodeHandler for OpIsZeroHandler {
             .increase_consumed_gas(gas_cost::ISZERO)?;
 
         let value = vm.current_call_frame.stack.pop1()?;
+        #[expect(clippy::as_conversions, reason = "safe")]
         vm.current_call_frame
             .stack
             .push((value.is_zero() as u64).into())?;
@@ -203,6 +209,10 @@ impl OpcodeHandler for OpByteHandler {
         vm.current_call_frame
             .stack
             .push(match usize::try_from(index) {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "x < 32 guard prevents overflow"
+                )]
                 Ok(x) if x < 32 => value.byte(31 - x).into(),
                 _ => U256::zero(),
             })?;
@@ -222,6 +232,7 @@ impl OpcodeHandler for OpShlHandler {
         vm.current_call_frame
             .stack
             .push(match u8::try_from(shift_amount) {
+                #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
                 Ok(shift_amount) => value << shift_amount,
                 Err(_) => U256::zero(),
             })?;
@@ -241,6 +252,7 @@ impl OpcodeHandler for OpShrHandler {
         vm.current_call_frame
             .stack
             .push(match u8::try_from(shift_amount) {
+                #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
                 Ok(shift_amount) => value >> shift_amount,
                 Err(_) => U256::zero(),
             })?;
@@ -257,6 +269,7 @@ impl OpcodeHandler for OpSarHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
 
         let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
+        #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
         vm.current_call_frame
             .stack
             .push(match (u8::try_from(shift_amount), value.bit(255)) {

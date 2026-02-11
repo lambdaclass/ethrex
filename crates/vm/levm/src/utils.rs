@@ -373,7 +373,7 @@ impl<'a> VM<'a> {
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
         for auth_tuple in self.tx.authorization_list().cloned().unwrap_or_default() {
-            let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id.into();
+            let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
             let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
 
             // 1. Verify the chain id is either 0 or the chain’s current ID.

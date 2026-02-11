@@ -41,6 +41,7 @@ impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::PUSHN)?;
 
+        #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
         vm.current_call_frame.stack.push(
             match vm
                 .current_call_frame

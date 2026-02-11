@@ -297,6 +297,10 @@ impl OpcodeHandler for OpSStoreHandler {
 
             // The operations on `delta` cannot overflow.
             let mut delta = 0i64;
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "delta additions are bounded by known constants"
+            )]
             if current_value == original_value {
                 if !original_value.is_zero() && value.is_zero() {
                     delta += REMOVE_SLOT_COST;
@@ -383,6 +387,7 @@ fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
     // Check target address validity.
     //   - Target bytecode has to be a JUMPDEST.
     //   - Target address must not be blacklisted (aka. the JUMPDEST must not be part of a literal).
+    #[expect(clippy::as_conversions, reason = "safe")]
     if vm
         .current_call_frame
         .bytecode

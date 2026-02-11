@@ -478,10 +478,13 @@ impl Blockchain {
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
+        let blob_fee: u64 = context.base_fee_per_blob_gas.try_into().map_err(|_| {
+            ChainError::Custom("base_fee_per_blob_gas does not fit in u64".to_owned())
+        })?;
         let tx_filter = PendingTxFilter {
             /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
             base_fee: context.base_fee_per_gas(),
-            blob_fee: Some(context.base_fee_per_blob_gas.try_into().unwrap()),
+            blob_fee: Some(blob_fee),
             ..Default::default()
         };
         let plain_tx_filter = PendingTxFilter {
