@@ -4,7 +4,7 @@
 
 ### 2026-02-11
 
-- Enable per-level LZ4/Zstd compression on RocksDB trie and FKV column families [#6176](https://github.com/lambdaclass/ethrex/pull/6176)
+- Deduplicate trie nodes across layers before writing to RocksDB [#6179](https://github.com/lambdaclass/ethrex/pull/6179)
 
 ### 2026-02-06
 
