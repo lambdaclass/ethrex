@@ -27,13 +27,10 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{HashMap, VecDeque},
     sync::atomic::Ordering,
-    time::Instant,
+    time::{Duration, Instant},
 };
-use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
-use tokio::{
-    sync::mpsc::{Sender, error::TrySendError},
-    task::yield_now,
-};
+use tokio::task::JoinSet;
+use tokio::sync::mpsc::{Sender, error::TrySendError};
 use tracing::{debug, trace};
 
 /// This struct stores the metadata we need when we request a node
@@ -170,7 +167,6 @@ pub async fn heal_storage_trie(
     let mut logged_no_free_peers_count = 0;
 
     loop {
-        yield_now().await;
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             METRICS
                 .global_storage_tries_leafs_healed
@@ -229,7 +225,7 @@ pub async fn heal_storage_trie(
                     encoded_to_write.push((hashed_account, account_nodes));
                 }
                 // PERF: use put_batch_no_alloc? (it needs to remove parent nodes too)
-                spawned_rt::tasks::block_on(store.write_storage_trie_nodes_batch(encoded_to_write))
+                spawned_rt::tasks::block_on(store.write_storage_trie_nodes_batch_no_wal(encoded_to_write))
                     .expect("db write failed");
             });
         }
@@ -258,14 +254,17 @@ pub async fn heal_storage_trie(
 
         let _ = requests_task_joinset.try_join_next();
 
-        let trie_nodes_result = match task_receiver.try_recv() {
-            Ok(trie_nodes) => trie_nodes,
-            Err(TryRecvError::Empty) => {
-                state.empty_count += 1;
-                continue;
+        let trie_nodes_result = tokio::select! {
+            result = task_receiver.recv() => {
+                match result {
+                    Some(trie_nodes) => trie_nodes,
+                    None => {
+                        state.disconnected_count += 1;
+                        continue;
+                    }
+                }
             }
-            Err(TryRecvError::Disconnected) => {
-                state.disconnected_count += 1;
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 continue;
             }
         };
