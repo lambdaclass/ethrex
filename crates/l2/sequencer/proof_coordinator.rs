@@ -184,50 +184,51 @@ impl ProofCoordinator {
         }
 
         // Check if this prover type's proof already exists for the batch.
-        let prover_proof_exists = self
+        if self
             .rollup_store
             .get_proof_by_batch_and_type(batch_to_prove, prover_type)
             .await?
-            .is_some();
-
-        let response = if prover_proof_exists
-            || !self.rollup_store.contains_batch(&batch_to_prove).await?
+            .is_some()
         {
-            if prover_proof_exists {
-                debug!("{prover_type} proof already exists for batch {batch_to_prove}, skipping");
-            }
-            debug!("Sending empty BatchResponse");
-            ProofData::empty_batch_response()
-        } else {
-            let Some(input) = self
-                .rollup_store
-                .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
-                .await?
-            else {
-                let response = ProofData::no_batch_for_version(commit_hash);
-                send_response(stream, &response).await?;
-                info!("No batch for version sent");
-                return Ok(());
-            };
-            let format = if self.aligned {
-                ProofFormat::Compressed
-            } else {
-                ProofFormat::Groth16
-            };
-            metrics!(
-                // First request starts a timer until a proof is received. The elapsed time will be
-                // the estimated proving time.
-                // This should be used for development only and runs on the assumption that:
-                //   1. There's a single prover
-                //   2. Communication does not fail
-                //   3. Communication adds negligible overhead in comparison with proving time
-                let mut lock = self.request_timestamp.lock().await;
-                lock.entry(batch_to_prove).or_insert(SystemTime::now());
-            );
-            debug!("Sending BatchResponse for block_number: {batch_to_prove}");
-            ProofData::batch_response(batch_to_prove, input, format)
+            debug!("{prover_type} proof already exists for batch {batch_to_prove}, skipping");
+            send_response(stream, &ProofData::empty_batch_response()).await?;
+            return Ok(());
+        }
+
+        if !self.rollup_store.contains_batch(&batch_to_prove).await? {
+            debug!("Batch {batch_to_prove} not found, sending empty BatchResponse");
+            send_response(stream, &ProofData::empty_batch_response()).await?;
+            return Ok(());
+        }
+
+        let Some(input) = self
+            .rollup_store
+            .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
+            .await?
+        else {
+            let response = ProofData::no_batch_for_version(commit_hash);
+            send_response(stream, &response).await?;
+            info!("No batch for version sent");
+            return Ok(());
         };
 
+        let format = if self.aligned {
+            ProofFormat::Compressed
+        } else {
+            ProofFormat::Groth16
+        };
+        metrics!(
+            // First request starts a timer until a proof is received. The elapsed time will be
+            // the estimated proving time.
+            // This should be used for development only and runs on the assumption that:
+            //   1. There's a single prover
+            //   2. Communication does not fail
+            //   3. Communication adds negligible overhead in comparison with proving time
+            let mut lock = self.request_timestamp.lock().await;
+            lock.entry(batch_to_prove).or_insert(SystemTime::now());
+        );
+
+        let response = ProofData::batch_response(batch_to_prove, input, format);
         send_response(stream, &response).await?;
         info!("BatchResponse sent for batch number: {batch_to_prove}");
 
