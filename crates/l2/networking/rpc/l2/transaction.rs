@@ -121,9 +121,10 @@ impl RpcHandler for SponsoredTx {
                 ));
             }
         }
-        let sponsor_address = get_address_from_secret_key(&context.sponsor_pk).map_err(|_| {
-            RpcErr::InvalidEthrexL2Message("Ethrex L2 Rpc method not enabled".to_string())
-        })?;
+        let sponsor_address = get_address_from_secret_key(&context.sponsor_pk.secret_bytes())
+            .map_err(|_| {
+                RpcErr::InvalidEthrexL2Message("Ethrex L2 Rpc method not enabled".to_string())
+            })?;
         let latest_block_number = context
             .l1_ctx
             .storage

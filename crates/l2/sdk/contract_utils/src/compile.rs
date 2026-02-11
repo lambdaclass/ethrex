@@ -15,8 +15,10 @@ pub fn compile_contract(
     output_dir: &Path,
     contract_path: &Path,
     runtime_bin: bool,
+    abi_json: bool,
     remappings: Option<&[(&str, PathBuf)]>,
     allow_paths: &[&Path],
+    optimize_runs: Option<u64>,
 ) -> Result<(), ContractCompilationError> {
     let bin_flag = if runtime_bin {
         "--bin-runtime"
@@ -27,7 +29,17 @@ pub fn compile_contract(
     let mut cmd = Command::new("solc");
     cmd.arg(bin_flag);
 
+    if abi_json {
+        cmd.arg("--abi");
+    }
+
     apply_remappings(&mut cmd, remappings)?;
+
+    if let Some(optimize_runs) = optimize_runs {
+        cmd.arg("--optimize")
+            .arg("--optimize-runs")
+            .arg(format!("{optimize_runs}"));
+    }
 
     cmd.arg(
         contract_path

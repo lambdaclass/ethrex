@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -20,6 +21,7 @@ ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-blockchain.workspace = true
+ethrex-metrics.workspace = true
 ethrex-crypto.workspace = true
 ethrex-p2p = { workspace = true, features = ["test-utils"] }
 ethrex-rlp.workspace = true

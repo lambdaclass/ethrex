@@ -43,7 +43,7 @@ pub struct Simulator {
     genesis_path: PathBuf,
     configs: Vec<Options>,
     enodes: Vec<String>,
-    cancellation_tokens: Vec<CancellationToken>,
+    cancellation_tokens: Vec<(CancellationToken, tokio::task::JoinHandle<()>)>,
 }
 
 impl Simulator {
@@ -52,7 +52,7 @@ impl Simulator {
         let jwt_secret = generate_jwt_secret();
         std::fs::write("jwt.hex", hex::encode(&jwt_secret)).unwrap();
 
-        let genesis_path = std::path::absolute("../../fixtures/genesis/l1-dev.json")
+        let genesis_path = std::path::absolute("../../fixtures/genesis/l1.json")
             .unwrap()
             .canonicalize()
             .unwrap();
@@ -97,7 +97,10 @@ impl Simulator {
 
         opts.syncmode = SyncMode::Full;
 
-        let _ = std::fs::remove_dir_all(&opts.datadir);
+        if opts.datadir.exists() {
+            std::fs::remove_dir_all(&opts.datadir)
+                .expect("Failed to remove existing data directory");
+        }
         std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
 
         let now = SystemTime::now()
@@ -110,7 +113,6 @@ impl Simulator {
         let cancel = CancellationToken::new();
 
         self.configs.push(opts.clone());
-        self.cancellation_tokens.push(cancel.clone());
 
         let mut cmd = Command::new(&self.cmd_path);
         cmd.args([
@@ -142,20 +144,26 @@ impl Simulator {
                 .expect("node initialization timed out");
         self.enodes.push(enode);
 
-        tokio::spawn(async move {
-            let mut child = child;
-            tokio::select! {
-                _ = cancel.cancelled() => {
-                    if let Some(pid) = child.id() {
-                        // NOTE: we use SIGTERM instead of child.kill() so sockets are closed
-                        signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM).unwrap();
+        let waiter = tokio::spawn({
+            let cancel = cancel.clone();
+            async move {
+                let mut child = child;
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        if let Some(pid) = child.id() {
+                            // NOTE: we use SIGTERM instead of child.kill() so sockets are closed
+                            signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM).unwrap();
+                        }
+                    }
+                    res = child.wait() => {
+                        assert!(res.unwrap().success());
                     }
                 }
-                res = child.wait() => {
-                    assert!(res.unwrap().success());
-                }
+                // Ignore any errors on shutdown
+                let _ = child.wait().await.unwrap();
             }
         });
+        self.cancellation_tokens.push((cancel, waiter));
 
         info!(
             "Started node {n} at http://{}:{}",
@@ -165,10 +173,13 @@ impl Simulator {
         self.get_node(n)
     }
 
-    pub fn stop(&self) {
-        for token in &self.cancellation_tokens {
+    pub async fn stop(&mut self) {
+        for (token, waiter) in self.cancellation_tokens.drain(..) {
             token.cancel();
+            waiter.await.unwrap();
         }
+        self.enodes.clear();
+        self.configs.clear();
     }
 
     fn get_http_url(&self, index: usize) -> Url {
@@ -277,11 +288,6 @@ impl Node {
         );
         let payload_id = fork_choice_response.payload_id.unwrap();
 
-        // We need this sleep so the get_payload call doesn't return an empty block
-        // As of #5205 we build an empty block first before building a payload with the transactions to avoid missing slots
-        // This can cause issues in these tests if the payload is requested too early, the sleep is there to avoid it
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
         let payload_response = self
             .engine_client
             .engine_get_payload_v5(payload_id)
@@ -289,9 +295,18 @@ impl Node {
             .unwrap();
 
         let requests_hash = compute_requests_hash(&payload_response.execution_requests.unwrap());
+        let block_access_list_hash = payload_response
+            .execution_payload
+            .block_access_list
+            .as_ref()
+            .map(|bal| bal.compute_hash());
         let block = payload_response
             .execution_payload
-            .into_block(parent_beacon_block_root, Some(requests_hash))
+            .into_block(
+                parent_beacon_block_root,
+                Some(requests_hash),
+                block_access_list_hash,
+            )
             .unwrap();
 
         info!(
@@ -316,7 +331,7 @@ impl Node {
 
     pub async fn notify_new_payload(&self, chain: &Chain) {
         let head = chain.blocks.last().unwrap();
-        let execution_payload = ExecutionPayload::from_block(head.clone());
+        let execution_payload = ExecutionPayload::from_block(head.clone(), None);
         // Support blobs
         // let commitments = execution_payload_response
         //     .blobs_bundle

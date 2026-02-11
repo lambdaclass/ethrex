@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
     encode::RLPEncode,
@@ -16,6 +17,9 @@ pub type Index = u64;
 pub struct Receipt {
     pub tx_type: TxType,
     pub succeeded: bool,
+    /// Cumulative gas used by this and all previous transactions in the block.
+    /// This is always post-refund gas.
+    /// Note: Block-level gas accounting (pre-refund for EIP-7778) uses BlockExecutionResult::block_gas_used.
     pub cumulative_gas_used: u64,
     pub logs: Vec<Log>,
 }
@@ -43,31 +47,31 @@ impl Receipt {
     }
 
     pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
-        let mut encode_buff = match self.tx_type {
-            TxType::Legacy => {
-                vec![]
-            }
-            _ => {
-                vec![self.tx_type as u8]
-            }
-        };
+        // Bloom is already 256 bytes, so we preallocate at least that much plus some,
+        // to avoid multiple small allocations.
+        let mut encode_buf = Vec::with_capacity(512);
+        if self.tx_type != TxType::Legacy {
+            encode_buf.push(self.tx_type as u8);
+        }
         let bloom = bloom_from_logs(&self.logs);
-        Encoder::new(&mut encode_buff)
+        Encoder::new(&mut encode_buf)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
             .encode_field(&bloom)
             .encode_field(&self.logs)
             .finish();
-        encode_buff
+        encode_buf
     }
 }
 
 pub fn bloom_from_logs(logs: &[Log]) -> Bloom {
     let mut bloom = Bloom::zero();
     for log in logs {
-        bloom.accrue(BloomInput::Raw(log.address.as_ref()));
+        let address_hash = keccak_hash(log.address);
+        bloom.accrue(BloomInput::Hash(&address_hash));
         for topic in log.topics.iter() {
-            bloom.accrue(BloomInput::Raw(topic.as_ref()));
+            let topic_hash = keccak_hash(*topic);
+            bloom.accrue(BloomInput::Hash(&topic_hash));
         }
     }
     bloom
@@ -111,6 +115,9 @@ impl RLPDecode for Receipt {
 pub struct ReceiptWithBloom {
     pub tx_type: TxType,
     pub succeeded: bool,
+    /// Cumulative gas used by this and all previous transactions in the block.
+    /// This is always post-refund gas.
+    /// Note: Block-level gas accounting (pre-refund for EIP-7778) uses BlockExecutionResult::block_gas_used.
     pub cumulative_gas_used: u64,
     pub bloom: Bloom,
     pub logs: Vec<Log>,
@@ -330,6 +337,10 @@ impl RLPDecode for Log {
 mod test {
     use super::*;
 
+    fn h256_from_hex(s: &str) -> H256 {
+        H256::from_slice(&hex::decode(s).unwrap())
+    }
+
     #[test]
     fn test_encode_decode_receipt_legacy() {
         let receipt = Receipt {
@@ -361,6 +372,7 @@ mod test {
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
     }
+
     #[test]
     fn test_encode_decode_inner_receipt_legacy() {
         let receipt = ReceiptWithBloom {
@@ -399,5 +411,49 @@ mod test {
             receipt,
             ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap()
         )
+    }
+
+    #[test]
+    fn test_encode_receipt_with_bloom() {
+        let receipt = Receipt {
+            tx_type: TxType::EIP1559,
+            succeeded: true,
+            cumulative_gas_used: 1500,
+            logs: vec![Log {
+                address: Address::random(),
+                topics: vec![
+                    h256_from_hex(
+                        "e70c0d1060ffbafc84e0e18d028245de3deeb0f41ecbade6562fa657d85ae945",
+                    ),
+                    h256_from_hex(
+                        "e7e9cd61c8c6cb313324d785aa130fe50a7b9885e4d1d7700a327c5e9ae4e183",
+                    ),
+                    h256_from_hex(
+                        "666d827b9db958c08f7186f127e3d9ea6a97288bcc4b527951ce493f6e2b76c4",
+                    ),
+                    h256_from_hex(
+                        "28b4366544dccafad7b61138e9ada51706e85bb217a20cfa1c86e2648f8f369a",
+                    ),
+                    h256_from_hex(
+                        "85cf9717f65c70d71cc6175f653512c13ce7b6a9bc5d9c2b9c49b2d2d6cb9536",
+                    ),
+                ],
+                data: Bytes::from_static(b"bar"),
+            }],
+        };
+        let encoded_receipt = receipt.encode_inner_with_bloom();
+
+        let correct_bloom = {
+            let mut bloom = Bloom::zero();
+            for log in receipt.logs {
+                bloom.accrue(BloomInput::Raw(log.address.as_ref()));
+                for topic in log.topics.iter() {
+                    bloom.accrue(BloomInput::Raw(topic.as_ref()));
+                }
+            }
+            bloom
+        };
+        let receipt_with_bloom = ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap();
+        assert_eq!(receipt_with_bloom.bloom, correct_bloom);
     }
 }

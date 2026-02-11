@@ -4,6 +4,7 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,13 +14,39 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.finish.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run_tests:
+              - '!docs/**'
+      - name: finish
+        id: finish
+        run: echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+      - name: Print result
+        run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
+
   lint_zk:
     name: Lint ${{ matrix.backend }} backend
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        backend: ["sp1", "risc0"]
+        # Note: openvm backend linting is disabled due to a problem in the installation https://github.com/lambdaclass/ethrex/issues/5509
+        backend: ["sp1", "risc0", "zisk"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -44,20 +71,42 @@ jobs:
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.8
 
+      - name: ZisK toolchain install
+        if: matrix.backend == 'zisk'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SETUP_KEY: none
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+          curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
+          echo "$HOME/.zisk/bin" >> $GITHUB_PATH
+
+      - name: RISC-V OpenVM toolchain install
+        if: matrix.backend == 'openvm'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rustup install nightly-2025-02-14
+          rustup component add rust-src --toolchain nightly-2025-02-14
+          cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.1 cargo-openvm
+
       - name: Check ${{ matrix.backend }} backend
         run: |
-          cargo check -r -p ethrex-prover -F ${{ matrix.backend }}
+          cargo check -r -p ethrex-prover -F "${{ matrix.backend }},ci"
 
       - name: Clippy ${{ matrix.backend }} backend
         run: |
-          cargo clippy -r -p ethrex-prover --all-targets -F ${{ matrix.backend }}
+          cargo clippy -r -p ethrex-prover --all-targets -F "${{ matrix.backend }},ci"
 
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |
-          git diff --exit-code -- crates/l2/prover/src/guest_program/${{ matrix.backend }}/Cargo.lock
+          git diff --exit-code -- crates/guest-program/bin/${{ matrix.backend }}/Cargo.lock
 
   lint_exec:
     name: Lint exec backend
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -74,6 +123,8 @@ jobs:
 
   lint_tdx:
     name: Lint tdx backend
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -94,9 +145,9 @@ jobs:
     # "Lint" is a required check, don't change the name
     name: Lint
     runs-on: ubuntu-latest
-    needs: [lint_exec, lint_tdx, lint_zk]
+    needs: [detect-changes, lint_exec, lint_tdx, lint_zk]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.lint_exec.result != 'skipped' && needs.lint_tdx.result != 'skipped' && needs.lint_zk.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.lint_exec.result != 'skipped' && needs.lint_tdx.result != 'skipped' && needs.lint_zk.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |

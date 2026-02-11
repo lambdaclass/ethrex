@@ -1,5 +1,6 @@
-use aligned_sdk::common::types::Network;
+use aligned_sdk::types::Network;
 use ethrex_common::types::Block;
+use ethrex_common::types::batch::Batch;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, types::TxType};
@@ -19,7 +20,7 @@ use rand::Rng;
 use reqwest::Url;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
-use tracing::info;
+use tracing::{info, warn};
 
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
@@ -116,11 +117,15 @@ pub async fn get_needed_proof_types(
 pub fn resolve_aligned_network(network: &str) -> Network {
     match network {
         "devnet" => Network::Devnet,
-        "holesky" => Network::Holesky,
-        "holesky-stage" => Network::HoleskyStage,
-        "mainnet" => Network::Mainnet,
         "hoodi" => Network::Hoodi,
-        _ => Network::Devnet, // TODO: Implement custom networks
+        "mainnet" => Network::Mainnet,
+        unknown => {
+            warn!(
+                "Unknown Aligned network '{}', defaulting to devnet. Valid options: devnet, hoodi, mainnet",
+                unknown
+            );
+            Network::Devnet
+        }
     }
 }
 
@@ -143,35 +148,28 @@ where
 }
 
 pub async fn fetch_blocks_with_respective_fee_configs<E>(
-    batch_number: u64,
+    batch: &Batch,
     store: &Store,
     rollup_store: &StoreRollup,
 ) -> Result<(Vec<Block>, Vec<FeeConfig>), E>
 where
     E: From<StoreError> + From<RollupStoreError>,
 {
-    let batch_blocks = rollup_store
-        .get_block_numbers_by_batch(batch_number)
-        .await?
-        .ok_or(RollupStoreError::Custom(
-            "failed to retrieve data from storage".to_string(),
-        ))?;
-
     let mut blocks = Vec::new();
     let mut fee_configs = vec![];
 
-    for block_number in batch_blocks {
+    for block_number in batch.first_block..=batch.last_block {
         let block_header = store
             .get_block_header(block_number)?
             .ok_or(StoreError::Custom(
-                "failed to retrieve data from storage".to_string(),
+                "failed to retrieve block header from storage".to_string(),
             ))?;
 
         let block_body = store
             .get_block_body(block_number)
             .await?
             .ok_or(StoreError::Custom(
-                "failed to retrieve data from storage".to_string(),
+                "failed to retrieve block body from storage".to_string(),
             ))?;
 
         let block = Block::new(block_header, block_body);

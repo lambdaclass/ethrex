@@ -70,6 +70,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
+
     #[tokio::test]
     async fn test_with_mixed_transactions() {
         let context = default_context().await;
@@ -81,6 +82,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
+
     #[tokio::test]
     async fn test_with_not_enough_blocks_or_transactions() {
         let context = default_context().await;
@@ -92,6 +94,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, MIN_GAS_TIP);
     }
+
     #[tokio::test]
     async fn test_with_no_blocks_but_genesis() {
         let context = default_context().await;
@@ -101,6 +104,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, MIN_GAS_TIP);
     }
+
     #[tokio::test]
     async fn request_smoke_test() {
         let raw_json = json!(

@@ -4,13 +4,16 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     types::{
-        fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
+        fork_choice::{
+            ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
+        },
         payload::PayloadStatus,
     },
     utils::RpcErr,
@@ -127,6 +130,46 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
     }
 }
 
+#[derive(Debug)]
+pub struct ForkChoiceUpdatedV4 {
+    pub fork_choice_state: ForkChoiceState,
+    pub payload_attributes: Option<PayloadAttributesV4>,
+}
+
+impl From<ForkChoiceUpdatedV4> for RpcRequest {
+    fn from(val: ForkChoiceUpdatedV4) -> Self {
+        RpcRequest {
+            method: "engine_forkchoiceUpdatedV4".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.fork_choice_state),
+                serde_json::json!(val.payload_attributes),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for ForkChoiceUpdatedV4 {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let (fork_choice_state, payload_attributes) = parse_v4(params)?;
+        Ok(ForkChoiceUpdatedV4 {
+            fork_choice_state,
+            payload_attributes,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let (head_block_opt, mut response) =
+            handle_forkchoice(&self.fork_choice_state, context.clone(), 4).await?;
+        if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
+            validate_attributes_v4(attributes, &head_block, &context)?;
+            let payload_id = build_payload_v4(attributes, context, &self.fork_choice_state).await?;
+            response.set_id(payload_id);
+        }
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
 fn parse(
     params: &Option<Vec<Value>>,
     is_v3: bool,
@@ -174,7 +217,7 @@ async fn handle_forkchoice(
             "Fork choice requested but syncer is not initialized".to_string(),
         ));
     };
-    info!(
+    debug!(
         version = %format!("v{}", version),
         head = %format!("{:#x}", fork_choice_state.head_block_hash),
         safe = %format!("{:#x}", fork_choice_state.safe_block_hash),
@@ -219,22 +262,14 @@ async fn handle_forkchoice(
         ));
     }
 
-    /*   Revert #4985
-    if context.syncer.sync_mode() == SyncMode::Snap {
-        // Don't trigger a sync if the block is already canonical
-        if context
-            .storage
-            .is_canonical_sync(fork_choice_state.head_block_hash)?
-        {
-            // Disable snapsync mode so we can process incoming payloads
-            context.syncer.disable_snap();
-        } else {
-            context
-                .syncer
-                .sync_to_head(fork_choice_state.head_block_hash);
-            return Ok((None, PayloadStatus::syncing().into()));
-        }
-    } */
+    // Ignore any FCU during snap-sync.
+    // Processing the FCU while snap-syncing can result in reading inconsistent data
+    // from the DB, and the later head update can overwrite changes made by the syncer
+    // process, corrupting the forkchoice state (see #5547)
+    if syncer.sync_mode() == SyncMode::Snap {
+        syncer.sync_to_head(fork_choice_state.head_block_hash);
+        return Ok((None, PayloadStatus::syncing().into()));
+    }
 
     match apply_fork_choice(
         &context.storage,
@@ -284,6 +319,11 @@ async fn handle_forkchoice(
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
+                    ForkChoiceResponse::from(PayloadStatus::syncing())
+                }
+                // TODO(#5564): handle arbitrary reorgs
+                InvalidForkChoice::StateNotReachable => {
+                    // Ignore the FCU
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
@@ -388,6 +428,7 @@ async fn build_payload(
         random: attributes.prev_randao,
         withdrawals: attributes.withdrawals.clone(),
         beacon_root: attributes.parent_beacon_block_root,
+        slot_number: None,
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: context.gas_ceil,
@@ -405,6 +446,107 @@ async fn build_payload(
         Err(ChainError::EvmError(error)) => return Err(error.into()),
         // Parent block is guaranteed to be present at this point,
         // so the only errors that may be returned are internal storage errors
+        Err(error) => return Err(RpcErr::Internal(error.to_string())),
+    };
+    context
+        .blockchain
+        .initiate_payload_build(payload, payload_id)
+        .await;
+    Ok(payload_id)
+}
+
+fn parse_v4(
+    params: &Option<Vec<Value>>,
+) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>), RpcErr> {
+    let params = params
+        .as_ref()
+        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+
+    if params.len() != 2 && params.len() != 1 {
+        return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
+    }
+
+    let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
+    let mut payload_attributes: Option<PayloadAttributesV4> = None;
+    if params.len() == 2 {
+        payload_attributes =
+            match serde_json::from_value::<Option<PayloadAttributesV4>>(params[1].clone()) {
+                Ok(attributes) => attributes,
+                Err(error) => {
+                    warn!("Could not parse payload attributes {}", error);
+                    None
+                }
+            };
+    }
+    Ok((forkchoice_state, payload_attributes))
+}
+
+fn validate_attributes_v4(
+    attributes: &PayloadAttributesV4,
+    head_block: &BlockHeader,
+    context: &RpcApiContext,
+) -> Result<(), RpcErr> {
+    // Similar validation to V3
+    let chain_config = context.storage.get_chain_config();
+    if !chain_config.is_amsterdam_activated(attributes.timestamp) {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "V4 payload attributes used for pre-Amsterdam timestamp".to_string(),
+        ));
+    }
+    if attributes.withdrawals.is_none() {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "V4 payload attributes missing withdrawals".to_string(),
+        ));
+    }
+    if attributes.parent_beacon_block_root.is_none() {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "V4 payload attributes missing parent_beacon_block_root".to_string(),
+        ));
+    }
+    validate_timestamp_v4(attributes, head_block)
+}
+
+fn validate_timestamp_v4(
+    attributes: &PayloadAttributesV4,
+    head_block: &BlockHeader,
+) -> Result<(), RpcErr> {
+    if attributes.timestamp <= head_block.timestamp {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "invalid timestamp".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn build_payload_v4(
+    attributes: &PayloadAttributesV4,
+    context: RpcApiContext,
+    fork_choice_state: &ForkChoiceState,
+) -> Result<u64, RpcErr> {
+    let args = BuildPayloadArgs {
+        parent: fork_choice_state.head_block_hash,
+        timestamp: attributes.timestamp,
+        fee_recipient: attributes.suggested_fee_recipient,
+        random: attributes.prev_randao,
+        withdrawals: attributes.withdrawals.clone(),
+        beacon_root: attributes.parent_beacon_block_root,
+        slot_number: Some(attributes.slot_number),
+        version: 4,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: context.gas_ceil,
+    };
+    let payload_id = args
+        .id()
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
+
+    info!(
+        id = payload_id,
+        slot = attributes.slot_number,
+        "Fork choice updated V4 includes payload attributes. Creating a new payload"
+    );
+    let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {
+        Ok(payload) => payload,
+        Err(ChainError::EvmError(error)) => return Err(error.into()),
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
     context

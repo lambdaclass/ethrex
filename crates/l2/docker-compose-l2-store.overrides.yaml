@@ -14,4 +14,6 @@ services:
       --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127
       --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
       --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+      --l1.bridge-address 0x0000000000000000000000000000000000000000
+      --l1.on-chain-proposer-address 0x0000000000000000000000000000000000000000
       --no-monitor

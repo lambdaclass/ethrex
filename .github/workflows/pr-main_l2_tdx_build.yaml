@@ -1,5 +1,6 @@
 name: L2 TDX build
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
   pull_request:
@@ -12,10 +13,35 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.finish.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run_tests:
+              - '!docs/**'
+      - name: finish
+        id: finish
+        run: echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+      - name: Print result
+        run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
+
   build_tdx:
     # "Test" is a required check, don't change the name
     name: Test
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -29,4 +55,4 @@ jobs:
           sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
           sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
           cd crates/l2/tee/quote-gen
-          make image.raw
+          make image.raw || { echo "if fails run in the root of the project: make update-cargo-lock"; exit 1; }

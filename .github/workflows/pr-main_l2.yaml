@@ -5,10 +5,12 @@ on:
   merge_group:
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
   actions: write
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -16,6 +18,9 @@ concurrency:
 
 env:
   DOCKER_ETHREX_WORKDIR: /usr/local/bin
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   detect-changes:
@@ -30,16 +35,32 @@ jobs:
           filters: |
             run_tests:
               - "crates/l2/**"
-              - "fixtures/**"
+              - "test/tests/l2/**"
+              - "fixtures/keys/**"
+              - "fixtures/genesis/l1.json"
+              - "fixtures/genesis/l2.json"
+              - "fixtures/cache/**"
+              - "fixtures/blobs/**"
+              - "fixtures/blockchain/**"
+              - "fixtures/contracts/**"
               - "crates/blockchain/dev/**"
               - "crates/vm/levm/**"
               - ".github/workflows/pr-main_l2.yaml"
               - "cmd/ethrex/l2/**"
+            non_docs:
+              - "!docs/**"
+            code_changed:
+              - "**/*.rs"
+              - "**/*.toml"
+              - "**/*.lock"
       - name: finish
         id: finish
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
               echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+              # In merge queue, only run lint if code files changed
+              echo "run_tests=${{ steps.filter.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
@@ -73,8 +94,8 @@ jobs:
 
       - name: Create placeholder SP1 ELF
         run: |
-          mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
-          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+          mkdir -p crates/guest-program/bin/sp1/out
+          touch crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-elf
 
       - name: Run cargo check
         run: cargo check --workspace --features l2,l2-sql
@@ -88,11 +109,33 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+  validate-blobs:
+    # Fast validation to catch stale blobs early
+    # This prevents waiting for state-diff-test to fail
+    # If this fails, regenerate blobs following:
+    # - docs/workflows/regenerate-blobs.md (agent workflow)
+    # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
+    name: Validate Blob Fixtures
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Validate blobs match genesis
+        run: |
+          cd crates/l2
+          make validate-blobs
+
   build-docker:
     name: Build docker image
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -103,9 +146,13 @@ jobs:
       - name: Build L1 docker image
         uses: ./.github/actions/build-docker
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main
+          variant: l1
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -119,7 +166,7 @@ jobs:
     name: Build docker image L2
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -130,11 +177,15 @@ jobs:
       - name: Build L2 docker image
         uses: ./.github/actions/build-docker
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
           build_args: BUILD_FLAGS=--features l2,l2-sql
+          variant: l2
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -142,11 +193,120 @@ jobs:
           name: ethrex_image_l2
           path: /tmp/ethrex_image_l2.tar
 
+  uniswap-swap:
+    name: Uniswap Swap Token Flow
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Yarn
+        run: npm install -g yarn
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
+
+      - name: Install rex
+        run: |
+          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-linux-x86_64 -o /tmp/rex
+          chmod +x /tmp/rex
+          sudo mv /tmp/rex /usr/local/bin/rex
+
+      - name: Build ethrex with L2 features and contracts
+        env:
+          COMPILE_CONTRACTS: "true"
+        run: |
+          cargo build --release --features "l2,l2-sql" --bin ethrex
+
+      - name: Run L2 dev node and Uniswap Swap Token Script
+        env:
+          COMPILE_CONTRACTS: "true"
+        run: |
+          set -euo pipefail
+
+          echo "Starting ethrex L2 dev node (logging to /tmp/ethrex.log)..."
+          ./target/release/ethrex \
+            l2 --dev \
+            --osaka-activation-time 1761677592 \
+            --no-monitor \
+            --log.level debug > /tmp/ethrex.log 2>&1 &
+          ETHREX_PID=$!
+
+          trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
+
+          if ! kill -0 "$ETHREX_PID" 2>/dev/null; then
+            echo "ethrex l2 --dev process exited unexpectedly"
+            exit 1
+          fi
+
+          echo "Waiting until rich account 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e has funds on the L2..."
+          MAX_BALANCE_TRIES=300
+          BALANCE_SLEEP_SECS=2
+          balance_wei=0
+          balance_output=""
+
+          for ((i = 1; i <= MAX_BALANCE_TRIES; i++)); do
+            if ! balance_output=$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e http://localhost:1729 2>/dev/null); then
+              sleep "${BALANCE_SLEEP_SECS}"
+              continue
+            fi
+
+            balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+
+            if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+              echo "Detected L2 balance for rich account: ${balance_wei} wei"
+              break
+            fi
+
+            sleep "${BALANCE_SLEEP_SECS}"
+          done
+
+          if [[ ! "${balance_wei}" =~ ^[0-9]+$ ]] || (( balance_wei == 0 )); then
+            echo "Timed out waiting for non-zero L2 balance for rich account."
+            echo "Last rex balance output:"
+            echo "${balance_output:-'<none>'}"
+            exit 1
+          fi
+
+          echo "Cloning ethrex-l2-contracts-kit..."
+          git clone https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
+            /tmp/ethrex-l2-contracts-kit
+
+          cd /tmp/ethrex-l2-contracts-kit
+
+          echo "Running Uniswap swap_token script..."
+          chmod +x examples/uniswap/swap_token
+          examples/uniswap/swap_token
+
+      - name: Dump ethrex logs on failure
+        if: ${{ failure() }}
+        run: |
+          echo "===== ethrex logs (/tmp/ethrex.log) ====="
+          if [ -f /tmp/ethrex.log ]; then
+            grep -E "INFO|WARN|ERROR" /tmp/ethrex.log
+          else
+            echo "Log file /tmp/ethrex.log not found"
+          fi
+
   integration-test:
     name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
       matrix:
         include:
@@ -178,20 +338,17 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Build prover
         run: |
           cd crates/l2
           make build-prover-exec
-          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32
+          mkdir -p ../guest-program/bin/sp1/out && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32
 
       - name: Build test
         run: |
-          cargo test l2 --features l2 --no-run --release
+          cargo test -p ethrex-test l2:: --no-run --release
 
       - name: Start Web3Signer
         if: matrix.web3signer
@@ -222,17 +379,13 @@ jobs:
       - name: Start L1
         run: |
           cd crates/l2
-          docker compose up --detach ethrex_l1
+          ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Install rex
-        if: ${{ matrix.based }}
         run: |
-          cd ..
-          git clone https://github.com/lambdaclass/rex.git
-          cd rex
-          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
-          make cli
-          echo "rex install successfully at $(which rex)"
+          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-linux-x86_64 -o /tmp/rex
+          chmod +x /tmp/rex
+          sudo mv /tmp/rex /usr/local/bin/rex
 
       - name: Deploy contracts
         run: |
@@ -297,23 +450,47 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          ETHREX_LOG_LEVEL=debug \
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
+
+      - name: Wait for L2 deposits to be processed
+        run: |
+          # Wait until test account deposits are processed on L2
+          # Get the first test account private key (last line, since tests use pop())
+          FIRST_TEST_PK=$(tail -n1 fixtures/keys/private_keys_tests.txt)
+          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_TEST_PK")
+          echo "Waiting for test account $RICH_ADDRESS deposits to be processed on L2..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2 balance... (attempt $i)"
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Rich account has balance on L2: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2 deposits to be processed"
+          exit 1
 
       - name: Run test
         run: |
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
-          docker logs --follow ethrex_l2 &
-          docker logs --follow ethrex_l1 &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
   integration-test-tdx:
     name: Integration Test - TDX
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -325,10 +502,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
@@ -359,6 +533,9 @@ jobs:
           sudo apt-get install -y qemu-system-x86 qemu-utils
 
       - name: Install rex
+        # NOTE: TDX deployment uses automata-on-chain-pccs which has rex commands
+        # with old CLI syntax (positional args). Updating to rex v8.0.0 requires
+        # updating that repo first: https://github.com/lambdaclass/automata-on-chain-pccs
         run: |
           cd /tmp
           git clone https://github.com/lambdaclass/rex
@@ -372,7 +549,7 @@ jobs:
           sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
           sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
           cd crates/l2/tee/quote-gen
-          make image.raw
+          make image.raw || { echo "if fails run in the root of the project: make update-cargo-lock"; exit 1; }
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -396,7 +573,31 @@ jobs:
           ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000 \
           ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec \
           ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
+          ETHREX_LOG_LEVEL=debug \
           docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
+
+      - name: Wait for L2 deposits to be processed
+        run: |
+          # Wait until test account deposits are processed on L2
+          # Get the first test account private key (last line, since tests use pop())
+          FIRST_TEST_PK=$(tail -n1 fixtures/keys/private_keys_tests.txt)
+          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_TEST_PK")
+          echo "Waiting for test account $RICH_ADDRESS deposits to be processed on L2..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2 balance... (attempt $i)"
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Rich account has balance on L2: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2 deposits to be processed"
+          exit 1
 
       - name: Run test
         run: |
@@ -413,15 +614,18 @@ jobs:
             -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap"
           tail -f tdx_prover.log &
           cd ../../
-          docker logs --follow ethrex_l2 &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
           pkill -9 -f ethrex_tdx_prover
 
   state-diff-test:
+    # If this test fails due to stale blobs, regenerate them following:
+    # - docs/workflows/regenerate-blobs.md (agent workflow)
+    # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    needs: [detect-changes, build-docker, build-docker-l2, validate-blobs]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -449,10 +653,7 @@ jobs:
           docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -479,15 +680,266 @@ jobs:
           cd crates/l2
           make state-diff-test
 
+  integration-test-shared-bridge:
+    name: Integration Test Shared Bridge - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-docker, build-docker-l2]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    strategy:
+      matrix:
+        include:
+          - name: "Normal"
+            forced_inclusion: false
+          - name: "Forced Inclusion"
+            forced_inclusion: true
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
+
+      - name: Install rex
+        run: |
+          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-linux-x86_64 -o /tmp/rex
+          chmod +x /tmp/rex
+          sudo mv /tmp/rex /usr/local/bin/rex
+
+      - name: Build prover
+        run: |
+          cd crates/l2
+          make build-prover-exec
+          mkdir -p ../guest-program/bin/sp1/out && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32
+
+      - name: Build test
+        run: |
+          cargo test -p ethrex-test l2:: --no-run --release
+
+      - name: Download ethrex image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load ethrex image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
+
+      - name: Start L1
+        run: |
+          cd crates/l2
+          ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
+
+      - name: Deploy contracts L2A
+        run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
+          touch cmd/.env
+          cd crates/l2
+          if  [ "${{ matrix.forced_inclusion }}" = true ]; then
+            # We set the inclusion max wait to 0 to force expired messages
+            export ETHREX_ON_CHAIN_PROPOSER_INCLUSION_MAX_WAIT=0
+          fi
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true \
+          docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
+
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env_l2a
+          cat cmd/.env_l2a
+
+      - name: Deploy contracts L2B
+        run: |
+          jq '.config.chainId = 1730' fixtures/genesis/l2.json > fixtures/genesis/l2b.json
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
+          touch cmd/.env
+          cd crates/l2
+          export $(grep -v '^#' ../../cmd/.env_l2a | xargs)
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
+          docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
+
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env_l2b
+          cat cmd/.env_l2b
+
+      - name: Start Sequencer L2A
+        run: |
+          cp cmd/.env_l2a cmd/.env
+          export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
+          export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
+          if  [ "${{ matrix.forced_inclusion }}" = false ]; then
+            # In forced_inclusion, we ommit these variables to avoid including messages from L2B into L2A
+            export ETHREX_WATCHER_L2_RPCS=http://ethrex_l2_b:1730
+            export ETHREX_WATCHER_L2_CHAIN_IDS=1730
+          fi
+          cd crates/l2
+          export $(xargs < ../../cmd/.env_l2a)
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          ETHREX_LOG_LEVEL=debug \
+          ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
+          docker compose -f docker-compose.yaml up --detach --no-deps ethrex_l2
+
+      - name: Start Sequencer L2B
+        run: |
+          cp cmd/.env_l2b cmd/.env
+          export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
+          export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
+          cd crates/l2
+          export $(xargs < ../../cmd/.env_l2b)
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          ETHREX_WATCHER_L2_RPCS=http://ethrex_l2:1729 \
+          ETHREX_WATCHER_L2_CHAIN_IDS=65536999 \
+          ETHREX_LOG_LEVEL=debug \
+          ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
+          docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
+
+      - name: Wait for L2A deposits to be processed
+        run: |
+          # Wait until shared_bridge test account deposits are processed on L2A
+          # This address is hardcoded in test/tests/l2/shared_bridge.rs (SENDER_ADDRESS)
+          SENDER_ADDRESS="0x000130bade00212be1aa2f4acfe965934635c9cd"
+          echo "Waiting for shared_bridge test account $SENDER_ADDRESS deposits to be processed on L2A..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2A balance... (attempt $i)"
+            if balance_output=$(rex balance "$SENDER_ADDRESS" http://localhost:1729 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Shared bridge test account has balance on L2A: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2A deposits to be processed"
+          exit 1
+
+      - name: Wait for L2B deposits to be processed
+        run: |
+          # Wait until shared_bridge test account deposits are processed on L2B
+          # This address is hardcoded in test/tests/l2/shared_bridge.rs (SENDER_ADDRESS)
+          SENDER_ADDRESS="0x000130bade00212be1aa2f4acfe965934635c9cd"
+          echo "Waiting for shared_bridge test account $SENDER_ADDRESS deposits to be processed on L2B..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2B balance... (attempt $i)"
+            if balance_output=$(rex balance "$SENDER_ADDRESS" http://localhost:1730 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Shared bridge test account has balance on L2B: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2B deposits to be processed"
+          exit 1
+
+      - name: Run Shared Bridge Tests
+        if: matrix.forced_inclusion == false
+        run: |
+          sudo chmod -R a+rw crates/l2
+          cd crates/l2
+          cargo run --release --features "l2,l2-sql" --manifest-path ../../Cargo.toml -- \
+          l2 prover \
+          --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
+          --backend exec &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          cp ../../cmd/.env_l2a ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2a)
+          cargo test -p ethrex-test test_shared_bridge --release --features l2 -- --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
+          cp ../../cmd/.env_l2b ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2b)
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
+          cp ../../cmd/.env_l2a ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2a)
+          cargo test -p ethrex-test test_shared_bridge --release --features l2 -- --nocapture --test-threads=1
+          killall ethrex -s SIGINT
+
+      - name: Run Forced Inclusion Test
+        if: matrix.forced_inclusion
+        run: |
+          sudo chmod -R a+rw crates/l2
+          cd crates/l2
+          cargo run --release --features "l2,l2-sql" --manifest-path ../../Cargo.toml -- \
+          l2 prover \
+          --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
+          --backend exec &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          cp ../../cmd/.env_l2a ../../cmd/.env
+          cargo test -p ethrex-test forced_inclusion --release --features l2 -- --nocapture --test-threads=1
+          killall ethrex -s SIGINT
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test L2" is a required check, don't change the name
     name: Integration Test L2
     runs-on: ubuntu-latest
     needs:
-      [detect-changes, integration-test, state-diff-test, integration-test-tdx]
+      [
+        detect-changes,
+        integration-test,
+        state-diff-test,
+        integration-test-tdx,
+        uniswap-swap,
+        integration-test-shared-bridge,
+      ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-swap.result != 'skipped' && needs.integration-test-shared-bridge.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -498,5 +950,15 @@ jobs:
 
           if [ "${{ needs.state-diff-test.result }}" != "success" ]; then
             echo "Job State Reconstruction Tests failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.uniswap-swap.result }}" != "success" ]; then
+            echo "Job Uniswap Swap Token Flow failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.integration-test-shared-bridge.result }}" != "success" ]; then
+            echo "Job Integration test shared bridge failed"
             exit 1
           fi

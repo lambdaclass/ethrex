@@ -28,15 +28,22 @@ impl<'a> VM<'a> {
     // BALANCE operation
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
-
         let address_was_cold = !self.substate.add_accessed_address(address);
+
+        // Gas check MUST pass before state access per EIP-7928:
+        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
+
+        // State access AFTER gas check passes
         let account_balance = self.db.get_account(address)?.info.balance;
 
-        let current_call_frame = &mut self.current_call_frame;
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
-        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
-
-        current_call_frame.stack.push(account_balance)?;
+        self.current_call_frame.stack.push(account_balance)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -132,6 +139,7 @@ impl<'a> VM<'a> {
     }
 
     // CALLDATACOPY operation
+    #[expect(clippy::arithmetic_side_effects, reason = "bound checked")]
     pub fn op_calldatacopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [dest_offset, calldata_offset, size] = *current_call_frame.stack.pop()?;
@@ -154,47 +162,22 @@ impl<'a> VM<'a> {
 
         // offset is out of bounds, so fill zeroes
         if calldata_offset >= calldata_len {
-            current_call_frame.memory.store_zeros(dest_offset, size)?;
+            current_call_frame
+                .memory
+                .store_data_zero_padded(dest_offset, &[], size)?;
             return Ok(OpcodeResult::Continue);
         }
 
-        #[expect(
-            clippy::arithmetic_side_effects,
-            clippy::indexing_slicing,
-            reason = "bounds checked"
-        )]
-        {
-            // we already verified calldata_len >= calldata_offset
-            let available_data = calldata_len - calldata_offset;
-            let copy_size = size.min(available_data);
-            let zero_fill_size = size - copy_size;
+        // We already verified calldata_len >= calldata_offset.
+        let available_data = calldata_len - calldata_offset;
+        let copy_size = size.min(available_data);
+        #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+        let src_slice = &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
+        current_call_frame
+            .memory
+            .store_data_zero_padded(dest_offset, src_slice, size)?;
 
-            if zero_fill_size == 0 {
-                // no zero padding needed
-
-                // calldata_offset + copy_size can't overflow because its the min of size and (calldata_len - calldata_offset).
-                let src_slice =
-                    &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
-                current_call_frame
-                    .memory
-                    .store_data(dest_offset, src_slice)?;
-            } else {
-                let mut data = vec![0u8; size];
-
-                let available_data = calldata_len - calldata_offset;
-                let copy_size = size.min(available_data);
-
-                if copy_size > 0 {
-                    data[..copy_size].copy_from_slice(
-                        &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size],
-                    );
-                }
-
-                current_call_frame.memory.store_data(dest_offset, &data)?;
-            }
-
-            Ok(OpcodeResult::Continue)
-        }
+        Ok(OpcodeResult::Continue)
     }
 
     // CODESIZE operation
@@ -245,28 +228,27 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.bytecode.len() {
-            let diff = current_call_frame
-                .bytecode
-                .bytecode
-                .len()
-                .wrapping_sub(code_offset);
-            let final_size = size.min(diff);
-            let end = code_offset.wrapping_add(final_size);
+        let code_len = current_call_frame.bytecode.bytecode.len();
 
+        #[expect(clippy::arithmetic_side_effects)]
+        let slice = if code_offset < code_len {
+            let available_data = code_len - code_offset;
+            let copy_size = size.min(available_data);
+            let end = code_offset + copy_size;
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             unsafe {
-                data.get_unchecked_mut(..final_size).copy_from_slice(
-                    current_call_frame
-                        .bytecode
-                        .bytecode
-                        .get_unchecked(code_offset..end),
-                );
+                current_call_frame
+                    .bytecode
+                    .bytecode
+                    .get_unchecked(code_offset..end)
             }
-        }
+        } else {
+            &[]
+        };
 
-        current_call_frame.memory.store_data(dest_offset, &data)?;
+        current_call_frame
+            .memory
+            .store_data_zero_padded(dest_offset, slice, size)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -286,14 +268,21 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
-        // FIXME: a bit wasteful to fetch the whole code just to get the length.
-        let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
 
-        let current_call_frame = &mut self.current_call_frame;
+        // Gas check MUST pass before state access per EIP-7928:
+        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
+        // State access AFTER gas check passes (using optimized code length lookup)
+        let account_code_length = self.db.get_code_length(address)?.into();
 
-        current_call_frame.stack.push(account_code_length)?;
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
+
+        self.current_call_frame.stack.push(account_code_length)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -311,6 +300,8 @@ impl<'a> VM<'a> {
         let address_was_cold = !self.substate.add_accessed_address(address);
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
+        // Gas check MUST pass before recording address in BAL per EIP-7928:
+        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
         self.current_call_frame
             .increase_consumed_gas(gas_cost::extcodecopy(
                 size,
@@ -318,6 +309,11 @@ impl<'a> VM<'a> {
                 current_memory_size,
                 address_was_cold,
             )?)?;
+
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
         if size == 0 {
             return Ok(OpcodeResult::Continue);
@@ -340,22 +336,24 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let mut data = vec![0u8; size];
-        if offset < bytecode.bytecode.len() {
-            let diff = bytecode.bytecode.len().wrapping_sub(offset);
-            let final_size = size.min(diff);
-            let end = offset.wrapping_add(final_size);
+        let code_len = bytecode.bytecode.len();
 
+        #[expect(clippy::arithmetic_side_effects)]
+        let slice = if offset < code_len {
+            let available_data = code_len - offset;
+            let copy_size = size.min(available_data);
+            let end = offset + copy_size;
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             unsafe {
-                data.get_unchecked_mut(..final_size)
-                    .copy_from_slice(bytecode.bytecode.get_unchecked(offset..end));
+                bytecode.bytecode.get_unchecked(offset..end)
             }
-        }
+        } else {
+            &[]
+        };
 
         self.current_call_frame
             .memory
-            .store_data(dest_offset, &data)?;
+            .store_data_zero_padded(dest_offset, slice, size)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -418,21 +416,30 @@ impl<'a> VM<'a> {
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
+
+        // Gas check MUST pass before state access per EIP-7928:
+        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
+
+        // State access AFTER gas check passes
         let account = self.db.get_account(address)?;
         let account_is_empty = account.is_empty();
         let account_code_hash = account.info.code_hash.0;
-        let current_call_frame = &mut self.current_call_frame;
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {
-            current_call_frame.stack.push_zero()?;
+            self.current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue);
         }
 
         let hash = u256_from_big_endian_const(account_code_hash);
-        current_call_frame.stack.push(hash)?;
+        self.current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeResult::Continue)
     }

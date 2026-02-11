@@ -39,21 +39,34 @@ pub enum KzgError {
     #[cfg(feature = "c-kzg")]
     #[error("c-kzg error: {0}")]
     CKzg(#[from] c_kzg::Error),
+    #[cfg(feature = "kzg-rs")]
     #[error("kzg-rs error: {0}")]
     KzgRs(kzg_rs::KzgError),
+    #[cfg(feature = "openvm-kzg")]
+    #[error("openvm-kzg error: {0}")]
+    OpenvmKzg(openvm_kzg::KzgError),
     #[cfg(not(feature = "c-kzg"))]
     #[error("{0} is not supported without c-kzg feature enabled")]
     NotSupportedWithoutCKZG(String),
+    #[error("unimplemented: {0}")]
+    Unimplemented(String),
 }
 
+#[cfg(feature = "kzg-rs")]
 impl From<kzg_rs::KzgError> for KzgError {
     fn from(value: kzg_rs::KzgError) -> Self {
         KzgError::KzgRs(value)
     }
 }
 
-/// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
-/// as defined by EIP-7594.
+#[cfg(feature = "openvm-kzg")]
+impl From<openvm_kzg::KzgError> for KzgError {
+    fn from(value: openvm_kzg::KzgError) -> Self {
+        KzgError::OpenvmKzg(value)
+    }
+}
+
+/// Verifies a KZG proof for blob committed data as defined by EIP-7594.
 #[allow(unused_variables)]
 pub fn verify_cell_kzg_proof_batch(
     blobs: &[Blob],
@@ -96,14 +109,27 @@ pub fn verify_cell_kzg_proof_batch(
     }
 }
 
-/// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
-/// as defined by c-kzg-4844.
+/// Verifies a KZG proof for blob committed data, as defined by c-kzg-4844.
 pub fn verify_blob_kzg_proof(
     blob: Blob,
     commitment: Commitment,
     proof: Proof,
 ) -> Result<bool, KzgError> {
-    #[cfg(not(feature = "c-kzg"))]
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "openvm-kzg"),
+        not(feature = "kzg-rs")
+    ))]
+    {
+        return Err(KzgError::Unimplemented(
+            "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
+        ));
+    }
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "openvm-kzg"),
+        feature = "kzg-rs"
+    ))]
     {
         kzg_rs::KzgProof::verify_blob_kzg_proof(
             kzg_rs::Blob(blob),
@@ -113,12 +139,22 @@ pub fn verify_blob_kzg_proof(
         )
         .map_err(KzgError::from)
     }
-    #[cfg(feature = "c-kzg")]
+    #[cfg(all(not(feature = "c-kzg"), feature = "openvm-kzg"))]
+    {
+        Err(KzgError::Unimplemented(
+            "openvm-kzg doesn't implement verify_blob_kzg_proof".to_string(),
+        ))
+    }
+    #[cfg(all(feature = "c-kzg", not(feature = "openvm-kzg")))]
     {
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         c_kzg_settings
             .verify_blob_kzg_proof(&blob.into(), &commitment.into(), &proof.into())
             .map_err(KzgError::from)
+    }
+    #[cfg(all(feature = "c-kzg", feature = "openvm-kzg"))]
+    {
+        compile_error!("you must enable only one of c-kzg or openvm-kzg feature flags")
     }
 }
 
@@ -155,7 +191,21 @@ pub fn verify_kzg_proof(
     y: [u8; 32],
     proof_bytes: [u8; 48],
 ) -> Result<bool, KzgError> {
-    #[cfg(not(feature = "c-kzg"))]
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "openvm-kzg"),
+        not(feature = "kzg-rs")
+    ))]
+    {
+        return Err(KzgError::Unimplemented(
+            "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
+        ));
+    }
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "openvm-kzg"),
+        feature = "kzg-rs"
+    ))]
     {
         kzg_rs::KzgProof::verify_kzg_proof(
             &kzg_rs::Bytes48(commitment_bytes),
@@ -166,7 +216,18 @@ pub fn verify_kzg_proof(
         )
         .map_err(KzgError::from)
     }
-    #[cfg(feature = "c-kzg")]
+    #[cfg(all(not(feature = "c-kzg"), feature = "openvm-kzg"))]
+    {
+        openvm_kzg::KzgProof::verify_kzg_proof(
+            &openvm_kzg::Bytes48::from_slice(&commitment_bytes)?,
+            &openvm_kzg::Bytes32::from_slice(&z)?,
+            &openvm_kzg::Bytes32::from_slice(&y)?,
+            &openvm_kzg::Bytes48::from_slice(&proof_bytes)?,
+            &openvm_kzg::get_kzg_settings(),
+        )
+        .map_err(KzgError::from)
+    }
+    #[cfg(all(feature = "c-kzg", not(feature = "openvm-kzg")))]
     {
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         c_kzg_settings
@@ -177,6 +238,10 @@ pub fn verify_kzg_proof(
                 &proof_bytes.into(),
             )
             .map_err(KzgError::from)
+    }
+    #[cfg(all(feature = "c-kzg", feature = "openvm-kzg"))]
+    {
+        compile_error!("you must enable only one of c-kzg or openvm-kzg feature flags")
     }
 }
 
