@@ -72,6 +72,13 @@ struct Cli {
         help = "Timeout in minutes. If the node doesn't provide updates in this time, it's considered stuck and the load test fails. If 0 is specified, the load test will wait indefinitely."
     )]
     wait: u64,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Run the load test in an infinite loop, restarting after each round finishes."
+    )]
+    endless: bool,
 }
 
 #[derive(ValueEnum, Clone, Debug)] // Derive ValueEnum for TestType
@@ -204,24 +211,27 @@ impl TxBuilder {
     }
 }
 
+/// Sends `tx_amount` transactions per account.
+/// Returns a vec of (address, target_nonce) pairs for use with `wait_until_all_included`.
 async fn load_test(
     tx_amount: u64,
     accounts: Vec<Signer>,
     client: EthClient,
     chain_id: u64,
     tx_builder: TxBuilder,
-) -> eyre::Result<()> {
+) -> eyre::Result<Vec<(Address, u64)>> {
     let mut tasks = FuturesUnordered::new();
     for account in accounts {
         let client = client.clone();
         let tx_builder = tx_builder.clone();
         tasks.push(async move {
             let nonce = client
-                .get_nonce(account.address(), BlockIdentifier::Tag(BlockTag::Latest))
+                .get_nonce(account.address(), BlockIdentifier::Tag(BlockTag::Pending))
                 .await
                 .unwrap();
             let src = account.address();
             let encoded_src: String = src.encode_hex();
+            let target_nonce = nonce + tx_amount;
 
             for i in 0..tx_amount {
                 let (value, calldata, dst) = tx_builder.build_tx();
@@ -246,27 +256,26 @@ async fn load_test(
                 sleep(Duration::from_micros(800)).await;
                 let _sent = send_generic_transaction(&client, tx, &account).await?;
             }
-            println!("{tx_amount} transactions have been sent for {encoded_src}",);
-            Ok::<(), EthClientError>(())
+            println!("{tx_amount} transactions have been sent for {encoded_src} (nonces {nonce}..{target_nonce})",);
+            Ok::<(Address, u64), EthClientError>((src, target_nonce))
         });
     }
 
+    let mut targets = Vec::new();
     while let Some(result) = tasks.next().await {
-        result?; // Propagate errors from tasks
+        targets.push(result?);
     }
-    Ok(())
+    Ok(targets)
 }
 
-// Waits until the nonce of each account has reached the tx_amount.
+/// Waits until the confirmed nonce of each account reaches its target.
 async fn wait_until_all_included(
     client: EthClient,
     timeout: Option<Duration>,
-    accounts: Vec<Signer>,
-    tx_amount: u64,
+    targets: Vec<(Address, u64)>,
 ) -> Result<(), String> {
-    for account in accounts {
+    for (src, target_nonce) in targets {
         let client = client.clone();
-        let src = account.address();
         let encoded_src: String = src.encode_hex();
         let mut last_updated = tokio::time::Instant::now();
         let mut last_nonce = 0;
@@ -276,15 +285,15 @@ async fn wait_until_all_included(
                 .get_nonce(src, BlockIdentifier::Tag(BlockTag::Latest))
                 .await
                 .unwrap();
-            if nonce >= tx_amount {
+            if nonce >= target_nonce {
                 println!(
                     "All transactions sent from {encoded_src} have been included in blocks. Nonce: {nonce}",
                 );
                 break;
             } else {
                 println!(
-                    "Waiting for transactions to be included from {encoded_src}. Nonce: {nonce}. Needs: {tx_amount}. Percentage: {:2}%.",
-                    (nonce as f64 / tx_amount as f64) * 100.0
+                    "Waiting for transactions to be included from {encoded_src}. Nonce: {nonce}. Target: {target_nonce}. Percentage: {:.2}%.",
+                    (nonce as f64 / target_nonce as f64) * 100.0
                 );
             }
 
@@ -380,37 +389,44 @@ async fn main() {
         }
     };
 
-    println!(
-        "Starting load test with {} transactions per account...",
-        cli.tx_amount
-    );
-    let time_now = tokio::time::Instant::now();
-
-    load_test(
-        cli.tx_amount,
-        accounts.clone(),
-        client.clone(),
-        chain_id,
-        tx_builder,
-    )
-    .await
-    .expect("Failed to load test");
-
     let wait_time = if cli.wait > 0 {
         Some(Duration::from_secs(cli.wait * 60))
     } else {
         None
     };
 
-    println!("Waiting for all transactions to be included in blocks...");
-    wait_until_all_included(client, wait_time, accounts, cli.tx_amount)
+    let mut round = 1;
+    loop {
+        println!(
+            "Starting load test round {round} with {} transactions per account...",
+            cli.tx_amount
+        );
+        let time_now = tokio::time::Instant::now();
+
+        let targets = load_test(
+            cli.tx_amount,
+            accounts.clone(),
+            client.clone(),
+            chain_id,
+            tx_builder.clone(),
+        )
         .await
-        .unwrap();
+        .expect("Failed to load test");
 
-    let elapsed_time = time_now.elapsed();
+        println!("Waiting for all transactions to be included in blocks...");
+        wait_until_all_included(client.clone(), wait_time, targets)
+            .await
+            .unwrap();
 
-    println!(
-        "Load test finished. Elapsed time: {} seconds",
-        elapsed_time.as_secs()
-    );
+        let elapsed_time = time_now.elapsed();
+        println!(
+            "Load test round {round} finished. Elapsed time: {} seconds",
+            elapsed_time.as_secs()
+        );
+
+        if !cli.endless {
+            break;
+        }
+        round += 1;
+    }
 }
