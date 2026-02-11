@@ -74,7 +74,7 @@ jobs:
 
       - name: Run cargo clippy
         run: |
-          cargo clippy -- -D warnings
+          make lint-l1
 
       - name: Run cargo fmt
         run: |
