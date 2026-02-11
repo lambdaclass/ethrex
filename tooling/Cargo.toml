@@ -8,6 +8,7 @@ members = [
   "load_test",
   "loc",
   "migrations",
+  "monitor",
   "reorgs",
 ]
 exclude = ["ef_tests/state"]

@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::{SequencerConfig, sequencer::errors::MonitorError};
+use crate::{MonitorConfig, error::MonitorError};
 
 #[derive(Clone, Default)]
 pub struct GlobalChainStatusTable {
@@ -22,15 +22,10 @@ pub struct GlobalChainStatusTable {
 }
 
 impl GlobalChainStatusTable {
-    pub fn new(cfg: &SequencerConfig) -> Self {
-        let sequencer_registry_address =
-            if cfg.state_updater.sequencer_registry == Address::default() {
-                None
-            } else {
-                Some(cfg.state_updater.sequencer_registry)
-            };
+    pub fn new(cfg: &MonitorConfig) -> Self {
+        let sequencer_registry_address = cfg.sequencer_registry_address;
         Self {
-            on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
+            on_chain_proposer_address: cfg.on_chain_proposer_address,
             sequencer_registry_address,
             ..Default::default()
         }

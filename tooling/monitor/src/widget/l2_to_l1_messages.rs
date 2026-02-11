@@ -14,12 +14,9 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::{
-        self,
-        utils::SelectableScroller,
-        widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
-    },
-    sequencer::errors::MonitorError,
+    error::MonitorError,
+    utils::SelectableScroller,
+    widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
 };
 
 /*
@@ -207,7 +204,7 @@ impl L2ToL1MessagesTable {
         eth_client: &EthClient,
         rollup_client: &EthClient,
     ) -> Result<Vec<L2ToL1MessageRow>, MonitorError> {
-        let logs = monitor::utils::get_logs(
+        let logs = crate::utils::get_logs(
             last_l2_block_fetched,
             COMMON_BRIDGE_L2_ADDRESS,
             vec![],
