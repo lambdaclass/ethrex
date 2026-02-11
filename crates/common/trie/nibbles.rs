@@ -313,4 +313,3 @@ fn compact_to_hex(compact: &[u8]) -> Vec<u8> {
     let chop = 2 - (base[0] & 1) as usize;
     base[chop..].to_vec()
 }
-
