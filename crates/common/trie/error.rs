@@ -74,8 +74,9 @@ impl std::fmt::Display for NodeType {
 
 #[derive(Debug)]
 pub struct NodeCountMismatchData {
-    /// The count mismatch: positive = missing nodes, negative = extra nodes
-    pub expected_count: isize,
+    /// The difference between expected and actual node counts.
+    /// Positive = missing nodes, negative = extra nodes
+    pub count_difference: isize,
     /// Path to the last successfully validated node
     pub last_valid_path: Option<Nibbles>,
     pub last_node_type: Option<NodeType>,
@@ -86,10 +87,10 @@ pub struct NodeCountMismatchData {
 
 impl std::fmt::Display for NodeCountMismatchData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mismatch = if self.expected_count > 0 {
-            format!("Expected {} more node(s)", self.expected_count)
+        let mismatch = if self.count_difference > 0 {
+            format!("Expected {} more node(s)", self.count_difference)
         } else {
-            format!("Found {} unexpected node(s)", self.expected_count.abs())
+            format!("Found {} unexpected node(s)", self.count_difference.abs())
         };
         let node_type = self
             .last_node_type

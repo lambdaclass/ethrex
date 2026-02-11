@@ -542,7 +542,8 @@ impl Trie {
     ///
     /// Returns `Err(TrieError::InconsistentTree(NodeCountMismatch))` if there is a
     /// mismatch between expected and actual node counts. The error includes diagnostic
-    /// information: path to the last validated node, node type, hash, and traversal count.
+    /// information: count difference, path to the last validated node, node type, hash,
+    /// and traversal count. The hash is only computed when validation fails.
     ///
     /// # Note
     ///
@@ -554,18 +555,18 @@ impl Trie {
         // Track context for error reporting
         let mut last_valid_path: Option<Nibbles> = None;
         let mut last_node_type: Option<NodeType> = None;
-        let mut last_node_hash: Option<H256> = None;
+        let mut last_node: Option<Node> = None;
         let mut nodes_traversed = 0;
 
         for (path, node) in self.into_iter() {
             // Capture context before processing this node
-            last_valid_path = Some(path.clone());
+            last_valid_path = Some(path);
             last_node_type = Some(match &node {
                 Node::Branch(_) => NodeType::Branch,
                 Node::Extension(_) => NodeType::Extension,
                 Node::Leaf(_) => NodeType::Leaf,
             });
-            last_node_hash = Some(node.compute_hash().finalize());
+            last_node = Some(node.clone());
             nodes_traversed += 1;
 
             expected_count -= 1;
@@ -585,9 +586,11 @@ impl Trie {
         }
 
         if expected_count != 0 {
+            // Only compute hash when validation fails to avoid performance cost on happy path
+            let last_node_hash = last_node.map(|n| n.compute_hash().finalize());
             return Err(TrieError::InconsistentTree(Box::new(
                 InconsistentTreeError::NodeCountMismatch(NodeCountMismatchData {
-                    expected_count,
+                    count_difference: expected_count,
                     last_valid_path,
                     last_node_type,
                     nodes_traversed,
