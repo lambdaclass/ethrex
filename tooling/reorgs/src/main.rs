@@ -311,7 +311,8 @@ async fn test_many_blocks_reorg(simulator: Arc<Mutex<Simulator>>) {
 
 async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
-    // Initcode for deploying a contract that receives two `bytes32` parameters and sets `storage[param0] = param1`
+    // Initcode that deploys a contract whose runtime bytecode is: SSTORE(CALLDATALOAD(0), CALLDATALOAD(32))
+    // i.e. it receives two bytes32 params via calldata and sets storage[param0] = param1
     let contract_deploy_bytecode = hex::decode("656020355f35555f526006601af3").unwrap().into();
     let signer: Signer = LocalSigner::new(
         "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
@@ -424,7 +425,8 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
 /// - slot1A and slot1B hash to the same 0x83 prefix
 async fn test_storage_trie_branches_reorg(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
-    // Initcode for deploying a contract that receives two `bytes32` parameters and sets `storage[param0] = param1`
+    // Initcode that deploys a contract whose runtime bytecode is: SSTORE(CALLDATALOAD(0), CALLDATALOAD(32))
+    // i.e. it receives two bytes32 params via calldata and sets storage[param0] = param1
     let contract_deploy_bytecode = hex::decode("656020355f35555f526006601af3").unwrap().into();
     let signer: Signer = LocalSigner::new(
         "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
@@ -556,7 +558,7 @@ async fn test_storage_trie_branches_reorg(simulator: Arc<Mutex<Simulator>>) {
         U256::zero()
     );
 
-    // Make base chain longer so it becomes canonical
+    // Make base chain longer (7 blocks) than side chain (2 blocks) so it becomes canonical
     for _ in 0..5 {
         base_chain = node1.build_payload(base_chain).await;
         node1.notify_new_payload(&base_chain).await;
