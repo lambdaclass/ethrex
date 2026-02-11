@@ -163,14 +163,6 @@ impl ProofCoordinator {
         prover_type: ProverType,
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received from {prover_type} prover");
-        let batch_to_prove = self.next_batch_to_prove_for_version(&commit_hash).await?;
-
-        if commit_hash != self.git_commit_hash {
-            debug!(
-                "Mismatch on prover version. Expected: {}, got: {}. Looking for batches left to prove",
-                self.git_commit_hash, commit_hash
-            );
-        }
 
         // Check if this prover's type is one of the needed proof types.
         // If not, tell the prover immediately — there's no point assigning
@@ -181,6 +173,15 @@ impl ProofCoordinator {
             let response = ProofData::ProverTypeNotNeeded { prover_type };
             send_response(stream, &response).await?;
             return Ok(());
+        }
+
+        let batch_to_prove = self.next_batch_to_prove_for_version(&commit_hash).await?;
+
+        if commit_hash != self.git_commit_hash {
+            debug!(
+                "Mismatch on prover version. Expected: {}, got: {}. Looking for batches left to prove",
+                self.git_commit_hash, commit_hash
+            );
         }
 
         // Check if this prover type's proof already exists for the batch.
