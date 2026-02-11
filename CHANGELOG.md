@@ -4,7 +4,7 @@
 
 ### 2026-02-11
 
-- Deduplicate trie nodes across layers before writing to RocksDB [#6177](https://github.com/lambdaclass/ethrex/pull/6177)
+- Deduplicate trie nodes across layers before writing to RocksDB [#6179](https://github.com/lambdaclass/ethrex/pull/6179)
 
 ### 2026-02-06
 
