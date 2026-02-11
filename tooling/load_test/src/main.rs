@@ -215,14 +215,14 @@ impl TxBuilder {
 }
 
 /// Sends `tx_amount` transactions per account.
-/// Returns a vec of (address, target_nonce) pairs for use with `wait_until_all_included`.
+/// Returns a vec of (address, start_nonce, target_nonce) tuples for use with `wait_until_all_included`.
 async fn load_test(
     tx_amount: u64,
     accounts: &[Signer],
     client: &EthClient,
     chain_id: u64,
     tx_builder: &TxBuilder,
-) -> eyre::Result<Vec<(Address, u64)>> {
+) -> eyre::Result<Vec<(Address, u64, u64)>> {
     let mut tasks = FuturesUnordered::new();
     for account in accounts {
         let account = account.clone();
@@ -261,7 +261,7 @@ async fn load_test(
                 let _sent = send_generic_transaction(&client, tx, &account).await?;
             }
             println!("{tx_amount} transactions have been sent for {encoded_src} (nonces {nonce}..{target_nonce})",);
-            Ok::<(Address, u64), EthClientError>((src, target_nonce))
+            Ok::<(Address, u64, u64), EthClientError>((src, nonce, target_nonce))
         });
     }
 
@@ -276,12 +276,13 @@ async fn load_test(
 async fn wait_until_all_included(
     client: &EthClient,
     timeout: Option<Duration>,
-    targets: Vec<(Address, u64)>,
+    targets: Vec<(Address, u64, u64)>,
 ) -> Result<(), String> {
-    for (src, target_nonce) in targets {
+    for (src, start_nonce, target_nonce) in targets {
         let encoded_src: String = src.encode_hex();
         let mut last_updated = tokio::time::Instant::now();
         let mut last_nonce = 0;
+        let total_txs = target_nonce - start_nonce;
 
         loop {
             let nonce = client
@@ -294,9 +295,14 @@ async fn wait_until_all_included(
                 );
                 break;
             } else {
+                let confirmed = nonce.saturating_sub(start_nonce);
+                let pct = if total_txs > 0 {
+                    (confirmed as f64 / total_txs as f64) * 100.0
+                } else {
+                    100.0
+                };
                 println!(
-                    "Waiting for transactions to be included from {encoded_src}. Nonce: {nonce}. Target: {target_nonce}. Percentage: {:.2}%.",
-                    (nonce as f64 / target_nonce as f64) * 100.0
+                    "Waiting for transactions to be included from {encoded_src}. Nonce: {nonce}. Target: {target_nonce}. Percentage: {pct:.2}%.",
                 );
             }
 
@@ -401,7 +407,7 @@ async fn main() {
     if cli.endless {
         let mut round = 1;
         loop {
-            run_round(
+            if let Err(e) = run_round(
                 round,
                 cli.tx_amount,
                 &accounts,
@@ -410,7 +416,10 @@ async fn main() {
                 &tx_builder,
                 wait_time,
             )
-            .await;
+            .await
+            {
+                eprintln!("Round {round} failed: {e}");
+            }
             round += 1;
         }
     } else {
@@ -423,7 +432,8 @@ async fn main() {
             &tx_builder,
             wait_time,
         )
-        .await;
+        .await
+        .expect("Load test failed");
     }
 }
 
@@ -435,22 +445,21 @@ async fn run_round(
     chain_id: u64,
     tx_builder: &TxBuilder,
     wait_time: Option<Duration>,
-) {
+) -> eyre::Result<()> {
     println!("Starting load test round {round} with {tx_amount} transactions per account...");
     let time_now = tokio::time::Instant::now();
 
-    let targets = load_test(tx_amount, accounts, client, chain_id, tx_builder)
-        .await
-        .expect("Failed to load test");
+    let targets = load_test(tx_amount, accounts, client, chain_id, tx_builder).await?;
 
     println!("Waiting for all transactions to be included in blocks...");
     wait_until_all_included(client, wait_time, targets)
         .await
-        .unwrap();
+        .map_err(|e| eyre::eyre!(e))?;
 
     let elapsed_time = time_now.elapsed();
     println!(
         "Load test round {round} finished. Elapsed time: {} seconds",
         elapsed_time.as_secs()
     );
+    Ok(())
 }

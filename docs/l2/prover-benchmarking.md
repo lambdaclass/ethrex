@@ -58,7 +58,7 @@ This sends transactions per account using the test private keys. The sequencer w
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `LOAD_TEST_RPC_URL` | `http://localhost:8545` | RPC URL of the node |
+| `LOAD_TEST_RPC_URL` | `http://localhost:8545` | RPC URL of the node. **For L2 benchmarking, set to `http://localhost:1729`** (the L2 RPC port). |
 | `LOAD_TEST_TX_AMOUNT` | `1000` | Transactions per account |
 | `LOAD_TEST_ENDLESS` | `false` | Restart load test after each round |
 

@@ -177,6 +177,14 @@ impl ProofCoordinator {
         // shouldn't be assigned a batch when only exec proofs are needed).
         let prover_type_needed = self.needed_proof_types.contains(&prover_type);
 
+        // Check if this specific prover type's proof already exists for the batch.
+        // Even if not all proofs exist, this prover may have already done its part.
+        let prover_proof_exists = self
+            .rollup_store
+            .get_proof_by_batch_and_type(batch_to_prove, prover_type)
+            .await?
+            .is_some();
+
         let mut all_proofs_exist = true;
         for proof_type in &self.needed_proof_types {
             if self
@@ -192,12 +200,16 @@ impl ProofCoordinator {
 
         let response = if all_proofs_exist
             || !prover_type_needed
+            || prover_proof_exists
             || !self.rollup_store.contains_batch(&batch_to_prove).await?
         {
             if !prover_type_needed {
                 debug!(
                     "{prover_type} proof is not needed, skipping batch {batch_to_prove} assignment"
                 );
+            }
+            if prover_proof_exists {
+                debug!("{prover_type} proof already exists for batch {batch_to_prove}, skipping");
             }
             debug!("Sending empty BatchResponse");
             ProofData::empty_batch_response()
@@ -212,7 +224,6 @@ impl ProofCoordinator {
                 info!("No batch for version sent");
                 return Ok(());
             };
-            debug!("Sending BatchResponse for block_number: {batch_to_prove}");
             let format = if self.aligned {
                 ProofFormat::Compressed
             } else {

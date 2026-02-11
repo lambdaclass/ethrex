@@ -10,6 +10,9 @@
 # from the L2 metrics endpoint (default localhost:3702/metrics).
 #
 # Outputs a markdown file (bench_results.md) with a results table and summary.
+#
+# Requires bash 4+ (uses associative arrays). macOS ships with bash 3.2;
+# install a newer version via Homebrew (`brew install bash`) if needed.
 
 set -euo pipefail
 
