@@ -137,8 +137,10 @@ pub async fn sync_cycle_snap(
             .await?
         else {
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
-                warn!("Sync failed to find target block header, aborting");
-                return Ok(());
+                warn!(
+                    "Sync failed to find target block header after {MAX_HEADER_FETCH_ATTEMPTS} attempts"
+                );
+                return Err(SyncError::HeaderFetchExhausted);
             }
             attempts += 1;
             tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64)).await;

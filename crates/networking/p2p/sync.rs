@@ -237,6 +237,8 @@ pub enum SyncError {
     PeerTableError(#[from] PeerTableError),
     #[error("Missing fullsync batch")]
     MissingFullsyncBatch,
+    #[error("Header fetch exhausted after maximum attempts")]
+    HeaderFetchExhausted,
     #[error("Snap error: {0}")]
     Snap(#[from] crate::snap::SnapError),
 }
@@ -275,7 +277,8 @@ impl SyncError {
             | SyncError::BodiesNotFound
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
-            | SyncError::NoBlocks => true,
+            | SyncError::NoBlocks
+            | SyncError::HeaderFetchExhausted => true,
         }
     }
 }
