@@ -18,7 +18,6 @@ use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Sender;
-use tracing::instrument;
 
 #[derive(Clone)]
 pub struct Evm {
@@ -85,12 +84,6 @@ impl Evm {
         LEVM::execute_block(block, &mut self.db, self.vm_type)
     }
 
-    #[instrument(
-        level = "trace",
-        name = "Block execution",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,

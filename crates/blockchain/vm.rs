@@ -10,7 +10,6 @@ use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
-use tracing::instrument;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
@@ -65,36 +64,18 @@ impl StoreVmDatabase {
 }
 
 impl VmDatabase for StoreVmDatabase {
-    #[instrument(
-        level = "trace",
-        name = "Account read",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.store
             .get_account_state_by_root(self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    #[instrument(
-        level = "trace",
-        name = "Storage read",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
             .get_storage_at_root(self.state_root, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    #[instrument(
-        level = "trace",
-        name = "Block hash read",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         let mut block_hash_cache = self
             .block_hash_cache
@@ -150,12 +131,6 @@ impl VmDatabase for StoreVmDatabase {
         Ok(self.store.get_chain_config())
     }
 
-    #[instrument(
-        level = "trace",
-        name = "Account code read",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
@@ -169,12 +144,6 @@ impl VmDatabase for StoreVmDatabase {
         }
     }
 
-    #[instrument(
-        level = "trace",
-        name = "Code metadata read",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, EvmError> {
         use ethrex_common::constants::EMPTY_KECCACK_HASH;
 

@@ -50,7 +50,7 @@ pub mod payload;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info, instrument, warn};
+use ::tracing::{debug, info, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -365,12 +365,6 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    #[instrument(
-        level = "trace",
-        name = "Execute Block",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
     fn execute_block_pipeline(
         &self,
         block: &Block,
@@ -497,12 +491,6 @@ impl Blockchain {
         ))
     }
 
-    #[instrument(
-        level = "trace",
-        name = "Trie update",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
     fn handle_merkleization<'a, 's, 'b>(
         &'a self,
         scope: &'s std::thread::Scope<'s, '_>,
@@ -1501,12 +1489,6 @@ impl Blockchain {
         })
     }
 
-    #[instrument(
-        level = "trace",
-        name = "Block DB update",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
     pub fn store_block(
         &self,
         block: Block,
