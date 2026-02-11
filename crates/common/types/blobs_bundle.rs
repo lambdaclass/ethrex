@@ -549,8 +549,9 @@ mod tests {
 
     #[test]
     #[cfg(feature = "c-kzg")]
-    fn transaction_with_version_0_blobs_should_pass_on_amsterdam() {
-        // Version 0 blobs should remain valid on Amsterdam fork (which comes after Osaka)
+    fn transaction_with_version_0_blobs_should_fail_on_amsterdam() {
+        // Version 0 blobs should be invalid on Amsterdam fork (which comes after Osaka)
+        // The validation requires version 0 only on Osaka; Amsterdam >= Osaka so version 0 is rejected
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()
             .map(|data| {
@@ -580,7 +581,7 @@ mod tests {
 
         assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Amsterdam),
-            Ok(())
+            Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
         ));
     }
 }
