@@ -218,6 +218,13 @@ pub async fn request_account_range(
             all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
         }
 
+        // Check completion before waiting for a peer — otherwise the loop can spin
+        // forever when no snap-capable peer is immediately available.
+        if tasks_queue_not_started.is_empty() && completed_tasks >= chunk_count {
+            info!("All account ranges downloaded successfully");
+            break;
+        }
+
         let Some((peer_id, connection)) = peers
             .peer_table
             .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
@@ -410,6 +417,11 @@ pub async fn request_bytecodes(
             for (i, bytecode) in bytecodes.into_iter().enumerate() {
                 all_bytecodes[start_index + i] = bytecode;
             }
+        }
+
+        if tasks_queue_not_started.is_empty() && completed_tasks >= chunk_count {
+            info!("All bytecodes downloaded successfully");
+            break;
         }
 
         let Some((peer_id, mut connection)) = peers
@@ -939,6 +951,10 @@ pub async fn request_storage_ranges(
                     );
                 }
             }
+        }
+
+        if tasks_queue_not_started.is_empty() && completed_tasks >= task_count {
+            break;
         }
 
         if block_is_stale(pivot_header) {
