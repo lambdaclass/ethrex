@@ -34,9 +34,7 @@ pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
     let client = blocking::ProverClient::from_env();
 
     let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
-    let pk = client
-        .setup(elf)
-        .expect("Failed to setup SP1 prover");
+    let pk = client.setup(elf).expect("Failed to setup SP1 prover");
     let vk = pk.verifying_key().clone();
 
     ProverSetup { client, pk, vk }
