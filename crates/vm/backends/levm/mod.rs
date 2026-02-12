@@ -334,8 +334,19 @@ impl LEVM {
             sender_groups.entry(*sender).or_default().push(tx);
         }
 
+        // Sort sender groups by total gas_limit descending so rayon schedules
+        // the heaviest groups first, maximizing the chance their state is cached
+        // when sequential execution reaches them.
+        let mut sorted_groups: Vec<(Address, Vec<&Transaction>)> =
+            sender_groups.into_iter().collect();
+        sorted_groups.sort_unstable_by(|(_, a), (_, b)| {
+            let gas_a: u64 = a.iter().map(|tx| tx.gas_limit()).sum();
+            let gas_b: u64 = b.iter().map(|tx| tx.gas_limit()).sum();
+            gas_b.cmp(&gas_a)
+        });
+
         // Parallel across sender groups, sequential within each group
-        sender_groups.into_par_iter().for_each_with(
+        sorted_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
                 // Each sender group gets its own db instance for state propagation
