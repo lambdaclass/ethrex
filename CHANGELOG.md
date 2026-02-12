@@ -4,7 +4,7 @@
 
 ### 2026-02-11
 
-- Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet for EVM accessed storage slots [#6185](https://github.com/lambdaclass/ethrex/pull/6185)
+- Replace heap-allocated Nibbles with stack-allocated buffer for O(1) trie traversal [#6190](https://github.com/lambdaclass/ethrex/pull/6190)
 
 ### 2026-02-06
 
