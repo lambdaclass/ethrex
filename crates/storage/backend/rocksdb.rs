@@ -33,7 +33,7 @@ impl RocksDBBackend {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        opts.set_max_open_files(-1);
+        opts.set_max_open_files(512);
         opts.set_max_file_opening_threads(16);
 
         opts.set_max_background_jobs(8);
@@ -208,7 +208,7 @@ impl Drop for RocksDBBackend {
         // When the last reference to the db is dropped, stop background threads
         // See https://github.com/facebook/rocksdb/issues/11349
         if let Some(db) = Arc::get_mut(&mut self.db) {
-            db.cancel_all_background_work(true);
+            db.cancel_all_background_work(false);
         }
     }
 }
