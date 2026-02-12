@@ -44,7 +44,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -558,7 +558,7 @@ impl Blockchain {
 
             // Check if we have enough gas to run the transaction
             if context.remaining_gas < head_tx.tx.gas_limit() {
-                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+                trace!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
                 continue;
@@ -585,7 +585,7 @@ impl Blockchain {
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
                 // Ignore replay protected tx & all txs from the sender
                 // Pull transaction from the mempool
-                debug!("Ignoring replay-protected transaction: {}", tx_hash);
+                trace!("Ignoring replay-protected transaction: {}", tx_hash);
                 txs.pop();
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
@@ -614,14 +614,14 @@ impl Blockchain {
                 }
                 // Ignore following txs from sender
                 Err(e) => {
-                    debug!("Failed to execute transaction: {tx_hash:x}, {e}");
+                    trace!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     txs.pop();
                     continue;
                 }
             };
             // Add transaction to block
-            debug!("Adding transaction: {} to payload", tx_hash);
+            trace!("Adding transaction: {} to payload", tx_hash);
             context.payload.body.transactions.push(head_tx.into());
             // Save receipt for hash calculation
             context.receipts.push(receipt);

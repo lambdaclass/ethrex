@@ -488,6 +488,10 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> 
 }
 
 pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<(), VMError> {
+    if vm.env.skip_balance_check {
+        return Ok(());
+    }
+
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 

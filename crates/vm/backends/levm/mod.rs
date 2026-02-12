@@ -344,7 +344,7 @@ impl LEVM {
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
                 for tx in txs {
-                    let _ = Self::execute_tx_in_block(
+                    let _ = Self::warm_tx_in_block(
                         tx,
                         sender,
                         &block.header,
@@ -429,6 +429,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
+            skip_balance_check: false,
         };
 
         Ok(env)
@@ -463,6 +464,27 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        let result = vm.execute().map_err(VMError::into);
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        result
+    }
+
+    /// Like execute_tx_in_block but skips balance validation.
+    /// Used by the warming path where execution results are discarded and
+    /// cross-sender-group balance dependencies would cause false failures.
+    fn warm_tx_in_block(
+        tx: &Transaction,
+        tx_sender: Address,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        stack_pool: &mut Vec<Stack>,
+    ) -> Result<ExecutionReport, EvmError> {
+        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        env.skip_balance_check = true;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
@@ -952,6 +974,7 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
+        skip_balance_check: false,
     })
 }
 
