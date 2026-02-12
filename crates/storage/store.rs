@@ -784,16 +784,19 @@ impl Store {
     /// Add account code
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
-        let buf = encode_code(&code);
-        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
 
-        // Write both code and metadata atomically
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut tx = backend.begin_write()?;
-            tx.put(ACCOUNT_CODES, &hash_key, &buf)?;
-            tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
-            tx.commit()
+            // Bytecodes are content-addressed by hash — skip if already stored.
+            if !tx.key_may_exist(ACCOUNT_CODES, &hash_key) {
+                let buf = encode_code(&code);
+                let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+                tx.put(ACCOUNT_CODES, &hash_key, &buf)?;
+                tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+                tx.commit()?;
+            }
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1161,21 +1164,23 @@ impl Store {
         &self,
         account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
-        let mut code_batch_items = Vec::new();
-        let mut metadata_batch_items = Vec::new();
-
-        for (code_hash, code) in account_codes {
-            let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
-            code_batch_items.push((code_hash.as_bytes().to_vec(), buf));
-            metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
-        }
-
-        // Write both batches
-        self.write_batch_async(ACCOUNT_CODES, code_batch_items)
-            .await?;
-        self.write_batch_async(ACCOUNT_CODE_METADATA, metadata_batch_items)
-            .await
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut tx = backend.begin_write()?;
+            for (code_hash, code) in account_codes {
+                let hash_key = code_hash.as_bytes().to_vec();
+                // Bytecodes are content-addressed by hash — skip if already stored.
+                if !tx.key_may_exist(ACCOUNT_CODES, &hash_key) {
+                    let buf = encode_code(&code);
+                    let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+                    tx.put(ACCOUNT_CODES, &hash_key, &buf)?;
+                    tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+                }
+            }
+            tx.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     // Helper methods for async operations with spawn_blocking
@@ -1389,10 +1394,13 @@ impl Store {
         }
 
         for (code_hash, code) in update_batch.code_updates {
-            let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
-            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
-            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
+            // Bytecodes are content-addressed by hash — skip if already stored.
+            if !tx.key_may_exist(ACCOUNT_CODES, code_hash.as_ref()) {
+                let buf = encode_code(&code);
+                let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+                tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+                tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
+            }
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
