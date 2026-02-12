@@ -487,7 +487,10 @@ impl ChainConfig {
         {
             return Some(schedule);
         }
-        if self.is_bpo2_activated(block_timestamp) {
+        // Amsterdam implies BPO2 blob params when no explicit schedule is set.
+        if self.is_bpo2_activated(block_timestamp)
+            || self.is_amsterdam_activated(block_timestamp)
+        {
             Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
@@ -1132,4 +1135,5 @@ mod tests {
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("missing field `depositContractAddress`"),);
     }
+
 }
