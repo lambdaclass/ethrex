@@ -466,26 +466,26 @@ impl ChainConfig {
         // Amsterdam (and BPO3-5) don't independently define blob params in Hive;
         // they inherit from the highest activated BPO fork. If the fork-specific
         // entry is None, fall through to find the right BPO schedule.
-        if self.is_amsterdam_activated(block_timestamp) {
-            if let Some(schedule) = self.blob_schedule.amsterdam {
-                return Some(schedule);
-            }
-            // Fall through to BPO chain
+        if self.is_amsterdam_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.amsterdam
+        {
+            return Some(schedule);
         }
-        if self.is_bpo5_activated(block_timestamp) {
-            if let Some(schedule) = self.blob_schedule.bpo5 {
-                return Some(schedule);
-            }
+        // Fall through to BPO chain
+        if self.is_bpo5_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.bpo5
+        {
+            return Some(schedule);
         }
-        if self.is_bpo4_activated(block_timestamp) {
-            if let Some(schedule) = self.blob_schedule.bpo4 {
-                return Some(schedule);
-            }
+        if self.is_bpo4_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.bpo4
+        {
+            return Some(schedule);
         }
-        if self.is_bpo3_activated(block_timestamp) {
-            if let Some(schedule) = self.blob_schedule.bpo3 {
-                return Some(schedule);
-            }
+        if self.is_bpo3_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.bpo3
+        {
+            return Some(schedule);
         }
         if self.is_bpo2_activated(block_timestamp) {
             Some(self.blob_schedule.bpo2)
