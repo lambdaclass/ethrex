@@ -178,12 +178,15 @@ impl TrieLayerCache {
         // older layers are useless
         self.layers.retain(|_, item| item.id > top_layer_id);
         self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
-        let nodes_to_commit = layers_to_commit
-            .into_iter()
-            .rev()
-            .flat_map(|layer| layer.nodes)
-            .collect();
-        Some(nodes_to_commit)
+        // Deduplicate nodes across layers: iterate oldest→newest so that
+        // newer values overwrite older ones in the HashMap. Without this,
+        // a node modified in multiple layers (e.g. the root node modified
+        // in all 128 layers) would produce duplicate WriteBatch entries.
+        let mut nodes_to_commit = FxHashMap::default();
+        for layer in layers_to_commit.into_iter().rev() {
+            nodes_to_commit.extend(layer.nodes);
+        }
+        Some(nodes_to_commit.into_iter().collect())
     }
 }
 
