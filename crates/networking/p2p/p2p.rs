@@ -68,6 +68,7 @@
 
 pub(crate) mod backend;
 pub mod discv4;
+pub mod peer_scoring;
 #[cfg(feature = "experimental-discv5")]
 pub mod discv5;
 pub(crate) mod metrics;

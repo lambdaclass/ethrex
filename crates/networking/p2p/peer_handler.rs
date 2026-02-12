@@ -70,10 +70,10 @@ async fn ask_peer_head_number(
     match PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
         .await
     {
-        Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+        Ok((RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
             block_headers,
-        })) => {
+        }), _elapsed_ms)) => {
             if !block_headers.is_empty() {
                 let sync_head_number = block_headers
                     .last()
@@ -87,7 +87,7 @@ async fn ask_peer_head_number(
                 Err(PeerHandlerError::EmptyResponseFromPeer(peer_id))
             }
         }
-        Ok(_other_msgs) => Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id)),
+        Ok((_other_msgs, _elapsed_ms)) => Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id)),
         Err(PeerConnectionError::Timeout) => {
             Err(PeerHandlerError::ReceiveMessageFromPeerTimeout(peer_id))
         }
@@ -111,11 +111,13 @@ impl PeerHandler {
         connection: &mut PeerConnection,
         message: RLPxMessage,
         timeout: Duration,
-    ) -> Result<RLPxMessage, PeerConnectionError> {
+    ) -> Result<(RLPxMessage, f64), PeerConnectionError> {
         peer_table.inc_requests(peer_id).await?;
+        let start = std::time::Instant::now();
         let result = connection.outgoing_request(message, timeout).await;
+        let elapsed_ms = start.elapsed().as_millis() as f64;
         peer_table.dec_requests(peer_id).await?;
-        result
+        result.map(|msg| (msg, elapsed_ms))
     }
 
     /// Returns a random node id and the channel ends to an active peer connection that supports the given capability
@@ -404,10 +406,10 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection)) => {
-                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                if let Ok((RLPxMessage::BlockHeaders(BlockHeaders {
                     id: _,
                     block_headers,
-                })) = PeerHandler::make_request(
+                }), _elapsed_ms)) = PeerHandler::make_request(
                     &mut self.peer_table,
                     peer_id,
                     &mut connection,
@@ -455,10 +457,10 @@ impl PeerHandler {
             skip: 0,
             reverse: false,
         });
-        if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+        if let Ok((RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
             block_headers,
-        })) =
+        }), _elapsed_ms)) =
             PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
                 .await
         {
@@ -490,10 +492,10 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection)) => {
-                if let Ok(RLPxMessage::BlockBodies(BlockBodies {
+                if let Ok((RLPxMessage::BlockBodies(BlockBodies {
                     id: _,
                     block_bodies,
-                })) = PeerHandler::make_request(
+                }), _elapsed_ms)) = PeerHandler::make_request(
                     &mut self.peer_table,
                     peer_id,
                     &mut connection,
@@ -591,10 +593,10 @@ impl PeerHandler {
         )
         .await
         {
-            Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+            Ok((RLPxMessage::BlockHeaders(BlockHeaders {
                 id: _,
                 block_headers,
-            })) => {
+            }), _elapsed_ms)) => {
                 if !block_headers.is_empty() {
                     return Ok(Some(
                         block_headers
@@ -604,7 +606,7 @@ impl PeerHandler {
                     ));
                 }
             }
-            Ok(_other_msgs) => {
+            Ok((_other_msgs, _elapsed_ms)) => {
                 debug!("Received unexpected message from peer");
             }
             Err(PeerConnectionError::Timeout) => {
@@ -645,15 +647,15 @@ impl PeerHandler {
         )
         .await
         {
-            Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+            Ok((RLPxMessage::BlockHeaders(BlockHeaders {
                 id: _,
                 block_headers,
-            })) => {
+            }), _elapsed_ms)) => {
                 if let Some(header) = block_headers.into_iter().next() {
                     return Ok(Some(header));
                 }
             }
-            Ok(_other_msgs) => {
+            Ok((_other_msgs, _elapsed_ms)) => {
                 debug!("Received unexpected message from peer");
             }
             Err(PeerConnectionError::Timeout) => {

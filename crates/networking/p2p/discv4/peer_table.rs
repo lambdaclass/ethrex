@@ -1,6 +1,7 @@
 use crate::{
     discv4::server::MAX_NODES_IN_NEIGHBORS_PACKET,
     metrics::METRICS,
+    peer_scoring::{PeerMetrics, RequestType},
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
 };
@@ -124,8 +125,8 @@ pub struct PeerData {
     pub is_connection_inbound: bool,
     /// communication channels between the peer data and its active connection
     pub connection: Option<PeerConnection>,
-    /// This tracks the score of a peer
-    score: i64,
+    /// Per-peer metrics (throughput, RTT, success/failure tracking)
+    pub metrics: PeerMetrics,
     /// Track the amount of concurrent requests this peer is handling
     requests: i64,
 }
@@ -143,7 +144,7 @@ impl PeerData {
             supported_capabilities: capabilities,
             is_connection_inbound: false,
             connection,
-            score: Default::default(),
+            metrics: Default::default(),
             requests: Default::default(),
         }
     }
@@ -607,6 +608,113 @@ impl PeerTable {
             _ => unreachable!(),
         }
     }
+
+    /// Record throughput measurement for a peer
+    pub async fn record_throughput(
+        &mut self,
+        node_id: H256,
+        request_type: RequestType,
+        items_per_ms: f64,
+        rtt_ms: f64,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordThroughput {
+                node_id,
+                request_type,
+                items_per_ms,
+                rtt_ms,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a per-type success for a peer
+    pub async fn record_success_for(
+        &mut self,
+        node_id: &H256,
+        request_type: RequestType,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordSuccessFor {
+                node_id: *node_id,
+                request_type,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a per-type failure for a peer
+    pub async fn record_failure_for(
+        &mut self,
+        node_id: &H256,
+        request_type: RequestType,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordFailureFor {
+                node_id: *node_id,
+                request_type,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Get the best peer for a specific request type (throughput-based selection)
+    pub async fn get_best_peer_for(
+        &mut self,
+        capabilities: &[Capability],
+        request_type: RequestType,
+    ) -> Result<Option<(H256, PeerConnection)>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetBestPeerFor {
+                capabilities: capabilities.to_vec(),
+                request_type,
+            })
+            .await?
+        {
+            OutMessage::FoundPeer {
+                node_id,
+                connection,
+            } => Ok(Some((node_id, connection))),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Get adaptive timeout for a peer
+    pub async fn get_timeout_for(&mut self, node_id: H256) -> Result<Duration, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetTimeoutFor { node_id })
+            .await?
+        {
+            OutMessage::TimeoutDuration(duration) => Ok(duration),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Get adaptive request size for a peer and request type
+    pub async fn get_request_size_for(
+        &mut self,
+        node_id: H256,
+        request_type: RequestType,
+        min_items: usize,
+        max_items: usize,
+    ) -> Result<usize, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetRequestSizeFor {
+                node_id,
+                request_type,
+                min_items,
+                max_items,
+            })
+            .await?
+        {
+            OutMessage::RequestSize(size) => Ok(size),
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -650,7 +758,7 @@ impl PeerTableServer {
             .filter_map(|(id, peer_data)| {
                 // Skip the peer if it has too many ongoing requests or if it doesn't match
                 // the capabilities
-                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                if !self.can_try_more_requests(&peer_data.metrics.score, &peer_data.requests)
                     || !capabilities
                         .iter()
                         .any(|cap| peer_data.supported_capabilities.contains(cap))
@@ -661,11 +769,70 @@ impl PeerTableServer {
                     let connection = peer_data.connection.clone()?;
 
                     // We return the id, the score and the channel to connect with.
-                    Some((*id, peer_data.score, peer_data.requests, connection))
+                    Some((*id, peer_data.metrics.score, peer_data.requests, connection))
                 }
             })
             .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
             .map(|(k, _, _, v)| (k, v))
+    }
+
+    fn get_best_peer_for(
+        &self,
+        capabilities: &[Capability],
+        request_type: RequestType,
+    ) -> Option<(H256, PeerConnection)> {
+        // 2.5% chance: pick random eligible peer for exploration
+        if rand::random::<f64>() < 0.025 {
+            return self.get_random_peer(capabilities.to_vec());
+        }
+
+        self.peers
+            .iter()
+            .filter_map(|(id, peer_data)| {
+                if !self.can_try_more_requests(&peer_data.metrics.score, &peer_data.requests)
+                    || !capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+                    || peer_data.metrics.is_weak_for(request_type)
+                {
+                    None
+                } else {
+                    let connection = peer_data.connection.clone()?;
+                    let throughput = peer_data.metrics.throughput_for(request_type);
+                    Some((*id, throughput, connection))
+                }
+            })
+            .max_by(|(_, a, _), (_, b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(k, _, v)| (k, v))
+    }
+
+    fn timeout_for(&self, node_id: &H256) -> Duration {
+        if let Some(peer_data) = self.peers.get(node_id)
+            && let Some(timeout_ms) = peer_data.metrics.adaptive_timeout_ms()
+        {
+            return Duration::from_millis(timeout_ms as u64);
+        }
+        // Default 15s for cold peers
+        Duration::from_secs(15)
+    }
+
+    fn request_size_for(
+        &self,
+        node_id: &H256,
+        request_type: RequestType,
+        min_items: usize,
+        max_items: usize,
+    ) -> usize {
+        if let Some(peer_data) = self.peers.get(node_id)
+            && let Some(size) =
+                peer_data
+                    .metrics
+                    .adaptive_request_size(request_type, min_items, max_items)
+        {
+            return size;
+        }
+        // Conservative default for unknown peers
+        min_items
     }
 
     fn prune(&mut self) {
@@ -928,6 +1095,20 @@ enum CastMessage {
     KnowsUs {
         node_id: H256,
     },
+    RecordThroughput {
+        node_id: H256,
+        request_type: RequestType,
+        items_per_ms: f64,
+        rtt_ms: f64,
+    },
+    RecordSuccessFor {
+        node_id: H256,
+        request_type: RequestType,
+    },
+    RecordFailureFor {
+        node_id: H256,
+        request_type: RequestType,
+    },
     Prune,
     Shutdown,
 }
@@ -945,6 +1126,7 @@ enum CallMessage {
     GetContact { node_id: H256 },
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
+    GetBestPeerFor { capabilities: Vec<Capability>, request_type: RequestType },
     GetScore { node_id: H256 },
     GetConnectedNodes,
     GetPeersWithCapabilities,
@@ -954,6 +1136,8 @@ enum CallMessage {
     GetClosestNodes { node_id: H256 },
     GetPeersData,
     GetRandomPeer { capabilities: Vec<Capability> },
+    GetTimeoutFor { node_id: H256 },
+    GetRequestSizeFor { node_id: H256, request_type: RequestType, min_items: usize, max_items: usize },
 }
 
 #[derive(Debug)]
@@ -977,6 +1161,8 @@ pub enum OutMessage {
     UnknownContact,
     IpMismatch,
     PeersData(Vec<PeerData>),
+    TimeoutDuration(Duration),
+    RequestSize(usize),
 }
 
 #[derive(Debug, Error)]
@@ -1059,7 +1245,7 @@ impl GenServer for PeerTableServer {
             CallMessage::GetScore { node_id } => CallResponse::Reply(Self::OutMsg::PeerScore(
                 self.peers
                     .get(&node_id)
-                    .map(|peer_data| peer_data.score)
+                    .map(|peer_data| peer_data.metrics.score)
                     .unwrap_or_default(),
             )),
             CallMessage::GetConnectedNodes => CallResponse::Reply(Self::OutMsg::Nodes(
@@ -1116,6 +1302,33 @@ impl GenServer for PeerTableServer {
                     OutMessage::NotFound
                 },
             ),
+            CallMessage::GetBestPeerFor {
+                capabilities,
+                request_type,
+            } => {
+                let result = self.get_best_peer_for(&capabilities, request_type);
+                CallResponse::Reply(result.map_or(
+                    Self::OutMsg::NotFound,
+                    |(node_id, connection)| Self::OutMsg::FoundPeer {
+                        node_id,
+                        connection,
+                    },
+                ))
+            }
+            CallMessage::GetTimeoutFor { node_id } => {
+                CallResponse::Reply(OutMessage::TimeoutDuration(self.timeout_for(&node_id)))
+            }
+            CallMessage::GetRequestSizeFor {
+                node_id,
+                request_type,
+                min_items,
+                max_items,
+            } => CallResponse::Reply(OutMessage::RequestSize(self.request_size_for(
+                &node_id,
+                request_type,
+                min_items,
+                max_items,
+            ))),
         }
     }
 
@@ -1164,19 +1377,19 @@ impl GenServer for PeerTableServer {
                     .and_modify(|contact| contact.is_fork_id_valid = Some(valid));
             }
             CastMessage::RecordSuccess { node_id } => {
-                self.peers
-                    .entry(node_id)
-                    .and_modify(|peer_data| peer_data.score = (peer_data.score + 1).min(MAX_SCORE));
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data.metrics.score = (peer_data.metrics.score + 1).min(MAX_SCORE)
+                });
             }
             CastMessage::RecordFailure { node_id } => {
-                self.peers
-                    .entry(node_id)
-                    .and_modify(|peer_data| peer_data.score = (peer_data.score - 1).max(MIN_SCORE));
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data.metrics.score = (peer_data.metrics.score - 1).max(MIN_SCORE)
+                });
             }
             CastMessage::RecordCriticalFailure { node_id } => {
                 self.peers
                     .entry(node_id)
-                    .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
+                    .and_modify(|peer_data| peer_data.metrics.score = MIN_SCORE_CRITICAL);
             }
             CastMessage::RecordPingSent { node_id, hash } => {
                 self.contacts
@@ -1227,6 +1440,34 @@ impl GenServer for PeerTableServer {
                 self.contacts
                     .entry(node_id)
                     .and_modify(|c| c.knows_us = true);
+            }
+            CastMessage::RecordThroughput {
+                node_id,
+                request_type,
+                items_per_ms,
+                rtt_ms,
+            } => {
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data
+                        .metrics
+                        .record_throughput(request_type, items_per_ms, rtt_ms);
+                });
+            }
+            CastMessage::RecordSuccessFor {
+                node_id,
+                request_type,
+            } => {
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data.metrics.record_success_for(request_type);
+                });
+            }
+            CastMessage::RecordFailureFor {
+                node_id,
+                request_type,
+            } => {
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data.metrics.record_failure_for(request_type);
+                });
             }
             CastMessage::Prune => self.prune(),
             CastMessage::Shutdown => return CastResponse::Stop,
