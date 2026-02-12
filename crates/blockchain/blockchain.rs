@@ -1659,25 +1659,14 @@ impl Blockchain {
         Ok(timings)
     }
 
-    /// Re-execute a block through the full pipeline without storing the result.
+    /// Re-execute a block through the full pipeline (including store).
     /// Used by the replay harness for benchmarking.
+    ///
+    /// Uses `add_block_pipeline` so that each replayed block's state is stored,
+    /// enabling sequential replay of block ranges (each block's parent state
+    /// is available from the previous replay).
     pub fn replay_block(&self, block: &Block) -> Result<timings::BlockTimings, ChainError> {
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            return Err(ChainError::ParentNotFound);
-        };
-
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-        let mut vm = self.new_evm(vm_db)?;
-
-        let (_res, _account_updates_list, _accumulated_updates, mut timings) =
-            self.execute_block_pipeline(block, &parent_header, &mut vm)?;
-
-        timings.block_number = block.header.number;
-        timings.gas_used = block.header.gas_used;
-        timings.gas_limit = block.header.gas_limit;
-        timings.tx_count = block.body.transactions.len();
-
-        Ok(timings)
+        self.add_block_pipeline(block.clone())
     }
 
     #[allow(clippy::too_many_arguments)]

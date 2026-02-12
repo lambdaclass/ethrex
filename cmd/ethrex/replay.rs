@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::time::Duration;
+use std::time::Instant;
 
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::timings::BlockTimings;
@@ -16,10 +17,27 @@ pub async fn run_replay(
     let block_count = to.saturating_sub(from) + 1;
     info!("Replaying blocks {}..{} ({} blocks)", from, to, block_count);
 
-    let mut all_timings: Vec<BlockTimings> = Vec::with_capacity(block_count as usize);
-    let mut errors = 0u64;
+    // Try to find a replayable starting point.
+    // The trie layer cache may not be persisted, so we scan forward
+    // from `from` until we find a block whose parent state root is available.
+    let actual_from = find_first_replayable_block(&store, from, to).await?;
+    if actual_from > from {
+        info!(
+            "State root unavailable for blocks {}..{}, starting replay at block {}",
+            from,
+            actual_from - 1,
+            actual_from
+        );
+    }
 
-    for number in from..=to {
+    let actual_count = to.saturating_sub(actual_from) + 1;
+    let skipped = actual_from.saturating_sub(from);
+
+    let mut all_timings: Vec<BlockTimings> = Vec::with_capacity(actual_count as usize);
+    let mut errors = 0u64;
+    let wall_start = Instant::now();
+
+    for number in actual_from..=to {
         let block_hash = match store.get_canonical_block_hash(number).await? {
             Some(hash) => hash,
             None => {
@@ -40,6 +58,15 @@ pub async fn run_replay(
 
         match blockchain.replay_block(&block) {
             Ok(timings) => {
+                info!(
+                    "Block {} replayed: pipeline={}ms exec={}ms merkle={}ms store={}ms gas={}",
+                    number,
+                    timings.pipeline_total.as_millis(),
+                    timings.executor.as_millis(),
+                    timings.merkle_drain.as_millis(),
+                    timings.store.as_millis(),
+                    timings.gas_used,
+                );
                 all_timings.push(timings);
             }
             Err(e) => {
@@ -49,12 +76,16 @@ pub async fn run_replay(
         }
     }
 
+    let wall_elapsed = wall_start.elapsed();
+
     if all_timings.is_empty() {
         println!("No blocks successfully replayed.");
+        println!("Hint: the trie layer cache may not be persisted. Try replaying while");
+        println!("the node has recently processed blocks, or from an earlier block range.");
         return Ok(());
     }
 
-    print_statistics(&all_timings, from, to, errors);
+    print_statistics(&all_timings, actual_from, to, errors, skipped, wall_elapsed);
 
     if let Some(path) = csv_path {
         write_csv(&all_timings, &path)?;
@@ -64,7 +95,36 @@ pub async fn run_replay(
     Ok(())
 }
 
-fn print_statistics(timings: &[BlockTimings], from: u64, to: u64, errors: u64) {
+/// Scan forward from `from` to `to` to find the first block whose parent
+/// state root is available in the store (i.e., the trie can be opened).
+async fn find_first_replayable_block(store: &Store, from: u64, to: u64) -> eyre::Result<u64> {
+    for number in from..=to {
+        let Some(block_hash) = store.get_canonical_block_hash(number).await? else {
+            continue;
+        };
+        // We need the PARENT's state root, so get the parent header
+        let Some(header) = store.get_block_header_by_hash(block_hash)? else {
+            continue;
+        };
+        let Some(parent_header) = store.get_block_header_by_hash(header.parent_hash)? else {
+            continue;
+        };
+        if store.has_state_root(parent_header.state_root)? {
+            return Ok(number);
+        }
+    }
+    // No replayable block found; return from and let the loop handle errors
+    Ok(from)
+}
+
+fn print_statistics(
+    timings: &[BlockTimings],
+    from: u64,
+    to: u64,
+    errors: u64,
+    skipped: u64,
+    wall_elapsed: Duration,
+) {
     let n = timings.len();
 
     let total_gas: u64 = timings.iter().map(|t| t.gas_used).sum();
@@ -77,12 +137,15 @@ fn print_statistics(timings: &[BlockTimings], from: u64, to: u64, errors: u64) {
     };
 
     println!(
-        "\n=== Replay Results: blocks {}..{} ({} replayed, {} errors) ===",
-        from, to, n, errors
+        "\n=== Replay Results: blocks {}..{} ({} replayed, {} errors, {} skipped) ===",
+        from, to, n, errors, skipped
     );
     println!(
-        "Total gas: {} | Total pipeline time: {}ms | Avg throughput: {:.3} Ggas/s\n",
-        total_gas, total_pipeline_ms, avg_ggas_per_s,
+        "Total gas: {} | Pipeline time: {}ms | Wall time: {:.1}s | Throughput: {:.3} Ggas/s\n",
+        total_gas,
+        total_pipeline_ms,
+        wall_elapsed.as_secs_f64(),
+        avg_ggas_per_s,
     );
 
     println!(
