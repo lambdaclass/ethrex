@@ -115,7 +115,7 @@ pub async fn request_account_range(
     peers: &mut PeerHandler,
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
-    block_sync_state: &mut SnapBlockSyncState,
+    block_sync_state: &Arc<tokio::sync::Mutex<SnapBlockSyncState>>,
 ) -> Result<(), SnapError> {
     let num_partitions = MAX_ACCOUNT_PARTITIONS;
     let partitions = compute_partitions(num_partitions);
@@ -126,7 +126,7 @@ pub async fn request_account_range(
     *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
     let pivot = Arc::new(tokio::sync::RwLock::new(pivot_header.clone()));
-    let sync_state = Arc::new(tokio::sync::Mutex::new(block_sync_state.clone()));
+    let sync_state = Arc::clone(block_sync_state);
     let chunk_file_counter = Arc::new(AtomicU64::new(0));
     let downloaded_counter = Arc::new(AtomicU64::new(0));
 
@@ -165,9 +165,9 @@ pub async fn request_account_range(
         })??;
     }
 
-    // Copy back the shared state
+    // Copy back the pivot header (shared via RwLock among partitions)
     *pivot_header = pivot.read().await.clone();
-    *block_sync_state = sync_state.lock().await.clone();
+    // block_sync_state is shared via Arc — no copy-back needed
 
     METRICS
         .downloaded_account_tries
@@ -347,8 +347,8 @@ async fn request_account_range_partition(
                 // Double-check under write lock (another partition may have updated)
                 if block_is_stale(&ph) {
                     info!("Partition {partition_id}: pivot is stale, updating");
-                    let mut bss = block_sync_state.lock().await;
-                    *ph = update_pivot(ph.number, ph.timestamp, &mut peers, &mut bss)
+                    // update_pivot locks block_sync_state internally — don't hold it here
+                    *ph = update_pivot(ph.number, ph.timestamp, &mut peers, &block_sync_state)
                         .await
                         .expect("Should be able to update pivot");
                 }
