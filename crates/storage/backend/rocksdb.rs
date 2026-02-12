@@ -278,13 +278,14 @@ impl StorageBackend for RocksDBBackend {
             .map(|n| n.get())
             .unwrap_or(8);
 
-        // Relax compaction triggers to avoid write stalls during bulk ingestion.
-        // During sync we write faster than compaction can keep up, so we allow
-        // more L0 files to accumulate before triggering slowdowns/stops.
+        // Allow background compaction during sync but with relaxed triggers.
+        // trigger=32 (~2GiB of L0 with 64MB files) lets compaction run without
+        // stalling writes. Previous trigger=64 effectively disabled compaction,
+        // causing 60+ GB of uncompacted L0 files and 5x read amplification.
         let sync_cf_opts: &[(&str, &str)] = &[
-            ("level0_file_num_compaction_trigger", "64"),
-            ("level0_slowdown_writes_trigger", "128"),
-            ("level0_stop_writes_trigger", "256"),
+            ("level0_file_num_compaction_trigger", "32"),
+            ("level0_slowdown_writes_trigger", "64"),
+            ("level0_stop_writes_trigger", "128"),
         ];
 
         let write_buffer_count = core_count.to_string();
@@ -326,18 +327,20 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn set_normal_mode(&self) -> Result<(), StoreError> {
-        // Restore normal compaction triggers (matching values from open())
+        // Restore normal compaction trigger (4) so RocksDB aggressively compacts
+        // the L0 backlog from sync. Use a high stop_writes (256) during transition
+        // to prevent write stalls while background compaction catches up.
         let trie_normal_opts: &[(&str, &str)] = &[
             ("level0_file_num_compaction_trigger", "4"),
             ("level0_slowdown_writes_trigger", "20"),
-            ("level0_stop_writes_trigger", "36"),
+            ("level0_stop_writes_trigger", "256"),
             ("max_write_buffer_number", "6"),
         ];
 
         let default_normal_opts: &[(&str, &str)] = &[
             ("level0_file_num_compaction_trigger", "4"),
             ("level0_slowdown_writes_trigger", "20"),
-            ("level0_stop_writes_trigger", "36"),
+            ("level0_stop_writes_trigger", "256"),
         ];
 
         let trie_cfs = [
@@ -363,10 +366,9 @@ impl StorageBackend for RocksDBBackend {
             StoreError::Custom(format!("Failed to restore DB-level normal options: {e}"))
         })?;
 
-        // Restoring triggers from 64→4 will cause RocksDB to automatically
-        // schedule background compaction for any CF whose L0 file count exceeds
-        // the new threshold. No manual compact_range_cf needed.
-        info!("RocksDB normal mode restored, background compaction will run automatically");
+        // Restoring trigger from 32→4 causes RocksDB to automatically schedule
+        // background compaction. No manual compact_range_cf needed.
+        info!("RocksDB normal mode restored (high stop_writes for transition), background compaction will run automatically");
 
         Ok(())
     }
