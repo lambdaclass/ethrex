@@ -290,7 +290,7 @@ The workflow uses fork-specific fixtures to ensure comprehensive test coverage:
 # Amsterdam tests use fixtures_bal (includes BAL-specific tests)
 if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
   FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz"
-  FLAGS+=" --sim.buildarg branch=forks/amsterdam"
+  FLAGS+=" --sim.buildarg branch=devnets/bal/2"
 else
   # Other forks use fixtures_develop (comprehensive coverage including static tests)
   FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
@@ -300,16 +300,20 @@ fi
 
 ### Fixtures URL Files
 
-- `tooling/ef_tests/blockchain/.fixtures_url`
-- `tooling/ef_tests/state/.fixtures_url`
+- `tooling/ef_tests/blockchain/.fixtures_url` — Used by `run-hive-eels` Makefile target (non-Amsterdam forks)
+- `tooling/ef_tests/blockchain/.fixtures_url_amsterdam` — Amsterdam-specific fixtures with BAL support
 
-Both contain:
+Contents:
 
 ```
+# .fixtures_url
+https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz
+
+# .fixtures_url_amsterdam
 https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz
 ```
 
-**Note**: The workflow uses both `fixtures_bal` (for Amsterdam) and `fixtures_develop` (for other forks) to ensure complete multi-fork compatibility.
+**Note**: The CI workflow uses `fixtures_bal` with `branch=devnets/bal/2` for Amsterdam tests, and `fixtures_develop` with `branch=forks/osaka` for other forks.
 
 ## Updating Repository Versions
 
@@ -327,7 +331,7 @@ To update to a different fork or newer versions:
 
    ```yaml
    FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz"
-   FLAGS+=" --sim.buildarg branch=forks/amsterdam"
+   FLAGS+=" --sim.buildarg branch=devnets/bal/2"
    ```
 
    For other forks (fixtures_develop):
@@ -340,8 +344,10 @@ To update to a different fork or newer versions:
 3. **Update fixtures URL files**:
 
    ```bash
-   echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url
-   echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz" > tooling/ef_tests/state/.fixtures_url
+   # For Amsterdam fixtures
+   echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url_amsterdam
+   # For other forks
+   echo "https://github.com/ethereum/execution-spec-tests/releases/download/v<version>/fixtures_develop.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url
    ```
 
 4. **Update fork references** in code if switching to a different fork:
