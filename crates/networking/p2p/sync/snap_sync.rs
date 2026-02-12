@@ -247,8 +247,8 @@ async fn download_headers_background(
             .await?
         else {
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
-                warn!("Background header download: failed to find target, aborting");
-                return Ok(());
+                error!("Background header download: failed to find target after {attempts} attempts");
+                return Err(SyncError::NoBlockHeaders);
             }
             attempts += 1;
             tokio::time::sleep(Duration::from_millis(
@@ -640,7 +640,7 @@ pub async fn snap_sync(
 
     // Restore normal mode: reset compaction triggers and compact trie CFs
     if let Err(e) = store.set_normal_mode() {
-        warn!("Failed to restore RocksDB normal mode: {e}");
+        error!("Failed to restore RocksDB normal mode: {e}. Node may have degraded read performance.");
     }
 
     // Wait for background header download to complete before store_block_bodies
