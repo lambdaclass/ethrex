@@ -29,7 +29,7 @@ use crate::{
 const EXECUTE_GAS_COST: u64 = 100_000;
 
 /// A deposit: credit `amount` to `address` before block execution.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Deposit {
     pub address: Address,
     pub amount: U256,
@@ -37,9 +37,9 @@ pub struct Deposit {
 
 /// Input to the EXECUTE precompile.
 ///
-/// For the PoC we build this struct directly in tests rather than
-/// parsing ABI-encoded calldata. A future version will define a
-/// proper encoding/decoding scheme.
+/// Serialized with JSON (serde_json) for the PoC. A future version will
+/// define a proper ABI encoding/decoding scheme.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ExecutePrecompileInput {
     pub pre_state_root: H256,
     pub post_state_root: H256,
@@ -50,19 +50,17 @@ pub struct ExecutePrecompileInput {
 
 /// Entrypoint matching the precompile function signature.
 ///
-/// Deserializes input from calldata and delegates to [`execute_inner`].
+/// Deserializes input from calldata (JSON) and delegates to [`execute_inner`].
 pub fn execute_precompile(
-    _calldata: &Bytes,
+    calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
     increase_precompile_consumed_gas(EXECUTE_GAS_COST, gas_remaining)?;
 
-    // For the PoC, calldata deserialization is not yet implemented.
-    // Tests call execute_inner() directly with a structured input.
-    Err(VMError::Internal(InternalError::Custom(
-        "EXECUTE precompile calldata deserialization not yet implemented. Use execute_inner() directly.".to_string(),
-    )))
+    let input: ExecutePrecompileInput = serde_json::from_slice(calldata.as_ref())
+        .map_err(|e| custom_err(format!("Failed to deserialize EXECUTE calldata: {e}")))?;
+    execute_inner(input)
 }
 
 fn custom_err(msg: String) -> VMError {
@@ -156,6 +154,31 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(), VMEr
     let block_excess_blob_gas = block.header.excess_blob_gas.map(U256::from);
     let base_blob_fee = get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?;
 
+    // Validate transaction types before recovering senders (cheap check first).
+    // Native rollup blocks only allow standard L1 transaction types.
+    for tx in &block.body.transactions {
+        match tx {
+            Transaction::EIP4844Transaction(_) => {
+                return Err(custom_err(
+                    "Blob transactions (EIP-4844) are not allowed in native rollup blocks"
+                        .to_string(),
+                ));
+            }
+            Transaction::PrivilegedL2Transaction(_) => {
+                return Err(custom_err(
+                    "Privileged L2 transactions are not allowed in native rollup blocks"
+                        .to_string(),
+                ));
+            }
+            Transaction::FeeTokenTransaction(_) => {
+                return Err(custom_err(
+                    "Fee token transactions are not allowed in native rollup blocks".to_string(),
+                ));
+            }
+            _ => {} // Legacy, EIP-2930, EIP-1559, EIP-7702 are allowed
+        }
+    }
+
     let transactions_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
         VMError::Internal(InternalError::Custom(format!(
             "Couldn't recover addresses: {error}"
@@ -209,9 +232,14 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(), VMEr
             .ok_or(VMError::Internal(InternalError::Overflow))?;
     }
 
-    // Process withdrawals
-    if let Some(withdrawals) = &block.body.withdrawals {
-        process_withdrawals(db, withdrawals)?;
+    // Native rollup L2 blocks do not have validator withdrawals.
+    if let Some(withdrawals) = &block.body.withdrawals
+        && !withdrawals.is_empty()
+    {
+        return Err(custom_err(format!(
+            "Native rollup blocks must not contain withdrawals, found {}",
+            withdrawals.len()
+        )));
     }
 
     // Validate gas used
@@ -245,27 +273,6 @@ fn calculate_gas_price(tx: &Transaction, base_fee_per_gas: u64) -> Result<U256, 
         max_fee_per_gas,
     )
     .into())
-}
-
-/// Process withdrawals by crediting validator balances.
-fn process_withdrawals(
-    db: &mut GeneralizedDatabase,
-    withdrawals: &[ethrex_common::types::Withdrawal],
-) -> Result<(), VMError> {
-    use ethrex_common::types::GWEI_TO_WEI;
-
-    for withdrawal in withdrawals.iter().filter(|w| w.amount > 0) {
-        let amount_in_wei = u128::from(withdrawal.amount)
-            .checked_mul(u128::from(GWEI_TO_WEI))
-            .ok_or(VMError::Internal(InternalError::Overflow))?;
-        let account = db.get_account_mut(withdrawal.address)?;
-        account.info.balance = account
-            .info
-            .balance
-            .checked_add(amount_in_wei.into())
-            .ok_or(VMError::Internal(InternalError::Overflow))?;
-    }
-    Ok(())
 }
 
 /// Apply a single deposit by crediting the recipient's balance in the state trie.
