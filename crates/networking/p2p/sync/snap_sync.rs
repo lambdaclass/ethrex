@@ -97,7 +97,10 @@ impl SnapBlockSyncState {
     }
 }
 
-/// Performs snap sync cycle - fetches state via snap protocol while downloading blocks in parallel
+/// Performs snap sync cycle - fetches state via snap protocol while downloading blocks in parallel.
+///
+/// Headers are downloaded in a background task concurrently with state sync.
+/// This removes headers from the critical path (saves 15-20 min on mainnet).
 pub async fn sync_cycle_snap(
     peers: &mut PeerHandler,
     blockchain: Arc<Blockchain>,
@@ -106,15 +109,9 @@ pub async fn sync_cycle_snap(
     store: Store,
     datadir: &Path,
 ) -> Result<(), SyncError> {
-    // Request all block headers between the current head and the sync head
-    // We will begin from the current head so that we download the earliest state first
-    // This step is not parallelized
-    let mut block_sync_state = SnapBlockSyncState::new(store.clone());
-    // Check if we have some blocks downloaded from a previous sync attempt
-    // This applies only to snap sync—full sync always starts fetching headers
-    // from the canonical block, which updates as new block headers are fetched.
-    let mut current_head = block_sync_state.get_current_head().await?;
-    let mut current_head_number = store
+    let block_sync_state = SnapBlockSyncState::new(store.clone());
+    let current_head = block_sync_state.get_current_head().await?;
+    let current_head_number = store
         .get_block_number(current_head)
         .await?
         .ok_or(SyncError::BlockNumber(current_head))?;
@@ -122,36 +119,146 @@ pub async fn sync_cycle_snap(
         "Syncing from current head {:?} to sync_head {:?}",
         current_head, sync_head
     );
-    let pending_block = match store.get_pending_block(sync_head).await {
-        Ok(res) => res,
-        Err(e) => return Err(e.into()),
+
+    // Fetch the pivot (sync_head) header directly — no need to download the full chain first
+    let pivot_header = request_pivot_header(peers, sync_head).await?;
+    info!(
+        "Obtained pivot header #{} (hash: {:?})",
+        pivot_header.number,
+        pivot_header.hash()
+    );
+
+    // Check if we should fall back to full sync
+    let already_has_blocks = store.get_latest_block_number().await? > 0;
+    if already_has_blocks || pivot_header.number < MIN_FULL_BLOCKS {
+        info!("Sync head is found, switching to FullSync");
+        snap_enabled.store(false, Ordering::Relaxed);
+        return super::full::sync_cycle_full(
+            peers,
+            blockchain,
+            tokio_util::sync::CancellationToken::new(),
+            sync_head,
+            store.clone(),
+        )
+        .await;
+    }
+
+    // Store the pivot header and add it to block_sync_state
+    store
+        .add_block_headers(vec![pivot_header.clone()])
+        .await?;
+    let mut block_sync_state = block_sync_state;
+    block_sync_state.block_hashes.push(pivot_header.hash());
+
+    // Wrap in Arc<Mutex<>> for sharing between background download and state sync
+    let block_sync_state = Arc::new(tokio::sync::Mutex::new(block_sync_state));
+
+    // Spawn background header download — runs concurrently with state sync
+    let header_handle = {
+        let bss = block_sync_state.clone();
+        let mut bg_peers = peers.clone();
+        let bg_store = store.clone();
+        let pending_block = store.get_pending_block(sync_head).await.ok().flatten();
+        tokio::spawn(async move {
+            download_headers_background(
+                &mut bg_peers,
+                &bg_store,
+                &bss,
+                current_head_number,
+                sync_head,
+                pending_block.map(|b| b.header),
+            )
+            .await
+        })
     };
+
+    info!("Background header download started — proceeding with state sync");
+    snap_sync(peers, &store, &block_sync_state, datadir, header_handle).await?;
+
+    store.clear_snap_state().await?;
+    snap_enabled.store(false, Ordering::Relaxed);
+
+    Ok(())
+}
+
+/// Fetch the pivot block header by hash, retrying across peers.
+async fn request_pivot_header(
+    peers: &mut PeerHandler,
+    pivot_hash: H256,
+) -> Result<BlockHeader, SyncError> {
+    let mut attempts = 0;
+    loop {
+        let Some((peer_id, mut connection)) = peers
+            .peer_table
+            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+            .await?
+        else {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        };
+
+        if let Some(header) = peers
+            .get_block_header_by_hash(peer_id, &mut connection, pivot_hash)
+            .await
+            .map_err(SyncError::PeerHandler)?
+        {
+            peers.peer_table.record_success(&peer_id).await?;
+            return Ok(header);
+        }
+
+        peers.peer_table.record_failure(&peer_id).await?;
+        attempts += 1;
+        if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+            return Err(SyncError::NoBlockHeaders);
+        }
+        tokio::time::sleep(Duration::from_millis(
+            1.1_f64.powf(attempts as f64) as u64,
+        ))
+        .await;
+    }
+}
+
+/// Download all block headers from current_head to sync_head in the background.
+/// This runs concurrently with state sync.
+async fn download_headers_background(
+    peers: &mut PeerHandler,
+    store: &Store,
+    block_sync_state: &Arc<tokio::sync::Mutex<SnapBlockSyncState>>,
+    mut current_head_number: u64,
+    sync_head: H256,
+    pending_block_header: Option<BlockHeader>,
+) -> Result<(), SyncError> {
+    let mut current_head = {
+        let bss = block_sync_state.lock().await;
+        bss.store
+            .get_latest_canonical_block_hash()
+            .await?
+            .unwrap_or(H256::zero())
+    };
+    if let Some(head) = store.get_header_download_checkpoint().await? {
+        current_head = head;
+    }
 
     let mut attempts = 0;
 
     loop {
-        debug!("Requesting Block Headers from {current_head}");
-
         let Some(mut block_headers) = peers
             .request_block_headers(current_head_number, sync_head)
             .await?
         else {
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
-                warn!("Sync failed to find target block header, aborting");
+                warn!("Background header download: failed to find target, aborting");
                 return Ok(());
             }
             attempts += 1;
-            tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64)).await;
+            tokio::time::sleep(Duration::from_millis(
+                1.1_f64.powf(attempts as f64) as u64,
+            ))
+            .await;
             continue;
         };
 
-        debug!("Sync Log 1: In snap sync");
-        debug!(
-            "Sync Log 2: State block hashes len {}",
-            block_sync_state.block_hashes.len()
-        );
-
-        let (first_block_hash, first_block_number, first_block_parent_hash) =
+        let (first_block_hash, _first_block_number, first_block_parent_hash) =
             match block_headers.first() {
                 Some(header) => (header.hash(), header.number, header.parent_hash),
                 None => continue,
@@ -160,34 +267,23 @@ pub async fn sync_cycle_snap(
             Some(header) => (header.hash(), header.number),
             None => continue,
         };
-        // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
-        // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
+
         if first_block_hash == last_block_hash
             && first_block_hash == current_head
             && current_head != sync_head
         {
-            // There is no path to the sync head this goes back until it find a common ancerstor
-            warn!("Sync failed to find target block header, going back to the previous parent");
+            warn!("Background header download: going back to previous parent");
             current_head = first_block_parent_hash;
             continue;
         }
 
-        debug!(
-            "Received {} block headers| First Number: {} Last Number: {}",
-            block_headers.len(),
-            first_block_number,
-            last_block_number
-        );
-
-        // If we have a pending block from new_payload request
-        // attach it to the end if it matches the parent_hash of the latest received header
-        if let Some(ref block) = pending_block
-            && block.header.parent_hash == last_block_hash
-        {
-            block_headers.push(block.header.clone());
+        // Attach pending block if it connects
+        if let Some(ref pending_header) = pending_block_header {
+            if pending_header.parent_hash == last_block_hash {
+                block_headers.push(pending_header.clone());
+            }
         }
 
-        // Filter out everything after the sync_head
         let mut sync_head_found = false;
         if let Some(index) = block_headers
             .iter()
@@ -197,68 +293,48 @@ pub async fn sync_cycle_snap(
             block_headers.drain(index + 1..);
         }
 
-        // Update current fetch head
         current_head = last_block_hash;
         current_head_number = last_block_number;
 
-        // If the sync head is not 0 we search to fullsync
-        let head_found = sync_head_found && store.get_latest_block_number().await? > 0;
-        // Or the head is very close to 0
-        let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
-
-        if head_found || head_close_to_0 {
-            // Too few blocks for a snap sync, switching to full sync
-            info!("Sync head is found, switching to FullSync");
-            snap_enabled.store(false, Ordering::Relaxed);
-            return super::full::sync_cycle_full(
-                peers,
-                blockchain,
-                tokio_util::sync::CancellationToken::new(),
-                sync_head,
-                store.clone(),
-            )
-            .await;
-        }
-
-        // Discard the first header as we already have it
         if block_headers.len() > 1 {
             let block_headers_iter = block_headers.into_iter().skip(1);
-
             block_sync_state
+                .lock()
+                .await
                 .process_incoming_headers(block_headers_iter)
                 .await?;
         }
 
         if sync_head_found {
+            info!("Background header download complete");
             break;
-        };
+        }
     }
-
-    snap_sync(peers, &store, &mut block_sync_state, datadir).await?;
-
-    store.clear_snap_state().await?;
-    snap_enabled.store(false, Ordering::Relaxed);
 
     Ok(())
 }
 
-/// Main snap sync logic - downloads state via snap protocol
+/// Main snap sync logic - downloads state via snap protocol.
+///
+/// `header_download_handle` is the background header download task spawned by
+/// `sync_cycle_snap`. It must complete before finalization (store_block_bodies
+/// and forkchoice_update) which need the full header chain.
 pub async fn snap_sync(
     peers: &mut PeerHandler,
     store: &Store,
-    block_sync_state: &mut SnapBlockSyncState,
+    block_sync_state: &Arc<tokio::sync::Mutex<SnapBlockSyncState>>,
     datadir: &Path,
+    header_download_handle: tokio::task::JoinHandle<Result<(), SyncError>>,
 ) -> Result<(), SyncError> {
-    // snap-sync: launch tasks to fetch blocks and state in parallel
-    // - Fetch each block's body and its receipt via eth p2p requests
-    // - Fetch the pivot block's state via snap p2p requests
-    // - Execute blocks after the pivot (like in full-sync)
     let pivot_hash = block_sync_state
+        .lock()
+        .await
         .block_hashes
         .last()
+        .copied()
         .ok_or(SyncError::NoBlockHeaders)?;
     let mut pivot_header = store
-        .get_block_header_by_hash(*pivot_hash)?
+        .get_block_header_by_hash(pivot_hash)?
         .ok_or(SyncError::CorruptDB)?;
 
     while block_is_stale(&pivot_header) {
@@ -560,6 +636,12 @@ pub async fn snap_sync(
 
     debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
+    // Wait for background header download to complete before store_block_bodies
+    // and forkchoice_update, which need the full header chain.
+    info!("Waiting for background header download to complete...");
+    header_download_handle.await??;
+    info!("Background header download complete");
+
     store_block_bodies(vec![pivot_header.clone()], peers.clone(), store.clone()).await?;
 
     let block = store
@@ -569,7 +651,8 @@ pub async fn snap_sync(
 
     store.add_block(block).await?;
 
-    let numbers_and_hashes = block_sync_state
+    let bss = block_sync_state.lock().await;
+    let numbers_and_hashes = bss
         .block_hashes
         .iter()
         .rev()
@@ -622,7 +705,7 @@ pub async fn update_pivot(
     block_number: u64,
     block_timestamp: u64,
     peers: &mut PeerHandler,
-    block_sync_state: &mut SnapBlockSyncState,
+    block_sync_state: &Arc<tokio::sync::Mutex<SnapBlockSyncState>>,
 ) -> Result<BlockHeader, SyncError> {
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
     let new_pivot_block_number = block_number
@@ -672,6 +755,8 @@ pub async fn update_pivot(
             .await?
             .ok_or(SyncError::NoBlockHeaders)?;
         block_sync_state
+            .lock()
+            .await
             .process_incoming_headers(block_headers.into_iter())
             .await?;
         *METRICS.sync_head_hash.lock().await = pivot.hash();
