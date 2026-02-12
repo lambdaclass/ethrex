@@ -307,18 +307,6 @@ impl RpcHandler for NewPayloadV5Request {
             )));
         }
 
-        // EIP-7928: When the block hash doesn't match and the block has a BAL,
-        // the BAL hash computed from the provided BAL data is the likely source
-        // of the mismatch (all other header fields come directly from the payload).
-        // Return a BAL-specific error instead of a generic block hash error.
-        if validate_block_hash(&self.payload, &block).is_err()
-            && self.payload.block_access_list.is_some()
-        {
-            return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
-                "Block access list hash does not match the one in the header after executing",
-            ))?);
-        }
-
         let payload_status = handle_new_payload_v4(
             &self.payload,
             context,
