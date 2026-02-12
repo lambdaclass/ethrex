@@ -905,6 +905,21 @@ impl Store {
         self.write_async(CHAIN_DATA, key, value).await
     }
 
+    /// Loads the chain config from the DB into memory.
+    /// Call this after `load_initial_state` when opening an existing store
+    /// without going through genesis initialization.
+    pub async fn load_chain_config(&mut self) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::ChainConfig);
+        if let Some(bytes) = self.read_async(CHAIN_DATA, key).await? {
+            let json = String::from_utf8(bytes)
+                .map_err(|_| StoreError::Custom("Invalid chain config UTF-8".to_string()))?;
+            let config: ChainConfig = serde_json::from_str(&json)
+                .map_err(|_| StoreError::Custom("Invalid chain config JSON".to_string()))?;
+            self.chain_config = config;
+        }
+        Ok(())
+    }
+
     /// Update earliest block number
     pub async fn update_earliest_block_number(
         &self,

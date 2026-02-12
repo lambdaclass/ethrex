@@ -559,7 +559,8 @@ impl Subcommand {
                 println!("{state_root:#x}");
             }
             Subcommand::Replay { from, to, csv } => {
-                let store = load_store(&opts.datadir).await?;
+                let mut store = load_store(&opts.datadir).await?;
+                store.load_chain_config().await?;
                 let blockchain = init_blockchain(
                     store.clone(),
                     BlockchainOptions {
