@@ -4,10 +4,12 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
 use rkyv::rancor::Error;
+#[cfg(not(feature = "gpu"))]
+use sp1_sdk::blocking::CpuProver;
 use sp1_sdk::{
-    Elf, HashableKey, ProvingKey, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin,
+    Elf, HashableKey, ProvingKey as _, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin,
     SP1VerifyingKey,
-    blocking::{self, ProveRequest, Prover},
+    blocking::{ProveRequest as _, Prover},
 };
 use std::{
     fmt::Debug,
@@ -18,12 +20,17 @@ use url::Url;
 
 use crate::backend::{BackendError, ProverBackend};
 
-type EnvProvingKey = <blocking::EnvProver as blocking::Prover>::ProvingKey;
+#[cfg(not(feature = "gpu"))]
+type ConcreteProver = CpuProver;
+#[cfg(feature = "gpu")]
+type ConcreteProver = sp1_sdk::blocking::CudaProver;
+
+type ConcreteProvingKey = <ConcreteProver as Prover>::ProvingKey;
 
 /// Setup data for the SP1 prover (client, proving key, verifying key).
 pub struct ProverSetup {
-    client: blocking::EnvProver,
-    pk: EnvProvingKey,
+    client: ConcreteProver,
+    pk: ConcreteProvingKey,
     vk: SP1VerifyingKey,
 }
 
@@ -31,7 +38,10 @@ pub struct ProverSetup {
 pub static PROVER_SETUP: OnceLock<ProverSetup> = OnceLock::new();
 
 pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
-    let client = blocking::ProverClient::from_env();
+    #[cfg(not(feature = "gpu"))]
+    let client = CpuProver::new();
+    #[cfg(feature = "gpu")]
+    let client = sp1_sdk::blocking::ProverClient::builder().cuda().build();
 
     let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
     let pk = client.setup(elf).expect("Failed to setup SP1 prover");

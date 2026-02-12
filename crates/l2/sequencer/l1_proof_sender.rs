@@ -45,7 +45,7 @@ use crate::{
 #[cfg(feature = "sp1")]
 use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
 #[cfg(feature = "sp1")]
-use sp1_sdk::{Elf, HashableKey, ProvingKey, SP1VerifyingKey, blocking::Prover};
+use sp1_sdk::{Elf, HashableKey, SP1VerifyingKey, blocking::CpuProver, blocking::Prover};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
 
@@ -149,8 +149,8 @@ impl L1ProofSender {
 
     #[cfg(feature = "sp1")]
     fn init_sp1_vk() -> Result<SP1VerifyingKey, ProofSenderError> {
-        // Setup the prover client to get the verifying key
-        let client = sp1_sdk::blocking::ProverClient::from_env();
+        // Setup a CPU prover client just to derive the verifying key
+        let client = CpuProver::new();
         let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
         let pk = client.setup(elf).map_err(|e| {
             ProofSenderError::UnexpectedError(format!("Failed to setup SP1 prover: {e}"))
