@@ -12,6 +12,7 @@ use ethrex_common::{
         block_execution_witness::{ExecutionWitness, GuestProgramState},
     },
 };
+use ethrex_rlp::decode::RLPDecode;
 use std::cmp::min;
 use std::sync::Arc;
 
@@ -29,17 +30,13 @@ use crate::{
 const EXECUTE_GAS_COST: u64 = 100_000;
 
 /// A deposit: credit `amount` to `address` before block execution.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Deposit {
     pub address: Address,
     pub amount: U256,
 }
 
 /// Input to the EXECUTE precompile.
-///
-/// Serialized with JSON (serde_json) for the PoC. A future version will
-/// define a proper ABI encoding/decoding scheme.
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ExecutePrecompileInput {
     pub pre_state_root: H256,
     pub post_state_root: H256,
@@ -50,7 +47,19 @@ pub struct ExecutePrecompileInput {
 
 /// Entrypoint matching the precompile function signature.
 ///
-/// Deserializes input from calldata (JSON) and delegates to [`execute_inner`].
+/// Parses the binary calldata format:
+/// ```text
+/// [32 bytes] pre_state_root (bytes32)
+/// [32 bytes] post_state_root (bytes32)
+/// [4  bytes] num_deposits (uint32 big-endian)
+/// [52 * num_deposits bytes] deposits (20 bytes address + 32 bytes amount each)
+/// [4  bytes] block_rlp_length (uint32 big-endian)
+/// [block_rlp_length bytes] block RLP
+/// [remaining bytes] witness JSON (serde_json)
+/// ```
+///
+/// Block uses RLP encoding (already implemented in ethrex). ExecutionWitness
+/// uses JSON because it doesn't have RLP support (it uses serde/rkyv instead).
 pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
@@ -58,9 +67,95 @@ pub fn execute_precompile(
 ) -> Result<Bytes, VMError> {
     increase_precompile_consumed_gas(EXECUTE_GAS_COST, gas_remaining)?;
 
-    let input: ExecutePrecompileInput = serde_json::from_slice(calldata.as_ref())
-        .map_err(|e| custom_err(format!("Failed to deserialize EXECUTE calldata: {e}")))?;
+    let input = parse_binary_calldata(calldata)?;
     execute_inner(input)
+}
+
+/// Read `n` bytes from `calldata` starting at `offset`, advancing `offset`.
+fn read_calldata<'a>(
+    calldata: &'a [u8],
+    offset: &mut usize,
+    n: usize,
+) -> Result<&'a [u8], VMError> {
+    let end = offset
+        .checked_add(n)
+        .ok_or_else(|| custom_err("EXECUTE calldata offset overflow".to_string()))?;
+    if end > calldata.len() {
+        return Err(custom_err(format!(
+            "EXECUTE calldata too short: need {n} more bytes at offset {}, have {}",
+            *offset,
+            calldata.len()
+        )));
+    }
+    let slice = calldata
+        .get(*offset..end)
+        .ok_or_else(|| custom_err("EXECUTE calldata slice out of bounds".to_string()))?;
+    *offset = end;
+    Ok(slice)
+}
+
+/// Parse the binary calldata format into an [`ExecutePrecompileInput`].
+fn parse_binary_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError> {
+    let mut offset: usize = 0;
+
+    // 1. pre_state_root (32 bytes)
+    let pre_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // 2. post_state_root (32 bytes)
+    let post_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // 3. num_deposits (4 bytes, big-endian uint32)
+    let num_deposits = u32::from_be_bytes(
+        read_calldata(calldata, &mut offset, 4)?
+            .try_into()
+            .map_err(|_| custom_err("Invalid deposit count bytes".to_string()))?,
+    );
+    let num_deposits: usize = usize::try_from(num_deposits)
+        .map_err(|_| custom_err("Deposit count too large".to_string()))?;
+
+    // 4. deposits (52 bytes each: 20 address + 32 amount)
+    let mut deposits = Vec::with_capacity(num_deposits);
+    for _ in 0..num_deposits {
+        let addr_bytes = read_calldata(calldata, &mut offset, 20)?;
+        let amount_bytes = read_calldata(calldata, &mut offset, 32)?;
+        deposits.push(Deposit {
+            address: Address::from_slice(addr_bytes),
+            amount: U256::from_big_endian(amount_bytes),
+        });
+    }
+
+    // 5. block_rlp_length (4 bytes, big-endian uint32)
+    let block_rlp_len = u32::from_be_bytes(
+        read_calldata(calldata, &mut offset, 4)?
+            .try_into()
+            .map_err(|_| custom_err("Invalid block RLP length bytes".to_string()))?,
+    );
+    let block_rlp_len: usize = usize::try_from(block_rlp_len)
+        .map_err(|_| custom_err("Block RLP length too large".to_string()))?;
+
+    // 6. block RLP
+    let block_rlp = read_calldata(calldata, &mut offset, block_rlp_len)?;
+    let block = Block::decode(block_rlp)
+        .map_err(|e| custom_err(format!("Failed to RLP-decode block: {e}")))?;
+
+    // 7. Remaining bytes: witness JSON (serde_json).
+    // ExecutionWitness uses JSON because it doesn't have RLP support — it
+    // uses serde/rkyv for serialization instead.
+    let remaining = calldata
+        .len()
+        .checked_sub(offset)
+        .ok_or_else(|| custom_err("EXECUTE calldata offset past end".to_string()))?;
+    let witness_bytes = read_calldata(calldata, &mut offset, remaining)?;
+    let execution_witness: ExecutionWitness = serde_json::from_slice(witness_bytes)
+        .map_err(|e| custom_err(format!("Failed to deserialize ExecutionWitness JSON: {e}")))?;
+
+    Ok(ExecutePrecompileInput {
+        pre_state_root,
+        post_state_root,
+        deposits,
+        execution_witness,
+        block,
+    })
 }
 
 fn custom_err(msg: String) -> VMError {

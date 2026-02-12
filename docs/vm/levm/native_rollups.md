@@ -13,24 +13,27 @@ L2 Block + ExecutionWitness + Deposits
         |
   EXECUTE precompile (in LEVM)
         |
-  1. Build GuestProgramState from witness
-  2. Verify pre-state root
-  3. Apply deposits to state (anchor)
-  4. Execute block transactions via LEVM
-  5. Verify post-state root matches
+  1. Parse binary calldata (state roots, deposits, block RLP, witness JSON)
+  2. Build GuestProgramState from witness
+  3. Verify pre-state root
+  4. Apply deposits to state (anchor)
+  5. Execute block transactions via LEVM
+  6. Verify post-state root matches
         |
   Returns 0x01 (success) or reverts
 ```
 
 ### Components
 
-**`execute_precompile.rs`** — The core precompile logic. Takes a single `ExecutePrecompileInput` containing one L2 block, its execution witness, deposits, and expected state roots. Orchestrates the full verification flow: witness deserialization, state root checks, deposit application, block execution, and final state root verification. Also contains helpers for block execution (`execute_block`), gas price calculation, transaction type validation, and deposit application.
+**`execute_precompile.rs`** — The core precompile logic. Parses binary calldata containing state roots, deposits, an RLP-encoded block, and a JSON-serialized witness. Orchestrates the full verification flow: calldata parsing, state root checks, deposit application, block execution, and final state root verification. Also contains helpers for block execution (`execute_block`), gas price calculation, transaction type validation, and deposit application.
 
 **`guest_program_state_db.rs`** — A thin adapter that implements LEVM's `Database` trait backed by `GuestProgramState`. This bridges the gap between the stateless execution witness (which provides account/storage/code data via tries) and LEVM's database interface. Uses a `Mutex` for interior mutability since `GuestProgramState` requires `&mut self` while `Database` methods take `&self`.
 
 **`precompiles.rs` (modified)** — Registers the EXECUTE precompile at address `0x0101`, dispatched at runtime before the standard const precompile table lookup.
 
-**`NativeRollup.sol`** — A Solidity contract that simulates an L2 on-chain. Maintains `stateRoot` (slot 0) and `blockNumber` (slot 1). Exposes `advance(bytes32, uint256, bytes)` which calls the EXECUTE precompile at `0x0101` and updates its state on success. This demonstrates how an L1 contract would track and verify L2 state transitions.
+**`NativeRollup.sol`** — A Solidity contract that manages L2 state on-chain. Maintains `stateRoot` (slot 0), `blockNumber` (slot 1), a `pendingDeposits` array (slot 2), and `depositIndex` (slot 3). Exposes:
+- `deposit(address)` — payable function that records pending deposits
+- `advance(bytes32, uint256, uint256, bytes, bytes)` — consumes pending deposits, builds binary precompile calldata, calls EXECUTE at `0x0101`, and updates state on success
 
 ### Why a Separate Database Adapter?
 
@@ -38,12 +41,32 @@ The existing `GuestProgramStateWrapper` in `crates/vm/witness_db.rs` bridges `Gu
 
 ### Deposit/Anchor Mechanism
 
-Per EIP-8079, an "anchor" injects L1 data into L2 state before block execution. For this PoC:
+Per EIP-8079, an "anchor" injects L1 data into L2 state before block execution. The deposit flow works as follows:
 
-- Anchor data is a list of `(address, amount)` deposits
-- Before executing the block body, the precompile credits each deposit recipient's balance directly in the state trie
-- The expected `post_state_root` must account for these credits
-- No predeploy contract is needed — direct state modification suffices for the PoC
+1. Users call `NativeRollup.deposit(recipient)` with ETH value — this records a `PendingDeposit{recipient, amount}` in the contract's storage array
+2. When `advance()` is called with `_depositsCount`, it pops that many deposits from the queue (advancing `depositIndex`) and includes them in the binary calldata sent to the EXECUTE precompile
+3. The precompile parses the deposits from calldata and credits each recipient's balance directly in the state trie before executing the block
+4. The expected `post_state_root` must account for these credits
+
+### Calldata Format (Binary)
+
+The EXECUTE precompile uses a hybrid binary format:
+
+```
+[32 bytes] pre_state_root (bytes32)
+[32 bytes] post_state_root (bytes32)
+[4  bytes] num_deposits (uint32 big-endian)
+[52 * num_deposits bytes] deposits (20 bytes address + 32 bytes amount each)
+[4  bytes] block_rlp_length (uint32 big-endian)
+[block_rlp_length bytes] block RLP
+[remaining bytes] witness JSON (serde_json)
+```
+
+- **Block** uses RLP encoding (already implemented in ethrex via `RLPEncode`/`RLPDecode`)
+- **ExecutionWitness** uses JSON because it doesn't have RLP support — it uses serde/rkyv for serialization instead
+- **State roots and deposits** use fixed-size binary encoding for simplicity
+
+The NativeRollup contract fills in `pre_state_root` from its own storage, `post_state_root` from the caller's parameter, deposits from its pending queue, and passes through block/witness bytes unchanged (opaque to the contract).
 
 ## Feature Flag
 
@@ -79,10 +102,6 @@ Native rollup blocks only allow standard L1 transaction types. The following are
 
 Legacy, EIP-2930, EIP-1559, and EIP-7702 transactions are allowed. Withdrawals are also rejected since native rollup L2 blocks don't have validator withdrawals.
 
-### Calldata Serialization
-
-The `execute_precompile()` entrypoint deserializes `ExecutePrecompileInput` from JSON (serde_json) calldata. A future version will define a proper ABI encoding/decoding scheme.
-
 ## Running the Tests
 
 ### In-process tests (no L1 needed)
@@ -103,7 +122,7 @@ NATIVE_ROLLUPS=1 make -C crates/l2 init-l1
 cargo test -p ethrex-test --features native-rollups -- native_rollups_integration --ignored --nocapture
 ```
 
-The integration test deploys the NativeRollup contract on L1, calls `advance()` with a valid L2 state transition, and verifies the contract's storage was updated.
+The integration test deploys the NativeRollup contract on L1, deposits 5 ETH for Charlie, calls `advance()` with a valid L2 state transition, and verifies the contract's storage was updated (stateRoot, blockNumber, depositIndex).
 
 ## Test Descriptions
 
@@ -114,33 +133,41 @@ The integration test deploys the NativeRollup contract on L1, calls `advance()` 
 3. Builds an `ExecutionWitness` from the state trie
 4. Defines a deposit: 5 ETH to Charlie
 5. Computes the expected post-state root (accounting for the transfer, gas costs, and deposit)
-6. Calls `execute_inner()` with the witness, block, and deposits
-7. The precompile re-executes the block, applies the deposit, and verifies the final state root matches
+6. Builds binary calldata (state roots + deposits + RLP block + JSON witness)
+7. Calls `execute_precompile()` with the binary calldata
+8. The precompile parses the calldata, re-executes the block, applies the deposit, and verifies the final state root matches
 
 ### NativeRollup contract test (`test_native_rollup_contract`)
 
-Demonstrates the full end-to-end flow where an L1 contract calls the EXECUTE precompile:
+Demonstrates the full end-to-end flow with deposit + advance:
 
-1. Builds the same L2 state transition (Alice->Bob transfer + Charlie deposit)
-2. Serializes `ExecutePrecompileInput` as JSON calldata
-3. Deploys a NativeRollup contract on L1 with the pre-state root in storage
-4. Executes an L1 transaction calling `advance(postStateRoot, 1, precompileInput)`
-5. The NativeRollup contract CALLs the EXECUTE precompile at `0x0101`
-6. Asserts the transaction succeeds and the contract's storage was updated
+1. Builds the L2 state transition (Alice->Bob transfer + Charlie deposit)
+2. Deploys a NativeRollup contract on L1 with the pre-state root in storage
+3. Executes a deposit TX: `deposit(charlie)` with 5 ETH
+4. Executes an advance TX: `advance(postStateRoot, 1, 1, blockRlp, witnessJson)`
+5. The contract builds binary calldata from its stored deposits and the parameters
+6. The contract CALLs the EXECUTE precompile at `0x0101`
+7. Asserts the transaction succeeds and the contract's storage was updated (stateRoot, blockNumber, depositIndex)
 
 ```
-L1 tx -> NativeRollup.advance() -> CALL -> EXECUTE precompile (0x0101)
-  -> deserialize JSON -> re-execute L2 block -> verify state roots -> 0x01
-  -> NativeRollup updates stateRoot (slot 0) and blockNumber (slot 1)
+L1 tx1 -> NativeRollup.deposit(charlie) {value: 5 ETH}
+  -> records PendingDeposit in storage
+
+L1 tx2 -> NativeRollup.advance(postRoot, 1, 1, blockRlp, witnessJson)
+  -> builds binary calldata from storage deposits + params
+  -> CALL -> EXECUTE precompile (0x0101)
+  -> parse binary calldata -> re-execute L2 block -> verify state roots -> 0x01
+  -> NativeRollup updates stateRoot (slot 0), blockNumber (slot 1), depositIndex (slot 3)
 ```
 
-### Integration test (`test_native_rollup_integration`)
+### Integration test (`test_native_rollup_on_l1`)
 
 Same flow as the NativeRollup contract test, but against a real running L1:
 
 1. Deploys NativeRollup contract on L1 via `EthClient`
-2. Sends `advance()` transaction with a valid L2 state transition
-3. Reads storage slots via `eth_getStorageAt` to verify the contract updated correctly
+2. Sends `deposit(charlie)` transaction with 5 ETH
+3. Sends `advance()` transaction with a valid L2 state transition
+4. Reads storage slots via `eth_getStorageAt` to verify the contract updated correctly (stateRoot, blockNumber, depositIndex)
 
 ### Rejection tests
 
@@ -150,17 +177,20 @@ Same flow as the NativeRollup contract test, but against a real running L1:
 ### Expected output
 
 ```
+Binary EXECUTE calldata: 7473 bytes
 EXECUTE precompile succeeded!
   Pre-state root:  0x453c...5c13
   Post-state root: 0x615c...49de
   Alice sent 1 ETH to Bob
   Charlie received 5 ETH deposit
 
-Serialized EXECUTE calldata: 8848 bytes
-NativeRollup contract test succeeded!
-  L2 state transition verified via NativeRollup.advance():
+Deposit TX succeeded (5 ETH for charlie)
+NativeRollup contract demo succeeded!
+  L2 state transition verified via deposit() + advance():
     Pre-state root:  0x453c...5c13
     Post-state root: 0x615c...49de
+    Block number:    1
+    Deposit index:   1
   Gas used: ...
 ```
 
@@ -168,7 +198,7 @@ NativeRollup contract test succeeded!
 
 | File | Description |
 |------|-------------|
-| `crates/vm/levm/src/execute_precompile.rs` | EXECUTE precompile logic |
+| `crates/vm/levm/src/execute_precompile.rs` | EXECUTE precompile logic (binary calldata parsing) |
 | `crates/vm/levm/src/db/guest_program_state_db.rs` | GuestProgramState -> LEVM Database adapter |
 | `crates/vm/levm/src/precompiles.rs` | Precompile registration (modified) |
 | `crates/vm/levm/src/db/mod.rs` | Module export (modified) |
@@ -176,7 +206,7 @@ NativeRollup contract test succeeded!
 | `crates/vm/levm/Cargo.toml` | Feature flag (modified) |
 | `crates/vm/Cargo.toml` | Feature flag propagation (modified) |
 | `cmd/ethrex/Cargo.toml` | Feature flag for ethrex binary (modified) |
-| `crates/vm/levm/contracts/NativeRollup.sol` | L2-simulator Solidity contract |
+| `crates/vm/levm/contracts/NativeRollup.sol` | L2-simulator Solidity contract (with deposit mechanism) |
 | `crates/vm/levm/tests/native_rollups.rs` | In-process tests |
 | `test/tests/levm/native_rollups_integration.rs` | Integration test (requires running L1) |
 | `test/Cargo.toml` | Feature flag for test crate (modified) |
@@ -187,10 +217,10 @@ NativeRollup contract test succeeded!
 This PoC intentionally omits several things that would be needed for production:
 
 - **Fixed gas cost** — Uses a flat 100,000 gas cost instead of real metering
-- **JSON serialization** — Uses serde_json for calldata; a production version would use proper ABI encoding
 - **No blob data support** — Only calldata-based input
 - **No anchoring predeploy** — Deposits modify state directly instead of going through a contract
 - **No L2 contract integration** — OnChainProposer is unchanged
 - **No L2 sequencer changes** — No integration with the L2 commit flow
+- **Hybrid serialization** — Binary header + RLP block + JSON witness (ExecutionWitness lacks RLP support)
 
 These are all Phase 2+ concerns.
