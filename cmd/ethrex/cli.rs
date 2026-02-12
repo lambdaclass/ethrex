@@ -454,6 +454,32 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[command(
+        name = "replay",
+        about = "Re-execute blocks from the local store with instrumented timing"
+    )]
+    Replay {
+        #[arg(
+            long = "from",
+            required = true,
+            value_name = "BLOCK_NUMBER",
+            help = "First block number to replay"
+        )]
+        from: u64,
+        #[arg(
+            long = "to",
+            required = true,
+            value_name = "BLOCK_NUMBER",
+            help = "Last block number to replay"
+        )]
+        to: u64,
+        #[arg(
+            long = "csv",
+            value_name = "CSV_PATH",
+            help = "Optional path to write per-block CSV results"
+        )]
+        csv: Option<PathBuf>,
+    },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
@@ -531,6 +557,17 @@ impl Subcommand {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
+            }
+            Subcommand::Replay { from, to, csv } => {
+                let store = load_store(&opts.datadir).await?;
+                let blockchain = init_blockchain(
+                    store.clone(),
+                    BlockchainOptions {
+                        perf_logs_enabled: true,
+                        ..Default::default()
+                    },
+                );
+                crate::replay::run_replay(store, &blockchain, from, to, csv).await?;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
