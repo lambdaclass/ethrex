@@ -607,7 +607,8 @@ impl<'a> VM<'a> {
 
         let target_account_is_cold = !self.substate.add_accessed_address(beneficiary);
         let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty()
-            && !precompiles::is_precompile(&beneficiary, self.env.config.fork, self.vm_type);
+            && !(self.env.config.fork >= Fork::Amsterdam
+                && precompiles::is_precompile(&beneficiary, self.env.config.fork, self.vm_type));
 
         let current_account = self.db.get_account(to)?;
         let balance = current_account.info.balance;
