@@ -582,6 +582,11 @@ impl Blockchain {
                     continue;
                 }
 
+                // Storage trie recomputation is implicitly skipped for accounts
+                // with only balance/nonce changes: no MerklizeStorage messages are
+                // sent, so the worker's `tree` map has no entry for this account,
+                // CollectStorages produces nothing, and MerklizeAccount preserves
+                // the existing storage_root loaded from the state trie.
                 if update.removed_storage {
                     for tx in &workers_tx {
                         tx.send(MerklizationRequest::Delete(hashed_address))
