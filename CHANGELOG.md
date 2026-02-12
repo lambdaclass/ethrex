@@ -4,7 +4,7 @@
 
 ### 2026-02-11
 
-- Replace heap-allocated Nibbles with stack-allocated buffer for O(1) trie traversal [#PENDING](https://github.com/lambdaclass/ethrex/pull/PENDING)
+- Replace heap-allocated Nibbles with stack-allocated buffer for O(1) trie traversal [#6190](https://github.com/lambdaclass/ethrex/pull/6190)
 
 ### 2026-02-06
 
