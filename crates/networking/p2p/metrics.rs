@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     },
     time::{Duration, SystemTime},
 };
@@ -64,6 +64,7 @@ pub struct Metrics {
     pub downloaded_headers: IntCounter,
     pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
     pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
+    pub headers_downloading: AtomicBool,
 
     // Account tries
     pub downloaded_account_tries: AtomicU64,
@@ -715,6 +716,7 @@ impl Default for Metrics {
             downloaded_headers,
             time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
             headers_download_start_time: Arc::new(Mutex::new(None)),
+            headers_downloading: AtomicBool::new(false),
 
             // Account tries
             downloaded_account_tries: AtomicU64::new(0),
