@@ -37,6 +37,14 @@ pub struct ProverSetup {
 /// Global prover setup - initialized once and reused.
 pub static PROVER_SETUP: OnceLock<ProverSetup> = OnceLock::new();
 
+/// Initialize the SP1 prover client, proving key, and verifying key.
+///
+/// **Important:** This function must NOT be called from within a tokio runtime when the
+/// `gpu` feature is enabled. The `CudaProver` builder internally calls `block_on()`, which
+/// panics if a tokio runtime is already active on the current thread. Use [`Sp1Backend::get_setup`]
+/// instead, which handles this by spawning initialization on a separate OS thread.
+///
+/// `CpuProver::new()` does not have this limitation and can be called from any context.
 pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
     #[cfg(not(feature = "gpu"))]
     let client = CpuProver::new();
@@ -83,8 +91,21 @@ impl Sp1Backend {
         Self
     }
 
+    /// Returns the global prover setup, initializing it on first call.
+    ///
+    /// Initialization is spawned on a separate OS thread because this method is called from
+    /// within a tokio runtime (the prover's async loop), and the SP1 `CudaProver` builder
+    /// internally calls `block_on()`. Calling `block_on()` from within an active tokio
+    /// runtime panics with "Cannot start a runtime from within a runtime". Spawning on a
+    /// fresh thread avoids this since that thread has no associated runtime.
+    ///
+    /// This only runs once thanks to `OnceLock` — subsequent calls return the cached setup.
     fn get_setup(&self) -> &ProverSetup {
-        PROVER_SETUP.get_or_init(|| init_prover_setup(None))
+        PROVER_SETUP.get_or_init(|| {
+            std::thread::spawn(|| init_prover_setup(None))
+                .join()
+                .expect("Failed to initialize prover setup")
+        })
     }
 
     fn convert_format(format: ProofFormat) -> SP1ProofMode {
