@@ -247,8 +247,8 @@ async fn download_headers_background(
             .await?
         else {
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
-                warn!("Background header download: failed to find target, aborting");
-                return Ok(());
+                error!("Background header download: failed to find target after {attempts} attempts");
+                return Err(SyncError::NoBlockHeaders);
             }
             attempts += 1;
             tokio::time::sleep(Duration::from_millis(
