@@ -8,7 +8,8 @@ use ethrex_common::{
     serde_utils,
     types::{
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        block_access_list::BlockAccessList, compute_transactions_root, compute_withdrawals_root,
+        block_access_list::BlockAccessList, compute_transactions_root_from_raw,
+        compute_withdrawals_root,
         requests::EncodedRequests,
     },
 };
@@ -90,6 +91,12 @@ impl Serialize for EncodedTransaction {
     }
 }
 
+impl AsRef<[u8]> for EncodedTransaction {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl EncodedTransaction {
     /// Based on [EIP-2718]
     /// Transactions can be encoded in the following formats:
@@ -113,10 +120,12 @@ impl ExecutionPayload {
         requests_hash: Option<H256>,
         block_access_list_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
+        // Compute tx root directly from raw encoded bytes, avoiding decode→re-encode.
+        let transactions_root = compute_transactions_root_from_raw(&self.transactions);
         let body = BlockBody {
             transactions: self
                 .transactions
-                .iter()
+                .into_iter()
                 .map(|encoded_tx| encoded_tx.decode())
                 .collect::<Result<Vec<_>, RLPDecodeError>>()?,
             ommers: vec![],
@@ -127,7 +136,7 @@ impl ExecutionPayload {
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.fee_recipient,
             state_root: self.state_root,
-            transactions_root: compute_transactions_root(&body.transactions),
+            transactions_root,
             receipts_root: self.receipts_root,
             logs_bloom: self.logs_bloom,
             difficulty: 0.into(),
