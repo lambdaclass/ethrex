@@ -505,14 +505,9 @@ impl DiscoveryServer {
         sender_id: H256,
         sender_addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        // Get nodes at the requested distances from our local node
-        let nodes = self
-            .peer_table
-            .get_nodes_at_distances(self.local_node.node_id(), find_node_message.distances)
-            .await?;
-
-        // Validate sender contact to prevent amplification attacks:
-        // ensure the stored IP matches the actual sender IP.
+        // Validate sender before doing any work. A peer with a session could
+        // update its ENR to point to a victim IP; the IP check ensures the
+        // response only goes to the address the packet actually came from.
         let contact = match self
             .peer_table
             .validate_contact(&sender_id, sender_addr.ip())
@@ -524,6 +519,12 @@ impl DiscoveryServer {
                 return Ok(());
             }
         };
+
+        // Get nodes at the requested distances from our local node
+        let nodes = self
+            .peer_table
+            .get_nodes_at_distances(self.local_node.node_id(), find_node_message.distances)
+            .await?;
 
         // Chunk nodes into multiple NODES messages if needed
         let chunks: Vec<_> = nodes.chunks(MAX_ENRS_PER_MESSAGE).collect();
