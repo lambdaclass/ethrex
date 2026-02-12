@@ -395,6 +395,8 @@ pub async fn snap_sync(
     let mut code_hash_collector: CodeHashCollector =
         CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
+    let mut bytecode_handle: Option<tokio::task::JoinHandle<Result<(), SyncError>>> = None;
+
     let mut storage_accounts = AccountStorageRoots::default();
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
         // We start by downloading all of the leafs of the trie of accounts
@@ -436,6 +438,32 @@ pub async fn snap_sync(
 
         info!("Original state root: {state_root:?}");
         info!("Computed state root after request_account_rages: {computed_state_root:?}");
+
+        // Start concurrent bytecode download with code hashes from account insertion.
+        // Bytecodes are content-addressed (hash=key), so they're safe to download
+        // while storage and healing proceed — pivot staleness doesn't affect them.
+        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+        code_hash_collector.finish().await?;
+        let initial_code_hashes = read_code_hashes_from_dir(&code_hashes_snapshot_dir)?;
+        // Clean up directory for reuse during healing
+        std::fs::remove_dir_all(&code_hashes_snapshot_dir)
+            .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
+        std::fs::create_dir_all(&code_hashes_snapshot_dir)
+            .map_err(|_| SyncError::CorruptPath)?;
+        info!(
+            "Spawning concurrent bytecode download for {} unique code hashes",
+            initial_code_hashes.len()
+        );
+        bytecode_handle = Some({
+            let mut bytecode_peers = peers.clone();
+            let bytecode_store = store.clone();
+            tokio::spawn(async move {
+                download_bytecodes(&mut bytecode_peers, &bytecode_store, initial_code_hashes)
+                    .await
+            })
+        });
+        // Create a new collector for the remaining phases (storage healing, final healing)
+        code_hash_collector = CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
         *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
         // We start downloading the storage leafs. To do so, we need to be sure that the storage root
@@ -544,6 +572,11 @@ pub async fn snap_sync(
         info!("Finished storing storage tries");
     }
 
+    // Restore normal mode after heavy writes — healing reads benefit from compacted data
+    if let Err(e) = store.set_normal_mode() {
+        error!("Failed to restore RocksDB normal mode: {e}. Node may have degraded read performance.");
+    }
+
     *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
     info!("Starting Healing Process");
     let mut global_state_leafs_healed: u64 = 0;
@@ -593,84 +626,29 @@ pub async fn snap_sync(
 
     info!("Finished healing");
 
-    // Finish code hash collection
+    // Download any additional bytecodes discovered during healing
     code_hash_collector.finish().await?;
-
-    *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
-
-    let code_hashes_dir = get_code_hashes_snapshots_dir(datadir);
-    let mut seen_code_hashes = HashSet::new();
-    let mut code_hashes_to_download = Vec::new();
-
-    info!("Starting download code hashes from peers");
-    for entry in std::fs::read_dir(&code_hashes_dir)
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
-    {
-        let entry = entry.map_err(|_| SyncError::CorruptPath)?;
-        let snapshot_contents = std::fs::read(entry.path())
-            .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
-        let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
-
-        for hash in code_hashes {
-            // If we haven't seen the code hash yet, add it to the list of hashes to download
-            if seen_code_hashes.insert(hash) {
-                code_hashes_to_download.push(hash);
-
-                if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
-                    info!(
-                        "Starting bytecode download of {} hashes",
-                        code_hashes_to_download.len()
-                    );
-                    let bytecodes = request_bytecodes(peers, &code_hashes_to_download)
-                        .await?
-                        .ok_or(SyncError::BytecodesNotFound)?;
-
-                    store
-                        .write_account_code_batch(
-                            code_hashes_to_download
-                                .drain(..)
-                                .zip(bytecodes)
-                                // SAFETY: hash already checked by the download worker
-                                .map(|(hash, code)| {
-                                    (hash, Code::from_bytecode_unchecked(code, hash))
-                                })
-                                .collect(),
-                        )
-                        .await?;
-                }
-            }
-        }
+    let healing_code_hashes = read_code_hashes_from_dir(&code_hashes_snapshot_dir)?;
+    if !healing_code_hashes.is_empty() {
+        info!(
+            "Downloading {} bytecodes discovered during healing",
+            healing_code_hashes.len()
+        );
+        download_bytecodes(peers, store, healing_code_hashes).await?;
     }
-
-    // Download remaining bytecodes if any
-    if !code_hashes_to_download.is_empty() {
-        let bytecodes = request_bytecodes(peers, &code_hashes_to_download)
-            .await?
-            .ok_or(SyncError::BytecodesNotFound)?;
-        store
-            .write_account_code_batch(
-                code_hashes_to_download
-                    .drain(..)
-                    .zip(bytecodes)
-                    // SAFETY: hash already checked by the download worker
-                    .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
-                    .collect(),
-            )
-            .await?;
-    }
-
-    std::fs::remove_dir_all(code_hashes_dir)
+    std::fs::remove_dir_all(&code_hashes_snapshot_dir)
         .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
+
+    // Await background bytecode download started after account insertion
+    if let Some(handle) = bytecode_handle {
+        info!("Waiting for background bytecode download to complete...");
+        handle.await??;
+        info!("Background bytecode download complete");
+    }
 
     *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
     debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
-
-    // Restore normal mode: reset compaction triggers and compact trie CFs
-    if let Err(e) = store.set_normal_mode() {
-        error!("Failed to restore RocksDB normal mode: {e}. Node may have degraded read performance.");
-    }
 
     // Wait for background header download to complete before store_block_bodies
     // and forkchoice_update, which need the full header chain.
@@ -1257,5 +1235,71 @@ async fn insert_storages(
     std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
         .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
 
+    Ok(())
+}
+
+// ============================================================================
+// Bytecode helpers
+// ============================================================================
+
+/// Reads all code hash snapshot files from a directory and returns deduplicated hashes.
+fn read_code_hashes_from_dir(dir: &Path) -> Result<Vec<H256>, SyncError> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for entry in
+        std::fs::read_dir(dir).map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
+    {
+        let entry = entry.map_err(|_| SyncError::CorruptPath)?;
+        let contents = std::fs::read(entry.path())
+            .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
+        let hashes: Vec<H256> = RLPDecode::decode(&contents)
+            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
+        for hash in hashes {
+            if seen.insert(hash) {
+                result.push(hash);
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Downloads and stores bytecodes for the given code hashes.
+/// Processes hashes in chunks of BYTECODE_CHUNK_SIZE to bound memory usage.
+async fn download_bytecodes(
+    peers: &mut PeerHandler,
+    store: &Store,
+    code_hashes: Vec<H256>,
+) -> Result<(), SyncError> {
+    if code_hashes.is_empty() {
+        return Ok(());
+    }
+    info!(
+        "Starting bytecode download for {} unique code hashes",
+        code_hashes.len()
+    );
+
+    for chunk in code_hashes.chunks(BYTECODE_CHUNK_SIZE) {
+        info!("Downloading bytecode chunk of {} hashes", chunk.len());
+        let bytecodes = request_bytecodes(peers, chunk)
+            .await?
+            .ok_or(SyncError::BytecodesNotFound)?;
+
+        store
+            .write_account_code_batch(
+                chunk
+                    .iter()
+                    .copied()
+                    .zip(bytecodes)
+                    // SAFETY: hash already checked by the download worker
+                    .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
+                    .collect(),
+            )
+            .await?;
+    }
+
+    info!(
+        "Finished bytecode download for {} unique code hashes",
+        code_hashes.len()
+    );
     Ok(())
 }

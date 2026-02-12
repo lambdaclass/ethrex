@@ -115,6 +115,13 @@ impl From<Node> for Contact {
     }
 }
 
+/// Context for peer allocation to prevent headers and state sync from competing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerAllocationContext {
+    Headers,
+    State,
+}
+
 #[derive(Debug, Clone)]
 pub struct PeerData {
     pub node: Node,
@@ -129,6 +136,9 @@ pub struct PeerData {
     pub metrics: PeerMetrics,
     /// Track the amount of concurrent requests this peer is handling
     requests: i64,
+    /// Which sync context this peer is currently allocated to (headers vs state).
+    /// Reset to None when requests drops to 0.
+    pub allocation_context: Option<PeerAllocationContext>,
 }
 
 impl PeerData {
@@ -146,6 +156,7 @@ impl PeerData {
             connection,
             metrics: Default::default(),
             requests: Default::default(),
+            allocation_context: None,
         }
     }
 }
@@ -681,6 +692,30 @@ impl PeerTable {
         }
     }
 
+    /// Get the best peer with allocation context awareness.
+    /// Prefers peers not allocated to the other context, falling back if none available.
+    pub async fn get_best_peer_with_context(
+        &mut self,
+        capabilities: &[Capability],
+        context: PeerAllocationContext,
+    ) -> Result<Option<(H256, PeerConnection)>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetBestPeerWithContext {
+                capabilities: capabilities.to_vec(),
+                context,
+            })
+            .await?
+        {
+            OutMessage::FoundPeer {
+                node_id,
+                connection,
+            } => Ok(Some((node_id, connection))),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
     /// Get adaptive timeout for a peer
     pub async fn get_timeout_for(&mut self, node_id: H256) -> Result<Duration, PeerTableError> {
         match self
@@ -804,6 +839,47 @@ impl PeerTableServer {
             })
             .max_by(|(_, a, _), (_, b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(k, _, v)| (k, v))
+    }
+
+    fn get_best_peer_with_context(
+        &mut self,
+        capabilities: &[Capability],
+        context: PeerAllocationContext,
+    ) -> Option<(H256, PeerConnection)> {
+        // First pass: prefer peers with matching or no allocation context
+        let preferred = self
+            .peers
+            .iter()
+            .filter_map(|(id, peer_data)| {
+                if !self.can_try_more_requests(&peer_data.metrics.score, &peer_data.requests)
+                    || !capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    return None;
+                }
+                // Only consider peers not allocated to the other context
+                match peer_data.allocation_context {
+                    Some(ctx) if ctx != context => return None,
+                    _ => {}
+                }
+                let connection = peer_data.connection.clone()?;
+                Some((*id, peer_data.metrics.score, peer_data.requests, connection))
+            })
+            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
+            .map(|(k, _, _, v)| (k, v));
+
+        // Fall back to any eligible peer if no preferred ones available
+        let result = preferred.or_else(|| self.get_best_peer(capabilities));
+
+        // Set allocation context on the selected peer
+        if let Some((node_id, _)) = &result
+            && let Some(peer_data) = self.peers.get_mut(node_id)
+        {
+            peer_data.allocation_context = Some(context);
+        }
+
+        result
     }
 
     fn timeout_for(&self, node_id: &H256) -> Duration {
@@ -1127,6 +1203,7 @@ enum CallMessage {
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
     GetBestPeerFor { capabilities: Vec<Capability>, request_type: RequestType },
+    GetBestPeerWithContext { capabilities: Vec<Capability>, context: PeerAllocationContext },
     GetScore { node_id: H256 },
     GetConnectedNodes,
     GetPeersWithCapabilities,
@@ -1315,6 +1392,19 @@ impl GenServer for PeerTableServer {
                     },
                 ))
             }
+            CallMessage::GetBestPeerWithContext {
+                capabilities,
+                context,
+            } => {
+                let result = self.get_best_peer_with_context(&capabilities, context);
+                CallResponse::Reply(result.map_or(
+                    Self::OutMsg::NotFound,
+                    |(node_id, connection)| Self::OutMsg::FoundPeer {
+                        node_id,
+                        connection,
+                    },
+                ))
+            }
             CallMessage::GetTimeoutFor { node_id } => {
                 CallResponse::Reply(OutMessage::TimeoutDuration(self.timeout_for(&node_id)))
             }
@@ -1362,9 +1452,12 @@ impl GenServer for PeerTableServer {
                     .and_modify(|peer_data| peer_data.requests += 1);
             }
             CastMessage::DecRequests { node_id } => {
-                self.peers
-                    .entry(node_id)
-                    .and_modify(|peer_data| peer_data.requests -= 1);
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data.requests -= 1;
+                    if peer_data.requests <= 0 {
+                        peer_data.allocation_context = None;
+                    }
+                });
             }
             CastMessage::SetUnwanted { node_id } => {
                 self.contacts
