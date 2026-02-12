@@ -619,7 +619,8 @@ impl<'a> VM<'a> {
         if self.env.config.fork >= Fork::Amsterdam {
             let base_cost = gas_cost::selfdestruct_base(target_account_is_cold)?;
             // Phase 1: Check base cost is available (without charging)
-            if (self.current_call_frame.gas_remaining - base_cost as i64) < 0 {
+            #[expect(clippy::as_conversions, reason = "base_cost fits in i64")]
+            if self.current_call_frame.gas_remaining < (base_cost as i64) {
                 return Err(ExceptionalHalt::OutOfGas.into());
             }
 
