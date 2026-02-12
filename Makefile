@@ -105,9 +105,6 @@ setup-hive: ## 🐝 Set up Hive testing framework
 		git checkout $(HIVE_BRANCH) && \
 		go build .; \
 	fi
-	# Apply ethrex exception mapper patch (needed until devnets/bal/2 has the mapper fixes pushed to forks/amsterdam)
-	cp fixtures/hive/ethrex-mapper.patch hive/simulators/ethereum/eels/consume-engine/
-	cd hive && git apply ../fixtures/hive/consume-engine-dockerfile.patch 2>/dev/null || true
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
