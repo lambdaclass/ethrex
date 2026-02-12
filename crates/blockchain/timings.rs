@@ -34,8 +34,14 @@ pub struct BlockTimings {
     pub merkle_queue_high_water: usize,
 
     // ── Storage ──
-    /// store_block total (trie layer wait + RocksDB WriteBatch)
+    /// store_block total (db_write + trie_wait + db_commit)
     pub store: Duration,
+    /// Time writing blocks, receipts, and code to the write batch
+    pub store_db_write: Duration,
+    /// Time waiting for trie layer to become ready (in-memory phase)
+    pub store_trie_wait: Duration,
+    /// Time for RocksDB commit
+    pub store_db_commit: Duration,
 
     // ── Block metadata (for correlation) ──
     pub block_number: u64,
@@ -70,8 +76,12 @@ impl BlockTimings {
         let store_ms = self.store.as_millis();
         let warmer_ms = self.warmer.as_millis();
 
+        let store_db_write_ms = self.store_db_write.as_millis();
+        let store_trie_wait_ms = self.store_trie_wait.as_millis();
+        let store_db_commit_ms = self.store_db_commit.as_millis();
+
         info!(
-            "[FLIGHT] block={} gas={} txs={} e2e={}ms rpc_parse={}ms block_build={}ms handoff={}ms pipeline={}ms validate={}ms exec={}ms merkle={}ms(concurrent={}ms drain={}ms) store={}ms warmer={}ms queue_peak={}",
+            "[FLIGHT] block={} gas={} txs={} e2e={}ms rpc_parse={}ms block_build={}ms handoff={}ms pipeline={}ms validate={}ms exec={}ms merkle={}ms(concurrent={}ms drain={}ms) store={}ms(write={}ms trie_wait={}ms commit={}ms) warmer={}ms queue_peak={}",
             self.block_number,
             self.gas_used,
             self.tx_count,
@@ -86,6 +96,9 @@ impl BlockTimings {
             merkle_concurrent_ms,
             merkle_drain_ms,
             store_ms,
+            store_db_write_ms,
+            store_trie_wait_ms,
+            store_db_commit_ms,
             warmer_ms,
             self.merkle_queue_high_water,
         );

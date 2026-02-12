@@ -1529,7 +1529,7 @@ impl Blockchain {
         block: Block,
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
-    ) -> Result<(), ChainError> {
+    ) -> Result<ethrex_storage::StorageTimings, ChainError> {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
@@ -1565,7 +1565,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, account_updates_list, res).map(drop);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -1642,8 +1642,11 @@ impl Blockchain {
         };
 
         let store_start = Instant::now();
-        self.store_block(block, account_updates_list, res)?;
+        let storage_timings = self.store_block(block, account_updates_list, res)?;
         timings.store = store_start.elapsed();
+        timings.store_db_write = storage_timings.db_write;
+        timings.store_trie_wait = storage_timings.trie_wait;
+        timings.store_db_commit = storage_timings.db_commit;
 
         // Finalize pipeline_total (validate + exec_merkle scope + store)
         timings.pipeline_total += timings.store;
@@ -1809,11 +1812,22 @@ impl Blockchain {
             overlap_pct,
             timings.merkle_queue_high_water,
         );
+        // Store sub-phase durations
+        let store_db_write_ms = timings.store_db_write.as_millis() as u64;
+        let store_trie_wait_ms = timings.store_trie_wait.as_millis() as u64;
+        let store_db_commit_ms = timings.store_db_commit.as_millis() as u64;
+
+        // Mgas/s throughput
+        let mgas_per_second = gas_used as f64 / 1e6 / (total_ms as f64 / 1000.0);
+
         info!(
-            "  |- store:    {:>4} ms  ({:>2}%){}",
+            "  |- store:    {:>4} ms  ({:>2}%){}  [write: {} ms, trie_wait: {} ms, commit: {} ms]",
             store_ms,
             pct(store_ms),
-            bottleneck_marker("store")
+            bottleneck_marker("store"),
+            store_db_write_ms,
+            store_trie_wait_ms,
+            store_db_commit_ms,
         );
         info!(
             "  `- warmer:   {:>4} ms         [finished: {} ms {}]",
@@ -1838,6 +1852,13 @@ impl Blockchain {
             METRICS_BLOCKS.set_store_ms(store_ms as i64);
             METRICS_BLOCKS.set_warmer_ms(warmer_ms as i64);
             METRICS_BLOCKS.set_warmer_early_ms(warmer_early_ms);
+            METRICS_BLOCKS.set_store_db_write_ms(store_db_write_ms as i64);
+            METRICS_BLOCKS.set_store_trie_wait_ms(store_trie_wait_ms as i64);
+            METRICS_BLOCKS.set_store_db_commit_ms(store_db_commit_ms as i64);
+            METRICS_BLOCKS.set_mgas_per_second(mgas_per_second);
+            METRICS_BLOCKS.set_e2e_ms(timings.e2e_total.as_millis() as i64);
+            METRICS_BLOCKS.set_channel_handoff_ms(timings.channel_handoff.as_millis() as i64);
+            METRICS_BLOCKS.set_rpc_block_construction_ms(timings.rpc_block_construction.as_millis() as i64);
         );
     }
 
@@ -1962,6 +1983,7 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
+            .map(drop)
             .map_err(|e| (e.into(), None))?;
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();

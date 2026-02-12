@@ -52,7 +52,19 @@ use std::{
     },
     thread::JoinHandle,
 };
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
+
+/// Per-phase timing breakdown for storage operations within `apply_updates`.
+#[derive(Debug, Clone, Default)]
+pub struct StorageTimings {
+    /// Time writing blocks, receipts, and code to the write batch
+    pub db_write: Duration,
+    /// Time waiting for trie layer to become ready (in-memory phase)
+    pub trie_wait: Duration,
+    /// Time for RocksDB commit
+    pub db_commit: Duration,
+}
 
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
@@ -1310,11 +1322,14 @@ impl Store {
         txn.commit()
     }
 
-    pub fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    pub fn store_block_updates(
+        &self,
+        update_batch: UpdateBatch,
+    ) -> Result<StorageTimings, StoreError> {
         self.apply_updates(update_batch)
     }
 
-    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<StorageTimings, StoreError> {
         let db = self.backend.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
@@ -1354,6 +1369,7 @@ impl Store {
         trie_upd_worker_tx.send(trie_update).map_err(|e| {
             StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
         })?;
+        let db_write_start = Instant::now();
         let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
@@ -1394,16 +1410,26 @@ impl Store {
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
+        let db_write = db_write_start.elapsed();
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
         // Specifically, the next block produced MUST see this upper layer.
+        let trie_wait_start = Instant::now();
         wait_for_new_layer
             .recv()
             .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
-        // After top-level is added, we can make the rest of the changes visible.
-        tx.commit()?;
+        let trie_wait = trie_wait_start.elapsed();
 
-        Ok(())
+        // After top-level is added, we can make the rest of the changes visible.
+        let db_commit_start = Instant::now();
+        tx.commit()?;
+        let db_commit = db_commit_start.elapsed();
+
+        Ok(StorageTimings {
+            db_write,
+            trie_wait,
+            db_commit,
+        })
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {

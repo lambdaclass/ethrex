@@ -37,6 +37,22 @@ pub struct MetricsBlocks {
     warmer_ms: IntGauge,
     /// Warmer finished early (positive) or late (negative) relative to exec, in ms
     warmer_early_ms: IntGauge,
+    // Flight recorder Phase 2: store sub-phases
+    /// Time writing blocks, receipts, and code to the write batch
+    store_db_write_ms: IntGauge,
+    /// Time waiting for trie layer to become ready
+    store_trie_wait_ms: IntGauge,
+    /// Time for RocksDB commit
+    store_db_commit_ms: IntGauge,
+    // Flight recorder Phase 2: RPC + e2e metrics
+    /// Full e2e latency including RPC overhead
+    e2e_ms: IntGauge,
+    /// Channel handoff latency
+    channel_handoff_ms: IntGauge,
+    /// Block construction time in RPC layer
+    rpc_block_construction_ms: IntGauge,
+    /// Mgas/s throughput per block (pipeline-only, no RPC overhead)
+    mgas_per_second: Gauge,
 }
 
 impl Default for MetricsBlocks {
@@ -157,6 +173,41 @@ impl MetricsBlocks {
                 "Warmer finished early (positive) or late (negative) relative to exec in milliseconds",
             )
             .expect("Failed to create warmer_early_ms metric"),
+            store_db_write_ms: IntGauge::new(
+                "store_db_write_ms",
+                "Time writing blocks, receipts, and code to the write batch in milliseconds",
+            )
+            .expect("Failed to create store_db_write_ms metric"),
+            store_trie_wait_ms: IntGauge::new(
+                "store_trie_wait_ms",
+                "Time waiting for trie layer to become ready in milliseconds",
+            )
+            .expect("Failed to create store_trie_wait_ms metric"),
+            store_db_commit_ms: IntGauge::new(
+                "store_db_commit_ms",
+                "Time for RocksDB commit in milliseconds",
+            )
+            .expect("Failed to create store_db_commit_ms metric"),
+            e2e_ms: IntGauge::new(
+                "e2e_ms",
+                "Full engine_newPayload e2e latency including RPC overhead in milliseconds",
+            )
+            .expect("Failed to create e2e_ms metric"),
+            channel_handoff_ms: IntGauge::new(
+                "channel_handoff_ms",
+                "Channel handoff latency in milliseconds",
+            )
+            .expect("Failed to create channel_handoff_ms metric"),
+            rpc_block_construction_ms: IntGauge::new(
+                "rpc_block_construction_ms",
+                "Block construction time in RPC layer in milliseconds",
+            )
+            .expect("Failed to create rpc_block_construction_ms metric"),
+            mgas_per_second: Gauge::new(
+                "mgas_per_second",
+                "Pipeline throughput in Mgas/s per block",
+            )
+            .expect("Failed to create mgas_per_second metric"),
         }
     }
 
@@ -233,6 +284,34 @@ impl MetricsBlocks {
         self.warmer_early_ms.set(warmer_early_ms);
     }
 
+    pub fn set_store_db_write_ms(&self, ms: i64) {
+        self.store_db_write_ms.set(ms);
+    }
+
+    pub fn set_store_trie_wait_ms(&self, ms: i64) {
+        self.store_trie_wait_ms.set(ms);
+    }
+
+    pub fn set_store_db_commit_ms(&self, ms: i64) {
+        self.store_db_commit_ms.set(ms);
+    }
+
+    pub fn set_e2e_ms(&self, ms: i64) {
+        self.e2e_ms.set(ms);
+    }
+
+    pub fn set_channel_handoff_ms(&self, ms: i64) {
+        self.channel_handoff_ms.set(ms);
+    }
+
+    pub fn set_rpc_block_construction_ms(&self, ms: i64) {
+        self.rpc_block_construction_ms.set(ms);
+    }
+
+    pub fn set_mgas_per_second(&self, mgas: f64) {
+        self.mgas_per_second.set(mgas);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         if self.block_number.get() <= 0 {
             return Ok(String::new());
@@ -277,6 +356,20 @@ impl MetricsBlocks {
         r.register(Box::new(self.warmer_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.warmer_early_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.store_db_write_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.store_trie_wait_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.store_db_commit_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.e2e_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.channel_handoff_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.rpc_block_construction_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.mgas_per_second.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
