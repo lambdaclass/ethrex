@@ -47,6 +47,7 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
+pub mod timings;
 pub mod tracing;
 pub mod vm;
 
@@ -118,9 +119,7 @@ type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
     Option<Vec<AccountUpdate>>,
-    usize,        // max queue length
-    [Instant; 6], // timing instants
-    Duration,     // warmer duration
+    timings::BlockTimings,
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -480,20 +479,38 @@ impl Blockchain {
 
         let exec_merkle_end_instant = Instant::now();
 
+        // Compute phase durations from raw instants
+        let validate = block_validated_instant.duration_since(start_instant);
+        let executor = exec_end_instant.duration_since(exec_merkle_start);
+        let merkleizer = merkle_end_instant.duration_since(exec_merkle_start);
+        let exec_merkle_total = exec_merkle_end_instant.duration_since(exec_merkle_start);
+
+        // Concurrent merkle time: portion that overlapped with executor
+        let merkle_concurrent = merkleizer.min(executor);
+
+        // Drain time: merkle work after executor finished
+        let merkle_drain = exec_merkle_end_instant.saturating_duration_since(exec_end_instant);
+
+        // Pipeline total so far (store will be added in add_block_pipeline)
+        let pipeline_total = validate + exec_merkle_total;
+
+        let timings = timings::BlockTimings {
+            validate,
+            warmer: warmer_duration,
+            executor,
+            merkleizer,
+            merkle_concurrent,
+            merkle_drain,
+            merkle_queue_high_water: max_queue_length,
+            pipeline_total,
+            ..Default::default()
+        };
+
         Ok((
             execution_result,
             account_updates_list,
             accumulated_updates,
-            max_queue_length,
-            [
-                start_instant,
-                block_validated_instant,
-                exec_merkle_start,
-                exec_end_instant,
-                merkle_end_instant,
-                exec_merkle_end_instant,
-            ],
-            warmer_duration,
+            timings,
         ))
     }
 
@@ -1601,21 +1618,14 @@ impl Blockchain {
             (vm, None)
         };
 
-        let (
-            res,
-            account_updates_list,
-            accumulated_updates,
-            merkle_queue_length,
-            instants,
-            warmer_duration,
-        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm)?;
+        let (res, account_updates_list, accumulated_updates, mut timings) =
+            self.execute_block_pipeline(&block, &parent_header, &mut vm)?;
 
-        let (gas_used, gas_limit, block_number, transactions_count) = (
-            block.header.gas_used,
-            block.header.gas_limit,
-            block.header.number,
-            block.body.transactions.len(),
-        );
+        // Fill block metadata
+        timings.block_number = block.header.number;
+        timings.gas_used = block.header.gas_used;
+        timings.gas_limit = block.header.gas_limit;
+        timings.tx_count = block.body.transactions.len();
 
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
@@ -1628,31 +1638,19 @@ impl Blockchain {
                 &logger,
             )?;
             self.storage
-                .store_witness(block_hash, block_number, witness)?;
+                .store_witness(block_hash, block.header.number, witness)?;
         };
 
+        let store_start = Instant::now();
         let result = self.store_block(block, account_updates_list, res);
+        timings.store = store_start.elapsed();
 
-        let stored = Instant::now();
-
-        let instants = std::array::from_fn(move |i| {
-            if i < instants.len() {
-                instants[i]
-            } else {
-                stored
-            }
-        });
+        // Finalize pipeline_total (validate + exec_merkle scope + store)
+        timings.pipeline_total += timings.store;
 
         if self.options.perf_logs_enabled {
-            Self::print_add_block_pipeline_logs(
-                gas_used,
-                gas_limit,
-                block_number,
-                transactions_count,
-                merkle_queue_length,
-                warmer_duration,
-                instants,
-            );
+            Self::print_add_block_pipeline_logs(&timings);
+            timings.emit_flight_log();
         }
 
         result
@@ -1712,61 +1710,28 @@ impl Blockchain {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn print_add_block_pipeline_logs(
-        gas_used: u64,
-        gas_limit: u64,
-        block_number: u64,
-        transactions_count: usize,
-        merkle_queue_length: usize,
-        warmer_duration: Duration,
-        [
-            start_instant,
-            block_validated_instant,
-            exec_merkle_start,
-            exec_end_instant,
-            merkle_end_instant,
-            exec_merkle_end_instant,
-            stored_instant,
-        ]: [Instant; 7],
-    ) {
-        let total_ms = stored_instant.duration_since(start_instant).as_millis() as u64;
+    fn print_add_block_pipeline_logs(timings: &timings::BlockTimings) {
+        let total_ms = timings.pipeline_total.as_millis() as u64;
         if total_ms == 0 {
             return;
         }
 
+        let gas_used = timings.gas_used;
+        let gas_limit = timings.gas_limit;
+        let block_number = timings.block_number;
+        let transactions_count = timings.tx_count;
+
         let as_mgas = gas_used as f64 / 1e6;
         let throughput = (gas_used as f64 / 1e9) / (total_ms as f64 / 1000.0);
 
-        // Calculate phase durations in ms
-        let validate_ms = block_validated_instant
-            .duration_since(start_instant)
-            .as_millis() as u64;
-        let exec_ms = exec_end_instant
-            .duration_since(exec_merkle_start)
-            .as_millis() as u64;
-        let store_ms = stored_instant
-            .duration_since(exec_merkle_end_instant)
-            .as_millis() as u64;
-        let warmer_ms = warmer_duration.as_millis() as u64;
-
-        // Calculate merkle breakdown
-        // merkle_end_instant marks when merkle thread finished (may be before or after exec)
-        // exec_merkle_end_instant marks when both exec and merkle are done
-        let _merkle_total_ms = exec_merkle_end_instant
-            .duration_since(exec_merkle_start)
-            .as_millis() as u64;
-
-        // Concurrent merkle time: the portion of merkle that ran while exec was running
-        let merkle_concurrent_ms = (merkle_end_instant
-            .duration_since(exec_merkle_start)
-            .as_millis() as u64)
-            .min(exec_ms);
-
-        // Drain time: time spent finishing merkle after exec completed
-        let merkle_drain_ms = exec_merkle_end_instant
-            .saturating_duration_since(exec_end_instant)
-            .as_millis() as u64;
+        // Extract phase durations in ms from BlockTimings
+        let validate_ms = timings.validate.as_millis() as u64;
+        let exec_ms = timings.executor.as_millis() as u64;
+        let store_ms = timings.store.as_millis() as u64;
+        let warmer_ms = timings.warmer.as_millis() as u64;
+        let merkle_concurrent_ms = timings.merkle_concurrent.as_millis() as u64;
+        let merkle_drain_ms = timings.merkle_drain.as_millis() as u64;
+        let merkle_total_ms = timings.merkleizer.as_millis() as u64;
 
         // Overlap percentage: how much of merkle work was done concurrently
         let actual_merkle_ms = merkle_concurrent_ms + merkle_drain_ms;
@@ -1842,7 +1807,7 @@ impl Blockchain {
             merkle_concurrent_ms,
             merkle_drain_ms,
             overlap_pct,
-            merkle_queue_length,
+            timings.merkle_queue_high_water,
         );
         info!(
             "  |- store:    {:>4} ms  ({:>2}%){}",
@@ -1868,7 +1833,7 @@ impl Blockchain {
             METRICS_BLOCKS.set_execution_ms(exec_ms as i64);
             METRICS_BLOCKS.set_merkle_concurrent_ms(merkle_concurrent_ms as i64);
             METRICS_BLOCKS.set_merkle_drain_ms(merkle_drain_ms as i64);
-            METRICS_BLOCKS.set_merkle_ms(_merkle_total_ms as i64);
+            METRICS_BLOCKS.set_merkle_ms(merkle_total_ms as i64);
             METRICS_BLOCKS.set_merkle_overlap_pct(overlap_pct as i64);
             METRICS_BLOCKS.set_store_ms(store_ms as i64);
             METRICS_BLOCKS.set_warmer_ms(warmer_ms as i64);
