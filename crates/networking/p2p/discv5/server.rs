@@ -11,7 +11,7 @@ use crate::{
         },
     },
     metrics::METRICS,
-    peer_table::{PeerTable, PeerTableError},
+    peer_table::{OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     rlpx::utils::compress_pubkey,
     types::{Node, NodeRecord},
     utils::{distance, node_id},
@@ -503,6 +503,7 @@ impl DiscoveryServer {
         &mut self,
         find_node_message: FindNodeMessage,
         sender_id: H256,
+        sender_addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
         // Get nodes at the requested distances from our local node
         let nodes = self
@@ -510,10 +511,18 @@ impl DiscoveryServer {
             .get_nodes_at_distances(self.local_node.node_id(), find_node_message.distances)
             .await?;
 
-        // Get sender contact for sending response
-        let Some(contact) = self.peer_table.get_contact(sender_id).await? else {
-            trace!(from = %sender_id, "Received FINDNODE from unknown node, cannot respond");
-            return Ok(());
+        // Validate sender contact to prevent amplification attacks:
+        // ensure the stored IP matches the actual sender IP.
+        let contact = match self
+            .peer_table
+            .validate_contact(&sender_id, sender_addr.ip())
+            .await?
+        {
+            PeerTableOutMessage::Contact(contact) => *contact,
+            reason => {
+                trace!(from = %sender_id, ?reason, "Rejected FINDNODE");
+                return Ok(());
+            }
         };
 
         // Chunk nodes into multiple NODES messages if needed
@@ -770,7 +779,8 @@ impl DiscoveryServer {
                 self.handle_pong(pong_message, sender_id).await?;
             }
             Message::FindNode(find_node_message) => {
-                self.handle_find_node(find_node_message, sender_id).await?;
+                self.handle_find_node(find_node_message, sender_id, sender_addr)
+                    .await?;
             }
             Message::Nodes(nodes_message) => {
                 self.handle_nodes_message(nodes_message).await?;
