@@ -361,6 +361,13 @@ impl StorageWriteBatch for RocksDBWriteTx {
             .write(batch)
             .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))
     }
+
+    fn key_may_exist(&self, table: &'static str, key: &[u8]) -> bool {
+        let Some(cf) = self.db.cf_handle(table) else {
+            return false;
+        };
+        self.db.key_may_exist_cf(&cf, key)
+    }
 }
 
 /// Locked snapshot for RocksDB

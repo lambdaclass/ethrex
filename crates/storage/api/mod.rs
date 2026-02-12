@@ -90,6 +90,14 @@ pub trait StorageWriteBatch: Send {
 
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;
+
+    /// Returns true if the key may exist in the table (bloom filter check).
+    /// False means the key definitely does not exist.
+    /// True means the key probably exists (may be a false positive).
+    /// Default returns false (no bloom filter available), so callers always write.
+    fn key_may_exist(&self, _table: &'static str, _key: &[u8]) -> bool {
+        false
+    }
 }
 
 /// Locked snapshot interface for batch read operations.
