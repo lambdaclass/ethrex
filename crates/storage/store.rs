@@ -1139,20 +1139,37 @@ impl Store {
     ) -> Result<(), StoreError> {
         let mut txn = self.backend.begin_write()?;
         tokio::task::spawn_blocking(move || {
-            for (address_hash, nodes) in storage_trie_nodes {
-                for (node_path, node_data) in nodes {
-                    let key = apply_prefix(Some(address_hash), node_path);
-                    if node_data.is_empty() {
-                        txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
-                    } else {
-                        txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node_data)?;
-                    }
-                }
-            }
-            txn.commit()
+            Self::write_storage_trie_nodes_inner(&mut *txn, storage_trie_nodes)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Synchronous version of [`Self::write_storage_trie_nodes_batch`] for use inside
+    /// `spawn_blocking` closures, avoiding a double thread hop through `block_on`.
+    pub fn write_storage_trie_nodes_batch_sync(
+        &self,
+        storage_trie_nodes: StorageUpdates,
+    ) -> Result<(), StoreError> {
+        let mut txn = self.backend.begin_write()?;
+        Self::write_storage_trie_nodes_inner(&mut *txn, storage_trie_nodes)
+    }
+
+    fn write_storage_trie_nodes_inner(
+        txn: &mut dyn crate::api::StorageWriteBatch,
+        storage_trie_nodes: StorageUpdates,
+    ) -> Result<(), StoreError> {
+        for (address_hash, nodes) in storage_trie_nodes {
+            for (node_path, node_data) in nodes {
+                let key = apply_prefix(Some(address_hash), node_path);
+                if node_data.is_empty() {
+                    txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
+                } else {
+                    txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node_data)?;
+                }
+            }
+        }
+        txn.commit()
     }
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.

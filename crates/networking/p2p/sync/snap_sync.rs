@@ -956,16 +956,12 @@ async fn insert_accounts(
         .collect();
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            code_hash_collector.add(account_state.code_hash);
-            code_hash_collector.flush_if_needed().await?;
-        }
-    }
 
+    let start = std::time::Instant::now();
+    // We collect code hashes directly into the collector's HashSet during the trie
+    // build pass. The collector deduplicates, so memory is bounded by unique contract
+    // accounts (~5M on mainnet = ~160MB). We can't call flush_if_needed() here because
+    // the trie build is synchronous, so we flush after the build completes.
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     let compute_state_root = trie_from_sorted_accounts_wrap(
         trie.db(),
@@ -976,6 +972,9 @@ async fn insert_accounts(
                     .account_tries_inserted
                     .fetch_add(1, Ordering::Relaxed);
                 let account_state = AccountState::decode(v).expect("We should have accounts here");
+                if account_state.code_hash != *EMPTY_KECCACK_HASH {
+                    code_hash_collector.add(account_state.code_hash);
+                }
                 if account_state.storage_root != *EMPTY_TRIE_HASH {
                     storage_accounts.accounts_with_storage_root.insert(
                         H256::from_slice(k),
@@ -986,6 +985,12 @@ async fn insert_accounts(
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
     .map_err(SyncError::TrieGenerationError)?;
+    debug!(
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "insert_accounts trie build"
+    );
+    // Flush any remaining code hashes that accumulated during the trie build
+    code_hash_collector.flush_if_needed().await?;
 
     drop(db); // close db before removing directory
 

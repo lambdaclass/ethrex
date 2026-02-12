@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-09
+
+- Optimize snap sync insertion and healing write paths: eliminate per-key Vec allocations in trie batch writes, merge two-pass account iteration into one, remove double thread hop in storage healing, fix data loss from parent-path marker overwrites, and add proper error propagation in background DB tasks [#6159](https://github.com/lambdaclass/ethrex/pull/6159)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)

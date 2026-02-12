@@ -149,8 +149,15 @@ fn flush_nodes_to_write(
     db: &dyn TrieDB,
     sender: Sender<Vec<(Nibbles, Node)>>,
 ) -> Result<(), TrieGenerationError> {
+    let start = std::time::Instant::now();
+    let node_count = nodes_to_write.len();
     db.put_batch_no_alloc(&nodes_to_write)
         .map_err(TrieGenerationError::FlushToDbError)?;
+    tracing::debug!(
+        node_count,
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "flush_nodes_to_write"
+    );
     nodes_to_write.clear();
     let _ = sender.send(nodes_to_write);
     Ok(())
@@ -351,7 +358,10 @@ where
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
     scope(|s| {
-        let pool = ThreadPool::new(12, s);
+        let thread_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(8);
+        let pool = ThreadPool::new(thread_count, s);
         trie_from_sorted_accounts(
             db,
             accounts_iter,
