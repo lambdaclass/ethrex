@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-11
+
+- Replace heap-allocated Nibbles with stack-allocated buffer for O(1) trie traversal [#PENDING](https://github.com/lambdaclass/ethrex/pull/PENDING)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)
