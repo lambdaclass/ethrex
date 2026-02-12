@@ -344,14 +344,23 @@ impl LEVM {
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
                 for tx in txs {
-                    let _ = Self::execute_tx_in_block(
-                        tx,
-                        sender,
-                        &block.header,
-                        &mut group_db,
-                        vm_type,
-                        stack_pool,
-                    );
+                    // Use setup_env + set disable_balance_check so txs from
+                    // senders funded by earlier txs can still warm state.
+                    let Ok(mut env) =
+                        Self::setup_env(tx, sender, &block.header, &group_db, vm_type)
+                    else {
+                        continue;
+                    };
+                    env.disable_balance_check = true;
+
+                    let Ok(mut vm) =
+                        VM::new(env, &mut group_db, tx, LevmCallTracer::disabled(), vm_type)
+                    else {
+                        continue;
+                    };
+                    std::mem::swap(&mut vm.stack_pool, stack_pool);
+                    let _ = vm.execute();
+                    std::mem::swap(&mut vm.stack_pool, stack_pool);
                 }
             },
         );
@@ -429,6 +438,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
+            disable_balance_check: false,
         };
 
         Ok(env)
@@ -952,6 +962,7 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
+        disable_balance_check: false,
     })
 }
 

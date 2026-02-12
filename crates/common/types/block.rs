@@ -341,6 +341,16 @@ pub fn compute_transactions_root(transactions: &[Transaction]) -> H256 {
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
+/// Computes the transactions root directly from raw canonical-encoded transaction bytes,
+/// avoiding the decode→re-encode round-trip used by [`compute_transactions_root`].
+pub fn compute_transactions_root_from_raw(raw_txs: &[impl AsRef<[u8]>]) -> H256 {
+    let iter = raw_txs
+        .iter()
+        .enumerate()
+        .map(|(idx, raw)| (idx.encode_to_vec(), raw.as_ref().to_vec()));
+    Trie::compute_hash_from_unsorted_iter(iter)
+}
+
 pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
     let iter = receipts
         .iter()
