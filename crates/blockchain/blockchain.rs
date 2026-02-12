@@ -1583,7 +1583,7 @@ impl Blockchain {
         result
     }
 
-    pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+    pub fn add_block_pipeline(&self, block: Block) -> Result<timings::BlockTimings, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1642,7 +1642,7 @@ impl Blockchain {
         };
 
         let store_start = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        self.store_block(block, account_updates_list, res)?;
         timings.store = store_start.elapsed();
 
         // Finalize pipeline_total (validate + exec_merkle scope + store)
@@ -1653,7 +1653,7 @@ impl Blockchain {
             timings.emit_flight_log();
         }
 
-        result
+        Ok(timings)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1731,7 +1731,7 @@ impl Blockchain {
         let warmer_ms = timings.warmer.as_millis() as u64;
         let merkle_concurrent_ms = timings.merkle_concurrent.as_millis() as u64;
         let merkle_drain_ms = timings.merkle_drain.as_millis() as u64;
-        let merkle_total_ms = timings.merkleizer.as_millis() as u64;
+        let _merkle_total_ms = timings.merkleizer.as_millis() as u64;
 
         // Overlap percentage: how much of merkle work was done concurrently
         let actual_merkle_ms = merkle_concurrent_ms + merkle_drain_ms;
@@ -1833,7 +1833,7 @@ impl Blockchain {
             METRICS_BLOCKS.set_execution_ms(exec_ms as i64);
             METRICS_BLOCKS.set_merkle_concurrent_ms(merkle_concurrent_ms as i64);
             METRICS_BLOCKS.set_merkle_drain_ms(merkle_drain_ms as i64);
-            METRICS_BLOCKS.set_merkle_ms(merkle_total_ms as i64);
+            METRICS_BLOCKS.set_merkle_ms(_merkle_total_ms as i64);
             METRICS_BLOCKS.set_merkle_overlap_pct(overlap_pct as i64);
             METRICS_BLOCKS.set_store_ms(store_ms as i64);
             METRICS_BLOCKS.set_warmer_ms(warmer_ms as i64);

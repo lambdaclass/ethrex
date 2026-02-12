@@ -73,7 +73,7 @@ use std::{
     future::IntoFuture,
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::net::TcpListener;
 use tokio::sync::{
@@ -200,7 +200,11 @@ pub struct RpcApiContext {
     /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
-    pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
+    pub block_worker_channel: UnboundedSender<(
+        oneshot::Sender<Result<ethrex_blockchain::timings::BlockTimings, ChainError>>,
+        Block,
+        Instant,
+    )>,
 }
 
 /// Client version information used for identification in the Engine API and P2P.
@@ -398,15 +402,27 @@ pub const FILTER_DURATION: Duration = {
 /// Panics if the worker thread cannot be spawned.
 pub fn start_block_executor(
     blockchain: Arc<Blockchain>,
-) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
-    let (block_worker_channel, mut block_receiver) =
-        unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
+) -> UnboundedSender<(
+    oneshot::Sender<Result<ethrex_blockchain::timings::BlockTimings, ChainError>>,
+    Block,
+    Instant,
+)> {
+    let (block_worker_channel, mut block_receiver) = unbounded_channel::<(
+        oneshot::Sender<Result<ethrex_blockchain::timings::BlockTimings, ChainError>>,
+        Block,
+        Instant,
+    )>();
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, rpc_send_instant)) = block_receiver.blocking_recv() {
+                let channel_handoff = rpc_send_instant.elapsed();
+                let result = blockchain.add_block_pipeline(block).map(|mut timings| {
+                    timings.channel_handoff = channel_handoff;
+                    timings
+                });
                 let _ = notify
-                    .send(blockchain.add_block_pipeline(block))
+                    .send(result)
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
             }
         })

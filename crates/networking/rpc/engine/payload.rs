@@ -36,7 +36,9 @@ impl RpcHandler for NewPayloadV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let handle_start = std::time::Instant::now();
         validate_execution_payload_v1(&self.payload)?;
+        let block_construction_start = std::time::Instant::now();
         let block = match get_block_from_payload(&self.payload, None, None, None) {
             Ok(block) => block,
             Err(err) => {
@@ -45,7 +47,15 @@ impl RpcHandler for NewPayloadV1Request {
                 ))?);
             }
         };
-        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
+        let block_construction_duration = block_construction_start.elapsed();
+        let payload_status = handle_new_payload_v1_v2(
+            &self.payload,
+            block,
+            context,
+            handle_start,
+            block_construction_duration,
+        )
+        .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -62,6 +72,7 @@ impl RpcHandler for NewPayloadV2Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let handle_start = std::time::Instant::now();
         let chain_config = &context.storage.get_chain_config();
         if chain_config.is_shanghai_activated(self.payload.timestamp) {
             validate_execution_payload_v2(&self.payload)?;
@@ -69,6 +80,7 @@ impl RpcHandler for NewPayloadV2Request {
             // Behave as a v1
             validate_execution_payload_v1(&self.payload)?;
         }
+        let block_construction_start = std::time::Instant::now();
         let block = match get_block_from_payload(&self.payload, None, None, None) {
             Ok(block) => block,
             Err(err) => {
@@ -77,7 +89,15 @@ impl RpcHandler for NewPayloadV2Request {
                 ))?);
             }
         };
-        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
+        let block_construction_duration = block_construction_start.elapsed();
+        let payload_status = handle_new_payload_v1_v2(
+            &self.payload,
+            block,
+            context,
+            handle_start,
+            block_construction_duration,
+        )
+        .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -121,6 +141,8 @@ impl RpcHandler for NewPayloadV3Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let handle_start = std::time::Instant::now();
+        let block_construction_start = std::time::Instant::now();
         let block = match get_block_from_payload(
             &self.payload,
             Some(self.parent_beacon_block_root),
@@ -134,6 +156,7 @@ impl RpcHandler for NewPayloadV3Request {
                 ))?);
             }
         };
+        let block_construction_duration = block_construction_start.elapsed();
         validate_fork(&block, Fork::Cancun, &context)?;
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = handle_new_payload_v3(
@@ -141,6 +164,8 @@ impl RpcHandler for NewPayloadV3Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
+            handle_start,
+            block_construction_duration,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -190,10 +215,12 @@ impl RpcHandler for NewPayloadV4Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let handle_start = std::time::Instant::now();
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
 
         let requests_hash = compute_requests_hash(&self.execution_requests);
+        let block_construction_start = std::time::Instant::now();
         let block = match get_block_from_payload(
             &self.payload,
             Some(self.parent_beacon_block_root),
@@ -207,6 +234,7 @@ impl RpcHandler for NewPayloadV4Request {
                 ))?);
             }
         };
+        let block_construction_duration = block_construction_start.elapsed();
 
         let chain_config = context.storage.get_chain_config();
 
@@ -223,6 +251,8 @@ impl RpcHandler for NewPayloadV4Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
+            handle_start,
+            block_construction_duration,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -272,6 +302,7 @@ impl RpcHandler for NewPayloadV5Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let handle_start = std::time::Instant::now();
         validate_execution_payload_v4(&self.payload)?;
 
         // validate the received requests
@@ -284,6 +315,7 @@ impl RpcHandler for NewPayloadV5Request {
             .as_ref()
             .map(|b| b.compute_hash());
 
+        let block_construction_start = std::time::Instant::now();
         let block = match get_block_from_payload(
             &self.payload,
             Some(self.parent_beacon_block_root),
@@ -297,6 +329,7 @@ impl RpcHandler for NewPayloadV5Request {
                 ))?);
             }
         };
+        let block_construction_duration = block_construction_start.elapsed();
 
         let chain_config = context.storage.get_chain_config();
 
@@ -311,6 +344,8 @@ impl RpcHandler for NewPayloadV5Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
+            handle_start,
+            block_construction_duration,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -819,6 +854,8 @@ async fn handle_new_payload_v1_v2(
     payload: &ExecutionPayload,
     block: Block,
     context: RpcApiContext,
+    handle_start: std::time::Instant,
+    block_construction_duration: std::time::Duration,
 ) -> Result<PayloadStatus, RpcErr> {
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
@@ -844,7 +881,14 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status = try_execute_payload(block, &context, latest_valid_hash).await?;
+    let payload_status = try_execute_payload(
+        block,
+        &context,
+        latest_valid_hash,
+        handle_start,
+        block_construction_duration,
+    )
+    .await?;
     Ok(payload_status)
 }
 
@@ -853,6 +897,8 @@ async fn handle_new_payload_v3(
     context: RpcApiContext,
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
+    handle_start: std::time::Instant,
+    block_construction_duration: std::time::Duration,
 ) -> Result<PayloadStatus, RpcErr> {
     // V3 specific: validate blob hashes
     let blob_versioned_hashes: Vec<H256> = block
@@ -868,7 +914,8 @@ async fn handle_new_payload_v3(
         ));
     }
 
-    handle_new_payload_v1_v2(payload, block, context).await
+    handle_new_payload_v1_v2(payload, block, context, handle_start, block_construction_duration)
+        .await
 }
 
 async fn handle_new_payload_v4(
@@ -876,9 +923,19 @@ async fn handle_new_payload_v4(
     context: RpcApiContext,
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
+    handle_start: std::time::Instant,
+    block_construction_duration: std::time::Duration,
 ) -> Result<PayloadStatus, RpcErr> {
     // TODO: V4 specific: validate block access list
-    handle_new_payload_v3(payload, context, block, expected_blob_versioned_hashes).await
+    handle_new_payload_v3(
+        payload,
+        context,
+        block,
+        expected_blob_versioned_hashes,
+        handle_start,
+        block_construction_duration,
+    )
+    .await
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
@@ -926,24 +983,39 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
-pub async fn add_block(ctx: &RpcApiContext, block: Block) -> Result<(), ChainError> {
+pub async fn add_block(
+    ctx: &RpcApiContext,
+    block: Block,
+    handle_start: std::time::Instant,
+    block_construction_duration: std::time::Duration,
+) -> Result<ethrex_blockchain::timings::BlockTimings, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
+    let rpc_send_instant = std::time::Instant::now();
     ctx.block_worker_channel
-        .send((notify_send, block))
+        .send((notify_send, block, rpc_send_instant))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
             ))
         })?;
-    notify_recv
+    let mut timings = notify_recv
         .await
-        .map_err(|e| ChainError::Custom(format!("failed to receive block execution result: {e}")))?
+        .map_err(|e| {
+            ChainError::Custom(format!("failed to receive block execution result: {e}"))
+        })??;
+    // Fill in RPC-layer timings
+    timings.rpc_block_construction = block_construction_duration;
+    timings.e2e_total = handle_start.elapsed();
+    timings.emit_flight_log();
+    Ok(timings)
 }
 
 async fn try_execute_payload(
     block: Block,
     context: &RpcApiContext,
     latest_valid_hash: H256,
+    handle_start: std::time::Instant,
+    block_construction_duration: std::time::Duration,
 ) -> Result<PayloadStatus, RpcErr> {
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
@@ -963,7 +1035,7 @@ async fn try_execute_payload(
     // Execute and store the block
     debug!(%block_hash, %block_number, "Executing payload");
 
-    match add_block(context, block).await {
+    match add_block(context, block, handle_start, block_construction_duration).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);
@@ -1008,7 +1080,7 @@ async fn try_execute_payload(
             error!("{e} for block {block_hash}");
             Err(RpcErr::Internal(e.to_string()))
         }
-        Ok(()) => {
+        Ok(_timings) => {
             debug!("Block with hash {block_hash} executed and added to storage successfully");
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }

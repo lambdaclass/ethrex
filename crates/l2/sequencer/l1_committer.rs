@@ -855,7 +855,7 @@ impl L1Committer {
                     *fee_config_guard = fee_config;
                 }
 
-                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone())?
+                drop(checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone())?);
             };
 
             // Accumulate block data with the rest of the batch.
