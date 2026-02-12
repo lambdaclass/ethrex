@@ -289,7 +289,7 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          hive_version: 7709e5892146c793307da072e1593f48039a7e4b
+          hive_version: 0ee187ce394720a5902c135324ac7de4240cbb37
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
