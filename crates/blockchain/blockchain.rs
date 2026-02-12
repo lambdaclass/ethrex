@@ -399,17 +399,27 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
+        // Don't spawn warmer thread for small blocks — overhead exceeds benefit.
+        const SMALL_BLOCK_TX_THRESHOLD: usize = 50;
+        let should_warm = block.body.transactions.len() >= SMALL_BLOCK_TX_THRESHOLD;
+
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
             let vm_type = vm.vm_type;
-            let warm_handle = std::thread::Builder::new()
-                .name("block_executor_warmer".to_string())
-                .spawn_scoped(s, move || {
-                    // Warming uses the same caching store, sharing cached state with execution
-                    let start = Instant::now();
-                    let _ = LEVM::warm_block(block, caching_store, vm_type);
-                    start.elapsed()
-                })
-                .expect("Failed to spawn block_executor warmer thread");
+            let warm_handle = if should_warm {
+                Some(
+                    std::thread::Builder::new()
+                        .name("block_executor_warmer".to_string())
+                        .spawn_scoped(s, move || {
+                            // Warming uses the same caching store, sharing cached state with execution
+                            let start = Instant::now();
+                            let _ = LEVM::warm_block(block, caching_store, vm_type);
+                            start.elapsed()
+                        })
+                        .expect("Failed to spawn block_executor warmer thread"),
+                )
+            } else {
+                None
+            };
             let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
             let execution_handle = std::thread::Builder::new()
@@ -459,9 +469,12 @@ impl Blockchain {
                 })
                 .expect("Failed to spawn block_executor merkleizer thread");
             let warmer_duration = warm_handle
-                .join()
-                .inspect_err(|e| warn!("Warming thread error: {e:?}"))
-                .ok()
+                .map(|h| {
+                    h.join()
+                        .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                        .ok()
+                        .unwrap_or(Duration::ZERO)
+                })
                 .unwrap_or(Duration::ZERO);
             (
                 execution_handle.join().unwrap_or_else(|_| {
@@ -546,13 +559,13 @@ impl Blockchain {
             *max_queue_length = current_length.max(*max_queue_length);
             // Accumulate updates for witness generation if enabled
             if let Some(acc) = &mut accumulator {
-                for update in updates.clone() {
+                for update in &updates {
                     match acc.entry(update.address) {
                         Entry::Vacant(e) => {
-                            e.insert(update);
+                            e.insert(update.clone());
                         }
                         Entry::Occupied(mut e) => {
-                            e.get_mut().merge(update);
+                            e.get_mut().merge(update.clone());
                         }
                     }
                 }
