@@ -118,6 +118,30 @@ pub const SECONDS_PER_BLOCK: u64 = 12;
 pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 // =============================================================================
+// ADAPTIVE REQUEST SIZING BOUNDS
+// =============================================================================
+
+/// Minimum/maximum accounts per adaptive account range request.
+pub const ACCOUNT_RANGE_MIN_ITEMS: usize = 100;
+pub const ACCOUNT_RANGE_MAX_ITEMS: usize = 4096;
+
+/// Minimum/maximum storage ranges per adaptive request.
+pub const STORAGE_RANGE_MIN_ITEMS: usize = 100;
+pub const STORAGE_RANGE_MAX_ITEMS: usize = 2400;
+
+/// Minimum/maximum bytecodes per adaptive request.
+pub const BYTECODES_MIN_ITEMS: usize = 50;
+pub const BYTECODES_MAX_ITEMS: usize = 500;
+
+/// Minimum/maximum state trie nodes per adaptive request.
+pub const STATE_TRIE_NODES_MIN_ITEMS: usize = 50;
+pub const STATE_TRIE_NODES_MAX_ITEMS: usize = 1000;
+
+/// Minimum/maximum storage trie nodes per adaptive request.
+pub const STORAGE_TRIE_NODES_MIN_ITEMS: usize = 50;
+pub const STORAGE_TRIE_NODES_MAX_ITEMS: usize = 1000;
+
+// =============================================================================
 // PROGRESS REPORTING
 // =============================================================================
 

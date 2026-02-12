@@ -1,6 +1,7 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
+    peer_scoring::RequestType,
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
@@ -157,7 +158,7 @@ pub async fn heal_storage_trie(
     // TODO: think if this is a better way to receiver the data
     // Not in the state because it's not clonable
     let mut requests_task_joinset: JoinSet<
-        Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodesError>>>,
+        Result<u64, TrySendError<(Result<TrieNodes, RequestStorageTrieNodesError>, f64)>>,
     > = JoinSet::new();
 
     let mut nodes_to_write: HashMap<H256, Vec<(Nibbles, Node)>> = HashMap::new();
@@ -165,7 +166,7 @@ pub async fn heal_storage_trie(
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) =
-        tokio::sync::mpsc::channel::<Result<TrieNodes, RequestStorageTrieNodesError>>(1000);
+        tokio::sync::mpsc::channel::<(Result<TrieNodes, RequestStorageTrieNodesError>, f64)>(1000);
 
     let mut logged_no_free_peers_count = 0;
 
@@ -258,8 +259,8 @@ pub async fn heal_storage_trie(
 
         let _ = requests_task_joinset.try_join_next();
 
-        let trie_nodes_result = match task_receiver.try_recv() {
-            Ok(trie_nodes) => trie_nodes,
+        let (trie_nodes_result, elapsed_ms) = match task_receiver.try_recv() {
+            Ok((trie_nodes, elapsed)) => (trie_nodes, elapsed),
             Err(TryRecvError::Empty) => {
                 state.empty_count += 1;
                 continue;
@@ -279,6 +280,7 @@ pub async fn heal_storage_trie(
                     &trie_nodes,
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
+                    elapsed_ms,
                 )
                 .await?
                 else {
@@ -314,6 +316,10 @@ pub async fn heal_storage_trie(
                     .peer_table
                     .record_failure(&inflight_request.peer_id)
                     .await?;
+                peers
+                    .peer_table
+                    .record_failure_for(&inflight_request.peer_id, RequestType::StorageTrieNodes)
+                    .await?;
             }
         }
     }
@@ -324,17 +330,17 @@ async fn ask_peers_for_nodes(
     download_queue: &mut VecDeque<NodeRequest>,
     requests: &mut HashMap<u64, InflightRequest>,
     requests_task_joinset: &mut JoinSet<
-        Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodesError>>>,
+        Result<u64, TrySendError<(Result<TrieNodes, RequestStorageTrieNodesError>, f64)>>,
     >,
     peers: &mut PeerHandler,
     state_root: H256,
-    task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodesError>>,
+    task_sender: &Sender<(Result<TrieNodes, RequestStorageTrieNodesError>, f64)>,
     logged_no_free_peers_count: &mut u32,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer_for(&SUPPORTED_SNAP_CAPABILITIES, RequestType::StorageTrieNodes)
             .await
             .inspect_err(|err| debug!(?err, "Error requesting a peer to perform storage healing"))
             .unwrap_or(None)
@@ -373,9 +379,11 @@ async fn ask_peers_for_nodes(
 
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
+            let start = Instant::now();
             let response = request_storage_trienodes(peer_id, connection, peer_table, gtn).await;
+            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             // TODO: add error handling
-            tx.try_send(response).inspect_err(
+            tx.try_send((response, elapsed_ms)).inspect_err(
                 |err| debug!(error=?err, "Failed to send state trie nodes response"),
             )?;
             Ok(req_id)
@@ -423,6 +431,7 @@ async fn zip_requeue_node_responses_score_peer(
     trie_nodes: &TrieNodes,
     succesful_downloads: &mut usize,
     failed_downloads: &mut usize,
+    elapsed_ms: f64,
 ) -> Result<Option<Vec<NodeResponse>>, SyncError> {
     trace!(
         trie_response_len=?trie_nodes.nodes.len(),
@@ -442,6 +451,10 @@ async fn zip_requeue_node_responses_score_peer(
         peer_handler
             .peer_table
             .record_failure(&request.peer_id)
+            .await?;
+        peer_handler
+            .peer_table
+            .record_failure_for(&request.peer_id, RequestType::StorageTrieNodes)
             .await?;
 
         download_queue.extend(request.requests);
@@ -492,12 +505,26 @@ async fn zip_requeue_node_responses_score_peer(
             .peer_table
             .record_success(&request.peer_id)
             .await?;
+        peer_handler
+            .peer_table
+            .record_success_for(&request.peer_id, RequestType::StorageTrieNodes)
+            .await?;
+        let items = nodes.len() as f64;
+        let items_per_ms = if elapsed_ms > 0.0 { items / elapsed_ms } else { 0.0 };
+        let _ = peer_handler
+            .peer_table
+            .record_throughput(request.peer_id, RequestType::StorageTrieNodes, items_per_ms, elapsed_ms)
+            .await;
         Ok(Some(nodes))
     } else {
         *failed_downloads += 1;
         peer_handler
             .peer_table
             .record_failure(&request.peer_id)
+            .await?;
+        peer_handler
+            .peer_table
+            .record_failure_for(&request.peer_id, RequestType::StorageTrieNodes)
             .await?;
         download_queue.extend(request.requests);
         Ok(None)

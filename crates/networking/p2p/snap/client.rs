@@ -2,6 +2,7 @@
 //!
 //! This module contains all the client-side snap protocol request functions.
 
+use crate::peer_scoring::RequestType;
 use crate::rlpx::message::Message as RLPxMessage;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -296,9 +297,11 @@ async fn request_account_range_partition(
             }
             if accounts.is_empty() {
                 peers.peer_table.record_failure(&peer_id).await?;
+                peers.peer_table.record_failure_for(&peer_id, RequestType::AccountRange).await?;
                 continue;
             }
             peers.peer_table.record_success(&peer_id).await?;
+            peers.peer_table.record_success_for(&peer_id, RequestType::AccountRange).await?;
 
             downloaded_count += accounts.len() as u64;
 
@@ -313,7 +316,7 @@ async fn request_account_range_partition(
 
         let Some((peer_id, connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer_for(&SUPPORTED_SNAP_CAPABILITIES, RequestType::AccountRange)
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
             .unwrap_or(None)
@@ -502,12 +505,14 @@ pub async fn request_bytecodes(
             }
             if bytecodes.is_empty() {
                 peers.peer_table.record_failure(&peer_id).await?;
+                peers.peer_table.record_failure_for(&peer_id, RequestType::ByteCodes).await?;
                 continue;
             }
 
             downloaded_count += bytecodes.len() as u64;
 
             peers.peer_table.record_success(&peer_id).await?;
+            peers.peer_table.record_success_for(&peer_id, RequestType::ByteCodes).await?;
             for (i, bytecode) in bytecodes.into_iter().enumerate() {
                 all_bytecodes[start_index + i] = bytecode;
             }
@@ -515,7 +520,7 @@ pub async fn request_bytecodes(
 
         let Some((peer_id, mut connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer_for(&SUPPORTED_SNAP_CAPABILITIES, RequestType::ByteCodes)
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
             .unwrap_or(None)
@@ -567,7 +572,7 @@ pub async fn request_bytecodes(
                 hashes: hashes_to_request.clone(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) =
+            if let Ok((RLPxMessage::ByteCodes(ByteCodes { id: _, codes }), elapsed_ms)) =
                 PeerHandler::make_request(
                     &mut peer_table,
                     peer_id,
@@ -590,6 +595,10 @@ pub async fn request_bytecodes(
                     .take_while(|(b, hash)| ethrex_common::utils::keccak(b) == *hash)
                     .map(|(b, _hash)| b)
                     .collect();
+                if !validated_codes.is_empty() && elapsed_ms > 0.0 {
+                    let items_per_ms = validated_codes.len() as f64 / elapsed_ms;
+                    let _ = peer_table.record_throughput(peer_id, RequestType::ByteCodes, items_per_ms, elapsed_ms).await;
+                }
                 let result = TaskResult {
                     start_index: chunk_start,
                     remaining_start: chunk_start + validated_codes.len(),
@@ -980,6 +989,7 @@ pub async fn request_storage_ranges(
 
             if account_storages.is_empty() {
                 peers.peer_table.record_failure(&peer_id).await?;
+                peers.peer_table.record_failure_for(&peer_id, RequestType::StorageRange).await?;
                 continue;
             }
             if let Some(hash_end) = hash_end {
@@ -990,6 +1000,7 @@ pub async fn request_storage_ranges(
             }
 
             peers.peer_table.record_success(&peer_id).await?;
+            peers.peer_table.record_success_for(&peer_id, RequestType::StorageRange).await?;
 
             let n_storages = account_storages.len();
             let n_slots = account_storages
@@ -1049,7 +1060,7 @@ pub async fn request_storage_ranges(
 
         let Some((peer_id, connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer_for(&SUPPORTED_SNAP_CAPABILITIES, RequestType::StorageRange)
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
             .unwrap_or(None)
@@ -1175,16 +1186,30 @@ pub async fn request_state_trienodes(
     )
     .await
     {
-        Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
-            .nodes
-            .iter()
-            .map(|node| Node::decode(node))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(SnapError::from),
-        Ok(other_msg) => Err(SnapError::Protocol(
-            PeerConnectionError::UnexpectedResponse("TrieNodes".to_string(), other_msg.to_string()),
-        )),
-        Err(other_err) => Err(SnapError::Protocol(other_err)),
+        Ok((RLPxMessage::TrieNodes(trie_nodes), elapsed_ms)) => {
+            let decoded: Result<Vec<_>, _> = trie_nodes
+                .nodes
+                .iter()
+                .map(|node| Node::decode(node))
+                .collect();
+            let decoded = decoded.map_err(SnapError::from)?;
+            if !decoded.is_empty() && elapsed_ms > 0.0 {
+                let items_per_ms = decoded.len() as f64 / elapsed_ms;
+                let _ = peer_table.record_throughput(peer_id, RequestType::StateTrieNodes, items_per_ms, elapsed_ms).await;
+            }
+            let _ = peer_table.record_success_for(&peer_id, RequestType::StateTrieNodes).await;
+            Ok(decoded)
+        }
+        Ok((other_msg, _elapsed_ms)) => {
+            let _ = peer_table.record_failure_for(&peer_id, RequestType::StateTrieNodes).await;
+            Err(SnapError::Protocol(
+                PeerConnectionError::UnexpectedResponse("TrieNodes".to_string(), other_msg.to_string()),
+            ))
+        }
+        Err(other_err) => {
+            let _ = peer_table.record_failure_for(&peer_id, RequestType::StateTrieNodes).await;
+            Err(SnapError::Protocol(other_err))
+        }
     }?;
 
     if nodes.is_empty() || nodes.len() > expected_nodes {
@@ -1228,18 +1253,31 @@ pub async fn request_storage_trienodes(
     )
     .await
     {
-        Ok(RLPxMessage::TrieNodes(trie_nodes)) => Ok(trie_nodes),
-        Ok(other_msg) => Err(RequestStorageTrieNodesError {
-            request_id,
-            source: SnapError::Protocol(PeerConnectionError::UnexpectedResponse(
-                "TrieNodes".to_string(),
-                other_msg.to_string(),
-            )),
-        }),
-        Err(e) => Err(RequestStorageTrieNodesError {
-            request_id,
-            source: SnapError::Protocol(e),
-        }),
+        Ok((RLPxMessage::TrieNodes(trie_nodes), elapsed_ms)) => {
+            if !trie_nodes.nodes.is_empty() && elapsed_ms > 0.0 {
+                let items_per_ms = trie_nodes.nodes.len() as f64 / elapsed_ms;
+                let _ = peer_table.record_throughput(peer_id, RequestType::StorageTrieNodes, items_per_ms, elapsed_ms).await;
+            }
+            let _ = peer_table.record_success_for(&peer_id, RequestType::StorageTrieNodes).await;
+            Ok(trie_nodes)
+        }
+        Ok((other_msg, _elapsed_ms)) => {
+            let _ = peer_table.record_failure_for(&peer_id, RequestType::StorageTrieNodes).await;
+            Err(RequestStorageTrieNodesError {
+                request_id,
+                source: SnapError::Protocol(PeerConnectionError::UnexpectedResponse(
+                    "TrieNodes".to_string(),
+                    other_msg.to_string(),
+                )),
+            })
+        }
+        Err(e) => {
+            let _ = peer_table.record_failure_for(&peer_id, RequestType::StorageTrieNodes).await;
+            Err(RequestStorageTrieNodesError {
+                request_id,
+                source: SnapError::Protocol(e),
+            })
+        }
     }
 }
 
@@ -1262,11 +1300,11 @@ async fn request_account_range_worker(
         limit_hash: chunk_end,
         response_bytes: MAX_RESPONSE_BYTES,
     });
-    if let Ok(RLPxMessage::AccountRange(AccountRange {
+    if let Ok((RLPxMessage::AccountRange(AccountRange {
         id: _,
         accounts,
         proof,
-    })) = PeerHandler::make_request(
+    }), elapsed_ms)) = PeerHandler::make_request(
         &mut peer_table,
         peer_id,
         &mut connection,
@@ -1275,6 +1313,10 @@ async fn request_account_range_worker(
     )
     .await
     {
+        if !accounts.is_empty() && elapsed_ms > 0.0 {
+            let items_per_ms = accounts.len() as f64 / elapsed_ms;
+            let _ = peer_table.record_throughput(peer_id, RequestType::AccountRange, items_per_ms, elapsed_ms).await;
+        }
         if accounts.is_empty() {
             tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                 .await
@@ -1376,11 +1418,11 @@ async fn request_storage_ranges_worker(
         limit_hash: task.end_hash.unwrap_or(HASH_MAX),
         response_bytes: MAX_RESPONSE_BYTES,
     });
-    let Ok(RLPxMessage::StorageRanges(StorageRanges {
+    let Ok((RLPxMessage::StorageRanges(StorageRanges {
         id: _,
         slots,
         proof,
-    })) = PeerHandler::make_request(
+    }), elapsed_ms)) = PeerHandler::make_request(
         &mut peer_table,
         peer_id,
         &mut connection,
@@ -1465,6 +1507,12 @@ async fn request_storage_ranges_worker(
                 .map(|slot| (slot.hash, slot.data))
                 .collect(),
         );
+    }
+    // Record throughput for storage ranges
+    let total_slots: usize = account_storages.iter().map(|s| s.len()).sum();
+    if total_slots > 0 && elapsed_ms > 0.0 {
+        let items_per_ms = total_slots as f64 / elapsed_ms;
+        let _ = peer_table.record_throughput(peer_id, RequestType::StorageRange, items_per_ms, elapsed_ms).await;
     }
     let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
         let last_account_storage = match account_storages.last() {
