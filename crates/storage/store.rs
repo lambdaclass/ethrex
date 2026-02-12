@@ -1905,13 +1905,20 @@ impl Store {
         let rpc_witness = RpcExecutionWitness::try_from(witness)?;
         let key = Self::make_witness_key(block_number, &block_hash);
         let value = serde_json::to_vec(&rpc_witness)?;
-        self.write(EXECUTION_WITNESSES, key, value)?;
-        // Clean up old witnesses (keep only last 128)
-        self.cleanup_old_witnesses(block_number)
+
+        // Batch the witness write, old witness cleanup, and metadata update
+        // into a single DB transaction to avoid multiple fsyncs.
+        let mut tx = self.backend.begin_write()?;
+        tx.put(EXECUTION_WITNESSES, &key, &value)?;
+        self.cleanup_old_witnesses_in_tx(&mut tx, block_number)?;
+        tx.commit()
     }
 
-    fn cleanup_old_witnesses(&self, latest_block_number: u64) -> Result<(), StoreError> {
-        // If we have less than 128 blocks, no cleanup needed
+    fn cleanup_old_witnesses_in_tx(
+        &self,
+        tx: &mut Box<dyn crate::api::StorageWriteBatch + 'static>,
+        latest_block_number: u64,
+    ) -> Result<(), StoreError> {
         if latest_block_number <= MAX_WITNESSES {
             return Ok(());
         }
@@ -1940,21 +1947,16 @@ impl Store {
             }
 
             for key in to_delete {
-                self.delete(EXECUTION_WITNESSES, key)?;
+                tx.delete(EXECUTION_WITNESSES, &key)?;
             }
         };
 
-        self.update_oldest_witness_number(threshold + 1)?;
-
-        Ok(())
-    }
-
-    fn update_oldest_witness_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
-        self.write(
+        tx.put(
             MISC_VALUES,
-            b"oldest_witness_block_number".to_vec(),
-            oldest_block_number.to_le_bytes().to_vec(),
+            b"oldest_witness_block_number",
+            &(threshold + 1).to_le_bytes(),
         )?;
+
         Ok(())
     }
 
