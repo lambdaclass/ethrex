@@ -12,7 +12,9 @@
     clippy::panic,
     clippy::indexing_slicing,
     clippy::unwrap_used,
-    clippy::arithmetic_side_effects
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    dead_code
 )]
 
 use std::collections::BTreeMap;
@@ -293,7 +295,7 @@ fn test_execute_precompile_transfer_and_deposit() {
         post_state_root,
         deposits,
         execution_witness: witness,
-        blocks: vec![block],
+        block,
     };
 
     let result = execute_inner(input);
@@ -372,7 +374,7 @@ fn build_rejection_test_input(block: Block) -> ExecutePrecompileInput {
         post_state_root: pre_state_root, // Doesn't matter — will fail before state check
         deposits: vec![],
         execution_witness: witness,
-        blocks: vec![block],
+        block,
     }
 }
 
@@ -489,19 +491,73 @@ impl ethrex_levm::db::Database for TestDb {
     }
 }
 
-/// Proxy contract bytecode: forwards all calldata to the EXECUTE precompile at 0x0101.
+/// NativeRollup.sol runtime bytecode (compiled with solc 0.8.31).
 ///
-/// ```text
-/// CALLDATASIZE PUSH1 0x00 PUSH1 0x00 CALLDATACOPY   // mem[0..] = calldata
-/// PUSH1 0x01 PUSH1 0x00                              // retSize=1, retOffset=0
-/// CALLDATASIZE PUSH1 0x00 PUSH1 0x00                 // argsSize, argsOffset=0, value=0
-/// PUSH2 0x0101 GAS CALL                              // call EXECUTE precompile
-/// PUSH1 0x1C JUMPI                                   // jump to RETURN on success
-/// PUSH1 0x00 PUSH1 0x00 REVERT                       // revert on failure
-/// JUMPDEST PUSH1 0x01 PUSH1 0x00 RETURN              // return mem[0..1]
-/// ```
-const PROXY_BYTECODE_HEX: &str =
-    "3660006000376001600036600060006101015AF1601C5760006000FD5B60016000F3";
+/// Contract storage layout:
+///   - Slot 0: stateRoot (bytes32)
+///   - Slot 1: blockNumber (uint256)
+///
+/// Function selectors:
+///   - 35eb2ee7: advance(bytes32,uint256,bytes)
+///   - 57e871e7: blockNumber()
+///   - 9588eca2: stateRoot()
+///
+/// Source: crates/vm/levm/contracts/NativeRollup.sol
+/// Compile: cd crates/vm/levm/contracts && solc --bin-runtime NativeRollup.sol -o build --overwrite
+const NATIVE_ROLLUP_RUNTIME_HEX: &str = "608060405234801561000f575f5ffd5b506004361061003f575f3560e01c806335eb2ee71461004357806357e871e71461005f5780639588eca21461007d575b5f5ffd5b61005d600480360381019061005891906102ac565b61009b565b005b6100676101d2565b604051610074919061032c565b60405180910390f35b6100856101d8565b6040516100929190610354565b60405180910390f35b5f5f61010173ffffffffffffffffffffffffffffffffffffffff1684846040516100c69291906103a9565b5f604051808303815f865af19150503d805f81146100ff576040519150601f19603f3d011682016040523d82523d5f602084013e610104565b606091505b5091509150818015610117575060018151145b801561014657506001815f81518110610133576101326103c1565b5b602001015160f81c60f81b60f81c60ff16145b610185576040517f08c379a000000000000000000000000000000000000000000000000000000000815260040161017c9061046e565b60405180910390fd5b855f8190555084600181905550847fe41acc52c5cd3ab398bfed63f4130976083bea5288e3bf4bf489ccbb3bd20c85876040516101c29190610354565b60405180910390a2505050505050565b60015481565b5f5481565b5f5ffd5b5f5ffd5b5f819050919050565b6101f7816101e5565b8114610201575f5ffd5b50565b5f81359050610212816101ee565b92915050565b5f819050919050565b61022a81610218565b8114610234575f5ffd5b50565b5f8135905061024581610221565b92915050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83601f84011261026c5761026b61024b565b5b8235905067ffffffffffffffff8111156102895761028861024f565b5b6020830191508360018202830111156102a5576102a4610253565b5b9250929050565b5f5f5f5f606085870312156102c4576102c36101dd565b5b5f6102d187828801610204565b94505060206102e287828801610237565b935050604085013567ffffffffffffffff811115610303576103026101e1565b5b61030f87828801610257565b925092505092959194509250565b61032681610218565b82525050565b5f60208201905061033f5f83018461031d565b92915050565b61034e816101e5565b82525050565b5f6020820190506103675f830184610345565b92915050565b5f81905092915050565b828183375f83830152505050565b5f610390838561036d565b935061039d838584610377565b82840190509392505050565b5f6103b5828486610385565b91508190509392505050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b5f82825260208201905092915050565b7f4558454355544520707265636f6d70696c6520766572696669636174696f6e205f8201527f6661696c65640000000000000000000000000000000000000000000000000000602082015250565b5f6104586026836103ee565b9150610463826103fe565b604082019050919050565b5f6020820190508181035f8301526104858161044c565b905091905056fea2646970667358221220db626fb96e6dadcaa318411badc9db5f31ac790f8309b9bfe367af6e15bd680f64736f6c634300081f0033";
+
+/// NativeRollup.sol full deployment bytecode (constructor + runtime).
+///
+/// Constructor takes bytes32 _initialStateRoot as argument.
+/// Deployment data = DEPLOY_BYTECODE + ABI-encoded constructor arg (32 bytes).
+///
+/// Compile: cd crates/vm/levm/contracts && solc --bin NativeRollup.sol -o build --overwrite
+const NATIVE_ROLLUP_DEPLOY_HEX: &str = "6080604052348015600e575f5ffd5b506040516105603803806105608339818101604052810190602e9190606b565b805f81905550506091565b5f5ffd5b5f819050919050565b604d81603d565b81146056575f5ffd5b50565b5f815190506065816046565b92915050565b5f60208284031215607d57607c6039565b5b5f6088848285016059565b91505092915050565b6104c28061009e5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c806335eb2ee71461004357806357e871e71461005f5780639588eca21461007d575b5f5ffd5b61005d600480360381019061005891906102ac565b61009b565b005b6100676101d2565b604051610074919061032c565b60405180910390f35b6100856101d8565b6040516100929190610354565b60405180910390f35b5f5f61010173ffffffffffffffffffffffffffffffffffffffff1684846040516100c69291906103a9565b5f604051808303815f865af19150503d805f81146100ff576040519150601f19603f3d011682016040523d82523d5f602084013e610104565b606091505b5091509150818015610117575060018151145b801561014657506001815f81518110610133576101326103c1565b5b602001015160f81c60f81b60f81c60ff16145b610185576040517f08c379a000000000000000000000000000000000000000000000000000000000815260040161017c9061046e565b60405180910390fd5b855f8190555084600181905550847fe41acc52c5cd3ab398bfed63f4130976083bea5288e3bf4bf489ccbb3bd20c85876040516101c29190610354565b60405180910390a2505050505050565b60015481565b5f5481565b5f5ffd5b5f5ffd5b5f819050919050565b6101f7816101e5565b8114610201575f5ffd5b50565b5f81359050610212816101ee565b92915050565b5f819050919050565b61022a81610218565b8114610234575f5ffd5b50565b5f8135905061024581610221565b92915050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83601f84011261026c5761026b61024b565b5b8235905067ffffffffffffffff8111156102895761028861024f565b5b6020830191508360018202830111156102a5576102a4610253565b5b9250929050565b5f5f5f5f606085870312156102c4576102c36101dd565b5b5f6102d187828801610204565b94505060206102e287828801610237565b935050604085013567ffffffffffffffff811115610303576103026101e1565b5b61030f87828801610257565b925092505092959194509250565b61032681610218565b82525050565b5f60208201905061033f5f83018461031d565b92915050565b61034e816101e5565b82525050565b5f6020820190506103675f830184610345565b92915050565b5f81905092915050565b828183375f83830152505050565b5f610390838561036d565b935061039d838584610377565b82840190509392505050565b5f6103b5828486610385565b91508190509392505050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b5f82825260208201905092915050565b7f4558454355544520707265636f6d70696c6520766572696669636174696f6e205f8201527f6661696c65640000000000000000000000000000000000000000000000000000602082015250565b5f6104586026836103ee565b9150610463826103fe565b604082019050919050565b5f6020820190508181035f8301526104858161044c565b905091905056fea2646970667358221220db626fb96e6dadcaa318411badc9db5f31ac790f8309b9bfe367af6e15bd680f64736f6c634300081f0033";
+
+/// Encode a call to NativeRollup.advance(bytes32, uint256, bytes).
+///
+/// ABI encoding for advance(bytes32 _newStateRoot, uint256 _newBlockNumber, bytes _precompileInput):
+///   - 4 bytes: function selector (0x35eb2ee7)
+///   - 32 bytes: _newStateRoot
+///   - 32 bytes: _newBlockNumber (left-padded)
+///   - 32 bytes: offset to bytes data (0x60 = 96)
+///   - 32 bytes: length of bytes data
+///   - N bytes: bytes data (padded to 32-byte boundary)
+fn encode_advance_call(
+    new_state_root: H256,
+    new_block_number: u64,
+    precompile_input: &[u8],
+) -> Vec<u8> {
+    let mut encoded = Vec::new();
+
+    // Function selector: advance(bytes32,uint256,bytes) = 0x35eb2ee7
+    encoded.extend_from_slice(&[0x35, 0xeb, 0x2e, 0xe7]);
+
+    // _newStateRoot (bytes32)
+    encoded.extend_from_slice(new_state_root.as_bytes());
+
+    // _newBlockNumber (uint256, left-padded to 32 bytes)
+    let mut block_num_bytes = [0u8; 32];
+    block_num_bytes[24..].copy_from_slice(&new_block_number.to_be_bytes());
+    encoded.extend_from_slice(&block_num_bytes);
+
+    // Offset to bytes data: 3 static params * 32 = 96 = 0x60
+    let mut offset = [0u8; 32];
+    offset[31] = 0x60;
+    encoded.extend_from_slice(&offset);
+
+    // Length of bytes data
+    let mut len = [0u8; 32];
+    len[24..].copy_from_slice(&(precompile_input.len() as u64).to_be_bytes());
+    encoded.extend_from_slice(&len);
+
+    // Bytes data (padded to 32-byte boundary)
+    encoded.extend_from_slice(precompile_input);
+    let padding = (32 - (precompile_input.len() % 32)) % 32;
+    encoded.resize(encoded.len() + padding, 0);
+
+    encoded
+}
 
 /// Build the L2 state transition used by both the direct test and the contract test.
 ///
@@ -669,44 +725,56 @@ fn build_l2_state_transition() -> (ExecutePrecompileInput, H256, H256) {
             amount: deposit_amount,
         }],
         execution_witness: witness,
-        blocks: vec![block],
+        block,
     };
 
     (input, pre_state_root, post_state_root)
 }
 
-/// Demo: an L1 contract calls the EXECUTE precompile to verify an L2 state transition.
+/// Demo: NativeRollup contract calls the EXECUTE precompile to verify an L2 state transition.
 ///
 /// This test shows the full end-to-end flow:
-///   L1 transaction → proxy contract → CALL to 0x0101 → EXECUTE precompile
-///     → deserialize calldata → re-execute L2 block → verify state roots → success
+///   L1 transaction → NativeRollup.advance() → CALL to 0x0101 → EXECUTE precompile
+///     → deserialize calldata → re-execute L2 block → verify state roots
+///     → success → contract updates stateRoot and blockNumber
 #[test]
-fn test_execute_precompile_via_contract() {
+fn test_native_rollup_contract() {
     let (input, pre_state_root, post_state_root) = build_l2_state_transition();
 
-    // Serialize the EXECUTE input as calldata
-    let calldata = serde_json::to_vec(&input).expect("JSON serialization failed");
-    println!("Serialized EXECUTE calldata: {} bytes", calldata.len());
+    // Serialize the EXECUTE input as calldata for the precompile
+    let precompile_input = serde_json::to_vec(&input).expect("JSON serialization failed");
+    println!(
+        "Serialized EXECUTE calldata: {} bytes",
+        precompile_input.len()
+    );
 
-    // Deploy proxy contract on "L1"
-    let proxy_address = Address::from_low_u64_be(0xFFFF);
+    // Deploy NativeRollup contract on "L1" (pre-loaded with runtime bytecode + initial storage)
+    let contract_address = Address::from_low_u64_be(0xFFFF);
     let sender = Address::from_low_u64_be(0x1234);
 
-    let proxy_bytecode = Bytes::from(hex::decode(PROXY_BYTECODE_HEX).expect("invalid hex"));
-    let proxy_code_hash = H256(keccak_hash(proxy_bytecode.as_ref()));
-    let proxy_code = Code::from_bytecode(proxy_bytecode);
+    let runtime_bytecode =
+        Bytes::from(hex::decode(NATIVE_ROLLUP_RUNTIME_HEX).expect("invalid hex"));
+    let contract_code_hash = H256(keccak_hash(runtime_bytecode.as_ref()));
+    let contract_code = Code::from_bytecode(runtime_bytecode);
+
+    // Pre-populate contract storage: slot 0 = stateRoot (pre_state_root)
+    let mut contract_storage: FxHashMap<H256, U256> = FxHashMap::default();
+    contract_storage.insert(
+        H256::zero(),
+        U256::from_big_endian(pre_state_root.as_bytes()),
+    );
 
     let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
     accounts.insert(
-        proxy_address,
+        contract_address,
         Account {
             info: AccountInfo {
-                code_hash: proxy_code_hash,
+                code_hash: contract_code_hash,
                 balance: U256::zero(),
                 nonce: 1,
             },
-            code: proxy_code,
-            storage: FxHashMap::default(),
+            code: contract_code,
+            storage: contract_storage,
         },
     );
     accounts.insert(
@@ -744,16 +812,18 @@ fn test_execute_precompile_via_contract() {
     });
     let mut db = GeneralizedDatabase::new_with_account_state(store, accounts);
 
-    // Build L1 transaction: call the proxy contract with the serialized EXECUTE input
+    // Build L1 transaction: call NativeRollup.advance(postStateRoot, 1, precompileInput)
+    let advance_calldata = encode_advance_call(post_state_root, 1, &precompile_input);
+
     let l1_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
         chain_id: 1,
         nonce: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 0,
-        gas_limit: 1_000_000_000, // 1B gas — plenty for the precompile
-        to: TxKind::Call(proxy_address),
+        gas_limit: 1_000_000_000,
+        to: TxKind::Call(contract_address),
         value: U256::zero(),
-        data: Bytes::from(calldata),
+        data: Bytes::from(advance_calldata),
         access_list: vec![],
         ..Default::default()
     });
@@ -777,15 +847,37 @@ fn test_execute_precompile_via_contract() {
         "L1 transaction reverted: {:?}",
         report.result
     );
+
+    // Verify the contract updated its storage
+    let contract_account = db.get_account(contract_address).expect("account not found");
+    let stored_state_root = contract_account
+        .storage
+        .get(&H256::zero())
+        .copied()
+        .unwrap_or_default();
+    let stored_block_number = contract_account
+        .storage
+        .get(&H256::from_low_u64_be(1))
+        .copied()
+        .unwrap_or_default();
+
+    // Convert stored U256 back to H256 for comparison
+    let root_bytes = stored_state_root.to_big_endian();
     assert_eq!(
-        report.output.as_ref(),
-        &[0x01],
-        "Expected success byte 0x01 from EXECUTE precompile"
+        H256::from(root_bytes),
+        post_state_root,
+        "Contract stateRoot mismatch"
+    );
+    assert_eq!(
+        stored_block_number,
+        U256::from(1),
+        "Contract blockNumber mismatch"
     );
 
-    println!("Contract demo succeeded!");
-    println!("  L2 state transition verified via L1 contract call:");
+    println!("NativeRollup contract demo succeeded!");
+    println!("  L2 state transition verified via NativeRollup.advance():");
     println!("    Pre-state root:  {pre_state_root:?}");
     println!("    Post-state root: {post_state_root:?}");
+    println!("    Block number:    1");
     println!("  Gas used: {}", report.gas_used);
 }

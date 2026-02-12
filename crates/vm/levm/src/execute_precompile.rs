@@ -1,8 +1,8 @@
 //! EXECUTE precompile for Native Rollups (EIP-8079 PoC).
 //!
 //! Verifies L2 state transitions by re-executing them inside the L1 EVM.
-//! The precompile receives an execution witness, blocks, and deposit data,
-//! re-executes the blocks, and verifies the resulting state root matches.
+//! The precompile receives an execution witness, a block, and deposit data,
+//! re-executes the block, and verifies the resulting state root matches.
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -45,7 +45,7 @@ pub struct ExecutePrecompileInput {
     pub post_state_root: H256,
     pub deposits: Vec<Deposit>,
     pub execution_witness: ExecutionWitness,
-    pub blocks: Vec<Block>,
+    pub block: Block,
 }
 
 /// Entrypoint matching the precompile function signature.
@@ -74,7 +74,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         post_state_root,
         deposits,
         execution_witness,
-        blocks,
+        block,
     } = input;
 
     // 1. Build GuestProgramState from witness
@@ -84,7 +84,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
 
     // Initialize block header hashes
     guest_state
-        .initialize_block_header_hashes(&blocks)
+        .initialize_block_header_hashes(std::slice::from_ref(&block))
         .map_err(|e| custom_err(format!("Failed to initialize block header hashes: {e}")))?;
 
     // 2. Verify initial state root
@@ -107,14 +107,14 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         })?;
     }
 
-    // 4. Execute each block
+    // 4. Execute the block
     let db = Arc::new(GuestProgramStateDb::new(guest_state));
 
-    for block in &blocks {
+    {
         let db_dyn: Arc<dyn crate::db::Database> = db.clone();
         let mut gen_db = GeneralizedDatabase::new(db_dyn);
 
-        execute_block(block, &mut gen_db)?;
+        execute_block(&block, &mut gen_db)?;
 
         // Apply state transitions back to the GuestProgramState
         let account_updates = gen_db
