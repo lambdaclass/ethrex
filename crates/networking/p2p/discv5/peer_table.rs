@@ -854,14 +854,7 @@ impl PeerTableServer {
                 match self.contacts.entry(node_id) {
                     Entry::Vacant(vacant_entry) => {
                         let is_fork_id_valid =
-                            if let Some(remote_fork_id) = node_record.decode_pairs().eth {
-                                backend::is_fork_id_valid(&self.store, &remote_fork_id)
-                                    .await
-                                    .ok()
-                                    .or(Some(false))
-                            } else {
-                                Some(false)
-                            };
+                            Self::evaluate_fork_id(&node_record, &self.store).await;
                         let mut contact = Contact::from(node);
                         contact.is_fork_id_valid = is_fork_id_valid;
                         contact.record = Some(node_record);
@@ -875,14 +868,7 @@ impl PeerTableServer {
                         };
                         if should_update {
                             let is_fork_id_valid =
-                                if let Some(remote_fork_id) = node_record.decode_pairs().eth {
-                                    backend::is_fork_id_valid(&self.store, &remote_fork_id)
-                                        .await
-                                        .ok()
-                                        .or(Some(false))
-                                } else {
-                                    Some(false)
-                                };
+                                Self::evaluate_fork_id(&node_record, &self.store).await;
                             let contact = occupied_entry.get_mut();
                             contact.node = node;
                             contact.record = Some(node_record);
@@ -891,6 +877,17 @@ impl PeerTableServer {
                     }
                 }
             }
+        }
+    }
+
+    async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
+        if let Some(remote_fork_id) = record.decode_pairs().eth {
+            backend::is_fork_id_valid(store, &remote_fork_id)
+                .await
+                .ok()
+                .or(Some(false))
+        } else {
+            Some(false)
         }
     }
 
