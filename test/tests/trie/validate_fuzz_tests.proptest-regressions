@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ca08b8c6f4fa56ad78032d4c991fefdeaabb1d0bb69f4f482a121832d1f18151 # shrinks to data = {[0], [1], [228, 0, 226, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}, seed = 0, corruption_kind = 0
+cc d5c9f5adb947dbe93b6a0390924887f1e489b5a11c05aff4b84af947195f9fa9 # shrinks to data = {[0], [1], [245, 0, 243, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}, seed = 0
+cc 7eba0c37507cdfddab8fbe2d3695bd0c120b956c5e081a53a2cfdbd1eb1b88b8 # shrinks to data = {[0], [1], [228, 0, 226, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}, seed = 0
