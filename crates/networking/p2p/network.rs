@@ -103,11 +103,13 @@ pub enum NetworkError {
     #[error("Failed to start Tx Broadcaster: {0}")]
     TxBroadcasterError(#[from] TxBroadcasterError),
     #[error("Failed to bind UDP socket: {0}")]
-    UdpSocketError(#[from] std::io::Error),
+    UdpSocketError(std::io::Error),
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
-    let udp_socket = UdpSocket::bind(context.local_node.udp_addr()).await?;
+    let udp_socket = UdpSocket::bind(context.local_node.udp_addr())
+        .await
+        .map_err(NetworkError::UdpSocketError)?;
 
     DiscoveryServer::spawn(
         context.storage.clone(),
