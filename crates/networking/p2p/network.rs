@@ -212,6 +212,8 @@ pub async fn periodically_show_peer_stats_during_syncing(
     let mut previous_step = CurrentStepValue::None;
     let mut phase_start_time = std::time::Instant::now();
     let mut sync_started_logged = false;
+    let mut headers_complete_logged = false;
+    let mut headers_were_downloading = false;
 
     // Track metrics at phase start for phase summaries
     let mut phase_start = PhaseCounters::default();
@@ -349,6 +351,27 @@ pub async fn periodically_show_peer_stats_during_syncing(
             previous_step = current_step;
         }
 
+        // Track background header download completion
+        let headers_downloading = METRICS.headers_downloading.load(Ordering::Relaxed);
+        if headers_downloading {
+            headers_were_downloading = true;
+        }
+        if headers_were_downloading && !headers_downloading && !headers_complete_logged {
+            let headers_downloaded = METRICS.downloaded_headers.get();
+            let elapsed = METRICS
+                .headers_download_start_time
+                .lock()
+                .await
+                .map(|t| format_duration(t.elapsed().unwrap_or_default()))
+                .unwrap_or_else(|| "??:??:??".to_string());
+            info!(
+                "  [Headers] Complete: {} headers in {}",
+                format_thousands(headers_downloaded),
+                elapsed
+            );
+            headers_complete_logged = true;
+        }
+
         // Log phase-specific progress update
         let phase_elapsed = phase_start_time.elapsed();
         let total_elapsed = format_duration(start.elapsed());
@@ -369,26 +392,26 @@ pub async fn periodically_show_peer_stats_during_syncing(
     }
 }
 
-/// Returns (phase_number, phase_name) for the current step
-fn phase_info(step: CurrentStepValue) -> (u8, &'static str) {
+/// Returns the phase name for the current step
+fn phase_name(step: CurrentStepValue) -> &'static str {
     match step {
-        CurrentStepValue::DownloadingHeaders => (1, "BLOCK HEADERS"),
-        CurrentStepValue::RequestingAccountRanges => (2, "ACCOUNT RANGES"),
+        CurrentStepValue::DownloadingHeaders => "BLOCK HEADERS",
+        CurrentStepValue::RequestingAccountRanges => "ACCOUNT RANGES",
         CurrentStepValue::InsertingAccountRanges | CurrentStepValue::InsertingAccountRangesNoDb => {
-            (3, "ACCOUNT INSERTION")
+            "ACCOUNT INSERTION"
         }
-        CurrentStepValue::RequestingStorageRanges => (4, "STORAGE RANGES"),
-        CurrentStepValue::InsertingStorageRanges => (5, "STORAGE INSERTION"),
-        CurrentStepValue::HealingState => (6, "STATE HEALING"),
-        CurrentStepValue::HealingStorage => (7, "STORAGE HEALING"),
-        CurrentStepValue::RequestingBytecodes => (8, "BYTECODES"),
-        CurrentStepValue::None => (0, "UNKNOWN"),
+        CurrentStepValue::RequestingStorageRanges => "STORAGE RANGES",
+        CurrentStepValue::InsertingStorageRanges => "STORAGE INSERTION",
+        CurrentStepValue::HealingState => "STATE HEALING",
+        CurrentStepValue::HealingStorage => "STORAGE HEALING",
+        CurrentStepValue::RequestingBytecodes => "BYTECODES",
+        CurrentStepValue::None => "UNKNOWN",
     }
 }
 
 fn log_phase_separator(step: CurrentStepValue) {
-    let (phase_num, phase_name) = phase_info(step);
-    let header = format!("── PHASE {}/8: {} ", phase_num, phase_name);
+    let name = phase_name(step);
+    let header = format!("── {} ", name);
     let header_width = header.chars().count();
     let padding_width = 80usize.saturating_sub(header_width);
     let padding = "─".repeat(padding_width);
@@ -397,8 +420,7 @@ fn log_phase_separator(step: CurrentStepValue) {
 }
 
 fn log_phase_completion(step: CurrentStepValue, elapsed: String, summary: &str) {
-    let (_, phase_name) = phase_info(step);
-    info!("✓ {} complete: {} in {}", phase_name, summary, elapsed);
+    info!("✓ {} complete: {} in {}", phase_name(step), summary, elapsed);
 }
 
 async fn phase_metrics(step: CurrentStepValue, phase_start: &PhaseCounters) -> String {
@@ -466,6 +488,34 @@ async fn phase_metrics(step: CurrentStepValue, phase_start: &PhaseCounters) -> S
 /// Interval in seconds between progress updates
 const PROGRESS_INTERVAL_SECS: u64 = 30;
 
+/// Shows a compact one-liner for the background header download if active
+fn log_background_headers_status(prev_interval: &PhaseCounters) {
+    let headers_downloading = METRICS.headers_downloading.load(Ordering::Relaxed);
+    if !headers_downloading {
+        return;
+    }
+
+    let headers_to_download = METRICS.sync_head_block.load(Ordering::Relaxed);
+    let headers_downloaded = u64::min(METRICS.downloaded_headers.get(), headers_to_download);
+    let interval_downloaded = headers_downloaded.saturating_sub(prev_interval.headers);
+    let percentage = if headers_to_download == 0 {
+        0.0
+    } else {
+        (headers_downloaded as f64 / headers_to_download as f64) * 100.0
+    };
+    let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
+
+    let bar = progress_bar(percentage, 20);
+    info!(
+        "  [Headers] {} {:>5.1}%  {} / {} @ {}/s",
+        bar,
+        percentage,
+        format_thousands(headers_downloaded),
+        format_thousands(headers_to_download),
+        format_thousands(rate)
+    );
+}
+
 async fn log_phase_progress(
     step: CurrentStepValue,
     phase_elapsed: Duration,
@@ -478,31 +528,13 @@ async fn log_phase_progress(
     // Use consistent column widths: left column 40 chars, then │, then right column
     let col1_width = 40;
 
+    // Always show background header progress first (compact one-liner)
+    log_background_headers_status(prev_interval);
+
     match step {
         CurrentStepValue::DownloadingHeaders => {
-            let headers_to_download = METRICS.sync_head_block.load(Ordering::Relaxed);
-            let headers_downloaded =
-                u64::min(METRICS.downloaded_headers.get(), headers_to_download);
-            let interval_downloaded = headers_downloaded.saturating_sub(prev_interval.headers);
-            let percentage = if headers_to_download == 0 {
-                0.0
-            } else {
-                (headers_downloaded as f64 / headers_to_download as f64) * 100.0
-            };
-            let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
-
-            let progress = progress_bar(percentage, 40);
-            info!("  {} {:>5.1}%", progress, percentage);
-            info!("");
-            let col1 = format!(
-                "Headers: {} / {}",
-                format_thousands(headers_downloaded),
-                format_thousands(headers_to_download)
-            );
-            info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
-            let col1 = format!("Rate: {} headers/s", format_thousands(rate));
-            info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
-            info!("  Total time: {}", total_elapsed);
+            // Headers are now a background task — progress shown by
+            // log_background_headers_status above. Nothing else to display.
         }
         CurrentStepValue::RequestingAccountRanges => {
             let accounts_downloaded = METRICS.downloaded_account_tries.load(Ordering::Relaxed);

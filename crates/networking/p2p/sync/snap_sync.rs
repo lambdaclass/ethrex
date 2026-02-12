@@ -224,6 +224,35 @@ async fn download_headers_background(
     peers: &mut PeerHandler,
     store: &Store,
     block_sync_state: &Arc<tokio::sync::Mutex<SnapBlockSyncState>>,
+    current_head_number: u64,
+    sync_head: H256,
+    pending_block_header: Option<BlockHeader>,
+) -> Result<(), SyncError> {
+    METRICS
+        .headers_downloading
+        .store(true, Ordering::Relaxed);
+    *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
+
+    let result = download_headers_background_inner(
+        peers,
+        store,
+        block_sync_state,
+        current_head_number,
+        sync_head,
+        pending_block_header,
+    )
+    .await;
+
+    METRICS
+        .headers_downloading
+        .store(false, Ordering::Relaxed);
+    result
+}
+
+async fn download_headers_background_inner(
+    peers: &mut PeerHandler,
+    store: &Store,
+    block_sync_state: &Arc<tokio::sync::Mutex<SnapBlockSyncState>>,
     mut current_head_number: u64,
     sync_head: H256,
     pending_block_header: Option<BlockHeader>,
