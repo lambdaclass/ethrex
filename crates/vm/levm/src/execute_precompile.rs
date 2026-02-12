@@ -39,7 +39,6 @@ pub struct Deposit {
 /// Input to the EXECUTE precompile.
 pub struct ExecutePrecompileInput {
     pub pre_state_root: H256,
-    pub post_state_root: H256,
     pub deposits: Vec<Deposit>,
     pub execution_witness: ExecutionWitness,
     pub block: Block,
@@ -47,19 +46,17 @@ pub struct ExecutePrecompileInput {
 
 /// Entrypoint matching the precompile function signature.
 ///
-/// Parses the binary calldata format:
+/// Parses ABI-encoded calldata:
 /// ```text
-/// [32 bytes] pre_state_root (bytes32)
-/// [32 bytes] post_state_root (bytes32)
-/// [4  bytes] num_deposits (uint32 big-endian)
-/// [52 * num_deposits bytes] deposits (20 bytes address + 32 bytes amount each)
-/// [4  bytes] block_rlp_length (uint32 big-endian)
-/// [block_rlp_length bytes] block RLP
-/// [remaining bytes] witness JSON (serde_json)
+/// abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes deposits)
 /// ```
 ///
+/// ABI layout: first param is static (32 bytes), rest are dynamic (offset → length-prefixed data).
 /// Block uses RLP encoding (already implemented in ethrex). ExecutionWitness
 /// uses JSON because it doesn't have RLP support (it uses serde/rkyv instead).
+/// Deposits use packed encoding: each deposit is 52 bytes (20 address + 32 amount).
+///
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber)` — 64 bytes.
 pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
@@ -67,7 +64,7 @@ pub fn execute_precompile(
 ) -> Result<Bytes, VMError> {
     increase_precompile_consumed_gas(EXECUTE_GAS_COST, gas_remaining)?;
 
-    let input = parse_binary_calldata(calldata)?;
+    let input = parse_abi_calldata(calldata)?;
     execute_inner(input)
 }
 
@@ -94,64 +91,79 @@ fn read_calldata<'a>(
     Ok(slice)
 }
 
-/// Parse the binary calldata format into an [`ExecutePrecompileInput`].
-fn parse_binary_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError> {
+/// Read the dynamic `bytes` at the given ABI offset.
+///
+/// In ABI encoding, a dynamic `bytes` parameter is stored as:
+///   - At the offset position: uint256 length (32 bytes)
+///   - Immediately after: the raw bytes (padded to 32-byte boundary)
+///
+/// Returns the raw bytes (without padding).
+fn read_abi_bytes(calldata: &[u8], abi_offset: usize) -> Result<&[u8], VMError> {
+    // Read the length word at the offset
+    let mut pos = abi_offset;
+    let len_bytes = read_calldata(calldata, &mut pos, 32)?;
+    let len = U256::from_big_endian(len_bytes);
+    let len: usize = len
+        .try_into()
+        .map_err(|_| custom_err("ABI bytes length too large".to_string()))?;
+
+    // Read the actual data
+    read_calldata(calldata, &mut pos, len)
+}
+
+/// Parse ABI-encoded calldata into an [`ExecutePrecompileInput`].
+///
+/// Format: `abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes deposits)`
+fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError> {
     let mut offset: usize = 0;
 
-    // 1. pre_state_root (32 bytes)
+    // 1. pre_state_root (bytes32, static — 32 bytes)
     let pre_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
-    // 2. post_state_root (32 bytes)
-    let post_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+    // 2. Read offsets for the 3 dynamic params (each is a uint256 offset)
+    let block_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
+    let block_offset: usize = U256::from_big_endian(block_offset_bytes)
+        .try_into()
+        .map_err(|_| custom_err("Block offset too large".to_string()))?;
 
-    // 3. num_deposits (4 bytes, big-endian uint32)
-    let num_deposits = u32::from_be_bytes(
-        read_calldata(calldata, &mut offset, 4)?
-            .try_into()
-            .map_err(|_| custom_err("Invalid deposit count bytes".to_string()))?,
-    );
-    let num_deposits: usize = usize::try_from(num_deposits)
-        .map_err(|_| custom_err("Deposit count too large".to_string()))?;
+    let witness_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
+    let witness_offset: usize = U256::from_big_endian(witness_offset_bytes)
+        .try_into()
+        .map_err(|_| custom_err("Witness offset too large".to_string()))?;
 
-    // 4. deposits (52 bytes each: 20 address + 32 amount)
-    let mut deposits = Vec::with_capacity(num_deposits);
-    for _ in 0..num_deposits {
-        let addr_bytes = read_calldata(calldata, &mut offset, 20)?;
-        let amount_bytes = read_calldata(calldata, &mut offset, 32)?;
+    let deposits_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
+    let deposits_offset: usize = U256::from_big_endian(deposits_offset_bytes)
+        .try_into()
+        .map_err(|_| custom_err("Deposits offset too large".to_string()))?;
+
+    // 3. Read block RLP bytes
+    let block_rlp = read_abi_bytes(calldata, block_offset)?;
+    let block = Block::decode(block_rlp)
+        .map_err(|e| custom_err(format!("Failed to RLP-decode block: {e}")))?;
+
+    // 4. Read witness JSON bytes
+    let witness_bytes = read_abi_bytes(calldata, witness_offset)?;
+    let execution_witness: ExecutionWitness = serde_json::from_slice(witness_bytes)
+        .map_err(|e| custom_err(format!("Failed to deserialize ExecutionWitness JSON: {e}")))?;
+
+    // 5. Read deposits (packed: each 52 bytes = 20 address + 32 amount)
+    let deposits_bytes = read_abi_bytes(calldata, deposits_offset)?;
+    let mut deposits = Vec::new();
+    let mut dep_offset: usize = 0;
+    while dep_offset
+        .checked_add(52)
+        .is_some_and(|end| end <= deposits_bytes.len())
+    {
+        let addr_bytes = read_calldata(deposits_bytes, &mut dep_offset, 20)?;
+        let amount_bytes = read_calldata(deposits_bytes, &mut dep_offset, 32)?;
         deposits.push(Deposit {
             address: Address::from_slice(addr_bytes),
             amount: U256::from_big_endian(amount_bytes),
         });
     }
 
-    // 5. block_rlp_length (4 bytes, big-endian uint32)
-    let block_rlp_len = u32::from_be_bytes(
-        read_calldata(calldata, &mut offset, 4)?
-            .try_into()
-            .map_err(|_| custom_err("Invalid block RLP length bytes".to_string()))?,
-    );
-    let block_rlp_len: usize = usize::try_from(block_rlp_len)
-        .map_err(|_| custom_err("Block RLP length too large".to_string()))?;
-
-    // 6. block RLP
-    let block_rlp = read_calldata(calldata, &mut offset, block_rlp_len)?;
-    let block = Block::decode(block_rlp)
-        .map_err(|e| custom_err(format!("Failed to RLP-decode block: {e}")))?;
-
-    // 7. Remaining bytes: witness JSON (serde_json).
-    // ExecutionWitness uses JSON because it doesn't have RLP support — it
-    // uses serde/rkyv for serialization instead.
-    let remaining = calldata
-        .len()
-        .checked_sub(offset)
-        .ok_or_else(|| custom_err("EXECUTE calldata offset past end".to_string()))?;
-    let witness_bytes = read_calldata(calldata, &mut offset, remaining)?;
-    let execution_witness: ExecutionWitness = serde_json::from_slice(witness_bytes)
-        .map_err(|e| custom_err(format!("Failed to deserialize ExecutionWitness JSON: {e}")))?;
-
     Ok(ExecutePrecompileInput {
         pre_state_root,
-        post_state_root,
         deposits,
         execution_witness,
         block,
@@ -163,14 +175,21 @@ fn custom_err(msg: String) -> VMError {
 }
 
 /// Core logic, separated so tests can call it directly with a structured input.
+///
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber)` — 64 bytes.
+/// The post-state root is extracted from `block.header.state_root` and verified
+/// against the actual computed state root after execution.
 pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let ExecutePrecompileInput {
         pre_state_root,
-        post_state_root,
         deposits,
         execution_witness,
         block,
     } = input;
+
+    // Extract expected values from the block header
+    let expected_post_state_root = block.header.state_root;
+    let block_number = block.header.number;
 
     // 1. Build GuestProgramState from witness
     let mut guest_state: GuestProgramState = execution_witness
@@ -231,14 +250,19 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         .state_trie_root()
         .map_err(|e| custom_err(format!("Failed to compute final state root: {e}")))?;
 
-    if final_root != post_state_root {
+    if final_root != expected_post_state_root {
         return Err(custom_err(format!(
-            "Final state root mismatch: expected {post_state_root:?}, got {final_root:?}"
+            "Final state root mismatch: expected {expected_post_state_root:?}, got {final_root:?}"
         )));
     }
 
-    // 6. Success
-    Ok(Bytes::from(vec![0x01]))
+    // 6. Return abi.encode(postStateRoot, blockNumber)
+    let mut result = Vec::with_capacity(64);
+    result.extend_from_slice(expected_post_state_root.as_bytes());
+    // block_number as uint256: 24 zero bytes + 8-byte big-endian
+    result.extend_from_slice(&[0u8; 24]);
+    result.extend_from_slice(&block_number.to_be_bytes());
+    Ok(Bytes::from(result))
 }
 
 /// Execute a block's transactions and process withdrawals.
