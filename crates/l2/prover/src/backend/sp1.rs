@@ -125,18 +125,32 @@ impl Sp1Backend {
     }
 
     /// Execute using already-serialized input.
+    ///
+    /// Runs on a scoped thread because the SP1 blocking SDK uses `block_on()` internally,
+    /// which panics inside a tokio runtime. `std::thread::scope` lets us borrow `setup`
+    /// safely across the thread boundary.
     fn execute_with_stdin(&self, stdin: &SP1Stdin) -> Result<(), BackendError> {
         let setup = self.get_setup();
         let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
-        setup
-            .client
-            .execute(elf, stdin.clone())
-            .run()
-            .map_err(BackendError::execution)?;
+        let stdin = stdin.clone();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                setup
+                    .client
+                    .execute(elf, stdin)
+                    .run()
+                    .map_err(BackendError::execution)
+            })
+            .join()
+            .expect("SP1 execute thread panicked")
+        })?;
         Ok(())
     }
 
     /// Prove using already-serialized input.
+    ///
+    /// Runs on a scoped thread because the SP1 blocking SDK uses `block_on()` internally,
+    /// which panics inside a tokio runtime.
     fn prove_with_stdin(
         &self,
         stdin: &SP1Stdin,
@@ -144,12 +158,19 @@ impl Sp1Backend {
     ) -> Result<Sp1ProveOutput, BackendError> {
         let setup = self.get_setup();
         let sp1_format = Self::convert_format(format);
-        let proof = setup
-            .client
-            .prove(&setup.pk, stdin.clone())
-            .mode(sp1_format)
-            .run()
-            .map_err(BackendError::proving)?;
+        let stdin = stdin.clone();
+        let proof = std::thread::scope(|s| {
+            s.spawn(|| {
+                setup
+                    .client
+                    .prove(&setup.pk, stdin)
+                    .mode(sp1_format)
+                    .run()
+                    .map_err(BackendError::proving)
+            })
+            .join()
+            .expect("SP1 prove thread panicked")
+        })?;
         Ok(Sp1ProveOutput::new(proof, setup.vk.clone()))
     }
 }
@@ -185,11 +206,16 @@ impl ProverBackend for Sp1Backend {
 
     fn verify(&self, proof: &Self::ProofOutput) -> Result<(), BackendError> {
         let setup = self.get_setup();
-        setup
-            .client
-            .verify(&proof.proof, &proof.vk, None)
-            .map_err(BackendError::verification)?;
-
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                setup
+                    .client
+                    .verify(&proof.proof, &proof.vk, None)
+                    .map_err(BackendError::verification)
+            })
+            .join()
+            .expect("SP1 verify thread panicked")
+        })?;
         Ok(())
     }
 
