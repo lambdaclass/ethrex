@@ -45,7 +45,9 @@ use crate::{
 #[cfg(feature = "sp1")]
 use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
 #[cfg(feature = "sp1")]
-use sp1_sdk::{Elf, HashableKey, SP1VerifyingKey, blocking::CpuProver, blocking::Prover};
+use sp1_sdk::{
+    Elf, HashableKey, ProvingKey, SP1VerifyingKey, blocking::CpuProver, blocking::Prover,
+};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
 
