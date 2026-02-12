@@ -363,17 +363,10 @@ impl StorageBackend for RocksDBBackend {
             StoreError::Custom(format!("Failed to restore DB-level normal options: {e}"))
         })?;
 
-        info!("RocksDB normal mode restored, starting manual compaction on trie CFs");
-
-        // Trigger manual compaction on trie CFs to consolidate L0 files
-        // accumulated during sync.
-        for cf_name in trie_cfs {
-            if let Some(cf) = self.db.cf_handle(cf_name) {
-                self.db
-                    .compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
-                info!("Triggered compaction for {cf_name}");
-            }
-        }
+        // Restoring triggers from 64→4 will cause RocksDB to automatically
+        // schedule background compaction for any CF whose L0 file count exceeds
+        // the new threshold. No manual compact_range_cf needed.
+        info!("RocksDB normal mode restored, background compaction will run automatically");
 
         Ok(())
     }
