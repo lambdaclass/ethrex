@@ -170,7 +170,10 @@ impl L2ToL1MessagesTable {
             rollup_client,
         )
         .await?;
-        new_l1_to_l2_messages.truncate(50);
+        let len = new_l1_to_l2_messages.len();
+        if len > 50 {
+            new_l1_to_l2_messages.drain(..len - 50);
+        }
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
