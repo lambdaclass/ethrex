@@ -24,11 +24,13 @@ L2 Block + ExecutionWitness + Deposits
 
 ### Components
 
-**`execute_precompile.rs`** — The core precompile logic. Contains `execute_precompile()` which deserializes JSON calldata and delegates to `execute_inner()`, which orchestrates the full verification flow: witness deserialization, state root checks, deposit application, block execution, and final state root verification. Also contains helpers for block execution (`execute_block`), gas price calculation, transaction type validation, and deposit application.
+**`execute_precompile.rs`** — The core precompile logic. Takes a single `ExecutePrecompileInput` containing one L2 block, its execution witness, deposits, and expected state roots. Orchestrates the full verification flow: witness deserialization, state root checks, deposit application, block execution, and final state root verification. Also contains helpers for block execution (`execute_block`), gas price calculation, transaction type validation, and deposit application.
 
 **`guest_program_state_db.rs`** — A thin adapter that implements LEVM's `Database` trait backed by `GuestProgramState`. This bridges the gap between the stateless execution witness (which provides account/storage/code data via tries) and LEVM's database interface. Uses a `Mutex` for interior mutability since `GuestProgramState` requires `&mut self` while `Database` methods take `&self`.
 
 **`precompiles.rs` (modified)** — Registers the EXECUTE precompile at address `0x0101`, dispatched at runtime before the standard const precompile table lookup.
+
+**`NativeRollup.sol`** — A Solidity contract that simulates an L2 on-chain. Maintains `stateRoot` (slot 0) and `blockNumber` (slot 1). Exposes `advance(bytes32, uint256, bytes)` which calls the EXECUTE precompile at `0x0101` and updates its state on success. This demonstrates how an L1 contract would track and verify L2 state transitions.
 
 ### Why a Separate Database Adapter?
 
@@ -52,7 +54,15 @@ All native rollups code is gated behind the `native-rollups` feature flag:
 [features]
 native-rollups = []
 
-# In crates/vm/Cargo.toml
+# In crates/vm/Cargo.toml (propagates to levm)
+[features]
+native-rollups = ["ethrex-levm/native-rollups"]
+
+# In cmd/ethrex/Cargo.toml (enables for the binary)
+[features]
+native-rollups = ["ethrex-vm/native-rollups"]
+
+# In test/Cargo.toml (enables for integration tests)
 [features]
 native-rollups = ["ethrex-levm/native-rollups"]
 ```
@@ -75,11 +85,27 @@ The `execute_precompile()` entrypoint deserializes `ExecutePrecompileInput` from
 
 ## Running the Tests
 
+### In-process tests (no L1 needed)
+
 ```bash
 cargo test -p ethrex-levm --features native-rollups --test native_rollups -- --nocapture
 ```
 
-The integration tests (`crates/vm/levm/tests/native_rollups.rs`) include:
+### Integration test (requires running L1)
+
+Start the L1 with native-rollups enabled, then run the integration test:
+
+```bash
+# Terminal 1: start L1
+NATIVE_ROLLUPS=1 make -C crates/l2 init-l1
+
+# Terminal 2: run the integration test
+cargo test -p ethrex-test --features native-rollups -- native_rollups_integration --ignored --nocapture
+```
+
+The integration test deploys the NativeRollup contract on L1, calls `advance()` with a valid L2 state transition, and verifies the contract's storage was updated.
+
+## Test Descriptions
 
 ### Direct precompile test (`test_execute_precompile_transfer_and_deposit`)
 
@@ -91,21 +117,30 @@ The integration tests (`crates/vm/levm/tests/native_rollups.rs`) include:
 6. Calls `execute_inner()` with the witness, block, and deposits
 7. The precompile re-executes the block, applies the deposit, and verifies the final state root matches
 
-### Contract demo test (`test_execute_precompile_via_contract`)
+### NativeRollup contract test (`test_native_rollup_contract`)
 
 Demonstrates the full end-to-end flow where an L1 contract calls the EXECUTE precompile:
 
-1. Builds the same L2 state transition (Alice→Bob transfer + Charlie deposit)
+1. Builds the same L2 state transition (Alice->Bob transfer + Charlie deposit)
 2. Serializes `ExecutePrecompileInput` as JSON calldata
-3. Deploys a proxy contract on L1 that forwards all calldata to the precompile at `0x0101`
-4. Executes an L1 transaction calling the proxy with the serialized input
-5. The proxy CALLs the EXECUTE precompile, which deserializes, re-executes, and verifies
-6. Asserts the transaction succeeds and returns `0x01`
+3. Deploys a NativeRollup contract on L1 with the pre-state root in storage
+4. Executes an L1 transaction calling `advance(postStateRoot, 1, precompileInput)`
+5. The NativeRollup contract CALLs the EXECUTE precompile at `0x0101`
+6. Asserts the transaction succeeds and the contract's storage was updated
 
 ```
-L1 tx → proxy contract (0xFFFF) → CALL → EXECUTE precompile (0x0101)
-  → deserialize JSON → re-execute L2 block → verify state roots → 0x01
+L1 tx -> NativeRollup.advance() -> CALL -> EXECUTE precompile (0x0101)
+  -> deserialize JSON -> re-execute L2 block -> verify state roots -> 0x01
+  -> NativeRollup updates stateRoot (slot 0) and blockNumber (slot 1)
 ```
+
+### Integration test (`test_native_rollup_integration`)
+
+Same flow as the NativeRollup contract test, but against a real running L1:
+
+1. Deploys NativeRollup contract on L1 via `EthClient`
+2. Sends `advance()` transaction with a valid L2 state transition
+3. Reads storage slots via `eth_getStorageAt` to verify the contract updated correctly
 
 ### Rejection tests
 
@@ -122,11 +157,11 @@ EXECUTE precompile succeeded!
   Charlie received 5 ETH deposit
 
 Serialized EXECUTE calldata: 8848 bytes
-Contract demo succeeded!
-  L2 state transition verified via L1 contract call:
+NativeRollup contract test succeeded!
+  L2 state transition verified via NativeRollup.advance():
     Pre-state root:  0x453c...5c13
     Post-state root: 0x615c...49de
-  Gas used: 267029
+  Gas used: ...
 ```
 
 ## Files
@@ -134,13 +169,18 @@ Contract demo succeeded!
 | File | Description |
 |------|-------------|
 | `crates/vm/levm/src/execute_precompile.rs` | EXECUTE precompile logic |
-| `crates/vm/levm/src/db/guest_program_state_db.rs` | GuestProgramState → LEVM Database adapter |
+| `crates/vm/levm/src/db/guest_program_state_db.rs` | GuestProgramState -> LEVM Database adapter |
 | `crates/vm/levm/src/precompiles.rs` | Precompile registration (modified) |
 | `crates/vm/levm/src/db/mod.rs` | Module export (modified) |
 | `crates/vm/levm/src/lib.rs` | Module export (modified) |
 | `crates/vm/levm/Cargo.toml` | Feature flag (modified) |
 | `crates/vm/Cargo.toml` | Feature flag propagation (modified) |
-| `crates/vm/levm/tests/native_rollups.rs` | Integration test |
+| `cmd/ethrex/Cargo.toml` | Feature flag for ethrex binary (modified) |
+| `crates/vm/levm/contracts/NativeRollup.sol` | L2-simulator Solidity contract |
+| `crates/vm/levm/tests/native_rollups.rs` | In-process tests |
+| `test/tests/levm/native_rollups_integration.rs` | Integration test (requires running L1) |
+| `test/Cargo.toml` | Feature flag for test crate (modified) |
+| `crates/l2/Makefile` | `init-l1` supports `NATIVE_ROLLUPS=1` (modified) |
 
 ## Limitations (Phase 1)
 

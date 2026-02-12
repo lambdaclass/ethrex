@@ -74,7 +74,16 @@ down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
-init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
+init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client (set NATIVE_ROLLUPS=1 to enable native-rollups)
+ifdef NATIVE_ROLLUPS
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features native-rollups -- \
+	--network ${L1_GENESIS_FILE_PATH} \
+	--http.port ${L1_PORT} \
+	--http.addr ${L1_RPC_ADDRESS} \
+	--authrpc.port ${L1_AUTH_PORT} \
+	--dev \
+	--datadir ${ethrex_L1_DEV_DB}
+else
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
@@ -82,6 +91,7 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--authrpc.port ${L1_AUTH_PORT} \
 	--dev \
 	--datadir ${ethrex_L1_DEV_DB}
+endif
 
 rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_DB} --force
