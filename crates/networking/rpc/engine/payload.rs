@@ -512,6 +512,59 @@ impl RpcHandler for GetPayloadV5Request {
     }
 }
 
+pub struct GetPayloadV6Request {
+    pub payload_id: u64,
+}
+
+impl From<GetPayloadV6Request> for RpcRequest {
+    fn from(val: GetPayloadV6Request) -> Self {
+        RpcRequest {
+            method: "engine_getPayloadV6".to_string(),
+            params: Some(vec![serde_json::json!(U256::from(val.payload_id))]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for GetPayloadV6Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let payload_id = parse_get_payload_request(params)?;
+        Ok(Self { payload_id })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let payload_bundle = get_payload(self.payload_id, &context).await?;
+        let chain_config = &context.storage.get_chain_config();
+
+        if !chain_config.is_amsterdam_activated(payload_bundle.block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(payload_bundle.block.header.timestamp)
+            )));
+        }
+
+        // V6 supports BAL (Amsterdam/Gloas fork, EIP-7928)
+        let response = ExecutionPayloadResponse {
+            execution_payload: ExecutionPayload::from_block(
+                payload_bundle.block,
+                payload_bundle.block_access_list,
+            ),
+            block_value: payload_bundle.block_value,
+            blobs_bundle: Some(payload_bundle.blobs_bundle),
+            should_override_builder: Some(false),
+            execution_requests: Some(
+                payload_bundle
+                    .requests
+                    .into_iter()
+                    .filter(|r| !r.is_empty())
+                    .collect(),
+            ),
+        };
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
 pub struct GetPayloadBodiesByHashV1Request {
     pub hashes: Vec<BlockHash>,
 }
