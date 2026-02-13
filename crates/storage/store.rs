@@ -3,7 +3,7 @@ use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
-        StorageBackend,
+        StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
             CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
@@ -1962,18 +1962,40 @@ impl Store {
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
         let account_hash = hash_address_fixed(&address);
+
+        // Pre-acquire shared resources once for both trie opens
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+
         let storage_root = if self.flatkeyvalue_computed(account_hash)? {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
-            let state_trie = self.open_state_trie(state_root)?;
+            let state_trie = self.open_state_trie_shared(
+                state_root,
+                read_view.clone(),
+                cache.clone(),
+                last_written.clone(),
+            )?;
             let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
             };
             let account = AccountState::decode(&encoded_account)?;
             account.storage_root
         };
-        let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
 
         let hashed_key = hash_key_fixed(&storage_key);
         storage_trie
@@ -2366,6 +2388,52 @@ impl Store {
             db: Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
+            )?),
+            prefix: Some(account_hash),
+        };
+        Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
+    /// Open a state trie using pre-acquired shared resources.
+    /// Avoids redundant RwLock acquisitions when multiple tries are opened
+    /// in the same operation (e.g., state trie + storage trie in get_storage_at_root).
+    fn open_state_trie_shared(
+        &self,
+        state_root: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper {
+            state_root,
+            inner: cache,
+            db: Box::new(BackendTrieDB::new_for_accounts_with_view(
+                self.backend.clone(),
+                read_view,
+                last_written,
+            )?),
+            prefix: None,
+        };
+        Ok(Trie::open(Box::new(trie_db), state_root))
+    }
+
+    /// Open a storage trie using pre-acquired shared resources.
+    fn open_storage_trie_shared(
+        &self,
+        account_hash: H256,
+        state_root: H256,
+        storage_root: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper {
+            state_root,
+            inner: cache,
+            db: Box::new(BackendTrieDB::new_for_storages_with_view(
+                self.backend.clone(),
+                read_view,
+                last_written,
             )?),
             prefix: Some(account_hash),
         };
