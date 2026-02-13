@@ -149,29 +149,41 @@ pub fn reveal_node_into(
 }
 
 /// Ensure a Hash node at the given path is revealed (loaded from DB and decoded).
+///
+/// For `NodeHash::Hashed` nodes (RLP >= 32 bytes), loads from the DB by path.
+/// For `NodeHash::Inline` nodes (RLP < 32 bytes), decodes directly from the
+/// embedded bytes — these nodes are never stored separately in the DB.
 fn ensure_revealed(
     upper: &mut SparseSubtrie,
     lower: &mut [LowerSubtrie],
     path_data: &[u8],
     provider: &dyn SparseTrieProvider,
 ) -> Result<(), TrieError> {
-    let is_hash = get_node(upper, lower, path_data)
-        .map(|n| n.is_hash())
-        .unwrap_or(false);
-
-    if !is_hash {
-        return Ok(());
-    }
-
-    let nibbles = Nibbles::from_hex(path_data.to_vec());
-    let rlp = provider.get_node(&nibbles)?.ok_or_else(|| {
-        TrieError::InconsistentTree(Box::new(
-            crate::error::InconsistentTreeError::RootNotFoundNoHash,
-        ))
-    })?;
+    let rlp = match get_node(upper, lower, path_data) {
+        Some(SparseNode::Hash(hash)) => match hash {
+            NodeHash::Inline(_) => {
+                // Inline nodes are embedded in their parent's RLP — not stored
+                // separately in the DB. Decode directly from the inline bytes.
+                hash.as_ref().to_vec()
+            }
+            NodeHash::Hashed(h256) => {
+                let h256 = *h256;
+                let nibbles = Nibbles::from_hex(path_data.to_vec());
+                provider.get_node(&nibbles)?.ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(
+                        crate::error::InconsistentTreeError::SparseNodeNotFound {
+                            path: Nibbles::from_hex(path_data.to_vec()),
+                            hash: h256,
+                        },
+                    ))
+                })?
+            }
+        },
+        _ => return Ok(()),
+    };
 
     remove_node(upper, lower, path_data);
-    reveal_node_into(upper, lower, nibbles, &rlp)
+    reveal_node_into(upper, lower, Nibbles::from_hex(path_data.to_vec()), &rlp)
 }
 
 fn get_node<'a>(
