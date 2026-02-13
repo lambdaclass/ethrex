@@ -14717,32 +14717,295 @@ See <a href="https://eest.ethereum.org/v4.1.0/consuming_tests/blockchain_test">d
 }
 
 </style>
-<h1 id="hive-tests"><a class="header" href="#hive-tests">Hive tests</a></h1>
-<p>End-to-End tests with hive.
-Hive is a system which simply sends RPC commands to our node,
-and expects a certain response. You can read more about it <a href="https://github.com/ethereum/hive/blob/master/docs/overview.md">here</a>.</p>
-<h4 id="prereqs"><a class="header" href="#prereqs">Prereqs</a></h4>
-<p>We need to have go installed for the first time we run hive, an easy way to do this is adding the asdf go plugin:</p>
-<pre><code class="language-shell">asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
-
-# If you need to set GOROOT please follow: https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot
+<h1 id="hive-tests"><a class="header" href="#hive-tests">Hive Tests</a></h1>
+<p>End-to-End tests with Hive. Hive is a system which sends RPC commands to Ethereum clients and validates their responses. You can read more about it <a href="https://github.com/ethereum/hive/blob/master/docs/overview.md">here</a>.</p>
+<h2 id="overview-3"><a class="header" href="#overview-3">Overview</a></h2>
+<p>This project uses three key repositories for Hive testing:</p>
+<ol>
+<li><strong><a href="https://github.com/ethereum/hive">ethereum/hive</a></strong> - The main Hive testing framework
+<ul>
+<li>Current commit: <code>0921fb7833e3de180eacdc9f26de6e51dcab0dba</code></li>
+</ul>
+</li>
+<li><strong><a href="https://github.com/ethereum/execution-spec-tests">ethereum/execution-spec-tests</a></strong> - Test fixtures and vectors
+<ul>
+<li>Current version: <code>bal@v5.1.0</code> (Amsterdam fork support)</li>
+</ul>
+</li>
+<li><strong><a href="https://github.com/ethereum/execution-specs">ethereum/execution-specs</a></strong> - Fork specifications
+<ul>
+<li>Current branch: <code>forks/amsterdam</code></li>
+</ul>
+</li>
+</ol>
+<h2 id="prerequisites-20"><a class="header" href="#prerequisites-20">Prerequisites</a></h2>
+<h3 id="required-tools"><a class="header" href="#required-tools">Required Tools</a></h3>
+<ol>
+<li>
+<p><strong>Docker</strong> - Required for running containerized clients</p>
+<pre><code class="language-bash"># Install Docker following the official guide for your OS
+# Verify installation
+docker --version
 </code></pre>
-<p>And uncommenting the golang line in the asdf <code>.tool-versions</code> file:</p>
+</li>
+<li>
+<p><strong>Go</strong> - Required to build the Hive framework</p>
+<p>Using asdf:</p>
+<pre><code class="language-bash">asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
+</code></pre>
+<p>Uncomment the golang line in the <code>.tool-versions</code> file:</p>
 <pre><code class="language-text">rust 1.90.0
 golang 1.23.2
 </code></pre>
-<h4 id="running-simulations"><a class="header" href="#running-simulations">Running Simulations</a></h4>
-<p>Hive tests are categorized by "simulations", and test instances can be filtered with a regex:</p>
-<pre><code class="language-bash">make run-hive-debug SIMULATION=&lt;simulation&gt; TEST_PATTERN=&lt;test-regex&gt;
+<p>Then install:</p>
+<pre><code class="language-bash">asdf install
 </code></pre>
-<p>This is an example of a Hive simulation called <code>ethereum/rpc-compat</code>, which will specifically
-run chain id and transaction by hash rpc tests:</p>
+<p>If you need to set GOROOT, follow <a href="https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot">these instructions</a>.</p>
+</li>
+<li>
+<p><strong>Rust</strong> - Required to build the ethrex client</p>
+<pre><code class="language-bash"># Already configured in .tool-versions
+asdf install rust
+</code></pre>
+</li>
+</ol>
+<h3 id="build-the-ethrex-docker-image"><a class="header" href="#build-the-ethrex-docker-image">Build the ethrex Docker Image</a></h3>
+<p>Before running Hive tests, you need to build the ethrex Docker image:</p>
+<pre><code class="language-bash">make build-image
+</code></pre>
+<h2 id="running-hive-tests"><a class="header" href="#running-hive-tests">Running Hive Tests</a></h2>
+<h3 id="1-setup-hive-framework"><a class="header" href="#1-setup-hive-framework">1. Setup Hive Framework</a></h3>
+<p>The first time you run tests, Hive will be automatically cloned and built. You can also set it up manually:</p>
+<pre><code class="language-bash">make setup-hive
+</code></pre>
+<p>This will:</p>
+<ul>
+<li>Clone the <code>ethereum/hive</code> repository at the configured commit</li>
+<li>Build the Hive binary using Go</li>
+<li>Place it in the <code>./hive</code> directory</li>
+</ul>
+<h3 id="2-basic-test-execution"><a class="header" href="#2-basic-test-execution">2. Basic Test Execution</a></h3>
+<h4 id="run-specific-simulation"><a class="header" href="#run-specific-simulation">Run Specific Simulation</a></h4>
+<p>Hive tests are organized by "simulations". To run a specific simulation:</p>
+<pre><code class="language-bash">make run-hive SIMULATION=&lt;simulation-name&gt; TEST_PATTERN="&lt;pattern&gt;"
+</code></pre>
+<p><strong>Available Simulations:</strong></p>
+<ul>
+<li><code>ethereum/rpc-compat</code> - RPC API compatibility tests</li>
+<li><code>devp2p</code> - P2P networking tests (Discovery V4, Eth, Snap)</li>
+<li><code>ethereum/engine</code> - Engine API tests (Paris, Auth, Cancun, Withdrawals)</li>
+<li><code>ethereum/sync</code> - Node synchronization tests</li>
+<li><code>ethereum/eels/consume-engine</code> - EVM Execution Layer tests (Engine format)</li>
+<li><code>ethereum/eels/consume-rlp</code> - EVM Execution Layer tests (RLP format)</li>
+<li><code>ethereum/eels/execute-blobs</code> - Blob execution tests</li>
+</ul>
+<h4 id="example-rpc-compatibility-tests"><a class="header" href="#example-rpc-compatibility-tests">Example: RPC Compatibility Tests</a></h4>
+<p>This is an example of a Hive simulation called <code>ethereum/rpc-compat</code>, which will specifically run chain id and transaction by hash rpc tests:</p>
 <pre><code class="language-bash">make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_getTransactionByHash"
 </code></pre>
-<p>If you want debug output from hive, use the run-hive-debug instead:</p>
+<p>Run all RPC tests:</p>
+<pre><code class="language-bash">make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="*"
+</code></pre>
+<h4 id="run-all-simulations"><a class="header" href="#run-all-simulations">Run All Simulations</a></h4>
+<p>To run every available simulation:</p>
+<pre><code class="language-bash">make run-hive-all
+</code></pre>
+<h3 id="3-debug-mode"><a class="header" href="#3-debug-mode">3. Debug Mode</a></h3>
+<p>For detailed debug output including Docker container logs:</p>
 <pre><code class="language-bash">make run-hive-debug SIMULATION=ethereum/rpc-compat TEST_PATTERN="*"
 </code></pre>
-<p>This example runs <strong>every</strong> test under rpc, with debug output</p>
+<p>Debug mode sets:</p>
+<ul>
+<li><code>--sim.loglevel 4</code> (maximum verbosity)</li>
+<li><code>--docker.output</code> (shows Docker container output)</li>
+</ul>
+<h3 id="4-amsterdam-fork-tests-eels"><a class="header" href="#4-amsterdam-fork-tests-eels">4. Amsterdam Fork Tests (EELS)</a></h3>
+<p>To test Amsterdam fork compatibility using the Ethereum Execution Layer Specification tests:</p>
+<h4 id="run-engine-format-tests"><a class="header" href="#run-engine-format-tests">Run Engine Format Tests</a></h4>
+<p>Tests all forks including Amsterdam:</p>
+<pre><code class="language-bash">make run-hive-eels-engine
+</code></pre>
+<p>Test specific forks:</p>
+<pre><code class="language-bash">make run-hive-eels EELS_SIM=ethereum/eels/consume-engine TEST_PATTERN_EELS=".*fork_Amsterdam.*"
+</code></pre>
+<p>Test multiple forks:</p>
+<pre><code class="language-bash">make run-hive-eels EELS_SIM=ethereum/eels/consume-engine TEST_PATTERN_EELS=".*fork_Prague.*|.*fork_Amsterdam.*"
+</code></pre>
+<h4 id="run-rlp-format-tests"><a class="header" href="#run-rlp-format-tests">Run RLP Format Tests</a></h4>
+<pre><code class="language-bash">make run-hive-eels-rlp
+</code></pre>
+<p>Or test specific forks:</p>
+<pre><code class="language-bash">make run-hive-eels EELS_SIM=ethereum/eels/consume-rlp TEST_PATTERN_EELS=".*fork_Amsterdam.*"
+</code></pre>
+<h4 id="run-blob-execution-tests"><a class="header" href="#run-blob-execution-tests">Run Blob Execution Tests</a></h4>
+<pre><code class="language-bash">make run-hive-eels-blobs
+</code></pre>
+<h3 id="5-customizing-test-execution"><a class="header" href="#5-customizing-test-execution">5. Customizing Test Execution</a></h3>
+<h4 id="adjust-parallelism"><a class="header" href="#adjust-parallelism">Adjust Parallelism</a></h4>
+<p>Control how many tests run in parallel (default: 16):</p>
+<pre><code class="language-bash">make run-hive SIMULATION=ethereum/rpc-compat SIM_PARALLELISM=8
+</code></pre>
+<h4 id="adjust-log-level"><a class="header" href="#adjust-log-level">Adjust Log Level</a></h4>
+<p>Set log verbosity from 1 (least verbose) to 4 (most verbose):</p>
+<pre><code class="language-bash">make run-hive SIMULATION=ethereum/rpc-compat SIM_LOG_LEVEL=1
+</code></pre>
+<h4 id="test-pattern-examples"><a class="header" href="#test-pattern-examples">Test Pattern Examples</a></h4>
+<p>Match specific test names:</p>
+<pre><code class="language-bash">TEST_PATTERN="/eth_chainId"                    # Single test
+TEST_PATTERN="/eth_chainId|eth_blockNumber"    # Multiple tests
+TEST_PATTERN="/eth_get.*"                       # Regex pattern
+TEST_PATTERN="*"                                # All tests
+</code></pre>
+<p>For fork-specific EELS tests:</p>
+<pre><code class="language-bash">TEST_PATTERN_EELS=".*fork_Amsterdam.*"                                    # Amsterdam only
+TEST_PATTERN_EELS=".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*"     # Multiple forks
+</code></pre>
+<h2 id="viewing-results"><a class="header" href="#viewing-results">Viewing Results</a></h2>
+<h3 id="hive-web-interface"><a class="header" href="#hive-web-interface">Hive Web Interface</a></h3>
+<p>After running tests, view results in a web interface:</p>
+<pre><code class="language-bash">make view-hive
+</code></pre>
+<p>This starts a local server at <code>http://127.0.0.1:8080</code> showing:</p>
+<ul>
+<li>Test pass/fail status</li>
+<li>Detailed logs for each test</li>
+<li>Client information and errors</li>
+</ul>
+<p>The web interface is automatically opened after <code>make run-hive</code> completes.</p>
+<h3 id="command-line-results"><a class="header" href="#command-line-results">Command Line Results</a></h3>
+<p>Results are also available in the terminal output and in:</p>
+<pre><code>./hive/workspace/logs/
+</code></pre>
+<p>Log files include:</p>
+<ul>
+<li><code>*.json</code> - Test results in JSON format</li>
+<li><code>*.log</code> - Detailed execution logs</li>
+<li>Client-specific logs for debugging failures</li>
+</ul>
+<h3 id="generate-hive-report"><a class="header" href="#generate-hive-report">Generate Hive Report</a></h3>
+<p>To generate a formatted report from test results:</p>
+<pre><code class="language-bash">cargo run --manifest-path tooling/Cargo.toml -p hive_report
+</code></pre>
+<p>This reads all JSON files in <code>hive/workspace/logs/</code> and produces:</p>
+<ul>
+<li>Summary by category (Engine, P2P, RPC, Sync, EVM)</li>
+<li>Pass/fail statistics per simulation</li>
+<li>Fork-specific results (Paris, Shanghai, Cancun, Prague, Amsterdam)</li>
+</ul>
+<h2 id="cleaning-up"><a class="header" href="#cleaning-up">Cleaning Up</a></h2>
+<p>Remove Hive logs and workspace:</p>
+<pre><code class="language-bash">make clean-hive-logs
+</code></pre>
+<p>Remove the entire Hive directory to force a fresh clone:</p>
+<pre><code class="language-bash">rm -rf ./hive
+</code></pre>
+<h2 id="repository-configuration"><a class="header" href="#repository-configuration">Repository Configuration</a></h2>
+<p>The project pins specific versions of the three repositories for Amsterdam fork support:</p>
+<h3 id="makefile-configuration"><a class="header" href="#makefile-configuration">Makefile Configuration</a></h3>
+<pre><code class="language-makefile"># ethereum/hive branch
+HIVE_BRANCH ?= master
+</code></pre>
+<h3 id="workflow-configuration-githubworkflowsdaily_hive_reportyaml"><a class="header" href="#workflow-configuration-githubworkflowsdaily_hive_reportyaml">Workflow Configuration (.github/workflows/daily_hive_report.yaml)</a></h3>
+<p>The workflow uses fork-specific fixtures to ensure comprehensive test coverage:</p>
+<pre><code class="language-yaml"># Amsterdam tests use fixtures_bal (includes BAL-specific tests)
+if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
+  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz"
+  FLAGS+=" --sim.buildarg branch=devnets/bal/2"
+else
+  # Other forks use fixtures_develop (comprehensive coverage including static tests)
+  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
+  FLAGS+=" --sim.buildarg branch=forks/osaka"
+fi
+</code></pre>
+<h3 id="fixtures-url-files"><a class="header" href="#fixtures-url-files">Fixtures URL Files</a></h3>
+<ul>
+<li><code>tooling/ef_tests/blockchain/.fixtures_url</code> — Used by <code>run-hive-eels</code> Makefile target (non-Amsterdam forks)</li>
+<li><code>tooling/ef_tests/blockchain/.fixtures_url_amsterdam</code> — Amsterdam-specific fixtures with BAL support</li>
+</ul>
+<p>Contents:</p>
+<pre><code># .fixtures_url
+https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz
+
+# .fixtures_url_amsterdam
+https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz
+</code></pre>
+<p><strong>Note</strong>: The CI workflow uses <code>fixtures_bal</code> with <code>branch=devnets/bal/2</code> for Amsterdam tests, and <code>fixtures_develop</code> with <code>branch=forks/osaka</code> for other forks.</p>
+<h2 id="updating-repository-versions"><a class="header" href="#updating-repository-versions">Updating Repository Versions</a></h2>
+<p>To update to a different fork or newer versions:</p>
+<ol>
+<li>
+<p><strong>Update Hive commit</strong> in <code>Makefile</code>:</p>
+<pre><code class="language-makefile">HIVE_BRANCH ?= &lt;new-commit-hash&gt;
+</code></pre>
+</li>
+<li>
+<p><strong>Update execution-spec-tests versions</strong> in <code>.github/workflows/daily_hive_report.yaml</code>:</p>
+<p>For Amsterdam tests (fixtures_bal):</p>
+<pre><code class="language-yaml">FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@&lt;version&gt;/fixtures_bal.tar.gz"
+FLAGS+=" --sim.buildarg branch=devnets/bal/2"
+</code></pre>
+<p>For other forks (fixtures_develop):</p>
+<pre><code class="language-yaml">FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v&lt;version&gt;/fixtures_develop.tar.gz"
+FLAGS+=" --sim.buildarg branch=forks/&lt;fork-name&gt;"
+</code></pre>
+</li>
+<li>
+<p><strong>Update fixtures URL files</strong>:</p>
+<pre><code class="language-bash"># For Amsterdam fixtures
+echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@&lt;version&gt;/fixtures_bal.tar.gz" &gt; tooling/ef_tests/blockchain/.fixtures_url_amsterdam
+# For other forks
+echo "https://github.com/ethereum/execution-spec-tests/releases/download/v&lt;version&gt;/fixtures_develop.tar.gz" &gt; tooling/ef_tests/blockchain/.fixtures_url
+</code></pre>
+</li>
+<li>
+<p><strong>Update fork references</strong> in code if switching to a different fork:</p>
+<ul>
+<li><code>.github/workflows/daily_hive_report.yaml</code> - Test names and patterns</li>
+<li><code>tooling/hive_report/src/main.rs</code> - Fork ranking and result processing</li>
+</ul>
+</li>
+</ol>
+<h2 id="troubleshooting-3"><a class="header" href="#troubleshooting-3">Troubleshooting</a></h2>
+<h3 id="docker-permission-errors"><a class="header" href="#docker-permission-errors">Docker Permission Errors</a></h3>
+<p>If you encounter Docker permission errors:</p>
+<pre><code class="language-bash">sudo usermod -aG docker $USER
+newgrp docker
+</code></pre>
+<h3 id="hive-build-failures"><a class="header" href="#hive-build-failures">Hive Build Failures</a></h3>
+<p>If Go build fails:</p>
+<pre><code class="language-bash"># Clean and rebuild
+rm -rf ./hive
+make setup-hive
+</code></pre>
+<h3 id="missing-test-fixtures"><a class="header" href="#missing-test-fixtures">Missing Test Fixtures</a></h3>
+<p>If EELS tests fail due to missing fixtures:</p>
+<pre><code class="language-bash"># Verify fixtures URL is accessible
+curl -I $(cat tooling/ef_tests/blockchain/.fixtures_url)
+
+# Re-download fixtures (they're downloaded automatically during test execution)
+</code></pre>
+<h3 id="client-container-failures"><a class="header" href="#client-container-failures">Client Container Failures</a></h3>
+<p>If the ethrex client container fails to start:</p>
+<pre><code class="language-bash"># Rebuild the Docker image
+make build-image
+
+# Check Docker images
+docker images | grep ethrex
+</code></pre>
+<h2 id="cicd-integration"><a class="header" href="#cicd-integration">CI/CD Integration</a></h2>
+<p>The project runs Hive tests automatically via GitHub Actions:</p>
+<ul>
+<li><strong>Daily runs</strong>: <code>.github/workflows/daily_hive_report.yaml</code> - Comprehensive test coverage</li>
+<li><strong>PR validation</strong>: <code>.github/workflows/pr-main_l1.yaml</code> - Subset of critical tests</li>
+</ul>
+<p>Results are posted to Slack and available in GitHub Actions artifacts.</p>
+<h2 id="additional-resources"><a class="header" href="#additional-resources">Additional Resources</a></h2>
+<ul>
+<li><a href="https://github.com/ethereum/hive/blob/master/docs/overview.md">Hive Documentation</a></li>
+<li><a href="https://github.com/ethereum/execution-spec-tests">Execution Spec Tests</a></li>
+<li><a href="https://github.com/ethereum/execution-apis">Ethereum Execution APIs</a></li>
+<li><a href="https://eips.ethereum.org/EIPS/eip-7928">Amsterdam Fork (Glamsterdam) Details</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -15144,7 +15407,7 @@ make load-test-io
 
 </style>
 <h1 id="ethrex-as-a-local-l2-development-node"><a class="header" href="#ethrex-as-a-local-l2-development-node">Ethrex as a local L2 development node</a></h1>
-<h2 id="prerequisites-20"><a class="header" href="#prerequisites-20">Prerequisites</a></h2>
+<h2 id="prerequisites-21"><a class="header" href="#prerequisites-21">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes you've read the dev <a href="developers/l2/../installing.html">installation guide</a></li>
 <li>An Ethereum utility tool like <a href="https://github.com/lambdaclass/rex">rex</a></li>
@@ -15232,7 +15495,7 @@ make load-test-io
 </style>
 <h1 id="running-integration-tests"><a class="header" href="#running-integration-tests">Running integration tests</a></h1>
 <p>In this section, we will explain how to run integration tests for ethrex L2 with the objective of validating the correct functioning of our stack in our releases. For this, we will use ethrex as a local L2 dev node.</p>
-<h2 id="prerequisites-21"><a class="header" href="#prerequisites-21">Prerequisites</a></h2>
+<h2 id="prerequisites-22"><a class="header" href="#prerequisites-22">Prerequisites</a></h2>
 <ul>
 <li>Install the latest ethrex release or pre-release binary following the instructions in the <a href="https://docs.ethrex.xyz/getting-started/installation/binary_distribution.html">Install ethrex (binary distribution)</a> section.</li>
 <li>For running the tests, you'll need a fresh clone of <a href="https://github.com/lambdaclass/ethrex/">ethrex</a>.</li>
@@ -15359,7 +15622,7 @@ To see more about the proof coordinator, read the <a href="https://docs.ethrex.x
 --backend exec \
 --proof-coordinators http://localhost:3900
 </code></pre>
-<h2 id="troubleshooting-3"><a class="header" href="#troubleshooting-3">Troubleshooting</a></h2>
+<h2 id="troubleshooting-4"><a class="header" href="#troubleshooting-4">Troubleshooting</a></h2>
 <div class="mdbook-alerts mdbook-alerts-note">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
@@ -17641,7 +17904,7 @@ xattr -dr com.apple.quarantine ethrex
 <p>Once the release is verified, <strong>merge the branch via PR</strong>.</p>
 <h2 id="dealing-with-hotfixes"><a class="header" href="#dealing-with-hotfixes">Dealing with hotfixes</a></h2>
 <p>If hotfixes are needed before the final release, commit them to <code>release/vX.Y.Z</code>, push, and create a new pre-release tag. The final tag <code>vX.Y.Z</code> should always point to the exact commit you will merge via PR.</p>
-<h2 id="troubleshooting-4"><a class="header" href="#troubleshooting-4">Troubleshooting</a></h2>
+<h2 id="troubleshooting-5"><a class="header" href="#troubleshooting-5">Troubleshooting</a></h2>
 <h3 id="failure-on-latest-release-workflow"><a class="header" href="#failure-on-latest-release-workflow">Failure on "latest release" workflow</a></h3>
 <p>If the CI fails when setting a release as latest (step 4), Docker tags <code>latest</code> and <code>l2</code> may not be updated. To manually push those changes, follow these steps:</p>
 <ul>
@@ -18456,7 +18719,7 @@ Long-term research directions and second-order ideas are intentionally out of sc
 </tbody></table>
 </div>
 <h1 id="ethrex-trie-optimization-for-zkvm"><a class="header" href="#ethrex-trie-optimization-for-zkvm">ethrex-trie optimization for zkvm</a></h1>
-<h1 id="overview-3"><a class="header" href="#overview-3">Overview</a></h1>
+<h1 id="overview-4"><a class="header" href="#overview-4">Overview</a></h1>
 <p>Using the risc0-trie we get the next perf. gains in cycle count over our ethrex-trie:</p>
 <ul>
 <li><code>rebuild_storage_trie()</code> 218.999 -&gt; 64.435 (x3.4)</li>
