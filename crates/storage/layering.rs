@@ -191,7 +191,28 @@ pub struct TrieWrapper {
     pub state_root: H256,
     pub inner: Arc<TrieLayerCache>,
     pub db: Box<dyn TrieDB>,
-    pub prefix: Option<H256>,
+    /// Pre-computed prefix nibbles for storage tries.
+    /// For state tries this is None; for storage tries this is
+    /// `Nibbles::from_bytes(address.as_bytes()).append_new(17)`.
+    prefix_nibbles: Option<Nibbles>,
+}
+
+impl TrieWrapper {
+    pub fn new(
+        state_root: H256,
+        inner: Arc<TrieLayerCache>,
+        db: Box<dyn TrieDB>,
+        prefix: Option<H256>,
+    ) -> Self {
+        let prefix_nibbles =
+            prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
+        Self {
+            state_root,
+            inner,
+            db,
+            prefix_nibbles,
+        }
+    }
 }
 
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
@@ -209,12 +230,18 @@ impl TrieDB for TrieWrapper {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
         // NOTE: we apply the prefix here, since the underlying TrieDB should
         // always be for the state trie.
-        let key = apply_prefix(self.prefix, key);
+        let key = match &self.prefix_nibbles {
+            Some(prefix) => prefix.concat(&key),
+            None => key,
+        };
         self.db.flatkeyvalue_computed(key)
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let key = apply_prefix(self.prefix, key);
+        let key = match &self.prefix_nibbles {
+            Some(prefix) => prefix.concat(&key),
+            None => key,
+        };
         if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
