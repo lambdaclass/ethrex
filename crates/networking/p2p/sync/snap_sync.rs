@@ -968,19 +968,35 @@ fn capture_snap_profile_dataset(
     std::fs::create_dir_all(capture_dir)
         .map_err(|e| SyncError::FileSystem(format!("Failed to create capture dir: {e}")))?;
 
-    copy_dir_recursive(
-        account_state_snapshots_dir,
-        &capture_dir.join("account_state_snapshots"),
-    )?;
-    copy_dir_recursive(
-        account_storages_snapshots_dir,
-        &capture_dir.join("account_storages_snapshots"),
-    )?;
+    // Always write RLP format for replay compatibility, regardless of build
+    #[cfg(feature = "rocksdb")]
+    {
+        convert_sst_accounts_to_rlp(
+            account_state_snapshots_dir,
+            &capture_dir.join("account_state_snapshots"),
+        )?;
+        convert_sst_storages_to_rlp(
+            account_storages_snapshots_dir,
+            &capture_dir.join("account_storages_snapshots"),
+        )?;
+    }
+    #[cfg(not(feature = "rocksdb"))]
+    {
+        copy_dir_recursive(
+            account_state_snapshots_dir,
+            &capture_dir.join("account_state_snapshots"),
+        )?;
+        copy_dir_recursive(
+            account_storages_snapshots_dir,
+            &capture_dir.join("account_storages_snapshots"),
+        )?;
+    }
 
     let manifest = SnapProfileManifest {
         version: 1,
         chain_id,
-        rocksdb_enabled: cfg!(feature = "rocksdb"),
+        // Dataset is always in RLP format regardless of build
+        rocksdb_enabled: false,
         pivot: PivotInfo {
             number: pivot_header.number,
             hash: pivot_header.hash(),
@@ -1003,6 +1019,7 @@ fn capture_snap_profile_dataset(
     Ok(())
 }
 
+#[cfg(not(feature = "rocksdb"))]
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), SyncError> {
     std::fs::create_dir_all(dst)
         .map_err(|e| SyncError::FileSystem(format!("Failed to create {dst:?}: {e}")))?;
@@ -1021,6 +1038,146 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), SyncError> {
             })?;
         }
     }
+    Ok(())
+}
+
+// ============================================================================
+// SST → RLP conversion for profile capture (rocksdb builds)
+// ============================================================================
+
+/// Convert account state SST files to RLP format for replay compatibility.
+/// Reads the SST files via a temporary rocksdb instance, then writes each
+/// chunk as RLP-encoded `Vec<(H256, AccountState)>`.
+#[cfg(feature = "rocksdb")]
+fn convert_sst_accounts_to_rlp(sst_dir: &Path, rlp_dir: &Path) -> Result<(), SyncError> {
+    use ethrex_rlp::encode::RLPEncode;
+
+    std::fs::create_dir_all(rlp_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to create {rlp_dir:?}: {e}")))?;
+
+    let tmp_db_dir = sst_dir.with_file_name("_profile_tmp_accounts_db");
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
+    let db = rocksdb::DB::open(&db_options, &tmp_db_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to open temp db: {e}")))?;
+
+    let file_paths: Vec<PathBuf> = std::fs::read_dir(sst_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to read {sst_dir:?}: {e}")))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    db.ingest_external_file(file_paths)
+        .map_err(|e| SyncError::FileSystem(format!("SST ingest failed: {e}")))?;
+
+    let mut chunk: Vec<(H256, AccountState)> = Vec::new();
+    let mut chunk_idx = 0u64;
+    let chunk_size = 500_000; // accounts per chunk
+
+    for item in db.full_iterator(rocksdb::IteratorMode::Start) {
+        let (key, value) =
+            item.map_err(|e| SyncError::FileSystem(format!("DB iter error: {e}")))?;
+        let account_hash = H256::from_slice(&key);
+        let account_state = AccountState::decode(&value).map_err(SyncError::Rlp)?;
+        chunk.push((account_hash, account_state));
+
+        if chunk.len() >= chunk_size {
+            let path = rlp_dir.join(format!("account_state_chunk.rlp.{chunk_idx}"));
+            std::fs::write(&path, chunk.encode_to_vec())
+                .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+            chunk.clear();
+            chunk_idx += 1;
+        }
+    }
+    if !chunk.is_empty() {
+        let path = rlp_dir.join(format!("account_state_chunk.rlp.{chunk_idx}"));
+        std::fs::write(&path, chunk.encode_to_vec())
+            .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+    }
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&tmp_db_dir);
+
+    info!(
+        "Converted account SST files to {} RLP chunks in {rlp_dir:?}",
+        chunk_idx + 1
+    );
+    Ok(())
+}
+
+/// Convert storage SST files to RLP format for replay compatibility.
+/// Groups entries by account hash to produce `Vec<AccountsWithStorage>` chunks.
+#[cfg(feature = "rocksdb")]
+fn convert_sst_storages_to_rlp(sst_dir: &Path, rlp_dir: &Path) -> Result<(), SyncError> {
+    use ethrex_common::U256;
+    use ethrex_rlp::encode::RLPEncode;
+    use std::collections::BTreeMap;
+
+    std::fs::create_dir_all(rlp_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to create {rlp_dir:?}: {e}")))?;
+
+    let tmp_db_dir = sst_dir.with_file_name("_profile_tmp_storages_db");
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
+    let db = rocksdb::DB::open(&db_options, &tmp_db_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to open temp db: {e}")))?;
+
+    let file_paths: Vec<PathBuf> = std::fs::read_dir(sst_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to read {sst_dir:?}: {e}")))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    db.ingest_external_file(file_paths)
+        .map_err(|e| SyncError::FileSystem(format!("SST ingest failed: {e}")))?;
+
+    // Group by account hash
+    let mut accounts_map: BTreeMap<H256, Vec<(H256, U256)>> = BTreeMap::new();
+
+    for item in db.full_iterator(rocksdb::IteratorMode::Start) {
+        let (key, value) =
+            item.map_err(|e| SyncError::FileSystem(format!("DB iter error: {e}")))?;
+        let account_hash = H256::from_slice(&key[0..32]);
+        let slot_hash = H256::from_slice(&key[32..64]);
+        let slot_value = U256::decode(&value).map_err(SyncError::Rlp)?;
+        accounts_map
+            .entry(account_hash)
+            .or_default()
+            .push((slot_hash, slot_value));
+    }
+
+    // Write as AccountsWithStorage chunks (matching non-rocksdb format)
+    // The non-rocksdb replay expects: Vec<(Vec<H256>, Vec<(H256, U256)>)>
+    let mut chunk: Vec<(Vec<H256>, Vec<(H256, U256)>)> = Vec::new();
+    let mut chunk_idx = 0u64;
+    let mut entries_in_chunk = 0usize;
+    let chunk_size = 100_000; // storage entries per chunk
+
+    for (account_hash, storages) in accounts_map {
+        let n = storages.len();
+        chunk.push((vec![account_hash], storages));
+        entries_in_chunk += n;
+
+        if entries_in_chunk >= chunk_size {
+            let path = rlp_dir.join(format!("account_storages_chunk.rlp.{chunk_idx}"));
+            std::fs::write(&path, chunk.encode_to_vec())
+                .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+            chunk.clear();
+            entries_in_chunk = 0;
+            chunk_idx += 1;
+        }
+    }
+    if !chunk.is_empty() {
+        let path = rlp_dir.join(format!("account_storages_chunk.rlp.{chunk_idx}"));
+        std::fs::write(&path, chunk.encode_to_vec())
+            .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+    }
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&tmp_db_dir);
+
+    info!(
+        "Converted storage SST files to {} RLP chunks in {rlp_dir:?}",
+        chunk_idx + 1
+    );
     Ok(())
 }
 
