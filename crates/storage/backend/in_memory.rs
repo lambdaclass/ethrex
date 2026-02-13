@@ -2,12 +2,13 @@ use crate::api::{
     PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
 };
 use crate::error::StoreError;
-use std::collections::BTreeMap;
+use rustc_hash::FxHashMap;
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
-type Table = BTreeMap<Vec<u8>, Vec<u8>>;
-type Database = BTreeMap<&'static str, Table>;
+type Table = FxHashMap<Vec<u8>, Vec<u8>>;
+type Database = HashMap<&'static str, Table>;
 
 #[derive(Debug)]
 pub struct InMemoryBackend {
@@ -36,9 +37,11 @@ impl StorageBackend for InMemoryBackend {
     }
 
     fn begin_read(&self) -> Result<Box<dyn StorageReadView + '_>, StoreError> {
-        Ok(Box::new(InMemoryReadTx {
-            backend: &self.inner,
-        }))
+        let guard = self
+            .inner
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
+        Ok(Box::new(InMemoryReadTx { guard }))
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
@@ -95,17 +98,13 @@ impl StorageLockedView for InMemoryLocked {
 }
 
 pub struct InMemoryReadTx<'a> {
-    backend: &'a RwLock<Database>,
+    guard: RwLockReadGuard<'a, Database>,
 }
 
 impl<'a> StorageReadView for InMemoryReadTx<'a> {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let db = self
-            .backend
-            .read()
-            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
-
-        Ok(db
+        Ok(self
+            .guard
             .get(table)
             .and_then(|table_ref| table_ref.get(key))
             .cloned())
@@ -116,12 +115,7 @@ impl<'a> StorageReadView for InMemoryReadTx<'a> {
         table: &str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
-        let db = self
-            .backend
-            .read()
-            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
-
-        let table_data = db.get(table).cloned().unwrap_or_default();
+        let table_data = self.guard.get(table).cloned().unwrap_or_default();
         let prefix_vec = prefix.to_vec();
 
         let results: Vec<PrefixResult> = table_data
@@ -152,7 +146,7 @@ impl StorageWriteBatch for InMemoryWriteTx {
             .write()
             .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
 
-        let table_ref = db.entry(table).or_insert_with(Table::new);
+        let table_ref = db.entry(table).or_default();
 
         for (key, value) in batch {
             table_ref.insert(key, value);
