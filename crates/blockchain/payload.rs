@@ -212,6 +212,9 @@ pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
 pub struct PayloadBuildContext {
     pub payload: Block,
     pub remaining_gas: u64,
+    /// Cumulative gas spent (post-refund) for receipt tracking.
+    /// Per EIP-7778 this differs from `remaining_gas` which tracks pre-refund gas.
+    pub cumulative_gas_spent: u64,
     pub receipts: Vec<Receipt>,
     pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
@@ -257,6 +260,7 @@ impl PayloadBuildContext {
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
+            cumulative_gas_spent: 0,
             receipts: vec![],
             requests: config
                 .is_prague_activated(payload.header.timestamp)
@@ -734,14 +738,19 @@ pub fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let (report, gas_used) = context.vm.execute_tx(
+    let (mut receipt, gas_spent) = context.vm.execute_tx(
         &head.tx,
         &context.payload.header,
         &mut context.remaining_gas,
         head.tx.sender(),
     )?;
-    context.block_value += U256::from(gas_used) * head.tip;
-    Ok(report)
+    // EIP-7778: receipt cumulative_gas_used uses post-refund gas (gas_spent),
+    // while remaining_gas tracks pre-refund gas (gas_used) for block accounting.
+    context.cumulative_gas_spent += gas_spent;
+    receipt.cumulative_gas_used = context.cumulative_gas_spent;
+    // Block value uses gas_spent (what the user actually pays) for tip calculation
+    context.block_value += U256::from(gas_spent) * head.tip;
+    Ok(receipt)
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block
