@@ -324,3 +324,49 @@ Whenever an account is downloaded or healed we check if the code is not empty. I
 ### Forkchoice update
 
 Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from `snap` to `full`, and we do an `apply_forkchoice` to mark the last pivot as the last block.
+
+## Offline Profiling
+
+The snap sync pipeline includes an offline profiling mode that lets you measure the compute-only phases (InsertAccounts, InsertStorages) without any network I/O. This is useful for benchmarking trie insertion performance and iterating on optimisations.
+
+### Step 1 — Capture a dataset
+
+Run a normal snap sync with the `ETHREX_SNAP_PROFILE_CAPTURE_DIR` environment variable set. When the sync reaches the InsertAccounts phase, the node copies the snapshot directories and writes a `manifest.json` to the capture directory.
+
+```bash
+ETHREX_SNAP_PROFILE_CAPTURE_DIR=/tmp/snap-dataset ethrex --network mainnet
+```
+
+The resulting directory layout:
+
+```
+/tmp/snap-dataset/
+├── manifest.json
+├── account_state_snapshots/
+│   └── *.rlp.*
+└── account_storages_snapshots/
+    └── *.rlp.*
+```
+
+> **Note:** Only the non-rocksdb (in-memory trie) code path is supported. The node must be built without the `rocksdb` feature for capture to work.
+
+### Step 2 — Replay offline with ethrex-replay
+
+Use the `ethrex-replay` tool to replay the captured dataset:
+
+```bash
+ethrex-replay snapsync profile \
+  --dataset /tmp/snap-dataset \
+  --repeat 5 \
+  --warmup 1 \
+  --phases insert-accounts,insert-storages
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--dataset` | Path to the captured dataset directory | (required) |
+| `--repeat` | Number of measured runs | `3` |
+| `--warmup` | Number of warm-up runs (excluded from stats) | `1` |
+| `--phases` | Comma-separated phases to report (`insert-accounts`, `insert-storages`) | `insert-accounts,insert-storages` |
+
+The tool validates the manifest, creates a fresh in-memory store for each run, replays both phases, checks that the computed state root is deterministic across runs, and prints per-phase statistics (median, mean, stddev, min, max).
