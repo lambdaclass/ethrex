@@ -88,20 +88,20 @@ impl LEVM {
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Use block_gas_used for limit check (pre-refund for Amsterdam+)
             if block_gas_used + tx.gas_limit() > block.header.gas_limit {
-                // EIP-7778: When block_gas_used tracks pre-refund gas (Amsterdam+),
-                // this is a block-level gas overflow, not a transaction-level error.
-                if record_bal {
+                // Distinguish between a single tx exceeding the block gas limit
+                // (transaction-level) vs accumulated pre-refund gas overflowing (block-level).
+                if tx.gas_limit() > block.header.gas_limit {
                     return Err(EvmError::Transaction(format!(
-                        "Block gas used overflow: pre-refund gas used {} plus transaction gas limit {} exceeds block gas limit {}",
-                        block_gas_used,
-                        tx.gas_limit(),
-                        block.header.gas_limit
+                        "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                        block.header.gas_limit,
+                        tx.gas_limit()
                     )));
                 }
                 return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
-                    block.header.gas_limit,
-                    tx.gas_limit()
+                    "Block gas used overflow: pre-refund gas used {} plus transaction gas limit {} exceeds block gas limit {}",
+                    block_gas_used,
+                    tx.gas_limit(),
+                    block.header.gas_limit
                 )));
             }
 
@@ -214,20 +214,20 @@ impl LEVM {
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Use block_gas_used for limit check (pre-refund for Amsterdam+)
             if block_gas_used + tx.gas_limit() > block.header.gas_limit {
-                // EIP-7778: When block_gas_used tracks pre-refund gas (Amsterdam+),
-                // this is a block-level gas overflow, not a transaction-level error.
-                if record_bal {
+                // Distinguish between a single tx exceeding the block gas limit
+                // (transaction-level) vs accumulated pre-refund gas overflowing (block-level).
+                if tx.gas_limit() > block.header.gas_limit {
                     return Err(EvmError::Transaction(format!(
-                        "Block gas used overflow: pre-refund gas used {} plus transaction gas limit {} exceeds block gas limit {}",
-                        block_gas_used,
-                        tx.gas_limit(),
-                        block.header.gas_limit
+                        "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                        block.header.gas_limit,
+                        tx.gas_limit()
                     )));
                 }
                 return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
-                    block.header.gas_limit,
-                    tx.gas_limit()
+                    "Block gas used overflow: pre-refund gas used {} plus transaction gas limit {} exceeds block gas limit {}",
+                    block_gas_used,
+                    tx.gas_limit(),
+                    block.header.gas_limit
                 )));
             }
 
