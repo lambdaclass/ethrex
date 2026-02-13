@@ -23,7 +23,7 @@ participants:
     el_image: ethrex:local
     validator_count: 160
     el_extra_env_vars:
-      RUST_LOG: "debug,ethrex_p2p::tx_broadcaster=info"
+      RUST_LOG: "debug,ethrex_p2p::tx_broadcaster=info,ethrex_blockchain::payload=info"
 global_log_level: 'debug'
 network_params:
   genesis_delay: 20
