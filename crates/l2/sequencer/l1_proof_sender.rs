@@ -32,7 +32,10 @@ use tracing::{error, info, warn};
 
 use super::{
     configs::AlignedConfig,
-    utils::{random_duration, send_verify_tx},
+    utils::{
+        INVALID_RISC0_PROOF_SELECTOR, INVALID_SP1_PROOF_SELECTOR, INVALID_TDX_PROOF_SELECTOR,
+        random_duration, send_verify_tx,
+    },
 };
 
 use crate::{
@@ -435,20 +438,22 @@ impl L1ProofSender {
         let send_verify_tx_result =
             send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await;
 
-        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. })) =
-            send_verify_tx_result.as_ref()
+        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
+            data: Some(data),
+            ..
+        })) = send_verify_tx_result.as_ref()
         {
-            if message.contains("Invalid TDX proof") {
+            if data.starts_with(INVALID_TDX_PROOF_SELECTOR) {
                 warn!("Deleting invalid TDX proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
                     .await?;
-            } else if message.contains("Invalid RISC0 proof") {
+            } else if data.starts_with(INVALID_RISC0_PROOF_SELECTOR) {
                 warn!("Deleting invalid RISC0 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
                     .await?;
-            } else if message.contains("Invalid SP1 proof") {
+            } else if data.starts_with(INVALID_SP1_PROOF_SELECTOR) {
                 warn!("Deleting invalid SP1 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
