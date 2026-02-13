@@ -62,12 +62,6 @@ pub enum SparseNode {
     },
 }
 
-impl SparseNode {
-    fn is_hash(&self) -> bool {
-        matches!(self, SparseNode::Hash(_))
-    }
-}
-
 /// Reusable buffers for stack-based hash computation.
 #[derive(Default)]
 struct SubtrieBuffers {

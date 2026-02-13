@@ -33,6 +33,8 @@ pub enum InconsistentTreeError {
     RootNotFound(H256),
     #[error("Root node not found")]
     RootNotFoundNoHash,
+    #[error("Node not found at path {path:?} (hash {hash:#x})")]
+    SparseNodeNotFound { path: Nibbles, hash: H256 },
 }
 
 #[derive(Debug)]
