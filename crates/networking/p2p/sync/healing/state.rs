@@ -30,7 +30,7 @@ use crate::{
         constants::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
         request_state_trienodes,
     },
-    sync::{AccountStorageRoots, SyncError, code_collector::CodeHashCollector},
+    sync::{StorageTrieTracker, SyncError, code_collector::CodeHashCollector},
     utils::current_unix_time,
 };
 
@@ -42,7 +42,7 @@ pub async fn heal_state_trie_wrap(
     peers: &PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
-    storage_accounts: &mut AccountStorageRoots,
+    tracker: &mut StorageTrieTracker,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
@@ -56,7 +56,7 @@ pub async fn heal_state_trie_wrap(
             staleness_timestamp,
             global_leafs_healed,
             HashMap::new(),
-            storage_accounts,
+            tracker,
             code_hash_collector,
         )
         .await?;
@@ -81,7 +81,7 @@ async fn heal_state_trie(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     mut healing_queue: StateHealingQueue,
-    storage_accounts: &mut AccountStorageRoots,
+    tracker: &mut StorageTrieTracker,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     // Add the current state trie root to the pending paths
@@ -163,19 +163,19 @@ async fn heal_state_trie(
                             let account_hash =
                                 H256::from_slice(&meta.path.concat(&node.partial).to_bytes());
 
-                            // // Collect valid code hash
+                            // Collect valid code hash
                             if account.code_hash != *EMPTY_KECCACK_HASH {
                                 code_hash_collector.add(account.code_hash);
                                 code_hash_collector.flush_if_needed().await?;
                             }
 
-                            storage_accounts.healed_accounts.insert(account_hash);
-                            let old_value = storage_accounts
-                                .accounts_with_storage_root
-                                .get_mut(&account_hash);
-                            if let Some((old_root, _)) = old_value {
-                                *old_root = None;
-                            }
+                            let new_root = account.storage_root;
+                            let old_root = tracker
+                                .account_to_root
+                                .get(&account_hash)
+                                .copied()
+                                .unwrap_or(new_root);
+                            tracker.handle_healed_account(account_hash, old_root, new_root);
                         }
                     }
                     leafs_healed += nodes
