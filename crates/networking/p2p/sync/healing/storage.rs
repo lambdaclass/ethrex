@@ -91,7 +91,7 @@ pub struct StorageHealer {
     maximum_length_seen: usize,
     leafs_healed: usize,
     roots_healed: usize,
-    succesful_downloads: usize,
+    successful_downloads: usize,
     failed_downloads: usize,
     empty_count: usize,
     disconnected_count: usize,
@@ -146,7 +146,7 @@ pub async fn heal_storage_trie(
         maximum_length_seen: Default::default(),
         leafs_healed: Default::default(),
         roots_healed: Default::default(),
-        succesful_downloads: Default::default(),
+        successful_downloads: Default::default(),
         failed_downloads: Default::default(),
         empty_count: Default::default(),
         disconnected_count: Default::default(),
@@ -192,15 +192,15 @@ pub async fn heal_storage_trie(
                 leaves_healed = state.leafs_healed,
                 global_leaves_healed = global_leafs_healed,
                 roots_healed = state.roots_healed,
-                succesful_downloads = state.succesful_downloads,
-                succesful_downloads_percentage = state.succesful_downloads as f64
+                successful_downloads = state.successful_downloads,
+                successful_downloads_percentage = state.successful_downloads as f64
                     / (state.succesful_downloads as f64 + state.failed_downloads as f64),
                 empty_count = state.empty_count,
                 disconnected_count = state.disconnected_count,
                 "We are storage healing",
             );
             //. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {}. Roots Healed {}. Good Downloads {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.
-            state.succesful_downloads = 0;
+            state.successful_downloads = 0;
             state.failed_downloads = 0;
             state.empty_count = 0;
             state.disconnected_count = 0;
@@ -277,7 +277,7 @@ pub async fn heal_storage_trie(
                     peers,
                     &mut state.download_queue,
                     &trie_nodes,
-                    &mut state.succesful_downloads,
+                    &mut state.successful_downloads,
                     &mut state.failed_downloads,
                 )
                 .await?
@@ -421,7 +421,7 @@ async fn zip_requeue_node_responses_score_peer(
     peer_handler: &mut PeerHandler,
     download_queue: &mut VecDeque<NodeRequest>,
     trie_nodes: &TrieNodes,
-    succesful_downloads: &mut usize,
+    successful_downloads: &mut usize,
     failed_downloads: &mut usize,
 ) -> Result<Option<Vec<NodeResponse>>, SyncError> {
     trace!(
@@ -499,7 +499,7 @@ async fn zip_requeue_node_responses_score_peer(
         if request.requests.len() > nodes_size {
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
-        *succesful_downloads += 1;
+        *successful_downloads += 1;
         peer_handler
             .peer_table
             .record_success(&request.peer_id)
