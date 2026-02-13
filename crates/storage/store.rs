@@ -3,7 +3,7 @@ use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
-        StorageBackend,
+        StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
@@ -47,7 +47,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
@@ -157,7 +157,7 @@ pub struct Store {
     /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
     /// Cache for trie nodes from recent blocks.
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     /// Channel for sending trie updates to the background worker.
@@ -171,7 +171,7 @@ pub struct Store {
     /// - Sync operations (must be idempotent anyway)
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
-    last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
@@ -1454,10 +1454,10 @@ impl Store {
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
-            last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
@@ -2085,18 +2085,40 @@ impl Store {
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
         let account_hash = hash_address_fixed(&address);
+
+        // Pre-acquire shared resources once for both trie opens
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+
         let storage_root = if self.flatkeyvalue_computed(account_hash)? {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
-            let state_trie = self.open_state_trie(state_root)?;
+            let state_trie = self.open_state_trie_shared(
+                state_root,
+                read_view.clone(),
+                cache.clone(),
+                last_written.clone(),
+            )?;
             let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
             };
             let account = AccountState::decode(&encoded_account)?;
             account.storage_root
         };
-        let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
 
         let hashed_key = hash_key_fixed(&storage_key);
         storage_trie
@@ -2422,19 +2444,18 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_accounts(
+            Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -2455,19 +2476,18 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
+            Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -2479,19 +2499,64 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_storages(
+            Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
+        Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
+    /// Open a state trie using pre-acquired shared resources.
+    /// Avoids redundant RwLock acquisitions when multiple tries are opened
+    /// in the same operation (e.g., state trie + storage trie in get_storage_at_root).
+    fn open_state_trie_shared(
+        &self,
+        state_root: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper::new(
+            state_root,
+            cache,
+            Box::new(BackendTrieDB::new_for_accounts_with_view(
+                self.backend.clone(),
+                read_view,
+                last_written,
+            )?),
+            None,
+        );
+        Ok(Trie::open(Box::new(trie_db), state_root))
+    }
+
+    /// Open a storage trie using pre-acquired shared resources.
+    fn open_storage_trie_shared(
+        &self,
+        account_hash: H256,
+        state_root: H256,
+        storage_root: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper::new(
+            state_root,
+            cache,
+            Box::new(BackendTrieDB::new_for_storages_with_view(
+                self.backend.clone(),
+                read_view,
+                last_written,
+            )?),
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
@@ -2520,19 +2585,18 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
+            Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
@@ -2645,7 +2709,7 @@ impl Store {
     fn last_written(&self) -> Result<Vec<u8>, StoreError> {
         let last_computed_flatkeyvalue = self
             .last_computed_flatkeyvalue
-            .lock()
+            .read()
             .map_err(|_| StoreError::LockError)?;
         Ok(last_computed_flatkeyvalue.clone())
     }
@@ -2672,7 +2736,7 @@ struct TrieUpdate {
 fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
-    trie_cache: &Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2695,13 +2759,13 @@ fn apply_trie_updates(
         .collect();
     // Read-Copy-Update the trie cache with a new layer.
     let trie = trie_cache
-        .lock()
+        .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
     let mut trie_mut = (*trie).clone();
     trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
     let trie = Arc::new(trie_mut);
-    *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
+    *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
     // Update finished, signal block processing.
     result_sender
         .send(Ok(()))
@@ -2766,7 +2830,7 @@ fn apply_trie_updates(
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
     // Phase 3: update diff layers with the removal of bottom layer.
-    *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+    *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
     Ok(())
 }
 
@@ -2774,7 +2838,7 @@ fn apply_trie_updates(
 // with the other end of `control_rx`
 fn flatkeyvalue_generator(
     backend: &Arc<dyn StorageBackend>,
-    last_computed_fkv: &Mutex<Vec<u8>>,
+    last_computed_fkv: &RwLock<Vec<u8>>,
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     info!("Generation of FlatKeyValue started.");
@@ -2840,7 +2904,7 @@ fn flatkeyvalue_generator(
                 write_txn.commit()?;
                 write_txn = backend.begin_write()?;
                 *last_computed_fkv
-                    .lock()
+                    .write()
                     .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
                 ctr = 0;
             }
@@ -2870,7 +2934,7 @@ fn flatkeyvalue_generator(
                     write_txn.commit()?;
                     write_txn = backend.begin_write()?;
                     *last_computed_fkv
-                        .lock()
+                        .write()
                         .map_err(|_| StoreError::LockError)? = key.into_vec();
                     ctr = 0;
                 }
@@ -2899,7 +2963,7 @@ fn flatkeyvalue_generator(
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
                 write_txn.commit()?;
                 *last_computed_fkv
-                    .lock()
+                    .write()
                     .map_err(|_| StoreError::LockError)? = vec![0xff; 131];
                 info!("FlatKeyValue generation finished.");
                 return Ok(());
