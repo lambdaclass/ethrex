@@ -447,12 +447,14 @@ pub async fn snap_sync(
 
         // Capture dataset for offline profiling if requested
         if let Some(ref capture_dir) = capture_dir {
+            let chain_id = store.get_chain_config().chain_id;
             capture_snap_profile_dataset(
                 capture_dir,
                 &account_state_snapshots_dir,
                 &account_storages_snapshots_dir,
                 &pivot_header,
                 computed_state_root,
+                chain_id,
             )?;
         }
 
@@ -959,6 +961,7 @@ fn capture_snap_profile_dataset(
     account_storages_snapshots_dir: &Path,
     pivot_header: &BlockHeader,
     computed_state_root: H256,
+    chain_id: u64,
 ) -> Result<(), SyncError> {
     use crate::sync::profile::{DatasetPaths, PivotInfo, SnapProfileManifest};
 
@@ -976,7 +979,7 @@ fn capture_snap_profile_dataset(
 
     let manifest = SnapProfileManifest {
         version: 1,
-        chain_id: 1,
+        chain_id,
         rocksdb_enabled: cfg!(feature = "rocksdb"),
         pivot: PivotInfo {
             number: pivot_header.number,
