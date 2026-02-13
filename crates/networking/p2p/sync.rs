@@ -7,6 +7,8 @@
 mod code_collector;
 mod full;
 mod healing;
+#[cfg(not(feature = "rocksdb"))]
+pub mod profile;
 mod snap_sync;
 
 use crate::metrics::METRICS;
@@ -241,6 +243,8 @@ pub enum SyncError {
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]
     Snap(#[from] crate::snap::SnapError),
+    #[error("Profile error: {0}")]
+    ProfileError(String),
 }
 
 impl SyncError {
@@ -267,7 +271,8 @@ impl SyncError {
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
-            | SyncError::FileSystem(_) => false,
+            | SyncError::FileSystem(_)
+            | SyncError::ProfileError(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

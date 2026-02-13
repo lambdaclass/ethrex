@@ -770,10 +770,10 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 // ============================================================================
 
 #[cfg(not(feature = "rocksdb"))]
-type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
+pub(crate) type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
 
 #[cfg(not(feature = "rocksdb"))]
-fn compute_storage_roots(
+pub(crate) fn compute_storage_roots(
     store: Store,
     account_hash: H256,
     key_value_pairs: &[(H256, U256)],
