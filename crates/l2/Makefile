@@ -1,7 +1,9 @@
 .PHONY: help init down restart init-l1-docker down-l1-docker restart-l1-docker \
 	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
-	init-prover-sp1 init-prover-risc0 init-prover-exec build-prover clean-tee clean-tee-contract-deps \
+	init-prover-sp1 init-prover-risc0 init-prover-zisk init-prover-exec \
+	build-prover-sp1 build-prover-risc0 build-prover-zisk build-prover-exec \
+	clean-tee clean-tee-contract-deps \
 	test integration-test integration-test-gpu state-diff-test
 
 .DEFAULT_GOAL := help
@@ -133,9 +135,15 @@ else
   RISC0? :=
 endif
 
+ifdef ZISK
+  ZISK? := zisk
+else
+  ZISK? :=
+endif
+
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
-	cargo run --release --features l2,l2-sql,$(SP1?),$(RISC0?) --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features l2,l2-sql,$(SP1?),$(RISC0?),$(ZISK?) --manifest-path ../../Cargo.toml -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -195,6 +203,9 @@ build-prover-sp1:
 build-prover-risc0:
 	cargo build --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml --bin ethrex
 
+build-prover-zisk:
+	cargo build --release --features "l2,l2-sql,$(GPU?),zisk" --manifest-path ../../Cargo.toml --bin ethrex
+
 build-prover-exec:
 	cargo build --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml --bin ethrex
 
@@ -209,6 +220,12 @@ init-prover-risc0:
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend risc0
+
+init-prover-zisk:
+	cargo run --release --features "l2,l2-sql,$(GPU?),zisk" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 \
+	--backend zisk
 
 init-prover-exec:
 	cargo run --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml -- \

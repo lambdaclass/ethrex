@@ -11,6 +11,7 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
+import {IZiskVerifier} from "./interfaces/IZiskVerifier.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
 
 /// @title OnChainProposer contract.
@@ -45,6 +46,7 @@ contract OnChainProposer is
 
     uint8 internal constant SP1_VERIFIER_ID = 1;
     uint8 internal constant RISC0_VERIFIER_ID = 2;
+    uint8 internal constant ZISK_VERIFIER_ID = 3;
 
     /// @notice Aligned Layer proving system ID for SP1 in isProofVerified calls.
     /// @dev Currently only SP1 is supported by Aligned in aggregation mode.
@@ -114,6 +116,12 @@ contract OnChainProposer is
     mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
         public verificationKeys;
 
+    /// @notice ZisK verifier address. Appended to preserve storage layout.
+    address public ZISK_VERIFIER_ADDRESS;
+
+    /// @notice True if a ZisK proof is required for batch verification.
+    bool public REQUIRE_ZISK_PROOF;
+
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev The owner is expected to be the Timelock contract.
@@ -128,13 +136,16 @@ contract OnChainProposer is
         bool requireRisc0Proof,
         bool requireSp1Proof,
         bool requireTdxProof,
+        bool requireZisKProof,
         bool aligned,
         address r0verifier,
         address sp1verifier,
         address tdxverifier,
+        address ziskVerifier,
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
+        bytes32 ziskVk,
         bytes32 commitHash,
         bytes32 genesisStateRoot,
         uint256 chainId,
@@ -145,6 +156,7 @@ contract OnChainProposer is
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
         REQUIRE_SP1_PROOF = requireSp1Proof;
         REQUIRE_TDX_PROOF = requireTdxProof;
+        REQUIRE_ZISK_PROOF = requireZisKProof;
 
         require(
             !REQUIRE_RISC0_PROOF || r0verifier != address(0),
@@ -163,6 +175,11 @@ contract OnChainProposer is
             "OnChainProposer: missing TDX verifier address"
         );
         TDX_VERIFIER_ADDRESS = tdxverifier;
+        require(
+            !REQUIRE_ZISK_PROOF || ziskVerifier != address(0),
+            "OnChainProposer: missing ZisK verifier address"
+        );
+        ZISK_VERIFIER_ADDRESS = ziskVerifier;
 
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
@@ -190,8 +207,13 @@ contract OnChainProposer is
             !REQUIRE_RISC0_PROOF || risc0Vk != bytes32(0),
             "OnChainProposer: missing RISC0 verification key"
         );
+        require(
+            !REQUIRE_ZISK_PROOF || ziskVk != bytes32(0),
+            "OnChainProposer: missing ZisK verification key"
+        );
         verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
         verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
+        verificationKeys[commitHash][ZISK_VERIFIER_ID] = ziskVk;
 
         BatchCommitmentInfo storage commitment = batchCommitments[0];
         commitment.newStateRoot = genesisStateRoot;
@@ -250,6 +272,21 @@ contract OnChainProposer is
         // as we may want to disable the version
         verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
         emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function upgradeZisKVerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        require(
+            commit_hash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][ZISK_VERIFIER_ID] = new_vk;
+        emit VerificationKeyUpgraded("ZisK", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -336,6 +373,11 @@ contract OnChainProposer is
             verificationKeys[commitHash][RISC0_VERIFIER_ID] == bytes32(0)
         ) {
             revert("013"); // missing verification key for commit hash
+        } else if (
+            REQUIRE_ZISK_PROOF &&
+            verificationKeys[commitHash][ZISK_VERIFIER_ID] == bytes32(0)
+        ) {
+            revert("013"); // missing verification key for commit hash
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -366,6 +408,8 @@ contract OnChainProposer is
         bytes memory risc0BlockProof,
         //sp1
         bytes memory sp1ProofBytes,
+        //zisk
+        bytes memory ziskProofBytes,
         //tdx
         bytes memory tdxSignature
     ) external override onlyOwner whenNotPaused {
@@ -454,6 +498,20 @@ contract OnChainProposer is
             }
         }
 
+        if (REQUIRE_ZISK_PROOF) {
+            uint64[4] memory programVk = getZiskVk(batchNumber);
+            bytes memory ziskPublicValues = buildZiskPublicValues(publicInputs);
+            try
+                IZiskVerifier(ZISK_VERIFIER_ADDRESS).verifySnarkProof(
+                    programVk,
+                    ziskPublicValues,
+                    ziskProofBytes
+                )
+            {} catch {
+                revert("017"); // OnChainProposer: Invalid ZisK proof
+            }
+        }
+
         if (REQUIRE_TDX_PROOF) {
             try
                 ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
@@ -477,6 +535,52 @@ contract OnChainProposer is
         delete batchCommitments[batchNumber - 1];
 
         emit BatchVerified(lastVerifiedBatch);
+    }
+
+    /// @notice Converts a bytes32 VK to uint64[4] array for ZisK verifier.
+    /// The VK file is written in little-endian by cargo-zisk rom-vkey,
+    /// but bytes32 is read as big-endian. This swaps bytes within each uint64.
+    function toZiskProgramVk(
+        bytes32 vk
+    ) public pure returns (uint64[4] memory out) {
+        uint256 word = uint256(vk);
+        out[0] = swapBytes64(uint64(word >> 192));
+        out[1] = swapBytes64(uint64(word >> 128));
+        out[2] = swapBytes64(uint64(word >> 64));
+        out[3] = swapBytes64(uint64(word));
+    }
+
+    /// @notice Swaps bytes within a uint64 (reverses byte order).
+    function swapBytes64(uint64 x) public pure returns (uint64) {
+        return
+            ((x & 0xFF00000000000000) >> 56) |
+            ((x & 0x00FF000000000000) >> 40) |
+            ((x & 0x0000FF0000000000) >> 24) |
+            ((x & 0x000000FF00000000) >> 8) |
+            ((x & 0x00000000FF000000) << 8) |
+            ((x & 0x0000000000FF0000) << 24) |
+            ((x & 0x000000000000FF00) << 40) |
+            ((x & 0x00000000000000FF) << 56);
+    }
+
+    /// @notice Swaps bytes within each 4-byte word of a bytes32.
+    /// ZisK writes the sha256 hash as little-endian u32 words, but Solidity's
+    /// sha256() returns big-endian. This function converts between them.
+    function swapHashBytes(bytes32 hash) public pure returns (bytes32) {
+        uint256 word = uint256(hash);
+        uint256 result = 0;
+        // Process 8 chunks of 4 bytes (32 bits) each
+        for (uint256 i = 0; i < 8; i++) {
+            uint256 shift = (7 - i) * 32;
+            uint32 chunk = uint32(word >> shift);
+            // Swap bytes within the 4-byte chunk
+            uint32 swapped = ((chunk & 0xFF000000) >> 24) |
+                             ((chunk & 0x00FF0000) >> 8) |
+                             ((chunk & 0x0000FF00) << 8) |
+                             ((chunk & 0x000000FF) << 24);
+            result |= uint256(swapped) << shift;
+        }
+        return bytes32(result);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -707,6 +811,29 @@ contract OnChainProposer is
         }
 
         return publicInputs;
+    }
+
+    /// @notice Get the converted VK as uint64[4] for a batch.
+    function getZiskVk(uint256 batchNumber) public view returns (uint64[4] memory programVk) {
+        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+        bytes32 rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
+        programVk = toZiskProgramVk(rawVk);
+    }
+
+    uint256 constant ZISK_PUBLIC_VALUES_SIZE = 256;
+    /// @dev Number of u32 output values from ZisK guest (SHA256 hash = 8 x u32).
+    bytes1 constant ZISK_OUTPUT_COUNT = 0x08;
+
+    /// @notice Build the 256-byte ZisK publicValues from publicInputs bytes.
+    function buildZiskPublicValues(bytes memory publicInputs) public pure returns (bytes memory ziskPublicValues) {
+        bytes32 outputHash = sha256(publicInputs);
+        bytes32 swappedHash = swapHashBytes(outputHash);
+        ziskPublicValues = new bytes(ZISK_PUBLIC_VALUES_SIZE);
+        // Byte 3 is the least significant byte of a big-endian u32 output count header
+        ziskPublicValues[3] = ZISK_OUTPUT_COUNT;
+        for (uint256 i = 0; i < 32; i++) {
+            ziskPublicValues[4 + i] = swappedHash[i];
+        }
     }
 
     /// @inheritdoc IOnChainProposer

@@ -29,8 +29,8 @@ make -C crates/l2 build-prover-sp1 # optional: GPU=true
 
 This will generate the SP1 ELF program and verification key under:
 
-- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf`
-- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32`
+- `crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-elf`
+- `crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32`
 
 ### 2. Deploying L1 Contracts
 

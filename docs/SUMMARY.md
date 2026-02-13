@@ -55,6 +55,7 @@
   - [Overview](./l2/deployment/prover/overview.md)
   - [Run an ethrex SP1 prover](./l2/deployment/prover/sp1.md)
   - [Run an ethrex RISC0 prover](./l2/deployment/prover/risc0.md)
+  - [Run an ethrex ZisK prover](./l2/deployment/prover/zisk.md)
   - [Run an ethrex TDX prover](./l2/deployment/prover/tee.md)
   - [Run multiple provers](./l2/deployment/prover/multi-prover.md)
 - [Monitoring and metrics](./l2/monitoring.md)

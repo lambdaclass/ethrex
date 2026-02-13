@@ -50,6 +50,14 @@ interface IOnChainProposer {
         bytes32 new_vk
     ) external;
 
+    /// @notice Upgrades the ZisK verification key that represents the sequencer's code.
+    /// @param commitHash git commit hash that produced the verifier keys for this batch.
+    /// @param new_vk new verification key for ZisK verifier
+    function upgradeZisKVerificationKey(
+        bytes32 commitHash,
+        bytes32 new_vk
+    ) external;
+
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
     /// and to publish withdrawals if any.
@@ -83,6 +91,8 @@ interface IOnChainProposer {
     /// ----------------------------------------------------------------------
     /// @param sp1ProofBytes Groth16 proof
     /// ----------------------------------------------------------------------
+    /// @param ziskProofBytes ZisK SNARK proof
+    /// ----------------------------------------------------------------------
     /// @param tdxSignature TDX signature
     function verifyBatch(
         uint256 batchNumber,
@@ -90,6 +100,8 @@ interface IOnChainProposer {
         bytes memory risc0BlockProof,
         //sp1
         bytes memory sp1ProofBytes,
+        //zisk
+        bytes memory ziskProofBytes,
         //tdx
         bytes memory tdxSignature
     ) external;

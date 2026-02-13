@@ -125,6 +125,7 @@ l2-sql = ["ethrex-storage-rollup/sql"]
 sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
+zisk = ["ethrex-prover/zisk", "ethrex-l2/zisk"]
 
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]

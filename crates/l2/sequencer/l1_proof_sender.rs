@@ -46,7 +46,7 @@ use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
 #[cfg(feature = "sp1")]
 use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
-const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -418,6 +418,11 @@ impl L1ProofSender {
                 .unwrap_or(ProverType::SP1.empty_calldata())
                 .as_slice(),
             proofs
+                .get(&ProverType::ZisK)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::ZisK.empty_calldata())
+                .as_slice(),
+            proofs
                 .get(&ProverType::TDX)
                 .map(|proof| proof.calldata())
                 .unwrap_or(ProverType::TDX.empty_calldata())
@@ -438,20 +443,29 @@ impl L1ProofSender {
         if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. })) =
             send_verify_tx_result.as_ref()
         {
-            if message.contains("Invalid TDX proof") {
+            if message.contains("00g") {
+                // TDX
                 warn!("Deleting invalid TDX proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
                     .await?;
-            } else if message.contains("Invalid RISC0 proof") {
+            } else if message.contains("00c") {
+                // RISC0
                 warn!("Deleting invalid RISC0 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
                     .await?;
-            } else if message.contains("Invalid SP1 proof") {
+            } else if message.contains("00e") {
+                // SP1
                 warn!("Deleting invalid SP1 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
+                    .await?;
+            } else if message.contains("017") {
+                // ZisK
+                warn!("Deleting invalid ZisK proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::ZisK)
                     .await?;
             }
         }

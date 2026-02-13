@@ -2,16 +2,36 @@ fn main() {
     println!("cargo::rerun-if-changed=build.rs");
 
     #[cfg(all(not(clippy), feature = "risc0"))]
-    build_risc0_program();
+    {
+        // Track RISC0 guest program source changes
+        println!("cargo::rerun-if-changed=bin/risc0/src");
+        println!("cargo::rerun-if-changed=bin/risc0/Cargo.toml");
+        build_risc0_program();
+    }
 
     #[cfg(all(not(clippy), feature = "sp1"))]
-    build_sp1_program();
+    {
+        // Track SP1 guest program source changes
+        println!("cargo::rerun-if-changed=bin/sp1/src");
+        println!("cargo::rerun-if-changed=bin/sp1/Cargo.toml");
+        build_sp1_program();
+    }
 
     #[cfg(all(not(clippy), feature = "zisk"))]
-    build_zisk_program();
+    {
+        // Track ZisK guest program source changes
+        println!("cargo::rerun-if-changed=bin/zisk/src");
+        println!("cargo::rerun-if-changed=bin/zisk/Cargo.toml");
+        build_zisk_program();
+    }
 
     #[cfg(all(not(clippy), feature = "openvm"))]
-    build_openvm_program();
+    {
+        // Track OpenVM guest program source changes
+        println!("cargo::rerun-if-changed=bin/openvm/src");
+        println!("cargo::rerun-if-changed=bin/openvm/Cargo.toml");
+        build_openvm_program();
+    }
 }
 
 #[cfg(all(not(clippy), feature = "risc0"))]
@@ -111,9 +131,29 @@ fn build_zisk_program() {
     // when building in a GitHub CI environment. This command is not required if we won't generate a proof
     // so we skip it under the `ci` feature flag.
 
+    #[cfg(not(feature = "ci"))]
+    fn zisk_command() -> std::process::Command {
+        std::process::Command::new("cargo-zisk")
+    }
+
+    #[cfg(feature = "ci")]
+    fn zisk_command() -> std::process::Command {
+        let mut cmd = std::process::Command::new("cargo");
+        cmd.args(["+zisk"]);
+        cmd
+    }
+
     let mut build_command = std::process::Command::new("cargo");
     #[cfg(not(feature = "ci"))]
-    let mut setup_command = std::process::Command::new("cargo-zisk");
+    let mut setup_command = zisk_command();
+    #[cfg(not(feature = "ci"))]
+    let mut vkey_command = zisk_command();
+
+    let features = if cfg!(feature = "l2") {
+        vec!["l2".to_string()]
+    } else {
+        vec![]
+    };
 
     build_command
         .env("RUSTC", rustc_path("zisk"))
@@ -129,6 +169,9 @@ fn build_zisk_program() {
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .current_dir("./bin/zisk");
+    if !features.is_empty() {
+        build_command.arg("--features").arg(features.join(","));
+    }
     #[cfg(not(feature = "ci"))]
     {
         setup_command
@@ -143,11 +186,33 @@ fn build_zisk_program() {
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
             .current_dir("./bin/zisk");
+
+        let proving_key = std::env::var("HOME")
+            .map(|home| format!("{home}/.zisk/provingKey"))
+            .unwrap_or_else(|_| ".zisk/provingKey".to_string());
+        vkey_command
+            .env("RUSTC", rustc_path("zisk"))
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .args([
+                "rom-vkey",
+                "-e",
+                "./target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk",
+                "-k",
+                proving_key.as_str(),
+                "-o",
+                "../zisk/out/riscv64ima-zisk-vk",
+            ])
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .current_dir("./bin/zisk");
     }
 
     println!("{build_command:?}");
     #[cfg(not(feature = "ci"))]
     println!("{setup_command:?}");
+    #[cfg(not(feature = "ci"))]
+    println!("{vkey_command:?}");
 
     println!("CWD = {}", std::env::current_dir().unwrap().display());
 
@@ -161,6 +226,10 @@ fn build_zisk_program() {
     let setup_status = setup_command
         .status()
         .expect("Failed to execute zisk setup command");
+    #[cfg(not(feature = "ci"))]
+    let vkey_status = vkey_command
+        .status()
+        .expect("Failed to execute zisk rom-vkey command");
 
     let duration = start.elapsed();
 
@@ -175,6 +244,10 @@ fn build_zisk_program() {
     #[cfg(not(feature = "ci"))]
     if !setup_status.success() {
         panic!("Failed to setup compiled guest program with zisk toolchain");
+    }
+    #[cfg(not(feature = "ci"))]
+    if !vkey_status.success() {
+        panic!("Failed to generate ZisK verification key");
     }
 
     let _ = std::fs::create_dir("./bin/zisk/out");

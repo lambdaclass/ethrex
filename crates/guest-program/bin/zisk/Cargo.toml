@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 [workspace]
 
 [dependencies]
-ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.15.0" }
+ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", branch = "feature/pre-develop-0.16.0-stable" }
 sha2 = "0.10.9"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 

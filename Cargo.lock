@@ -4260,6 +4260,7 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_json",
+ "sha2",
  "sp1-prover",
  "sp1-recursion-gnark-ffi",
  "sp1-sdk",
@@ -6348,8 +6349,8 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "lib-c"
-version = "0.15.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
+version = "0.16.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?branch=feature%2Fpre-develop-0.16.0-stable#e4ac8bfe1cafe87cc95503530fcf297dbf1aea55"
 
 [[package]]
 name = "libc"
@@ -14765,8 +14766,8 @@ dependencies = [
 
 [[package]]
 name = "ziskos"
-version = "0.15.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
+version = "0.16.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?branch=feature%2Fpre-develop-0.16.0-stable#e4ac8bfe1cafe87cc95503530fcf297dbf1aea55"
 dependencies = [
  "bincode 2.0.1",
  "cfg-if 1.0.4",
