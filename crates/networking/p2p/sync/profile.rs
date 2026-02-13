@@ -72,13 +72,6 @@ pub fn load_manifest(dataset_root: &Path) -> Result<SnapProfileManifest, SyncErr
         )));
     }
 
-    // Only in-memory backend is supported for profiling
-    if manifest.rocksdb_enabled {
-        return Err(SyncError::ProfileError(
-            "rocksdb_enabled=true is not supported for offline profiling".to_string(),
-        ));
-    }
-
     // Validate that snapshot directories exist and are non-empty
     let acc_dir = dataset_root.join(&manifest.paths.account_state_snapshots_dir);
     validate_non_empty_dir(&acc_dir, "account_state_snapshots")?;
@@ -317,16 +310,13 @@ mod tests {
     }
 
     #[test]
-    fn load_manifest_rejects_rocksdb_enabled() {
+    fn load_manifest_accepts_rocksdb_enabled() {
         let dir = tempfile::tempdir().unwrap();
         write_valid_manifest(dir.path(), true, 1);
         create_snapshot_dirs(dir.path());
 
-        let err = load_manifest(dir.path()).unwrap_err();
-        assert!(
-            err.to_string().contains("rocksdb_enabled=true"),
-            "Expected rocksdb error, got: {err}"
-        );
+        let manifest = load_manifest(dir.path()).unwrap();
+        assert!(manifest.rocksdb_enabled);
     }
 
     #[test]
