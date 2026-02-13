@@ -1110,7 +1110,6 @@ fn convert_sst_accounts_to_rlp(sst_dir: &Path, rlp_dir: &Path) -> Result<(), Syn
 fn convert_sst_storages_to_rlp(sst_dir: &Path, rlp_dir: &Path) -> Result<(), SyncError> {
     use ethrex_common::U256;
     use ethrex_rlp::encode::RLPEncode;
-    use std::collections::BTreeMap;
 
     std::fs::create_dir_all(rlp_dir)
         .map_err(|e| SyncError::FileSystem(format!("Failed to create {rlp_dir:?}: {e}")))?;
@@ -1129,8 +1128,30 @@ fn convert_sst_storages_to_rlp(sst_dir: &Path, rlp_dir: &Path) -> Result<(), Syn
     db.ingest_external_file(file_paths)
         .map_err(|e| SyncError::FileSystem(format!("SST ingest failed: {e}")))?;
 
-    // Group by account hash
-    let mut accounts_map: BTreeMap<H256, Vec<(H256, U256)>> = BTreeMap::new();
+    // Stream through sorted SST entries and write RLP chunks.
+    // SST keys are (account_hash || slot_hash), so entries for the same account are contiguous.
+    // Large accounts are split across multiple chunk entries to keep files small.
+    // The replay's compute_storage_roots handles incremental trie building.
+    let chunk_size = 100_000; // storage entries per chunk
+    let mut chunk: Vec<(Vec<H256>, Vec<(H256, U256)>)> = Vec::new();
+    let mut chunk_idx = 0u64;
+    let mut entries_in_chunk = 0usize;
+    let mut current_account: Option<H256> = None;
+    let mut current_storages: Vec<(H256, U256)> = Vec::new();
+
+    let flush_chunk =
+        |chunk: &mut Vec<(Vec<H256>, Vec<(H256, U256)>)>,
+         chunk_idx: &mut u64,
+         entries_in_chunk: &mut usize,
+         rlp_dir: &Path| {
+            let path = rlp_dir.join(format!("account_storages_chunk.rlp.{chunk_idx}"));
+            std::fs::write(&path, chunk.encode_to_vec())
+                .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+            chunk.clear();
+            *entries_in_chunk = 0;
+            *chunk_idx += 1;
+            Ok::<(), SyncError>(())
+        };
 
     for item in db.full_iterator(rocksdb::IteratorMode::Start) {
         let (key, value) =
@@ -1138,45 +1159,52 @@ fn convert_sst_storages_to_rlp(sst_dir: &Path, rlp_dir: &Path) -> Result<(), Syn
         let account_hash = H256::from_slice(&key[0..32]);
         let slot_hash = H256::from_slice(&key[32..64]);
         let slot_value = U256::decode(&value).map_err(SyncError::Rlp)?;
-        accounts_map
-            .entry(account_hash)
-            .or_default()
-            .push((slot_hash, slot_value));
+
+        // When account changes, flush accumulated storages for the previous account
+        if current_account != Some(account_hash) {
+            if let Some(prev_account) = current_account {
+                if !current_storages.is_empty() {
+                    let n = current_storages.len();
+                    chunk.push((vec![prev_account], std::mem::take(&mut current_storages)));
+                    entries_in_chunk += n;
+                }
+            }
+            current_account = Some(account_hash);
+        }
+
+        current_storages.push((slot_hash, slot_value));
+
+        // Split large accounts: flush current storages when they reach chunk_size
+        if current_storages.len() >= chunk_size {
+            let n = current_storages.len();
+            chunk.push((vec![account_hash], std::mem::take(&mut current_storages)));
+            entries_in_chunk += n;
+        }
+
+        // Write chunk file when enough entries accumulated
+        if entries_in_chunk >= chunk_size {
+            flush_chunk(&mut chunk, &mut chunk_idx, &mut entries_in_chunk, rlp_dir)?;
+        }
     }
 
-    // Write as AccountsWithStorage chunks (matching non-rocksdb format)
-    // The non-rocksdb replay expects: Vec<(Vec<H256>, Vec<(H256, U256)>)>
-    let mut chunk: Vec<(Vec<H256>, Vec<(H256, U256)>)> = Vec::new();
-    let mut chunk_idx = 0u64;
-    let mut entries_in_chunk = 0usize;
-    let chunk_size = 100_000; // storage entries per chunk
-
-    for (account_hash, storages) in accounts_map {
-        let n = storages.len();
-        chunk.push((vec![account_hash], storages));
-        entries_in_chunk += n;
-
-        if entries_in_chunk >= chunk_size {
-            let path = rlp_dir.join(format!("account_storages_chunk.rlp.{chunk_idx}"));
-            std::fs::write(&path, chunk.encode_to_vec())
-                .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
-            chunk.clear();
-            entries_in_chunk = 0;
-            chunk_idx += 1;
+    // Flush remaining storages for the last account
+    if let Some(last_account) = current_account {
+        if !current_storages.is_empty() {
+            chunk.push((vec![last_account], current_storages));
         }
     }
     if !chunk.is_empty() {
         let path = rlp_dir.join(format!("account_storages_chunk.rlp.{chunk_idx}"));
         std::fs::write(&path, chunk.encode_to_vec())
             .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+        chunk_idx += 1;
     }
 
     drop(db);
     let _ = std::fs::remove_dir_all(&tmp_db_dir);
 
     info!(
-        "Converted storage SST files to {} RLP chunks in {rlp_dir:?}",
-        chunk_idx + 1
+        "Converted storage SST files to {chunk_idx} RLP chunks in {rlp_dir:?}",
     );
     Ok(())
 }
