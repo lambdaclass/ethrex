@@ -109,6 +109,18 @@ impl Network {
         Network::PublicNetwork(PublicNetwork::Mainnet)
     }
 
+    /// Returns the directory suffix for this network, if any.
+    /// Used to separate database directories for different public networks.
+    pub fn datadir_suffix(&self) -> Option<&str> {
+        match self {
+            Network::PublicNetwork(PublicNetwork::Mainnet) => Some("mainnet"),
+            Network::PublicNetwork(PublicNetwork::Hoodi) => Some("hoodi"),
+            Network::PublicNetwork(PublicNetwork::Holesky) => Some("holesky"),
+            Network::PublicNetwork(PublicNetwork::Sepolia) => Some("sepolia"),
+            _ => None,
+        }
+    }
+
     pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
         match self {
             Network::PublicNetwork(public_network) => {
@@ -208,5 +220,35 @@ mod tests {
         Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Sepolia).get_bootnodes();
+    }
+
+    #[test]
+    fn test_datadir_suffix_for_public_networks() {
+        assert_eq!(
+            Network::PublicNetwork(PublicNetwork::Mainnet).datadir_suffix(),
+            Some("mainnet")
+        );
+        assert_eq!(
+            Network::PublicNetwork(PublicNetwork::Hoodi).datadir_suffix(),
+            Some("hoodi")
+        );
+        assert_eq!(
+            Network::PublicNetwork(PublicNetwork::Holesky).datadir_suffix(),
+            Some("holesky")
+        );
+        assert_eq!(
+            Network::PublicNetwork(PublicNetwork::Sepolia).datadir_suffix(),
+            Some("sepolia")
+        );
+    }
+
+    #[test]
+    fn test_datadir_suffix_returns_none_for_non_public_networks() {
+        assert_eq!(Network::LocalDevnet.datadir_suffix(), None);
+        assert_eq!(Network::LocalDevnetL2.datadir_suffix(), None);
+        assert_eq!(
+            Network::GenesisPath(PathBuf::from("/custom/genesis.json")).datadir_suffix(),
+            None
+        );
     }
 }
