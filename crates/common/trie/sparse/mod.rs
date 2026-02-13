@@ -3,7 +3,7 @@ mod hash;
 mod tests;
 mod update;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use ethereum_types::H256;
 
@@ -188,6 +188,10 @@ pub struct SparseTrie {
     lower: Vec<LowerSubtrie>,
     /// Tracks which paths need hash recomputation.
     prefix_set: PrefixSet,
+    /// Tracks full paths of leaves that have been removed.
+    /// These produce `(path, vec![])` deletion markers in the layer cache,
+    /// preventing stale reads via the FKV shortcut in `Trie::get()`.
+    removed_leaves: FxHashSet<Vec<u8>>,
 }
 
 impl SparseTrie {
@@ -201,6 +205,7 @@ impl SparseTrie {
             upper: SparseSubtrie::new_empty(),
             lower,
             prefix_set: PrefixSet::new(),
+            removed_leaves: FxHashSet::default(),
         }
     }
 
@@ -241,6 +246,8 @@ impl SparseTrie {
         provider: &dyn SparseTrieProvider,
     ) -> Result<(), TrieError> {
         self.prefix_set.insert(&full_path);
+        // Cancel any prior removal for this path (handles remove-then-reinsert)
+        self.removed_leaves.remove(full_path.as_ref());
         update::update_leaf(&mut self.upper, &mut self.lower, full_path, value, provider)
     }
 
@@ -251,6 +258,9 @@ impl SparseTrie {
         provider: &dyn SparseTrieProvider,
     ) -> Result<(), TrieError> {
         self.prefix_set.insert(&full_path);
+        // Track removal so collect_updates produces a deletion marker.
+        // This prevents stale reads via the FKV shortcut in Trie::get().
+        self.removed_leaves.insert(full_path.as_ref().to_vec());
         update::remove_leaf(&mut self.upper, &mut self.lower, full_path, provider)
     }
 
@@ -263,12 +273,17 @@ impl SparseTrie {
     /// Collect modified nodes as (path, RLP-encoded node) pairs
     /// for persistence to the database.
     ///
-    /// Produces two kinds of entries per the old Trie's commit format:
+    /// Produces three kinds of entries:
     /// 1. Node entries: `(position_path, RLP-encoded node)` → goes to NODES table
     /// 2. Leaf value entries: `(full_path, raw_value)` → goes to FKV table
+    /// 3. Deletion entries: `(full_path, vec![])` → marks removed leaves in FKV
     ///
     /// Hash nodes (blinded nodes that were never expanded) are skipped, as they
     /// are already persisted in the database.
+    ///
+    /// Deletion entries are critical for the layer cache: without them,
+    /// `Trie::get()` would find stale values from prior blocks via the
+    /// FKV shortcut.
     pub fn collect_updates(&self) -> Vec<(Nibbles, Vec<u8>)> {
         let mut updates = Vec::new();
 
@@ -298,17 +313,13 @@ impl SparseTrie {
             }
         }
 
-        updates
-    }
+        // Append deletion markers for removed leaves.
+        // These correspond to the old Trie's `pending_removal` entries.
+        for path in &self.removed_leaves {
+            updates.push((Nibbles::from_hex(path.clone()), vec![]));
+        }
 
-    /// Collect node removals — paths that were in the trie but are now gone.
-    /// Returns paths with empty Vec<u8> to signal deletion.
-    pub fn collect_removals(&self) -> Vec<(Nibbles, Vec<u8>)> {
-        // Removals are tracked implicitly: nodes that existed in the DB
-        // but are no longer in our node maps need to be removed.
-        // For now, the caller handles this via the old approach of tracking
-        // pending_removal in the Trie struct. We'll integrate this later.
-        Vec::new()
+        updates
     }
 }
 
