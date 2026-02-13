@@ -2581,6 +2581,16 @@ impl Store {
         Ok(())
     }
 
+    /// Switches the storage backend to sync mode for higher write throughput.
+    pub fn set_sync_mode(&self) -> Result<(), StoreError> {
+        self.backend.set_sync_mode()
+    }
+
+    /// Restores normal storage backend settings and triggers compaction.
+    pub fn set_normal_mode(&self) -> Result<(), StoreError> {
+        self.backend.set_normal_mode()
+    }
+
     pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
         Ok(self.db_path.clone())
     }
