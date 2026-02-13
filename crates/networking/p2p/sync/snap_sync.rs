@@ -249,6 +249,11 @@ pub async fn snap_sync(
     block_sync_state: &mut SnapBlockSyncState,
     datadir: &Path,
 ) -> Result<(), SyncError> {
+    let capture_dir = std::env::var("ETHREX_SNAP_PROFILE_CAPTURE_DIR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from);
+
     // snap-sync: launch tasks to fetch blocks and state in parallel
     // - Fetch each block's body and its receipt via eth p2p requests
     // - Fetch the pivot block's state via snap p2p requests
@@ -439,6 +444,28 @@ pub async fn snap_sync(
         *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
         info!("Finished storing storage tries");
+
+        // Capture dataset for offline profiling if requested
+        #[cfg(not(feature = "rocksdb"))]
+        if let Some(ref capture_dir) = capture_dir {
+            capture_snap_profile_dataset(
+                capture_dir,
+                &account_state_snapshots_dir,
+                &account_storages_snapshots_dir,
+                &pivot_header,
+                computed_state_root,
+            )?;
+        }
+
+        // Clean up snapshot directories (skipped when capturing so the data
+        // remains available for the copy above — the dirs are read-only during
+        // capture).
+        if capture_dir.is_none() {
+            std::fs::remove_dir_all(&account_state_snapshots_dir)
+                .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
+            std::fs::remove_dir_all(&account_storages_snapshots_dir)
+                .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+        }
     }
 
     *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
@@ -859,8 +886,6 @@ async fn insert_accounts(
 
         computed_state_root = current_state_root?;
     }
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     info!("computed_state_root {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
@@ -926,9 +951,80 @@ async fn insert_storages(
             .await?;
     }
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    Ok(())
+}
 
+// ============================================================================
+// Dataset capture for offline profiling (non-rocksdb)
+// ============================================================================
+
+#[cfg(not(feature = "rocksdb"))]
+fn capture_snap_profile_dataset(
+    capture_dir: &Path,
+    account_state_snapshots_dir: &Path,
+    account_storages_snapshots_dir: &Path,
+    pivot_header: &BlockHeader,
+    computed_state_root: H256,
+) -> Result<(), SyncError> {
+    use crate::sync::profile::{DatasetPaths, PivotInfo, SnapProfileManifest};
+
+    std::fs::create_dir_all(capture_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to create capture dir: {e}")))?;
+
+    copy_dir_recursive(
+        account_state_snapshots_dir,
+        &capture_dir.join("account_state_snapshots"),
+    )?;
+    copy_dir_recursive(
+        account_storages_snapshots_dir,
+        &capture_dir.join("account_storages_snapshots"),
+    )?;
+
+    let manifest = SnapProfileManifest {
+        version: 1,
+        chain_id: 1,
+        rocksdb_enabled: false,
+        pivot: PivotInfo {
+            number: pivot_header.number,
+            hash: pivot_header.hash(),
+            state_root: pivot_header.state_root,
+            timestamp: pivot_header.timestamp,
+        },
+        post_accounts_insert_state_root: computed_state_root,
+        paths: DatasetPaths {
+            account_state_snapshots_dir: "account_state_snapshots".to_string(),
+            account_storages_snapshots_dir: "account_storages_snapshots".to_string(),
+        },
+    };
+
+    let manifest_json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to serialize manifest: {e}")))?;
+    std::fs::write(capture_dir.join("manifest.json"), manifest_json)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to write manifest: {e}")))?;
+
+    info!("Snap profile dataset captured to {capture_dir:?}");
+    Ok(())
+}
+
+#[cfg(not(feature = "rocksdb"))]
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), SyncError> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to create {dst:?}: {e}")))?;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to read {src:?}: {e}")))?
+    {
+        let entry =
+            entry.map_err(|e| SyncError::FileSystem(format!("Failed to read entry: {e}")))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| {
+                SyncError::FileSystem(format!("Failed to copy {src_path:?} to {dst_path:?}: {e}"))
+            })?;
+        }
+    }
     Ok(())
 }
 
