@@ -520,7 +520,7 @@ pub async fn snap_sync(
                         .ok_or(SyncError::BytecodesNotFound)?;
 
                     store
-                        .write_account_code_batch(
+                        .write_account_code_batch_no_wal(
                             code_hashes_to_download
                                 .drain(..)
                                 .zip(bytecodes)
@@ -542,7 +542,7 @@ pub async fn snap_sync(
             .await?
             .ok_or(SyncError::BytecodesNotFound)?;
         store
-            .write_account_code_batch(
+            .write_account_code_batch_no_wal(
                 code_hashes_to_download
                     .drain(..)
                     .zip(bytecodes)
@@ -775,12 +775,12 @@ fn compute_storage_roots(
 ) -> Result<StorageRoots, SyncError> {
     use ethrex_trie::{Nibbles, Node};
 
-    let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    let storage_trie = store.open_direct_storage_trie_no_wal(account_hash, *EMPTY_TRIE_HASH)?;
     let trie_hash = match storage_trie.db().get(Nibbles::default())? {
         Some(noderlp) => Node::decode(&noderlp)?.compute_hash().finalize(),
         None => *EMPTY_TRIE_HASH,
     };
-    let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
+    let mut storage_trie = store.open_direct_storage_trie_no_wal(account_hash, trie_hash)?;
 
     for (hashed_key, value) in key_value_pairs {
         if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
@@ -841,7 +841,7 @@ async fn insert_accounts(
         let store_clone = store.clone();
         let current_state_root: Result<H256, SyncError> =
             tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
+                let mut trie = store_clone.open_direct_state_trie_no_wal(computed_state_root)?;
 
                 for (account_hash, account) in account_states_snapshot {
                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
@@ -917,7 +917,7 @@ async fn insert_storages(
         info!("Writing to db");
 
         store
-            .write_storage_trie_nodes_batch(storage_trie_node_changes)
+            .write_storage_trie_nodes_batch_no_wal(storage_trie_node_changes)
             .await?;
     }
 
@@ -942,7 +942,7 @@ async fn insert_accounts(
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_direct_state_trie_no_wal(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
@@ -1069,7 +1069,7 @@ async fn insert_storages(
             (
                 account_hash,
                 store
-                    .open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                    .open_direct_storage_trie_no_wal(account_hash, *EMPTY_TRIE_HASH)
                     .expect("Should be able to open trie"),
             )
         })

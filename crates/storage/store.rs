@@ -1137,6 +1137,24 @@ impl Store {
         &self,
         storage_trie_nodes: StorageUpdates,
     ) -> Result<(), StoreError> {
+        self.write_storage_trie_nodes_batch_inner(storage_trie_nodes, false)
+            .await
+    }
+
+    /// Like `write_storage_trie_nodes_batch` but with WAL disabled for snap sync.
+    pub async fn write_storage_trie_nodes_batch_no_wal(
+        &self,
+        storage_trie_nodes: StorageUpdates,
+    ) -> Result<(), StoreError> {
+        self.write_storage_trie_nodes_batch_inner(storage_trie_nodes, true)
+            .await
+    }
+
+    async fn write_storage_trie_nodes_batch_inner(
+        &self,
+        storage_trie_nodes: StorageUpdates,
+        no_wal: bool,
+    ) -> Result<(), StoreError> {
         let mut txn = self.backend.begin_write()?;
         tokio::task::spawn_blocking(move || {
             for (address_hash, nodes) in storage_trie_nodes {
@@ -1149,7 +1167,11 @@ impl Store {
                     }
                 }
             }
-            txn.commit()
+            if no_wal {
+                txn.commit_no_wal()
+            } else {
+                txn.commit()
+            }
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1161,6 +1183,24 @@ impl Store {
         &self,
         account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
+        self.write_account_code_batch_inner(account_codes, false)
+            .await
+    }
+
+    /// Like `write_account_code_batch` but with WAL disabled for snap sync.
+    pub async fn write_account_code_batch_no_wal(
+        &self,
+        account_codes: Vec<(H256, Code)>,
+    ) -> Result<(), StoreError> {
+        self.write_account_code_batch_inner(account_codes, true)
+            .await
+    }
+
+    async fn write_account_code_batch_inner(
+        &self,
+        account_codes: Vec<(H256, Code)>,
+        no_wal: bool,
+    ) -> Result<(), StoreError> {
         let mut code_batch_items = Vec::new();
         let mut metadata_batch_items = Vec::new();
 
@@ -1171,11 +1211,17 @@ impl Store {
             metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
         }
 
-        // Write both batches
-        self.write_batch_async(ACCOUNT_CODES, code_batch_items)
-            .await?;
-        self.write_batch_async(ACCOUNT_CODE_METADATA, metadata_batch_items)
-            .await
+        if no_wal {
+            self.write_batch_async_no_wal(ACCOUNT_CODES, code_batch_items)
+                .await?;
+            self.write_batch_async_no_wal(ACCOUNT_CODE_METADATA, metadata_batch_items)
+                .await
+        } else {
+            self.write_batch_async(ACCOUNT_CODES, code_batch_items)
+                .await?;
+            self.write_batch_async(ACCOUNT_CODE_METADATA, metadata_batch_items)
+                .await
+        }
     }
 
     // Helper methods for async operations with spawn_blocking
@@ -1247,12 +1293,33 @@ impl Store {
         table: &'static str,
         batch_ops: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
+        self.write_batch_async_inner(table, batch_ops, false).await
+    }
+
+    pub async fn write_batch_async_no_wal(
+        &self,
+        table: &'static str,
+        batch_ops: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
+        self.write_batch_async_inner(table, batch_ops, true).await
+    }
+
+    async fn write_batch_async_inner(
+        &self,
+        table: &'static str,
+        batch_ops: Vec<(Vec<u8>, Vec<u8>)>,
+        no_wal: bool,
+    ) -> Result<(), StoreError> {
         let backend = self.backend.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut txn = backend.begin_write()?;
             txn.put_batch(table, batch_ops)?;
-            txn.commit()
+            if no_wal {
+                txn.commit_no_wal()
+            } else {
+                txn.commit()
+            }
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -2451,6 +2518,17 @@ impl Store {
         ))
     }
 
+    /// Like `open_direct_state_trie` but with WAL disabled for snap sync writes.
+    pub fn open_direct_state_trie_no_wal(&self, state_root: H256) -> Result<Trie, StoreError> {
+        Ok(Trie::open(
+            Box::new(
+                BackendTrieDB::new_for_accounts(self.backend.clone(), self.last_written()?)?
+                    .with_no_wal(),
+            ),
+            state_root,
+        ))
+    }
+
     /// Obtain a state trie locked for reads from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
@@ -2508,6 +2586,25 @@ impl Store {
                 account_hash,
                 self.last_written()?,
             )?),
+            storage_root,
+        ))
+    }
+
+    /// Like `open_direct_storage_trie` but with WAL disabled for snap sync writes.
+    pub fn open_direct_storage_trie_no_wal(
+        &self,
+        account_hash: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        Ok(Trie::open(
+            Box::new(
+                BackendTrieDB::new_for_account_storage(
+                    self.backend.clone(),
+                    account_hash,
+                    self.last_written()?,
+                )?
+                .with_no_wal(),
+            ),
             storage_root,
         ))
     }

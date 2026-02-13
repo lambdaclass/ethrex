@@ -27,7 +27,7 @@ use crate::{
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     snap::{
         SnapError,
-        constants::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
+        constants::{MAX_IN_FLIGHT_REQUESTS, NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
         request_state_trienodes,
     },
     sync::{AccountStorageRoots, SyncError, code_collector::CodeHashCollector},
@@ -97,7 +97,6 @@ async fn heal_state_trie(
     let mut downloads_success = 0;
     let mut downloads_fail = 0;
     let mut leafs_healed = 0;
-    let mut empty_try_recv: u64 = 0;
     let mut heals_per_cycle: u64 = 0;
     let mut nodes_to_write: Vec<(Nibbles, Node)> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
@@ -110,7 +109,7 @@ async fn heal_state_trie(
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
 
-    let mut logged_no_free_peers_count = 0;
+    let mut logged_no_free_peers_count: u32 = 0;
 
     loop {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
@@ -126,9 +125,6 @@ async fn heal_state_trie(
             METRICS
                 .global_state_trie_leafs_healed
                 .store(*global_leafs_healed, Ordering::Relaxed);
-            METRICS
-                .healing_empty_try_recv
-                .store(empty_try_recv, Ordering::Relaxed);
             debug!(
                 status = if is_stale { "stopping" } else { "in progress" },
                 snap_peers = num_peers,
@@ -146,123 +142,22 @@ async fn heal_state_trie(
             downloads_fail = 0;
         }
 
-        // Attempt to receive a response from one of the peers
-        // TODO: this match response should score the appropiate peers
-        let res = task_receiver.try_recv();
-        if res.is_err() {
-            empty_try_recv += 1;
-        }
-        if let Ok((peer_id, response, batch)) = res {
-            inflight_tasks -= 1;
-            match response {
-                // If the peers responded with nodes, add them to the nodes_to_heal vector
-                Ok(nodes) => {
-                    for (node, meta) in nodes.iter().zip(batch.iter()) {
-                        if let Node::Leaf(node) = node {
-                            let account = AccountState::decode(&node.value)?;
-                            let account_hash =
-                                H256::from_slice(&meta.path.concat(&node.partial).to_bytes());
-
-                            // // Collect valid code hash
-                            if account.code_hash != *EMPTY_KECCACK_HASH {
-                                code_hash_collector.add(account.code_hash);
-                                code_hash_collector.flush_if_needed().await?;
-                            }
-
-                            storage_accounts.healed_accounts.insert(account_hash);
-                            let old_value = storage_accounts
-                                .accounts_with_storage_root
-                                .get_mut(&account_hash);
-                            if let Some((old_root, _)) = old_value {
-                                *old_root = None;
-                            }
-                        }
-                    }
-                    leafs_healed += nodes
-                        .iter()
-                        .filter(|node| matches!(node, Node::Leaf(_)))
-                        .count();
-                    *global_leafs_healed += nodes
-                        .iter()
-                        .filter(|node| matches!(node, Node::Leaf(_)))
-                        .count() as u64;
-                    nodes_to_heal.push((nodes, batch));
-                    downloads_success += 1;
-                    peers.peer_table.record_success(&peer_id).await?;
-                }
-                // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
-                Err(_) => {
-                    // TODO: Check if it's faster to reach the leafs of the trie
-                    // by doing batch.extend(paths);paths = batch
-                    // Or with a VecDequeue
-                    paths.extend(batch);
-                    downloads_fail += 1;
-                    peers.peer_table.record_failure(&peer_id).await?;
-                }
-            }
-        }
-
+        // Dispatch multiple batches concurrently (up to MAX_IN_FLIGHT_REQUESTS)
         if !is_stale {
-            let batch: Vec<RequestMetadata> =
-                paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
-            if !batch.is_empty() {
-                longest_path_seen = usize::max(
-                    batch
-                        .iter()
-                        .map(|request_metadata| request_metadata.path.len())
-                        .max()
-                        .unwrap_or_default(),
-                    longest_path_seen,
-                );
-                let Some((peer_id, connection)) = peers
-                    .peer_table
-                    .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
-                    .await
-                    .inspect_err(
-                        |err| debug!(err=?err, "Error requesting a peer to perform state healing"),
-                    )
-                    .unwrap_or(None)
-                else {
-                    // If there are no peers available, re-add the batch to the paths vector, and continue
-                    paths.extend(batch);
-
-                    // Log ~ once every 10 seconds
-                    if logged_no_free_peers_count == 0 {
-                        trace!("We are missing peers in heal_state_trie");
-                        logged_no_free_peers_count = 1000;
-                    }
-                    logged_no_free_peers_count -= 1;
-
-                    // Sleep a bit to avoid busy polling
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    continue;
-                };
-
-                let tx = task_sender.clone();
-                inflight_tasks += 1;
-
-                let peer_table = peers.peer_table.clone();
-                tokio::spawn(async move {
-                    // TODO: check errors to determine whether the current block is stale
-                    let response = request_state_trienodes(
-                        peer_id,
-                        connection,
-                        peer_table,
-                        state_root,
-                        batch.clone(),
-                    )
-                    .await;
-                    // TODO: add error handling
-                    tx.send((peer_id, response, batch)).await.inspect_err(
-                        |err| debug!(error=?err, "Failed to send state trie nodes response"),
-                    )
-                });
-                tokio::task::yield_now().await;
-            }
+            dispatch_state_healing_batches(
+                &mut paths,
+                &mut inflight_tasks,
+                &mut longest_path_seen,
+                &mut peers,
+                state_root,
+                &task_sender,
+                &mut logged_no_free_peers_count,
+            )
+            .await;
         }
 
-        // If there is at least one "batch" of nodes to heal, heal it
-        if let Some((nodes, batch)) = nodes_to_heal.pop() {
+        // Process all pending healed node batches
+        while let Some((nodes, batch)) = nodes_to_heal.pop() {
             heals_per_cycle += 1;
             let return_paths = heal_state_batch(
                 batch,
@@ -299,7 +194,7 @@ async fn heal_state_trie(
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
                 let trie_db = store
-                    .open_direct_state_trie(*EMPTY_TRIE_HASH)
+                    .open_direct_state_trie_no_wal(*EMPTY_TRIE_HASH)
                     .expect("Store should open");
                 let db = trie_db.db();
                 // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
@@ -326,6 +221,61 @@ async fn heal_state_trie(
             db_joinset.join_all().await;
             break;
         }
+
+        // Wait for a response or check staleness periodically
+        if inflight_tasks > 0 {
+            tokio::select! {
+                Some((peer_id, response, batch)) = task_receiver.recv() => {
+                    inflight_tasks -= 1;
+                    match response {
+                        Ok(nodes) => {
+                            for (node, meta) in nodes.iter().zip(batch.iter()) {
+                                if let Node::Leaf(node) = node {
+                                    let account = AccountState::decode(&node.value)?;
+                                    let account_hash =
+                                        H256::from_slice(&meta.path.concat(&node.partial).to_bytes());
+
+                                    if account.code_hash != *EMPTY_KECCACK_HASH {
+                                        code_hash_collector.add(account.code_hash);
+                                        code_hash_collector.flush_if_needed().await?;
+                                    }
+
+                                    storage_accounts.healed_accounts.insert(account_hash);
+                                    let old_value = storage_accounts
+                                        .accounts_with_storage_root
+                                        .get_mut(&account_hash);
+                                    if let Some((old_root, _)) = old_value {
+                                        *old_root = None;
+                                    }
+                                }
+                            }
+                            leafs_healed += nodes
+                                .iter()
+                                .filter(|node| matches!(node, Node::Leaf(_)))
+                                .count();
+                            *global_leafs_healed += nodes
+                                .iter()
+                                .filter(|node| matches!(node, Node::Leaf(_)))
+                                .count() as u64;
+                            nodes_to_heal.push((nodes, batch));
+                            downloads_success += 1;
+                            peers.peer_table.record_success(&peer_id).await?;
+                        }
+                        Err(_) => {
+                            paths.extend(batch);
+                            downloads_fail += 1;
+                            peers.peer_table.record_failure(&peer_id).await?;
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                    // Timeout: re-check staleness and try dispatching again
+                }
+            }
+        } else if !paths.is_empty() {
+            // No peers available for dispatching, back off briefly
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
     debug!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle. If there are no paths left, clear it in case pivot becomes stale during storage
@@ -333,6 +283,76 @@ async fn heal_state_trie(
     // bytecode_sender.send(vec![]).await?;
     // bytecode_fetcher_handle.await??;
     Ok(paths.is_empty())
+}
+
+/// Dispatches multiple state healing batches concurrently, up to MAX_IN_FLIGHT_REQUESTS.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_state_healing_batches(
+    paths: &mut Vec<RequestMetadata>,
+    inflight_tasks: &mut u64,
+    longest_path_seen: &mut usize,
+    peers: &mut PeerHandler,
+    state_root: H256,
+    task_sender: &tokio::sync::mpsc::Sender<(
+        H256,
+        Result<Vec<Node>, SnapError>,
+        Vec<RequestMetadata>,
+    )>,
+    logged_no_free_peers_count: &mut u32,
+) {
+    while (*inflight_tasks as u32) < MAX_IN_FLIGHT_REQUESTS && !paths.is_empty() {
+        let batch: Vec<RequestMetadata> =
+            paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+
+        *longest_path_seen = usize::max(
+            batch
+                .iter()
+                .map(|request_metadata| request_metadata.path.len())
+                .max()
+                .unwrap_or_default(),
+            *longest_path_seen,
+        );
+
+        let Some((peer_id, connection)) = peers
+            .peer_table
+            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .await
+            .inspect_err(
+                |err| debug!(err=?err, "Error requesting a peer to perform state healing"),
+            )
+            .unwrap_or(None)
+        else {
+            // No peers available, put batch back and stop dispatching
+            paths.extend(batch);
+            if *logged_no_free_peers_count == 0 {
+                trace!("We are missing peers in heal_state_trie");
+                *logged_no_free_peers_count = 1000;
+            }
+            *logged_no_free_peers_count -= 1;
+            break;
+        };
+
+        let tx = task_sender.clone();
+        *inflight_tasks += 1;
+        let peer_table = peers.peer_table.clone();
+
+        tokio::spawn(async move {
+            let response = request_state_trienodes(
+                peer_id,
+                connection,
+                peer_table,
+                state_root,
+                batch.clone(),
+            )
+            .await;
+            let _ = tx
+                .send((peer_id, response, batch))
+                .await
+                .inspect_err(
+                    |err| debug!(error=?err, "Failed to send state trie nodes response"),
+                );
+        });
+    }
 }
 
 /// Receives a set of state trie paths, fetches their respective nodes, stores them,

@@ -12,7 +12,7 @@ use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
-    WriteBatch,
+    WriteBatch, WriteOptions,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -359,6 +359,15 @@ impl StorageWriteBatch for RocksDBWriteTx {
         let batch = std::mem::take(&mut self.batch);
         self.db
             .write(batch)
+            .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))
+    }
+
+    fn commit_no_wal(&mut self) -> Result<(), StoreError> {
+        let batch = std::mem::take(&mut self.batch);
+        let mut write_opts = WriteOptions::default();
+        write_opts.disable_wal(true);
+        self.db
+            .write_opt(batch, &write_opts)
             .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))
     }
 }
