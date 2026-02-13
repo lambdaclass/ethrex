@@ -194,7 +194,7 @@ pub async fn heal_storage_trie(
                 roots_healed = state.roots_healed,
                 successful_downloads = state.successful_downloads,
                 successful_downloads_percentage = state.successful_downloads as f64
-                    / (state.succesful_downloads as f64 + state.failed_downloads as f64),
+                    / (state.successful_downloads as f64 + state.failed_downloads as f64),
                 empty_count = state.empty_count,
                 disconnected_count = state.disconnected_count,
                 "We are storage healing",
