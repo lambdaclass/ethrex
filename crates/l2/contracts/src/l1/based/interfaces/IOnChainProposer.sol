@@ -6,6 +6,51 @@ pragma solidity =0.8.31;
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
 /// by the proposer to commit batches of l2 blocks and verify proofs.
 interface IOnChainProposer {
+    // Initialization errors
+    error MissingRisc0Verifier();
+    error MissingSp1Verifier();
+    error MissingTdxVerifier();
+    error AlignedModeRequiresSp1();
+    error AlignedModeDoesNotSupportRisc0();
+    error CommitHashIsZero();
+    error MissingSp1VerificationKey();
+    error MissingRisc0VerificationKey();
+    error BridgeIsZeroAddress();
+    error BridgeIsContractAddress();
+    error AlreadyInitialized();
+    error SequencerRegistryIsZeroAddress();
+    error SequencerRegistryIsContractAddress();
+
+    // Commit errors
+    error BatchNumberNotSuccessor();
+    error BatchAlreadyCommitted();
+    error LastBlockHashIsZero();
+    error InvalidPrivilegedTransactionLogs();
+    error InvalidL2MessageRollingHash();
+    error ValidiumBlobPublished();
+    error RollupBlobNotPublished();
+    error MissingVerificationKeyForCommit();
+
+    // Verify errors
+    error UseAlignedVerification();
+    error UseSmartContractVerification();
+    error BatchNotCommitted();
+    error ExpiredPrivilegedTransactionDeadline();
+    error InvalidRisc0Proof();
+    error InvalidSp1Proof();
+    error InvalidTdxProof();
+
+    // Aligned verify errors
+    error IncorrectFirstBatchNumber();
+    error LastBatchExceedsCommitted();
+    error Sp1ProofArrayLengthMismatch();
+    error Risc0ProofArrayLengthMismatch();
+    error AlignedAggregatorCallFailed();
+    error AlignedProofVerificationFailed();
+
+    // Access control errors
+    error CallerHasNoSequencingRights();
+
     /// @notice The latest committed batch number.
     /// @return The latest committed batch number as a uint256.
     function lastCommittedBatch() external view returns (uint256);

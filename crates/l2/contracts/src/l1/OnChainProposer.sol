@@ -146,50 +146,32 @@ contract OnChainProposer is
         REQUIRE_SP1_PROOF = requireSp1Proof;
         REQUIRE_TDX_PROOF = requireTdxProof;
 
-        require(
-            !REQUIRE_RISC0_PROOF || r0verifier != address(0),
-            "OnChainProposer: missing RISC0 verifier address"
-        );
+        if (REQUIRE_RISC0_PROOF && r0verifier == address(0))
+            revert MissingRisc0Verifier();
         RISC0_VERIFIER_ADDRESS = r0verifier;
         // In Aligned mode, SP1 proofs are verified through the AlignedProofAggregator,
         // not through a direct SP1 verifier contract, so we don't require sp1verifier.
-        require(
-            !REQUIRE_SP1_PROOF || aligned || sp1verifier != address(0),
-            "OnChainProposer: missing SP1 verifier address"
-        );
+        if (REQUIRE_SP1_PROOF && !aligned && sp1verifier == address(0))
+            revert MissingSp1Verifier();
         SP1_VERIFIER_ADDRESS = sp1verifier;
-        require(
-            !REQUIRE_TDX_PROOF || tdxverifier != address(0),
-            "OnChainProposer: missing TDX verifier address"
-        );
+        if (REQUIRE_TDX_PROOF && tdxverifier == address(0))
+            revert MissingTdxVerifier();
         TDX_VERIFIER_ADDRESS = tdxverifier;
 
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         // Aligned mode requires SP1 proofs to be enabled
-        require(
-            !aligned || requireSp1Proof,
-            "OnChainProposer: Aligned mode requires SP1 proof"
-        );
+        if (aligned && !requireSp1Proof) revert AlignedModeRequiresSp1();
         // Aligned mode does not support RISC0 proofs (not yet available in aggregation mode)
-        require(
-            !aligned || !requireRisc0Proof,
-            "OnChainProposer: Aligned mode does not support RISC0 proof"
-        );
+        if (aligned && requireRisc0Proof)
+            revert AlignedModeDoesNotSupportRisc0();
 
-        require(
-            commitHash != bytes32(0),
-            "OnChainProposer: commit hash is zero"
-        );
-        require(
-            !REQUIRE_SP1_PROOF || sp1Vk != bytes32(0),
-            "OnChainProposer: missing SP1 verification key"
-        );
-        require(
-            !REQUIRE_RISC0_PROOF || risc0Vk != bytes32(0),
-            "OnChainProposer: missing RISC0 verification key"
-        );
+        if (commitHash == bytes32(0)) revert CommitHashIsZero();
+        if (REQUIRE_SP1_PROOF && sp1Vk == bytes32(0))
+            revert MissingSp1VerificationKey();
+        if (REQUIRE_RISC0_PROOF && risc0Vk == bytes32(0))
+            revert MissingRisc0VerificationKey();
         verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
         verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
 
@@ -209,14 +191,8 @@ contract OnChainProposer is
 
         CHAIN_ID = chainId;
 
-        require(
-            bridge != address(0),
-            "001" // OnChainProposer: bridge is the zero address
-        );
-        require(
-            bridge != address(this),
-            "000" // OnChainProposer: bridge is the contract address
-        );
+        if (bridge == address(0)) revert BridgeIsZeroAddress();
+        if (bridge == address(this)) revert BridgeIsContractAddress();
         BRIDGE = bridge;
 
         OwnableUpgradeable.__Ownable_init(timelock_owner);
@@ -227,10 +203,7 @@ contract OnChainProposer is
         bytes32 commit_hash,
         bytes32 new_vk
     ) public onlyOwner {
-        require(
-            commit_hash != bytes32(0),
-            "OnChainProposer: commit hash is zero"
-        );
+        if (commit_hash == bytes32(0)) revert CommitHashIsZero();
         // we don't want to restrict setting the vk to zero
         // as we may want to disable the version
         verificationKeys[commit_hash][SP1_VERIFIER_ID] = new_vk;
@@ -242,10 +215,7 @@ contract OnChainProposer is
         bytes32 commit_hash,
         bytes32 new_vk
     ) public onlyOwner {
-        require(
-            commit_hash != bytes32(0),
-            "OnChainProposer: commit hash is zero"
-        );
+        if (commit_hash == bytes32(0)) revert CommitHashIsZero();
         // we don't want to restrict setting the vk to zero
         // as we may want to disable the version
         verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
@@ -264,30 +234,21 @@ contract OnChainProposer is
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external override onlyOwner whenNotPaused {
-        // TODO: Refactor validation
-        require(
-            batchNumber == lastCommittedBatch + 1,
-            "002" // OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch
-        );
-        require(
-            batchCommitments[batchNumber].newStateRoot == bytes32(0),
-            "003" // OnChainProposer: tried to commit an already committed batch
-        );
-        require(
-            lastBlockHash != bytes32(0),
-            "004" // OnChainProposer: lastBlockHash cannot be zero
-        );
+        if (batchNumber != lastCommittedBatch + 1)
+            revert BatchNumberNotSuccessor();
+        if (batchCommitments[batchNumber].newStateRoot != bytes32(0))
+            revert BatchAlreadyCommitted();
+        if (lastBlockHash == bytes32(0)) revert LastBlockHashIsZero();
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
             bytes32 claimedProcessedTransactions = ICommonBridge(BRIDGE)
                 .getPendingTransactionsVersionedHash(
                     uint16(bytes2(processedPrivilegedTransactionsRollingHash))
                 );
-            require(
-                claimedProcessedTransactions ==
-                    processedPrivilegedTransactionsRollingHash,
-                "005" // OnChainProposer: invalid privileged transaction logs
-            );
+            if (
+                claimedProcessedTransactions !=
+                processedPrivilegedTransactionsRollingHash
+            ) revert InvalidPrivilegedTransactionLogs();
         }
 
         for (uint256 i = 0; i < l2MessageRollingHashes.length; i++) {
@@ -297,10 +258,8 @@ contract OnChainProposer is
                     l2MessageRollingHashes[i].chainId,
                     uint16(bytes2(receivedRollingHash))
                 );
-            require(
-                expectedRollingHash == receivedRollingHash,
-                "012" // OnChainProposer: invalid L2 message rolling hash
-            );
+            if (expectedRollingHash != receivedRollingHash)
+                revert InvalidL2MessageRollingHash();
         }
 
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
@@ -313,29 +272,23 @@ contract OnChainProposer is
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
         if (VALIDIUM) {
-            require(
-                blobVersionedHash == 0,
-                "006" // L2 running as validium but blob was published
-            );
+            if (blobVersionedHash != 0) revert ValidiumBlobPublished();
         } else {
-            require(
-                blobVersionedHash != 0,
-                "007" // L2 running as rollup but blob was not published
-            );
+            if (blobVersionedHash == 0) revert RollupBlobNotPublished();
         }
 
         // Validate commit hash and corresponding verification keys are valid
-        require(commitHash != bytes32(0), "012");
+        if (commitHash == bytes32(0)) revert CommitHashIsZero();
         if (
             REQUIRE_SP1_PROOF &&
             verificationKeys[commitHash][SP1_VERIFIER_ID] == bytes32(0)
         ) {
-            revert("013"); // missing verification key for commit hash
+            revert MissingVerificationKeyForCommit();
         } else if (
             REQUIRE_RISC0_PROOF &&
             verificationKeys[commitHash][RISC0_VERIFIER_ID] == bytes32(0)
         ) {
-            revert("013"); // missing verification key for commit hash
+            revert MissingVerificationKeyForCommit();
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -369,19 +322,12 @@ contract OnChainProposer is
         //tdx
         bytes memory tdxSignature
     ) external override onlyOwner whenNotPaused {
-        require(
-            !ALIGNED_MODE,
-            "008" // Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.
-        );
+        if (ALIGNED_MODE) revert UseAlignedVerification();
 
-        require(
-            batchNumber == lastVerifiedBatch + 1,
-            "009" // OnChainProposer: batch already verified
-        );
-        require(
-            batchCommitments[batchNumber].newStateRoot != bytes32(0),
-            "00a" // OnChainProposer: cannot verify an uncommitted batch
-        );
+        if (batchNumber != lastVerifiedBatch + 1)
+            revert BatchAlreadyVerified();
+        if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
+            revert BatchNotCommitted();
 
         // The first 2 bytes are the number of privileged transactions.
         uint16 privileged_transaction_count = uint16(
@@ -413,7 +359,7 @@ contract OnChainProposer is
             ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
             batchCommitments[batchNumber].nonPrivilegedTransactions != 0
         ) {
-            revert("00v"); // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
+            revert ExpiredPrivilegedTransactionDeadline();
         }
 
         // Reconstruct public inputs from commitments
@@ -432,9 +378,7 @@ contract OnChainProposer is
                     sha256(publicInputs)
                 )
             {} catch {
-                revert(
-                    "00c" // OnChainProposer: Invalid RISC0 proof failed proof verification
-                );
+                revert InvalidRisc0Proof();
             }
         }
 
@@ -448,9 +392,7 @@ contract OnChainProposer is
                     sp1ProofBytes
                 )
             {} catch {
-                revert(
-                    "00e" // OnChainProposer: Invalid SP1 proof failed proof verification
-                );
+                revert InvalidSp1Proof();
             }
         }
 
@@ -461,9 +403,7 @@ contract OnChainProposer is
                     tdxSignature
                 )
             {} catch {
-                revert(
-                    "00g" // OnChainProposer: Invalid TDX proof failed proof verification
-                );
+                revert InvalidTdxProof();
             }
         }
 
@@ -486,41 +426,28 @@ contract OnChainProposer is
         bytes32[][] calldata sp1MerkleProofsList,
         bytes32[][] calldata risc0MerkleProofsList
     ) external override onlyOwner whenNotPaused {
-        require(
-            ALIGNED_MODE,
-            "00h" // Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.
-        );
-        require(
-            firstBatchNumber == lastVerifiedBatch + 1,
-            "00i" // OnChainProposer: incorrect first batch number
-        );
-        require(
-            lastBatchNumber <= lastCommittedBatch,
-            "014" // OnChainProposer: last batch number exceeds last committed batch"
-        );
+        if (!ALIGNED_MODE) revert UseSmartContractVerification();
+        if (firstBatchNumber != lastVerifiedBatch + 1)
+            revert IncorrectFirstBatchNumber();
+        if (lastBatchNumber > lastCommittedBatch)
+            revert LastBatchExceedsCommitted();
 
         uint256 batchesToVerify = (lastBatchNumber - firstBatchNumber) + 1;
 
         if (REQUIRE_SP1_PROOF) {
-            require(
-                batchesToVerify == sp1MerkleProofsList.length,
-                "00j" // OnChainProposer: SP1 input/proof array length mismatch
-            );
+            if (batchesToVerify != sp1MerkleProofsList.length)
+                revert Sp1ProofArrayLengthMismatch();
         }
         if (REQUIRE_RISC0_PROOF) {
-            require(
-                batchesToVerify == risc0MerkleProofsList.length,
-                "00k" // OnChainProposer: Risc0 input/proof array length mismatch
-            );
+            if (batchesToVerify != risc0MerkleProofsList.length)
+                revert Risc0ProofArrayLengthMismatch();
         }
 
         uint256 batchNumber = firstBatchNumber;
 
         for (uint256 i = 0; i < batchesToVerify; i++) {
-            require(
-                batchCommitments[batchNumber].newStateRoot != bytes32(0),
-                "00l" // OnChainProposer: cannot verify an uncommitted batch
-            );
+            if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
+                revert BatchNotCommitted();
 
             // The first 2 bytes are the number of transactions.
             uint16 privileged_transaction_count = uint16(
@@ -607,15 +534,9 @@ contract OnChainProposer is
         );
         (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
             .staticcall(callData);
-        require(
-            callResult,
-            "00y" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
-        );
+        if (!callResult) revert AlignedAggregatorCallFailed();
         bool proofVerified = abi.decode(response, (bool));
-        require(
-            proofVerified,
-            "00z" // OnChainProposer: Aligned proof verification failed
-        );
+        if (!proofVerified) revert AlignedProofVerificationFailed();
     }
 
     /// @notice Constructs public inputs from committed batch data for proof verification.
@@ -713,14 +634,9 @@ contract OnChainProposer is
     function revertBatch(
         uint256 batchNumber
     ) external override onlyOwner whenPaused {
-        require(
-            batchNumber > lastVerifiedBatch,
-            "010" // OnChainProposer: can't revert verified batch
-        );
-        require(
-            batchNumber <= lastCommittedBatch,
-            "011" // OnChainProposer: no batches are being reverted
-        );
+        if (batchNumber <= lastVerifiedBatch)
+            revert CannotRevertVerifiedBatch();
+        if (batchNumber > lastCommittedBatch) revert NoBatchesToRevert();
 
         // Remove batch commitments from batchNumber to lastCommittedBatch
         for (uint256 i = batchNumber; i <= lastCommittedBatch; i++) {

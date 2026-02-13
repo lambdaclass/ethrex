@@ -67,6 +67,7 @@ pub async fn get_batch_number(client: &EthClient) -> Result<u64, EthClientError>
         RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
             method: "ethrex_batchNumber".to_string(),
             message: error_response.error.message,
+            data: error_response.error.data,
         }
         .into()),
     }
@@ -151,6 +152,7 @@ pub async fn send_ethrex_transaction(
         RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
             method: "ethrex_sendTransaction".to_string(),
             message: error_response.error.message,
+            data: error_response.error.data,
         }
         .into()),
     }

@@ -10,7 +10,11 @@ pub enum RpcRequestError {
         source: serde_json::Error,
     },
     #[error("{method}: {message}")]
-    RPCError { method: String, message: String },
+    RPCError {
+        method: String,
+        message: String,
+        data: Option<String>,
+    },
     #[error("{method}: {source}")]
     ParseIntError {
         method: String,
