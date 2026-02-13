@@ -299,6 +299,7 @@ fn prefix_set_basic() {
     let mut ps = PrefixSet::new();
     ps.insert(&Nibbles::from_hex(vec![1, 2, 3]));
     ps.insert(&Nibbles::from_hex(vec![4, 5, 6]));
+    ps.ensure_sorted();
 
     // Exact match
     assert!(ps.contains(&[1, 2, 3]));
