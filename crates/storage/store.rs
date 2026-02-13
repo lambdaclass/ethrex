@@ -2321,19 +2321,18 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
+            self.trie_cache
                 .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_accounts(
+            Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -2354,19 +2353,18 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
+            self.trie_cache
                 .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
+            Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -2378,19 +2376,18 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
+            self.trie_cache
                 .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_storages(
+            Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
@@ -2404,16 +2401,16 @@ impl Store {
         cache: Arc<TrieLayerCache>,
         last_written: Vec<u8>,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: cache,
-            db: Box::new(BackendTrieDB::new_for_accounts_with_view(
+            cache,
+            Box::new(BackendTrieDB::new_for_accounts_with_view(
                 self.backend.clone(),
                 read_view,
                 last_written,
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -2427,16 +2424,16 @@ impl Store {
         cache: Arc<TrieLayerCache>,
         last_written: Vec<u8>,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: cache,
-            db: Box::new(BackendTrieDB::new_for_storages_with_view(
+            cache,
+            Box::new(BackendTrieDB::new_for_storages_with_view(
                 self.backend.clone(),
                 read_view,
                 last_written,
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
@@ -2465,19 +2462,18 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
+            self.trie_cache
                 .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
+            Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
