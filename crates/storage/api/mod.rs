@@ -19,7 +19,7 @@
 //!   only used during snap-sync.
 
 use crate::error::StoreError;
-use std::{fmt::Debug, path::Path};
+use std::{fmt::Debug, path::Path, sync::Arc};
 
 pub mod tables;
 
@@ -34,7 +34,7 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;
 
     /// Opens a new read view.
-    fn begin_read(&self) -> Result<Box<dyn StorageReadView>, StoreError>;
+    fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError>;
 
     /// Creates a new write batch.
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError>;
