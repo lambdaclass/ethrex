@@ -1108,3 +1108,56 @@ fn removal_then_reinsert_cancels_deletion_marker() {
         .any(|(nibbles, value)| nibbles.as_ref() == path_data.as_slice() && !value.is_empty());
     assert!(has_value, "reinserted leaf should have a value entry");
 }
+
+/// Regression test: ensure_revealed must handle inline nodes (NodeHash::Inline)
+/// correctly. When a child node's RLP is < 32 bytes, it is embedded inline in
+/// the parent rather than stored separately in the DB. The SparseTrie must
+/// decode these directly from the inline bytes instead of looking them up in DB.
+#[test]
+fn inline_node_reveal_does_not_hit_db() {
+    use crate::db::NodeMap;
+
+    // Use very short keys and values to create a trie with inline child nodes.
+    // With 1-byte keys and 1-byte values, the leaf RLP is ~4 bytes — well under
+    // the 32-byte threshold, so branch children will be inline.
+    let entries: Vec<(Vec<u8>, Vec<u8>)> = vec![(vec![0x10], vec![0xAA]), (vec![0x20], vec![0xBB])];
+
+    // Build initial state with old Trie
+    let db_inner: NodeMap = Arc::new(Mutex::new(BTreeMap::new()));
+    let mut old_trie = Trie::new(Box::new(InMemoryTrieDB::new(db_inner.clone())));
+    for (key, value) in &entries {
+        old_trie.insert(key.clone(), value.clone()).expect("insert");
+    }
+    old_trie.commit().expect("commit");
+    let initial_root = old_trie.hash_no_commit();
+
+    // Now open a SparseTrie from this state and update it.
+    // This must NOT fail with "Root node not found" for inline children.
+    let db = InMemoryTrieDB::new(db_inner.clone());
+    let provider = TrieDBProvider(&db as &dyn crate::db::TrieDB);
+    let mut sparse = SparseTrie::new();
+    sparse.reveal_root(initial_root, &provider).expect("reveal");
+
+    // Update an existing entry — this traverses through branch → inline child
+    sparse
+        .update_leaf(Nibbles::from_bytes(&[0x10]), vec![0xFF], &provider)
+        .expect("update should succeed even with inline child nodes");
+
+    // Add a new entry in the same branch
+    sparse
+        .update_leaf(Nibbles::from_bytes(&[0x30]), vec![0xCC], &provider)
+        .expect("insert new");
+
+    let new_root = sparse.root().expect("root");
+
+    // Verify against old trie
+    let mut old_trie2 = Trie::new_temp();
+    old_trie2.insert(vec![0x10], vec![0xFF]).expect("insert");
+    old_trie2.insert(vec![0x20], vec![0xBB]).expect("insert");
+    old_trie2.insert(vec![0x30], vec![0xCC]).expect("insert");
+    let expected_root = old_trie2.hash_no_commit();
+    assert_eq!(
+        new_root, expected_root,
+        "roots must match after inline node update"
+    );
+}
