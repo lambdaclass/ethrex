@@ -864,18 +864,7 @@ impl PeerTableServer {
                     vacant_entry.insert(contact);
                     METRICS.record_new_discovery().await;
                 }
-                // The contact is already present
-                else if let Some(existing_contact) = self.contacts.get_mut(&node_id) {
-                    if let Some(existing_record) = &existing_contact.record {
-                        if node_record.seq > existing_record.seq {
-                            existing_contact.record = Some(node_record);
-                            METRICS.record_new_discovery().await;
-                        }
-                    } else {
-                        existing_contact.record = Some(node_record);
-                        METRICS.record_new_discovery().await;
-                    }
-                }
+                // TODO Handle the case the contact is already present
             }
         }
     }
