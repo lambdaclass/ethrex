@@ -5,22 +5,15 @@
 //! performance optimisation without network I/O.
 
 use std::path::Path;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use ethrex_common::constants::EMPTY_TRIE_HASH;
-use ethrex_common::types::AccountState;
-use ethrex_common::{H256, U256};
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{EngineType, Store};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use ethrex_common::H256;
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
 use super::SyncError;
-use super::snap_sync::compute_storage_roots;
-use crate::utils::AccountsWithStorage;
+
+#[cfg(not(feature = "rocksdb"))]
+use ethrex_storage::Store;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -98,7 +91,16 @@ pub fn load_manifest(dataset_root: &Path) -> Result<SnapProfileManifest, SyncErr
 
 /// Replay InsertAccounts + InsertStorages from a captured dataset and return
 /// timing results.
+///
+/// Only available without the `rocksdb` feature — replay uses an in-memory
+/// Store backend.
+#[cfg(not(feature = "rocksdb"))]
 pub async fn run_once(dataset_root: &Path) -> Result<SnapProfileResult, SyncError> {
+    use std::time::Instant;
+
+    use ethrex_storage::EngineType;
+    use tracing::info;
+
     let total_start = Instant::now();
 
     let manifest = load_manifest(dataset_root)?;
@@ -154,9 +156,14 @@ fn validate_non_empty_dir(path: &Path, label: &str) -> Result<(), SyncError> {
     Ok(())
 }
 
-/// Mirrors the non-rocksdb `insert_accounts` in `snap_sync.rs`, without
-/// storage_accounts tracking, code_hash_collector, or remove_dir_all.
+#[cfg(not(feature = "rocksdb"))]
 async fn insert_accounts_phase(store: &Store, acc_dir: &Path) -> Result<H256, SyncError> {
+    use ethrex_common::constants::EMPTY_TRIE_HASH;
+    use ethrex_common::types::AccountState;
+    use ethrex_rlp::decode::RLPDecode;
+    use ethrex_rlp::encode::RLPEncode;
+    use tracing::info;
+
     let mut computed_state_root = *EMPTY_TRIE_HASH;
 
     for entry in
@@ -196,9 +203,18 @@ async fn insert_accounts_phase(store: &Store, acc_dir: &Path) -> Result<H256, Sy
     Ok(computed_state_root)
 }
 
-/// Mirrors the non-rocksdb `insert_storages` in `snap_sync.rs`, without
-/// `remove_dir_all`.
+#[cfg(not(feature = "rocksdb"))]
 async fn insert_storages_phase(store: &Store, storage_dir: &Path) -> Result<(), SyncError> {
+    use std::sync::Arc;
+
+    use ethrex_common::U256;
+    use ethrex_rlp::decode::RLPDecode;
+    use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    use tracing::info;
+
+    use super::snap_sync::compute_storage_roots;
+    use crate::utils::AccountsWithStorage;
+
     for entry in std::fs::read_dir(storage_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
     {

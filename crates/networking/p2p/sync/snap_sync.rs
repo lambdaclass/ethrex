@@ -446,7 +446,6 @@ pub async fn snap_sync(
         info!("Finished storing storage tries");
 
         // Capture dataset for offline profiling if requested
-        #[cfg(not(feature = "rocksdb"))]
         if let Some(ref capture_dir) = capture_dir {
             capture_snap_profile_dataset(
                 capture_dir,
@@ -955,10 +954,9 @@ async fn insert_storages(
 }
 
 // ============================================================================
-// Dataset capture for offline profiling (non-rocksdb)
+// Dataset capture for offline profiling
 // ============================================================================
 
-#[cfg(not(feature = "rocksdb"))]
 fn capture_snap_profile_dataset(
     capture_dir: &Path,
     account_state_snapshots_dir: &Path,
@@ -983,7 +981,7 @@ fn capture_snap_profile_dataset(
     let manifest = SnapProfileManifest {
         version: 1,
         chain_id: 1,
-        rocksdb_enabled: false,
+        rocksdb_enabled: cfg!(feature = "rocksdb"),
         pivot: PivotInfo {
             number: pivot_header.number,
             hash: pivot_header.hash(),
@@ -1006,7 +1004,6 @@ fn capture_snap_profile_dataset(
     Ok(())
 }
 
-#[cfg(not(feature = "rocksdb"))]
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), SyncError> {
     std::fs::create_dir_all(dst)
         .map_err(|e| SyncError::FileSystem(format!("Failed to create {dst:?}: {e}")))?;

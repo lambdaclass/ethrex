@@ -7,7 +7,6 @@
 mod code_collector;
 mod full;
 mod healing;
-#[cfg(not(feature = "rocksdb"))]
 pub mod profile;
 mod snap_sync;
 
