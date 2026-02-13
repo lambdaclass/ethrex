@@ -168,8 +168,7 @@ fn ensure_revealed(
             }
             NodeHash::Hashed(h256) => {
                 let h256 = *h256;
-                let nibbles = Nibbles::from_hex(path_data.to_vec());
-                provider.get_node(&nibbles)?.ok_or_else(|| {
+                provider.get_node(path_data)?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(
                         crate::error::InconsistentTreeError::SparseNodeNotFound {
                             path: Nibbles::from_hex(path_data.to_vec()),
@@ -222,12 +221,13 @@ fn insert_node(
 ) {
     match route_path(&path_data) {
         None => {
+            upper.dirty_nodes.insert(path_data.clone());
             upper.nodes.insert(path_data, node);
         }
         Some(idx) => {
-            get_or_create_lower(lower, idx)
-                .nodes
-                .insert(path_data, node);
+            let subtrie = get_or_create_lower(lower, idx);
+            subtrie.dirty_nodes.insert(path_data.clone());
+            subtrie.nodes.insert(path_data, node);
         }
     }
 }
@@ -258,12 +258,13 @@ fn insert_value(
 ) {
     match route_path(node_path) {
         None => {
+            upper.dirty_values.insert(value_key.clone());
             upper.values.insert(value_key, value);
         }
         Some(idx) => {
-            get_or_create_lower(lower, idx)
-                .values
-                .insert(value_key, value);
+            let subtrie = get_or_create_lower(lower, idx);
+            subtrie.dirty_values.insert(value_key.clone());
+            subtrie.values.insert(value_key, value);
         }
     }
 }
@@ -304,10 +305,26 @@ fn get_value<'a>(
     }
 }
 
+/// Mark a node path as dirty in the correct subtrie (for collect_updates).
+fn mark_node_dirty(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], path_data: &[u8]) {
+    match route_path(path_data) {
+        None => {
+            upper.dirty_nodes.insert(path_data.to_vec());
+        }
+        Some(idx) => match &mut lower[idx] {
+            LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => {
+                s.dirty_nodes.insert(path_data.to_vec());
+            }
+            LowerSubtrie::Blind(None) => {}
+        },
+    }
+}
+
 fn invalidate_branch_hash(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], path: &[u8]) {
     if let Some(SparseNode::Branch { hash, .. }) = get_node_mut(upper, lower, path) {
         *hash = None;
     }
+    mark_node_dirty(upper, lower, path);
 }
 
 /// Update or insert a leaf in the sparse trie.
@@ -374,6 +391,7 @@ pub fn update_leaf(
                     {
                         *hash = None;
                     }
+                    mark_node_dirty(upper, lower, &current_path);
                     insert_value(upper, lower, &current_path, path_data, value);
                     return Ok(());
                 }
@@ -477,6 +495,7 @@ pub fn update_leaf(
                     {
                         *hash = None;
                     }
+                    mark_node_dirty(upper, lower, &current_path);
                     current_path.extend_from_slice(&ext_key_data);
                     continue;
                 }
@@ -596,6 +615,7 @@ pub fn update_leaf(
                         *mask |= 1 << nibble;
                         *hash = None;
                     }
+                    mark_node_dirty(upper, lower, &current_path);
                 } else {
                     invalidate_branch_hash(upper, lower, &current_path);
                 }
@@ -655,6 +675,7 @@ pub fn remove_leaf(
                 {
                     *hash = None;
                 }
+                mark_node_dirty(upper, lower, &walk_path);
                 parent_stack.push(walk_path.clone());
                 walk_path.extend_from_slice(ext_key_data);
             }
@@ -955,6 +976,7 @@ fn collapse_branch_if_needed(
                         *mask = 1 << only_child_nibble;
                         *hash = None;
                     }
+                    mark_node_dirty(upper, lower, branch_path);
                 }
             }
         }
@@ -971,6 +993,7 @@ fn collapse_branch_if_needed(
                 *mask = new_mask;
                 *hash = None;
             }
+            mark_node_dirty(upper, lower, branch_path);
         }
     }
 

@@ -581,6 +581,10 @@ impl Blockchain {
         let mut code_updates: Vec<(H256, Code)> = vec![];
         let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
 
+        // Cache decoded AccountState per hashed_address to avoid redundant DB reads.
+        // The same account is often looked up multiple times (storage root + state update).
+        let mut account_state_cache: FxHashMap<H256, Option<AccountState>> = Default::default();
+
         // Accumulator for witness generation
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
             if self.options.precompute_witnesses {
@@ -640,10 +644,17 @@ impl Blockchain {
                         let storage_root = if cleared_storage.contains(&hashed_address) {
                             *EMPTY_TRIE_HASH
                         } else {
-                            match state_db_trie.get(hashed_address.as_bytes())? {
-                                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
-                                None => *EMPTY_TRIE_HASH,
+                            if let Entry::Vacant(e) = account_state_cache.entry(hashed_address) {
+                                let state = match state_db_trie.get(hashed_address.as_bytes())? {
+                                    Some(rlp) => Some(AccountState::decode(&rlp)?),
+                                    None => None,
+                                };
+                                e.insert(state);
                             }
+                            account_state_cache[&hashed_address]
+                                .as_ref()
+                                .map(|s| s.storage_root)
+                                .unwrap_or(*EMPTY_TRIE_HASH)
                         };
 
                         // Open storage trie DB (for on-demand node loading)
@@ -698,10 +709,14 @@ impl Blockchain {
             storage_updates.push((*hashed_address, updates));
 
             // Build the account state with the new storage root
-            let mut account_state = match state_db_trie.get(hashed_address.as_bytes())? {
-                Some(rlp) => AccountState::decode(&rlp)?,
-                None => AccountState::default(),
-            };
+            if let Entry::Vacant(e) = account_state_cache.entry(*hashed_address) {
+                let state = match state_db_trie.get(hashed_address.as_bytes())? {
+                    Some(rlp) => Some(AccountState::decode(&rlp)?),
+                    None => None,
+                };
+                e.insert(state);
+            }
+            let mut account_state = account_state_cache[hashed_address].unwrap_or_default();
             account_state.storage_root = storage_root;
 
             // Apply info changes if any
@@ -726,10 +741,14 @@ impl Blockchain {
         // Process accounts with only info changes (no storage modifications)
         for (hashed_address, info_opt) in account_infos {
             if let Some(info) = info_opt {
-                let mut account_state = match state_db_trie.get(hashed_address.as_bytes())? {
-                    Some(rlp) => AccountState::decode(&rlp)?,
-                    None => AccountState::default(),
-                };
+                if let Entry::Vacant(e) = account_state_cache.entry(hashed_address) {
+                    let state = match state_db_trie.get(hashed_address.as_bytes())? {
+                        Some(rlp) => Some(AccountState::decode(&rlp)?),
+                        None => None,
+                    };
+                    e.insert(state);
+                }
+                let mut account_state = account_state_cache[&hashed_address].unwrap_or_default();
 
                 // For removed accounts with cleared storage, set empty storage root
                 if cleared_storage.contains(&hashed_address) {
@@ -760,9 +779,15 @@ impl Blockchain {
             if processed_cleared.contains(hashed_address) {
                 continue;
             }
-            let mut account_state = match state_db_trie.get(hashed_address.as_bytes())? {
-                Some(rlp) => AccountState::decode(&rlp)?,
-                None => continue,
+            if let Entry::Vacant(e) = account_state_cache.entry(*hashed_address) {
+                let state = match state_db_trie.get(hashed_address.as_bytes())? {
+                    Some(rlp) => Some(AccountState::decode(&rlp)?),
+                    None => None,
+                };
+                e.insert(state);
+            }
+            let Some(mut account_state) = account_state_cache[hashed_address] else {
+                continue;
             };
             if account_state.storage_root != *EMPTY_TRIE_HASH {
                 account_state.storage_root = *EMPTY_TRIE_HASH;
