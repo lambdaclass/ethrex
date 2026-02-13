@@ -307,11 +307,40 @@ pub async fn snap_sync(
         info!("Finish downloading account ranges from peers");
 
         *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
+        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
         METRICS
             .current_step
             .set(CurrentStepValue::InsertingAccountRanges);
+
+        // Set up early bytecode download: spawn a background task that receives
+        // code hashes via a channel after they're collected during the first pass
+        // of account insertion, then downloads while trie building (second pass) proceeds.
+        // Bytecodes are content-addressed (hash=key), so they're safe to download
+        // concurrently — pivot staleness doesn't affect them.
+        let (code_hashes_tx, code_hashes_rx) = tokio::sync::oneshot::channel::<Vec<H256>>();
+        bytecode_handle = Some({
+            let mut bytecode_peers = peers.clone();
+            let bytecode_store = store.clone();
+            tokio::spawn(async move {
+                // Wait for code hashes to be sent from insert_accounts (between passes)
+                let code_hashes = code_hashes_rx.await.map_err(|_| SyncError::BytecodesNotFound)?;
+                if code_hashes.is_empty() {
+                    return Ok(());
+                }
+                info!(
+                    "Background bytecode download starting for {} unique code hashes",
+                    code_hashes.len()
+                );
+                // update_metrics=false to avoid overwriting current_step during concurrent run
+                download_bytecodes(&mut bytecode_peers, &bytecode_store, code_hashes, false)
+                    .await
+            })
+        });
+
         // We read the account leafs from the files in account_state_snapshots_dir, write it into
-        // the trie to compute the nodes and stores the accounts with storages for later use
+        // the trie to compute the nodes and stores the accounts with storages for later use.
+        // Between the code hash collection pass and the trie building pass, the function
+        // flushes code hashes, reads them, and sends them to the background download task.
 
         // Variable `accounts_with_storage` unused if not in rocksdb
         #[allow(unused_variables)]
@@ -321,6 +350,7 @@ pub async fn snap_sync(
             &account_state_snapshots_dir,
             datadir,
             &mut code_hash_collector,
+            Some(code_hashes_tx),
         )
         .await?;
         info!(
@@ -332,29 +362,13 @@ pub async fn snap_sync(
         info!("Original state root: {state_root:?}");
         info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
-        // Start concurrent bytecode download with code hashes from account insertion.
-        // Bytecodes are content-addressed (hash=key), so they're safe to download
-        // while storage and healing proceed — pivot staleness doesn't affect them.
-        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+        // Collector was already flushed during insertion (between passes).
+        // Consume it and clean up the directory for reuse during healing.
         code_hash_collector.finish().await?;
-        let initial_code_hashes = read_code_hashes_from_dir(&code_hashes_snapshot_dir)?;
-        // Clean up directory for reuse during healing
         std::fs::remove_dir_all(&code_hashes_snapshot_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
         std::fs::create_dir_all(&code_hashes_snapshot_dir)
             .map_err(|_| SyncError::CorruptPath)?;
-        info!(
-            "Spawning concurrent bytecode download for {} unique code hashes",
-            initial_code_hashes.len()
-        );
-        bytecode_handle = Some({
-            let mut bytecode_peers = peers.clone();
-            let bytecode_store = store.clone();
-            tokio::spawn(async move {
-                download_bytecodes(&mut bytecode_peers, &bytecode_store, initial_code_hashes)
-                    .await
-            })
-        });
         // Create a new collector for the remaining phases (storage healing, final healing)
         code_hash_collector = CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
@@ -522,7 +536,7 @@ pub async fn snap_sync(
             "Downloading {} bytecodes discovered during healing",
             healing_code_hashes.len()
         );
-        download_bytecodes(peers, store, healing_code_hashes).await?;
+        download_bytecodes(peers, store, healing_code_hashes, true).await?;
     }
     std::fs::remove_dir_all(&code_hashes_snapshot_dir)
         .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
@@ -781,7 +795,9 @@ async fn insert_accounts(
     account_state_snapshots_dir: &Path,
     _: &Path,
     code_hash_collector: &mut CodeHashCollector,
+    code_hashes_tx: Option<tokio::sync::oneshot::Sender<Vec<H256>>>,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
+    let code_hashes_snapshot_dir = code_hash_collector.dir().clone();
     let mut computed_state_root = *EMPTY_TRIE_HASH;
     for entry in std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
@@ -832,6 +848,18 @@ async fn insert_accounts(
 
         computed_state_root = current_state_root?;
     }
+
+    // Flush code hashes and send to background download task.
+    // Note: unlike the rocksdb version (which has separate collection and trie building
+    // passes), here code hash collection and trie insertion are interleaved in the same
+    // loop. So the send fires after ALL insertion completes — no early start benefit.
+    // The early start optimization only matters for the rocksdb path (production config).
+    if let Some(tx) = code_hashes_tx {
+        code_hash_collector.flush_all().await?;
+        let hashes = read_code_hashes_from_dir(&code_hashes_snapshot_dir)?;
+        let _ = tx.send(hashes);
+    }
+
     std::fs::remove_dir_all(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     info!("computed_state_root {computed_state_root}");
@@ -916,6 +944,7 @@ async fn insert_accounts(
     account_state_snapshots_dir: &Path,
     datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
+    code_hashes_tx: Option<tokio::sync::oneshot::Sender<Vec<H256>>>,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
@@ -942,6 +971,14 @@ async fn insert_accounts(
             code_hash_collector.add(account_state.code_hash);
             code_hash_collector.flush_if_needed().await?;
         }
+    }
+
+    // Flush code hashes to disk, read them, and send to the background download
+    // task so bytecodes start downloading during the trie building pass (below).
+    if let Some(tx) = code_hashes_tx {
+        code_hash_collector.flush_all().await?;
+        let code_hashes = read_code_hashes_from_dir(code_hash_collector.dir())?;
+        let _ = tx.send(code_hashes);
     }
 
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
@@ -1144,22 +1181,32 @@ fn read_code_hashes_from_dir(dir: &Path) -> Result<Vec<H256>, SyncError> {
 
 /// Downloads and stores bytecodes for the given code hashes.
 /// Processes hashes in chunks of BYTECODE_CHUNK_SIZE to bound memory usage.
+/// Skips hashes already present in the store (e.g., from a previous sync attempt).
+/// When `update_metrics` is false, avoids overwriting the current_step metric
+/// (used when running concurrently with storage download).
 async fn download_bytecodes(
     peers: &mut PeerHandler,
     store: &Store,
     code_hashes: Vec<H256>,
+    update_metrics: bool,
 ) -> Result<(), SyncError> {
+    // Filter out already-stored bytecodes to avoid re-downloading on retry
+    let code_hashes: Vec<H256> = code_hashes
+        .into_iter()
+        .filter(|hash| !store.get_account_code(*hash).is_ok_and(|code| code.is_some()))
+        .collect();
+
     if code_hashes.is_empty() {
+        info!("All bytecodes already stored, nothing to download");
         return Ok(());
     }
-    info!(
-        "Starting bytecode download for {} unique code hashes",
-        code_hashes.len()
-    );
 
+    let total = code_hashes.len();
+    info!("Starting bytecode download for {total} code hashes (after filtering already stored)");
+
+    let mut downloaded_so_far = 0;
     for chunk in code_hashes.chunks(BYTECODE_CHUNK_SIZE) {
-        info!("Downloading bytecode chunk of {} hashes", chunk.len());
-        let bytecodes = request_bytecodes(peers, chunk)
+        let bytecodes = request_bytecodes(peers, chunk, update_metrics)
             .await?
             .ok_or(SyncError::BytecodesNotFound)?;
 
@@ -1173,11 +1220,14 @@ async fn download_bytecodes(
                     .collect(),
             )
             .await?;
+
+        downloaded_so_far += chunk.len();
+        info!(
+            "Bytecode progress: {downloaded_so_far}/{total} downloaded ({:.1}%)",
+            downloaded_so_far as f64 / total as f64 * 100.0
+        );
     }
 
-    info!(
-        "Finished bytecode download for {} unique code hashes",
-        code_hashes.len()
-    );
+    info!("Finished bytecode download for {total} code hashes");
     Ok(())
 }

@@ -32,6 +32,11 @@ impl CodeHashCollector {
         }
     }
 
+    /// Returns the snapshot directory path.
+    pub fn dir(&self) -> &PathBuf {
+        &self.snapshots_dir
+    }
+
     /// Adds a code hash to the buffer
     pub fn add(&mut self, hash: H256) {
         self.buffer.insert(hash);
@@ -52,6 +57,29 @@ impl CodeHashCollector {
             let buffer = std::mem::take(&mut self.buffer);
             self.flush_buffer(buffer);
         }
+        Ok(())
+    }
+
+    /// Flushes all buffered hashes to disk and waits for all pending writes.
+    /// Unlike `finish()`, this doesn't consume the collector, allowing continued use.
+    pub async fn flush_all(&mut self) -> Result<(), SyncError> {
+        if !self.buffer.is_empty() {
+            let buffer = std::mem::take(&mut self.buffer);
+            self.flush_buffer(buffer);
+        }
+        // Take ownership of pending tasks, replacing with an empty JoinSet
+        let tasks = std::mem::take(&mut self.disk_tasks);
+        tasks
+            .join_all()
+            .await
+            .into_iter()
+            .map(|result| {
+                result.inspect_err(|err| {
+                    error!("Failed to write code hashes: {err:?}");
+                })
+            })
+            .collect::<Result<Vec<()>, DumpError>>()
+            .map_err(|_| SyncError::BytecodeFileError)?;
         Ok(())
     }
 

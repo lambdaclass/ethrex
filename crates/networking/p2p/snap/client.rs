@@ -327,10 +327,13 @@ pub async fn request_account_range(
 pub async fn request_bytecodes(
     peers: &mut PeerHandler,
     all_bytecode_hashes: &[H256],
+    update_metrics: bool,
 ) -> Result<Option<Vec<Bytes>>, SnapError> {
-    METRICS
-        .current_step
-        .set(CurrentStepValue::RequestingBytecodes);
+    if update_metrics {
+        METRICS
+            .current_step
+            .set(CurrentStepValue::RequestingBytecodes);
+    }
     if all_bytecode_hashes.is_empty() {
         return Ok(Some(Vec::new()));
     }
