@@ -514,6 +514,10 @@ pub struct BlockAccessListRecorder {
     /// Used for efficient checkpoint/restore without cloning storage_reads.
     /// On restore, we truncate this Vec and the slots go back to being reads.
     reads_promoted_to_writes: BTreeMap<Address, Vec<U256>>,
+    /// When true, SYSTEM_ADDRESS balance/nonce/touch changes are filtered out.
+    /// Set during system contract calls (EIP-2935, EIP-4788, etc.) where the
+    /// system address account is backed up and restored, so changes are transient.
+    in_system_call: bool,
 }
 
 impl BlockAccessListRecorder {
@@ -588,6 +592,15 @@ impl BlockAccessListRecorder {
                 }
             }
 
+            // If this slot was promoted from read to write, undo the promotion
+            // so build() doesn't skip it from storage_reads.
+            if let Some(promoted) = self.reads_promoted_to_writes.get_mut(&addr) {
+                promoted.retain(|s| *s != slot);
+                if promoted.is_empty() {
+                    self.reads_promoted_to_writes.remove(&addr);
+                }
+            }
+
             // Add as a read instead
             self.storage_reads.entry(addr).or_default().insert(slot);
         }
@@ -638,24 +651,40 @@ impl BlockAccessListRecorder {
         self.current_index
     }
 
+    /// Marks the recorder as being inside a system contract call.
+    /// While in this mode, SYSTEM_ADDRESS balance/nonce/touch changes are filtered out
+    /// because system calls backup and restore the system address account state.
+    pub fn enter_system_call(&mut self) {
+        self.in_system_call = true;
+    }
+
+    /// Marks the recorder as no longer inside a system contract call.
+    pub fn exit_system_call(&mut self) {
+        self.in_system_call = false;
+    }
+
     /// Records an address as touched during execution.
     /// The address will appear in the BAL even if it has no state changes.
     ///
-    /// Note: SYSTEM_ADDRESS is excluded unless it has actual state changes.
+    /// Note: SYSTEM_ADDRESS is excluded during system contract calls.
     pub fn record_touched_address(&mut self, address: Address) {
-        // SYSTEM_ADDRESS is only included if it has actual state changes
-        if address != SYSTEM_ADDRESS {
-            self.touched_addresses.insert(address);
+        if address == SYSTEM_ADDRESS && self.in_system_call {
+            return;
         }
+        self.touched_addresses.insert(address);
     }
 
     /// Records multiple addresses as touched during execution.
     /// More efficient than calling `record_touched_address` in a loop.
     ///
-    /// Note: SYSTEM_ADDRESS is filtered out.
+    /// Note: SYSTEM_ADDRESS is filtered out during system contract calls.
     pub fn extend_touched_addresses(&mut self, addresses: impl Iterator<Item = Address>) {
-        self.touched_addresses
-            .extend(addresses.filter(|addr| *addr != SYSTEM_ADDRESS));
+        if self.in_system_call {
+            self.touched_addresses
+                .extend(addresses.filter(|addr| *addr != SYSTEM_ADDRESS));
+        } else {
+            self.touched_addresses.extend(addresses);
+        }
     }
 
     /// Records a storage slot read.
@@ -695,7 +724,10 @@ impl BlockAccessListRecorder {
             }
         }
 
-        // Get or create the changes vector for this slot
+        // Always push a new entry instead of updating in-place.
+        // This is necessary for correct checkpoint/restore semantics:
+        // restore() truncates the vector by length, so in-place updates
+        // would corrupt values that should be preserved after a revert.
         let changes = self
             .storage_writes
             .entry(address)
@@ -703,19 +735,6 @@ impl BlockAccessListRecorder {
             .entry(slot)
             .or_default();
 
-        // Check if there's already an entry with the same block_access_index
-        // If so, update it with the new value, keeping only the final write
-        if let Some(last) = changes.last_mut()
-            && last.0 == self.current_index
-        {
-            // Update the existing entry with the new value
-            last.1 = post_value;
-            // Mark address as touched
-            self.touched_addresses.insert(address);
-            return;
-        }
-
-        // No existing entry for this index, push new change
         changes.push((self.current_index, post_value));
         // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
         self.touched_addresses.insert(address);
@@ -736,7 +755,8 @@ impl BlockAccessListRecorder {
     /// Should be called after every balance modification.
     /// Per EIP-7928, only the final balance per (address, block_access_index) is recorded.
     /// If multiple balance changes occur within the same transaction, only the last one matters.
-    /// Note: SYSTEM_ADDRESS balance changes are excluded (system calls backup/restore it).
+    /// Note: SYSTEM_ADDRESS balance changes are excluded during system contract calls
+    /// (system calls backup/restore the system address account state).
     ///
     /// IMPORTANT: We always push new entries (never update in-place) to support checkpoint/restore.
     /// The checkpoint mechanism captures lengths, not values. If we updated in-place, the restored
@@ -745,7 +765,7 @@ impl BlockAccessListRecorder {
     pub fn record_balance_change(&mut self, address: Address, post_balance: U256) {
         // SYSTEM_ADDRESS balance changes from system contract calls should not be recorded
         // (system calls backup and restore SYSTEM_ADDRESS state)
-        if address == SYSTEM_ADDRESS {
+        if address == SYSTEM_ADDRESS && self.in_system_call {
             return;
         }
 
@@ -779,7 +799,7 @@ impl BlockAccessListRecorder {
     /// Note: SYSTEM_ADDRESS nonce changes from system calls are excluded.
     pub fn record_nonce_change(&mut self, address: Address, post_nonce: u64) {
         // SYSTEM_ADDRESS nonce changes from system contract calls should not be recorded
-        if address == SYSTEM_ADDRESS {
+        if address == SYSTEM_ADDRESS && self.in_system_call {
             return;
         }
         self.nonce_changes
@@ -859,11 +879,17 @@ impl BlockAccessListRecorder {
             let mut account_changes = AccountChanges::new(*address);
 
             // Add storage writes (slot changes)
+            // Deduplicate entries per block_access_index (keep last per idx),
+            // since record_storage_write always pushes for correct checkpoint/restore.
             if let Some(slots) = self.storage_writes.get(address) {
                 for (slot, changes) in slots {
                     let mut slot_change = SlotChange::new(*slot);
+                    let mut deduped: BTreeMap<u16, U256> = BTreeMap::new();
                     for (index, post_value) in changes {
-                        slot_change.add_change(StorageChange::new(*index, *post_value));
+                        deduped.insert(*index, *post_value);
+                    }
+                    for (index, post_value) in deduped {
+                        slot_change.add_change(StorageChange::new(index, post_value));
                     }
                     account_changes.add_storage_change(slot_change);
                 }
@@ -1092,5 +1118,71 @@ impl BlockAccessListRecorder {
 
         // Note: touched_addresses is intentionally NOT restored - per EIP-7928,
         // accessed addresses must be included even from reverted calls
+    }
+
+    /// Handles BAL cleanup for a self-destructed account per EIP-7928/EIP-6780.
+    /// Called after destroy_account for contracts created and destroyed in the same tx.
+    /// Removes nonce/code changes, converts storage writes to reads.
+    /// Matches EELS `track_selfdestruct` in state_tracker.py:315.
+    pub fn track_selfdestruct(&mut self, address: Address) {
+        let idx = self.current_index;
+
+        // 1. Remove nonce changes for this address at current tx index
+        if let Some(changes) = self.nonce_changes.get_mut(&address) {
+            changes.retain(|(i, _)| *i != idx);
+            if changes.is_empty() {
+                self.nonce_changes.remove(&address);
+            }
+        }
+
+        // 2. Remove balance changes if pre-balance was 0 (round-trip: 0→X→0)
+        // If initial_balance was never set, treat it as 0 (contract created with no value)
+        let pre_balance = self
+            .initial_balances
+            .get(&address)
+            .copied()
+            .unwrap_or_default();
+        if pre_balance.is_zero()
+            && let Some(changes) = self.balance_changes.get_mut(&address)
+        {
+            changes.retain(|(i, _)| *i != idx);
+            if changes.is_empty() {
+                self.balance_changes.remove(&address);
+            }
+        }
+
+        // 3. Remove code changes for this address at current tx index
+        if let Some(changes) = self.code_changes.get_mut(&address) {
+            changes.retain(|(i, _)| *i != idx);
+            if changes.is_empty() {
+                self.code_changes.remove(&address);
+            }
+        }
+
+        // 4. Convert storage writes from current tx to reads
+        if let Some(slots) = self.storage_writes.get_mut(&address) {
+            let mut slots_to_read: Vec<U256> = Vec::new();
+            for (slot, changes) in slots.iter_mut() {
+                if changes.iter().any(|(i, _)| *i == idx) {
+                    slots_to_read.push(*slot);
+                }
+                changes.retain(|(i, _)| *i != idx);
+            }
+            slots.retain(|_, changes| !changes.is_empty());
+            if slots.is_empty() {
+                self.storage_writes.remove(&address);
+            }
+
+            for slot in slots_to_read {
+                self.storage_reads.entry(address).or_default().insert(slot);
+                // Undo read-to-write promotion for these slots
+                if let Some(promoted) = self.reads_promoted_to_writes.get_mut(&address) {
+                    promoted.retain(|s| *s != slot);
+                    if promoted.is_empty() {
+                        self.reads_promoted_to_writes.remove(&address);
+                    }
+                }
+            }
+        }
     }
 }
