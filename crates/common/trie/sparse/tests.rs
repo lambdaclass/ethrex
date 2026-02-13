@@ -10,7 +10,7 @@ use crate::nibbles::Nibbles;
 struct NullProvider;
 
 impl SparseTrieProvider for NullProvider {
-    fn get_node(&self, _path: &Nibbles) -> Result<Option<Vec<u8>>, crate::error::TrieError> {
+    fn get_node(&self, _path: &[u8]) -> Result<Option<Vec<u8>>, crate::error::TrieError> {
         Ok(None)
     }
 }

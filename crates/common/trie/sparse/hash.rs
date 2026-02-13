@@ -33,6 +33,10 @@ pub fn compute_root(
             LowerSubtrie::Blind(Some(s)) => s,
             LowerSubtrie::Blind(None) => return Ok(()),
         };
+        // Skip subtries with no dirty nodes — all hashes are still valid
+        if subtrie.dirty_nodes.is_empty() {
+            return Ok(());
+        }
         hash_subtrie(subtrie, prefix_set)
     })?;
 
@@ -127,49 +131,36 @@ fn propagate_cross_boundary_hashes(upper: &mut SparseSubtrie, lower: &[LowerSubt
 }
 
 /// Hash all nodes in a subtrie bottom-up using an iterative stack-based approach.
-fn hash_subtrie(subtrie: &mut SparseSubtrie, prefix_set: &PrefixSet) -> Result<(), TrieError> {
-    // Collect all paths and sort them by length (deepest first) for bottom-up processing
-    let mut paths: Vec<Vec<u8>> = subtrie.nodes.keys().cloned().collect();
+fn hash_subtrie(subtrie: &mut SparseSubtrie, _prefix_set: &PrefixSet) -> Result<(), TrieError> {
+    // Only collect paths where hash needs recomputation (hash == None),
+    // avoiding the cost of sorting all revealed-but-clean nodes.
+    let mut paths: Vec<Vec<u8>> = subtrie
+        .nodes
+        .iter()
+        .filter(|(_, node)| {
+            matches!(
+                node,
+                SparseNode::Leaf { hash: None, .. }
+                    | SparseNode::Extension { hash: None, .. }
+                    | SparseNode::Branch { hash: None, .. }
+            )
+        })
+        .map(|(k, _)| k.clone())
+        .collect();
     paths.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
 
     let mut buffers = std::mem::take(&mut subtrie.buffers);
 
     for path in &paths {
-        let node = subtrie.nodes.get(path);
-        if let Some(node) = node {
-            // Check if the node's hash needs recomputation.
-            // A node needs hashing if its hash was invalidated (set to None).
-            // The PrefixSet is an optimization: if non-empty, we can skip nodes
-            // that are NOT in the set AND still have a valid hash. But any node
-            // with hash=None MUST be recomputed regardless of the PrefixSet.
-            let needs_hash = match node {
-                SparseNode::Leaf { hash, .. }
-                | SparseNode::Extension { hash, .. }
-                | SparseNode::Branch { hash, .. } => {
-                    if hash.is_none() {
-                        // Hash was invalidated — must recompute
-                        true
-                    } else if !prefix_set.is_empty() && !prefix_set.contains(path) {
-                        // Hash is valid and path not modified — skip
-                        false
-                    } else {
-                        // Hash is valid but path was modified — skip (already hashed)
-                        false
-                    }
-                }
-                SparseNode::Empty | SparseNode::Hash(_) => false,
-            };
-
-            if needs_hash {
-                let hash = node_hash(node, &subtrie.values, &subtrie.nodes, path, &mut buffers);
-                // Store the computed hash
-                if let Some(node) = subtrie.nodes.get_mut(path) {
-                    match node {
-                        SparseNode::Leaf { hash: h, .. } => *h = Some(hash),
-                        SparseNode::Extension { hash: h, .. } => *h = Some(hash),
-                        SparseNode::Branch { hash: h, .. } => *h = Some(hash),
-                        _ => {}
-                    }
+        if let Some(node) = subtrie.nodes.get(path) {
+            let hash = node_hash(node, &subtrie.values, &subtrie.nodes, path, &mut buffers);
+            // Store the computed hash
+            if let Some(node) = subtrie.nodes.get_mut(path) {
+                match node {
+                    SparseNode::Leaf { hash: h, .. } => *h = Some(hash),
+                    SparseNode::Extension { hash: h, .. } => *h = Some(hash),
+                    SparseNode::Branch { hash: h, .. } => *h = Some(hash),
+                    _ => {}
                 }
             }
         }

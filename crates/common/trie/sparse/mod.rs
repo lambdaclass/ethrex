@@ -14,13 +14,13 @@ use crate::node_hash::NodeHash;
 
 /// Trait for on-demand node loading from the database.
 pub trait SparseTrieProvider: Send + Sync {
-    fn get_node(&self, path: &Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
+    fn get_node(&self, path: &[u8]) -> Result<Option<Vec<u8>>, TrieError>;
 }
 
 /// Blanket implementation: any TrieDB automatically works as a SparseTrieProvider.
 impl<T: crate::db::TrieDB + ?Sized> SparseTrieProvider for T {
-    fn get_node(&self, path: &Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        self.get(path.clone())
+    fn get_node(&self, path: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
+        self.get(Nibbles::from_hex(path.to_vec()))
     }
 }
 
@@ -32,8 +32,8 @@ impl<T: crate::db::TrieDB + ?Sized> SparseTrieProvider for T {
 pub struct TrieDBProvider<'a>(pub &'a dyn crate::db::TrieDB);
 
 impl SparseTrieProvider for TrieDBProvider<'_> {
-    fn get_node(&self, path: &Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        self.0.get(path.clone())
+    fn get_node(&self, path: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
+        self.0.get(Nibbles::from_hex(path.to_vec()))
     }
 }
 
@@ -79,6 +79,10 @@ pub struct SparseSubtrie {
     nodes: FxHashMap<Vec<u8>, SparseNode>,
     /// Leaf full_path → RLP-encoded value (separate from leaf node metadata).
     values: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// Paths of nodes modified since last collect_updates (for dirty-only output).
+    dirty_nodes: FxHashSet<Vec<u8>>,
+    /// Paths of values modified since last collect_updates (for dirty-only output).
+    dirty_values: FxHashSet<Vec<u8>>,
     /// Reusable buffers for hash computation.
     buffers: SubtrieBuffers,
 }
@@ -89,6 +93,8 @@ impl SparseSubtrie {
             path,
             nodes: FxHashMap::default(),
             values: FxHashMap::default(),
+            dirty_nodes: FxHashSet::default(),
+            dirty_values: FxHashSet::default(),
             buffers: SubtrieBuffers::default(),
         }
     }
@@ -222,7 +228,7 @@ impl SparseTrie {
         }
 
         // Load root from DB
-        let root_rlp = provider.get_node(&Nibbles::default())?.ok_or_else(|| {
+        let root_rlp = provider.get_node(&[])?.ok_or_else(|| {
             TrieError::InconsistentTree(Box::new(
                 crate::error::InconsistentTreeError::RootNotFound(root_hash),
             ))
@@ -282,15 +288,20 @@ impl SparseTrie {
         let mut updates = Vec::new();
 
         let collect_subtrie = |subtrie: &SparseSubtrie, updates: &mut Vec<(Nibbles, Vec<u8>)>| {
-            for (path_data, node) in &subtrie.nodes {
-                if let Some(rlp) =
-                    hash::encode_node(node, &subtrie.values, &subtrie.nodes, path_data)
+            // Only emit dirty nodes (modified since last reveal), not all revealed nodes
+            for path_data in &subtrie.dirty_nodes {
+                if let Some(node) = subtrie.nodes.get(path_data)
+                    && let Some(rlp) =
+                        hash::encode_node(node, &subtrie.values, &subtrie.nodes, path_data)
                 {
                     updates.push((Nibbles::from_hex(path_data.clone()), rlp));
                 }
             }
-            for (path_data, value) in &subtrie.values {
-                updates.push((Nibbles::from_hex(path_data.clone()), value.clone()));
+            // Only emit dirty values, not all revealed values
+            for path_data in &subtrie.dirty_values {
+                if let Some(value) = subtrie.values.get(path_data) {
+                    updates.push((Nibbles::from_hex(path_data.clone()), value.clone()));
+                }
             }
         };
 
