@@ -8,6 +8,23 @@ use std::{
 };
 use tracing::error;
 
+#[cfg(feature = "rocksdb")]
+use std::sync::Arc;
+
+/// Type alias for the flush target used during account range downloads.
+/// On rocksdb builds, accounts are written directly to a temp RocksDB instance.
+/// On non-rocksdb builds, accounts are written to snapshot files under a directory.
+#[cfg(feature = "rocksdb")]
+pub type AccountFlushTarget = Arc<rocksdb::DB>;
+#[cfg(not(feature = "rocksdb"))]
+pub type AccountFlushTarget = PathBuf;
+
+/// Type alias for the flush target used during storage range downloads.
+#[cfg(feature = "rocksdb")]
+pub type StorageFlushTarget = Arc<rocksdb::DB>;
+#[cfg(not(feature = "rocksdb"))]
+pub type StorageFlushTarget = PathBuf;
+
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
     keccak(public_key)
@@ -69,21 +86,22 @@ pub fn get_rocksdb_temp_storage_dir(datadir: &Path) -> PathBuf {
     datadir.join("temp_storage_dir")
 }
 
+#[cfg(not(feature = "rocksdb"))]
 pub fn get_account_state_snapshot_file(directory: &Path, chunk_index: u64) -> PathBuf {
     directory.join(format!("account_state_chunk.rlp.{chunk_index}"))
 }
 
+#[cfg(not(feature = "rocksdb"))]
 pub fn get_account_storages_snapshot_file(directory: &Path, chunk_index: u64) -> PathBuf {
     directory.join(format!("account_storages_chunk.rlp.{chunk_index}"))
 }
 
+/// Writes a batch of accounts directly into a temp RocksDB instance using WriteBatch.
 #[cfg(feature = "rocksdb")]
-pub fn dump_accounts_to_rocks_db(
-    path: &Path,
+pub fn write_accounts_to_rocksdb(
+    db: &rocksdb::DB,
     mut contents: Vec<(H256, AccountState)>,
-) -> Result<(), rocksdb::Error> {
-    // This can happen sometimes during download, and the sst ingestion method
-    // fails with empty chunk files
+) -> Result<(), DumpError> {
     if contents.is_empty() {
         return Ok(());
     }
@@ -94,24 +112,27 @@ pub fn dump_accounts_to_rocks_db(
         buf
     });
     let mut buffer: Vec<u8> = Vec::new();
-    let writer_options = rocksdb::Options::default();
-    let mut writer = rocksdb::SstFileWriter::create(&writer_options);
-    writer.open(std::path::Path::new(&path))?;
+    let mut batch = rocksdb::WriteBatch::default();
     for (key, account) in contents {
         buffer.clear();
         account.encode(&mut buffer);
-        writer.put(key.0.as_ref(), buffer.as_slice())?;
+        batch.put(key.0.as_ref(), buffer.as_slice());
     }
-    writer.finish()
+    db.write(batch)
+        .inspect_err(|err| error!("RocksDB WriteBatch error for accounts: {err:?}"))
+        .map_err(|_| DumpError {
+            path: PathBuf::from("<rocksdb>"),
+            error: std::io::ErrorKind::Other,
+        })
 }
 
+/// Writes a batch of storage slots directly into a temp RocksDB instance using WriteBatch.
+/// Each key is a 64-byte composite `[account_hash || slot_hash]`.
 #[cfg(feature = "rocksdb")]
-pub fn dump_storages_to_rocks_db(
-    path: &Path,
+pub fn write_storages_to_rocksdb(
+    db: &rocksdb::DB,
     mut contents: Vec<(H256, H256, U256)>,
-) -> Result<(), rocksdb::Error> {
-    // This can happen sometimes during download, and the sst ingestion method
-    // fails with empty chunk files
+) -> Result<(), DumpError> {
     if contents.is_empty() {
         return Ok(());
     }
@@ -122,19 +143,22 @@ pub fn dump_storages_to_rocks_db(
         buffer[32..64].copy_from_slice(&k1.0);
         buffer
     });
-    let writer_options = rocksdb::Options::default();
-    let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     let mut buffer_key = [0_u8; 64];
     let mut buffer_storage: Vec<u8> = Vec::new();
-    writer.open(std::path::Path::new(&path))?;
+    let mut batch = rocksdb::WriteBatch::default();
     for (account, slot_hash, slot_value) in contents {
         buffer_key[0..32].copy_from_slice(&account.0);
         buffer_key[32..64].copy_from_slice(&slot_hash.0);
         buffer_storage.clear();
         slot_value.encode(&mut buffer_storage);
-        writer.put(buffer_key.as_ref(), buffer_storage.as_slice())?;
+        batch.put(buffer_key.as_ref(), buffer_storage.as_slice());
     }
-    writer.finish()
+    db.write(batch)
+        .inspect_err(|err| error!("RocksDB WriteBatch error for storages: {err:?}"))
+        .map_err(|_| DumpError {
+            path: PathBuf::from("<rocksdb>"),
+            error: std::io::ErrorKind::Other,
+        })
 }
 
 pub fn get_code_hashes_snapshots_dir(datadir: &Path) -> PathBuf {
@@ -154,18 +178,11 @@ pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
         })
 }
 
+#[cfg(not(feature = "rocksdb"))]
 pub fn dump_accounts_to_file(
     path: &Path,
     accounts: Vec<(H256, AccountState)>,
 ) -> Result<(), DumpError> {
-    #[cfg(feature = "rocksdb")]
-    return dump_accounts_to_rocks_db(path, accounts)
-        .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
-        .map_err(|_| DumpError {
-            path: path.to_path_buf(),
-            error: std::io::ErrorKind::Other,
-        });
-    #[cfg(not(feature = "rocksdb"))]
     dump_to_file(path, accounts.encode_to_vec())
 }
 
@@ -177,38 +194,11 @@ pub struct AccountsWithStorage {
     pub storages: Vec<(H256, U256)>,
 }
 
+#[cfg(not(feature = "rocksdb"))]
 pub fn dump_storages_to_file(
     path: &Path,
     storages: Vec<AccountsWithStorage>,
 ) -> Result<(), DumpError> {
-    #[cfg(feature = "rocksdb")]
-    return dump_storages_to_rocks_db(
-        path,
-        storages
-            .into_iter()
-            .flat_map(|accounts_with_slots| {
-                accounts_with_slots
-                    .accounts
-                    .into_iter()
-                    .map(|hash| {
-                        accounts_with_slots
-                            .storages
-                            .iter()
-                            .map(move |(slot_hash, slot_value)| (hash, *slot_hash, *slot_value))
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .flatten()
-            .collect::<Vec<_>>(),
-    )
-    .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
-    .map_err(|_| DumpError {
-        path: path.to_path_buf(),
-        error: std::io::ErrorKind::Other,
-    });
-
-    #[cfg(not(feature = "rocksdb"))]
     dump_to_file(
         path,
         storages
