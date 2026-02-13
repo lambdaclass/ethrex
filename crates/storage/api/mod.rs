@@ -34,7 +34,7 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;
 
     /// Opens a new read view.
-    fn begin_read(&self) -> Result<Box<dyn StorageReadView + '_>, StoreError>;
+    fn begin_read(&self) -> Result<Box<dyn StorageReadView>, StoreError>;
 
     /// Creates a new write batch.
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError>;
@@ -55,7 +55,7 @@ pub trait StorageBackend: Debug + Send + Sync {
 
 /// Read-only transaction interface.
 /// Provides methods to read data from the database
-pub trait StorageReadView {
+pub trait StorageReadView: Send + Sync {
     /// Retrieves a value by key from the specified table.
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
