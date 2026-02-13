@@ -234,6 +234,9 @@ pub struct NewPayloadV5Request {
     pub expected_blob_versioned_hashes: Vec<H256>,
     pub parent_beacon_block_root: H256,
     pub execution_requests: Vec<EncodedRequests>,
+    /// The BAL hash computed from the raw RLP bytes as received (no re-encoding/sorting).
+    /// This preserves the exact encoding from the payload for block hash validation.
+    pub raw_bal_hash: Option<H256>,
 }
 
 impl From<NewPayloadV5Request> for RpcRequest {
@@ -259,6 +262,18 @@ impl RpcHandler for NewPayloadV5Request {
         if params.len() != 4 {
             return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
         }
+
+        // Extract the raw BAL hash from the JSON payload before deserialization.
+        // We hash the raw RLP bytes as-received to preserve the exact encoding
+        // (including any ordering) for accurate block hash validation.
+        let raw_bal_hash = params[0]
+            .get("blockAccessList")
+            .and_then(|v| v.as_str())
+            .and_then(|hex_str| {
+                let bytes = hex::decode(hex_str.trim_start_matches("0x")).ok()?;
+                Some(ethrex_common::utils::keccak(bytes))
+            });
+
         Ok(Self {
             payload: serde_json::from_value(params[0].clone())
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
@@ -268,6 +283,7 @@ impl RpcHandler for NewPayloadV5Request {
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
             execution_requests: serde_json::from_value(params[3].clone())
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+            raw_bal_hash,
         })
     }
 
@@ -278,11 +294,10 @@ impl RpcHandler for NewPayloadV5Request {
         validate_execution_requests(&self.execution_requests)?;
 
         let requests_hash = compute_requests_hash(&self.execution_requests);
-        let block_access_list_hash = self
-            .payload
-            .block_access_list
-            .as_ref()
-            .map(|b| b.compute_hash());
+        // Use the hash computed from the raw RLP bytes as-received.
+        // This preserves the exact encoding (including any ordering) from the payload,
+        // so the block hash check correctly detects BAL corruption.
+        let block_access_list_hash = self.raw_bal_hash;
 
         let block = match get_block_from_payload(
             &self.payload,
