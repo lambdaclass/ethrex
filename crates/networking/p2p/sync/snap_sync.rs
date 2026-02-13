@@ -280,7 +280,11 @@ pub async fn snap_sync(
     let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
 
     let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(datadir);
-    std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
+    std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|e| {
+        SyncError::FileSystem(format!(
+            "Failed to create {code_hashes_snapshot_dir:?}: {e}"
+        ))
+    })?;
 
     // Create collector to store code hashes in files
     let mut code_hash_collector: CodeHashCollector =
@@ -499,7 +503,8 @@ pub async fn snap_sync(
     for entry in std::fs::read_dir(&code_hashes_dir)
         .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
     {
-        let entry = entry.map_err(|_| SyncError::CorruptPath)?;
+        let entry =
+            entry.map_err(|e| SyncError::FileSystem(format!("Failed to read dir entry: {e}")))?;
         let snapshot_contents = std::fs::read(entry.path())
             .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
         let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
