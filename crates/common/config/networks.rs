@@ -12,6 +12,7 @@ const MAINNET_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/mainn
 const HOLESKY_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/holesky/bootnodes.json");
 const SEPOLIA_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/sepolia/bootnodes.json");
 const HOODI_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/hoodi/bootnodes.json");
+const GNOSIS_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/gnosis/bootnodes.json");
 
 pub const MAINNET_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/mainnet/genesis.json");
@@ -21,6 +22,8 @@ pub const HOODI_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
 pub const SEPOLIA_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/sepolia/genesis.json");
+pub const GNOSIS_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/gnosis/genesis.json");
 pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l1.json");
 pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l2.json");
 
@@ -31,6 +34,7 @@ pub const MAINNET_CHAIN_ID: u64 = 0x1;
 pub const HOLESKY_CHAIN_ID: u64 = 0x4268;
 pub const HOODI_CHAIN_ID: u64 = 0x88bb0;
 pub const SEPOLIA_CHAIN_ID: u64 = 0xAA36A7;
+pub const GNOSIS_CHAIN_ID: u64 = 0x64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Network {
@@ -48,6 +52,7 @@ pub enum PublicNetwork {
     Holesky,
     Sepolia,
     Mainnet,
+    Gnosis,
 }
 
 impl From<&str> for Network {
@@ -57,6 +62,7 @@ impl From<&str> for Network {
             "holesky" => Network::PublicNetwork(PublicNetwork::Holesky),
             "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
             "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
+            "gnosis" => Network::PublicNetwork(PublicNetwork::Gnosis),
             // Note that we don't allow to manually specify the local devnet genesis
             s => Network::GenesisPath(PathBuf::from(s)),
         }
@@ -72,6 +78,7 @@ impl TryFrom<u64> for Network {
             HOLESKY_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),
             SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
             HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
+            GNOSIS_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Gnosis)),
             _ => Err(format!("Unknown chain ID: {}", value)),
         }
     }
@@ -96,6 +103,7 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
             Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
+            Network::PublicNetwork(PublicNetwork::Gnosis) => write!(f, "gnosis"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
             Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
@@ -134,6 +142,7 @@ impl Network {
             Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
+            Network::PublicNetwork(PublicNetwork::Gnosis) => GNOSIS_BOOTNODES,
             _ => return vec![],
         };
         serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
@@ -146,6 +155,7 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
         PublicNetwork::Hoodi => HOODI_GENESIS_CONTENTS,
         PublicNetwork::Mainnet => MAINNET_GENESIS_CONTENTS,
         PublicNetwork::Sepolia => SEPOLIA_GENESIS_CONTENTS,
+        PublicNetwork::Gnosis => GNOSIS_GENESIS_CONTENTS,
     }
 }
 
@@ -208,5 +218,13 @@ mod tests {
         Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Sepolia).get_bootnodes();
+        Network::PublicNetwork(PublicNetwork::Gnosis).get_bootnodes();
+    }
+
+    #[test]
+    fn test_gnosis_genesis_parses() {
+        // Verify Gnosis genesis can be parsed correctly
+        let genesis = Network::PublicNetwork(PublicNetwork::Gnosis).get_genesis().unwrap();
+        assert_eq!(genesis.config.chain_id, 100);
     }
 }
