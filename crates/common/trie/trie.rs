@@ -562,6 +562,88 @@ impl Trie {
         }
         Ok(())
     }
+
+    /// Validate the trie structure in parallel by splitting at the root branch node.
+    /// Each of the root's 16 subtrees is validated independently using rayon.
+    pub fn validate_parallel(self) -> Result<(), TrieError> {
+        use rayon::prelude::*;
+
+        if !self.root.is_valid() {
+            return Ok(());
+        }
+
+        let db = &*self.db;
+        let root_node = self
+            .root
+            .get_node_checked(db, Nibbles::default())?
+            .ok_or_else(|| TrieError::Verify("Root node not found".to_string()))?;
+
+        match &*root_node {
+            Node::Branch(branch_node) => {
+                let children: Vec<(Nibbles, NodeRef)> = branch_node
+                    .choices
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, child)| child.is_valid())
+                    .map(|(i, child)| {
+                        let path = Nibbles::default().append_new(i as u8);
+                        (path, child.clone())
+                    })
+                    .collect();
+
+                children
+                    .par_iter()
+                    .try_for_each(|(start_path, start_ref)| {
+                        validate_subtree(db, start_path.clone(), start_ref.clone())
+                    })
+            }
+            _ => {
+                // Non-branch root (rare): validate sequentially
+                validate_subtree(db, Nibbles::default(), self.root.clone())
+            }
+        }
+    }
+}
+
+/// Validate a subtree rooted at `start_ref`, checking that all referenced nodes exist
+/// and their hashes match.
+fn validate_subtree(
+    db: &dyn TrieDB,
+    start_path: Nibbles,
+    start_ref: NodeRef,
+) -> Result<(), TrieError> {
+    let mut expected_count: isize = 1;
+    let mut stack = vec![(start_path, start_ref)];
+
+    while let Some((path, node_ref)) = stack.pop() {
+        let node = node_ref
+            .get_node_checked(db, path.clone())?
+            .ok_or_else(|| TrieError::Verify(format!("Missing node at path {path:?}")))?;
+
+        expected_count -= 1;
+        match &*node {
+            Node::Branch(branch) => {
+                for (choice, child) in branch.choices.iter().enumerate().rev() {
+                    if child.is_valid() {
+                        expected_count += 1;
+                        stack.push((path.append_new(choice as u8), child.clone()));
+                    }
+                }
+            }
+            Node::Extension(ext) => {
+                expected_count += 1;
+                stack.push((path.concat(&ext.prefix), ext.child.clone()));
+            }
+            Node::Leaf(_) => {}
+        }
+    }
+
+    if expected_count != 0 {
+        return Err(TrieError::Verify(format!(
+            "Node count mismatch in subtree, expected {expected_count} more"
+        )));
+    }
+    Ok(())
 }
 
 impl IntoIterator for Trie {

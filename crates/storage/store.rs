@@ -710,6 +710,28 @@ impl Store {
         Ok(Some(code))
     }
 
+    /// Check if account code exists by its hash, without reading the full bytecode.
+    /// More efficient than get_account_code for existence checks since it skips
+    /// blob value reads and RLP decoding.
+    pub fn code_exists(&self, code_hash: H256) -> Result<bool, StoreError> {
+        // Check cache first
+        if self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        // Check DB without reading the full value
+        Ok(self
+            .backend
+            .begin_read()?
+            .get(ACCOUNT_CODES, code_hash.as_bytes())?
+            .is_some())
+    }
+
     /// Get code metadata (length) by its hash.
     ///
     /// Checks cache first, falls back to database. If metadata is missing,
