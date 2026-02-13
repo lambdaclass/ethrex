@@ -456,15 +456,11 @@ pub async fn snap_sync(
             )?;
         }
 
-        // Clean up snapshot directories (skipped when capturing so the data
-        // remains available for the copy above — the dirs are read-only during
-        // capture).
-        if capture_dir.is_none() {
-            std::fs::remove_dir_all(&account_state_snapshots_dir)
-                .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
-            std::fs::remove_dir_all(&account_storages_snapshots_dir)
-                .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-        }
+        // Clean up snapshot directories (after capture has copied them, if active)
+        std::fs::remove_dir_all(&account_state_snapshots_dir)
+            .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
+        std::fs::remove_dir_all(&account_storages_snapshots_dir)
+            .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     }
 
     *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
@@ -1087,8 +1083,7 @@ async fn insert_accounts(
 
     drop(db); // close db before removing directory
 
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
+    // Snapshot dir cleanup is handled by the caller (conditional on capture mode).
     std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
 
@@ -1229,8 +1224,7 @@ async fn insert_storages(
     drop(snapshot);
     drop(db);
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    // Snapshot dir cleanup is handled by the caller (conditional on capture mode).
     std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
         .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
 
