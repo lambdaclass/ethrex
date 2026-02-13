@@ -3,7 +3,7 @@ mod hash;
 mod tests;
 mod update;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use ethereum_types::H256;
 
@@ -72,6 +72,8 @@ impl SparseNode {
 #[derive(Default)]
 struct SubtrieBuffers {
     rlp_buf: Vec<u8>,
+    /// Reusable buffer for building child paths in branch node hashing.
+    child_path_buf: Vec<u8>,
 }
 
 /// A subtrie in the SparseTrie, containing nodes indexed by path.
@@ -80,9 +82,9 @@ pub struct SparseSubtrie {
     #[allow(dead_code)]
     path: Nibbles,
     /// Path-indexed node storage (path → SparseNode).
-    nodes: HashMap<Vec<u8>, SparseNode>,
+    nodes: FxHashMap<Vec<u8>, SparseNode>,
     /// Leaf full_path → RLP-encoded value (separate from leaf node metadata).
-    values: HashMap<Vec<u8>, Vec<u8>>,
+    values: FxHashMap<Vec<u8>, Vec<u8>>,
     /// Reusable buffers for hash computation.
     buffers: SubtrieBuffers,
 }
@@ -91,8 +93,8 @@ impl SparseSubtrie {
     fn new(path: Nibbles) -> Self {
         Self {
             path,
-            nodes: HashMap::new(),
-            values: HashMap::new(),
+            nodes: FxHashMap::default(),
+            values: FxHashMap::default(),
             buffers: SubtrieBuffers::default(),
         }
     }
@@ -130,13 +132,22 @@ impl PrefixSet {
         self.sorted = false;
     }
 
-    /// Check if any path in the set is a prefix of the given path, or vice versa.
-    pub fn contains(&mut self, path: &[u8]) -> bool {
+    /// Sort the prefix set if not already sorted. Call before parallel reads.
+    pub fn ensure_sorted(&mut self) {
         if !self.sorted {
             self.modified.sort();
             self.modified.dedup();
             self.sorted = true;
         }
+    }
+
+    /// Check if any path in the set is a prefix of the given path, or vice versa.
+    /// Must call `ensure_sorted()` first if the set has been modified.
+    pub fn contains(&self, path: &[u8]) -> bool {
+        debug_assert!(
+            self.sorted,
+            "PrefixSet must be sorted before calling contains()"
+        );
 
         // Binary search for a prefix match
         let idx = self.modified.partition_point(|p| p.as_slice() < path);

@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::{RLPEncode, encode_length};
+use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 
 use crate::EMPTY_TRIE_HASH;
 use crate::error::TrieError;
@@ -12,7 +12,7 @@ use super::{LowerSubtrie, PrefixSet, SparseNode, SparseSubtrie, SubtrieBuffers};
 
 /// Compute the root hash of the entire SparseTrie.
 ///
-/// 1. Hash all lower subtries (can be parallelized with rayon).
+/// 1. Hash all lower subtries in parallel via rayon.
 /// 2. Propagate lower subtrie root hashes to upper subtrie.
 /// 3. Hash the upper subtrie using the propagated hashes.
 /// 4. Return the root hash.
@@ -21,16 +21,20 @@ pub fn compute_root(
     lower: &mut [LowerSubtrie],
     prefix_set: &mut PrefixSet,
 ) -> Result<H256, TrieError> {
-    // First, hash all lower subtries
-    // For now, do this sequentially. Rayon parallelism will be added after correctness is verified.
-    for lower_subtrie in lower.iter_mut() {
+    // Hash all lower subtries in parallel via rayon.
+    // Each lower subtrie is independent, so they can be hashed concurrently.
+    // PrefixSet is read-only after sort (triggered by first contains() call).
+    // Force the sort now so parallel reads are safe.
+    prefix_set.ensure_sorted();
+
+    lower.par_iter_mut().try_for_each(|lower_subtrie| {
         let subtrie = match lower_subtrie {
             LowerSubtrie::Revealed(s) => s,
             LowerSubtrie::Blind(Some(s)) => s,
-            LowerSubtrie::Blind(None) => continue,
+            LowerSubtrie::Blind(None) => return Ok(()),
         };
-        hash_subtrie(subtrie, prefix_set)?;
-    }
+        hash_subtrie(subtrie, prefix_set)
+    })?;
 
     // Propagate lower subtrie root hashes to the upper subtrie.
     // Each lower subtrie's root node (at path [n0, n1]) needs its hash
@@ -123,7 +127,7 @@ fn propagate_cross_boundary_hashes(upper: &mut SparseSubtrie, lower: &[LowerSubt
 }
 
 /// Hash all nodes in a subtrie bottom-up using an iterative stack-based approach.
-fn hash_subtrie(subtrie: &mut SparseSubtrie, prefix_set: &mut PrefixSet) -> Result<(), TrieError> {
+fn hash_subtrie(subtrie: &mut SparseSubtrie, prefix_set: &PrefixSet) -> Result<(), TrieError> {
     // Collect all paths and sort them by length (deepest first) for bottom-up processing
     let mut paths: Vec<Vec<u8>> = subtrie.nodes.keys().cloned().collect();
     paths.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
@@ -178,8 +182,8 @@ fn hash_subtrie(subtrie: &mut SparseSubtrie, prefix_set: &mut PrefixSet) -> Resu
 /// Compute the NodeHash for a single SparseNode.
 fn node_hash(
     node: &SparseNode,
-    values: &HashMap<Vec<u8>, Vec<u8>>,
-    nodes: &HashMap<Vec<u8>, SparseNode>,
+    values: &FxHashMap<Vec<u8>, Vec<u8>>,
+    nodes: &FxHashMap<Vec<u8>, SparseNode>,
     path: &[u8],
     buffers: &mut SubtrieBuffers,
 ) -> NodeHash {
@@ -198,10 +202,11 @@ fn node_hash(
             // Encode: RLP([compact_key, value])
             let compact = key.encode_compact();
             let full_path: Vec<u8> = path.iter().chain(key.as_ref().iter()).copied().collect();
-            let value = values.get(&full_path).cloned().unwrap_or_default();
+            let empty_value = Vec::new();
+            let value = values.get(&full_path).unwrap_or(&empty_value);
             ethrex_rlp::structs::Encoder::new(&mut buffers.rlp_buf)
                 .encode_bytes(&compact)
-                .encode_bytes(&value)
+                .encode_bytes(value)
                 .finish();
             NodeHash::from_encoded(&buffers.rlp_buf)
         }
@@ -230,14 +235,17 @@ fn node_hash(
                 return *h;
             }
             // Encode: RLP([child0, child1, ..., child15, value])
-            // First compute all child hashes
+            // First compute all child hashes, reusing the child_path_buf.
             let mut child_hashes: [NodeHash; 16] = [NodeHash::default(); 16];
             for i in 0..16u8 {
                 if state_mask & (1 << i) != 0 {
-                    let mut child_path = path.to_vec();
-                    child_path.push(i);
-                    child_hashes[i as usize] = match nodes.get(&child_path) {
+                    buffers.child_path_buf.clear();
+                    buffers.child_path_buf.extend_from_slice(path);
+                    buffers.child_path_buf.push(i);
+                    child_hashes[i as usize] = match nodes.get(&buffers.child_path_buf) {
                         Some(child_node) => {
+                            // Clone the path out since node_hash needs mutable buffers
+                            let child_path = buffers.child_path_buf.clone();
                             node_hash(child_node, values, nodes, &child_path, buffers)
                         }
                         None => NodeHash::default(),
@@ -248,13 +256,15 @@ fn node_hash(
             // Now encode the branch node
             buffers.rlp_buf.clear();
 
-            // Check for branch value
-            let mut value_path = path.to_vec();
-            value_path.push(16);
-            let branch_value = values.get(&value_path).cloned().unwrap_or_default();
+            // Check for branch value using the reusable buffer
+            buffers.child_path_buf.clear();
+            buffers.child_path_buf.extend_from_slice(path);
+            buffers.child_path_buf.push(16);
+            let empty_value = Vec::new();
+            let branch_value = values.get(&buffers.child_path_buf).unwrap_or(&empty_value);
 
             // Calculate payload length
-            let value_len = <[u8] as RLPEncode>::length(&branch_value);
+            let value_len = <[u8] as RLPEncode>::length(branch_value);
             let payload_len = child_hashes
                 .iter()
                 .fold(value_len, |acc, child| acc + RLPEncode::length(child));
@@ -269,7 +279,7 @@ fn node_hash(
                     }
                 }
             }
-            <[u8] as RLPEncode>::encode(&branch_value, &mut buffers.rlp_buf);
+            <[u8] as RLPEncode>::encode(branch_value, &mut buffers.rlp_buf);
 
             NodeHash::from_encoded(&buffers.rlp_buf)
         }
@@ -280,8 +290,8 @@ fn node_hash(
 /// The `nodes` map is needed to resolve child hashes for branch nodes.
 pub fn encode_node(
     node: &SparseNode,
-    values: &HashMap<Vec<u8>, Vec<u8>>,
-    nodes: &HashMap<Vec<u8>, SparseNode>,
+    values: &FxHashMap<Vec<u8>, Vec<u8>>,
+    nodes: &FxHashMap<Vec<u8>, SparseNode>,
     path_data: &[u8],
 ) -> Option<Vec<u8>> {
     match node {
@@ -295,11 +305,12 @@ pub fn encode_node(
                 .chain(key.as_ref().iter())
                 .copied()
                 .collect();
-            let value = values.get(&full_path).cloned().unwrap_or_default();
+            let empty_value = Vec::new();
+            let value = values.get(&full_path).unwrap_or(&empty_value);
             let mut buf = Vec::new();
             ethrex_rlp::structs::Encoder::new(&mut buf)
                 .encode_bytes(&compact)
-                .encode_bytes(&value)
+                .encode_bytes(value)
                 .finish();
             Some(buf)
         }
@@ -328,13 +339,15 @@ pub fn encode_node(
             Some(buf)
         }
         SparseNode::Branch { state_mask, .. } => {
-            // Look up cached hashes from child nodes
+            // Look up cached hashes from child nodes, reusing a single buffer
             let mut child_hashes: [NodeHash; 16] = [NodeHash::default(); 16];
+            let mut child_path_buf = Vec::with_capacity(path_data.len() + 1);
             for i in 0..16u8 {
                 if state_mask & (1 << i) != 0 {
-                    let mut child_path = path_data.to_vec();
-                    child_path.push(i);
-                    if let Some(child_node) = nodes.get(&child_path) {
+                    child_path_buf.clear();
+                    child_path_buf.extend_from_slice(path_data);
+                    child_path_buf.push(i);
+                    if let Some(child_node) = nodes.get(&child_path_buf) {
                         child_hashes[i as usize] = match child_node {
                             SparseNode::Leaf { hash, .. }
                             | SparseNode::Extension { hash, .. }
@@ -347,13 +360,15 @@ pub fn encode_node(
             }
 
             // Get branch value if any
-            let mut value_path = path_data.to_vec();
-            value_path.push(16);
-            let branch_value = values.get(&value_path).cloned().unwrap_or_default();
+            child_path_buf.clear();
+            child_path_buf.extend_from_slice(path_data);
+            child_path_buf.push(16);
+            let empty_value = Vec::new();
+            let branch_value = values.get(&child_path_buf).unwrap_or(&empty_value);
 
             // Encode the branch as RLP
             let mut buf = Vec::new();
-            let value_len = <[u8] as RLPEncode>::length(&branch_value);
+            let value_len = <[u8] as RLPEncode>::length(branch_value);
             let payload_len = child_hashes
                 .iter()
                 .fold(value_len, |acc, child| acc + RLPEncode::length(child));
@@ -368,7 +383,7 @@ pub fn encode_node(
                     }
                 }
             }
-            <[u8] as RLPEncode>::encode(&branch_value, &mut buf);
+            <[u8] as RLPEncode>::encode(branch_value, &mut buf);
 
             Some(buf)
         }
