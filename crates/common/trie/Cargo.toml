@@ -24,6 +24,7 @@ lazy_static.workspace = true
 crossbeam.workspace = true
 rustc-hash.workspace = true
 rkyv.workspace = true
+rayon.workspace = true
 
 [features]
 default = []

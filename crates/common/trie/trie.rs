@@ -6,6 +6,7 @@ pub mod node;
 mod node_hash;
 pub mod rkyv_utils;
 mod rlp;
+pub mod sparse;
 #[cfg(test)]
 mod test_utils;
 pub mod threadpool;
