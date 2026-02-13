@@ -306,6 +306,7 @@ impl RpcHandler for NewPayloadV5Request {
                 chain_config.get_fork(block.header.timestamp)
             )));
         }
+
         let payload_status = handle_new_payload_v4(
             &self.payload,
             context,

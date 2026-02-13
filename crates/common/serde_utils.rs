@@ -233,10 +233,16 @@ pub mod u64 {
         where
             D: Deserializer<'de>,
         {
-            let value = Option::<String>::deserialize(d)?;
+            let value: Option<serde_json::Value> = Option::deserialize(d)?;
             match value {
-                Some(s) if !s.is_empty() => u64::from_str_radix(s.trim_start_matches("0x"), 16)
-                    .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
+                Some(serde_json::Value::String(s)) if !s.is_empty() => {
+                    u64::from_str_radix(s.trim_start_matches("0x"), 16)
+                        .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
+                        .map(Some)
+                }
+                Some(serde_json::Value::Number(n)) => n
+                    .as_u64()
+                    .ok_or_else(|| D::Error::custom("Failed to deserialize u64 value"))
                     .map(Some),
                 _ => Ok(None),
             }
