@@ -9,13 +9,14 @@ use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::sync::Arc;
 
 /// TrieDB implementation that holds a pre-acquired read view for the entire
-/// trie traversal, avoiding per-node-lookup Box allocation and lock acquisition.
+/// trie traversal, avoiding per-node-lookup allocation and lock acquisition.
 pub struct BackendTrieDB {
     /// Reference to the storage backend (used only for writes)
     db: Arc<dyn StorageBackend>,
     /// Pre-acquired read view held for the lifetime of this struct.
-    /// All get() calls go through this view without additional allocation or locking.
-    read_view: Box<dyn StorageReadView>,
+    /// Using Arc allows sharing a single read view across multiple BackendTrieDB
+    /// instances (e.g., state trie + storage trie in a single query).
+    read_view: Arc<dyn StorageReadView>,
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
     nodes_table: &'static str,
@@ -31,8 +32,17 @@ impl BackendTrieDB {
         db: Arc<dyn StorageBackend>,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
-        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         let read_view = db.begin_read()?;
+        Self::new_for_accounts_with_view(db, read_view, last_written)
+    }
+
+    /// Create a new BackendTrieDB for the account trie with a shared read view
+    pub fn new_for_accounts_with_view(
+        db: Arc<dyn StorageBackend>,
+        read_view: Arc<dyn StorageReadView>,
+        last_written: Vec<u8>,
+    ) -> Result<Self, StoreError> {
+        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
             db,
             read_view,
@@ -48,8 +58,17 @@ impl BackendTrieDB {
         db: Arc<dyn StorageBackend>,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
-        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         let read_view = db.begin_read()?;
+        Self::new_for_storages_with_view(db, read_view, last_written)
+    }
+
+    /// Create a new BackendTrieDB for the storage tries with a shared read view
+    pub fn new_for_storages_with_view(
+        db: Arc<dyn StorageBackend>,
+        read_view: Arc<dyn StorageReadView>,
+        last_written: Vec<u8>,
+    ) -> Result<Self, StoreError> {
+        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
             db,
             read_view,
@@ -66,8 +85,18 @@ impl BackendTrieDB {
         address_prefix: H256,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
-        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         let read_view = db.begin_read()?;
+        Self::new_for_account_storage_with_view(db, read_view, address_prefix, last_written)
+    }
+
+    /// Create a new BackendTrieDB for a specific storage trie with a shared read view
+    pub fn new_for_account_storage_with_view(
+        db: Arc<dyn StorageBackend>,
+        read_view: Arc<dyn StorageReadView>,
+        address_prefix: H256,
+        last_written: Vec<u8>,
+    ) -> Result<Self, StoreError> {
+        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
             db,
             read_view,

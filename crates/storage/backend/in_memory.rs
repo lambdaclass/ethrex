@@ -37,13 +37,13 @@ impl StorageBackend for InMemoryBackend {
         Ok(())
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageReadView>, StoreError> {
+    fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
         let snapshot = self
             .inner
             .read()
             .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?
             .clone();
-        Ok(Box::new(InMemoryReadTx { snapshot }))
+        Ok(Arc::new(InMemoryReadTx { snapshot }))
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
