@@ -232,7 +232,7 @@ impl StorageBackend for RocksDBBackend {
             .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageReadView + '_>, StoreError> {
+    fn begin_read(&self) -> Result<Box<dyn StorageReadView>, StoreError> {
         Ok(Box::new(RocksDBReadTx {
             db: self.db.clone(),
         }))
