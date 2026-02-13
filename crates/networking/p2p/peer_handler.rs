@@ -619,6 +619,53 @@ impl PeerHandler {
 
         Ok(None)
     }
+
+    /// Requests a single block header by hash from a specific peer.
+    pub async fn get_block_header_by_hash(
+        &mut self,
+        peer_id: H256,
+        connection: &mut PeerConnection,
+        block_hash: H256,
+    ) -> Result<Option<BlockHeader>, PeerHandlerError> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Hash(block_hash),
+            limit: 1,
+            skip: 0,
+            reverse: false,
+        });
+        debug!("get_block_header_by_hash: requesting header with hash {block_hash:?}");
+        match PeerHandler::make_request(
+            &mut self.peer_table,
+            peer_id,
+            connection,
+            request,
+            PEER_REPLY_TIMEOUT,
+        )
+        .await
+        {
+            Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                id: _,
+                block_headers,
+            })) => {
+                if let Some(header) = block_headers.into_iter().next() {
+                    return Ok(Some(header));
+                }
+            }
+            Ok(_other_msgs) => {
+                debug!("Received unexpected message from peer");
+            }
+            Err(PeerConnectionError::Timeout) => {
+                debug!("Timeout while waiting for header by hash from peer");
+            }
+            Err(_) => {
+                warn!("The RLPxConnection closed the backend channel");
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header

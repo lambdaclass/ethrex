@@ -35,7 +35,7 @@ use ethrex_trie::{Node, verify_range};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::Path,
-    sync::atomic::Ordering,
+    sync::{atomic::Ordering, Arc},
     time::{Duration, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
@@ -96,7 +96,7 @@ pub async fn request_account_range(
     limit: H256,
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
-    block_sync_state: &mut SnapBlockSyncState,
+    block_sync_state: &Arc<tokio::sync::Mutex<SnapBlockSyncState>>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
