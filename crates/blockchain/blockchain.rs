@@ -538,6 +538,268 @@ impl Blockchain {
     )]
     fn handle_merkleization<'a, 's, 'b>(
         &'a self,
+        _scope: &'s std::thread::Scope<'s, '_>,
+        rx: Receiver<Vec<AccountUpdate>>,
+        parent_header: &'b BlockHeader,
+        queue_length: &AtomicUsize,
+        max_queue_length: &mut usize,
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError>
+    where
+        'a: 's,
+        'b: 's,
+    {
+        self.handle_merkleization_sparse(rx, parent_header, queue_length, max_queue_length)
+    }
+
+    /// SparseTrie-based merkleization: replaces the old 16-worker-thread approach.
+    fn handle_merkleization_sparse(
+        &self,
+        rx: Receiver<Vec<AccountUpdate>>,
+        parent_header: &BlockHeader,
+        queue_length: &AtomicUsize,
+        max_queue_length: &mut usize,
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+        use ethrex_trie::sparse::{SparseTrie, TrieDBProvider};
+
+        // Open state trie DB for on-demand node loading
+        let state_db_trie = self.storage.open_state_trie(parent_header.state_root)?;
+        let state_provider = TrieDBProvider(state_db_trie.db());
+
+        // Create sparse state trie and reveal root
+        let mut sparse_state = SparseTrie::new();
+        sparse_state.reveal_root(parent_header.state_root, &state_provider)?;
+
+        // Per-account storage tries and their DB backings
+        let mut storage_db_tries: FxHashMap<H256, Trie> = Default::default();
+        let mut storage_sparse_tries: FxHashMap<H256, SparseTrie> = Default::default();
+
+        // Track accounts with cleared storage (from removed or removed_storage)
+        let mut cleared_storage: rustc_hash::FxHashSet<H256> = Default::default();
+
+        // Account info tracking (hashed_address → AccountInfo)
+        let mut account_infos: FxHashMap<H256, Option<AccountInfo>> = Default::default();
+        let mut code_updates: Vec<(H256, Code)> = vec![];
+        let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
+
+        // Accumulator for witness generation
+        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
+            if self.options.precompute_witnesses {
+                Some(FxHashMap::default())
+            } else {
+                None
+            };
+
+        // Process all account update batches
+        for updates in rx {
+            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
+            *max_queue_length = current_length.max(*max_queue_length);
+
+            // Accumulate updates for witness generation if enabled
+            if let Some(acc) = &mut accumulator {
+                for update in updates.clone() {
+                    match acc.entry(update.address) {
+                        Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update);
+                        }
+                    }
+                }
+            }
+
+            for update in updates {
+                let hashed_address = *hashed_address_cache
+                    .entry(update.address)
+                    .or_insert_with(|| keccak(update.address));
+
+                if update.removed {
+                    // Mark account for removal: set info to default so state
+                    // becomes default → removed from state trie.
+                    account_infos.insert(hashed_address, Some(AccountInfo::default()));
+                    // Clear storage
+                    storage_sparse_tries.remove(&hashed_address);
+                    storage_db_tries.remove(&hashed_address);
+                    cleared_storage.insert(hashed_address);
+                    continue;
+                }
+
+                if update.removed_storage {
+                    storage_sparse_tries.remove(&hashed_address);
+                    storage_db_tries.remove(&hashed_address);
+                    cleared_storage.insert(hashed_address);
+                }
+
+                // Process storage updates
+                for (key, value) in update.added_storage {
+                    let hashed_key = keccak(key);
+                    let hashed_key_nibbles = Nibbles::from_bytes(hashed_key.as_bytes());
+
+                    // Get or create storage SparseTrie for this account
+                    if let Entry::Vacant(e) = storage_sparse_tries.entry(hashed_address) {
+                        let storage_root = if cleared_storage.contains(&hashed_address) {
+                            *EMPTY_TRIE_HASH
+                        } else {
+                            match state_db_trie.get(hashed_address.as_bytes())? {
+                                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                                None => *EMPTY_TRIE_HASH,
+                            }
+                        };
+
+                        // Open storage trie DB (for on-demand node loading)
+                        let storage_trie = self.storage.open_storage_trie(
+                            hashed_address,
+                            parent_header.state_root,
+                            storage_root,
+                        )?;
+                        storage_db_tries.insert(hashed_address, storage_trie);
+
+                        // Create sparse storage trie and reveal root
+                        let mut sparse = SparseTrie::new();
+                        let storage_provider =
+                            TrieDBProvider(storage_db_tries[&hashed_address].db());
+                        sparse.reveal_root(storage_root, &storage_provider)?;
+                        e.insert(sparse);
+                    }
+
+                    // SAFETY: entry was just inserted above if it was vacant
+                    let Some(sparse) = storage_sparse_tries.get_mut(&hashed_address) else {
+                        unreachable!("storage sparse trie was just inserted")
+                    };
+                    let provider = TrieDBProvider(storage_db_tries[&hashed_address].db());
+
+                    if value.is_zero() {
+                        sparse.remove_leaf(hashed_key_nibbles, &provider)?;
+                    } else {
+                        sparse.update_leaf(hashed_key_nibbles, value.encode_to_vec(), &provider)?;
+                    }
+                }
+
+                // Track account info changes
+                if let Some(info) = update.info {
+                    if let Some(code) = update.code {
+                        code_updates.push((info.code_hash, code));
+                    }
+                    account_infos.insert(hashed_address, Some(info));
+                }
+            }
+        }
+
+        // Phase 2: Compute storage roots and update state trie
+        let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
+
+        // Track which cleared_storage accounts have been processed
+        let mut processed_cleared: rustc_hash::FxHashSet<H256> = Default::default();
+
+        // Process accounts with storage changes
+        for (hashed_address, sparse) in &mut storage_sparse_tries {
+            let storage_root = sparse.root()?;
+            let updates = sparse.collect_updates();
+            storage_updates.push((*hashed_address, updates));
+
+            // Build the account state with the new storage root
+            let mut account_state = match state_db_trie.get(hashed_address.as_bytes())? {
+                Some(rlp) => AccountState::decode(&rlp)?,
+                None => AccountState::default(),
+            };
+            account_state.storage_root = storage_root;
+
+            // Apply info changes if any
+            if let Some(Some(info)) = account_infos.remove(hashed_address) {
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+            }
+
+            if cleared_storage.contains(hashed_address) {
+                processed_cleared.insert(*hashed_address);
+            }
+
+            let path = Nibbles::from_bytes(hashed_address.as_bytes());
+            if account_state != AccountState::default() {
+                sparse_state.update_leaf(path, account_state.encode_to_vec(), &state_provider)?;
+            } else {
+                sparse_state.remove_leaf(path, &state_provider)?;
+            }
+        }
+
+        // Process accounts with only info changes (no storage modifications)
+        for (hashed_address, info_opt) in account_infos {
+            if let Some(info) = info_opt {
+                let mut account_state = match state_db_trie.get(hashed_address.as_bytes())? {
+                    Some(rlp) => AccountState::decode(&rlp)?,
+                    None => AccountState::default(),
+                };
+
+                // For removed accounts with cleared storage, set empty storage root
+                if cleared_storage.contains(&hashed_address) {
+                    account_state.storage_root = *EMPTY_TRIE_HASH;
+                    processed_cleared.insert(hashed_address);
+                }
+
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+
+                let path = Nibbles::from_bytes(hashed_address.as_bytes());
+                if account_state != AccountState::default() {
+                    sparse_state.update_leaf(
+                        path,
+                        account_state.encode_to_vec(),
+                        &state_provider,
+                    )?;
+                } else {
+                    sparse_state.remove_leaf(path, &state_provider)?;
+                }
+            }
+        }
+
+        // Process accounts with cleared storage but no info or storage changes.
+        // These accounts need their storage_root set to EMPTY_TRIE_HASH.
+        for hashed_address in &cleared_storage {
+            if processed_cleared.contains(hashed_address) {
+                continue;
+            }
+            let mut account_state = match state_db_trie.get(hashed_address.as_bytes())? {
+                Some(rlp) => AccountState::decode(&rlp)?,
+                None => continue,
+            };
+            if account_state.storage_root != *EMPTY_TRIE_HASH {
+                account_state.storage_root = *EMPTY_TRIE_HASH;
+                let path = Nibbles::from_bytes(hashed_address.as_bytes());
+                if account_state != AccountState::default() {
+                    sparse_state.update_leaf(
+                        path,
+                        account_state.encode_to_vec(),
+                        &state_provider,
+                    )?;
+                } else {
+                    sparse_state.remove_leaf(path, &state_provider)?;
+                }
+            }
+        }
+
+        // Phase 3: Compute state root
+        let state_trie_hash = sparse_state.root()?;
+        let state_updates = sparse_state.collect_updates();
+
+        let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+
+        Ok((
+            AccountUpdatesList {
+                state_trie_hash,
+                state_updates,
+                storage_updates,
+                code_updates,
+            },
+            accumulated_updates,
+        ))
+    }
+
+    /// Old 16-worker-thread merkleization (kept as fallback).
+    #[allow(dead_code)]
+    fn handle_merkleization_old<'a, 's, 'b>(
+        &'a self,
         scope: &'s std::thread::Scope<'s, '_>,
         rx: Receiver<Vec<AccountUpdate>>,
         parent_header: &'b BlockHeader,
