@@ -981,3 +981,130 @@ fn multi_block_simulation() {
         "new entry should exist"
     );
 }
+
+/// Regression test: removing a leaf from a branch with 3+ children must
+/// invalidate the branch hash so it gets recomputed. Without the fix,
+/// `remove_leaf` didn't invalidate branch hashes during the downward walk,
+/// causing the old (stale) hash to be used for the root computation.
+#[test]
+fn remove_from_multi_child_branch_invalidates_hash() {
+    let mut sparse = SparseTrie::new();
+    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+
+    let mut old_trie = Trie::new_temp();
+
+    // Insert 4 entries whose hashed keys land in different branch children,
+    // forcing a branch with 4 children at the root level.
+    let entries: Vec<(Vec<u8>, Vec<u8>)> = vec![
+        (vec![0x00], vec![0xA0]),
+        (vec![0x10], vec![0xA1]),
+        (vec![0x20], vec![0xA2]),
+        (vec![0x30], vec![0xA3]),
+    ];
+
+    for (path, value) in &entries {
+        sparse
+            .update_leaf(Nibbles::from_bytes(path), value.clone(), &NullProvider)
+            .expect("insert");
+        old_trie
+            .insert(path.clone(), value.clone())
+            .expect("insert");
+    }
+
+    // Compute root with all 4 entries — must match old trie
+    let full_root_sparse = sparse.root().expect("root with all entries");
+    let full_root_old = old_trie.hash_no_commit();
+    assert_eq!(
+        full_root_sparse, full_root_old,
+        "roots must match before removal"
+    );
+
+    // Remove one entry — branch still has 3 children, no collapse
+    sparse
+        .remove_leaf(Nibbles::from_bytes(&[0x00]), &NullProvider)
+        .expect("remove");
+    old_trie.remove(&[0x00]).expect("remove");
+
+    // Recompute roots — must still match. Without the fix, the sparse trie
+    // would reuse the stale branch hash and produce a different root.
+    let after_root_sparse = sparse.root().expect("root after removal");
+    let after_root_old = old_trie.hash_no_commit();
+    assert_eq!(
+        after_root_sparse, after_root_old,
+        "roots must match after removing one child from multi-child branch"
+    );
+    assert_ne!(
+        after_root_sparse, full_root_sparse,
+        "root should change after removal"
+    );
+}
+
+#[test]
+fn collect_updates_includes_deletion_markers() {
+    // Verify that removing a leaf causes collect_updates to produce
+    // a deletion entry (path, vec![]), matching the old Trie's
+    // pending_removal behavior.
+    let mut sparse = SparseTrie::new();
+    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+
+    let path1 = Nibbles::from_bytes(&[0x01]);
+    let path2 = Nibbles::from_bytes(&[0x02]);
+
+    sparse
+        .update_leaf(path1.clone(), vec![0x10], &NullProvider)
+        .expect("insert 1");
+    sparse
+        .update_leaf(path2, vec![0x20], &NullProvider)
+        .expect("insert 2");
+
+    // Remove path1
+    sparse
+        .remove_leaf(path1.clone(), &NullProvider)
+        .expect("remove");
+
+    let updates = sparse.collect_updates();
+
+    // There should be a deletion marker for path1's full path
+    let path1_data = path1.as_ref().to_vec();
+    let has_deletion = updates
+        .iter()
+        .any(|(nibbles, value)| nibbles.as_ref() == path1_data.as_slice() && value.is_empty());
+    assert!(
+        has_deletion,
+        "collect_updates must produce a deletion marker (path, vec![]) for removed leaves"
+    );
+}
+
+#[test]
+fn removal_then_reinsert_cancels_deletion_marker() {
+    // If a leaf is removed and then re-inserted, no deletion marker
+    // should be produced (the re-insert cancels the removal).
+    let mut sparse = SparseTrie::new();
+    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+
+    let path = Nibbles::from_bytes(&[0x01]);
+
+    sparse
+        .update_leaf(path.clone(), vec![0x10], &NullProvider)
+        .expect("insert");
+    sparse
+        .remove_leaf(path.clone(), &NullProvider)
+        .expect("remove");
+    sparse
+        .update_leaf(path.clone(), vec![0x20], &NullProvider)
+        .expect("reinsert");
+
+    let updates = sparse.collect_updates();
+
+    let path_data = path.as_ref().to_vec();
+    let has_deletion = updates
+        .iter()
+        .any(|(nibbles, value)| nibbles.as_ref() == path_data.as_slice() && value.is_empty());
+    assert!(!has_deletion, "reinsert should cancel the deletion marker");
+
+    // The path should have a non-empty value entry
+    let has_value = updates
+        .iter()
+        .any(|(nibbles, value)| nibbles.as_ref() == path_data.as_slice() && !value.is_empty());
+    assert!(has_value, "reinserted leaf should have a value entry");
+}

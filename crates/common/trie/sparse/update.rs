@@ -662,6 +662,8 @@ pub fn remove_leaf(
                 if state_mask & (1 << nibble) == 0 {
                     return Ok(());
                 }
+                // Invalidate branch hash since a descendant will be removed
+                invalidate_branch_hash(upper, lower, &walk_path);
                 parent_stack.push(walk_path.clone());
                 walk_path.push(nibble);
             }
