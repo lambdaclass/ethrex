@@ -90,9 +90,9 @@ pub enum MempoolError {
     )]
     TxMaxGasLimitExceededError(H256, u64),
     #[error("Transaction priority fee above gas fee")]
-    TxGasOverflowError,
-    #[error("Transaction intrinsic gas overflow")]
     TxTipAboveFeeCapError,
+    #[error("Transaction intrinsic gas overflow")]
+    TxGasOverflowError,
     #[error("Transaction intrinsic gas cost above gas limit")]
     TxIntrinsicGasCostAboveLimitError,
     #[error("Transaction blob base fee too low")]
