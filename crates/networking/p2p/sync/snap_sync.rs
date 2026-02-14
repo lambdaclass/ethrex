@@ -43,9 +43,7 @@ use crate::utils::{
 
 use super::{AccountStorageRoots, SyncError};
 
-#[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
-#[cfg(not(feature = "rocksdb"))]
 use ethrex_rlp::encode::RLPEncode;
 
 /// Persisted State during the Block Sync phase for SnapSync
@@ -793,10 +791,8 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 // Account and Storage Insertion (non-rocksdb)
 // ============================================================================
 
-#[cfg(not(feature = "rocksdb"))]
 pub(crate) type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
 
-#[cfg(not(feature = "rocksdb"))]
 pub(crate) fn compute_storage_roots(
     store: Store,
     account_hash: H256,

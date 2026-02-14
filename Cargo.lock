@@ -4193,6 +4193,7 @@ dependencies = [
  "aes-gcm",
  "async-trait",
  "bytes",
+ "clap",
  "concat-kdf",
  "crossbeam 0.8.4",
  "ctr",
@@ -4231,6 +4232,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
+ "tracing-subscriber 0.3.22",
 ]
 
 [[package]]

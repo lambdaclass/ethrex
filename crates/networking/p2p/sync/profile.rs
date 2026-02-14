@@ -4,16 +4,15 @@
 //! previously captured RLP snapshot files, enabling fast iteration on
 //! performance optimisation without network I/O.
 
+use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 
 use ethrex_common::H256;
+use ethrex_storage::{EngineType, Store};
 use serde::{Deserialize, Serialize};
 
 use super::SyncError;
-
-#[cfg(not(feature = "rocksdb"))]
-use ethrex_storage::Store;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,12 +42,30 @@ pub struct DatasetPaths {
     pub account_storages_snapshots_dir: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ProfileBackend {
+    InMemory,
+    #[cfg(feature = "rocksdb")]
+    RocksDb,
+}
+
+impl fmt::Display for ProfileBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProfileBackend::InMemory => write!(f, "inmemory"),
+            #[cfg(feature = "rocksdb")]
+            ProfileBackend::RocksDb => write!(f, "rocksdb"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SnapProfileResult {
     pub insert_accounts_duration: Duration,
     pub insert_storages_duration: Duration,
     pub total_duration: Duration,
     pub computed_state_root: H256,
+    pub backend: ProfileBackend,
 }
 
 // ---------------------------------------------------------------------------
@@ -82,30 +99,47 @@ pub fn load_manifest(dataset_root: &Path) -> Result<SnapProfileManifest, SyncErr
     Ok(manifest)
 }
 
-/// Replay InsertAccounts + InsertStorages from a captured dataset and return
-/// timing results.
-///
-/// Only available without the `rocksdb` feature — replay uses an in-memory
-/// Store backend.
-#[cfg(not(feature = "rocksdb"))]
+/// Replay InsertAccounts + InsertStorages from a captured dataset using
+/// an in-memory Store backend. Compatibility wrapper for `run_once_with_opts`.
 pub async fn run_once(dataset_root: &Path) -> Result<SnapProfileResult, SyncError> {
+    run_once_with_opts(dataset_root, ProfileBackend::InMemory, Path::new(".")).await
+}
+
+/// Replay InsertAccounts + InsertStorages from a captured dataset using the
+/// specified backend and working directory.
+///
+/// - `ProfileBackend::InMemory` — all state lives in RAM. Fast but requires
+///   enough memory to hold the entire state trie. `db_dir` is ignored.
+/// - `ProfileBackend::RocksDb` — state is written to disk via RocksDB.
+///   Uses `db_dir` for the database files. Suitable for large datasets.
+pub async fn run_once_with_opts(
+    dataset_root: &Path,
+    backend: ProfileBackend,
+    db_dir: &Path,
+) -> Result<SnapProfileResult, SyncError> {
     use std::time::Instant;
 
-    use ethrex_storage::EngineType;
     use tracing::info;
 
     let total_start = Instant::now();
 
     let manifest = load_manifest(dataset_root)?;
 
-    // Fresh in-memory store
-    let store = Store::new(".", EngineType::InMemory)
-        .map_err(|e| SyncError::ProfileError(format!("Failed to create in-memory store: {e}")))?;
+    let engine_type = match backend {
+        ProfileBackend::InMemory => EngineType::InMemory,
+        #[cfg(feature = "rocksdb")]
+        ProfileBackend::RocksDb => EngineType::RocksDB,
+    };
+
+    let store = Store::new(db_dir.to_str().unwrap_or("."), engine_type)
+        .map_err(|e| SyncError::ProfileError(format!("Failed to create store: {e}")))?;
+
+    info!("Store created with backend: {backend}");
 
     let acc_dir = dataset_root.join(&manifest.paths.account_state_snapshots_dir);
     let storage_dir = dataset_root.join(&manifest.paths.account_storages_snapshots_dir);
 
-    // ── InsertAccounts phase ──────────────────────────────────────────────
+    // -- InsertAccounts phase ------------------------------------------------
     let accounts_start = Instant::now();
     let computed_state_root = insert_accounts_phase(&store, &acc_dir).await?;
     let insert_accounts_duration = accounts_start.elapsed();
@@ -115,7 +149,7 @@ pub async fn run_once(dataset_root: &Path) -> Result<SnapProfileResult, SyncErro
         insert_accounts_duration.as_secs_f64()
     );
 
-    // ── InsertStorages phase ─────────────────────────────────────────────
+    // -- InsertStorages phase ------------------------------------------------
     let storages_start = Instant::now();
     insert_storages_phase(&store, &storage_dir).await?;
     let insert_storages_duration = storages_start.elapsed();
@@ -130,6 +164,7 @@ pub async fn run_once(dataset_root: &Path) -> Result<SnapProfileResult, SyncErro
         insert_storages_duration,
         total_duration: total_start.elapsed(),
         computed_state_root,
+        backend,
     })
 }
 
@@ -149,7 +184,6 @@ fn validate_non_empty_dir(path: &Path, label: &str) -> Result<(), SyncError> {
     Ok(())
 }
 
-#[cfg(not(feature = "rocksdb"))]
 async fn insert_accounts_phase(store: &Store, acc_dir: &Path) -> Result<H256, SyncError> {
     use ethrex_common::constants::EMPTY_TRIE_HASH;
     use ethrex_common::types::AccountState;
@@ -196,7 +230,6 @@ async fn insert_accounts_phase(store: &Store, acc_dir: &Path) -> Result<H256, Sy
     Ok(computed_state_root)
 }
 
-#[cfg(not(feature = "rocksdb"))]
 async fn insert_storages_phase(store: &Store, storage_dir: &Path) -> Result<(), SyncError> {
     use std::sync::Arc;
 
