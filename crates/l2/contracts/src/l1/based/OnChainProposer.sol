@@ -335,9 +335,9 @@ contract OnChainProposer is
     /// @notice Internal batch verification logic used by verifyBatches.
     function _verifyBatchInternal(
         uint256 batchNumber,
-        bytes memory risc0BlockProof,
-        bytes memory sp1ProofBytes,
-        bytes memory tdxSignature
+        bytes calldata risc0BlockProof,
+        bytes calldata sp1ProofBytes,
+        bytes calldata tdxSignature
     ) internal {
         require(
             batchNumber == lastVerifiedBatch + 1,
