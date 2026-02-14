@@ -1,0 +1,3 @@
+# Build outputs (ELF binaries, verification keys)
+bin/*/out/
+bin/*/target/
