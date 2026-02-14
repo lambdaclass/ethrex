@@ -74,8 +74,14 @@ down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
-init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
+ifdef NATIVE_ROLLUPS
+  NATIVE_ROLLUPS? := native-rollups
+else
+  NATIVE_ROLLUPS? :=
+endif
+
+init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client (set NATIVE_ROLLUPS=1 to enable native-rollups)
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "$(NATIVE_ROLLUPS?)" -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
 	--http.addr ${L1_RPC_ADDRESS} \
