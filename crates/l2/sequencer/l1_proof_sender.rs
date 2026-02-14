@@ -432,7 +432,7 @@ impl L1ProofSender {
     async fn send_verify_batches_tx(
         &self,
         first_batch: u64,
-        batches: &[(u64, HashMap<ProverType, BatchProof>)],
+        batches: &[(u64, &HashMap<ProverType, BatchProof>)],
     ) -> Result<ethrex_common::H256, EthClientError> {
         let batch_count = batches.len();
 
@@ -546,7 +546,7 @@ impl L1ProofSender {
         batch_number: u64,
         proofs: &HashMap<ProverType, BatchProof>,
     ) -> Result<(), ProofSenderError> {
-        let single_batch = [(batch_number, proofs.clone())];
+        let single_batch = [(batch_number, proofs)];
         let result = self
             .send_verify_batches_tx(batch_number, &single_batch)
             .await;
@@ -591,7 +591,9 @@ impl L1ProofSender {
             batch_count, "Sending batch verification transaction to L1"
         );
 
-        let send_verify_tx_result = self.send_verify_batches_tx(first_batch, batches).await;
+        let batch_refs: Vec<(u64, &HashMap<ProverType, BatchProof>)> =
+            batches.iter().map(|(n, p)| (*n, p)).collect();
+        let send_verify_tx_result = self.send_verify_batches_tx(first_batch, &batch_refs).await;
 
         // On any error with multiple batches, fall back to single-batch sending
         // so that a gas limit / calldata issue doesn't block the sequencer.
@@ -600,6 +602,9 @@ impl L1ProofSender {
             if batch_count > 1 {
                 warn!("Multi-batch verify failed ({err}), falling back to single-batch sending");
                 for (batch_number, proofs) in batches {
+                    // The `?` here is intentional: on-chain verification is sequential, so if
+                    // batch N fails (e.g. invalid proof), batches N+1, N+2, ... would also fail
+                    // since the contract requires batchNumber == lastVerifiedBatch + 1.
                     self.send_single_batch_proof(*batch_number, proofs).await?;
                 }
                 return Ok(());
