@@ -59,6 +59,7 @@ use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 // Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
@@ -70,8 +71,8 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
-    get_total_blob_gas, validate_block, validate_gas_used, validate_receipts_root,
-    validate_requests_hash,
+    get_total_blob_gas, validate_block, validate_block_access_list_hash, validate_gas_used,
+    validate_receipts_root, validate_requests_hash,
 };
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
@@ -318,15 +319,49 @@ impl Blockchain {
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
-        let execution_result = vm.execute_block(block)?;
+        let (execution_result, bal) = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        if let Some(bal) = &bal {
+            validate_block_access_list_hash(
+                &block.header,
+                &chain_config,
+                bal,
+                block.body.transactions.len(),
+            )?;
+        }
 
         Ok((execution_result, account_updates))
+    }
+
+    /// Generates Block Access List by re-executing a block.
+    /// Returns None for pre-Amsterdam blocks.
+    /// This is used by engine_getPayloadBodiesByHashV2 and engine_getPayloadBodiesByRangeV2.
+    pub fn generate_bal_for_block(
+        &self,
+        block: &Block,
+    ) -> Result<Option<BlockAccessList>, ChainError> {
+        let chain_config = self.storage.get_chain_config();
+
+        // Pre-Amsterdam blocks don't have BAL
+        if !chain_config.is_amsterdam_activated(block.header.timestamp) {
+            return Ok(None);
+        }
+
+        // Find parent header
+        let parent_header = find_parent_header(&block.header, &self.storage)?;
+
+        // Create VM and execute block with BAL recording
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let mut vm = self.new_evm(vm_db)?;
+
+        let (_execution_result, bal) = vm.execute_block(block)?;
+
+        Ok(bal)
     }
 
     /// Executes a block withing a new vm instance and state
@@ -364,74 +399,90 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
-        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
-            let vm_type = vm.vm_type;
-            let warm_handle = std::thread::Builder::new()
-                .name("block_executor_warmer".to_string())
-                .spawn_scoped(s, move || {
-                    // Warming uses the same caching store, sharing cached state with execution
-                    let start = Instant::now();
-                    let _ = LEVM::warm_block(block, caching_store, vm_type);
-                    start.elapsed()
-                })
-                .expect("Failed to spawn block_executor warmer thread");
-            let max_queue_length_ref = &mut max_queue_length;
-            let (tx, rx) = channel();
-            let execution_handle = std::thread::Builder::new()
-                .name("block_executor_execution".to_string())
-                .spawn_scoped(s, move || -> Result<_, ChainError> {
-                    let execution_result =
-                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+        let (execution_result, merkleization_result, warmer_duration) =
+            std::thread::scope(|s| -> Result<_, ChainError> {
+                let vm_type = vm.vm_type;
+                let warm_handle = std::thread::Builder::new()
+                    .name("block_executor_warmer".to_string())
+                    .spawn_scoped(s, move || {
+                        // Warming uses the same caching store, sharing cached state with execution
+                        let start = Instant::now();
+                        let _ = LEVM::warm_block(block, caching_store, vm_type);
+                        start.elapsed()
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
+                    })?;
+                let max_queue_length_ref = &mut max_queue_length;
+                let (tx, rx) = channel();
+                let execution_handle = std::thread::Builder::new()
+                    .name("block_executor_execution".to_string())
+                    .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        let (execution_result, bal) =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
-                    // Validate execution went alright
-                    validate_gas_used(execution_result.block_gas_used, &block.header)?;
-                    validate_receipts_root(&block.header, &execution_result.receipts)?;
-                    validate_requests_hash(
-                        &block.header,
-                        &chain_config,
-                        &execution_result.requests,
-                    )?;
+                        // Validate execution went alright
+                        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+                        validate_receipts_root(&block.header, &execution_result.receipts)?;
+                        validate_requests_hash(
+                            &block.header,
+                            &chain_config,
+                            &execution_result.requests,
+                        )?;
+                        if let Some(bal) = &bal {
+                            validate_block_access_list_hash(
+                                &block.header,
+                                &chain_config,
+                                bal,
+                                block.body.transactions.len(),
+                            )?;
+                        }
 
-                    let exec_end_instant = Instant::now();
-                    Ok((execution_result, exec_end_instant))
-                })
-                .expect("Failed to spawn block_executor exec thread");
-            let parent_header_ref = &parent_header; // Avoid moving to thread
-            let merkleize_handle = std::thread::Builder::new()
-                .name("block_executor_merkleizer".to_string())
-                .spawn_scoped(s, move || -> Result<_, StoreError> {
-                    let (account_updates_list, accumulated_updates) = self.handle_merkleization(
-                        s,
-                        rx,
-                        parent_header_ref,
-                        queue_length_ref,
-                        max_queue_length_ref,
-                    )?;
-                    let merkle_end_instant = Instant::now();
-                    Ok((
-                        account_updates_list,
-                        accumulated_updates,
-                        merkle_end_instant,
-                    ))
-                })
-                .expect("Failed to spawn block_executor merkleizer thread");
-            let warmer_duration = warm_handle
-                .join()
-                .inspect_err(|e| warn!("Warming thread error: {e:?}"))
-                .ok()
-                .unwrap_or(Duration::ZERO);
-            (
-                execution_handle.join().unwrap_or_else(|_| {
-                    Err(ChainError::Custom("execution thread panicked".to_string()))
-                }),
-                merkleize_handle.join().unwrap_or_else(|_| {
-                    Err(StoreError::Custom(
-                        "merklization thread panicked".to_string(),
-                    ))
-                }),
-                warmer_duration,
-            )
-        });
+                        let exec_end_instant = Instant::now();
+                        Ok((execution_result, exec_end_instant))
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
+                    })?;
+                let parent_header_ref = &parent_header; // Avoid moving to thread
+                let merkleize_handle = std::thread::Builder::new()
+                    .name("block_executor_merkleizer".to_string())
+                    .spawn_scoped(s, move || -> Result<_, StoreError> {
+                        let (account_updates_list, accumulated_updates) = self
+                            .handle_merkleization(
+                                s,
+                                rx,
+                                parent_header_ref,
+                                queue_length_ref,
+                                max_queue_length_ref,
+                            )?;
+                        let merkle_end_instant = Instant::now();
+                        Ok((
+                            account_updates_list,
+                            accumulated_updates,
+                            merkle_end_instant,
+                        ))
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
+                    })?;
+                let warmer_duration = warm_handle
+                    .join()
+                    .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                    .ok()
+                    .unwrap_or(Duration::ZERO);
+                Ok((
+                    execution_handle.join().unwrap_or_else(|_| {
+                        Err(ChainError::Custom("execution thread panicked".to_string()))
+                    }),
+                    merkleize_handle.join().unwrap_or_else(|_| {
+                        Err(StoreError::Custom(
+                            "merklization thread panicked".to_string(),
+                        ))
+                    }),
+                    warmer_duration,
+                ))
+            })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
 
@@ -857,11 +908,19 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-        let execution_result = vm.execute_block(block)?;
+        let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        if let Some(bal) = &bal {
+            validate_block_access_list_hash(
+                &block.header,
+                chain_config,
+                bal,
+                block.body.transactions.len(),
+            )?;
+        }
 
         Ok(execution_result)
     }
@@ -954,7 +1013,7 @@ impl Blockchain {
             };
 
             // Re-execute block with logger
-            let execution_result = vm.execute_block(block)?;
+            let (execution_result, _bal) = vm.execute_block(block)?;
 
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
