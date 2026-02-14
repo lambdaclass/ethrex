@@ -137,25 +137,6 @@ impl ProofCoordinator {
         }
     }
 
-    async fn next_batch_to_prove_for_version(
-        &self,
-        commit_hash: &str,
-    ) -> Result<u64, ProofCoordinatorError> {
-        let mut batch_to_prove = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
-
-        while self
-            .rollup_store
-            .get_prover_input_by_batch_and_version(batch_to_prove, commit_hash)
-            .await?
-            .is_none()
-            && self.rollup_store.contains_batch(&batch_to_prove).await?
-        {
-            batch_to_prove += 1;
-        }
-
-        Ok(batch_to_prove)
-    }
-
     async fn handle_request(
         &self,
         stream: &mut TcpStream,
@@ -164,10 +145,10 @@ impl ProofCoordinator {
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received from {prover_type} prover");
 
-        // Check if this prover's type is one of the needed proof types.
+        // Step 1: Check if this prover's type is one of the needed proof types.
         // If not, tell the prover immediately — there's no point assigning
         // any batch to it (e.g. an SP1 prover connecting when only exec
-        // proofs are needed).
+        // proofs are needed). This is a permanent rejection.
         if !self.needed_proof_types.contains(&prover_type) {
             info!("{prover_type} proof is not needed, rejecting prover");
             let response = ProofData::ProverTypeNotNeeded { prover_type };
@@ -175,16 +156,11 @@ impl ProofCoordinator {
             return Ok(());
         }
 
-        let batch_to_prove = self.next_batch_to_prove_for_version(&commit_hash).await?;
+        // Step 2: Resolve the next batch to prove.
+        let batch_to_prove = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
 
-        if commit_hash != self.git_commit_hash {
-            debug!(
-                "Mismatch on prover version. Expected: {}, got: {}. Looking for batches left to prove",
-                self.git_commit_hash, commit_hash
-            );
-        }
-
-        // Check if this prover type's proof already exists for the batch.
+        // Step 3: If we already have a proof for this batch and prover type,
+        // there's nothing for this prover to do right now.
         if self
             .rollup_store
             .get_proof_by_batch_and_type(batch_to_prove, prover_type)
@@ -196,12 +172,41 @@ impl ProofCoordinator {
             return Ok(());
         }
 
+        // Step 4: Check if the batch exists in the database.
+        // If it doesn't, either the prover is ahead of the proposer (versions
+        // match, nothing to prove yet) or the prover is stale (versions differ,
+        // and future batches will be created with the coordinator's version).
+        if !self.rollup_store.contains_batch(&batch_to_prove).await? {
+            if commit_hash != self.git_commit_hash {
+                info!(
+                    "Batch {batch_to_prove} not yet created, and prover version ({commit_hash}) \
+                     differs from coordinator version ({}). New batches will use the coordinator's \
+                     version, so this prover is stale.",
+                    self.git_commit_hash
+                );
+                let response = ProofData::no_batch_for_version(self.git_commit_hash.clone());
+                send_response(stream, &response).await?;
+            } else {
+                debug!("Batch {batch_to_prove} not yet created, prover is ahead of the proposer");
+                send_response(stream, &ProofData::empty_batch_response()).await?;
+            }
+            return Ok(());
+        }
+
+        // Step 5: The batch exists, so its public input must also exist (they are
+        // stored atomically). Try to retrieve it for the prover's version.
+        // If not found, the batch was created with a different code version.
         let Some(input) = self
             .rollup_store
             .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
             .await?
         else {
-            send_response(stream, &ProofData::empty_batch_response()).await?;
+            info!(
+                "Batch {batch_to_prove} exists but has no input for prover version ({commit_hash}), \
+                 version mismatch"
+            );
+            let response = ProofData::no_batch_for_version(self.git_commit_hash.clone());
+            send_response(stream, &response).await?;
             return Ok(());
         };
 
