@@ -325,6 +325,7 @@ impl Store {
 
             let number_key = block_number.to_le_bytes().to_vec();
             txn.put(BLOCK_NUMBERS, &hash_key, &number_key)?;
+            txn.put(CANONICAL_BLOCK_HASHES, &number_key, &hash_key)?;
         }
         txn.commit()?;
         Ok(())
