@@ -118,7 +118,8 @@ impl<B: ProverBackend> Prover<B> {
 
     async fn request_new_input(&self, endpoint: &Url) -> Result<Option<ProverData>, String> {
         // Request the input with the correct batch_number
-        let request = ProofData::batch_request(self.commit_hash.clone());
+        let request =
+            ProofData::batch_request(self.commit_hash.clone(), self.backend.prover_type());
         let response = connect_to_prover_server_wr(endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
