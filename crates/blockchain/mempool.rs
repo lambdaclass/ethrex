@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    sync::RwLock,
+    sync::{
+        RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::{
@@ -78,13 +81,24 @@ impl MempoolInner {
 #[derive(Debug, Default)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
+    /// Monotonically increasing counter, bumped on every transaction insertion.
+    /// The payload builder polls this to skip rebuilds when the mempool is unchanged.
+    generation: AtomicU64,
 }
 
 impl Mempool {
     pub fn new(max_mempool_size: usize) -> Self {
         Mempool {
             inner: RwLock::new(MempoolInner::new(max_mempool_size)),
+            generation: AtomicU64::new(0),
         }
+    }
+
+    /// Returns a monotonically increasing counter that increments on every
+    /// transaction insertion. Useful for detecting mempool changes without
+    /// holding any lock.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
     }
 
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, MempoolInner>, StoreError> {
@@ -123,6 +137,7 @@ impl Mempool {
             .insert((sender, transaction.nonce()), hash);
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
+        self.generation.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
     }
