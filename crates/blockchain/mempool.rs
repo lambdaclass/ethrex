@@ -168,9 +168,6 @@ impl Mempool {
         self.write()?
             .blobs_bundle_pool
             .insert(tx_hash, blobs_bundle);
-        // Notify after the bundle is inserted so builders that woke up from
-        // add_transaction see the complete blob data.
-        self.tx_added.notify_waiters();
         Ok(())
     }
 
