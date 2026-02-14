@@ -184,8 +184,7 @@ impl ProofCoordinator {
                      version, so this prover is stale.",
                     self.git_commit_hash
                 );
-                let response = ProofData::no_batch_for_version(self.git_commit_hash.clone());
-                send_response(stream, &response).await?;
+                send_response(stream, &ProofData::version_mismatch()).await?;
             } else {
                 debug!("Batch {batch_to_prove} not yet created, prover is ahead of the proposer");
                 send_response(stream, &ProofData::empty_batch_response()).await?;
@@ -205,8 +204,7 @@ impl ProofCoordinator {
                 "Batch {batch_to_prove} exists but has no input for prover version ({commit_hash}), \
                  version mismatch"
             );
-            let response = ProofData::no_batch_for_version(self.git_commit_hash.clone());
-            send_response(stream, &response).await?;
+            send_response(stream, &ProofData::version_mismatch()).await?;
             return Ok(());
         };
 

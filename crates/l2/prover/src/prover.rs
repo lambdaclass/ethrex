@@ -171,10 +171,10 @@ impl<B: ProverBackend> Prover<B> {
                 input,
                 format,
             } => (batch_number, input, format),
-            ProofData::NoBatchForVersion { commit_hash } => {
+            ProofData::VersionMismatch => {
                 warn!(
                     "Version mismatch: the next batch to prove was built with a different code \
-                     version ({commit_hash}). This prover needs to be updated."
+                     version. This prover may need to be updated."
                 );
                 return Ok(InputRequest::RetryLater);
             }
