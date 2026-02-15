@@ -251,36 +251,64 @@ Expected output:
 ```
 Connected to L1 at http://localhost:8545
 Deployer: 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
-Compiler run successful. Artifact(s) can be found in directory ".../crates/vm/levm/contracts/solc_out".
 NativeRollup deployed at: 0x...
   Deploy tx: 0x...
-  Initial stateRoot verified: 0x453ce276913130ed26928c276ae51759ff45ba62c4ab3389452355d56a485c13
+  Initial stateRoot verified: 0x...
   deposit() tx: 0x...
   advance() tx: 0x...
-  Gas used: 305970
+  Gas used: ...
 
-NativeRollup integration test passed!
-  Pre-state root:  0x453ce276913130ed26928c276ae51759ff45ba62c4ab3389452355d56a485c13
-  Post-state root: 0x615cd8914a432a898d1d9998c8b8bce16c0bed49cd9e241cd3aca2ff41a449de
-  Block number:    1
-  Deposit index:   1
+  Phase 1 passed: transfer + deposit
+  ...
+
+  advance(block 2) tx: 0x...
+  Gas used: ...
+  withdrawalRoots[2]: 0x...
+  Receiver balance before claim: 0
+  claimWithdrawal() tx: 0x...
+  Receiver balance after claim: 1000000000000000000
+  Withdrawal amount: 1000000000000000000
+
+NativeRollup integration test passed (transfer + deposit + withdrawal + claim)!
   Contract:        0x...
+  L2 blocks:       2
+  Deposit:         5 ETH to charlie
+  Withdrawal:      1 ETH from alice to 0x...
 test l2::native_rollups::test_native_rollup_on_l1 ... ok
 ```
 
 #### What the integration test does (`test_native_rollup_on_l1`)
 
+The test exercises the full lifecycle: deploy, deposit, advance (2 blocks), and withdrawal claiming.
+
+**Phase 1 — Transfer + Deposit (L2 block 1):**
+
 1. **Connect to L1** — Creates an `EthClient` pointing at `localhost:8545` and loads the pre-funded signer from the Makefile's private key.
-2. **Compile NativeRollup.sol** — Calls `solc` via `compile_contract()` to produce the deployment bytecode. This avoids hardcoding hex bytecode in the test.
-3. **Deploy contract** — Sends a CREATE transaction with `deployBytecode + abi.encode(preStateRoot)` as constructor arg. Waits for the receipt and verifies deployment succeeded.
-4. **Verify initial state** — Reads storage slot 0 via `eth_getStorageAt` and asserts it matches the pre-state root passed to the constructor.
-5. **Deposit** — Sends `deposit(charlie)` with 5 ETH via `build_generic_tx` + `send_generic_transaction` (SDK helpers). Waits for receipt.
-6. **Advance** — Sends `advance(1, blockRlp, witnessJson)` with gas estimated via `eth_estimateGas` (the precompile re-executes an entire L2 block). The calldata is built with `encode_calldata()` from the SDK. Waits for receipt.
-7. **Verify final state** — Reads storage slots via RPC and asserts:
-   - Slot 0 (`stateRoot`) = expected post-state root
-   - Slot 1 (`blockNumber`) = 1
-   - Slot 3 (`depositIndex`) = 1
-   - `withdrawalRoots[1]` (mapping at slot 4, key 1) = zero (no withdrawals in the test block)
+2. **Build L2 state transitions** — Calls `build_l2_state_transition()` to create L2 block 1 (Alice→Bob transfer + Charlie deposit) and `build_l2_withdrawal_block()` to create L2 block 2 (Alice withdraws 1 ETH via the L2 bridge).
+3. **Compile contracts** — Calls `solc` via `compile_contract()` for both `NativeRollup.sol` and `L2WithdrawalBridge.sol`.
+4. **Deploy NativeRollup** — Sends a CREATE transaction with `deployBytecode + abi.encode(preStateRoot)` as constructor arg.
+5. **Verify initial state** — Reads storage slot 0 via `eth_getStorageAt` and asserts it matches the pre-state root.
+6. **Deposit** — Sends `deposit(charlie)` with 5 ETH via SDK helpers.
+7. **Advance (block 1)** — Sends `advance(1, blockRlp, witnessJson)` to process the L2 block with the deposit.
+8. **Verify block 1 state** — Asserts stateRoot, blockNumber=1, depositIndex=1, and withdrawalRoots[1]=0 (no withdrawals).
+
+**Phase 2 — Withdrawal + Claim (L2 block 2):**
+
+9. **Advance (block 2)** — Sends `advance(0, block2Rlp, witness2Json)` with 0 deposits. Block 2 contains Alice calling `L2WithdrawalBridge.withdraw(receiver)` with 1 ETH.
+10. **Verify block 2 state** — Asserts stateRoot updated, blockNumber=2, and withdrawalRoots[2] is non-zero (withdrawal Merkle root stored).
+11. **Check receiver balance** — Reads the L1 receiver's balance (should be 0 before claiming).
+12. **Claim withdrawal** — Sends `claimWithdrawal(aliceL2, receiver, 1 ETH, messageId=0, blockNumber=2, proof=[])`. The proof is empty because a single-leaf Merkle tree has root = leaf hash.
+13. **Verify receiver got ETH** — Asserts the receiver's balance increased by exactly 1 ETH.
+
+**Building L2 block 2 (`build_l2_withdrawal_block`):**
+
+The withdrawal block requires computing exact `gas_used` and `post_state_root` before building the final block (since the EXECUTE precompile validates both). The helper:
+
+1. Reconstructs the block 1 post-state (including the L2WithdrawalBridge contract at `0x00...fffd`)
+2. Builds a withdrawal transaction: Alice → bridge.withdraw(receiver) with 1 ETH
+3. Executes through LEVM via `GuestProgramState → GuestProgramStateDb → GeneralizedDatabase → VM` to get gas_used and state transitions
+4. Applies state transitions and computes the post-state root
+5. Builds the final block and witness with correct header values
 
 ## Files
 
@@ -311,7 +339,7 @@ This PoC intentionally omits several things that would be needed for production:
 - **No finality delay for withdrawals** — Withdrawals can be claimed immediately after the block is processed (production would require a challenge period)
 - **No L2 contract integration** — OnChainProposer is unchanged
 - **No L2 sequencer changes** — No integration with the L2 commit flow
-- **L2 bridge not deployed in genesis** — The L2WithdrawalBridge contract exists but isn't automatically deployed at `0x00...fffd` in the L2 genesis state yet
+- **L2 bridge not deployed in production genesis** — The L2WithdrawalBridge contract is included in the test L2 genesis state, but isn't automatically deployed in production genesis yet
 - **Hybrid serialization** — ABI envelope + RLP block + JSON witness (ExecutionWitness lacks RLP support)
 
 These are all Phase 2+ concerns.
