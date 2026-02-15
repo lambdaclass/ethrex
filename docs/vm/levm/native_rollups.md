@@ -17,24 +17,28 @@ L2 Block + ExecutionWitness + Deposits
   2. Build GuestProgramState from witness
   3. Verify pre-state root
   4. Apply deposits to state (anchor)
-  5. Execute block transactions via LEVM
+  5. Execute block transactions via LEVM, collect logs
   6. Verify post-state root (from block header) matches computed root
+  7. Extract WithdrawalInitiated events from logs → compute Merkle root
         |
-  Returns abi.encode(postStateRoot, blockNumber) or reverts
+  Returns abi.encode(postStateRoot, blockNumber, withdrawalRoot) or reverts
 ```
 
 ### Components
 
-**`execute_precompile.rs`** — The core precompile logic. Parses ABI-encoded calldata containing the pre-state root, an RLP-encoded block, a JSON-serialized witness, and packed deposit data. Orchestrates the full verification flow: calldata parsing, state root checks, deposit application, block execution, and final state root verification. The post-state root and block number are extracted from the block header and returned as `abi.encode(postStateRoot, blockNumber)`. Also contains helpers for block execution (`execute_block`), gas price calculation, transaction type validation, and deposit application.
+**`execute_precompile.rs`** — The core precompile logic. Parses ABI-encoded calldata containing the pre-state root, an RLP-encoded block, a JSON-serialized witness, and packed deposit data. Orchestrates the full verification flow: calldata parsing, state root checks, deposit application, block execution, withdrawal extraction, and final state root verification. After execution, it scans transaction logs for `WithdrawalInitiated` events emitted by the L2 withdrawal bridge (`0x00...fffd`) and computes a commutative Keccak256 Merkle root (OpenZeppelin-compatible). The post-state root, block number, and withdrawal root are returned as `abi.encode(postStateRoot, blockNumber, withdrawalRoot)` — 96 bytes. Also contains helpers for block execution (`execute_block`), gas price calculation, transaction type validation, deposit application, Merkle tree construction, and Merkle proof generation.
 
 **`guest_program_state_db.rs`** — A thin adapter that implements LEVM's `Database` trait backed by `GuestProgramState`. This bridges the gap between the stateless execution witness (which provides account/storage/code data via tries) and LEVM's database interface. Uses a `Mutex` for interior mutability since `GuestProgramState` requires `&mut self` while `Database` methods take `&self`.
 
 **`precompiles.rs` (modified)** — Registers the EXECUTE precompile at address `0x0101`, dispatched at runtime before the standard const precompile table lookup.
 
-**`NativeRollup.sol`** — A Solidity contract that manages L2 state on-chain. Maintains `stateRoot` (slot 0), `blockNumber` (slot 1), a `pendingDeposits` array (slot 2), and `depositIndex` (slot 3). Exposes:
+**`NativeRollup.sol`** — A Solidity contract that manages L2 state on-chain. Maintains `stateRoot` (slot 0), `blockNumber` (slot 1), a `pendingDeposits` array (slot 2), `depositIndex` (slot 3), `withdrawalRoots` mapping (slot 4), `claimedWithdrawals` mapping (slot 5), and a reentrancy guard (slot 6). Exposes:
 - `deposit(address)` — payable function that records pending deposits
 - `receive()` — payable fallback that deposits for `msg.sender`
-- `advance(uint256, bytes, bytes)` — consumes pending deposits, builds ABI-encoded precompile calldata via `abi.encode(stateRoot, _block, _witness, depositsData)`, calls EXECUTE at `0x0101`, decodes the returned `(postStateRoot, blockNumber)`, and updates state
+- `advance(uint256, bytes, bytes)` — consumes pending deposits, builds ABI-encoded precompile calldata via `abi.encode(stateRoot, _block, _witness, depositsData)`, calls EXECUTE at `0x0101`, decodes the returned `(postStateRoot, blockNumber, withdrawalRoot)`, stores the withdrawal root keyed by block number, and updates state
+- `claimWithdrawal(address, address, uint256, uint256, uint256, bytes32[])` — allows users to claim withdrawals initiated on L2, verifying a Merkle proof against the stored withdrawal root for the given block number. Uses checks-effects-interactions pattern with reentrancy guard.
+
+**`L2WithdrawalBridge.sol`** — An L2 contract deployed at `0x00...fffd` where users initiate withdrawals. Calling `withdraw(address receiver)` with ETH value emits a `WithdrawalInitiated(from, receiver, amount, messageId)` event. The EXECUTE precompile scans for these events and includes them in the withdrawal Merkle root.
 
 ### Why a Separate Database Adapter?
 
@@ -70,10 +74,10 @@ Offset  Contents
 ### Return Value
 
 ```
-abi.encode(bytes32 postStateRoot, uint256 blockNumber)  — 64 bytes
+abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot)  — 96 bytes
 ```
 
-The post-state root is extracted from `block.header.state_root` and verified against the computed state root after execution. The block number is extracted from `block.header.number`.
+The post-state root is extracted from `block.header.state_root` and verified against the computed state root after execution. The block number is extracted from `block.header.number`. The withdrawal root is the Merkle root of all `WithdrawalInitiated` events emitted during block execution (zero if none).
 
 ### Encoding Details
 
@@ -81,7 +85,30 @@ The post-state root is extracted from `block.header.state_root` and verified aga
 - **ExecutionWitness** uses JSON because it doesn't have RLP support — it uses serde/rkyv for serialization instead
 - **Deposits** use packed binary encoding: each deposit is 52 bytes (20-byte address + 32-byte amount)
 
-The NativeRollup contract fills in `preStateRoot` from its own storage, deposits from its pending queue, and passes through block/witness bytes unchanged (opaque to the contract). The contract decodes the precompile's return value to extract the new state root and block number.
+The NativeRollup contract fills in `preStateRoot` from its own storage, deposits from its pending queue, and passes through block/witness bytes unchanged (opaque to the contract). The contract decodes the precompile's return value to extract the new state root, block number, and withdrawal Merkle root.
+
+### Withdrawal Mechanism
+
+Withdrawals allow users to move ETH from L2 back to L1. The flow is:
+
+```
+L2: User calls L2WithdrawalBridge.withdraw(receiverOnL1) with ETH
+     → emits WithdrawalInitiated(from, receiver, amount, messageId)
+
+EXECUTE precompile: Scans logs for WithdrawalInitiated events from 0x00...fffd
+     → computes withdrawal hashes: keccak256(abi.encodePacked(from, receiver, amount, messageId))
+     → builds commutative Keccak256 Merkle tree (OpenZeppelin-compatible)
+     → returns withdrawalRoot as third return value
+
+L1: NativeRollup.advance() stores withdrawalRoots[blockNumber] = withdrawalRoot
+
+L1: User calls NativeRollup.claimWithdrawal(from, receiver, amount, messageId, blockNumber, merkleProof)
+     → verifies Merkle proof against stored root
+     → marks withdrawal as claimed (prevents double-claiming)
+     → transfers ETH to receiver
+```
+
+Each withdrawal is uniquely identified by `keccak256(abi.encodePacked(from, receiver, amount, messageId))`. The `messageId` is a counter maintained by the L2 bridge contract, starting at 0 and incrementing per withdrawal.
 
 ## Feature Flag
 
@@ -176,7 +203,7 @@ This test simulates a complete L2 block verification:
 4. **Build witness** — Creates an `ExecutionWitness` containing the state trie, chain config, and block headers. This is the minimal data needed to re-execute the block without full node state.
 5. **Build ABI-encoded calldata** — Encodes `abi.encode(preStateRoot, blockRlp, witnessJson, deposits)` matching what the NativeRollup contract would produce.
 6. **Call the precompile** — Invokes `execute_precompile()` directly with the calldata. Inside, the precompile parses the ABI data, rebuilds the state from the witness, applies the deposit, re-executes the block, and verifies the computed state root matches the expected one.
-7. **Verify result** — Asserts the precompile returns `abi.encode(postStateRoot, blockNumber)` (64 bytes).
+7. **Verify result** — Asserts the precompile returns `abi.encode(postStateRoot, blockNumber, withdrawalRoot)` (96 bytes). The withdrawal root is zero since the test block contains no withdrawal events.
 
 #### What the contract test does (`test_native_rollup_contract`)
 
@@ -192,12 +219,12 @@ L1 tx2 -> NativeRollup.advance(1, blockRlp, witnessJson)
   -> builds calldata: abi.encode(stateRoot, block, witness, depositsData)
   -> CALL to 0x0101 (EXECUTE precompile)
     -> precompile re-executes the L2 block and verifies state roots
-  -> returns abi.encode(postStateRoot, blockNumber)
+  -> returns abi.encode(postStateRoot, blockNumber, withdrawalRoot)
   -> contract decodes return value
-  -> updates storage: stateRoot (slot 0), blockNumber (slot 1), depositIndex (slot 3)
+  -> updates storage: stateRoot (slot 0), blockNumber (slot 1), depositIndex (slot 3), withdrawalRoots[blockNumber] (slot 4 mapping)
 ```
 
-The test verifies all three storage slots were updated correctly after `advance()` succeeds.
+The test verifies all three storage slots were updated correctly after `advance()` succeeds. The contract also stores a withdrawal root for the block (zero when no withdrawals), which can be verified via the `withdrawalRoots` mapping.
 
 ### 2. Integration test (requires running L1)
 
@@ -249,10 +276,11 @@ test l2::native_rollups::test_native_rollup_on_l1 ... ok
 4. **Verify initial state** — Reads storage slot 0 via `eth_getStorageAt` and asserts it matches the pre-state root passed to the constructor.
 5. **Deposit** — Sends `deposit(charlie)` with 5 ETH via `build_generic_tx` + `send_generic_transaction` (SDK helpers). Waits for receipt.
 6. **Advance** — Sends `advance(1, blockRlp, witnessJson)` with gas estimated via `eth_estimateGas` (the precompile re-executes an entire L2 block). The calldata is built with `encode_calldata()` from the SDK. Waits for receipt.
-7. **Verify final state** — Reads storage slots 0, 1, and 3 via RPC and asserts:
+7. **Verify final state** — Reads storage slots via RPC and asserts:
    - Slot 0 (`stateRoot`) = expected post-state root
    - Slot 1 (`blockNumber`) = 1
    - Slot 3 (`depositIndex`) = 1
+   - `withdrawalRoots[1]` (mapping at slot 4, key 1) = zero (no withdrawals in the test block)
 
 ## Files
 
@@ -266,7 +294,8 @@ test l2::native_rollups::test_native_rollup_on_l1 ... ok
 | `crates/vm/levm/Cargo.toml` | Feature flag (modified) |
 | `crates/vm/Cargo.toml` | Feature flag propagation (modified) |
 | `cmd/ethrex/Cargo.toml` | Feature flag for ethrex binary (modified) |
-| `crates/vm/levm/contracts/NativeRollup.sol` | L2-simulator Solidity contract (with deposit mechanism) |
+| `crates/vm/levm/contracts/NativeRollup.sol` | L1 contract: L2 state manager with deposits, advance, and withdrawal claiming |
+| `crates/vm/levm/contracts/L2WithdrawalBridge.sol` | L2 contract: withdrawal bridge where users burn ETH to initiate L2→L1 withdrawals |
 | `test/tests/levm/native_rollups.rs` | Unit tests and contract-based test |
 | `test/tests/l2/native_rollups.rs` | Integration test (requires running L1) |
 | `test/Cargo.toml` | Feature flag for test crate (modified) |
@@ -279,8 +308,10 @@ This PoC intentionally omits several things that would be needed for production:
 - **Fixed gas cost** — Uses a flat 100,000 gas cost instead of real metering
 - **No blob data support** — Only calldata-based input
 - **No anchoring predeploy** — Deposits modify state directly instead of going through a contract
+- **No finality delay for withdrawals** — Withdrawals can be claimed immediately after the block is processed (production would require a challenge period)
 - **No L2 contract integration** — OnChainProposer is unchanged
 - **No L2 sequencer changes** — No integration with the L2 commit flow
+- **L2 bridge not deployed in genesis** — The L2WithdrawalBridge contract exists but isn't automatically deployed at `0x00...fffd` in the L2 genesis state yet
 - **Hybrid serialization** — ABI envelope + RLP block + JSON witness (ExecutionWitness lacks RLP support)
 
 These are all Phase 2+ concerns.

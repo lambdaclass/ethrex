@@ -449,6 +449,29 @@ async fn test_native_rollup_on_l1() {
         .expect("get_storage_at failed");
     assert_eq!(stored_deposit_index, U256::from(1), "depositIndex mismatch");
 
+    // 8. Verify withdrawalRoots[1] was stored (zero since no withdrawals in this block)
+    // Storage slot for mapping(uint256 => bytes32) at slot 4, key 1:
+    //   keccak256(abi.encode(uint256(1), uint256(4)))
+    let mut slot_preimage = [0u8; 64];
+    slot_preimage[31] = 1; // key = 1
+    slot_preimage[63] = 4; // mapping base slot = 4
+    let withdrawal_roots_slot = U256::from_big_endian(&keccak_hash(&slot_preimage));
+
+    let stored_withdrawal_root = eth_client
+        .get_storage_at(
+            contract_address,
+            withdrawal_roots_slot,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await
+        .expect("get_storage_at failed");
+    // No withdrawal events in this L2 block, so root should be zero
+    assert_eq!(
+        stored_withdrawal_root,
+        U256::zero(),
+        "withdrawalRoots[1] should be zero (no withdrawals)"
+    );
+
     println!("\nNativeRollup integration test passed!");
     println!("  Pre-state root:  {pre_state_root:?}");
     println!("  Post-state root: {post_state_root:?}");
