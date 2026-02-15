@@ -217,6 +217,14 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
+	# WORKAROUND: The substrate-bn SP1 v6 patch (non-RC tag) declares sp1-lib = "6.0.0"
+	# which doesn't match the RC pre-release 6.0.0-rc.1. We fetch first, then patch the
+	# cached Cargo.toml so cargo metadata --locked can validate the lockfile.
+	# Remove this block when SP1 v6.0.0 stable is released.
+	cargo fetch --manifest-path crates/guest-program/bin/sp1/Cargo.toml 2>/dev/null || true
+	@for f in $$(find $$HOME/.cargo/git/checkouts/bn-* -name Cargo.toml 2>/dev/null); do \
+		perl -pi -e 's/sp1-lib = \{ version = "6\.0\.0" \}/sp1-lib = { version = "6.0.0-rc.1" }/' "$$f"; \
+	done
 	cargo metadata --locked --manifest-path crates/guest-program/bin/sp1/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/bin/risc0/Cargo.toml > /dev/null
 	# We use metadata so we don't need to have the ZisK toolchain installed and verify compilation

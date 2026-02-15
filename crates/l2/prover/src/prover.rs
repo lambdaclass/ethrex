@@ -23,8 +23,15 @@ pub async fn start_prover(config: ProverConfig) {
         #[cfg(feature = "sp1")]
         BackendType::SP1 => {
             use crate::backend::sp1::{PROVER_SETUP, Sp1Backend, init_prover_setup};
+            // CudaProver builder internally calls block_on(), which panics inside a tokio
+            // runtime. Spawn initialization on a separate OS thread to avoid this.
             #[cfg(feature = "gpu")]
-            PROVER_SETUP.get_or_init(|| init_prover_setup(config.sp1_server.clone()));
+            PROVER_SETUP.get_or_init(|| {
+                let endpoint = config.sp1_server.clone();
+                std::thread::spawn(move || init_prover_setup(endpoint))
+                    .join()
+                    .expect("Failed to initialize SP1 prover setup")
+            });
             #[cfg(not(feature = "gpu"))]
             PROVER_SETUP.get_or_init(|| init_prover_setup(None));
             let prover = Prover::new(Sp1Backend::new(), &config);
