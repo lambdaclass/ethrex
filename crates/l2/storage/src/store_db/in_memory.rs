@@ -197,10 +197,10 @@ impl StoreEngineRollup for Store {
         privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
-        let mut values = self.inner()?.operations_counts;
-        values[0] += transaction_inc;
-        values[1] += privileged_tx_inc;
-        values[2] += messages_inc;
+        let mut inner = self.inner()?;
+        inner.operations_counts[0] += transaction_inc;
+        inner.operations_counts[1] += privileged_tx_inc;
+        inner.operations_counts[2] += messages_inc;
         Ok(())
     }
 
