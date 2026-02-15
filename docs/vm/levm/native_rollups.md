@@ -219,6 +219,28 @@ This starts an ethrex node on `localhost:8545` with the EXECUTE precompile regis
 cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --ignored --nocapture
 ```
 
+Expected output:
+
+```
+Connected to L1 at http://localhost:8545
+Deployer: 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+Compiler run successful. Artifact(s) can be found in directory ".../crates/vm/levm/contracts/solc_out".
+NativeRollup deployed at: 0x...
+  Deploy tx: 0x...
+  Initial stateRoot verified: 0x453ce276913130ed26928c276ae51759ff45ba62c4ab3389452355d56a485c13
+  deposit() tx: 0x...
+  advance() tx: 0x...
+  Gas used: 305970
+
+NativeRollup integration test passed!
+  Pre-state root:  0x453ce276913130ed26928c276ae51759ff45ba62c4ab3389452355d56a485c13
+  Post-state root: 0x615cd8914a432a898d1d9998c8b8bce16c0bed49cd9e241cd3aca2ff41a449de
+  Block number:    1
+  Deposit index:   1
+  Contract:        0x...
+test l2::native_rollups::test_native_rollup_on_l1 ... ok
+```
+
 #### What the integration test does (`test_native_rollup_on_l1`)
 
 1. **Connect to L1** — Creates an `EthClient` pointing at `localhost:8545` and loads the pre-funded signer from the Makefile's private key.
@@ -226,7 +248,7 @@ cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --igno
 3. **Deploy contract** — Sends a CREATE transaction with `deployBytecode + abi.encode(preStateRoot)` as constructor arg. Waits for the receipt and verifies deployment succeeded.
 4. **Verify initial state** — Reads storage slot 0 via `eth_getStorageAt` and asserts it matches the pre-state root passed to the constructor.
 5. **Deposit** — Sends `deposit(charlie)` with 5 ETH via `build_generic_tx` + `send_generic_transaction` (SDK helpers). Waits for receipt.
-6. **Advance** — Sends `advance(1, blockRlp, witnessJson)` with 1B gas limit (the precompile re-executes an entire L2 block). The calldata is built with `encode_calldata()` from the SDK. Waits for receipt.
+6. **Advance** — Sends `advance(1, blockRlp, witnessJson)` with gas estimated via `eth_estimateGas` (the precompile re-executes an entire L2 block). The calldata is built with `encode_calldata()` from the SDK. Waits for receipt.
 7. **Verify final state** — Reads storage slots 0, 1, and 3 via RPC and asserts:
    - Slot 0 (`stateRoot`) = expected post-state root
    - Slot 1 (`blockNumber`) = 1

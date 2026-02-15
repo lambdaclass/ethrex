@@ -391,10 +391,7 @@ async fn test_native_rollup_on_l1() {
         contract_address,
         signer.address(),
         Bytes::from(advance_calldata),
-        Overrides {
-            gas_limit: Some(1_000_000_000), // 1B gas for the precompile
-            ..Default::default()
-        },
+        Overrides::default(),
     )
     .await
     .expect("Failed to build advance tx");
