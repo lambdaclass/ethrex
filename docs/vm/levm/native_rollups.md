@@ -119,10 +119,16 @@ Legacy, EIP-2930, EIP-1559, and EIP-7702 transactions are allowed. Withdrawals a
 
 ## Running the Tests
 
-### In-process tests (no L1 needed)
+### Unit tests (no L1 needed)
 
 ```bash
-cargo test -p ethrex-levm --features native-rollups --test native_rollups -- --nocapture
+cargo test -p ethrex-test --features native-rollups -- native_rollups::test_execute_precompile --nocapture
+```
+
+### Contract-based test (no L1 needed)
+
+```bash
+cargo test -p ethrex-test --features native-rollups -- native_rollups::test_native_rollup_contract --nocapture
 ```
 
 ### Integration test (requires running L1)
@@ -134,10 +140,10 @@ Start the L1 with native-rollups enabled, then run the integration test:
 NATIVE_ROLLUPS=1 make -C crates/l2 init-l1
 
 # Terminal 2: run the integration test
-cargo test -p ethrex-test --features native-rollups -- native_rollups_integration --ignored --nocapture
+cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --ignored --nocapture
 ```
 
-The integration test deploys the NativeRollup contract on L1, deposits 5 ETH for Charlie, calls `advance()` with a valid L2 state transition, and verifies the contract's storage was updated (stateRoot, blockNumber, depositIndex).
+The integration test compiles and deploys the NativeRollup contract on L1, deposits 5 ETH for Charlie, calls `advance()` with a valid L2 state transition, and verifies the contract's storage was updated (stateRoot, blockNumber, depositIndex).
 
 ## Test Descriptions
 
@@ -225,8 +231,8 @@ NativeRollup contract demo succeeded!
 | `crates/vm/Cargo.toml` | Feature flag propagation (modified) |
 | `cmd/ethrex/Cargo.toml` | Feature flag for ethrex binary (modified) |
 | `crates/vm/levm/contracts/NativeRollup.sol` | L2-simulator Solidity contract (with deposit mechanism) |
-| `crates/vm/levm/tests/native_rollups.rs` | In-process tests |
-| `test/tests/levm/native_rollups_integration.rs` | Integration test (requires running L1) |
+| `test/tests/levm/native_rollups.rs` | Unit tests and contract-based test |
+| `test/tests/l2/native_rollups.rs` | Integration test (requires running L1) |
 | `test/Cargo.toml` | Feature flag for test crate (modified) |
 | `crates/l2/Makefile` | `init-l1` supports `NATIVE_ROLLUPS=1` (modified) |
 
