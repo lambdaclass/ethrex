@@ -117,106 +117,120 @@ Native rollup blocks only allow standard L1 transaction types. The following are
 
 Legacy, EIP-2930, EIP-1559, and EIP-7702 transactions are allowed. Withdrawals are also rejected since native rollup L2 blocks don't have validator withdrawals.
 
-## Running the Tests
+## How to Test
 
-### Unit tests (no L1 needed)
+All tests live in the shared test crate (`test/`) and require the `native-rollups` feature flag.
 
-```bash
-cargo test -p ethrex-test --features native-rollups -- native_rollups::test_execute_precompile --nocapture
-```
+There are three levels of testing, from fastest to most comprehensive:
 
-### Contract-based test (no L1 needed)
+### 1. Unit tests (no infrastructure needed)
 
-```bash
-cargo test -p ethrex-test --features native-rollups -- native_rollups::test_native_rollup_contract --nocapture
-```
-
-### Integration test (requires running L1)
-
-Start the L1 with native-rollups enabled, then run the integration test:
+These tests call the EXECUTE precompile directly in-process — no L1 node, no network, no Solidity compilation. They verify the core precompile logic works correctly.
 
 ```bash
-# Terminal 1: start L1
-NATIVE_ROLLUPS=1 make -C crates/l2 init-l1
-
-# Terminal 2: run the integration test
-cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --ignored --nocapture
+cargo test -p ethrex-test --features native-rollups -- levm::native_rollups --nocapture
 ```
 
-The integration test compiles and deploys the NativeRollup contract on L1, deposits 5 ETH for Charlie, calls `advance()` with a valid L2 state transition, and verifies the contract's storage was updated (stateRoot, blockNumber, depositIndex).
+This runs all 4 offline tests:
 
-## Test Descriptions
+| Test | What it verifies |
+|------|-----------------|
+| `test_execute_precompile_transfer_and_deposit` | Full precompile flow: transfer + deposit + state root verification |
+| `test_native_rollup_contract` | NativeRollup.sol running in LEVM calling the EXECUTE precompile |
+| `test_execute_precompile_rejects_blob_transactions` | EIP-4844 blob transactions are rejected |
+| `test_execute_precompile_rejects_withdrawals` | Blocks with withdrawals are rejected |
 
-### Direct precompile test (`test_execute_precompile_transfer_and_deposit`)
-
-1. Creates a genesis state: Alice (10 ETH), Bob (0), Charlie (0), Coinbase (0)
-2. Signs an EIP-1559 transfer: Alice sends 1 ETH to Bob
-3. Builds an `ExecutionWitness` from the state trie
-4. Defines a deposit: 5 ETH to Charlie
-5. Computes the expected post-state root (accounting for the transfer, gas costs, and deposit)
-6. Builds ABI-encoded calldata (`abi.encode(preStateRoot, blockRlp, witnessJson, deposits)`)
-7. Calls `execute_precompile()` with the ABI-encoded calldata
-8. The precompile parses the calldata, re-executes the block, applies the deposit, and verifies the final state root
-9. Asserts the return value is `abi.encode(postStateRoot, blockNumber)` (64 bytes)
-
-### NativeRollup contract test (`test_native_rollup_contract`)
-
-Demonstrates the full end-to-end flow with deposit + advance:
-
-1. Builds the L2 state transition (Alice->Bob transfer + Charlie deposit)
-2. Deploys a NativeRollup contract on L1 with the pre-state root in storage
-3. Executes a deposit TX: `deposit(charlie)` with 5 ETH
-4. Executes an advance TX: `advance(1, blockRlp, witnessJson)`
-5. The contract builds ABI-encoded calldata from its stored state root, deposits, and the parameters
-6. The contract CALLs the EXECUTE precompile at `0x0101`
-7. The contract decodes the returned `(postStateRoot, blockNumber)` and updates its state
-8. Asserts the transaction succeeds and the contract's storage was updated (stateRoot, blockNumber, depositIndex)
+Expected output:
 
 ```
-L1 tx1 -> NativeRollup.deposit(charlie) {value: 5 ETH}
-  -> records PendingDeposit in storage
-
-L1 tx2 -> NativeRollup.advance(1, blockRlp, witnessJson)
-  -> builds ABI-encoded calldata: abi.encode(stateRoot, block, witness, depositsData)
-  -> CALL -> EXECUTE precompile (0x0101)
-  -> parse ABI calldata -> re-execute L2 block -> verify state roots
-  -> returns abi.encode(postStateRoot, blockNumber)
-  -> NativeRollup decodes return, updates stateRoot (slot 0), blockNumber (slot 1), depositIndex (slot 3)
-```
-
-### Integration test (`test_native_rollup_on_l1`)
-
-Same flow as the NativeRollup contract test, but against a real running L1:
-
-1. Deploys NativeRollup contract on L1 via `EthClient`
-2. Sends `deposit(charlie)` transaction with 5 ETH
-3. Sends `advance()` transaction with a valid L2 state transition
-4. Reads storage slots via `eth_getStorageAt` to verify the contract updated correctly (stateRoot, blockNumber, depositIndex)
-
-### Rejection tests
-
-- `test_execute_precompile_rejects_blob_transactions` — verifies EIP-4844 transactions are rejected
-- `test_execute_precompile_rejects_withdrawals` — verifies non-empty withdrawals are rejected
-
-### Expected output
-
-```
-ABI-encoded EXECUTE calldata: ... bytes
+running 4 tests
+test levm::native_rollups::test_execute_precompile_rejects_blob_transactions ... ok
+test levm::native_rollups::test_execute_precompile_rejects_withdrawals ... ok
+ABI-encoded EXECUTE calldata: 7648 bytes
 EXECUTE precompile succeeded!
-  Pre-state root:  0x453c...5c13
-  Post-state root: 0x615c...49de
+  Pre-state root:  0x453ce276913130ed26928c276ae51759ff45ba62c4ab3389452355d56a485c13
+  Post-state root: 0x615cd8914a432a898d1d9998c8b8bce16c0bed49cd9e241cd3aca2ff41a449de
   Alice sent 1 ETH to Bob
   Charlie received 5 ETH deposit
-
+test levm::native_rollups::test_execute_precompile_transfer_and_deposit ... ok
 Deposit TX succeeded (5 ETH for charlie)
 NativeRollup contract demo succeeded!
   L2 state transition verified via deposit() + advance():
-    Pre-state root:  0x453c...5c13
-    Post-state root: 0x615c...49de
+    Pre-state root:  0x453ce276913130ed26928c276ae51759ff45ba62c4ab3389452355d56a485c13
+    Post-state root: 0x615cd8914a432a898d1d9998c8b8bce16c0bed49cd9e241cd3aca2ff41a449de
     Block number:    1
     Deposit index:   1
-  Gas used: ...
+  Gas used: 303139
+test levm::native_rollups::test_native_rollup_contract ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; ...
 ```
+
+#### What the main test does (`test_execute_precompile_transfer_and_deposit`)
+
+This test simulates a complete L2 block verification:
+
+1. **Setup genesis state** — Creates 4 accounts: Alice (10 ETH), Bob (0), Charlie (0), Coinbase (0). Inserts them into a state trie and computes the pre-state root.
+2. **Build L2 transaction** — Signs an EIP-1559 transfer: Alice sends 1 ETH to Bob (gas limit 21,000, 1 gwei priority fee, 2 gwei max fee).
+3. **Compute expected post-state** — Calculates the final balances after the transfer (Alice loses 1 ETH + gas, Bob gains 1 ETH, Coinbase gets priority fee) and after the deposit (Charlie gains 5 ETH). Computes the expected post-state root.
+4. **Build witness** — Creates an `ExecutionWitness` containing the state trie, chain config, and block headers. This is the minimal data needed to re-execute the block without full node state.
+5. **Build ABI-encoded calldata** — Encodes `abi.encode(preStateRoot, blockRlp, witnessJson, deposits)` matching what the NativeRollup contract would produce.
+6. **Call the precompile** — Invokes `execute_precompile()` directly with the calldata. Inside, the precompile parses the ABI data, rebuilds the state from the witness, applies the deposit, re-executes the block, and verifies the computed state root matches the expected one.
+7. **Verify result** — Asserts the precompile returns `abi.encode(postStateRoot, blockNumber)` (64 bytes).
+
+#### What the contract test does (`test_native_rollup_contract`)
+
+This test runs the NativeRollup.sol contract inside LEVM, which in turn calls the EXECUTE precompile:
+
+```
+L1 tx1 -> NativeRollup.deposit(charlie) {value: 5 ETH}
+  -> records PendingDeposit{charlie, 5 ETH} in contract storage
+
+L1 tx2 -> NativeRollup.advance(1, blockRlp, witnessJson)
+  -> reads stateRoot from slot 0
+  -> pops 1 deposit from pendingDeposits array
+  -> builds calldata: abi.encode(stateRoot, block, witness, depositsData)
+  -> CALL to 0x0101 (EXECUTE precompile)
+    -> precompile re-executes the L2 block and verifies state roots
+  -> returns abi.encode(postStateRoot, blockNumber)
+  -> contract decodes return value
+  -> updates storage: stateRoot (slot 0), blockNumber (slot 1), depositIndex (slot 3)
+```
+
+The test verifies all three storage slots were updated correctly after `advance()` succeeds.
+
+### 2. Integration test (requires running L1)
+
+This test deploys the NativeRollup contract on a real L1 node (ethrex with the EXECUTE precompile enabled), sends real transactions, and reads storage via RPC.
+
+**Prerequisites:** `solc` (Solidity compiler) must be installed for contract compilation.
+
+**Terminal 1** — Start the L1:
+
+```bash
+NATIVE_ROLLUPS=1 make -C crates/l2 init-l1
+```
+
+This starts an ethrex node on `localhost:8545` with the EXECUTE precompile registered at address `0x0101` and a pre-funded account for testing.
+
+**Terminal 2** — Run the test:
+
+```bash
+cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --ignored --nocapture
+```
+
+#### What the integration test does (`test_native_rollup_on_l1`)
+
+1. **Connect to L1** — Creates an `EthClient` pointing at `localhost:8545` and loads the pre-funded signer from the Makefile's private key.
+2. **Compile NativeRollup.sol** — Calls `solc` via `compile_contract()` to produce the deployment bytecode. This avoids hardcoding hex bytecode in the test.
+3. **Deploy contract** — Sends a CREATE transaction with `deployBytecode + abi.encode(preStateRoot)` as constructor arg. Waits for the receipt and verifies deployment succeeded.
+4. **Verify initial state** — Reads storage slot 0 via `eth_getStorageAt` and asserts it matches the pre-state root passed to the constructor.
+5. **Deposit** — Sends `deposit(charlie)` with 5 ETH via `build_generic_tx` + `send_generic_transaction` (SDK helpers). Waits for receipt.
+6. **Advance** — Sends `advance(1, blockRlp, witnessJson)` with 1B gas limit (the precompile re-executes an entire L2 block). The calldata is built with `encode_calldata()` from the SDK. Waits for receipt.
+7. **Verify final state** — Reads storage slots 0, 1, and 3 via RPC and asserts:
+   - Slot 0 (`stateRoot`) = expected post-state root
+   - Slot 1 (`blockNumber`) = 1
+   - Slot 3 (`depositIndex`) = 1
 
 ## Files
 
