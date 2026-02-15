@@ -356,7 +356,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::MissingParam(_) => "MissingParam",
         RpcErr::TooLargeRequest => "TooLargeRequest",
         RpcErr::BadHexFormat(_) => "BadHexFormat",
-        RpcErr::UnsuportedFork(_) => "UnsuportedFork",
+        RpcErr::UnsupportedFork(_) => "UnsupportedFork",
         RpcErr::Internal(_) => "Internal",
         RpcErr::Vm(_) => "Vm",
         RpcErr::Revert { .. } => "Revert",

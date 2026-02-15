@@ -41,7 +41,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();
             if chain_config.is_cancun_activated(attributes.timestamp) {
-                return Err(RpcErr::UnsuportedFork(
+                return Err(RpcErr::UnsupportedFork(
                     "forkChoiceV1 used to build Cancun payload".to_string(),
                 ));
             }
@@ -74,7 +74,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();
             if chain_config.is_cancun_activated(attributes.timestamp) {
-                return Err(RpcErr::UnsuportedFork(
+                return Err(RpcErr::UnsupportedFork(
                     "forkChoiceV2 used to build Cancun payload".to_string(),
                 ));
             } else if chain_config.is_shanghai_activated(attributes.timestamp) {
@@ -396,7 +396,7 @@ fn validate_attributes_v3(
         ));
     }
     if !chain_config.is_cancun_activated(attributes.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
+        return Err(RpcErr::UnsupportedFork(
             "forkChoiceV3 used to build pre-Cancun payload".to_string(),
         ));
     }
