@@ -2,10 +2,10 @@
 //!
 //! Requires:
 //!   1. Start L1: `NATIVE_ROLLUPS=1 make -C crates/l2 init-l1`
-//!   2. Run: `cargo test -p ethrex-test --features native-rollups -- native_rollups_integration --ignored --nocapture`
+//!   2. Run: `cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --ignored --nocapture`
 //!
-//! The test deploys NativeRollup.sol, builds an L2 state transition,
-//! calls advance(), and verifies the contract state was updated.
+//! The test compiles and deploys NativeRollup.sol, builds an L2 state transition,
+//! calls deposit() + advance(), and verifies the contract state was updated.
 
 #![allow(
     clippy::expect_used,
@@ -26,29 +26,32 @@ use ethrex_common::{
     },
 };
 use ethrex_crypto::keccak::keccak_hash;
+use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_sdk::{
-    build_generic_tx, create_deploy, send_generic_transaction, wait_for_transaction_receipt,
+    build_generic_tx, compile_contract, create_deploy, send_generic_transaction,
+    wait_for_transaction_receipt,
 };
 use ethrex_levm::execute_precompile::{Deposit, ExecutePrecompileInput};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::clients::eth::{EthClient, Overrides};
+use ethrex_rpc::clients::Overrides;
+use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_trie::Trie;
 use k256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
 use reqwest::Url;
 use secp256k1::SecretKey;
 
+use super::utils::workspace_root;
+
 const L1_RPC_URL: &str = "http://localhost:8545";
 /// Private key from crates/l2/Makefile (pre-funded in L1 genesis).
 const L1_PRIVATE_KEY: &str = "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
 
-/// NativeRollup.sol deployment bytecode (constructor + runtime).
-/// Compiled with solc 0.8.31.
-/// Source: crates/vm/levm/contracts/NativeRollup.sol
-const NATIVE_ROLLUP_DEPLOY_HEX: &str = "6080604052348015600e575f5ffd5b50604051610e60380380610e608339818101604052810190602e9190606b565b805f81905550506091565b5f5ffd5b5f819050919050565b604d81603d565b81146056575f5ffd5b50565b5f815190506065816046565b92915050565b5f60208284031215607d57607c6039565b5b5f6088848285016059565b91505092915050565b610dc28061009e5f395ff3fe608060405260043610610058575f3560e01c806357e871e7146101965780637b898939146101c05780639588eca2146101ea578063a793279414610214578063ed3133f214610251578063f340fa011461027957610192565b36610192575f341161009f576040517f08c379a0000000000000000000000000000000000000000000000000000000008152600401610096906106fa565b60405180910390fd5b600260405180604001604052803373ffffffffffffffffffffffffffffffffffffffff16815260200134815250908060018154018082558091505060019003905f5260205f2090600202015f909190919091505f820151815f015f6101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff1602179055506020820151816001015550503373ffffffffffffffffffffffffffffffffffffffff167f741a0277a612f71e4836430fe80cc831a4e28c01d2121c0ab1a4451bc88f909e346040516101889190610730565b60405180910390a2005b5f5ffd5b3480156101a1575f5ffd5b506101aa610295565b6040516101b79190610730565b60405180910390f35b3480156101cb575f5ffd5b506101d461029b565b6040516101e19190610730565b60405180910390f35b3480156101f5575f5ffd5b506101fe6102a1565b60405161020b9190610761565b60405180910390f35b34801561021f575f5ffd5b5061023a600480360381019061023591906107ac565b6102a6565b604051610248929190610816565b60405180910390f35b34801561025c575f5ffd5b506102776004803603810190610272919061089e565b6102f4565b005b610293600480360381019061028e9190610959565b61056a565b005b60015481565b60035481565b5f5481565b600281815481106102b5575f80fd5b905f5260205f2090600202015f91509050805f015f9054906101000a900473ffffffffffffffffffffffffffffffffffffffff16908060010154905082565b5f6003549050600280549050868261030c91906109b1565b111561034d576040517f08c379a000000000000000000000000000000000000000000000000000000000815260040161034490610a2e565b60405180910390fd5b60605f5f90505b87811015610403575f6002828561036b91906109b1565b8154811061037c5761037b610a4c565b5b905f5260205f209060020201905082815f015f9054906101000a900473ffffffffffffffffffffffffffffffffffffffff1682600101546040516020016103c4929190610ade565b6040516020818303038152906040526040516020016103e4929190610b5b565b6040516020818303038152906040529250508080600101915050610354565b50868261041091906109b1565b6003819055505f5f54878787878660405160200161043396959493929190610c10565b60405160208183030381529060405290505f5f61010173ffffffffffffffffffffffffffffffffffffffff168360405161046d9190610c6c565b5f604051808303815f865af19150503d805f81146104a6576040519150601f19603f3d011682016040523d82523d5f602084013e6104ab565b606091505b50915091508180156104be575060408151145b6104fd576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016104f490610cf2565b60405180910390fd5b5f5f828060200190518101906105139190610d4e565b91509150815f8190555080600181905550807fe41acc52c5cd3ab398bfed63f4130976083bea5288e3bf4bf489ccbb3bd20c85836040516105549190610761565b60405180910390a2505050505050505050505050565b5f34116105ac576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016105a3906106fa565b60405180910390fd5b600260405180604001604052808373ffffffffffffffffffffffffffffffffffffffff16815260200134815250908060018154018082558091505060019003905f5260205f2090600202015f909190919091505f820151815f015f6101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff1602179055506020820151816001015550508073ffffffffffffffffffffffffffffffffffffffff167f741a0277a612f71e4836430fe80cc831a4e28c01d2121c0ab1a4451bc88f909e346040516106959190610730565b60405180910390a250565b5f82825260208201905092915050565b7f4d7573742073656e6420455448000000000000000000000000000000000000005f82015250565b5f6106e4600d836106a0565b91506106ef826106b0565b602082019050919050565b5f6020820190508181035f830152610711816106d8565b9050919050565b5f819050919050565b61072a81610718565b82525050565b5f6020820190506107435f830184610721565b92915050565b5f819050919050565b61075b81610749565b82525050565b5f6020820190506107745f830184610752565b92915050565b5f5ffd5b5f5ffd5b61078b81610718565b8114610795575f5ffd5b50565b5f813590506107a681610782565b92915050565b5f602082840312156107c1576107c061077a565b5b5f6107ce84828501610798565b91505092915050565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f610800826107d7565b9050919050565b610810816107f6565b82525050565b5f6040820190506108295f830185610807565b6108366020830184610721565b9392505050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83601f84011261085e5761085d61083d565b5b8235905067ffffffffffffffff81111561087b5761087a610841565b5b60208301915083600182028301111561089757610896610845565b5b9250929050565b5f5f5f5f5f606086880312156108b7576108b661077a565b5b5f6108c488828901610798565b955050602086013567ffffffffffffffff8111156108e5576108e461077e565b5b6108f188828901610849565b9450945050604086013567ffffffffffffffff8111156109145761091361077e565b5b61092088828901610849565b92509250509295509295909350565b610938816107f6565b8114610942575f5ffd5b50565b5f813590506109538161092f565b92915050565b5f6020828403121561096e5761096d61077a565b5b5f61097b84828501610945565b91505092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6109bb82610718565b91506109c683610718565b92508282019050808211156109de576109dd610984565b5b92915050565b7f4e6f7420656e6f756768206465706f73697473000000000000000000000000005f82015250565b5f610a186013836106a0565b9150610a23826109e4565b602082019050919050565b5f6020820190508181035f830152610a4581610a0c565b9050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b5f8160601b9050919050565b5f610a8f82610a79565b9050919050565b5f610aa082610a85565b9050919050565b610ab8610ab3826107f6565b610a96565b82525050565b5f819050919050565b610ad8610ad382610718565b610abe565b82525050565b5f610ae98285610aa7565b601482019150610af98284610ac7565b6020820191508190509392505050565b5f81519050919050565b5f81905092915050565b8281835e5f83830152505050565b5f610b3582610b09565b610b3f8185610b13565b9350610b4f818560208601610b1d565b80840191505092915050565b5f610b668285610b2b565b9150610b728284610b2b565b91508190509392505050565b5f82825260208201905092915050565b828183375f83830152505050565b5f601f19601f8301169050919050565b5f610bb78385610b7e565b9350610bc4838584610b8e565b610bcd83610b9c565b840190509392505050565b5f610be282610b09565b610bec8185610b7e565b9350610bfc818560208601610b1d565b610c0581610b9c565b840191505092915050565b5f608082019050610c235f830189610752565b8181036020830152610c36818789610bac565b90508181036040830152610c4b818587610bac565b90508181036060830152610c5f8184610bd8565b9050979650505050505050565b5f610c778284610b2b565b915081905092915050565b7f4558454355544520707265636f6d70696c6520766572696669636174696f6e205f8201527f6661696c65640000000000000000000000000000000000000000000000000000602082015250565b5f610cdc6026836106a0565b9150610ce782610c82565b604082019050919050565b5f6020820190508181035f830152610d0981610cd0565b9050919050565b610d1981610749565b8114610d23575f5ffd5b50565b5f81519050610d3481610d10565b92915050565b5f81519050610d4881610782565b92915050565b5f5f60408385031215610d6457610d6361077a565b5b5f610d7185828601610d26565b9250506020610d8285828601610d3a565b915050925092905056fea264697066735822122032f2db442daf298b9e99572230200f4a1f4248d37377159a59baf92b1f49ba4f64736f6c634300081f0033";
-
-// ===== Helpers (duplicated from crates/vm/levm/tests/native_rollups.rs) =====
+// ===== Helpers for building the L2 state transition =====
+// These use manual signing because they build a raw L2 block for the witness,
+// not an RPC transaction.
 
 fn address_from_key(key: &SigningKey) -> Address {
     use k256::ecdsa::VerifyingKey;
@@ -266,69 +269,11 @@ fn build_l2_state_transition() -> (ExecutePrecompileInput, Vec<u8>, Vec<u8>, H25
     )
 }
 
-/// Encode a call to NativeRollup.deposit(address).
-fn encode_deposit_call(recipient: Address) -> Vec<u8> {
-    let mut encoded = Vec::new();
-
-    // Function selector: deposit(address) = 0xf340fa01
-    encoded.extend_from_slice(&[0xf3, 0x40, 0xfa, 0x01]);
-
-    // _recipient (address, left-padded to 32 bytes)
-    let mut addr_bytes = [0u8; 32];
-    addr_bytes[12..].copy_from_slice(recipient.as_bytes());
-    encoded.extend_from_slice(&addr_bytes);
-
-    encoded
-}
-
-/// Encode ABI: advance(uint256, bytes, bytes)
-fn encode_advance_call(deposits_count: u64, block_rlp: &[u8], witness_json: &[u8]) -> Vec<u8> {
-    let mut encoded = Vec::new();
-
-    // Function selector: advance(uint256,bytes,bytes) = 0xed3133f2
-    encoded.extend_from_slice(&[0xed, 0x31, 0x33, 0xf2]);
-
-    // _depositsCount (uint256)
-    let mut deposits_count_bytes = [0u8; 32];
-    deposits_count_bytes[24..].copy_from_slice(&deposits_count.to_be_bytes());
-    encoded.extend_from_slice(&deposits_count_bytes);
-
-    // Offset to _block: 3 static params * 32 = 96 = 0x60
-    let mut block_offset = [0u8; 32];
-    block_offset[31] = 0x60;
-    encoded.extend_from_slice(&block_offset);
-
-    // Offset to _witness: 0x60 + 32 (block length) + padded block data
-    let padded_block_len = block_rlp.len() + ((32 - (block_rlp.len() % 32)) % 32);
-    let witness_offset: u64 = 96 + 32 + padded_block_len as u64;
-    let mut witness_offset_bytes = [0u8; 32];
-    witness_offset_bytes[24..].copy_from_slice(&witness_offset.to_be_bytes());
-    encoded.extend_from_slice(&witness_offset_bytes);
-
-    // _block: length + data (padded to 32-byte boundary)
-    let mut block_len = [0u8; 32];
-    block_len[24..].copy_from_slice(&(block_rlp.len() as u64).to_be_bytes());
-    encoded.extend_from_slice(&block_len);
-    encoded.extend_from_slice(block_rlp);
-    let block_padding = (32 - (block_rlp.len() % 32)) % 32;
-    encoded.resize(encoded.len() + block_padding, 0);
-
-    // _witness: length + data (padded to 32-byte boundary)
-    let mut witness_len = [0u8; 32];
-    witness_len[24..].copy_from_slice(&(witness_json.len() as u64).to_be_bytes());
-    encoded.extend_from_slice(&witness_len);
-    encoded.extend_from_slice(witness_json);
-    let witness_padding = (32 - (witness_json.len() % 32)) % 32;
-    encoded.resize(encoded.len() + witness_padding, 0);
-
-    encoded
-}
-
-/// Integration test: deploy NativeRollup on a real L1 and advance it with one block.
+/// Integration test: compile and deploy NativeRollup on a real L1, then advance it with one block.
 ///
 /// Prerequisites:
 ///   1. Start L1: `NATIVE_ROLLUPS=1 make -C crates/l2 init-l1`
-///   2. Run: `cargo test -p ethrex-test --features native-rollups -- native_rollups_integration --ignored --nocapture`
+///   2. Run: `cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --ignored --nocapture`
 #[tokio::test]
 #[ignore = "requires running L1 (NATIVE_ROLLUPS=1 make -C crates/l2 init-l1)"]
 async fn test_native_rollup_on_l1() {
@@ -347,8 +292,22 @@ async fn test_native_rollup_on_l1() {
     let charlie = Address::from_low_u64_be(0xC4A);
     let deposit_amount = U256::from(5) * U256::from(10).pow(U256::from(18)); // 5 ETH
 
-    // 3. Deploy NativeRollup(pre_state_root)
-    let deploy_bytecode = hex::decode(NATIVE_ROLLUP_DEPLOY_HEX).expect("invalid hex");
+    // 3. Compile and deploy NativeRollup(pre_state_root)
+    let contracts_path = workspace_root().join("crates/vm/levm/contracts");
+    compile_contract(
+        &contracts_path,
+        &contracts_path.join("NativeRollup.sol"),
+        false,
+        false,
+        None,
+        &[],
+        None,
+    )
+    .expect("Failed to compile NativeRollup.sol");
+
+    let deploy_hex = std::fs::read_to_string(contracts_path.join("solc_out/NativeRollup.bin"))
+        .expect("Failed to read compiled contract");
+    let deploy_bytecode = hex::decode(deploy_hex.trim()).expect("invalid hex in .bin file");
     let constructor_arg = pre_state_root.as_bytes().to_vec();
     let init_code: Bytes = [deploy_bytecode, constructor_arg].concat().into();
 
@@ -385,7 +344,8 @@ async fn test_native_rollup_on_l1() {
     println!("  Initial stateRoot verified: {pre_state_root:?}");
 
     // 5. Call deposit(charlie) with 5 ETH
-    let deposit_calldata = encode_deposit_call(charlie);
+    let deposit_calldata =
+        encode_calldata("deposit(address)", &[Value::Address(charlie)]).expect("encode failed");
 
     let deposit_tx = build_generic_tx(
         &eth_client,
@@ -415,7 +375,15 @@ async fn test_native_rollup_on_l1() {
     println!("  deposit() tx: {deposit_tx_hash:?}");
 
     // 6. Call advance(1, block_rlp, witness_json)
-    let advance_calldata = encode_advance_call(1, &block_rlp, &witness_json);
+    let advance_calldata = encode_calldata(
+        "advance(uint256,bytes,bytes)",
+        &[
+            Value::Uint(U256::from(1)),
+            Value::Bytes(Bytes::from(block_rlp)),
+            Value::Bytes(Bytes::from(witness_json)),
+        ],
+    )
+    .expect("encode failed");
 
     let advance_tx = build_generic_tx(
         &eth_client,

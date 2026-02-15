@@ -22,7 +22,6 @@ use crate::{
     errors::{InternalError, TxValidationError, VMError},
     precompiles::increase_precompile_consumed_gas,
     tracing::LevmCallTracer,
-    utils::get_base_fee_per_blob_gas,
     vm::{VM, VMType},
 };
 
@@ -270,9 +269,6 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(), VMEr
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
 
-    let block_excess_blob_gas = block.header.excess_blob_gas.map(U256::from);
-    let base_blob_fee = get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?;
-
     // Validate transaction types before recovering senders (cheap check first).
     // Native rollup blocks only allow standard L1 transaction types.
     for tx in &block.body.transactions {
@@ -325,14 +321,14 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(), VMEr
                 .unwrap_or(U256::zero()),
             chain_id: chain_config.chain_id.into(),
             base_fee_per_gas: block.header.base_fee_per_gas.unwrap_or_default().into(),
-            base_blob_fee_per_gas: base_blob_fee,
+            base_blob_fee_per_gas: U256::zero(),
             gas_price,
-            block_excess_blob_gas,
-            block_blob_gas_used: block.header.blob_gas_used.map(U256::from),
-            tx_blob_hashes: tx.blob_versioned_hashes(),
+            block_excess_blob_gas: None,
+            block_blob_gas_used: None,
+            tx_blob_hashes: vec![],
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
-            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
+            tx_max_fee_per_blob_gas: None,
             tx_nonce: tx.nonce(),
             block_gas_limit: block.header.gas_limit,
             difficulty: block.header.difficulty,
