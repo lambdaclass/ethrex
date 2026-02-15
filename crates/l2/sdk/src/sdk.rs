@@ -337,7 +337,7 @@ pub async fn deposit_erc20(
     from_signer: &Signer,
     eth_client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    println!("Claiming {amount} from bridge to {from:#x}");
+    println!("Depositing {amount} from {from:#x} to bridge");
 
     const DEPOSIT_ERC20_SIGNATURE: &str = "depositERC20(address,address,address,uint256)";
 
