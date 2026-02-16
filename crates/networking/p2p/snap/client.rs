@@ -788,7 +788,8 @@ pub async fn request_storage_ranges(
             chunk_index += 1;
         }
 
-        if let Some(Ok(result)) = worker_joinset.try_join_next() {
+        if let Some(result) = worker_joinset.try_join_next() {
+            let result = result.expect("Storage worker task panicked");
             let (peer_id, success) = process_storage_task_result(
                 result,
                 tracker,
