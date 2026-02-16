@@ -84,8 +84,8 @@ impl RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
-        // Shared block cache across all column families (2GB)
-        let cache = Cache::new_lru_cache(2 * 1024 * 1024 * 1024);
+        // Shared block cache across all column families (10GB)
+        let cache = Cache::new_lru_cache(10 * 1024 * 1024 * 1024);
 
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
