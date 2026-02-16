@@ -294,25 +294,49 @@ impl StorageTrieTracker {
             // Old root was in big_tries
             let big = self
                 .big_tries
-                .get_mut(&old_root)
+                .get(&old_root)
                 .expect("big_tries should contain old_root");
-            if big.accounts.len() == 1 && big.accounts[0] == account_hash {
+            let is_only_account = big.accounts.len() == 1 && big.accounts[0] == account_hash;
+            if is_only_account {
                 // Only account: re-key
-                let mut big = self
+                let big = self
                     .big_tries
                     .remove(&old_root)
                     .expect("big_tries should contain old_root");
-                big.accounts = vec![account_hash];
-                self.big_tries.insert(new_root, big);
+                if let Some(existing) = self.big_tries.get_mut(&new_root) {
+                    existing.accounts.push(account_hash);
+                } else {
+                    self.big_tries.insert(new_root, big);
+                }
             } else {
-                // Multiple accounts: remove account, create new big trie with cloned data
-                big.accounts.retain(|a| *a != account_hash);
-                let new_big = BigTrie {
-                    accounts: vec![account_hash],
-                    slots: big.slots.clone(),
-                    intervals: big.intervals.clone(),
-                };
-                self.big_tries.insert(new_root, new_big);
+                // Multiple accounts: remove account from old entry, add to new root
+                let new_root_exists = self.big_tries.contains_key(&new_root);
+                if new_root_exists {
+                    // new_root already tracked: just move the account, no clone needed
+                    self.big_tries
+                        .get_mut(&old_root)
+                        .expect("big_tries should contain old_root")
+                        .accounts
+                        .retain(|a| *a != account_hash);
+                    self.big_tries
+                        .get_mut(&new_root)
+                        .expect("big_tries should contain new_root")
+                        .accounts
+                        .push(account_hash);
+                } else {
+                    // new_root not tracked: clone slots/intervals for the new entry
+                    let big = self
+                        .big_tries
+                        .get_mut(&old_root)
+                        .expect("big_tries should contain old_root");
+                    let new_big = BigTrie {
+                        accounts: vec![account_hash],
+                        slots: big.slots.clone(),
+                        intervals: big.intervals.clone(),
+                    };
+                    big.accounts.retain(|a| *a != account_hash);
+                    self.big_tries.insert(new_root, new_big);
+                }
             }
         } else {
             // Old root was in small_tries or not registered
