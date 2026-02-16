@@ -64,7 +64,6 @@ impl RocksDBBackend {
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
-        opts.set_use_direct_reads(true);
         opts.set_unordered_write(true);
         opts.set_manual_wal_flush(true);
 
