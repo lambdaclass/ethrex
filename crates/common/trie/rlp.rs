@@ -11,7 +11,7 @@ use ethrex_rlp::{
 };
 
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
-use crate::{Nibbles, NodeHash};
+use crate::{Nibbles, NodeHash, ValueRLP, db::TrieDB, error::TrieError};
 
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
@@ -149,6 +149,113 @@ impl RLPDecode for Node {
         };
         Ok((node, decoder.finish()?))
     }
+}
+
+/// Perform a trie get directly on raw RLP bytes, avoiding full Node construction.
+/// At each branch node, only the needed child is parsed (1 of 16) instead of all 17 items.
+pub(crate) fn get_from_raw_rlp(
+    db: &dyn TrieDB,
+    initial_rlp: &[u8],
+    mut path: Nibbles,
+) -> Result<Option<ValueRLP>, TrieError> {
+    let mut rlp_buf: Vec<u8> = initial_rlp.to_vec();
+
+    loop {
+        let item_count = {
+            let decoder = Decoder::new(&rlp_buf).map_err(TrieError::RLPDecode)?;
+            decoder.count_items().map_err(TrieError::RLPDecode)?
+        };
+
+        match item_count {
+            2 => {
+                // Leaf or Extension
+                let decoder = Decoder::new(&rlp_buf).map_err(TrieError::RLPDecode)?;
+                let (prefix_bytes, decoder) =
+                    decoder.get_encoded_item_ref().map_err(TrieError::RLPDecode)?;
+                let (prefix_bytes, _) =
+                    decode_bytes(prefix_bytes).map_err(TrieError::RLPDecode)?;
+                let prefix = Nibbles::decode_compact(prefix_bytes);
+
+                if prefix.is_leaf() {
+                    if path.skip_prefix(&prefix) {
+                        let (value_bytes, _) =
+                            decoder.get_encoded_item_ref().map_err(TrieError::RLPDecode)?;
+                        let (value, _) =
+                            decode_bytes(value_bytes).map_err(TrieError::RLPDecode)?;
+                        return Ok(Some(value.to_vec()));
+                    }
+                    return Ok(None);
+                } else {
+                    // Extension
+                    if !path.skip_prefix(&prefix) {
+                        return Ok(None);
+                    }
+                    let (child_bytes, _) =
+                        decoder.get_encoded_item_ref().map_err(TrieError::RLPDecode)?;
+                    let child_hash = decode_child(child_bytes);
+                    if !child_hash.is_valid() {
+                        return Ok(None);
+                    }
+                    fetch_next_rlp(db, &child_hash, &path, &mut rlp_buf)?;
+                }
+            }
+            17 => {
+                // Branch
+                if let Some(choice) = path.next_choice() {
+                    let child_hash = {
+                        let decoder =
+                            Decoder::new(&rlp_buf).map_err(TrieError::RLPDecode)?;
+                        let child_bytes = decoder
+                            .get_nth_encoded_item(choice)
+                            .map_err(TrieError::RLPDecode)?;
+                        decode_child(child_bytes)
+                    };
+                    if !child_hash.is_valid() {
+                        return Ok(None);
+                    }
+                    fetch_next_rlp(db, &child_hash, &path, &mut rlp_buf)?;
+                } else {
+                    // Path exhausted — return branch value (item 16)
+                    let decoder = Decoder::new(&rlp_buf).map_err(TrieError::RLPDecode)?;
+                    let value_bytes = decoder
+                        .get_nth_encoded_item(16)
+                        .map_err(TrieError::RLPDecode)?;
+                    let (value, _) = decode_bytes(value_bytes).map_err(TrieError::RLPDecode)?;
+                    return Ok(if value.is_empty() {
+                        None
+                    } else {
+                        Some(value.to_vec())
+                    });
+                }
+            }
+            _ => return Err(TrieError::RLPDecode(RLPDecodeError::MalformedData)),
+        }
+    }
+}
+
+/// Fetch the next node's RLP into the buffer, reusing its allocation.
+fn fetch_next_rlp(
+    db: &dyn TrieDB,
+    child_hash: &NodeHash,
+    path: &Nibbles,
+    buf: &mut Vec<u8>,
+) -> Result<(), TrieError> {
+    buf.clear();
+    match child_hash {
+        NodeHash::Inline(_) => {
+            buf.extend_from_slice(child_hash.as_ref());
+        }
+        NodeHash::Hashed(_) => {
+            let data = db
+                .get(path.current())?
+                .filter(|rlp| !rlp.is_empty())
+                .ok_or_else(|| {
+                    TrieError::Verify("Child node not found in database".to_string())
+                })?;
+            buf.extend_from_slice(&data);
+        }
+    }
+    Ok(())
 }
 
 fn decode_child(rlp: &[u8]) -> NodeHash {

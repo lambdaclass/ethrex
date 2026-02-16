@@ -112,6 +112,36 @@ impl<'a> Decoder<'a> {
         self.payload.is_empty()
     }
 
+    /// Count top-level items in the payload without consuming the decoder.
+    pub fn count_items(&self) -> Result<usize, RLPDecodeError> {
+        let mut remaining = self.payload;
+        let mut count = 0;
+        while !remaining.is_empty() {
+            let (_, rest) = get_item_with_prefix(remaining)?;
+            remaining = rest;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Skip `n` items and return the nth encoded item (0-indexed), including its RLP prefix.
+    /// Does not consume the decoder.
+    pub fn get_nth_encoded_item(&self, n: usize) -> Result<&'a [u8], RLPDecodeError> {
+        let mut remaining = self.payload;
+        for _ in 0..n {
+            if remaining.is_empty() {
+                return Err(RLPDecodeError::InvalidLength);
+            }
+            let (_, rest) = get_item_with_prefix(remaining)?;
+            remaining = rest;
+        }
+        if remaining.is_empty() {
+            return Err(RLPDecodeError::InvalidLength);
+        }
+        let (item, _) = get_item_with_prefix(remaining)?;
+        Ok(item)
+    }
+
     /// Same as [`finish`](Self::finish), but discards the item's remaining payload
     /// instead of failing.
     pub const fn finish_unchecked(self) -> &'a [u8] {

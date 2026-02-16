@@ -113,16 +113,25 @@ impl Trie {
             return Ok(Some(value_rlp));
         }
 
-        Ok(match self.root {
-            NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
+        Ok(match &self.root {
+            NodeRef::Node(node, _) => node.get(self.db.as_ref(), path)?,
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) if hash.is_valid() => {
+                Node::decode(hash.as_ref())
+                    .map_err(TrieError::RLPDecode)?
+                    .get(self.db.as_ref(), path)?
+            }
             NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
-                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                        hash.finalize(),
-                    )))
-                })?)
-                .map_err(TrieError::RLPDecode)?
-                .get(self.db.as_ref(), path)?
+                // Streaming path — navigate raw RLP bytes, avoiding full Node construction
+                let rlp = self
+                    .db
+                    .get(path.current())?
+                    .filter(|rlp| !rlp.is_empty())
+                    .ok_or_else(|| {
+                        TrieError::InconsistentTree(Box::new(
+                            InconsistentTreeError::RootNotFound(hash.finalize()),
+                        ))
+                    })?;
+                rlp::get_from_raw_rlp(self.db.as_ref(), &rlp, path)?
             }
             _ => None,
         })
@@ -607,5 +616,104 @@ impl ProofTrie {
 impl From<Trie> for ProofTrie {
     fn from(value: Trie) -> Self {
         Self(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that the streaming trie get (via raw RLP) produces the same results
+    /// as the standard Node-based get for a DB-backed trie.
+    #[test]
+    fn streaming_get_matches_standard_get() {
+        // Create a trie with a shared DB, insert values, commit to DB
+        let db_map: db::NodeMap = Default::default();
+        let db = Box::new(InMemoryTrieDB::new(Arc::clone(&db_map)));
+        let mut trie = Trie::new(db);
+
+        // Insert diverse paths to create branch, extension, and leaf nodes
+        let test_data: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (vec![0x00], vec![0x01]),
+            (vec![0x01], vec![0x02]),
+            (vec![0x10], vec![0x03]),
+            (vec![0x11], vec![0x04]),
+            (vec![0x12, 0x34], vec![0x05, 0x06]),
+            (vec![0x12, 0x35], vec![0x07, 0x08]),
+            (vec![0xFF], vec![0x09]),
+            (vec![0xAB, 0xCD, 0xEF], vec![0x0A, 0x0B, 0x0C]),
+        ];
+
+        for (path, value) in &test_data {
+            trie.insert(path.clone(), value.clone()).unwrap();
+        }
+
+        let root_hash = trie.hash().unwrap();
+
+        // Open a new trie from the same DB with the root hash.
+        // This creates NodeRef::Hash(Hashed), triggering the streaming path.
+        let db2 = Box::new(InMemoryTrieDB::new(db_map));
+        let trie2 = Trie::open(db2, root_hash);
+
+        // Verify all inserted values are retrievable
+        for (path, expected_value) in &test_data {
+            let result = trie2.get(path).unwrap();
+            assert_eq!(
+                result.as_deref(),
+                Some(expected_value.as_slice()),
+                "Mismatch for path {:?}",
+                path
+            );
+        }
+
+        // Verify non-existent paths return None
+        assert_eq!(trie2.get(&[0x02]).unwrap(), None);
+        assert_eq!(trie2.get(&[0x12, 0x36]).unwrap(), None);
+        assert_eq!(trie2.get(&[0xAB, 0xCD]).unwrap(), None);
+    }
+
+    /// Test the streaming path with a single leaf (root is a leaf node).
+    #[test]
+    fn streaming_get_single_leaf() {
+        let db_map: db::NodeMap = Default::default();
+        let db = Box::new(InMemoryTrieDB::new(Arc::clone(&db_map)));
+        let mut trie = Trie::new(db);
+
+        trie.insert(vec![0xAA, 0xBB], vec![0x01, 0x02, 0x03])
+            .unwrap();
+        let root_hash = trie.hash().unwrap();
+
+        let db2 = Box::new(InMemoryTrieDB::new(db_map));
+        let trie2 = Trie::open(db2, root_hash);
+
+        assert_eq!(
+            trie2.get(&[0xAA, 0xBB]).unwrap(),
+            Some(vec![0x01, 0x02, 0x03])
+        );
+        assert_eq!(trie2.get(&[0xAA, 0xBC]).unwrap(), None);
+        assert_eq!(trie2.get(&[0xAA]).unwrap(), None);
+    }
+
+    /// Test the streaming path with many values to exercise deep branch structures.
+    #[test]
+    fn streaming_get_many_values() {
+        let db_map: db::NodeMap = Default::default();
+        let db = Box::new(InMemoryTrieDB::new(Arc::clone(&db_map)));
+        let mut trie = Trie::new(db);
+
+        // Insert 256 values with single-byte keys
+        for i in 0u16..256 {
+            trie.insert(vec![i as u8], vec![i as u8, (i >> 8) as u8])
+                .unwrap();
+        }
+        let root_hash = trie.hash().unwrap();
+
+        let db2 = Box::new(InMemoryTrieDB::new(db_map));
+        let trie2 = Trie::open(db2, root_hash);
+
+        for i in 0u16..256 {
+            let result = trie2.get(&[i as u8]).unwrap();
+            assert_eq!(result, Some(vec![i as u8, (i >> 8) as u8]), "key={i}");
+        }
     }
 }
