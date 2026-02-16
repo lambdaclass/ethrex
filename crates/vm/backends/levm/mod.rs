@@ -86,12 +86,12 @@ impl LEVM {
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Use block_gas_used for limit check (pre-refund for Amsterdam+)
-            // GAS_ALLOWANCE_EXCEEDED (single tx gas_limit > block gas limit) is
-            // already validated during individual tx validation in the VM hooks.
-            // Here we only check cumulative block gas overflow.
+            // Message includes both "Gas allowance exceeded" and "Block gas used overflow"
+            // so the EELS exception mapper matches both TransactionException.GAS_ALLOWANCE_EXCEEDED
+            // and BlockException.GAS_USED_OVERFLOW from the same string.
             if block_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
-                    "Block gas used overflow: block gas used {} plus transaction gas limit {} exceeds block gas limit {}",
+                    "Gas allowance exceeded: Block gas used overflow: block gas used {} plus transaction gas limit {} exceeds block gas limit {}",
                     block_gas_used,
                     tx.gas_limit(),
                     block.header.gas_limit
@@ -205,12 +205,12 @@ impl LEVM {
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Use block_gas_used for limit check (pre-refund for Amsterdam+)
-            // GAS_ALLOWANCE_EXCEEDED (single tx gas_limit > block gas limit) is
-            // already validated during individual tx validation in the VM hooks.
-            // Here we only check cumulative block gas overflow.
+            // Message includes both "Gas allowance exceeded" and "Block gas used overflow"
+            // so the EELS exception mapper matches both TransactionException.GAS_ALLOWANCE_EXCEEDED
+            // and BlockException.GAS_USED_OVERFLOW from the same string.
             if block_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
-                    "Block gas used overflow: block gas used {} plus transaction gas limit {} exceeds block gas limit {}",
+                    "Gas allowance exceeded: Block gas used overflow: block gas used {} plus transaction gas limit {} exceeds block gas limit {}",
                     block_gas_used,
                     tx.gas_limit(),
                     block.header.gas_limit
