@@ -35,6 +35,7 @@ impl RocksDBBackend {
 
         opts.set_max_open_files(-1);
         opts.set_max_file_opening_threads(16);
+        opts.increase_parallelism(12);
 
         opts.set_max_background_jobs(8);
 
@@ -63,6 +64,9 @@ impl RocksDBBackend {
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
+        opts.set_use_direct_reads(true);
+        opts.set_unordered_write(true);
+        opts.set_manual_wal_flush(true);
 
         let compressible_tables = [
             BLOCK_NUMBERS,
@@ -109,6 +113,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
+                    block_opts.set_bloom_filter(10.0, false);
                     block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -128,11 +133,13 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2);
+                    cf_opts.set_memtable_whole_key_filtering(true);
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_block_size(4 * 1024); // 4KB — smaller blocks for point lookups
+                    block_opts.set_bloom_filter(10.0, false);
                     block_opts.set_block_cache(&cache);
                     block_opts.set_cache_index_and_filter_blocks(true);
                     block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
@@ -143,11 +150,13 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2);
+                    cf_opts.set_memtable_whole_key_filtering(true);
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_block_size(4 * 1024); // 4KB — smaller blocks for point lookups
+                    block_opts.set_bloom_filter(10.0, false);
                     block_opts.set_block_cache(&cache);
                     block_opts.set_cache_index_and_filter_blocks(true);
                     block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
