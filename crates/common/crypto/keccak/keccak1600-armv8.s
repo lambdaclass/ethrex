@@ -4,11 +4,21 @@
 //     Rust.
 //   - Removed dots from all local labels for correct detection in the frontend.
 //     Reason: `.L` local labels are ELF-specific.
-//   - Replaced instance of `adr x??,label` by `adrp x??,label@PAGE` followed by
-//     `add x??,x??,label@PAGEOFF`.
-//
-// TODO: this is probably a matter of selecting the right parameter
-// for the translator.
+//   - Replaced instance of `adr x??,label` by a macro constructing calls to `adrp x??,label@PAGE` followed by
+//     `add x??,x??,label@PAGEOFF` or `adrp x??,label` followed by `add x??,x??,:lo12:label` depending on the target
+//     OS.
+//   - Replaced existing instances of curly braces by pairs of them, to avoid confusing with Rust's templates.
+//   - Replaced exported symbols by parameters representing their name mangled versions.
+
+.macro adr reg, label
+.if {elf}
+adrp \reg,\label
+add \reg,\reg,:lo12:\label
+.else
+adrp \reg, \label@PAGE
+add \reg, \reg, \label@PAGEOFF
+.endif
+.endm
 
 .align	8	// strategic alignment and padding that allows to use
 		// address value as loop termination condition...
@@ -241,8 +251,7 @@ KeccakF1600:
 	ldp	x22,x23,[x26,#16*11]
 	ldr	x24,[x26,#16*12]
 
-	adrp	x28,iotas@PAGE
-	add	x28,x28,iotas@PAGEOFF
+    adr    x28,iotas
 	bl	KeccakF1600_int
 
 	ldr	x26,[sp,#16+2*8]
@@ -271,10 +280,10 @@ KeccakF1600:
 	ret
 // .size	KeccakF1600,.-KeccakF1600
 
-.globl	_SHA3_absorb
+.globl	{SHA3_absorb}
 // .type	SHA3_absorb,%function
 .align	5
-_SHA3_absorb:
+{SHA3_absorb}:
 .inst	0xd503233f			// paciasp
 	stp	x29,x30,[sp,#-16*8]!
 	add	x29,sp,#0
@@ -433,8 +442,7 @@ Lprocess_block:
 	add	x27,x27,x30
 	str	x27,[sp,#16+3*8]	// save inp
 
-	adrp	x28,iotas@PAGE
-	add	x28,x28,iotas@PAGEOFF
+	adr	x28,iotas
 	bl	KeccakF1600_int
 
 	ldr	x27,[sp,#16+3*8]	// restore arguments
@@ -469,10 +477,10 @@ Labsorbed:
 .inst	0xd50323bf			// autiasp
 	ret
 // .size	SHA3_absorb,.-SHA3_absorb
-.globl	_SHA3_squeeze
+.globl	{SHA3_squeeze}
 // .type	SHA3_squeeze,%function
 .align	5
-_SHA3_squeeze:
+{SHA3_squeeze}:
 .inst	0xd503233f			// paciasp
 	stp	x29,x30,[sp,#-6*8]!
 	add	x29,sp,#0
@@ -603,7 +611,7 @@ Loop_ce:
 .inst	0xce3a62f7	//bcax v23.16b,v23.16b,v26.16b,   v24.16b
 .inst	0xce286b18	//bcax v24.16b,v24.16b,v8.16b,v26.16b	// A[1][3]=A[4][1]
 
-	ld1r	{v26.2d},[x10],#8
+	ld1r	{{v26.2d}},[x10],#8
 
 .inst	0xce330fd1	//bcax v17.16b,v30.16b,   v19.16b,v3.16b	// A[0][3]=A[3][3]
 .inst	0xce2f4c72	//bcax v18.16b,v3.16b,v15.16b,v19.16b	// A[0][3]=A[3][3]
@@ -660,8 +668,7 @@ KeccakF1600_cext:
 	ldp	d20,d21,[x0,#8*20]
 	ldp	d22,d23,[x0,#8*22]
 	ldr	d24,[x0,#8*24]
-	adrp	x10,iotas@PAGE
-	add	x10,x10,iotas@PAGEOFF
+	adr	x10,iotas
 	bl	KeccakF1600_ce
 	ldr	x30,[sp,#8]
 	stp	d0,d1,[x0,#8*0]
@@ -718,21 +725,21 @@ Loop_absorb_ce:
 	blo	Labsorbed_ce
 
 	cmp	x3,#104
-	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
+	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
 	eor	v0.16b,v0.16b,v27.16b
 	eor	v1.16b,v1.16b,v28.16b
 	eor	v2.16b,v2.16b,v29.16b
 	eor	v3.16b,v3.16b,v30.16b
-	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
+	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
 	eor	v4.16b,v4.16b,v27.16b
 	eor	v5.16b,v5.16b,v28.16b
 	eor	v6.16b,v6.16b,v29.16b
 	eor	v7.16b,v7.16b,v30.16b
-	ld1	{v31.8b},[x1],#8	// A[1][4] ^= *inp++
+	ld1	{{v31.8b}},[x1],#8	// A[1][4] ^= *inp++
 	eor	v8.16b,v8.16b,v31.16b
 	blo	Lprocess_block_ce
 
-	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
+	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
 	eor	v9.16b,v9.16b,v27.16b
 	eor	v10.16b,v10.16b,v28.16b
 	eor	v11.16b,v11.16b,v29.16b
@@ -740,25 +747,24 @@ Loop_absorb_ce:
 	beq	Lprocess_block_ce
 
 	cmp	x3,#144
-	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
+	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
 	eor	v13.16b,v13.16b,v27.16b
 	eor	v14.16b,v14.16b,v28.16b
 	eor	v15.16b,v15.16b,v29.16b
 	eor	v16.16b,v16.16b,v30.16b
 	blo	Lprocess_block_ce
 
-	ld1	{v31.8b},[x1],#8	// A[3][3] ^= *inp++
+	ld1	{{v31.8b}},[x1],#8	// A[3][3] ^= *inp++
 	eor	v17.16b,v17.16b,v31.16b
 	beq	Lprocess_block_ce
 
-	ld1	{v28.8b,v29.8b,v30.8b},[x1],#24
+	ld1	{{v28.8b,v29.8b,v30.8b}},[x1],#24
 	eor	v18.16b,v18.16b,v28.16b
 	eor	v19.16b,v19.16b,v29.16b
 	eor	v20.16b,v20.16b,v30.16b
 
 Lprocess_block_ce:
-	adrp	x10,iotas@PAGE
-	add	x10,x10,iotas@PAGEOFF
+	adr	x10,iotas
 	bl	KeccakF1600_ce
 
 	b	Loop_absorb_ce

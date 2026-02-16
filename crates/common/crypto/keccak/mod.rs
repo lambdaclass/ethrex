@@ -1,7 +1,5 @@
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-std::arch::global_asm!(include_str!("keccak1600-armv8-elf.s"), options(raw));
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-std::arch::global_asm!(include_str!("keccak1600-armv8-macho.s"), options(raw));
+#[cfg(target_arch = "aarch64")]
+std::arch::global_asm!(include_str!("keccak1600-armv8.s"), elf=const cfg!(target_os="linux") as u32, SHA3_absorb=sym SHA3_absorb, SHA3_squeeze=sym SHA3_squeeze);
 #[cfg(target_arch = "x86_64")]
 std::arch::global_asm!(include_str!("keccak1600-x86_64.s"), options(att_syntax));
 
@@ -13,12 +11,16 @@ mod imp {
 
     #[derive(Default, Clone, Copy)]
     #[repr(transparent)]
-    struct State([u64; 25]);
+    pub(super) struct State([u64; 25]);
 
     unsafe extern "C" {
-        #[link_name = "SHA3_absorb"]
-        unsafe fn SHA3_absorb(state: *mut State, buf: *const u8, len: usize, r: usize) -> usize;
-        unsafe fn SHA3_squeeze(state: *mut State, buf: *mut u8, len: usize, r: usize);
+        pub(super) unsafe fn SHA3_absorb(
+            state: *mut State,
+            buf: *const u8,
+            len: usize,
+            r: usize,
+        ) -> usize;
+        pub(super) unsafe fn SHA3_squeeze(state: *mut State, buf: *mut u8, len: usize, r: usize);
     }
 
     pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32] {
