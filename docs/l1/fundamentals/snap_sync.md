@@ -376,3 +376,50 @@ RUST_LOG=info ./target/release/examples/snap_profile_replay \
 | `--keep-db` | Don't clean up RocksDB directory after the run | `false` |
 
 Both phases (InsertAccounts, InsertStorages) always run. The computed state root is validated against the manifest — a mismatch is a hard error.
+
+### Workflow Profiling (External Tools)
+
+For systematic profiling with external tools, use the Make targets. These wrap the replay binary with standard profilers, build with frame pointers, and collect structured artifacts.
+
+**Quick start:**
+
+```bash
+# CPU profiling with perf (Linux)
+make snapsync-prof-perf SNAP_DATASET=/path/to/dataset
+
+# CPU profiling with samply (Linux/macOS)
+make snapsync-prof-samply SNAP_DATASET=/path/to/dataset
+
+# Heap profiling with heaptrack (Linux)
+make snapsync-prof-heap SNAP_DATASET=/path/to/dataset
+
+# Heap profiling with jemalloc (Linux)
+make snapsync-prof-jeprof SNAP_DATASET=/path/to/dataset JEMALLOC_SO=/usr/lib/x86_64-linux-gnu/libjemalloc.so
+```
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SNAP_DATASET` | (required) | Path to captured dataset directory |
+| `SNAP_BACKEND` | `rocksdb` | Storage backend (`rocksdb` or `inmemory`) |
+| `SNAP_DB_DIR` | `/tmp/snap-profile-db` | Directory for RocksDB data |
+| `SNAP_KEEP_DB` | `0` | Set to `1` to keep the RocksDB directory after the run |
+| `SNAP_CARGO_PROFILE` | `release-with-debug` | Cargo build profile |
+| `SNAP_FEATURES` | `rocksdb,c-kzg` | Cargo feature flags |
+| `JEMALLOC_SO` | (required for jeprof) | Path to `libjemalloc.so` |
+
+**Artifacts:**
+
+Each run creates a timestamped directory under `artifacts/snapsync-profile/`:
+
+```
+artifacts/snapsync-profile/<timestamp>/<tool>/
+├── run_metadata.json    # Build info, git SHA, host info, command
+├── manifest.json        # Copy of the dataset manifest
+├── run.log              # Full stdout/stderr
+├── command.txt          # Exact profiler invocation
+└── <tool-specific>      # perf.data, samply-profile.json, heaptrack.*, etc.
+```
+
+The `run_metadata.json` file includes git SHA, dataset hash, build configuration, and host information for reproducibility.

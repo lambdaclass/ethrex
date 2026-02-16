@@ -1,6 +1,7 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io run-hive-eels-blobs
+		load-test-fibonacci load-test-io run-hive-eels-blobs \
+		snapsync-prof-perf snapsync-prof-samply snapsync-prof-heap snapsync-prof-jeprof
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -11,6 +12,16 @@ FRAME_POINTERS ?= 0
 ifeq ($(FRAME_POINTERS),1)
 PROFILING_CFG := --config .cargo/profiling.toml
 endif
+
+# SnapSync profiling workflow
+SNAP_DATASET ?=
+SNAP_BACKEND ?= rocksdb
+SNAP_DB_DIR ?= /tmp/snap-profile-db
+SNAP_KEEP_DB ?= 0
+SNAP_CARGO_PROFILE ?= release-with-debug
+SNAP_FEATURES ?= rocksdb,c-kzg
+SNAP_TIMESTAMP ?= $(shell date -u +%Y%m%dT%H%M%SZ)
+JEMALLOC_SO ?=
 
 build: ## 🔨 Build the client
 	cargo build $(PROFILING_CFG) --workspace
@@ -175,6 +186,31 @@ load-test-fibonacci:
 
 load-test-io:
 	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t io-heavy
+
+snapsync-prof-perf: ## 🔬 Profile snap sync replay with perf
+	DATASET=$(SNAP_DATASET) BACKEND=$(SNAP_BACKEND) DB_DIR=$(SNAP_DB_DIR) \
+	KEEP_DB=$(SNAP_KEEP_DB) SNAP_CARGO_PROFILE=$(SNAP_CARGO_PROFILE) \
+	FEATURES=$(SNAP_FEATURES) TIMESTAMP=$(SNAP_TIMESTAMP) \
+	./tooling/snapsync_profile/run_perf.sh
+
+snapsync-prof-samply: ## 🔬 Profile snap sync replay with samply
+	DATASET=$(SNAP_DATASET) BACKEND=$(SNAP_BACKEND) DB_DIR=$(SNAP_DB_DIR) \
+	KEEP_DB=$(SNAP_KEEP_DB) SNAP_CARGO_PROFILE=$(SNAP_CARGO_PROFILE) \
+	FEATURES=$(SNAP_FEATURES) TIMESTAMP=$(SNAP_TIMESTAMP) \
+	./tooling/snapsync_profile/run_samply.sh
+
+snapsync-prof-heap: ## 🔬 Profile snap sync replay with heaptrack
+	DATASET=$(SNAP_DATASET) BACKEND=$(SNAP_BACKEND) DB_DIR=$(SNAP_DB_DIR) \
+	KEEP_DB=$(SNAP_KEEP_DB) SNAP_CARGO_PROFILE=$(SNAP_CARGO_PROFILE) \
+	FEATURES=$(SNAP_FEATURES) TIMESTAMP=$(SNAP_TIMESTAMP) \
+	./tooling/snapsync_profile/run_heaptrack.sh
+
+snapsync-prof-jeprof: ## 🔬 Profile snap sync replay with jemalloc heap profiling
+	DATASET=$(SNAP_DATASET) BACKEND=$(SNAP_BACKEND) DB_DIR=$(SNAP_DB_DIR) \
+	KEEP_DB=$(SNAP_KEEP_DB) SNAP_CARGO_PROFILE=$(SNAP_CARGO_PROFILE) \
+	FEATURES=$(SNAP_FEATURES) TIMESTAMP=$(SNAP_TIMESTAMP) \
+	JEMALLOC_SO=$(JEMALLOC_SO) \
+	./tooling/snapsync_profile/run_jemalloc_prof.sh
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
