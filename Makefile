@@ -19,7 +19,7 @@ SNAP_BACKEND ?= rocksdb
 SNAP_DB_DIR ?= /tmp/snap-profile-db
 SNAP_KEEP_DB ?= 0
 SNAP_CARGO_PROFILE ?= release-with-debug
-SNAP_FEATURES ?= rocksdb,c-kzg
+SNAP_FEATURES ?= rocksdb
 SNAP_TIMESTAMP ?= $(shell date -u +%Y%m%dT%H%M%SZ)
 JEMALLOC_SO ?=
 

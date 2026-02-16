@@ -352,19 +352,19 @@ Capture works with both rocksdb and non-rocksdb builds. Rocksdb builds automatic
 
 ### Step 2 — Replay offline
 
-Build and run the `snap_profile_replay` example:
+Build and run the `snap_profile_replay` binary from the `snapsync_profile` tooling crate:
 
 ```bash
 # Build with rocksdb backend (recommended for large datasets)
-cargo build --release --example snap_profile_replay -p ethrex-p2p --features rocksdb,c-kzg
+cargo build --release --bin snap_profile_replay -p snapsync_profile --features rocksdb --manifest-path tooling/Cargo.toml
 
 # Replay with rocksdb backend (~5GB RAM for Hoodi-sized datasets)
-RUST_LOG=info ./target/release/examples/snap_profile_replay \
+RUST_LOG=info ./tooling/target/release/snap_profile_replay \
   /tmp/snap-dataset --backend rocksdb
 
 # Or with in-memory backend (needs enough RAM for the full state trie)
-cargo build --release --example snap_profile_replay -p ethrex-p2p --features c-kzg
-RUST_LOG=info ./target/release/examples/snap_profile_replay \
+cargo build --release --bin snap_profile_replay -p snapsync_profile --manifest-path tooling/Cargo.toml
+RUST_LOG=info ./tooling/target/release/snap_profile_replay \
   /tmp/snap-dataset --backend inmemory
 ```
 
@@ -406,7 +406,7 @@ make snapsync-prof-jeprof SNAP_DATASET=/path/to/dataset JEMALLOC_SO=/usr/lib/x86
 | `SNAP_DB_DIR` | `/tmp/snap-profile-db` | Directory for RocksDB data |
 | `SNAP_KEEP_DB` | `0` | Set to `1` to keep the RocksDB directory after the run |
 | `SNAP_CARGO_PROFILE` | `release-with-debug` | Cargo build profile |
-| `SNAP_FEATURES` | `rocksdb,c-kzg` | Cargo feature flags |
+| `SNAP_FEATURES` | `rocksdb` | Cargo feature flags |
 | `JEMALLOC_SO` | (required for jeprof) | Path to `libjemalloc.so` |
 
 **Artifacts:**

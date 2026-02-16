@@ -2,15 +2,18 @@
 //!
 //! Usage:
 //!   # With rocksdb (default when feature is enabled):
-//!   cargo run --release --example snap_profile_replay -p ethrex-p2p --features rocksdb,c-kzg -- <dataset_path>
+//!   cargo build --bin snap_profile_replay -p snapsync_profile --features rocksdb --manifest-path tooling/Cargo.toml
+//!   ./tooling/target/release/snap_profile_replay <dataset_path>
 //!
 //!   # With in-memory backend (pure-compute micro-bench, needs enough RAM):
-//!   cargo run --release --example snap_profile_replay -p ethrex-p2p --features c-kzg -- <dataset_path> --backend inmemory
+//!   cargo build --bin snap_profile_replay -p snapsync_profile --manifest-path tooling/Cargo.toml
+//!   ./tooling/target/release/snap_profile_replay <dataset_path> --backend inmemory
 
 use std::path::PathBuf;
 
 use clap::Parser;
-use ethrex_p2p::sync::profile::{self, ProfileBackend};
+use ethrex_p2p::sync::profile;
+use snapsync_profile::ProfileBackend;
 
 #[derive(Parser)]
 #[command(about = "Replay snap sync phases from a captured dataset for offline profiling")]
@@ -46,8 +49,8 @@ fn parse_backend(name: &str) -> Result<ProfileBackend, String> {
         "rocksdb" => Ok(ProfileBackend::RocksDb),
         #[cfg(not(feature = "rocksdb"))]
         "rocksdb" => Err(
-            "rocksdb backend requested but ethrex-p2p was compiled without the rocksdb feature. \
-             Rebuild with --features rocksdb,c-kzg"
+            "rocksdb backend requested but snapsync_profile was compiled without the rocksdb feature. \
+             Rebuild with --features rocksdb"
                 .to_string(),
         ),
         other => Err(format!("unknown backend: {other} (expected: inmemory, rocksdb)")),
@@ -110,13 +113,12 @@ async fn main() {
     }
     println!();
 
-    let result =
-        profile::run_once_with_opts(&args.dataset_path, backend, &db_dir)
-            .await
-            .unwrap_or_else(|e| {
-                eprintln!("Replay failed: {e}");
-                std::process::exit(1);
-            });
+    let result = snapsync_profile::run_once_with_opts(&args.dataset_path, backend, &db_dir)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Replay failed: {e}");
+            std::process::exit(1);
+        });
 
     println!();
     println!("=== Replay Results ===");

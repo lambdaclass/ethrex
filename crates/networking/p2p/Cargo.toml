@@ -61,8 +61,6 @@ crossbeam.workspace = true
 [dev-dependencies]
 hex-literal.workspace = true
 tempfile.workspace = true
-clap.workspace = true
-tracing-subscriber.workspace = true
 
 [lib]
 path = "./p2p.rs"

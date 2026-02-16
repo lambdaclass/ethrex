@@ -8,7 +8,7 @@ mod code_collector;
 mod full;
 mod healing;
 pub mod profile;
-mod snap_sync;
+pub mod snap_sync;
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{PeerHandler, PeerHandlerError};

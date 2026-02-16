@@ -15,7 +15,7 @@ TOOL="heaptrack"
 : "${DB_DIR:=/tmp/snap-profile-db}"
 : "${KEEP_DB:=0}"
 : "${SNAP_CARGO_PROFILE:=release-with-debug}"
-: "${FEATURES:=rocksdb,c-kzg}"
+: "${FEATURES:=rocksdb}"
 : "${TIMESTAMP:=$(date -u +%Y%m%dT%H%M%SZ)}"
 : "${OUT_ROOT:=./artifacts/snapsync-profile}"
 
@@ -52,12 +52,13 @@ fi
 echo "==> Building snap_profile_replay (profile=${SNAP_CARGO_PROFILE}, features=${FEATURES})"
 
 BUILD_RUSTFLAGS="-C force-frame-pointers=yes ${RUSTFLAGS:-}"
-RUSTFLAGS="${BUILD_RUSTFLAGS}" cargo build -p ethrex-p2p \
+RUSTFLAGS="${BUILD_RUSTFLAGS}" cargo build -p snapsync_profile \
     --profile "${SNAP_CARGO_PROFILE}" \
-    --example snap_profile_replay \
-    --features "${FEATURES}"
+    --bin snap_profile_replay \
+    --features "${FEATURES}" \
+    --manifest-path tooling/Cargo.toml
 
-BINARY="./target/${SNAP_CARGO_PROFILE}/examples/snap_profile_replay"
+BINARY="./tooling/target/${SNAP_CARGO_PROFILE}/snap_profile_replay"
 if [[ ! -x "${BINARY}" ]]; then
     echo "ERROR: binary not found at ${BINARY}" >&2
     exit 1

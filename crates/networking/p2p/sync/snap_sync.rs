@@ -791,9 +791,9 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 // Account and Storage Insertion (non-rocksdb)
 // ============================================================================
 
-pub(crate) type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
+pub type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
 
-pub(crate) fn compute_storage_roots(
+pub fn compute_storage_roots(
     store: Store,
     account_hash: H256,
     key_value_pairs: &[(H256, U256)],
