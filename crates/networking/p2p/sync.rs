@@ -229,14 +229,17 @@ impl StorageTrieTracker {
     }
 
     /// Promotes a small trie to a big trie with downloaded slots and computed intervals.
+    /// `accounts` must be provided by the caller since the small trie may have already
+    /// been taken out of `small_tries` by `take_small_batch`.
     pub fn promote_to_big(
         &mut self,
         root: H256,
+        accounts: Vec<H256>,
         first_slots: Vec<Slot>,
         intervals: Vec<Interval>,
     ) {
-        let small = self.small_tries.remove(&root);
-        let accounts = small.map(|s| s.accounts).unwrap_or_default();
+        // Clean up small_tries in case it wasn't already removed
+        self.small_tries.remove(&root);
         self.big_tries.insert(
             root,
             BigTrie {

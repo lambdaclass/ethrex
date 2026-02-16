@@ -635,7 +635,7 @@ fn process_storage_task_result(
                 .storages
                 .extend(storages);
 
-            tracker.promote_to_big(big_root, big_trie.slots, intervals.clone());
+            tracker.promote_to_big(big_root, big_trie.accounts, big_trie.slots, intervals.clone());
 
             let accounts = tracker
                 .big_tries
