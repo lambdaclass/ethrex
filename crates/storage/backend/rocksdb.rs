@@ -35,7 +35,6 @@ impl RocksDBBackend {
 
         opts.set_max_open_files(-1);
         opts.set_max_file_opening_threads(16);
-        opts.increase_parallelism(12);
 
         opts.set_max_background_jobs(8);
 
@@ -58,14 +57,12 @@ impl RocksDBBackend {
         opts.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
         opts.set_use_fsync(false); // fdatasync
 
-        opts.set_enable_pipelined_write(false);
+        opts.set_enable_pipelined_write(true);
         opts.set_allow_concurrent_memtable_write(true);
         opts.set_enable_write_thread_adaptive_yield(true);
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
-        opts.set_unordered_write(true);
-        opts.set_manual_wal_flush(true);
 
         let compressible_tables = [
             BLOCK_NUMBERS,
