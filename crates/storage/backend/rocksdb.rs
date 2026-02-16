@@ -58,7 +58,7 @@ impl RocksDBBackend {
         opts.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
         opts.set_use_fsync(false); // fdatasync
 
-        opts.set_enable_pipelined_write(true);
+        opts.set_enable_pipelined_write(false);
         opts.set_allow_concurrent_memtable_write(true);
         opts.set_enable_write_thread_adaptive_yield(true);
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
