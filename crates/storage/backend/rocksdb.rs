@@ -11,8 +11,8 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
-    WriteBatch,
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MultiThreaded, Options,
+    SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -84,6 +84,9 @@ impl RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
+        // Shared block cache across all column families (12 GB)
+        let cache = Cache::new_lru_cache(12 * 1024 * 1024 * 1024);
+
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
             let mut cf_opts = Options::default();
@@ -106,6 +109,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
@@ -116,6 +120,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
@@ -128,6 +133,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -140,6 +146,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {
@@ -154,6 +161,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 RECEIPTS => {
@@ -163,6 +171,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 _ => {
@@ -173,6 +182,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
             }
