@@ -14,11 +14,9 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::{
-        utils::SelectableScroller,
-        widget::{HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
-    },
-    sequencer::errors::MonitorError,
+    error::MonitorError,
+    utils::SelectableScroller,
+    widget::{HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
 };
 
 const BATCH_WINDOW_SIZE: usize = 50;
