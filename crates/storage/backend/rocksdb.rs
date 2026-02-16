@@ -38,7 +38,7 @@ impl RocksDBBackend {
 
         opts.set_max_background_jobs(8);
 
-        opts.set_level_zero_file_num_compaction_trigger(2);
+        opts.set_level_zero_file_num_compaction_trigger(4);
         opts.set_level_zero_slowdown_writes_trigger(10);
         opts.set_level_zero_stop_writes_trigger(16);
         opts.set_target_file_size_base(512 * 1024 * 1024); // 512MB
@@ -46,7 +46,7 @@ impl RocksDBBackend {
         opts.set_max_bytes_for_level_multiplier(10.0);
         opts.set_level_compaction_dynamic_level_bytes(true);
 
-        opts.set_db_write_buffer_size(1024 * 1024 * 1024); // 1GB
+        opts.set_db_write_buffer_size(4 * 1024 * 1024 * 1024); // 4GB
         opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
         opts.set_max_write_buffer_number(4);
         opts.set_min_write_buffer_number_to_merge(2);
