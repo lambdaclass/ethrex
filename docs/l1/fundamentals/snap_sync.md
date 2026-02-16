@@ -334,7 +334,7 @@ The snap sync pipeline includes an offline profiling mode that lets you measure 
 Run a normal snap sync with the `ETHREX_SNAP_PROFILE_CAPTURE_DIR` environment variable set. When the sync reaches the InsertAccounts phase, the node copies the snapshot directories and writes a `manifest.json` to the capture directory.
 
 ```bash
-ETHREX_SNAP_PROFILE_CAPTURE_DIR=/tmp/snap-dataset ethrex --network mainnet
+ETHREX_SNAP_PROFILE_CAPTURE_DIR=/tmp/snap-dataset ethrex --network hoodi
 ```
 
 The resulting directory layout:
@@ -348,25 +348,31 @@ The resulting directory layout:
     └── *.rlp.*
 ```
 
-> **Note:** Only the non-rocksdb (in-memory trie) code path is supported. The node must be built without the `rocksdb` feature for capture to work.
+Capture works with both rocksdb and non-rocksdb builds. Rocksdb builds automatically convert SST files to RLP during capture so the dataset is portable.
 
-### Step 2 — Replay offline with ethrex-replay
+### Step 2 — Replay offline
 
-Use the `ethrex-replay` tool to replay the captured dataset:
+Build and run the `snap_profile_replay` example:
 
 ```bash
-ethrex-replay snapsync profile \
-  --dataset /tmp/snap-dataset \
-  --repeat 5 \
-  --warmup 1 \
-  --phases insert-accounts,insert-storages
+# Build with rocksdb backend (recommended for large datasets)
+cargo build --release --example snap_profile_replay -p ethrex-p2p --features rocksdb,c-kzg
+
+# Replay with rocksdb backend (~5GB RAM for Hoodi-sized datasets)
+RUST_LOG=info ./target/release/examples/snap_profile_replay \
+  /tmp/snap-dataset --backend rocksdb
+
+# Or with in-memory backend (needs enough RAM for the full state trie)
+cargo build --release --example snap_profile_replay -p ethrex-p2p --features c-kzg
+RUST_LOG=info ./target/release/examples/snap_profile_replay \
+  /tmp/snap-dataset --backend inmemory
 ```
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--dataset` | Path to the captured dataset directory | (required) |
-| `--repeat` | Number of measured runs | `3` |
-| `--warmup` | Number of warm-up runs (excluded from stats) | `1` |
-| `--phases` | Comma-separated phases to report (`insert-accounts`, `insert-storages`) | `insert-accounts,insert-storages` |
+| `dataset_path` | Path to the captured dataset directory | (positional, required) |
+| `--backend` | `rocksdb` (disk-backed) or `inmemory` (all state in RAM) | `rocksdb` if feature enabled |
+| `--db-dir` | Directory for RocksDB data | Temporary directory (auto-cleaned) |
+| `--keep-db` | Don't clean up RocksDB directory after the run | `false` |
 
-The tool validates the manifest, creates a fresh in-memory store for each run, replays both phases, checks that the computed state root is deterministic across runs, and prints per-phase statistics (median, mean, stddev, min, max).
+Both phases (InsertAccounts, InsertStorages) always run. The computed state root is validated against the manifest — a mismatch is a hard error.
