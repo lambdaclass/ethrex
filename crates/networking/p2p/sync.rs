@@ -29,7 +29,7 @@ use std::sync::{
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 // Re-export types used by submodules
 pub use snap_sync::{
@@ -373,6 +373,17 @@ impl BigTrie {
         let chunk_size = storage_density
             .checked_mul(U256::from(slots_per_chunk))
             .unwrap_or(U256::MAX);
+        // chunk_size is zero only when last_downloaded_hash < slot_count (integer division
+        // floors to zero). In practice this requires either empty slots (H256::zero() fallback)
+        // or keccak256 hashes smaller than the slot count, both of which indicate an unexpected
+        // state earlier in the pipeline. We fall back to a single interval but warn so the
+        // root cause can be investigated.
+        let chunk_size = if chunk_size.is_zero() {
+            warn!("compute_intervals: chunk_size is zero (last_downloaded_hash={last_downloaded_hash:?}, slot_count={slot_count}), falling back to single interval");
+            U256::MAX
+        } else {
+            chunk_size
+        };
         let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
         let mut intervals = Vec::with_capacity(chunk_count);
