@@ -137,11 +137,9 @@ impl RocksDBBackend {
                     cf_opts.set_memtable_whole_key_filtering(true);
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(4 * 1024); // 4KB — smaller blocks for point lookups
+                    block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
                     block_opts.set_block_cache(&cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -154,11 +152,9 @@ impl RocksDBBackend {
                     cf_opts.set_memtable_whole_key_filtering(true);
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(4 * 1024); // 4KB — smaller blocks for point lookups
+                    block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
                     block_opts.set_block_cache(&cache);
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {
