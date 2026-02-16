@@ -277,12 +277,7 @@ impl StorageTrieTracker {
     }
 
     /// Called by state healing when an account's storage root changes.
-    pub fn handle_healed_account(
-        &mut self,
-        account_hash: H256,
-        old_root: H256,
-        new_root: H256,
-    ) {
+    pub fn handle_healed_account(&mut self, account_hash: H256, old_root: H256, new_root: H256) {
         // Always mark for healing
         self.healed_accounts.insert(account_hash);
 
@@ -406,7 +401,9 @@ impl BigTrie {
         // state earlier in the pipeline. We fall back to a single interval but warn so the
         // root cause can be investigated.
         let chunk_size = if chunk_size.is_zero() {
-            warn!("compute_intervals: chunk_size is zero (last_downloaded_hash={last_downloaded_hash:?}, slot_count={slot_count}), falling back to single interval");
+            warn!(
+                "compute_intervals: chunk_size is zero (last_downloaded_hash={last_downloaded_hash:?}, slot_count={slot_count}), falling back to single interval"
+            );
             U256::MAX
         } else {
             chunk_size

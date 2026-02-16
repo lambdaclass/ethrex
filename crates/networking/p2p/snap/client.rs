@@ -554,11 +554,8 @@ fn flush_completed_tries(
         .inc_by(effective_slots as u64);
 
     for (root, trie) in completed {
-        let storages: Vec<(H256, U256)> = trie
-            .slots
-            .into_iter()
-            .map(|s| (s.hash, s.value))
-            .collect();
+        let storages: Vec<(H256, U256)> =
+            trie.slots.into_iter().map(|s| (s.hash, s.value)).collect();
         current_account_storages.insert(
             root,
             AccountsWithStorage {
@@ -621,11 +618,8 @@ fn process_storage_task_result(
             tracker.healed_accounts.extend(big_trie.accounts.iter());
 
             // Store the initial slots
-            let storages: Vec<(H256, U256)> = big_trie
-                .slots
-                .iter()
-                .map(|s| (s.hash, s.value))
-                .collect();
+            let storages: Vec<(H256, U256)> =
+                big_trie.slots.iter().map(|s| (s.hash, s.value)).collect();
             current_account_storages
                 .entry(big_root)
                 .or_insert_with(|| AccountsWithStorage {
@@ -635,7 +629,12 @@ fn process_storage_task_result(
                 .storages
                 .extend(storages);
 
-            tracker.promote_to_big(big_root, big_trie.accounts, big_trie.slots, intervals.clone());
+            tracker.promote_to_big(
+                big_root,
+                big_trie.accounts,
+                big_trie.slots,
+                intervals.clone(),
+            );
 
             let accounts = tracker
                 .big_tries
@@ -733,8 +732,7 @@ pub async fn request_storage_ranges(
         }
     }
 
-    let mut worker_joinset: tokio::task::JoinSet<StorageTaskResult> =
-        tokio::task::JoinSet::new();
+    let mut worker_joinset: tokio::task::JoinSet<StorageTaskResult> = tokio::task::JoinSet::new();
 
     // joinset to send the result of dumping storages
     let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> = tokio::task::JoinSet::new();
@@ -860,9 +858,7 @@ pub async fn request_storage_ranges(
             StorageTask::SmallBatch { tries } => {
                 tracker.return_small_tries(tries);
             }
-            StorageTask::BigInterval {
-                root, interval, ..
-            } => {
+            StorageTask::BigInterval { root, interval, .. } => {
                 if let Some(big) = tracker.big_tries.get_mut(&root) {
                     big.intervals.push(interval);
                 }
