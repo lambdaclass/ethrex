@@ -8,7 +8,7 @@ mod code_collector;
 mod full;
 mod healing;
 pub mod profile;
-pub mod snap_sync;
+mod snap_sync;
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{PeerHandler, PeerHandlerError};
@@ -32,10 +32,11 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-// Re-export types used by submodules
+// Re-export types used by submodules and the tooling crate
 pub use snap_sync::{
-    SnapBlockSyncState, block_is_stale, calculate_staleness_timestamp, update_pivot,
-    validate_bytecodes, validate_state_root, validate_storage_root,
+    SnapBlockSyncState, StorageRoots, block_is_stale, calculate_staleness_timestamp,
+    compute_storage_roots, update_pivot, validate_bytecodes, validate_state_root,
+    validate_storage_root,
 };
 
 #[cfg(feature = "sync-test")]

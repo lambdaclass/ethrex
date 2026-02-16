@@ -13,7 +13,7 @@ use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::AccountState;
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::profile::load_manifest;
-use ethrex_p2p::sync::snap_sync::compute_storage_roots;
+use ethrex_p2p::sync::compute_storage_roots;
 use ethrex_p2p::sync::SyncError;
 use ethrex_p2p::utils::AccountsWithStorage;
 use ethrex_rlp::decode::RLPDecode;
