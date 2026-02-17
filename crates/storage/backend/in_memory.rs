@@ -12,6 +12,9 @@ type Database = HashMap<&'static str, Table>;
 
 #[derive(Debug)]
 pub struct InMemoryBackend {
+    // RCU-style snapshot store: readers clone the inner Arc and then read lock-free.
+    // Writes run under the outer write lock and use Arc::make_mut for copy-on-write.
+    // If read snapshots are still alive, writes may clone the full Database.
     inner: Arc<RwLock<Arc<Database>>>,
 }
 
@@ -150,6 +153,7 @@ impl StorageWriteBatch for InMemoryWriteTx {
             .write()
             .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
 
+        // Copy-on-write update of the current snapshot.
         let db_mut = Arc::make_mut(&mut *db);
         let table_ref = db_mut.entry(table).or_default();
 
