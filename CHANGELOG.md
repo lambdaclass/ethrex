@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-11
+
+- Reduce trie/FKV memtable size and raise L0 compaction trigger to reduce skiplist and compaction overhead [#6183](https://github.com/lambdaclass/ethrex/pull/6183)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)
