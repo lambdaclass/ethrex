@@ -982,7 +982,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
+                head: 30000000,
                 time: 1710338134,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0xdce96c2d").unwrap(),
@@ -991,7 +991,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
+                head: 30000000,
                 time: 1710338135,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0x9f3d2254").unwrap(),
@@ -1000,8 +1000,8 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
-                time: 1746612310,
+                head: 30000000,
+                time: 1746022486,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0x9f3d2254").unwrap(),
                     fork_next: 1746612311,
@@ -1009,7 +1009,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
+                head: 30000000,
                 time: 1746612311,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0xc376cf8b").unwrap(),
@@ -1018,7 +1018,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
+                head: 30000000,
                 time: 1764798550,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0xc376cf8b").unwrap(),
@@ -1027,7 +1027,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
+                head: 30000000,
                 time: 1764798551,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0x5167e2a6").unwrap(),
@@ -1036,7 +1036,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
+                head: 30000000,
                 time: 1765290070,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0x5167e2a6").unwrap(),
@@ -1045,7 +1045,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
+                head: 30000000,
                 time: 1765290071,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0xcba2a1c0").unwrap(),
@@ -1054,7 +1054,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
+                head: 30000000,
                 time: 1767747670,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0xcba2a1c0").unwrap(),
@@ -1063,7 +1063,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 20000000,
+                head: 30000000,
                 time: 1767747671,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0x07c9462e").unwrap(),
@@ -1072,7 +1072,7 @@ mod tests {
                 is_valid: true,
             },
             TestCase {
-                head: 25000000,
+                head: 50000000,
                 time: 2000000000,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0x07c9462e").unwrap(),
@@ -1081,6 +1081,15 @@ mod tests {
                 is_valid: true,
             },
         ];
+        for test_case in &test_cases {
+            let fork_id = ForkId::new(
+                genesis.config,
+                genesis_header.clone(),
+                test_case.time,
+                test_case.head,
+            );
+            assert_eq!(fork_id, test_case.fork_id);
+        }
         assert_test_cases(test_cases, genesis.config, genesis_header);
     }
 }
