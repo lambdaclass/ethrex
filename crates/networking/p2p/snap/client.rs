@@ -704,7 +704,11 @@ pub async fn request_storage_ranges(
         "Starting request_storage_ranges: {} small tries, {} big tries, {} total big intervals",
         tracker.small_tries.len(),
         tracker.big_tries.len(),
-        tracker.big_tries.values().map(|b| b.intervals.len()).sum::<usize>(),
+        tracker
+            .big_tries
+            .values()
+            .map(|b| b.intervals.len())
+            .sum::<usize>(),
     );
 
     // Build initial tasks from tracker
@@ -763,9 +767,10 @@ pub async fn request_storage_ranges(
         if last_progress_log.elapsed() >= Duration::from_secs(10) {
             let remaining = tasks_queue_not_started.len();
             let in_flight = worker_joinset.len();
+            let total_peers = peers.peer_table.peer_count().await.unwrap_or(0);
             debug!(
-                "request_storage_ranges progress: {} tasks remaining, {} in flight, chunk_index={}",
-                remaining, in_flight, chunk_index,
+                "request_storage_ranges progress: {} tasks remaining, {} in flight, {} peers connected, chunk_index={}",
+                remaining, in_flight, total_peers, chunk_index,
             );
             last_progress_log = tokio::time::Instant::now();
         }
@@ -1187,7 +1192,7 @@ async fn handle_small_batch(
         return StorageTaskResult::SmallFailed { tries, peer_id };
     };
 
-    if (slots.is_empty() && proof.is_empty()) || slots.is_empty() || slots.len() > tries.len() {
+    if slots.is_empty() || slots.len() > tries.len() {
         return StorageTaskResult::SmallFailed { tries, peer_id };
     }
 
