@@ -71,8 +71,9 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
-    get_total_blob_gas, validate_block, validate_block_access_list_hash, validate_gas_used,
-    validate_receipts_root, validate_requests_hash,
+    get_total_blob_gas, validate_block, validate_block_access_list_hash,
+    validate_block_access_list_size, validate_gas_used, validate_receipts_root,
+    validate_requests_hash,
 };
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
@@ -342,6 +343,12 @@ impl Blockchain {
                 bal,
                 block.body.transactions.len(),
             )?;
+            validate_block_access_list_size(
+                &block.header,
+                &chain_config,
+                bal,
+                block.body.transactions.len(),
+            )?;
         }
 
         Ok((execution_result, account_updates))
@@ -448,6 +455,12 @@ impl Blockchain {
                         )?;
                         if let Some(bal) = &bal {
                             validate_block_access_list_hash(
+                                &block.header,
+                                &chain_config,
+                                bal,
+                                block.body.transactions.len(),
+                            )?;
+                            validate_block_access_list_size(
                                 &block.header,
                                 &chain_config,
                                 bal,
@@ -1246,6 +1259,12 @@ impl Blockchain {
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
+                &block.header,
+                chain_config,
+                bal,
+                block.body.transactions.len(),
+            )?;
+            validate_block_access_list_size(
                 &block.header,
                 chain_config,
                 bal,
