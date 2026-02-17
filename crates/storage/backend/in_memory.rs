@@ -3,12 +3,11 @@ use crate::api::{
 };
 use crate::error::StoreError;
 use rustc_hash::FxHashMap;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 type Table = FxHashMap<Vec<u8>, Vec<u8>>;
-type Database = HashMap<&'static str, Table>;
+type Database = FxHashMap<&'static str, Table>;
 
 #[derive(Debug)]
 pub struct InMemoryBackend {
