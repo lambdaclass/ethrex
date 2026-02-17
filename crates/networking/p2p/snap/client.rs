@@ -756,9 +756,20 @@ pub async fn request_storage_ranges(
     let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
 
     let mut logged_no_free_peers_count = 0;
+    let mut last_progress_log = tokio::time::Instant::now();
 
     debug!("Starting request_storage_ranges loop");
     loop {
+        if last_progress_log.elapsed() >= Duration::from_secs(10) {
+            let remaining = tasks_queue_not_started.len();
+            let in_flight = worker_joinset.len();
+            debug!(
+                "request_storage_ranges progress: {} tasks remaining, {} in flight, chunk_index={}",
+                remaining, in_flight, chunk_index,
+            );
+            last_progress_log = tokio::time::Instant::now();
+        }
+
         if current_account_storages
             .values()
             .map(|accounts| 32 * accounts.accounts.len() + 64 * accounts.storages.len())
