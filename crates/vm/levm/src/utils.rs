@@ -662,18 +662,18 @@ pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
     }
 }
 
-/// Creates EIP-7708 Selfdestruct log (LOG2) for account destruction.
-/// Emitted from SYSTEM_ADDRESS when a contract is destroyed.
+/// Creates EIP-7708 Burn log (LOG2) for ETH burns.
+/// Emitted from SYSTEM_ADDRESS when ETH is burned (e.g. via SELFDESTRUCT).
 #[inline]
-pub fn create_selfdestruct_log(contract: Address, balance: U256) -> Log {
-    let mut contract_topic = [0u8; 32];
-    contract_topic[12..].copy_from_slice(contract.as_bytes());
+pub fn create_burn_log(address: Address, amount: U256) -> Log {
+    let mut address_topic = [0u8; 32];
+    address_topic[12..].copy_from_slice(address.as_bytes());
 
-    let data = balance.to_big_endian();
+    let data = amount.to_big_endian();
 
     Log {
         address: SYSTEM_ADDRESS,
-        topics: vec![SELFDESTRUCT_EVENT_TOPIC, H256::from(contract_topic)],
+        topics: vec![BURN_EVENT_TOPIC, H256::from(address_topic)],
         data: Bytes::from(data.to_vec()),
     }
 }
