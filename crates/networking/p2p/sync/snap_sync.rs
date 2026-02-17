@@ -367,8 +367,10 @@ pub async fn snap_sync(
             };
 
             info!(
-                "Started request_storage_ranges with {} storage tries remaining",
-                tracker.remaining_count()
+                "Started request_storage_ranges: {} small tries, {} big tries, {} total big intervals remaining",
+                tracker.small_tries.len(),
+                tracker.big_tries.len(),
+                tracker.big_tries.values().map(|b| b.intervals.len()).sum::<usize>(),
             );
             storage_range_request_attempts += 1;
             if storage_range_request_attempts < 5 {
@@ -390,8 +392,10 @@ pub async fn snap_sync(
             }
 
             info!(
-                "Ended request_storage_ranges with {} storage tries remaining and {} big/healed accounts",
-                tracker.remaining_count(),
+                "Ended request_storage_ranges: {} small tries, {} big tries, {} total big intervals, {} healed accounts",
+                tracker.small_tries.len(),
+                tracker.big_tries.len(),
+                tracker.big_tries.values().map(|b| b.intervals.len()).sum::<usize>(),
                 tracker.healed_accounts.len(),
             );
             if !block_is_stale(&pivot_header) {

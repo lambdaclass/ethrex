@@ -700,21 +700,29 @@ pub async fn request_storage_ranges(
     METRICS
         .current_step
         .set(CurrentStepValue::RequestingStorageRanges);
-    debug!("Starting request_storage_ranges function");
+    debug!(
+        "Starting request_storage_ranges: {} small tries, {} big tries, {} total big intervals",
+        tracker.small_tries.len(),
+        tracker.big_tries.len(),
+        tracker.big_tries.values().map(|b| b.intervals.len()).sum::<usize>(),
+    );
 
     // Build initial tasks from tracker
     let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
 
     // Create SmallBatch tasks from small tries
+    let mut small_batch_count = 0usize;
     loop {
         let batch = tracker.take_small_batch(STORAGE_BATCH_SIZE);
         if batch.is_empty() {
             break;
         }
+        small_batch_count += 1;
         tasks_queue_not_started.push_back(StorageTask::SmallBatch { tries: batch });
     }
 
     // Create BigInterval tasks from big tries
+    let mut big_interval_count = 0usize;
     {
         let big_roots: Vec<H256> = tracker.big_tries.keys().copied().collect();
         for root in big_roots {
@@ -722,6 +730,7 @@ pub async fn request_storage_ranges(
                 let accounts = big.accounts.clone();
                 let intervals: Vec<Interval> = std::mem::take(&mut big.intervals);
                 for interval in intervals {
+                    big_interval_count += 1;
                     tasks_queue_not_started.push_back(StorageTask::BigInterval {
                         root,
                         accounts: accounts.clone(),
@@ -731,6 +740,11 @@ pub async fn request_storage_ranges(
             }
         }
     }
+
+    debug!(
+        "Task queue built: {} SmallBatch tasks, {} BigInterval tasks",
+        small_batch_count, big_interval_count,
+    );
 
     let mut worker_joinset: tokio::task::JoinSet<StorageTaskResult> = tokio::task::JoinSet::new();
 
