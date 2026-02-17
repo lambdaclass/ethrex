@@ -376,6 +376,7 @@ impl Blockchain {
         block: &Block,
         parent_header: &BlockHeader,
         vm: &mut Evm,
+        bal: Option<&BlockAccessList>,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -405,9 +406,14 @@ impl Blockchain {
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
-                        // Warming uses the same caching store, sharing cached state with execution
                         let start = Instant::now();
-                        let _ = LEVM::warm_block(block, caching_store, vm_type);
+                        if let Some(bal) = bal {
+                            // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
+                            let _ = LEVM::warm_block_from_bal(bal, caching_store);
+                        } else {
+                            // Pre-Amsterdam / P2P sync: speculative tx re-execution
+                            let _ = LEVM::warm_block(block, caching_store, vm_type);
+                        }
                         start.elapsed()
                     })
                     .map_err(|e| {
@@ -1574,7 +1580,11 @@ impl Blockchain {
         result
     }
 
-    pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+    pub fn add_block_pipeline(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<(), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1616,7 +1626,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm)?;
+        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,

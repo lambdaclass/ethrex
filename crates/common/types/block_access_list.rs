@@ -332,6 +332,15 @@ impl AccountChanges {
         self.code_changes.push(change);
     }
 
+    /// Returns an iterator over all unique storage slots that need prefetching
+    /// (both reads and writes need their pre-state loaded).
+    pub fn all_storage_slots(&self) -> impl Iterator<Item = U256> + '_ {
+        self.storage_reads
+            .iter()
+            .copied()
+            .chain(self.storage_changes.iter().map(|sc| sc.slot))
+    }
+
     /// Returns whether this account has any changes or reads.
     pub fn is_empty(&self) -> bool {
         self.storage_changes.is_empty()

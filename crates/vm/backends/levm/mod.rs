@@ -12,7 +12,7 @@ use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
-    Address, U256,
+    Address, BigEndianHash, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
         GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
@@ -37,7 +37,8 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
@@ -372,6 +373,50 @@ impl LEVM {
                 ))
             })?;
         }
+        Ok(())
+    }
+
+    /// Pre-warms state by loading all accounts and storage slots listed in the
+    /// Block Access List directly, without speculative re-execution.
+    ///
+    /// Two-phase approach:
+    /// - Phase 1: Load all account states (parallel via rayon) -> warms CachingDatabase
+    ///   account cache AND trie layer cache nodes
+    /// - Phase 2: Load all storage slots + contract code (parallel via rayon, per-account)
+    ///   -> benefits from trie nodes cached in Phase 1
+    pub fn warm_block_from_bal(
+        bal: &BlockAccessList,
+        store: Arc<dyn Database>,
+    ) -> Result<(), EvmError> {
+        let accounts = bal.accounts();
+        if accounts.is_empty() {
+            return Ok(());
+        }
+
+        // Phase 1: Prefetch all account states in parallel.
+        // This warms the CachingDatabase account cache and the TrieLayerCache
+        // with state trie nodes, so Phase 2 storage reads benefit from cached lookups.
+        accounts.par_iter().for_each(|ac| {
+            let _ = store.get_account_state(ac.address);
+        });
+
+        // Phase 2: Prefetch storage slots and contract code in parallel.
+        // Each account's storage reads + writes need their pre-state loaded.
+        // Also prefetch code for all accounts with non-empty code_hash.
+        accounts.par_iter().for_each(|ac| {
+            // Storage: both reads and writes need pre-state
+            for slot in ac.all_storage_slots() {
+                let key = ethrex_common::H256::from_uint(&slot);
+                let _ = store.get_storage_value(ac.address, key);
+            }
+            // Code prefetch: get_account_state is a cache hit from Phase 1
+            if let Ok(acct) = store.get_account_state(ac.address)
+                && acct.code_hash != *EMPTY_KECCACK_HASH
+            {
+                let _ = store.get_account_code(acct.code_hash);
+            }
+        });
+
         Ok(())
     }
 

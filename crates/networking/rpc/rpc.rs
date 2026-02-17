@@ -60,6 +60,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -175,6 +176,13 @@ pub enum RpcRequestWrapper {
 
 /// Shared context passed to all RPC request handlers.
 ///
+/// Channel message type for the block executor worker thread.
+type BlockWorkerMessage = (
+    oneshot::Sender<Result<(), ChainError>>,
+    Block,
+    Option<BlockAccessList>,
+);
+
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
@@ -200,7 +208,7 @@ pub struct RpcApiContext {
     /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
-    pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
+    pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
 }
 
 /// Client version information used for identification in the Engine API and P2P.
@@ -398,15 +406,14 @@ pub const FILTER_DURATION: Duration = {
 /// Panics if the worker thread cannot be spawned.
 pub fn start_block_executor(
     blockchain: Arc<Blockchain>,
-) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
-    let (block_worker_channel, mut block_receiver) =
-        unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
+) -> UnboundedSender<BlockWorkerMessage> {
+    let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal)) = block_receiver.blocking_recv() {
                 let _ = notify
-                    .send(blockchain.add_block_pipeline(block))
+                    .send(blockchain.add_block_pipeline(block, bal.as_ref()))
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
             }
         })
