@@ -204,8 +204,7 @@ impl TrieWrapper {
         db: Box<dyn TrieDB>,
         prefix: Option<H256>,
     ) -> Self {
-        let prefix_nibbles =
-            prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
+        let prefix_nibbles = prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
         Self {
             state_root,
             inner,
