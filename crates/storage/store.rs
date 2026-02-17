@@ -2094,8 +2094,9 @@ impl Store {
             .map_err(|_| StoreError::LockError)?
             .clone();
         let last_written = self.last_written()?;
+        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
 
-        let storage_root = if self.flatkeyvalue_computed(account_hash)? {
+        let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
@@ -2714,10 +2715,9 @@ impl Store {
         Ok(last_computed_flatkeyvalue.clone())
     }
 
-    fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
+    fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
-        let last_computed_flatkeyvalue = self.last_written()?;
-        Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+        &last_written[0..64] > account_nibbles.as_ref()
     }
 }
 
@@ -2842,22 +2842,25 @@ fn flatkeyvalue_generator(
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     info!("Generation of FlatKeyValue started.");
-    let read_tx = backend.begin_read()?;
-    let last_written = read_tx
+    let initial_last_written = backend
+        .begin_read()?
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
 
-    if last_written.is_empty() {
+    if initial_last_written.is_empty() {
         // First time generating the FKV. Remove all FKV entries just in case
         backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
         backend.clear_table(STORAGE_FLATKEYVALUE)?;
-    } else if last_written == [0xff] {
+    } else if initial_last_written == [0xff] {
         // FKV was already generated
         info!("FlatKeyValue already generated. Skipping.");
         return Ok(());
     }
 
     loop {
+        // Acquire a fresh read view per iteration so updates performed while the
+        // generator is paused are visible after a Continue signal.
+        let read_tx = backend.begin_read()?;
         let root = read_tx
             .get(ACCOUNT_TRIE_NODES, &[])?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
@@ -2881,8 +2884,9 @@ fn flatkeyvalue_generator(
         let mut ctr = 0;
         let mut write_txn = backend.begin_write()?;
         let mut iter = Trie::open(
-            Box::new(BackendTrieDB::new_for_accounts(
+            Box::new(BackendTrieDB::new_for_accounts_with_view(
                 backend.clone(),
+                read_tx.clone(),
                 last_written.clone(),
             )?),
             state_root,
@@ -2910,8 +2914,9 @@ fn flatkeyvalue_generator(
             }
 
             let mut iter_inner = Trie::open(
-                Box::new(BackendTrieDB::new_for_account_storage(
+                Box::new(BackendTrieDB::new_for_account_storage_with_view(
                     backend.clone(),
+                    read_tx.clone(),
                     account_hash,
                     path.as_ref().to_vec(),
                 )?),
