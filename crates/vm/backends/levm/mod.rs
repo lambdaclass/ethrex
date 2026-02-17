@@ -427,6 +427,7 @@ impl LEVM {
         Ok(())
     }
 
+
     fn send_state_transitions_tx(
         merkleizer: &Sender<Vec<AccountUpdate>>,
         db: &mut GeneralizedDatabase,

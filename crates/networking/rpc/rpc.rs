@@ -181,6 +181,7 @@ type BlockWorkerMessage = (
     Option<BlockAccessList>,
 );
 
+
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
