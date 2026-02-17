@@ -4015,6 +4015,7 @@ dependencies = [
  "ethrex-l2-rpc",
  "ethrex-levm",
  "ethrex-metrics",
+ "ethrex-monitor",
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-rpc",
@@ -4151,6 +4152,38 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.22",
+]
+
+[[package]]
+name = "ethrex-monitor"
+version = "9.0.0"
+dependencies = [
+ "bytes",
+ "chrono",
+ "color-eyre",
+ "crossterm 0.29.0",
+ "ethrex-common",
+ "ethrex-config",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-sdk",
+ "ethrex-storage",
+ "ethrex-storage-rollup",
+ "futures",
+ "hex",
+ "ratatui",
+ "reqwest",
+ "secp256k1",
+ "serde",
+ "spawned-concurrency",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tui-big-text",
+ "tui-logger",
+ "tui-scrollview",
 ]
 
 [[package]]

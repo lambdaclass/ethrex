@@ -535,6 +535,20 @@ fn compute_gas_create(
     Ok(gas_create_cost)
 }
 
+/// Base cost of SELFDESTRUCT before evaluating NEW_ACCOUNT.
+/// Used for EIP-7928 two-phase gas check: first verify base cost is
+/// available (to allow BAL state access), then charge the full cost.
+pub fn selfdestruct_base(address_was_cold: bool) -> Result<u64, VMError> {
+    let cold_cost = if address_was_cold {
+        COLD_ADDRESS_ACCESS_COST
+    } else {
+        0
+    };
+    SELFDESTRUCT_STATIC
+        .checked_add(cold_cost)
+        .ok_or(OutOfGas.into())
+}
+
 pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
