@@ -124,9 +124,14 @@ impl StorageReadView for InMemoryReadTx {
         let table_data = self.snapshot.get(table).cloned().unwrap_or_default();
         let prefix_vec = prefix.to_vec();
 
-        let results: Vec<PrefixResult> = table_data
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = table_data
             .into_iter()
             .filter(|(key, _)| key.starts_with(&prefix_vec))
+            .collect();
+        entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
+        let results: Vec<PrefixResult> = entries
+            .into_iter()
             .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
             .collect();
 
