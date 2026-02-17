@@ -738,16 +738,13 @@ pub fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let (mut receipt, gas_spent) = context.vm.execute_tx(
+    let (receipt, gas_spent) = context.vm.execute_tx(
         &head.tx,
         &context.payload.header,
         &mut context.remaining_gas,
+        &mut context.cumulative_gas_spent,
         head.tx.sender(),
     )?;
-    // EIP-7778: receipt cumulative_gas_used uses post-refund gas (gas_spent),
-    // while remaining_gas tracks pre-refund gas (gas_used) for block accounting.
-    context.cumulative_gas_spent += gas_spent;
-    receipt.cumulative_gas_used = context.cumulative_gas_spent;
     // Block value uses gas_spent (what the user actually pays) for tip calculation
     context.block_value += U256::from(gas_spent) * head.tip;
     Ok(receipt)
