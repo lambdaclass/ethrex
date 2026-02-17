@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     fs::{File, metadata, read_dir},
-    io::{self, Write},
+    io::{self, BufWriter, Write},
     mem,
     path::{Path, PathBuf},
     str::FromStr,
@@ -19,6 +19,7 @@ use ethrex_p2p::{
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rpc::types::{fork_choice::ForkChoiceState, payload::ExecutionPayload};
 use ethrex_storage::error::StoreError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
@@ -442,6 +443,55 @@ pub enum Subcommand {
         last: Option<u64>,
     },
     #[command(
+        name = "export-jsonl",
+        about = "Export blocks as engine API JSONL requests (newPayloadV3 + forkchoiceUpdatedV3)"
+    )]
+    ExportJsonl {
+        #[arg(
+            required = true,
+            value_name = "OUTPUT_PREFIX",
+            help = "Output file prefix: creates <PREFIX>-payloads.jsonl and <PREFIX>-fcus.jsonl"
+        )]
+        prefix: String,
+        #[arg(
+            long = "first",
+            value_name = "NUMBER",
+            help = "First block number to export"
+        )]
+        first: Option<u64>,
+        #[arg(
+            long = "last",
+            value_name = "NUMBER",
+            help = "Last block number to export"
+        )]
+        last: Option<u64>,
+    },
+    #[command(
+        name = "truncate",
+        about = "Remove the latest N blocks from the chain, optionally exporting them first"
+    )]
+    Truncate {
+        #[arg(
+            long = "count",
+            required = true,
+            value_name = "N",
+            help = "Number of latest blocks to remove"
+        )]
+        count: u64,
+        #[arg(
+            long = "export",
+            value_name = "FILE_PATH",
+            help = "Export removed blocks to RLP file before truncation"
+        )]
+        export: Option<String>,
+        #[arg(
+            long = "export-jsonl",
+            value_name = "OUTPUT_PREFIX",
+            help = "Export removed blocks as engine API JSONL before truncation (creates <PREFIX>-payloads.jsonl and <PREFIX>-fcus.jsonl)"
+        )]
+        export_jsonl: Option<String>,
+    },
+    #[command(
         name = "compute-state-root",
         about = "Compute the state root from a genesis file"
     )]
@@ -526,6 +576,21 @@ impl Subcommand {
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
+            }
+            Subcommand::ExportJsonl {
+                prefix,
+                first,
+                last,
+            } => {
+                export_blocks_jsonl(&prefix, &opts.datadir, first, last).await?;
+            }
+            Subcommand::Truncate {
+                count,
+                export,
+                export_jsonl,
+            } => {
+                truncate_blocks(&opts.datadir, count, export.as_deref(), export_jsonl.as_deref())
+                    .await?;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
@@ -953,4 +1018,189 @@ pub async fn export_blocks(
         path = %path,
         "Exported blocks to file"
     );
+}
+
+pub async fn truncate_blocks(
+    datadir: &Path,
+    count: u64,
+    export_path: Option<&str>,
+    export_jsonl_prefix: Option<&str>,
+) -> Result<(), eyre::Error> {
+    if count == 0 {
+        info!("Nothing to truncate (count = 0)");
+        return Ok(());
+    }
+
+    init_datadir(datadir);
+    let store = load_store(datadir).await?;
+
+    let latest = match store.get_latest_block_number().await {
+        Ok(number) => number,
+        Err(StoreError::MissingLatestBlockNumber) => {
+            warn!("No blocks in the current chain, nothing to truncate");
+            return Ok(());
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    // Compute from_block, clamping to keep genesis
+    let from_block = latest.saturating_sub(count - 1).max(1);
+
+    info!(
+        latest_block = latest,
+        from_block = from_block,
+        blocks_to_remove = latest - from_block + 1,
+        "Truncating blocks"
+    );
+
+    // Export first if requested
+    if let Some(path) = export_path {
+        info!(path = path, "Exporting blocks (RLP) before truncation");
+        export_blocks(path, datadir, Some(from_block), Some(latest)).await;
+    }
+    if let Some(prefix) = export_jsonl_prefix {
+        info!(prefix = prefix, "Exporting blocks (JSONL) before truncation");
+        export_blocks_jsonl(prefix, datadir, Some(from_block), Some(latest)).await?;
+    }
+
+    let removed = store.truncate_from(from_block).await?;
+
+    let new_latest = from_block - 1;
+    info!(
+        blocks_removed = removed,
+        new_latest = new_latest,
+        "Truncation complete"
+    );
+
+    Ok(())
+}
+
+pub async fn export_blocks_jsonl(
+    prefix: &str,
+    datadir: &Path,
+    first_number: Option<u64>,
+    last_number: Option<u64>,
+) -> Result<(), eyre::Error> {
+    init_datadir(datadir);
+    let store = load_store(datadir).await?;
+
+    let latest_number = match store.get_latest_block_number().await {
+        Ok(number) => number,
+        Err(StoreError::MissingLatestBlockNumber) => {
+            warn!("No blocks in the current chain, nothing to export");
+            return Ok(());
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    let start = first_number.unwrap_or(1); // Skip genesis for engine API replay
+    let end = last_number.unwrap_or(latest_number);
+
+    if end > latest_number {
+        warn!("Requested block range exceeds current chain length {latest_number}");
+        return Ok(());
+    }
+    if start > end {
+        warn!("Cannot export block range [{start}..{end}], please input a valid range");
+        return Ok(());
+    }
+
+    let payloads_path = format!("{prefix}-payloads.jsonl");
+    let fcus_path = format!("{prefix}-fcus.jsonl");
+
+    let payloads_file = BufWriter::new(File::create(&payloads_path)?);
+    let fcus_file = BufWriter::new(File::create(&fcus_path)?);
+
+    let mut payloads_writer = payloads_file;
+    let mut fcus_writer = fcus_file;
+
+    let mut exported_count: u64 = 0;
+    let mut last_output = Instant::now();
+    let denom = end.saturating_sub(start) + 1;
+
+    for n in start..=end {
+        let block = match store.get_block_by_number(n).await {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                warn!(block_number = n, "Block is missing, skipping");
+                continue;
+            }
+            Err(err) => {
+                error!(block_number = n, error = %err, "Failed to read block from DB");
+                return Err(err.into());
+            }
+        };
+
+        let block_hash = block.hash();
+        let block_number = block.header.number;
+        let parent_beacon_block_root = block.header.parent_beacon_block_root.unwrap_or_default();
+
+        // Collect blob versioned hashes from EIP-4844 transactions
+        let blob_versioned_hashes: Vec<ethrex_common::H256> = block
+            .body
+            .transactions
+            .iter()
+            .flat_map(|tx| tx.blob_versioned_hashes())
+            .collect();
+
+        let payload = ExecutionPayload::from_block(block, None);
+
+        // engine_newPayloadV3 request
+        let payload_request = serde_json::json!({
+            "id": block_number,
+            "jsonrpc": "2.0",
+            "method": "engine_newPayloadV3",
+            "params": [
+                payload,
+                blob_versioned_hashes,
+                parent_beacon_block_root,
+            ]
+        });
+
+        serde_json::to_writer(&mut payloads_writer, &payload_request)?;
+        payloads_writer.write_all(b"\n")?;
+
+        // engine_forkchoiceUpdatedV3 request
+        let fcu_request = serde_json::json!({
+            "id": block_number,
+            "jsonrpc": "2.0",
+            "method": "engine_forkchoiceUpdatedV3",
+            "params": [
+                ForkChoiceState {
+                    head_block_hash: block_hash,
+                    safe_block_hash: block_hash,
+                    finalized_block_hash: block_hash,
+                },
+            ]
+        });
+
+        serde_json::to_writer(&mut fcus_writer, &fcu_request)?;
+        fcus_writer.write_all(b"\n")?;
+
+        exported_count += 1;
+
+        if last_output.elapsed() > Duration::from_secs(5) {
+            let percent = (exported_count * 100) / denom;
+            info!(
+                current_block = n,
+                end_block = end,
+                percent_complete = percent,
+                blocks_exported = exported_count,
+                "Exporting blocks (JSONL)"
+            );
+            last_output = Instant::now();
+        }
+    }
+
+    payloads_writer.flush()?;
+    fcus_writer.flush()?;
+
+    info!(
+        blocks_exported = exported_count,
+        payloads_path = %payloads_path,
+        fcus_path = %fcus_path,
+        "Exported blocks to JSONL files"
+    );
+
+    Ok(())
 }

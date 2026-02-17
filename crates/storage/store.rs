@@ -3,7 +3,7 @@ use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
-        StorageBackend,
+        StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
@@ -387,6 +387,208 @@ impl Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Remove all canonical blocks with number >= `from_block`, cleaning up all related tables,
+    /// then update chain metadata to point to the new latest block. Returns the count of blocks removed.
+    ///
+    /// This is intended for offline CLI use (e.g. truncating bad blocks, debugging reorgs).
+    /// Genesis (block 0) is never removed.
+    pub async fn truncate_from(&self, from_block: BlockNumber) -> Result<u64, StoreError> {
+        if from_block == 0 {
+            return Err(StoreError::Custom(
+                "Cannot truncate genesis block".to_string(),
+            ));
+        }
+
+        let latest = self.get_latest_block_number().await?;
+        if from_block > latest {
+            return Ok(0);
+        }
+
+        let backend = self.backend.clone();
+        let removed = tokio::task::spawn_blocking(move || -> Result<u64, StoreError> {
+            // First pass: read block data we need for cleanup
+            struct BlockInfo {
+                number: BlockNumber,
+                hash: BlockHash,
+                tx_hashes: Vec<H256>,
+                receipt_count: u64,
+            }
+
+            let mut blocks_info = Vec::new();
+            {
+                let read_txn = backend.begin_read()?;
+                // Iterate from latest down to from_block
+                for n in (from_block..=latest).rev() {
+                    let Some(hash) = read_txn
+                        .get(CANONICAL_BLOCK_HASHES, n.to_le_bytes().as_slice())?
+                        .map(|bytes| H256::decode(bytes.as_slice()))
+                        .transpose()?
+                    else {
+                        tracing::warn!(block_number = n, "Missing canonical block hash, skipping");
+                        continue;
+                    };
+
+                    let hash_key = hash.encode_to_vec();
+
+                    // Read body for tx hashes
+                    let tx_hashes = match read_txn.get(BODIES, &hash_key)? {
+                        Some(bytes) => {
+                            match BlockBodyRLP::from_bytes(bytes).to() {
+                                Ok(body) => body
+                                    .transactions
+                                    .iter()
+                                    .map(|tx| tx.hash())
+                                    .collect::<Vec<_>>(),
+                                Err(_) => {
+                                    tracing::warn!(block_number = n, "Failed to decode block body, skipping tx cleanup");
+                                    vec![]
+                                }
+                            }
+                        }
+                        None => {
+                            tracing::warn!(block_number = n, "Missing block body, skipping tx cleanup");
+                            vec![]
+                        }
+                    };
+
+                    // Count receipts
+                    let mut receipt_count = 0u64;
+                    loop {
+                        let key = (hash, receipt_count).encode_to_vec();
+                        if read_txn.get(RECEIPTS, key.as_slice())?.is_some() {
+                            receipt_count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    blocks_info.push(BlockInfo {
+                        number: n,
+                        hash,
+                        tx_hashes,
+                        receipt_count,
+                    });
+                }
+            }
+
+            // Also read chain metadata that may need clamping
+            let read_chain_number = |read_txn: &dyn StorageReadView,
+                                     index: ChainDataIndex|
+             -> Result<Option<BlockNumber>, StoreError> {
+                let key = chain_data_key(index);
+                read_txn
+                    .get(CHAIN_DATA, &key)?
+                    .map(|bytes| -> Result<BlockNumber, StoreError> {
+                        let array: [u8; 8] = bytes.try_into().map_err(|_| {
+                            StoreError::Custom(format!("Invalid {:?} bytes", index))
+                        })?;
+                        Ok(BlockNumber::from_le_bytes(array))
+                    })
+                    .transpose()
+            };
+
+            let safe_number;
+            let finalized_number;
+            let pending_number;
+            {
+                let read_txn = backend.begin_read()?;
+                safe_number = read_chain_number(&*read_txn, ChainDataIndex::SafeBlockNumber)?;
+                finalized_number =
+                    read_chain_number(&*read_txn, ChainDataIndex::FinalizedBlockNumber)?;
+                pending_number =
+                    read_chain_number(&*read_txn, ChainDataIndex::PendingBlockNumber)?;
+            }
+
+            // Second pass: delete everything in a single write transaction
+            let mut write_txn = backend.begin_write()?;
+            let mut removed_count = 0u64;
+
+            for block in &blocks_info {
+                let hash_key = block.hash.encode_to_vec();
+
+                // CANONICAL_BLOCK_HASHES
+                write_txn.delete(
+                    CANONICAL_BLOCK_HASHES,
+                    block.number.to_le_bytes().as_slice(),
+                )?;
+
+                // HEADERS
+                write_txn.delete(HEADERS, &hash_key)?;
+
+                // BODIES
+                write_txn.delete(BODIES, &hash_key)?;
+
+                // BLOCK_NUMBERS
+                write_txn.delete(BLOCK_NUMBERS, &hash_key)?;
+
+                // RECEIPTS
+                for i in 0..block.receipt_count {
+                    let key = (block.hash, i).encode_to_vec();
+                    write_txn.delete(RECEIPTS, &key)?;
+                }
+
+                // TRANSACTION_LOCATIONS
+                for tx_hash in &block.tx_hashes {
+                    let mut composite_key = Vec::with_capacity(64);
+                    composite_key.extend_from_slice(tx_hash.as_bytes());
+                    composite_key.extend_from_slice(block.hash.as_bytes());
+                    write_txn.delete(TRANSACTION_LOCATIONS, &composite_key)?;
+                }
+
+                // EXECUTION_WITNESSES
+                let witness_key = Store::make_witness_key(block.number, &block.hash);
+                write_txn.delete(EXECUTION_WITNESSES, &witness_key)?;
+
+                removed_count += 1;
+            }
+
+            // Update chain metadata
+            let new_latest = from_block - 1;
+
+            let latest_key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+            write_txn.put(CHAIN_DATA, &latest_key, &new_latest.to_le_bytes())?;
+
+            // Clamp safe block number
+            if let Some(safe) = safe_number
+                && safe >= from_block
+            {
+                let safe_key = chain_data_key(ChainDataIndex::SafeBlockNumber);
+                write_txn.put(CHAIN_DATA, &safe_key, &new_latest.to_le_bytes())?;
+            }
+
+            // Clamp finalized block number
+            if let Some(finalized) = finalized_number
+                && finalized >= from_block
+            {
+                let finalized_key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+                write_txn.put(CHAIN_DATA, &finalized_key, &new_latest.to_le_bytes())?;
+            }
+
+            // Clamp pending block number
+            if let Some(pending) = pending_number
+                && pending >= from_block
+            {
+                let pending_key = chain_data_key(ChainDataIndex::PendingBlockNumber);
+                write_txn.put(CHAIN_DATA, &pending_key, &new_latest.to_le_bytes())?;
+            }
+
+            write_txn.commit()?;
+            Ok(removed_count)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))??;
+
+        // Update the in-memory latest_block_header cache
+        if removed > 0 {
+            let new_latest = from_block - 1;
+            if let Some(header) = self.load_block_header(new_latest)? {
+                self.latest_block_header.update(header);
+            }
+        }
+
+        Ok(removed)
     }
 
     /// Obtain canonical block bodies in from..=to
