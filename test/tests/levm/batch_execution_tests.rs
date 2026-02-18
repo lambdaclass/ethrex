@@ -15,10 +15,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{
     account::{AccountStatus, LevmAccount},
-    db::{
-        Database,
-        gen_db::GeneralizedDatabase,
-    },
+    db::{Database, gen_db::GeneralizedDatabase},
     errors::DatabaseError,
 };
 use rustc_hash::FxHashMap;
@@ -223,7 +220,10 @@ fn batch_removed_storage_set_when_account_had_trie_storage() {
         "removed_storage should be true when account had storage in the trie"
     );
     // Account should not be removed (it has balance).
-    assert!(!update.removed, "Account should not be removed (has balance)");
+    assert!(
+        !update.removed,
+        "Account should not be removed (has balance)"
+    );
     // Info should be updated (balance changed).
     assert!(update.info.is_some(), "Info should be updated");
 }
@@ -275,10 +275,7 @@ fn batch_destroyed_modified_with_balance_but_no_prior_storage() {
         .expect("AccountUpdate should be emitted (balance changed from 0)");
 
     // Info should be updated (balance went from 0 to 1 ETH).
-    assert!(
-        update.info.is_some(),
-        "Info should reflect the new balance"
-    );
+    assert!(update.info.is_some(), "Info should reflect the new balance");
     // removed_storage should be false — there was never storage in the trie.
     assert!(
         !update.removed_storage,
