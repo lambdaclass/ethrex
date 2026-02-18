@@ -40,8 +40,5 @@ additional-js = ["mermaid.min.js", "mermaid-init.js"]
 "/l2/fundamentals/README.html" = "/l2/fundamentals/index.html"
 "/l2/architecture/README.html" = "/l2/architecture/index.html"
 
-# Broken-link checker
-# https://github.com/Michael-F-Bryan/mdbook-linkcheck
-# Needs to be installed with `cargo install mdbook-linkcheck`
 [output.linkcheck]
 optional = true
