@@ -5,6 +5,7 @@ use ethrex_common::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
+use rustc_hash::FxHashMap;
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
@@ -20,6 +21,7 @@ pub struct StoreVmDatabase {
     // We will also pre-load this when executing blocks in batches, as we will only add the blocks at the end
     // and may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: Arc<Mutex<BTreeMap<BlockNumber, BlockHash>>>,
+    pub storage_root_cache: Arc<Mutex<FxHashMap<Address, H256>>>,
     pub state_root: H256,
 }
 
@@ -39,6 +41,7 @@ impl StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            storage_root_cache: Arc::new(Mutex::new(FxHashMap::default())),
             state_root: block_header.state_root,
         })
     }
@@ -59,6 +62,7 @@ impl StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
+            storage_root_cache: Arc::new(Mutex::new(FxHashMap::default())),
             state_root: block_header.state_root,
         })
     }
@@ -84,8 +88,33 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+        let cached_root = self
+            .storage_root_cache
+            .lock()
+            .map_err(|_| EvmError::Custom("LockError".to_string()))?
+            .get(&address)
+            .copied();
+
+        let storage_root = match cached_root {
+            Some(root) => root,
+            None => {
+                let root = self
+                    .store
+                    .get_storage_root(self.state_root, address)
+                    .map_err(|e| EvmError::DB(e.to_string()))?;
+                let Some(root) = root else {
+                    return Ok(None);
+                };
+                self.storage_root_cache
+                    .lock()
+                    .map_err(|_| EvmError::Custom("LockError".to_string()))?
+                    .insert(address, root);
+                root
+            }
+        };
+
         self.store
-            .get_storage_at_root(self.state_root, address, key)
+            .get_value_at_storage_root(self.state_root, address, storage_root, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
