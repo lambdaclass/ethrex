@@ -21,7 +21,7 @@ use ethrex_levm::{
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-// ==================== Test Database ====================
+// ==================== Test Helpers ====================
 
 /// Minimal in-memory database that returns empty/default for everything.
 struct EmptyDatabase;
@@ -52,6 +52,30 @@ impl Database for EmptyDatabase {
     }
 }
 
+/// Build a `LevmAccount` with the given overrides, defaulting to an empty unmodified account.
+fn account(info: AccountInfo, has_storage: bool, status: AccountStatus) -> LevmAccount {
+    LevmAccount {
+        info,
+        storage: FxHashMap::default(),
+        has_storage,
+        status,
+    }
+}
+
+/// Shorthand for an empty account as it would appear when first loaded from DB
+/// (never existed → default info, no storage, unmodified).
+fn empty_initial_account() -> LevmAccount {
+    account(AccountInfo::default(), false, AccountStatus::Unmodified)
+}
+
+/// Set up a GeneralizedDatabase with one account's initial and current state.
+fn setup_db(address: Address, initial: LevmAccount, current: LevmAccount) -> GeneralizedDatabase {
+    let mut db = GeneralizedDatabase::new(Arc::new(EmptyDatabase));
+    db.initial_accounts_state.insert(address, initial);
+    db.current_accounts_state.insert(address, current);
+    db
+}
+
 // ==================== Tests ====================
 
 /// Regression test for issue #6219: `get_state_transitions()` emitted
@@ -73,95 +97,54 @@ impl Database for EmptyDatabase {
 /// into the state trie, corrupting the state root.
 #[test]
 fn batch_no_spurious_update_for_account_created_and_destroyed_within_batch() {
-    let address_x = Address::from_low_u64_be(0xDEAD);
-
-    let mut db = GeneralizedDatabase::new(Arc::new(EmptyDatabase));
-
-    // Simulate the initial state: X was first loaded from DB when accessed
-    // during block N's CREATE. X didn't exist in DB → empty account, has_storage=false.
-    db.initial_accounts_state.insert(
-        address_x,
-        LevmAccount {
-            info: AccountInfo::default(),
-            storage: FxHashMap::default(),
-            has_storage: false,
-            status: AccountStatus::Unmodified,
-        },
-    );
-
-    // Simulate the final state after all blocks in the batch executed:
-    // X was CREATEd (Modified), then SELFDESTRUCT'd (Destroyed), then touched
-    // via another SELFDESTRUCT's increase_account_balance(X, 0) → DestroyedModified.
-    // X is empty (default info, no storage).
-    db.current_accounts_state.insert(
-        address_x,
-        LevmAccount {
-            info: AccountInfo::default(),
-            storage: FxHashMap::default(),
-            has_storage: false,
-            status: AccountStatus::DestroyedModified,
-        },
+    let addr = Address::from_low_u64_be(0xDEAD);
+    let mut db = setup_db(
+        addr,
+        empty_initial_account(),
+        account(
+            AccountInfo::default(),
+            false,
+            AccountStatus::DestroyedModified,
+        ),
     );
 
     let updates = db.get_state_transitions().unwrap();
 
-    // ASSERTION: No AccountUpdate should be emitted for X.
-    // X was empty before the batch (didn't exist in DB) and is empty after
-    // (destroyed). There is nothing to update in the trie.
-    //
-    // BUG (current code): removed_storage=true is set unconditionally for
-    // DestroyedModified, causing this assertion to fail. The spurious update
-    // with {removed: false, info: None, removed_storage: true} causes
-    // apply_account_updates_from_trie_batch to insert a default AccountState
-    // leaf into the trie, corrupting the state root.
-    let spurious_update = updates.iter().find(|u| u.address == address_x);
+    let spurious = updates.iter().find(|u| u.address == addr);
     assert!(
-        spurious_update.is_none(),
+        spurious.is_none(),
         "No AccountUpdate should be emitted for an account created and destroyed within the batch. \
          Got: removed_storage={}, removed={}, info={:?}",
-        spurious_update.map(|u| u.removed_storage).unwrap_or(false),
-        spurious_update.map(|u| u.removed).unwrap_or(false),
-        spurious_update.and_then(|u| u.info.as_ref()),
+        spurious.map(|u| u.removed_storage).unwrap_or(false),
+        spurious.map(|u| u.removed).unwrap_or(false),
+        spurious.and_then(|u| u.info.as_ref()),
     );
 }
 
 /// Same as above but for get_state_transitions_tx() (used in the pipeline path).
 #[test]
 fn batch_tx_no_spurious_update_for_account_created_and_destroyed_within_batch() {
-    let address_x = Address::from_low_u64_be(0xDEAD);
-
-    let mut db = GeneralizedDatabase::new(Arc::new(EmptyDatabase));
-
-    db.initial_accounts_state.insert(
-        address_x,
-        LevmAccount {
-            info: AccountInfo::default(),
-            storage: FxHashMap::default(),
-            has_storage: false,
-            status: AccountStatus::Unmodified,
-        },
-    );
-
-    db.current_accounts_state.insert(
-        address_x,
-        LevmAccount {
-            info: AccountInfo::default(),
-            storage: FxHashMap::default(),
-            has_storage: false,
-            status: AccountStatus::DestroyedModified,
-        },
+    let addr = Address::from_low_u64_be(0xDEAD);
+    let mut db = setup_db(
+        addr,
+        empty_initial_account(),
+        account(
+            AccountInfo::default(),
+            false,
+            AccountStatus::DestroyedModified,
+        ),
     );
 
     let updates = db.get_state_transitions_tx().unwrap();
 
-    let spurious_update = updates.iter().find(|u| u.address == address_x);
+    let spurious = updates.iter().find(|u| u.address == addr);
     assert!(
-        spurious_update.is_none(),
+        spurious.is_none(),
         "No AccountUpdate should be emitted for an account created and destroyed within the batch (tx path). \
          Got: removed_storage={}, removed={}, info={:?}",
-        spurious_update.map(|u| u.removed_storage).unwrap_or(false),
-        spurious_update.map(|u| u.removed).unwrap_or(false),
-        spurious_update.and_then(|u| u.info.as_ref()),
+        spurious.map(|u| u.removed_storage).unwrap_or(false),
+        spurious.map(|u| u.removed).unwrap_or(false),
+        spurious.and_then(|u| u.info.as_ref()),
     );
 }
 
@@ -173,58 +156,38 @@ fn batch_tx_no_spurious_update_for_account_created_and_destroyed_within_batch() 
 /// gets modified (e.g., receives ETH). Its storage should be cleared.
 #[test]
 fn batch_removed_storage_set_when_account_had_trie_storage() {
-    let address_x = Address::from_low_u64_be(0xBEEF);
+    let addr = Address::from_low_u64_be(0xBEEF);
+    let initial_info = AccountInfo {
+        nonce: 1,
+        balance: U256::from(1000),
+        code_hash: *EMPTY_KECCACK_HASH,
+    };
+    let final_info = AccountInfo {
+        nonce: 0,
+        balance: U256::from(42),
+        code_hash: *EMPTY_KECCACK_HASH,
+    };
 
-    let mut db = GeneralizedDatabase::new(Arc::new(EmptyDatabase));
-
-    // Account existed in the trie before the batch with storage.
-    db.initial_accounts_state.insert(
-        address_x,
-        LevmAccount {
-            info: AccountInfo {
-                nonce: 1,
-                balance: U256::from(1000),
-                code_hash: *EMPTY_KECCACK_HASH,
-            },
-            storage: FxHashMap::default(),
-            has_storage: true, // KEY: account had storage in the trie
-            status: AccountStatus::Unmodified,
-        },
-    );
-
-    // After SELFDESTRUCT + receiving some ETH → DestroyedModified with balance.
-    db.current_accounts_state.insert(
-        address_x,
-        LevmAccount {
-            info: AccountInfo {
-                nonce: 0,
-                balance: U256::from(42),
-                code_hash: *EMPTY_KECCACK_HASH,
-            },
-            storage: FxHashMap::default(),
-            has_storage: false,
-            status: AccountStatus::DestroyedModified,
-        },
+    let mut db = setup_db(
+        addr,
+        account(initial_info, true, AccountStatus::Unmodified),
+        account(final_info, false, AccountStatus::DestroyedModified),
     );
 
     let updates = db.get_state_transitions().unwrap();
-
     let update = updates
         .iter()
-        .find(|u| u.address == address_x)
+        .find(|u| u.address == addr)
         .expect("AccountUpdate should be emitted for account that existed in trie");
 
-    // removed_storage should be true because the account DID have storage in the trie.
     assert!(
         update.removed_storage,
         "removed_storage should be true when account had storage in the trie"
     );
-    // Account should not be removed (it has balance).
     assert!(
         !update.removed,
         "Account should not be removed (has balance)"
     );
-    // Info should be updated (balance changed).
     assert!(update.info.is_some(), "Info should be updated");
 }
 
@@ -236,47 +199,26 @@ fn batch_removed_storage_set_when_account_had_trie_storage() {
 /// removed_storage should be false (nothing to remove from trie).
 #[test]
 fn batch_destroyed_modified_with_balance_but_no_prior_storage() {
-    let address_x = Address::from_low_u64_be(0xCAFE);
+    let addr = Address::from_low_u64_be(0xCAFE);
+    let final_info = AccountInfo {
+        nonce: 0,
+        balance: U256::from(1_000_000_000_000_000_000u64), // 1 ETH
+        code_hash: *EMPTY_KECCACK_HASH,
+    };
 
-    let mut db = GeneralizedDatabase::new(Arc::new(EmptyDatabase));
-
-    // Account didn't exist before the batch.
-    db.initial_accounts_state.insert(
-        address_x,
-        LevmAccount {
-            info: AccountInfo::default(),
-            storage: FxHashMap::default(),
-            has_storage: false,
-            status: AccountStatus::Unmodified,
-        },
-    );
-
-    // Created in batch, then destroyed, then received 1 ETH.
-    // DestroyedModified with balance > 0.
-    db.current_accounts_state.insert(
-        address_x,
-        LevmAccount {
-            info: AccountInfo {
-                nonce: 0,
-                balance: U256::from(1_000_000_000_000_000_000u64), // 1 ETH
-                code_hash: *EMPTY_KECCACK_HASH,
-            },
-            storage: FxHashMap::default(),
-            has_storage: false,
-            status: AccountStatus::DestroyedModified,
-        },
+    let mut db = setup_db(
+        addr,
+        empty_initial_account(),
+        account(final_info, false, AccountStatus::DestroyedModified),
     );
 
     let updates = db.get_state_transitions().unwrap();
-
     let update = updates
         .iter()
-        .find(|u| u.address == address_x)
+        .find(|u| u.address == addr)
         .expect("AccountUpdate should be emitted (balance changed from 0)");
 
-    // Info should be updated (balance went from 0 to 1 ETH).
     assert!(update.info.is_some(), "Info should reflect the new balance");
-    // removed_storage should be false — there was never storage in the trie.
     assert!(
         !update.removed_storage,
         "removed_storage should be false when account never had storage in the trie"
