@@ -99,8 +99,18 @@ impl<B: ProverBackend> Prover<B> {
                 // Generate the Proof
                 let Ok(batch_proof) = self
                     .backend
-                    .prove(prover_data.input, prover_data.format)
-                    .and_then(|output| self.backend.to_batch_proof(output, prover_data.format))
+                    .prove_timed(prover_data.input, prover_data.format)
+                    .and_then(|(output, elapsed)| {
+                        info!(
+                            batch = prover_data.batch_number,
+                            proving_time_s = elapsed.as_secs(),
+                            proving_time_ms = elapsed.as_millis() as u64,
+                            "Proved batch {} in {:.2?}",
+                            prover_data.batch_number,
+                            elapsed
+                        );
+                        self.backend.to_batch_proof(output, prover_data.format)
+                    })
                     .inspect_err(|e| error!("{e}"))
                 else {
                     continue;
