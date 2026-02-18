@@ -11,7 +11,7 @@ edition = "2024"
 # https://github.com/lambdalisue/rs-mdbook-alerts
 [preprocessor.alerts]
 # This is to avoid warnings about incomplete links on each alert
-renderers = ["html", "linkcheck"]
+renderers = ["html", "linkcheck2"]
 
 # To render Mermaid diagrams
 # https://github.com/badboy/mdbook-mermaid
@@ -40,5 +40,8 @@ additional-js = ["mermaid.min.js", "mermaid-init.js"]
 "/l2/fundamentals/README.html" = "/l2/fundamentals/index.html"
 "/l2/architecture/README.html" = "/l2/architecture/index.html"
 
-[output.linkcheck]
+# Broken-link checker
+# https://github.com/marxin/mdbook-linkcheck2
+# Needs to be installed with `cargo install mdbook-linkcheck2`
+[output.linkcheck2]
 optional = true
