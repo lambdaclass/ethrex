@@ -503,7 +503,7 @@ mod tests {
     fn test_object_passthrough() {
         let cmd = cmd_with_param("obj", ParamType::Object);
         let obj = json!({"to": "0xabc"});
-        let result = cmd.build_params(&[obj.clone()]).unwrap();
+        let result = cmd.build_params(std::slice::from_ref(&obj)).unwrap();
         assert_eq!(result[0], obj);
     }
 
@@ -525,7 +525,7 @@ mod tests {
     fn test_array_passthrough() {
         let cmd = cmd_with_param("arr", ParamType::Array);
         let arr = json!([1, 2, 3]);
-        let result = cmd.build_params(&[arr.clone()]).unwrap();
+        let result = cmd.build_params(std::slice::from_ref(&arr)).unwrap();
         assert_eq!(result[0], arr);
     }
 
