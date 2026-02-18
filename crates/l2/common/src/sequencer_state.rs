@@ -1,18 +1,17 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct SequencerState(Arc<Mutex<SequencerStatus>>);
 
 impl SequencerState {
-    pub async fn status(&self) -> SequencerStatus {
-        *self.0.clone().lock().await
+    pub fn status(&self) -> SequencerStatus {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub async fn new_status(&self, status: SequencerStatus) {
-        *self.0.lock().await = status;
+    pub fn new_status(&self, status: SequencerStatus) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = status;
     }
 }
 

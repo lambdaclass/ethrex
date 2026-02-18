@@ -7,7 +7,7 @@ This section covers the fundamentals of "based" rollups in the context of L2s bu
 A based rollup is a type of Layer 2 (L2) rollup that relies on the Ethereum mainnet (L1) for sequencing and ordering transactions, instead of using its own independent sequencer. This design leverages Ethereum's security and neutrality for transaction ordering, making the rollup more trust-minimized and censorship-resistant.
 
 > [!IMPORTANT]
-> This documentation is about the current state of the `based` feature development and not about the final implementation. It is subject to change as the feature evolves and their still could be unmitigated issues.
+> This documentation is about the current state of the `based` feature development and not about the final implementation. It is subject to change as the feature evolves and there still could be unmitigated issues.
 
 > [!NOTE]
 > This is an extension of the [ethrex-L2-Sequencer documentation](../architecture/sequencer.md) and is intended to be merged with it in the future.

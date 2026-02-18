@@ -1539,8 +1539,8 @@ impl Store {
         let file = std::fs::File::open(genesis_path)
             .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
         let reader = std::io::BufReader::new(file);
-        let genesis: Genesis =
-            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+        let genesis: Genesis = serde_json::from_reader(reader)
+            .map_err(|e| StoreError::Custom(format!("Failed to deserialize genesis file: {e}")))?;
         let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
