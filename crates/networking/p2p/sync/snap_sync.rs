@@ -29,8 +29,8 @@ use crate::peer_handler::PeerHandler;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
     constants::{
-        BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
-        SECONDS_PER_BLOCK, SNAP_LIMIT,
+        BYTECODE_CHUNK_SIZE, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS,
+        MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE, SECONDS_PER_BLOCK, SNAP_LIMIT,
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
@@ -41,7 +41,9 @@ use crate::utils::{
     get_code_hashes_snapshots_dir,
 };
 
-use super::{AccountStorageRoots, SyncError};
+use super::{
+    AccountStorageRoots, SNAP_BODY_PREFETCH_INFLIGHT, SNAP_RECEIPT_PREFETCH_INFLIGHT, SyncError,
+};
 
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
@@ -253,12 +255,12 @@ pub async fn snap_sync(
     // - Fetch each block's body and its receipt via eth p2p requests
     // - Fetch the pivot block's state via snap p2p requests
     // - Execute blocks after the pivot (like in full-sync)
-    let pivot_hash = block_sync_state
+    let pivot_hash = *block_sync_state
         .block_hashes
         .last()
         .ok_or(SyncError::NoBlockHeaders)?;
     let mut pivot_header = store
-        .get_block_header_by_hash(*pivot_hash)?
+        .get_block_header_by_hash(pivot_hash)?
         .ok_or(SyncError::CorruptDB)?;
 
     while block_is_stale(&pivot_header) {
@@ -291,6 +293,20 @@ pub async fn snap_sync(
         CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
     let mut storage_accounts = AccountStorageRoots::default();
+
+    // Spawn background prefetch of non-pivot block bodies and receipts
+    let prefetch_hashes: Vec<H256> = block_sync_state
+        .block_hashes
+        .iter()
+        .filter(|h| **h != pivot_hash)
+        .copied()
+        .collect();
+    let prefetch_handle = tokio::spawn(prefetch_bodies_and_receipts(
+        prefetch_hashes,
+        peers.clone(),
+        store.clone(),
+    ));
+
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
         // We start by downloading all of the leafs of the trie of accounts
         // The function request_account_range writes the leafs into files in
@@ -565,6 +581,12 @@ pub async fn snap_sync(
 
     debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
+    // Wait for background prefetch to complete (non-fatal if it failed)
+    match prefetch_handle.await {
+        Ok(()) => info!("Body/receipt prefetch completed successfully"),
+        Err(e) => warn!("Body/receipt prefetch task failed: {e}"),
+    }
+
     store_block_bodies(vec![pivot_header.clone()], peers.clone(), store.clone()).await?;
 
     let block = store
@@ -592,6 +614,95 @@ pub async fn snap_sync(
         )
         .await?;
     Ok(())
+}
+
+/// Prefetches block bodies and receipts for non-pivot blocks during snap sync.
+/// Runs as a background task while state download and healing are in progress.
+/// Failures are non-fatal — snap sync continues even if prefetch fails.
+async fn prefetch_bodies_and_receipts(
+    block_hashes: Vec<H256>,
+    mut peers: PeerHandler,
+    store: Store,
+) {
+    if block_hashes.is_empty() {
+        return;
+    }
+
+    // Fetch headers for the block hashes so we can request bodies
+    let mut headers_to_fetch = Vec::new();
+    for hash in &block_hashes {
+        match store.get_block_header_by_hash(*hash) {
+            Ok(Some(header)) => headers_to_fetch.push(header),
+            Ok(None) => {
+                warn!("[PREFETCH] Missing header for block hash {hash:?}, stopping body prefetch");
+                break;
+            }
+            Err(e) => {
+                warn!("[PREFETCH] Error reading header for {hash:?}: {e}");
+                break;
+            }
+        }
+    }
+
+    if headers_to_fetch.is_empty() {
+        return;
+    }
+
+    info!(
+        "[PREFETCH] Starting body prefetch for {} blocks",
+        headers_to_fetch.len()
+    );
+
+    // Prefetch bodies in chunks
+    for chunk in headers_to_fetch.chunks(MAX_BLOCK_BODIES_TO_REQUEST) {
+        match peers
+            .request_block_bodies_parallel(chunk, *SNAP_BODY_PREFETCH_INFLIGHT)
+            .await
+        {
+            Ok(Some(bodies)) => {
+                for (header, body) in chunk.iter().zip(bodies) {
+                    let hash = header.hash();
+                    if let Err(e) = store.add_block_body(hash, body).await {
+                        warn!("[PREFETCH] Failed to store body for {hash:?}: {e}");
+                    }
+                }
+                METRICS.sync_snap_prefetched_bodies_total.inc_by(chunk.len() as u64);
+                debug!("[PREFETCH] Stored {} block bodies", chunk.len());
+            }
+            Ok(None) => {
+                warn!("[PREFETCH] Body fetch returned None, stopping body prefetch");
+                break;
+            }
+            Err(e) => {
+                warn!("[PREFETCH] Body fetch error: {e}, stopping body prefetch");
+                break;
+            }
+        }
+    }
+
+    info!("[PREFETCH] Body prefetch complete, starting receipt prefetch");
+
+    // Prefetch receipts
+    match peers
+        .request_receipts_parallel(&block_hashes, *SNAP_RECEIPT_PREFETCH_INFLIGHT)
+        .await
+    {
+        Ok(Some(all_receipts)) => {
+            for (hash, receipts) in block_hashes.iter().zip(all_receipts) {
+                if let Err(e) = store.add_receipts(*hash, receipts).await {
+                    warn!("[PREFETCH] Failed to store receipts for {hash:?}: {e}");
+                }
+            }
+            METRICS.sync_snap_prefetched_receipts_total.inc_by(block_hashes.len() as u64);
+            info!("[PREFETCH] Receipt prefetch complete");
+        }
+        Ok(None) => {
+            warn!("[PREFETCH] Receipt fetch returned None, skipping receipts");
+        }
+        Err(e) => {
+            warn!("[PREFETCH] Receipt fetch error: {e}, skipping receipts");
+        }
+    }
 }
 
 /// Fetches all block bodies for the given block headers via p2p and stores them

@@ -5,9 +5,12 @@ use crate::{
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
-        eth::blocks::{
-            BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
-            HashOrNumber,
+        eth::{
+            blocks::{
+                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+                HashOrNumber,
+            },
+            receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
@@ -15,12 +18,12 @@ use crate::{
 };
 use ethrex_common::{
     H256,
-    types::{BlockBody, BlockHeader, validate_block_body},
+    types::{BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::{HashSet, VecDeque},
-    sync::atomic::Ordering,
+    sync::{atomic::Ordering, Arc},
     time::{Duration, SystemTime},
 };
 use tracing::{debug, error, trace, warn};
@@ -416,6 +419,23 @@ impl PeerHandler {
                 )
                 .await
                 {
+                    // Anchor check: for NewToOld, first header must match requested hash
+                    if matches!(order, BlockRequestOrder::NewToOld) {
+                        if let Some(first) = block_headers.first() {
+                            if first.hash() != start {
+                                warn!(
+                                    "[SYNCING] Header anchor mismatch from peer {peer_id}: expected {start:?}, got {:?}",
+                                    first.hash()
+                                );
+                                METRICS.sync_header_anchor_mismatch_total.inc();
+                                self.peer_table
+                                    .record_critical_failure(&peer_id)
+                                    .await?;
+                                return Ok(None);
+                            }
+                        }
+                    }
+
                     if !block_headers.is_empty()
                         && are_block_headers_chained(&block_headers, &order)
                     {
@@ -554,6 +574,178 @@ impl PeerHandler {
         }
         Ok(None)
     }
+    /// Requests block bodies in parallel from suitable peers using bounded concurrency.
+    /// Chunks the headers into groups of MAX_BLOCK_BODIES_TO_REQUEST and dispatches them
+    /// concurrently with at most `inflight` requests in flight at once.
+    /// Returns all bodies in deterministic original-header order, or None if any chunk fails.
+    pub async fn request_block_bodies_parallel(
+        &mut self,
+        block_headers: &[BlockHeader],
+        inflight: usize,
+    ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
+        if block_headers.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        // For small batches, just use the existing sequential method
+        if block_headers.len() <= MAX_BLOCK_BODIES_TO_REQUEST {
+            return self.request_block_bodies(block_headers).await;
+        }
+
+        let chunks: Vec<Vec<BlockHeader>> = block_headers
+            .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
+            .map(|c| c.to_vec())
+            .collect();
+
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(inflight));
+        let (tx, mut rx) =
+            tokio::sync::mpsc::channel::<(usize, Option<Vec<BlockBody>>)>(chunks.len());
+
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|_| PeerHandlerError::NoResponseFromPeer)?;
+            let mut peer_handler = self.clone();
+            let chunk = chunk.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = peer_handler.request_block_bodies(&chunk).await;
+                let _ = tx.send((idx, result.unwrap_or(None))).await;
+                drop(permit);
+            });
+        }
+        drop(tx);
+
+        let mut results: Vec<Option<Vec<BlockBody>>> = vec![None; chunks.len()];
+        while let Some((idx, bodies)) = rx.recv().await {
+            results[idx] = bodies;
+        }
+
+        // Check all chunks succeeded
+        let mut all_bodies = Vec::with_capacity(block_headers.len());
+        for result in results {
+            match result {
+                Some(bodies) => all_bodies.extend(bodies),
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(all_bodies))
+    }
+
+    /// Requests receipts from any suitable peer given their block hashes.
+    /// Returns the receipt lists or None if:
+    /// - There are no available peers
+    /// - The peer did not return a valid response
+    pub async fn request_receipts(
+        &mut self,
+        block_hashes: &[H256],
+    ) -> Result<Option<Vec<Vec<Receipt>>>, PeerHandlerError> {
+        let block_hashes_len = block_hashes.len();
+        let request_id = rand::random();
+        let request =
+            RLPxMessage::GetReceipts(GetReceipts::new(request_id, block_hashes.to_vec()));
+        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+            None => Ok(None),
+            Some((peer_id, mut connection)) => {
+                match PeerHandler::make_request(
+                    &mut self.peer_table,
+                    peer_id,
+                    &mut connection,
+                    request,
+                    PEER_REPLY_TIMEOUT,
+                )
+                .await
+                {
+                    Ok(RLPxMessage::Receipts68(receipts)) => {
+                        let receipt_lists = receipts.get_receipts();
+                        if !receipt_lists.is_empty() && receipt_lists.len() <= block_hashes_len {
+                            self.peer_table.record_success(&peer_id).await?;
+                            return Ok(Some(receipt_lists));
+                        }
+                        warn!("[SYNCING] Invalid receipts response from peer {peer_id}");
+                        self.peer_table.record_failure(&peer_id).await?;
+                        Ok(None)
+                    }
+                    Ok(RLPxMessage::Receipts69(receipts)) => {
+                        let receipt_lists = receipts.receipts;
+                        if !receipt_lists.is_empty() && receipt_lists.len() <= block_hashes_len {
+                            self.peer_table.record_success(&peer_id).await?;
+                            return Ok(Some(receipt_lists));
+                        }
+                        warn!("[SYNCING] Invalid receipts response from peer {peer_id}");
+                        self.peer_table.record_failure(&peer_id).await?;
+                        Ok(None)
+                    }
+                    _ => {
+                        warn!("[SYNCING] Didn't receive receipts from peer {peer_id}");
+                        self.peer_table.record_failure(&peer_id).await?;
+                        Ok(None)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Requests receipts in parallel from suitable peers using bounded concurrency.
+    /// Chunks the block hashes into groups of MAX_RECEIPTS_TO_REQUEST and dispatches them
+    /// concurrently with at most `inflight` requests in flight at once.
+    /// Returns all receipt lists in deterministic original order, or None if any chunk fails.
+    pub async fn request_receipts_parallel(
+        &mut self,
+        block_hashes: &[H256],
+        inflight: usize,
+    ) -> Result<Option<Vec<Vec<Receipt>>>, PeerHandlerError> {
+        use crate::snap::constants::MAX_RECEIPTS_TO_REQUEST;
+
+        if block_hashes.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        if block_hashes.len() <= MAX_RECEIPTS_TO_REQUEST {
+            return self.request_receipts(block_hashes).await;
+        }
+
+        let chunks: Vec<Vec<H256>> = block_hashes
+            .chunks(MAX_RECEIPTS_TO_REQUEST)
+            .map(|c| c.to_vec())
+            .collect();
+
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(inflight));
+        let (tx, mut rx) =
+            tokio::sync::mpsc::channel::<(usize, Option<Vec<Vec<Receipt>>>)>(chunks.len());
+
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|_| PeerHandlerError::NoResponseFromPeer)?;
+            let mut peer_handler = self.clone();
+            let chunk = chunk.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = peer_handler.request_receipts(&chunk).await;
+                let _ = tx.send((idx, result.unwrap_or(None))).await;
+                drop(permit);
+            });
+        }
+        drop(tx);
+
+        let mut results: Vec<Option<Vec<Vec<Receipt>>>> = vec![None; chunks.len()];
+        while let Some((idx, receipts)) = rx.recv().await {
+            results[idx] = receipts;
+        }
+
+        let mut all_receipts = Vec::with_capacity(block_hashes.len());
+        for result in results {
+            match result {
+                Some(receipts) => all_receipts.extend(receipts),
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(all_receipts))
+    }
+
     /// Returns the PeerData for each connected Peer
     pub async fn read_connected_peers(&mut self) -> Vec<PeerData> {
         self.peer_table

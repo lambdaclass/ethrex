@@ -3,7 +3,7 @@
 //! This module contains the logic for full synchronization mode where all blocks
 //! are fetched via p2p eth requests and executed to rebuild the state.
 
-use std::cmp::min;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,10 +14,13 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::metrics::METRICS;
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
-use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
+use crate::snap::constants::MAX_HEADER_FETCH_ATTEMPTS;
 
-use super::{EXECUTE_BATCH_SIZE, SyncError};
+use super::{
+    EXECUTE_BATCH_SIZE, FULLSYNC_BODY_INFLIGHT, FULLSYNC_PREFETCH_BATCHES, SyncError,
+};
 
 /// Performs full sync cycle - fetches and executes all blocks between current head and sync head
 ///
@@ -111,53 +114,133 @@ pub async fn sync_cycle_full(
     end_block_number += 1;
     start_block_number = start_block_number.max(1);
 
-    // Download block bodies and execute full blocks in batches
-    for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
-        let batch_size = EXECUTE_BATCH_SIZE.min((end_block_number - start) as usize);
-        let final_batch = end_block_number == start + batch_size as u64;
-        // Retrieve batch from DB
-        if !single_batch {
-            headers = store
-                .read_fullsync_batch(start, batch_size as u64)
-                .await?
-                .into_iter()
-                .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
-                .collect::<Result<Vec<_>, SyncError>>()?;
+    // Pipeline: overlap body downloads with block execution
+    let prefetch_bound = *FULLSYNC_PREFETCH_BATCHES;
+    let (batch_tx, mut batch_rx) =
+        tokio::sync::mpsc::channel::<(u64, Vec<Block>, bool)>(prefetch_bound);
+
+    // Clone what the producer task needs
+    let mut producer_peers = peers.clone();
+    let producer_store = store.clone();
+    let producer_headers = if single_batch {
+        headers.clone()
+    } else {
+        vec![]
+    };
+
+    let producer = tokio::spawn(async move {
+        let mut remaining_headers = producer_headers;
+
+        for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
+            let batch_size = EXECUTE_BATCH_SIZE.min((end_block_number - start) as usize);
+            let final_batch = end_block_number == start + batch_size as u64;
+
+            let mut batch_headers = if single_batch {
+                let take = batch_size.min(remaining_headers.len());
+                remaining_headers.drain(..take).collect::<Vec<_>>()
+            } else {
+                match producer_store
+                    .read_fullsync_batch(start, batch_size as u64)
+                    .await
+                {
+                    Ok(opts) => {
+                        let mut hdrs = Vec::with_capacity(opts.len());
+                        for opt in opts {
+                            match opt {
+                                Some(h) => hdrs.push(h),
+                                None => {
+                                    warn!("Missing fullsync batch header at block {start}");
+                                    return;
+                                }
+                            }
+                        }
+                        hdrs
+                    }
+                    Err(e) => {
+                        warn!("Failed to read fullsync batch: {e}");
+                        return;
+                    }
+                }
+            };
+
+            // Fetch bodies using parallel downloader
+            let mut blocks = Vec::new();
+            while !batch_headers.is_empty() {
+                match producer_peers
+                    .request_block_bodies_parallel(
+                        &batch_headers,
+                        *FULLSYNC_BODY_INFLIGHT,
+                    )
+                    .await
+                {
+                    Ok(Some(bodies)) => {
+                        debug!(
+                            "Pipeline: obtained {} block bodies for batch starting at {start}",
+                            bodies.len()
+                        );
+                        let block_batch = batch_headers
+                            .drain(..bodies.len())
+                            .zip(bodies)
+                            .map(|(header, body)| Block { header, body });
+                        blocks.extend(block_batch);
+                    }
+                    Ok(None) => {
+                        warn!(
+                            "Pipeline: failed to get bodies for batch starting at {start}"
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Pipeline: body fetch error for batch starting at {start}: {e}"
+                        );
+                        return;
+                    }
+                }
+            }
+
+            if batch_tx.send((start, blocks, final_batch)).await.is_err() {
+                return; // Consumer dropped
+            }
         }
-        let mut blocks = Vec::new();
-        // Request block bodies
-        // Download block bodies
-        while !headers.is_empty() {
-            let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
-            let bodies = peers
-                .request_block_bodies(header_batch)
-                .await?
-                .ok_or(SyncError::BodiesNotFound)?;
-            debug!("Obtained: {} block bodies", bodies.len());
-            let block_batch = headers
-                .drain(..bodies.len())
-                .zip(bodies)
-                .map(|(header, body)| Block { header, body });
-            blocks.extend(block_batch);
-        }
-        if !blocks.is_empty() {
-            // Execute blocks
-            info!(
-                "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
-                blocks.len(),
-                blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
-                blocks.last().ok_or(SyncError::NoBlocks)?.hash()
-            );
-            add_blocks_in_batch(
-                blockchain.clone(),
-                cancel_token.clone(),
-                blocks,
-                final_batch,
-                store.clone(),
-            )
-            .await?;
+    });
+
+    // Consumer: receive batches and execute in order
+    let mut next_expected = start_block_number;
+    let mut pending_batches: BTreeMap<u64, (Vec<Block>, bool)> = BTreeMap::new();
+
+    while let Some((start, blocks, final_batch)) = batch_rx.recv().await {
+        pending_batches.insert(start, (blocks, final_batch));
+        METRICS.sync_full_prefetch_queue_depth.store(
+            pending_batches.len() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+
+        // Drain all consecutive ready batches
+        while let Some((blocks, final_batch)) = pending_batches.remove(&next_expected) {
+            if !blocks.is_empty() {
+                info!(
+                    "Pipeline: executing {} blocks starting at block {next_expected}",
+                    blocks.len()
+                );
+                add_blocks_in_batch(
+                    blockchain.clone(),
+                    cancel_token.clone(),
+                    blocks,
+                    final_batch,
+                    store.clone(),
+                )
+                .await?;
+            }
+            // Advance to next expected batch
+            let batch_size =
+                EXECUTE_BATCH_SIZE.min((end_block_number - next_expected) as usize);
+            next_expected += batch_size as u64;
         }
     }
+
+    // Wait for producer to finish
+    let _ = producer.await;
 
     // Execute pending blocks
     if !pending_blocks.is_empty() {

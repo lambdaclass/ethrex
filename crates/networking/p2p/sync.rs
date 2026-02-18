@@ -46,6 +46,21 @@ lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
 }
 
+lazy_static::lazy_static! {
+    pub static ref FULLSYNC_BODY_INFLIGHT: usize = std::env::var("ETHREX_FULLSYNC_BODY_INFLIGHT")
+        .map(|var| var.parse().expect("ETHREX_FULLSYNC_BODY_INFLIGHT is not a number"))
+        .unwrap_or(crate::snap::constants::FULLSYNC_BODY_INFLIGHT_DEFAULT);
+    pub static ref FULLSYNC_PREFETCH_BATCHES: usize = std::env::var("ETHREX_FULLSYNC_PREFETCH_BATCHES")
+        .map(|var| var.parse().expect("ETHREX_FULLSYNC_PREFETCH_BATCHES is not a number"))
+        .unwrap_or(crate::snap::constants::FULLSYNC_PREFETCH_BATCHES_DEFAULT);
+    pub static ref SNAP_BODY_PREFETCH_INFLIGHT: usize = std::env::var("ETHREX_SNAP_BODY_PREFETCH_INFLIGHT")
+        .map(|var| var.parse().expect("ETHREX_SNAP_BODY_PREFETCH_INFLIGHT is not a number"))
+        .unwrap_or(crate::snap::constants::SNAP_BODY_PREFETCH_INFLIGHT_DEFAULT);
+    pub static ref SNAP_RECEIPT_PREFETCH_INFLIGHT: usize = std::env::var("ETHREX_SNAP_RECEIPT_PREFETCH_INFLIGHT")
+        .map(|var| var.parse().expect("ETHREX_SNAP_RECEIPT_PREFETCH_INFLIGHT is not a number"))
+        .unwrap_or(crate::snap::constants::SNAP_RECEIPT_PREFETCH_INFLIGHT_DEFAULT);
+}
+
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {
     #[default]

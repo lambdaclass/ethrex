@@ -96,6 +96,16 @@ pub struct Metrics {
     pub bytecode_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub bytecode_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
+    // Sync pipeline metrics
+    pub sync_full_prefetch_queue_depth: AtomicU64,
+    #[allow(dead_code)] // Placeholder for per-batch latency instrumentation
+    pub sync_full_body_fetch_latency_ms: AtomicU64,
+    #[allow(dead_code)] // Placeholder for execution-wait-on-prefetch instrumentation
+    pub sync_full_execute_wait_on_prefetch_ms: AtomicU64,
+    pub sync_snap_prefetched_bodies_total: IntCounter,
+    pub sync_snap_prefetched_receipts_total: IntCounter,
+    pub sync_header_anchor_mismatch_total: IntCounter,
+
     start_time: SystemTime,
 }
 
@@ -675,6 +685,36 @@ impl Default for Metrics {
             .register(Box::new(storage_leaves_downloaded.clone()))
             .expect("Failed to register storage_leaves_downloaded counter");
 
+        let sync_snap_prefetched_bodies_total = IntCounter::new(
+            "sync_snap_prefetched_bodies_total",
+            "Total number of block bodies prefetched during snap sync",
+        )
+        .expect("Failed to create sync_snap_prefetched_bodies_total counter");
+
+        registry
+            .register(Box::new(sync_snap_prefetched_bodies_total.clone()))
+            .expect("Failed to register sync_snap_prefetched_bodies_total counter");
+
+        let sync_snap_prefetched_receipts_total = IntCounter::new(
+            "sync_snap_prefetched_receipts_total",
+            "Total number of receipt batches prefetched during snap sync",
+        )
+        .expect("Failed to create sync_snap_prefetched_receipts_total counter");
+
+        registry
+            .register(Box::new(sync_snap_prefetched_receipts_total.clone()))
+            .expect("Failed to register sync_snap_prefetched_receipts_total counter");
+
+        let sync_header_anchor_mismatch_total = IntCounter::new(
+            "sync_header_anchor_mismatch_total",
+            "Total number of header anchor mismatches detected",
+        )
+        .expect("Failed to create sync_header_anchor_mismatch_total counter");
+
+        registry
+            .register(Box::new(sync_header_anchor_mismatch_total.clone()))
+            .expect("Failed to register sync_header_anchor_mismatch_total counter");
+
         Metrics {
             _registry: registry,
             enabled: Arc::new(Mutex::new(false)),
@@ -748,6 +788,14 @@ impl Default for Metrics {
             downloaded_bytecodes: AtomicU64::new(0),
             bytecode_download_start_time: Arc::new(Mutex::new(None)),
             bytecode_download_end_time: Arc::new(Mutex::new(None)),
+
+            // Sync pipeline
+            sync_full_prefetch_queue_depth: AtomicU64::new(0),
+            sync_full_body_fetch_latency_ms: AtomicU64::new(0),
+            sync_full_execute_wait_on_prefetch_ms: AtomicU64::new(0),
+            sync_snap_prefetched_bodies_total,
+            sync_snap_prefetched_receipts_total,
+            sync_header_anchor_mismatch_total,
 
             start_time: SystemTime::now(),
         }

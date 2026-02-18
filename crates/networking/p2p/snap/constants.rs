@@ -114,6 +114,25 @@ pub const SECONDS_PER_BLOCK: u64 = 12;
 pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 // =============================================================================
+// SYNC PIPELINE TUNABLES
+// =============================================================================
+
+/// Default number of concurrent in-flight body fetch requests during full sync.
+pub const FULLSYNC_BODY_INFLIGHT_DEFAULT: usize = 8;
+
+/// Default number of prefetch batches to keep ahead during full sync pipeline.
+pub const FULLSYNC_PREFETCH_BATCHES_DEFAULT: usize = 4;
+
+/// Default number of concurrent body prefetch requests during snap sync.
+pub const SNAP_BODY_PREFETCH_INFLIGHT_DEFAULT: usize = 8;
+
+/// Default number of concurrent receipt prefetch requests during snap sync.
+pub const SNAP_RECEIPT_PREFETCH_INFLIGHT_DEFAULT: usize = 6;
+
+/// Maximum number of receipts to request per eth/GetReceipts message.
+pub const MAX_RECEIPTS_TO_REQUEST: usize = 128;
+
+// =============================================================================
 // PROGRESS REPORTING
 // =============================================================================
 
