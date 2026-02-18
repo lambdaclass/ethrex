@@ -2,6 +2,12 @@ name: Publish Performance tag Docker
 
 on:
   workflow_dispatch:
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: performance-docker-publish
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -14,9 +20,70 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  check-performance-label:
+    name: Check for performance label
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check if should run
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Checking whether to run performance publish for commit '$COMMIT_SHA' on event '$EVENT_NAME'."
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Workflow triggered manually (workflow_dispatch); setting should_run=true."
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Find the PR associated with this commit using the commits/{sha}/pulls API
+          echo "Attempting to find PR associated with commit '$COMMIT_SHA'."
+          PR_NUMBER=$(gh api "repos/$REPO/commits/$COMMIT_SHA/pulls" --jq '.[0].number' 2>/dev/null || echo "")
+
+          # Fallback: if no PR is associated (e.g., squash or rebase merge), try to extract PR number from commit message
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR found via API, trying to extract from commit message."
+            COMMIT_MESSAGE=$(gh api "repos/$REPO/commits/$COMMIT_SHA" --jq '.commit.message' 2>/dev/null || echo "")
+
+            # Squash merge pattern: "Title (#123)"
+            if echo "$COMMIT_MESSAGE" | grep -qE '\(#([0-9]+)\)'; then
+              PR_NUMBER=$(echo "$COMMIT_MESSAGE" | sed -nE 's/.*\(#([0-9]+)\).*/\1/p' | head -n1)
+              echo "Extracted PR #$PR_NUMBER from squash merge commit message."
+            # Merge commit pattern: "Merge pull request #123"
+            elif echo "$COMMIT_MESSAGE" | grep -qE 'Merge pull request #([0-9]+)'; then
+              PR_NUMBER=$(echo "$COMMIT_MESSAGE" | sed -nE 's/.*Merge pull request #([0-9]+).*/\1/p' | head -n1)
+              echo "Extracted PR #$PR_NUMBER from merge commit message."
+            fi
+          fi
+
+          if [ -n "$PR_NUMBER" ]; then
+            echo "Found PR #$PR_NUMBER for commit '$COMMIT_SHA'. Checking for 'performance' label."
+            # Check if the PR has the performance label
+            HAS_LABEL=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.labels[].name' | grep -c '^performance$' || echo "0")
+            echo "Number of 'performance' labels on PR #$PR_NUMBER: $HAS_LABEL"
+            if [ "$HAS_LABEL" -gt 0 ]; then
+              echo "PR #$PR_NUMBER has the 'performance' label; setting should_run=true."
+              echo "should_run=true" >> $GITHUB_OUTPUT
+            else
+              echo "PR #$PR_NUMBER does not have the 'performance' label; setting should_run=false."
+              echo "should_run=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No PR found for commit '$COMMIT_SHA'; setting should_run=false."
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
   build-and-push-image:
     name: Build and push Docker image
     runs-on: ubuntu-latest
+    needs: [check-performance-label]
+    if: needs.check-performance-label.outputs.should_run == 'true'
 
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
     permissions:
