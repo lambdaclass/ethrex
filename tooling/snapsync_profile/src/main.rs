@@ -42,27 +42,12 @@ fn default_backend_name() -> String {
     }
 }
 
-fn parse_backend(name: &str) -> Result<ProfileBackend, String> {
-    match name {
-        "inmemory" => Ok(ProfileBackend::InMemory),
-        #[cfg(feature = "rocksdb")]
-        "rocksdb" => Ok(ProfileBackend::RocksDb),
-        #[cfg(not(feature = "rocksdb"))]
-        "rocksdb" => Err(
-            "rocksdb backend requested but snapsync_profile was compiled without the rocksdb feature. \
-             Rebuild with --features rocksdb"
-                .to_string(),
-        ),
-        other => Err(format!("unknown backend: {other} (expected: inmemory, rocksdb)")),
-    }
-}
-
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
-    let backend = parse_backend(&args.backend).unwrap_or_else(|e| {
+    let backend: ProfileBackend = args.backend.parse().unwrap_or_else(|e| {
         eprintln!("Error: {e}");
         std::process::exit(1);
     });

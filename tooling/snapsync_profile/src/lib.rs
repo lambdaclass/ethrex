@@ -6,14 +6,15 @@
 
 use std::fmt;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::AccountState;
 use ethrex_common::{H256, U256};
-use ethrex_p2p::sync::profile::load_manifest;
 use ethrex_p2p::sync::compute_storage_roots;
+use ethrex_p2p::sync::profile::load_manifest;
 use ethrex_p2p::sync::SyncError;
 use ethrex_p2p::utils::AccountsWithStorage;
 use ethrex_rlp::decode::RLPDecode;
@@ -39,6 +40,25 @@ impl fmt::Display for ProfileBackend {
             ProfileBackend::InMemory => write!(f, "inmemory"),
             #[cfg(feature = "rocksdb")]
             ProfileBackend::RocksDb => write!(f, "rocksdb"),
+        }
+    }
+}
+
+impl FromStr for ProfileBackend {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "inmemory" => Ok(ProfileBackend::InMemory),
+            #[cfg(feature = "rocksdb")]
+            "rocksdb" => Ok(ProfileBackend::RocksDb),
+            #[cfg(not(feature = "rocksdb"))]
+            "rocksdb" => Err(
+                "rocksdb backend requested but snapsync_profile was compiled without the \
+                 rocksdb feature; rebuild with --features rocksdb"
+                    .to_string(),
+            ),
+            other => Err(format!("unknown backend: {other} (expected: inmemory, rocksdb)")),
         }
     }
 }

@@ -73,7 +73,7 @@ pub fn load_manifest(dataset_root: &Path) -> Result<SnapProfileManifest, SyncErr
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-pub fn validate_non_empty_dir(path: &Path, label: &str) -> Result<(), SyncError> {
+fn validate_non_empty_dir(path: &Path, label: &str) -> Result<(), SyncError> {
     let entries = std::fs::read_dir(path).map_err(|e| {
         SyncError::ProfileError(format!("{label} directory {path:?} cannot be read: {e}"))
     })?;
