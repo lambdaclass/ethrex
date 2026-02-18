@@ -285,7 +285,12 @@ impl GeneralizedDatabase {
             // Edge cases that can make this true:
             //   1. Account was destroyed and created again afterwards.
             //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
-            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+            // Only set removed_storage if the initial (pre-batch) account actually had storage
+            // in the trie. If it didn't (e.g. account was created within the batch), there's
+            // nothing to remove, and emitting removed_storage=true would cause a spurious
+            // empty account to be inserted into the state trie.
+            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified
+                && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage: FxHashMap<_, _> = Default::default();
@@ -386,7 +391,12 @@ impl GeneralizedDatabase {
             // Edge cases that can make this true:
             //   1. Account was destroyed and created again afterwards.
             //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
-            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+            // Only set removed_storage if the initial (pre-batch) account actually had storage
+            // in the trie. If it didn't (e.g. account was created within the batch), there's
+            // nothing to remove, and emitting removed_storage=true would cause a spurious
+            // empty account to be inserted into the state trie.
+            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified
+                && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage: FxHashMap<_, _> = Default::default();
