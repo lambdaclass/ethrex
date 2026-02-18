@@ -423,7 +423,8 @@ impl BlockAccessList {
         &self.inner
     }
 
-    /// Computes the hash of the block access list.
+    /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
+    /// Use this when hashing a BAL constructed locally from execution.
     pub fn compute_hash(&self) -> H256 {
         if self.inner.is_empty() {
             return *EMPTY_BLOCK_ACCESS_LIST_HASH;
