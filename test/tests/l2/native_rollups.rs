@@ -2,7 +2,7 @@
 //!
 //! Requires:
 //!   1. Start L1: `NATIVE_ROLLUPS=1 make -C crates/l2 init-l1`
-//!   2. Run: `cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --ignored --nocapture`
+//!   2. Run: `cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --nocapture`
 //!
 //! The test compiles and deploys NativeRollup.sol, builds an L2 state transition,
 //! calls deposit() + advance(), and verifies the contract state was updated.
@@ -167,6 +167,8 @@ fn build_l2_state_transition() -> (ExecutePrecompileInput, Vec<u8>, Vec<u8>, H25
     insert_account(&mut state_trie, coinbase, &AccountState::default());
     insert_account(&mut state_trie, bob, &AccountState::default());
     insert_account(&mut state_trie, charlie, &AccountState::default());
+    // address(0) is the burn address used by L2WithdrawalBridge.withdraw()
+    insert_account(&mut state_trie, Address::zero(), &AccountState::default());
     insert_account(
         &mut state_trie,
         L2_WITHDRAWAL_BRIDGE,
@@ -249,6 +251,8 @@ fn build_l2_state_transition() -> (ExecutePrecompileInput, Vec<u8>, Vec<u8>, H25
             ..Default::default()
         },
     );
+    // Burn address unchanged from genesis (not accessed in block 1)
+    insert_account(&mut post_trie, Address::zero(), &AccountState::default());
     // Bridge unchanged from genesis (not accessed in block 1)
     insert_account(
         &mut post_trie,
@@ -380,6 +384,8 @@ fn build_l2_withdrawal_block(
             ..Default::default()
         },
     );
+    // Burn address (matches block 1 post-state)
+    insert_account(&mut pre_trie, Address::zero(), &AccountState::default());
     insert_account(
         &mut pre_trie,
         L2_WITHDRAWAL_BRIDGE,
@@ -582,9 +588,10 @@ fn build_l2_withdrawal_block(
 ///
 /// Prerequisites:
 ///   1. Start L1: `NATIVE_ROLLUPS=1 make -C crates/l2 init-l1`
-///   2. Run: `cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --ignored --nocapture`
+///   2. Run: `cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --nocapture`
+///
+/// The `native-rollups` feature flag gates both compilation and execution.
 #[tokio::test]
-#[ignore = "requires running L1 (NATIVE_ROLLUPS=1 make -C crates/l2 init-l1)"]
 async fn test_native_rollup_on_l1() {
     // 1. Connect to L1
     let eth_client = EthClient::new(Url::parse(L1_RPC_URL).unwrap()).unwrap();
@@ -595,27 +602,12 @@ async fn test_native_rollup_on_l1() {
     println!("Connected to L1 at {L1_RPC_URL}");
     println!("Deployer: {:?}", signer.address());
 
-    // 2. Build L2 state transitions
-    let (input, block_rlp, witness_json, pre_state_root, post_state_root) =
-        build_l2_state_transition();
-    let charlie = Address::from_low_u64_be(0xC4A);
-    let deposit_amount = U256::from(5) * U256::from(10).pow(U256::from(18)); // 5 ETH
-
-    // The L1 receiver of the withdrawal (fresh address for easy balance verification)
-    let l1_withdrawal_receiver = Address::from_low_u64_be(0xDEAD);
-
-    // Build block 2 (withdrawal block)
-    let (block2_rlp, witness2_json, block2_post_state_root) =
-        build_l2_withdrawal_block(&input.block, post_state_root, l1_withdrawal_receiver);
-    let alice_l2 = address_from_key(&SigningKey::from_bytes(&[1u8; 32].into()).unwrap());
-    let withdrawal_amount = U256::from(10).pow(U256::from(18)); // 1 ETH
-
-    // 3. Compile contracts
+    // 2. Compile contracts (must happen before building L2 state, which reads bridge bytecode)
     let contracts_path = workspace_root().join("crates/vm/levm/contracts");
     compile_contract(
         &contracts_path,
         &contracts_path.join("L2WithdrawalBridge.sol"),
-        false,
+        true, // runtime bytecode needed for L2 genesis state
         false,
         None,
         &[],
@@ -633,6 +625,22 @@ async fn test_native_rollup_on_l1() {
     )
     .expect("Failed to compile NativeRollup.sol");
 
+    // 3. Build L2 state transitions
+    let (input, block_rlp, witness_json, pre_state_root, post_state_root) =
+        build_l2_state_transition();
+    let charlie = Address::from_low_u64_be(0xC4A);
+    let deposit_amount = U256::from(5) * U256::from(10).pow(U256::from(18)); // 5 ETH
+
+    // The L1 receiver of the withdrawal (fresh address for easy balance verification)
+    let l1_withdrawal_receiver = Address::from_low_u64_be(0xDEAD);
+
+    // Build block 2 (withdrawal block)
+    let (block2_rlp, witness2_json, block2_post_state_root) =
+        build_l2_withdrawal_block(&input.block, post_state_root, l1_withdrawal_receiver);
+    let alice_l2 = address_from_key(&SigningKey::from_bytes(&[1u8; 32].into()).unwrap());
+    let withdrawal_amount = U256::from(10).pow(U256::from(18)); // 1 ETH
+
+    // 4. Deploy NativeRollup
     let deploy_hex = std::fs::read_to_string(contracts_path.join("solc_out/NativeRollup.bin"))
         .expect("Failed to read compiled contract");
     let deploy_bytecode = hex::decode(deploy_hex.trim()).expect("invalid hex in .bin file");
@@ -655,7 +663,7 @@ async fn test_native_rollup_on_l1() {
     println!("NativeRollup deployed at: {contract_address:?}");
     println!("  Deploy tx: {deploy_tx_hash:?}");
 
-    // 4. Verify initial state: stateRoot = pre_state_root
+    // 5. Verify initial state: stateRoot = pre_state_root
     let stored_root = eth_client
         .get_storage_at(
             contract_address,
@@ -671,7 +679,7 @@ async fn test_native_rollup_on_l1() {
     );
     println!("  Initial stateRoot verified: {pre_state_root:?}");
 
-    // 5. Call deposit(charlie) with 5 ETH
+    // 6. Call deposit(charlie) with 5 ETH
     let deposit_calldata =
         encode_calldata("deposit(address)", &[Value::Address(charlie)]).expect("encode failed");
 
@@ -702,7 +710,7 @@ async fn test_native_rollup_on_l1() {
     );
     println!("  deposit() tx: {deposit_tx_hash:?}");
 
-    // 6. Call advance(1, block_rlp, witness_json)
+    // 7. Call advance(1, block_rlp, witness_json)
     let advance_calldata = encode_calldata(
         "advance(uint256,bytes,bytes)",
         &[
@@ -742,7 +750,7 @@ async fn test_native_rollup_on_l1() {
         advance_receipt.receipt.cumulative_gas_used
     );
 
-    // 7. Verify updated state
+    // 8. Verify updated state
     let stored_root = eth_client
         .get_storage_at(
             contract_address,
@@ -777,7 +785,7 @@ async fn test_native_rollup_on_l1() {
         .expect("get_storage_at failed");
     assert_eq!(stored_deposit_index, U256::from(1), "depositIndex mismatch");
 
-    // 8. Verify withdrawalRoots[1] was stored (zero since no withdrawals in this block)
+    // 9. Verify withdrawalRoots[1] was stored (zero since no withdrawals in this block)
     // Storage slot for mapping(uint256 => bytes32) at slot 4, key 1:
     //   keccak256(abi.encode(uint256(1), uint256(4)))
     let mut slot_preimage = [0u8; 64];
@@ -809,7 +817,7 @@ async fn test_native_rollup_on_l1() {
     // ===== Phase 2: Withdrawal =====
     // Advance with block 2 (contains Alice → bridge.withdraw(l1_receiver) with 1 ETH)
 
-    // 9. advance(0, block2_rlp, witness2_json) — 0 deposits for block 2
+    // 10. advance(0, block2_rlp, witness2_json) — 0 deposits for block 2
     let advance2_calldata = encode_calldata(
         "advance(uint256,bytes,bytes)",
         &[
@@ -849,7 +857,7 @@ async fn test_native_rollup_on_l1() {
         advance2_receipt.receipt.cumulative_gas_used
     );
 
-    // 10. Verify block 2 state
+    // 11. Verify block 2 state
     let stored_root = eth_client
         .get_storage_at(
             contract_address,
@@ -878,7 +886,7 @@ async fn test_native_rollup_on_l1() {
         "blockNumber should be 2 after advance(block2)"
     );
 
-    // 11. Verify withdrawalRoots[2] is non-zero (withdrawal was included)
+    // 12. Verify withdrawalRoots[2] is non-zero (withdrawal was included)
     let mut slot_preimage_b2 = [0u8; 64];
     slot_preimage_b2[31] = 2; // key = 2 (block number)
     slot_preimage_b2[63] = 4; // mapping base slot = 4
@@ -899,7 +907,7 @@ async fn test_native_rollup_on_l1() {
     );
     println!("  withdrawalRoots[2]: {stored_withdrawal_root_b2:?}");
 
-    // 12. Check l1_withdrawal_receiver balance before claim
+    // 13. Check l1_withdrawal_receiver balance before claim
     let receiver_balance_before = eth_client
         .get_balance(
             l1_withdrawal_receiver,
@@ -909,7 +917,7 @@ async fn test_native_rollup_on_l1() {
         .expect("get_balance failed");
     println!("  Receiver balance before claim: {receiver_balance_before}");
 
-    // 13. Call claimWithdrawal(from, receiver, amount, messageId, blockNumber, proof)
+    // 14. Call claimWithdrawal(from, receiver, amount, messageId, blockNumber, proof)
     // Single withdrawal → Merkle root = leaf hash, proof is empty
     let claim_calldata = encode_calldata(
         "claimWithdrawal(address,address,uint256,uint256,uint256,bytes32[])",
@@ -949,7 +957,7 @@ async fn test_native_rollup_on_l1() {
 
     println!("  claimWithdrawal() tx: {claim_tx_hash:?}");
 
-    // 14. Verify the receiver got the ETH
+    // 15. Verify the receiver got the ETH
     let receiver_balance_after = eth_client
         .get_balance(
             l1_withdrawal_receiver,

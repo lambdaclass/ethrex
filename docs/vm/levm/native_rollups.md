@@ -243,7 +243,7 @@ This starts an ethrex node on `localhost:8545` with the EXECUTE precompile regis
 **Terminal 2** — Run the test:
 
 ```bash
-cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --ignored --nocapture
+cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --nocapture
 ```
 
 Expected output:
@@ -337,9 +337,7 @@ This PoC intentionally omits several things that would be needed for production:
 - **No blob data support** — Only calldata-based input
 - **No anchoring predeploy** — Deposits modify state directly instead of going through a contract
 - **No finality delay for withdrawals** — Withdrawals can be claimed immediately after the block is processed (production would require a challenge period)
-- **No L2 contract integration** — OnChainProposer is unchanged
-- **No L2 sequencer changes** — No integration with the L2 commit flow
-- **L2 bridge not deployed in production genesis** — The L2WithdrawalBridge contract is included in the test L2 genesis state, but isn't automatically deployed in production genesis yet
+- **No L2 production stack changes** — The existing L2 sequencer, OnChainProposer, and production genesis are unchanged; this PoC only adds the L1-side precompile and contracts
 - **Hybrid serialization** — ABI envelope + RLP block + JSON witness (ExecutionWitness lacks RLP support)
 
 These are all Phase 2+ concerns.
