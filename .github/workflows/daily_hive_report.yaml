@@ -82,14 +82,15 @@ jobs:
               simulation: ethereum/eels/consume-rlp,
               limit: ".*fork_Prague.*",
             }
-          # Disabled: Consume RLP tests (Amsterdam) — runner gets OOM-killed on CI
-          # (exit 143 / SIGTERM after ~68min while Prague/Rest RLP complete fine)
-          # - {
-          #     name: "Consume RLP tests (Amsterdam)",
-          #     file_name: consume-rlp-amsterdam,
-          #     simulation: ethereum/eels/consume-rlp,
-          #     limit: ".*fork_Amsterdam.*",
-          #   }
+          # Lower parallelism to avoid OOM on CI (runner gets SIGTERM'd at ~68min
+          # with parallelism 4, likely due to larger BAL fixture set + bigger block bodies)
+          - {
+              name: "Consume RLP tests (Amsterdam)",
+              file_name: consume-rlp-amsterdam,
+              simulation: ethereum/eels/consume-rlp,
+              limit: ".*fork_Amsterdam.*",
+              parallelism: 2,
+            }
           - {
               name: "Execute Blobs tests",
               file_name: execute-blobs,
@@ -116,7 +117,7 @@ jobs:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
         run: |
-          FLAGS='--sim.parallelism 4 --sim.loglevel 1'
+          FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
             # Use fork-specific fixtures to ensure comprehensive test coverage
             if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
