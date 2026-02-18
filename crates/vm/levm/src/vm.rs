@@ -22,7 +22,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -71,7 +71,7 @@ pub struct Substate {
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
     accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
-    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -85,7 +85,7 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         accessed_addresses: FxHashSet<Address>,
-        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
@@ -401,7 +401,7 @@ pub struct VM<'a> {
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation).
-    pub storage_original_values: BTreeMap<(Address, H256), U256>,
+    pub storage_original_values: FxHashMap<(Address, H256), U256>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Debug mode for development diagnostics.
@@ -436,7 +436,7 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            storage_original_values: BTreeMap::new(),
+            storage_original_values: FxHashMap::default(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
@@ -739,7 +739,7 @@ impl Substate {
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = FxHashSet::default();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> = FxHashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
