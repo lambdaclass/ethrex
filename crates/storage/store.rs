@@ -2004,6 +2004,73 @@ impl Store {
             .transpose()
     }
 
+    /// Returns the storage_root for a given address by traversing only the state trie.
+    pub fn get_storage_root(
+        &self,
+        state_root: H256,
+        address: Address,
+    ) -> Result<Option<H256>, StoreError> {
+        let account_hash = hash_address_fixed(&address);
+
+        if self.flatkeyvalue_computed(account_hash)? {
+            return Ok(Some(*EMPTY_TRIE_HASH));
+        }
+
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+
+        let state_trie = self.open_state_trie_shared(
+            state_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
+        let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
+            return Ok(None);
+        };
+        let account = AccountState::decode(&encoded_account)?;
+        Ok(Some(account.storage_root))
+    }
+
+    /// Looks up a storage value given a known storage_root, skipping the state trie.
+    pub fn get_value_at_storage_root(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let account_hash = hash_address_fixed(&address);
+
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
+
+        let hashed_key = hash_key_fixed(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
     pub fn get_chain_config(&self) -> ChainConfig {
         self.chain_config
     }
