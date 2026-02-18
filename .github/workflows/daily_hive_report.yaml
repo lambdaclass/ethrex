@@ -82,12 +82,14 @@ jobs:
               simulation: ethereum/eels/consume-rlp,
               limit: ".*fork_Prague.*",
             }
-          - {
-              name: "Consume RLP tests (Amsterdam)",
-              file_name: consume-rlp-amsterdam,
-              simulation: ethereum/eels/consume-rlp,
-              limit: ".*fork_Amsterdam.*",
-            }
+          # Disabled: Consume RLP tests (Amsterdam) — runner gets OOM-killed on CI
+          # (exit 143 / SIGTERM after ~68min while Prague/Rest RLP complete fine)
+          # - {
+          #     name: "Consume RLP tests (Amsterdam)",
+          #     file_name: consume-rlp-amsterdam,
+          #     simulation: ethereum/eels/consume-rlp,
+          #     limit: ".*fork_Amsterdam.*",
+          #   }
           - {
               name: "Execute Blobs tests",
               file_name: execute-blobs,
