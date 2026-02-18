@@ -42,6 +42,36 @@ impl SyncManager {
         datadir: PathBuf,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
+
+        // Fetch checkpoint once to avoid duplicate DB reads
+        let has_checkpoint = store
+            .get_header_download_checkpoint()
+            .await
+            .unwrap_or_else(|e| {
+                warn!("Failed to read header download checkpoint: {e}");
+                None
+            })
+            .is_some();
+
+        // Auto-switch from snap to full sync if node already has synced state.
+        // A node is considered "synced" if it has blocks beyond the merge fork AND
+        // there's no ongoing snap sync. The merge_netsplit_block threshold avoids
+        // false positives in hive tests with pre-merge blocks. For post-merge networks
+        // where merge_netsplit_block is 0, any block > 0 indicates prior sync.
+        // Skip auto-switch if merge_netsplit_block is None (custom genesis).
+        if snap_enabled.load(Ordering::Relaxed)
+            && !has_checkpoint
+            && let Some(merge_block) = store.get_chain_config().merge_netsplit_block
+        {
+            let latest_block = store.get_latest_block_number().await.unwrap_or(0);
+            if latest_block > merge_block {
+                info!(
+                    "Node has synced state (block {latest_block} > merge block {merge_block}), switching to full sync"
+                );
+                snap_enabled.store(false, Ordering::Relaxed);
+            }
+        }
+
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
@@ -57,11 +87,7 @@ impl SyncManager {
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
-        if store
-            .get_header_download_checkpoint()
-            .await
-            .is_ok_and(|res| res.is_some())
-        {
+        if has_checkpoint {
             sync_manager.start_sync();
         }
         sync_manager
