@@ -615,6 +615,7 @@ impl<'a> VM<'a> {
     /// Note: This function does NOT record to BAL. Per EIP-7928, BAL recording
     /// must happen after gas checks pass. Use `record_storage_slot_to_bal()`
     /// separately after the gas check succeeds.
+    #[inline(always)]
     pub fn access_storage_slot(
         &mut self,
         address: Address,
@@ -648,22 +649,31 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        if let Some(account) = self.db.current_accounts_state.get(&address) {
+        // Use Entry API to avoid double lookup
+        {
+            let account = match self.db.current_accounts_state.entry(address) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(_) => {
+                    // When requesting storage of an account we should've previously requested and cached the account
+                    return Err(InternalError::AccountNotFound);
+                }
+            };
+
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
             }
+
             // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values
             if account.status == AccountStatus::DestroyedModified {
                 return Ok(U256::zero());
             }
-        } else {
-            // When requesting storage of an account we should've previously requested and cached the account
-            return Err(InternalError::AccountNotFound);
-        }
+        };
 
+        // Dropped entry borrow, now we can safely borrow db for the database lookup
         let value = self.db.get_value_from_database(address, key)?;
 
-        // Update the account with the fetched value
+        // Must preserve the backup call for transaction rollback!
+        // get_account_mut handles the backup
         let account = self.get_account_mut(address)?;
         account.storage.insert(key, value);
 
