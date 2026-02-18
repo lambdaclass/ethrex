@@ -54,21 +54,29 @@ impl SyncManager {
             .is_some();
 
         // Auto-switch from snap to full sync if node already has synced state.
-        // A node is considered "synced" if it has blocks beyond the merge fork AND
-        // there's no ongoing snap sync. The merge_netsplit_block threshold avoids
-        // false positives in hive tests with pre-merge blocks. For post-merge networks
-        // where merge_netsplit_block is 0, any block > 0 indicates prior sync.
-        // Skip auto-switch if merge_netsplit_block is None (custom genesis).
-        if snap_enabled.load(Ordering::Relaxed)
-            && !has_checkpoint
-            && let Some(merge_block) = store.get_chain_config().merge_netsplit_block
-        {
+        // For post-merge networks (terminal_total_difficulty_passed), any stored
+        // block > 0 means the node has previously synced. For pre-merge networks,
+        // use merge_netsplit_block as threshold to avoid false positives in hive tests.
+        if snap_enabled.load(Ordering::Relaxed) {
             let latest_block = store.get_latest_block_number().await.unwrap_or(0);
-            if latest_block > merge_block {
+            let chain_config = store.get_chain_config();
+            let is_synced = if chain_config.terminal_total_difficulty_passed {
+                latest_block > 0
+            } else if let Some(merge_block) = chain_config.merge_netsplit_block {
+                latest_block > merge_block
+            } else {
+                false
+            };
+            if is_synced {
                 info!(
-                    "Node has synced state (block {latest_block} > merge block {merge_block}), switching to full sync"
+                    "Node has synced state (block {latest_block}), switching to full sync"
                 );
                 snap_enabled.store(false, Ordering::Relaxed);
+                if has_checkpoint {
+                    if let Err(e) = store.clear_snap_state().await {
+                        warn!("Failed to clear stale snap state: {e}");
+                    }
+                }
             }
         }
 
