@@ -43,9 +43,7 @@ use crate::utils::{
 
 use super::{AccountStorageRoots, SyncError};
 
-#[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
-#[cfg(not(feature = "rocksdb"))]
 use ethrex_rlp::encode::RLPEncode;
 
 /// Persisted State during the Block Sync phase for SnapSync
@@ -249,6 +247,11 @@ pub async fn snap_sync(
     block_sync_state: &mut SnapBlockSyncState,
     datadir: &Path,
 ) -> Result<(), SyncError> {
+    let capture_dir = std::env::var("ETHREX_SNAP_PROFILE_CAPTURE_DIR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from);
+
     // snap-sync: launch tasks to fetch blocks and state in parallel
     // - Fetch each block's body and its receipt via eth p2p requests
     // - Fetch the pivot block's state via snap p2p requests
@@ -439,6 +442,25 @@ pub async fn snap_sync(
         *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
         info!("Finished storing storage tries");
+
+        // Capture dataset for offline profiling if requested
+        if let Some(ref capture_dir) = capture_dir {
+            let chain_id = store.get_chain_config().chain_id;
+            capture_snap_profile_dataset(
+                capture_dir,
+                &account_state_snapshots_dir,
+                &account_storages_snapshots_dir,
+                &pivot_header,
+                computed_state_root,
+                chain_id,
+            )?;
+        }
+
+        // Clean up snapshot directories (after capture has copied them, if active)
+        std::fs::remove_dir_all(&account_state_snapshots_dir)
+            .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
+        std::fs::remove_dir_all(&account_storages_snapshots_dir)
+            .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     }
 
     *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
@@ -769,11 +791,9 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 // Account and Storage Insertion (non-rocksdb)
 // ============================================================================
 
-#[cfg(not(feature = "rocksdb"))]
-type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
+pub type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
 
-#[cfg(not(feature = "rocksdb"))]
-fn compute_storage_roots(
+pub fn compute_storage_roots(
     store: Store,
     account_hash: H256,
     key_value_pairs: &[(H256, U256)],
@@ -859,8 +879,6 @@ async fn insert_accounts(
 
         computed_state_root = current_state_root?;
     }
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     info!("computed_state_root {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
@@ -926,9 +944,264 @@ async fn insert_storages(
             .await?;
     }
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    Ok(())
+}
 
+// ============================================================================
+// Dataset capture for offline profiling
+// ============================================================================
+
+fn capture_snap_profile_dataset(
+    capture_dir: &Path,
+    account_state_snapshots_dir: &Path,
+    account_storages_snapshots_dir: &Path,
+    pivot_header: &BlockHeader,
+    computed_state_root: H256,
+    chain_id: u64,
+) -> Result<(), SyncError> {
+    use crate::sync::profile::{DatasetPaths, PivotInfo, SnapProfileManifest};
+
+    std::fs::create_dir_all(capture_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to create capture dir: {e}")))?;
+
+    // Always write RLP format for replay compatibility, regardless of build
+    #[cfg(feature = "rocksdb")]
+    {
+        convert_sst_accounts_to_rlp(
+            account_state_snapshots_dir,
+            &capture_dir.join("account_state_snapshots"),
+        )?;
+        convert_sst_storages_to_rlp(
+            account_storages_snapshots_dir,
+            &capture_dir.join("account_storages_snapshots"),
+        )?;
+    }
+    #[cfg(not(feature = "rocksdb"))]
+    {
+        copy_dir_recursive(
+            account_state_snapshots_dir,
+            &capture_dir.join("account_state_snapshots"),
+        )?;
+        copy_dir_recursive(
+            account_storages_snapshots_dir,
+            &capture_dir.join("account_storages_snapshots"),
+        )?;
+    }
+
+    let manifest = SnapProfileManifest {
+        version: 1,
+        chain_id,
+        // Dataset is always in RLP format regardless of build
+        rocksdb_enabled: false,
+        pivot: PivotInfo {
+            number: pivot_header.number,
+            hash: pivot_header.hash(),
+            state_root: pivot_header.state_root,
+            timestamp: pivot_header.timestamp,
+        },
+        post_accounts_insert_state_root: computed_state_root,
+        paths: DatasetPaths {
+            account_state_snapshots_dir: "account_state_snapshots".to_string(),
+            account_storages_snapshots_dir: "account_storages_snapshots".to_string(),
+        },
+    };
+
+    let manifest_json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to serialize manifest: {e}")))?;
+    std::fs::write(capture_dir.join("manifest.json"), manifest_json)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to write manifest: {e}")))?;
+
+    info!("Snap profile dataset captured to {capture_dir:?}");
+    Ok(())
+}
+
+#[cfg(not(feature = "rocksdb"))]
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), SyncError> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to create {dst:?}: {e}")))?;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to read {src:?}: {e}")))?
+    {
+        let entry =
+            entry.map_err(|e| SyncError::FileSystem(format!("Failed to read entry: {e}")))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| {
+                SyncError::FileSystem(format!("Failed to copy {src_path:?} to {dst_path:?}: {e}"))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
+// SST → RLP conversion for profile capture (rocksdb builds)
+// ============================================================================
+
+/// Convert account state SST files to RLP format for replay compatibility.
+/// Reads the SST files via a temporary rocksdb instance, then writes each
+/// chunk as RLP-encoded `Vec<(H256, AccountState)>`.
+#[cfg(feature = "rocksdb")]
+fn convert_sst_accounts_to_rlp(sst_dir: &Path, rlp_dir: &Path) -> Result<(), SyncError> {
+    use ethrex_rlp::encode::RLPEncode;
+
+    std::fs::create_dir_all(rlp_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to create {rlp_dir:?}: {e}")))?;
+
+    let tmp_db_dir = sst_dir.with_file_name("_profile_tmp_accounts_db");
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
+    let db = rocksdb::DB::open(&db_options, &tmp_db_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to open temp db: {e}")))?;
+
+    let file_paths: Vec<PathBuf> = std::fs::read_dir(sst_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to read {sst_dir:?}: {e}")))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    db.ingest_external_file(file_paths)
+        .map_err(|e| SyncError::FileSystem(format!("SST ingest failed: {e}")))?;
+
+    let mut chunk: Vec<(H256, AccountState)> = Vec::new();
+    let mut chunk_idx = 0u64;
+    let chunk_size = 500_000; // accounts per chunk
+
+    for item in db.full_iterator(rocksdb::IteratorMode::Start) {
+        let (key, value) =
+            item.map_err(|e| SyncError::FileSystem(format!("DB iter error: {e}")))?;
+        let account_hash = H256::from_slice(&key);
+        let account_state = AccountState::decode(&value).map_err(SyncError::Rlp)?;
+        chunk.push((account_hash, account_state));
+
+        if chunk.len() >= chunk_size {
+            let path = rlp_dir.join(format!("account_state_chunk.rlp.{chunk_idx}"));
+            std::fs::write(&path, chunk.encode_to_vec())
+                .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+            chunk.clear();
+            chunk_idx += 1;
+        }
+    }
+    if !chunk.is_empty() {
+        let path = rlp_dir.join(format!("account_state_chunk.rlp.{chunk_idx}"));
+        std::fs::write(&path, chunk.encode_to_vec())
+            .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+    }
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&tmp_db_dir);
+
+    info!(
+        "Converted account SST files to {} RLP chunks in {rlp_dir:?}",
+        chunk_idx + 1
+    );
+    Ok(())
+}
+
+/// Convert storage SST files to RLP format for replay compatibility.
+/// Groups entries by account hash to produce `Vec<AccountsWithStorage>` chunks.
+#[cfg(feature = "rocksdb")]
+fn convert_sst_storages_to_rlp(sst_dir: &Path, rlp_dir: &Path) -> Result<(), SyncError> {
+    use ethrex_common::U256;
+    use ethrex_rlp::encode::RLPEncode;
+
+    std::fs::create_dir_all(rlp_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to create {rlp_dir:?}: {e}")))?;
+
+    let tmp_db_dir = sst_dir.with_file_name("_profile_tmp_storages_db");
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
+    let db = rocksdb::DB::open(&db_options, &tmp_db_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to open temp db: {e}")))?;
+
+    let file_paths: Vec<PathBuf> = std::fs::read_dir(sst_dir)
+        .map_err(|e| SyncError::FileSystem(format!("Failed to read {sst_dir:?}: {e}")))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    db.ingest_external_file(file_paths)
+        .map_err(|e| SyncError::FileSystem(format!("SST ingest failed: {e}")))?;
+
+    // Stream through sorted SST entries and write RLP chunks.
+    // SST keys are (account_hash || slot_hash), so entries for the same account are contiguous.
+    // Large accounts are split across multiple chunk entries to keep files small.
+    // The replay's compute_storage_roots handles incremental trie building.
+    let chunk_size = 100_000; // storage entries per chunk
+    let mut chunk: Vec<(Vec<H256>, Vec<(H256, U256)>)> = Vec::new();
+    let mut chunk_idx = 0u64;
+    let mut entries_in_chunk = 0usize;
+    let mut current_account: Option<H256> = None;
+    let mut current_storages: Vec<(H256, U256)> = Vec::new();
+
+    let flush_chunk =
+        |chunk: &mut Vec<(Vec<H256>, Vec<(H256, U256)>)>,
+         chunk_idx: &mut u64,
+         entries_in_chunk: &mut usize,
+         rlp_dir: &Path| {
+            let path = rlp_dir.join(format!("account_storages_chunk.rlp.{chunk_idx}"));
+            std::fs::write(&path, chunk.encode_to_vec())
+                .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+            chunk.clear();
+            *entries_in_chunk = 0;
+            *chunk_idx += 1;
+            Ok::<(), SyncError>(())
+        };
+
+    for item in db.full_iterator(rocksdb::IteratorMode::Start) {
+        let (key, value) =
+            item.map_err(|e| SyncError::FileSystem(format!("DB iter error: {e}")))?;
+        let account_hash = H256::from_slice(&key[0..32]);
+        let slot_hash = H256::from_slice(&key[32..64]);
+        let slot_value = U256::decode(&value).map_err(SyncError::Rlp)?;
+
+        // When account changes, flush accumulated storages for the previous account
+        if current_account != Some(account_hash) {
+            if let Some(prev_account) = current_account {
+                if !current_storages.is_empty() {
+                    let n = current_storages.len();
+                    chunk.push((vec![prev_account], std::mem::take(&mut current_storages)));
+                    entries_in_chunk += n;
+                }
+            }
+            current_account = Some(account_hash);
+        }
+
+        current_storages.push((slot_hash, slot_value));
+
+        // Split large accounts: flush current storages when they reach chunk_size
+        if current_storages.len() >= chunk_size {
+            let n = current_storages.len();
+            chunk.push((vec![account_hash], std::mem::take(&mut current_storages)));
+            entries_in_chunk += n;
+        }
+
+        // Write chunk file when enough entries accumulated
+        if entries_in_chunk >= chunk_size {
+            flush_chunk(&mut chunk, &mut chunk_idx, &mut entries_in_chunk, rlp_dir)?;
+        }
+    }
+
+    // Flush remaining storages for the last account
+    if let Some(last_account) = current_account {
+        if !current_storages.is_empty() {
+            chunk.push((vec![last_account], current_storages));
+        }
+    }
+    if !chunk.is_empty() {
+        let path = rlp_dir.join(format!("account_storages_chunk.rlp.{chunk_idx}"));
+        std::fs::write(&path, chunk.encode_to_vec())
+            .map_err(|e| SyncError::FileSystem(format!("Failed to write {path:?}: {e}")))?;
+        chunk_idx += 1;
+    }
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&tmp_db_dir);
+
+    info!(
+        "Converted storage SST files to {chunk_idx} RLP chunks in {rlp_dir:?}",
+    );
     Ok(())
 }
 
@@ -994,8 +1267,7 @@ async fn insert_accounts(
 
     drop(db); // close db before removing directory
 
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
+    // Snapshot dir cleanup is handled by the caller (conditional on capture mode).
     std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
 
@@ -1136,8 +1408,7 @@ async fn insert_storages(
     drop(snapshot);
     drop(db);
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    // Snapshot dir cleanup is handled by the caller (conditional on capture mode).
     std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
         .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
 

@@ -7,6 +7,7 @@
 mod code_collector;
 mod full;
 mod healing;
+pub mod profile;
 mod snap_sync;
 
 use crate::metrics::METRICS;
@@ -31,10 +32,11 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-// Re-export types used by submodules
+// Re-export types used by submodules and the tooling crate
 pub use snap_sync::{
-    SnapBlockSyncState, block_is_stale, calculate_staleness_timestamp, update_pivot,
-    validate_bytecodes, validate_state_root, validate_storage_root,
+    SnapBlockSyncState, StorageRoots, block_is_stale, calculate_staleness_timestamp,
+    compute_storage_roots, update_pivot, validate_bytecodes, validate_state_root,
+    validate_storage_root,
 };
 
 #[cfg(feature = "sync-test")]
@@ -241,6 +243,8 @@ pub enum SyncError {
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]
     Snap(#[from] crate::snap::SnapError),
+    #[error("Profile error: {0}")]
+    ProfileError(String),
 }
 
 impl SyncError {
@@ -267,7 +271,8 @@ impl SyncError {
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
-            | SyncError::FileSystem(_) => false,
+            | SyncError::FileSystem(_)
+            | SyncError::ProfileError(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

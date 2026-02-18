@@ -10,6 +10,7 @@ members = [
   "migrations",
   "monitor",
   "reorgs",
+  "snapsync_profile",
 ]
 exclude = ["ef_tests/state"]
 resolver = "2"

@@ -8502,6 +8502,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
+name = "snapsync_profile"
+version = "4.0.0"
+dependencies = [
+ "clap 4.5.54",
+ "ethrex-common 9.0.0",
+ "ethrex-p2p",
+ "ethrex-rlp 9.0.0",
+ "ethrex-storage 9.0.0",
+ "ethrex-trie 9.0.0",
+ "eyre",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+]
+
+[[package]]
 name = "snowbridge-amcl"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

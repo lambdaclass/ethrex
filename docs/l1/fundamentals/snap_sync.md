@@ -324,3 +324,102 @@ Whenever an account is downloaded or healed we check if the code is not empty. I
 ### Forkchoice update
 
 Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from `snap` to `full`, and we do an `apply_forkchoice` to mark the last pivot as the last block.
+
+## Offline Profiling
+
+The snap sync pipeline includes an offline profiling mode that lets you measure the compute-only phases (InsertAccounts, InsertStorages) without any network I/O. This is useful for benchmarking trie insertion performance and iterating on optimisations.
+
+### Step 1 — Capture a dataset
+
+Run a normal snap sync with the `ETHREX_SNAP_PROFILE_CAPTURE_DIR` environment variable set. When the sync reaches the InsertAccounts phase, the node copies the snapshot directories and writes a `manifest.json` to the capture directory.
+
+```bash
+ETHREX_SNAP_PROFILE_CAPTURE_DIR=/tmp/snap-dataset ethrex --network hoodi
+```
+
+The resulting directory layout:
+
+```
+/tmp/snap-dataset/
+├── manifest.json
+├── account_state_snapshots/
+│   └── *.rlp.*
+└── account_storages_snapshots/
+    └── *.rlp.*
+```
+
+Capture works with both rocksdb and non-rocksdb builds. Rocksdb builds automatically convert SST files to RLP during capture so the dataset is portable.
+
+### Step 2 — Replay offline
+
+Build and run the `snap_profile_replay` binary from the `snapsync_profile` tooling crate:
+
+```bash
+# Build with rocksdb backend (recommended for large datasets)
+cargo build --release --bin snap_profile_replay -p snapsync_profile --features rocksdb --manifest-path tooling/Cargo.toml
+
+# Replay with rocksdb backend (~5GB RAM for Hoodi-sized datasets)
+RUST_LOG=info ./tooling/target/release/snap_profile_replay \
+  /tmp/snap-dataset --backend rocksdb
+
+# Or with in-memory backend (needs enough RAM for the full state trie)
+cargo build --release --bin snap_profile_replay -p snapsync_profile --manifest-path tooling/Cargo.toml
+RUST_LOG=info ./tooling/target/release/snap_profile_replay \
+  /tmp/snap-dataset --backend inmemory
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `dataset_path` | Path to the captured dataset directory | (positional, required) |
+| `--backend` | `rocksdb` (disk-backed) or `inmemory` (all state in RAM) | `rocksdb` if feature enabled |
+| `--db-dir` | Directory for RocksDB data | Temporary directory (auto-cleaned) |
+| `--keep-db` | Don't clean up RocksDB directory after the run | `false` |
+
+Both phases (InsertAccounts, InsertStorages) always run. The computed state root is validated against the manifest — a mismatch is a hard error.
+
+### Workflow Profiling (External Tools)
+
+For systematic profiling with external tools, use the Make targets. These wrap the replay binary with standard profilers, build with frame pointers, and collect structured artifacts.
+
+**Quick start:**
+
+```bash
+# CPU profiling with perf (Linux)
+make snapsync-prof-perf SNAP_DATASET=/path/to/dataset
+
+# CPU profiling with samply (Linux/macOS)
+make snapsync-prof-samply SNAP_DATASET=/path/to/dataset
+
+# Heap profiling with heaptrack (Linux)
+make snapsync-prof-heap SNAP_DATASET=/path/to/dataset
+
+# Heap profiling with jemalloc (Linux)
+make snapsync-prof-jeprof SNAP_DATASET=/path/to/dataset JEMALLOC_SO=/usr/lib/x86_64-linux-gnu/libjemalloc.so
+```
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SNAP_DATASET` | (required) | Path to captured dataset directory |
+| `SNAP_BACKEND` | `rocksdb` | Storage backend (`rocksdb` or `inmemory`) |
+| `SNAP_DB_DIR` | `/tmp/snap-profile-db` | Directory for RocksDB data |
+| `SNAP_KEEP_DB` | `0` | Set to `1` to keep the RocksDB directory after the run |
+| `SNAP_CARGO_PROFILE` | `release-with-debug` | Cargo build profile |
+| `SNAP_FEATURES` | `rocksdb` | Cargo feature flags |
+| `JEMALLOC_SO` | (required for jeprof) | Path to `libjemalloc.so` |
+
+**Artifacts:**
+
+Each run creates a timestamped directory under `artifacts/snapsync-profile/`:
+
+```
+artifacts/snapsync-profile/<timestamp>/<tool>/
+├── run_metadata.json    # Build info, git SHA, host info, command
+├── manifest.json        # Copy of the dataset manifest
+├── run.log              # Full stdout/stderr
+├── command.txt          # Exact profiler invocation
+└── <tool-specific>      # perf.data, samply-profile.json, heaptrack.*, etc.
+```
+
+The `run_metadata.json` file includes git SHA, dataset hash, build configuration, and host information for reproducibility.

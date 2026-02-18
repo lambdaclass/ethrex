@@ -60,6 +60,7 @@ crossbeam.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+tempfile.workspace = true
 
 [lib]
 path = "./p2p.rs"
@@ -71,6 +72,7 @@ sync-test = []
 l2 = ["dep:ethrex-storage-rollup", "dep:ethrex-l2-common"]
 test-utils = []
 metrics = ["dep:ethrex-metrics"]
+rocksdb = ["dep:rocksdb", "ethrex-storage/rocksdb"]
 # discv5 is currently experimental and should only be enabled for development purposes
 experimental-discv5 = ["dep:aes-gcm", "dep:hkdf"]
 
