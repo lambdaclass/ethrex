@@ -295,11 +295,13 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 
     // Delete the accounts
     for address in vm.substate.iter_selfdestruct() {
-        let account_to_remove = vm.db.get_account_mut(*address)?;
+        // Take backup BEFORE mark_modified so the original status is preserved
+        let account_to_remove = vm.db.get_account(*address)?;
         vm.current_call_frame
             .call_frame_backup
             .backup_account_info(*address, account_to_remove)?;
 
+        let account_to_remove = vm.db.get_account_mut(*address)?;
         *account_to_remove = LevmAccount::default();
         account_to_remove.mark_destroyed();
 

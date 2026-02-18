@@ -458,12 +458,13 @@ impl<'a> VM<'a> {
 
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
-        let account = self.db.get_account_mut(address)?;
-
+        // Take backup BEFORE mark_modified so the original status is preserved
+        let account = self.db.get_account(address)?;
         self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, account)?;
 
+        let account = self.db.get_account_mut(address)?;
         Ok(account)
     }
 
