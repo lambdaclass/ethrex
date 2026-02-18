@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{LazyLock, Mutex},
+    sync::{
+        LazyLock, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -145,3 +148,49 @@ fn format_precompile_timings(sorted: &[(Address, Duration, Duration, u64)]) -> S
     }
     out
 }
+
+/// SLOAD cache attribution counters for measuring hit/miss rates across cache layers.
+///
+/// Uses atomics for thread safety since CachingDatabase is shared between
+/// warmer and executor threads.
+pub struct SloadCounters {
+    /// Value found in GeneralizedDatabase.current_accounts_state.storage (L1 per-tx cache)
+    pub sload_l1_hit: AtomicU64,
+    /// Value found in CachingDatabase storage cache (L2 cross-tx cache)
+    pub sload_l2_hit: AtomicU64,
+    /// Value not in CachingDatabase, fell through to Store/trie
+    pub sload_l2_miss: AtomicU64,
+    /// Read miss on CachingDatabase became a hit on write recheck (warmer filled it between locks)
+    pub sload_duplicate_miss_race: AtomicU64,
+}
+
+impl SloadCounters {
+    const fn new() -> Self {
+        Self {
+            sload_l1_hit: AtomicU64::new(0),
+            sload_l2_hit: AtomicU64::new(0),
+            sload_l2_miss: AtomicU64::new(0),
+            sload_duplicate_miss_race: AtomicU64::new(0),
+        }
+    }
+
+    pub fn reset(&self) {
+        self.sload_l1_hit.store(0, Ordering::Relaxed);
+        self.sload_l2_hit.store(0, Ordering::Relaxed);
+        self.sload_l2_miss.store(0, Ordering::Relaxed);
+        self.sload_duplicate_miss_race.store(0, Ordering::Relaxed);
+    }
+
+    pub fn info_pretty(&self) -> String {
+        let l1 = self.sload_l1_hit.load(Ordering::Relaxed);
+        let l2 = self.sload_l2_hit.load(Ordering::Relaxed);
+        let miss = self.sload_l2_miss.load(Ordering::Relaxed);
+        let race = self.sload_duplicate_miss_race.load(Ordering::Relaxed);
+        let total = l1.saturating_add(l2).saturating_add(miss);
+        format!(
+            "[PERF] sload cache (total={total}): l1_hit={l1} l2_hit={l2} l2_miss={miss} dup_race={race}"
+        )
+    }
+}
+
+pub static SLOAD_COUNTERS: SloadCounters = SloadCounters::new();
