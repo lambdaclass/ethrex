@@ -739,8 +739,7 @@ impl Substate {
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = FxHashSet::default();
-        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
-            FxHashMap::default();
+        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> = FxHashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);

@@ -650,10 +650,6 @@ impl<'a> VM<'a> {
     ) -> Result<U256, InternalError> {
         if let Some(account) = self.db.current_accounts_state.get(&address) {
             if let Some(value) = account.storage.get(&key) {
-                #[cfg(feature = "perf_opcode_timings")]
-                crate::timings::SLOAD_COUNTERS
-                    .sload_l1_hit
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return Ok(*value);
             }
             // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values

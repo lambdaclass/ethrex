@@ -284,7 +284,6 @@ impl LEVM {
             ::tracing::info!("{}", timings.info_pretty());
             let precompiles_timings = PRECOMPILES_TIMINGS.lock().expect("poison");
             ::tracing::info!("{}", precompiles_timings.info_pretty());
-            ::tracing::info!("{}", ethrex_levm::timings::SLOAD_COUNTERS.info_pretty());
         }
 
         if queue_length.load(Ordering::Relaxed) == 0 {

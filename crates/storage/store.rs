@@ -16,7 +16,7 @@ use crate::{
     error::StoreError,
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
-    trie::{BackendTrieDB, BackendTrieDBLocked, SharedLockedTrieDB},
+    trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
@@ -2128,82 +2128,6 @@ impl Store {
             .transpose()
     }
 
-    /// Creates a locked backend snapshot for block-scoped reuse.
-    /// Call once per block, share via Arc across all trie reads.
-    pub fn create_locked_backend(&self) -> Result<Arc<BackendTrieDBLocked>, StoreError> {
-        let locked = BackendTrieDBLocked::new(self.backend.as_ref(), self.last_written()?)?;
-        Ok(Arc::new(locked))
-    }
-
-    /// Like `get_storage_at_root` but reuses a shared locked backend.
-    pub fn get_storage_at_root_locked(
-        &self,
-        state_root: H256,
-        address: Address,
-        storage_key: H256,
-        locked: &Arc<BackendTrieDBLocked>,
-    ) -> Result<Option<U256>, StoreError> {
-        let account_hash = hash_address_fixed(&address);
-        let last_written = self.last_written()?;
-        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
-        let storage_root = if use_fkv {
-            *EMPTY_TRIE_HASH
-        } else {
-            let state_trie = self.open_state_trie_with_locked(state_root, locked)?;
-            let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
-                return Ok(None);
-            };
-            let account = AccountState::decode(&encoded_account)?;
-            account.storage_root
-        };
-        let storage_trie =
-            self.open_storage_trie_with_locked(account_hash, state_root, storage_root, locked)?;
-        let hashed_key = hash_key_fixed(&storage_key);
-        storage_trie
-            .get(&hashed_key)?
-            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose()
-    }
-
-    /// Like `get_storage_at_root_locked` but takes a pre-resolved `storage_root`,
-    /// skipping the state trie traversal entirely. Used when the caller has already
-    /// cached the storage root from a prior lookup.
-    pub fn get_storage_at_storage_root_locked(
-        &self,
-        state_root: H256,
-        address: Address,
-        storage_root: H256,
-        storage_key: H256,
-        locked: &Arc<BackendTrieDBLocked>,
-    ) -> Result<Option<U256>, StoreError> {
-        let account_hash = hash_address_fixed(&address);
-        let last_written = self.last_written()?;
-        let effective_root =
-            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
-                *EMPTY_TRIE_HASH
-            } else {
-                storage_root
-            };
-        let storage_trie =
-            self.open_storage_trie_with_locked(account_hash, state_root, effective_root, locked)?;
-        let hashed_key = hash_key_fixed(&storage_key);
-        storage_trie
-            .get(&hashed_key)?
-            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose()
-    }
-
-    /// Like `get_account_state_by_root` but reuses a shared locked backend.
-    pub fn get_account_state_by_root_locked(
-        &self,
-        state_root: H256,
-        address: Address,
-        locked: &Arc<BackendTrieDBLocked>,
-    ) -> Result<Option<AccountState>, StoreError> {
-        let state_trie = self.open_state_trie_with_locked(state_root, locked)?;
-        self.get_account_state_from_trie(&state_trie, address)
-    }
-
     pub fn get_chain_config(&self) -> ChainConfig {
         self.chain_config
     }
@@ -2672,44 +2596,6 @@ impl Store {
                 self.backend.as_ref(),
                 self.last_written()?,
             )?),
-            Some(account_hash),
-        );
-        Ok(Trie::open(Box::new(trie_db), storage_root))
-    }
-
-    /// Opens a state trie using a shared locked backend instead of per-lookup transactions.
-    fn open_state_trie_with_locked(
-        &self,
-        state_root: H256,
-        locked: &Arc<BackendTrieDBLocked>,
-    ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper::new(
-            state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
-            Box::new(SharedLockedTrieDB::new(locked.clone())),
-            None,
-        );
-        Ok(Trie::open(Box::new(trie_db), state_root))
-    }
-
-    /// Opens a storage trie using a shared locked backend instead of per-lookup transactions.
-    fn open_storage_trie_with_locked(
-        &self,
-        account_hash: H256,
-        state_root: H256,
-        storage_root: H256,
-        locked: &Arc<BackendTrieDBLocked>,
-    ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper::new(
-            state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
-            Box::new(SharedLockedTrieDB::new(locked.clone())),
             Some(account_hash),
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))

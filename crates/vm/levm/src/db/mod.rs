@@ -99,10 +99,6 @@ impl Database for CachingDatabase {
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
         // Check cache first
         if let Some(value) = self.read_storage()?.get(&(address, key)).copied() {
-            #[cfg(feature = "perf_opcode_timings")]
-            crate::timings::SLOAD_COUNTERS
-                .sload_l2_hit
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(value);
         }
 
@@ -110,22 +106,7 @@ impl Database for CachingDatabase {
         let value = self.inner.get_storage_value(address, key)?;
 
         // Populate cache (U256 is Copy, no clone needed)
-        // Check for duplicate miss race: another thread may have populated the cache
-        // between our read lock release and write lock acquisition.
-        let mut storage = self.write_storage()?;
-        #[cfg(feature = "perf_opcode_timings")]
-        {
-            use std::sync::atomic::Ordering::Relaxed;
-            if storage.contains_key(&(address, key)) {
-                crate::timings::SLOAD_COUNTERS
-                    .sload_duplicate_miss_race
-                    .fetch_add(1, Relaxed);
-            }
-            crate::timings::SLOAD_COUNTERS
-                .sload_l2_miss
-                .fetch_add(1, Relaxed);
-        }
-        storage.insert((address, key), value);
+        self.write_storage()?.insert((address, key), value);
 
         Ok(value)
     }

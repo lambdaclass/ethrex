@@ -4,9 +4,7 @@ use ethrex_common::{
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
 use ethrex_storage::Store;
-use ethrex_storage::trie::BackendTrieDBLocked;
 use ethrex_vm::{EvmError, VmDatabase};
-use rustc_hash::FxHashMap;
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
@@ -23,10 +21,6 @@ pub struct StoreVmDatabase {
     // and may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: Arc<Mutex<BTreeMap<BlockNumber, BlockHash>>>,
     pub state_root: H256,
-    /// Block-scoped locked RocksDB snapshot reused across all trie reads during execution.
-    locked_backend: Arc<BackendTrieDBLocked>,
-    /// Caches address → storage_root to skip state trie traversal on repeated storage reads.
-    storage_root_cache: Arc<Mutex<FxHashMap<Address, H256>>>,
 }
 
 impl StoreVmDatabase {
@@ -41,16 +35,11 @@ impl StoreVmDatabase {
         {
             return Err(EvmError::DB("state root missing".to_string()));
         }
-        let locked_backend = store
-            .create_locked_backend()
-            .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             state_root: block_header.state_root,
-            locked_backend,
-            storage_root_cache: Arc::new(Mutex::new(FxHashMap::default())),
         })
     }
 
@@ -66,16 +55,11 @@ impl StoreVmDatabase {
         {
             return Err(EvmError::DB("state root missing".to_string()));
         }
-        let locked_backend = store
-            .create_locked_backend()
-            .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             state_root: block_header.state_root,
-            locked_backend,
-            storage_root_cache: Arc::new(Mutex::new(FxHashMap::default())),
         })
     }
 }
@@ -89,7 +73,7 @@ impl VmDatabase for StoreVmDatabase {
     )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.store
-            .get_account_state_by_root_locked(self.state_root, address, &self.locked_backend)
+            .get_account_state_by_root(self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
@@ -100,51 +84,8 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        // Check if we already have the storage root cached for this address
-        let cached_root = self
-            .storage_root_cache
-            .lock()
-            .map_err(|_| EvmError::Custom("LockError".to_string()))?
-            .get(&address)
-            .copied();
-
-        if let Some(storage_root) = cached_root {
-            // Cache hit: skip state trie traversal, go directly to storage trie
-            return self
-                .store
-                .get_storage_at_storage_root_locked(
-                    self.state_root,
-                    address,
-                    storage_root,
-                    key,
-                    &self.locked_backend,
-                )
-                .map_err(|e| EvmError::DB(e.to_string()));
-        }
-
-        // Cache miss: resolve storage root via account state lookup
-        let account_state = self
-            .store
-            .get_account_state_by_root_locked(self.state_root, address, &self.locked_backend)
-            .map_err(|e| EvmError::DB(e.to_string()))?;
-
-        let Some(state) = account_state else {
-            return Ok(None);
-        };
-
-        self.storage_root_cache
-            .lock()
-            .map_err(|_| EvmError::Custom("LockError".to_string()))?
-            .insert(address, state.storage_root);
-
         self.store
-            .get_storage_at_storage_root_locked(
-                self.state_root,
-                address,
-                state.storage_root,
-                key,
-                &self.locked_backend,
-            )
+            .get_storage_at_root(self.state_root, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 

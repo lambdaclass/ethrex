@@ -151,33 +151,6 @@ impl TrieDB for BackendTrieDB {
     }
 }
 
-/// Shared, ref-counted wrapper around `BackendTrieDBLocked`.
-/// Allows multiple `Trie` instances to reuse a single locked RocksDB snapshot
-/// during block execution, avoiding per-node transaction creation.
-pub struct SharedLockedTrieDB {
-    inner: Arc<BackendTrieDBLocked>,
-}
-
-impl SharedLockedTrieDB {
-    pub fn new(inner: Arc<BackendTrieDBLocked>) -> Self {
-        Self { inner }
-    }
-}
-
-impl TrieDB for SharedLockedTrieDB {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        self.inner.flatkeyvalue_computed(key)
-    }
-
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        self.inner.get(key)
-    }
-
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        self.inner.put_batch(key_values)
-    }
-}
-
 /// Read-only version with persistent locked transaction/snapshot for batch reads
 pub struct BackendTrieDBLocked {
     account_trie_tx: Box<dyn StorageLockedView>,
