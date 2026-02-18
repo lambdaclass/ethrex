@@ -34,8 +34,7 @@ fn test_trie_db_with_address_prefix() {
     let address = H256::from([0xaa; 32]);
     let node_hash = Nibbles::from_hex(vec![1]);
     let node_data = vec![1, 2, 3, 4, 5];
-    let writer =
-        BackendTrieDB::new_for_account_storage(backend.clone(), address, vec![]).unwrap();
+    let writer = BackendTrieDB::new_for_account_storage(backend.clone(), address, vec![]).unwrap();
     writer
         .put_batch(vec![(node_hash.clone(), node_data.clone())])
         .unwrap();

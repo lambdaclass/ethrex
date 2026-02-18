@@ -2145,8 +2145,7 @@ impl Store {
     ) -> Result<Option<U256>, StoreError> {
         let account_hash = hash_address_fixed(&address);
         let last_written = self.last_written()?;
-        let use_fkv =
-            Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
         let storage_root = if use_fkv {
             *EMPTY_TRIE_HASH
         } else {
