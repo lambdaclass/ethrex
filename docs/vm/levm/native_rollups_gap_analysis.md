@@ -147,13 +147,23 @@ contract L2Bridge {
 
 ---
 
-## Gap 5: L2 Fee Market — Burned Fee Tracking
+## Gap 5: L2 Fee Market — Burned Fee Tracking & ETH Supply Drain
 
 **Status:** Partial
-**Current:** Base fee verified, but burned fees not tracked/exposed
+**Current:** Base fee verified, but burned fees not tracked/exposed. L2 ETH supply slowly drains as EIP-1559 base fees are burned on every transaction.
 **Spec:** Expose burned fees in block output for L1 bridge crediting
 
-### Plan
+### Problem
+
+The L2Bridge has a finite preminted ETH balance. Every L2 transaction burns base fees (standard EIP-1559), permanently removing ETH from circulation. Since there is no minting mechanism on L2, the total supply decreases over time. Deposits cannot replenish this because `processL1Message()` transfers ETH from the bridge's own balance — it redistributes, not creates.
+
+### Possible Solutions
+
+1. **Configure fee destination in the EVM** (recommended) — redirect burned base fees to the L2Bridge contract instead of destroying them, similar to the OP Stack's `BaseFeeVault` predeploy. This keeps total L2 supply constant without changing EVM opcode semantics.
+2. **Post-block bridge crediting** — after standard EVM execution, both the sequencer and the EXECUTE precompile apply a post-processing step crediting the bridge with `sum(base_fee * gas_used)`. The EVM itself is untouched, but the block state transition has an extra step.
+3. **Over-premint** — premint enough ETH that drain is negligible for the PoC lifetime. Does not solve the problem, only delays it.
+
+### Plan (Burned Fee Tracking)
 
 1. After block execution, compute `burned_fees` = sum over all txs of `base_fee_per_gas * gas_used_after_refund`.
 2. Add `burnedFees` to the precompile return value (160 bytes total).

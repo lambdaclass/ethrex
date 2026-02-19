@@ -469,6 +469,7 @@ This PoC intentionally omits several things that would be needed for production:
 - **No finality delay for withdrawals** — Withdrawals can be claimed immediately after the block is processed (production would require a challenge period)
 - **No forced transaction mechanism** — No censorship resistance guarantees
 - **No burned fee tracking** — Base fees are burned implicitly but not exposed separately
+- **L2 ETH supply drain** — EIP-1559 base fees are burned on every L2 transaction, permanently removing ETH from circulation. Since the L2Bridge has a finite preminted balance and there is no minting mechanism, the total L2 ETH supply slowly decreases over time. A possible solution is adding the ability to configure the fee destination in the EVM (similar to the OP Stack's `BaseFeeVault`), redirecting burned fees to the bridge contract instead of destroying them
 - **No L2 production stack changes** — The existing L2 sequencer, OnChainProposer, and production genesis are unchanged; this PoC only adds the L1-side precompile and contracts
 - **Hybrid serialization** — ABI envelope + RLP block + JSON witness (spec envisions blob-referenced transactions)
 
