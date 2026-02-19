@@ -95,7 +95,8 @@ impl SyncManager {
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
-        if has_checkpoint {
+        // Skip if the auto-switch already transitioned to full sync (snap_enabled is now false)
+        if has_checkpoint && sync_manager.snap_enabled.load(Ordering::Relaxed) {
             sync_manager.start_sync();
         }
         sync_manager
