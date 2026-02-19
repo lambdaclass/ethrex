@@ -77,3 +77,13 @@ pub const BLOB_BASE_COST: u64 = 8192;
 // === EIP-7825 constants ===
 // https://eips.ethereum.org/EIPS/eip-7825
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
+
+// === EIP-7928 BAL size cap constants ===
+/// ITEM_COST = GAS_WARM_ACCESS (100) + TX_ACCESS_LIST_STORAGE_KEY_COST (1900)
+pub const BAL_ITEM_COST: u64 = 2000;
+/// TX_BASE_COST for BAL available gas calculation
+pub const BAL_TX_BASE_COST: u64 = 21000;
+/// MAX_WITHDRAWAL_REQUESTS_PER_BLOCK from EIP-7002
+pub const MAX_WITHDRAWAL_REQUESTS_PER_BLOCK: u64 = 16;
+/// MAX_CONSOLIDATION_REQUESTS_PER_BLOCK from EIP-7251
+pub const MAX_CONSOLIDATION_REQUESTS_PER_BLOCK: u64 = 2;

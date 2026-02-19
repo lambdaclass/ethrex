@@ -267,8 +267,7 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
-    // EIP-7708: Emit Selfdestruct logs for accounts with non-zero balance
-    // This handles the case where a contract receives ETH after being flagged for SELFDESTRUCT
+    // EIP-7708: Emit Burn logs for accounts with non-zero balance marked for deletion
     // Must emit in lexicographical order of address
     if vm.env.config.fork >= Fork::Amsterdam {
         let mut addresses_with_balance: Vec<(Address, U256)> = vm
@@ -288,7 +287,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
         addresses_with_balance.sort_by_key(|(addr, _)| *addr);
 
         for (addr, balance) in addresses_with_balance {
-            let log = create_selfdestruct_log(addr, balance);
+            let log = create_burn_log(addr, balance);
             vm.substate.add_log(log);
         }
     }
