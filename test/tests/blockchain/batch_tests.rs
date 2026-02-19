@@ -9,8 +9,8 @@ use ethrex_common::{
     Address, H160, H256, U256,
     evm::calculate_create_address,
     types::{
-        Block, BlockHeader, EIP1559Transaction, GenesisAccount, Transaction, TxKind,
-        DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER,
+        Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, ELASTICITY_MULTIPLIER,
+        GenesisAccount, Transaction, TxKind,
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
@@ -179,6 +179,11 @@ async fn batch_selfdestruct_created_account_no_spurious_state() {
 
     // 4. Build block 1 and validate it via single-block path.
     let block1 = build_block(&store_a, &blockchain_a, &genesis_header).await;
+    assert_eq!(
+        block1.body.transactions.len(),
+        1,
+        "block1 must include the deploy tx"
+    );
     blockchain_a
         .add_block(block1.clone())
         .expect("block1 should be valid (single-block)");
@@ -217,6 +222,11 @@ async fn batch_selfdestruct_created_account_no_spurious_state() {
 
     // 6. Build block 2 and validate it via single-block path.
     let block2 = build_block(&store_a, &blockchain_a, &block1.header).await;
+    assert_eq!(
+        block2.body.transactions.len(),
+        1,
+        "block2 must include the 0-value tx to the destroyed address"
+    );
     blockchain_a
         .add_block(block2.clone())
         .expect("block2 should be valid (single-block)");
@@ -261,6 +271,11 @@ async fn batch_single_block_selfdestruct() {
         .expect("tx should enter pool");
 
     let block1 = build_block(&store_a, &blockchain_a, &genesis_header).await;
+    assert_eq!(
+        block1.body.transactions.len(),
+        1,
+        "block1 must include the deploy tx"
+    );
     blockchain_a
         .add_block(block1.clone())
         .expect("block1 should be valid (single-block)");
