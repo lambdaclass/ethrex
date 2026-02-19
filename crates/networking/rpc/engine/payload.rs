@@ -1,7 +1,7 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
-use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
@@ -46,8 +46,7 @@ impl RpcHandler for NewPayloadV1Request {
                 ))?);
             }
         };
-        let payload_status =
-            handle_new_payload_v1_v2(&self.payload, block, context, None).await?;
+        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context, None).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -79,8 +78,7 @@ impl RpcHandler for NewPayloadV2Request {
                 ))?);
             }
         };
-        let payload_status =
-            handle_new_payload_v1_v2(&self.payload, block, context, None).await?;
+        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context, None).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

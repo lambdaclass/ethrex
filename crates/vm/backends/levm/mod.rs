@@ -8,6 +8,7 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
@@ -37,7 +38,6 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
-use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::cmp::min;
