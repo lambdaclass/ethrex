@@ -4,6 +4,7 @@ mod tests;
 mod update;
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 
 use ethereum_types::H256;
 
@@ -11,6 +12,11 @@ use crate::EMPTY_TRIE_HASH;
 use crate::error::TrieError;
 use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
+
+/// Stack-allocated path buffer for trie nibble paths.
+/// Ethereum state trie paths are at most 64 nibbles (keccak hash) + 2 for
+/// routing, so 66 bytes fits on the stack without heap allocation.
+pub(super) type PathVec = SmallVec<[u8; 66]>;
 
 /// Trait for on-demand node loading from the database.
 pub trait SparseTrieProvider: Send + Sync {
@@ -67,7 +73,7 @@ pub enum SparseNode {
 struct SubtrieBuffers {
     rlp_buf: Vec<u8>,
     /// Reusable buffer for building child paths in branch node hashing.
-    child_path_buf: Vec<u8>,
+    child_path_buf: PathVec,
 }
 
 /// A subtrie in the SparseTrie, containing nodes indexed by path.
@@ -76,15 +82,18 @@ pub struct SparseSubtrie {
     #[allow(dead_code)]
     path: Nibbles,
     /// Path-indexed node storage (path → SparseNode).
-    nodes: FxHashMap<Vec<u8>, SparseNode>,
+    nodes: FxHashMap<PathVec, SparseNode>,
     /// Leaf full_path → RLP-encoded value (separate from leaf node metadata).
-    values: FxHashMap<Vec<u8>, Vec<u8>>,
+    values: FxHashMap<PathVec, Vec<u8>>,
     /// Paths of nodes modified since last collect_updates (for dirty-only output).
-    dirty_nodes: FxHashSet<Vec<u8>>,
+    dirty_nodes: FxHashSet<PathVec>,
     /// Paths of values modified since last collect_updates (for dirty-only output).
-    dirty_values: FxHashSet<Vec<u8>>,
+    dirty_values: FxHashSet<PathVec>,
     /// Reusable buffers for hash computation.
     buffers: SubtrieBuffers,
+    /// Cached RLP encodings from the last hashing pass.
+    /// Avoids double-encoding between `root()` and `collect_updates()`.
+    rlp_cache: FxHashMap<PathVec, Vec<u8>>,
 }
 
 impl SparseSubtrie {
@@ -96,6 +105,7 @@ impl SparseSubtrie {
             dirty_nodes: FxHashSet::default(),
             dirty_values: FxHashSet::default(),
             buffers: SubtrieBuffers::default(),
+            rlp_cache: FxHashMap::default(),
         }
     }
 
@@ -116,7 +126,7 @@ enum LowerSubtrie {
 #[derive(Default)]
 pub struct PrefixSet {
     /// Set of modified paths (stored as raw nibble vecs for efficiency).
-    modified: Vec<Vec<u8>>,
+    modified: Vec<PathVec>,
     /// Whether the set has been sorted (for prefix-based lookup).
     sorted: bool,
 }
@@ -128,7 +138,7 @@ impl PrefixSet {
 
     /// Mark a path as modified.
     pub fn insert(&mut self, path: &Nibbles) {
-        self.modified.push(path.as_ref().to_vec());
+        self.modified.push(PathVec::from_slice(path.as_ref()));
         self.sorted = false;
     }
 
@@ -191,7 +201,7 @@ pub struct SparseTrie {
     /// Tracks full paths of leaves that have been removed.
     /// These produce `(path, vec![])` deletion markers in the layer cache,
     /// preventing stale reads via the FKV shortcut in `Trie::get()`.
-    removed_leaves: FxHashSet<Vec<u8>>,
+    removed_leaves: FxHashSet<PathVec>,
 }
 
 impl SparseTrie {
@@ -223,7 +233,7 @@ impl SparseTrie {
     ) -> Result<(), TrieError> {
         if root_hash == *EMPTY_TRIE_HASH {
             // Empty trie, insert an empty node at root
-            self.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+            self.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
             return Ok(());
         }
 
@@ -260,14 +270,17 @@ impl SparseTrie {
         self.prefix_set.insert(&full_path);
         // Track removal so collect_updates produces a deletion marker.
         // This prevents stale reads via the FKV shortcut in Trie::get().
-        self.removed_leaves.insert(full_path.as_ref().to_vec());
+        self.removed_leaves
+            .insert(PathVec::from_slice(full_path.as_ref()));
         update::remove_leaf(&mut self.upper, &mut self.lower, full_path, provider)
     }
 
     /// Compute the root hash of the trie, using rayon to parallelize
     /// hashing of lower subtries.
     pub fn root(&mut self) -> Result<H256, TrieError> {
-        hash::compute_root(&mut self.upper, &mut self.lower, &mut self.prefix_set)
+        let result = hash::compute_root(&mut self.upper, &mut self.lower);
+        self.prefix_set.clear();
+        result
     }
 
     /// Collect modified nodes as (path, RLP-encoded node) pairs
@@ -290,17 +303,24 @@ impl SparseTrie {
         let collect_subtrie = |subtrie: &SparseSubtrie, updates: &mut Vec<(Nibbles, Vec<u8>)>| {
             // Only emit dirty nodes (modified since last reveal), not all revealed nodes
             for path_data in &subtrie.dirty_nodes {
-                if let Some(node) = subtrie.nodes.get(path_data)
-                    && let Some(rlp) =
-                        hash::encode_node(node, &subtrie.values, &subtrie.nodes, path_data)
-                {
-                    updates.push((Nibbles::from_hex(path_data.clone()), rlp));
+                if let Some(node) = subtrie.nodes.get(path_data.as_slice()) {
+                    // Check RLP cache first (populated during hashing), fall back to encode_node
+                    let rlp = subtrie
+                        .rlp_cache
+                        .get(path_data.as_slice())
+                        .cloned()
+                        .or_else(|| {
+                            hash::encode_node(node, &subtrie.values, &subtrie.nodes, path_data)
+                        });
+                    if let Some(rlp) = rlp {
+                        updates.push((Nibbles::from_hex(path_data.to_vec()), rlp));
+                    }
                 }
             }
             // Only emit dirty values, not all revealed values
             for path_data in &subtrie.dirty_values {
-                if let Some(value) = subtrie.values.get(path_data) {
-                    updates.push((Nibbles::from_hex(path_data.clone()), value.clone()));
+                if let Some(value) = subtrie.values.get(path_data.as_slice()) {
+                    updates.push((Nibbles::from_hex(path_data.to_vec()), value.clone()));
                 }
             }
         };
@@ -321,7 +341,7 @@ impl SparseTrie {
         // Append deletion markers for removed leaves.
         // These correspond to the old Trie's `pending_removal` entries.
         for path in &self.removed_leaves {
-            updates.push((Nibbles::from_hex(path.clone()), vec![]));
+            updates.push((Nibbles::from_hex(path.to_vec()), vec![]));
         }
 
         updates

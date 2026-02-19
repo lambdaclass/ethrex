@@ -18,7 +18,7 @@ impl SparseTrieProvider for NullProvider {
 #[test]
 fn empty_trie_root() {
     let mut trie = SparseTrie::new();
-    trie.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    trie.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
     let root = trie.root().expect("should compute root");
     assert_eq!(root, *EMPTY_TRIE_HASH);
 }
@@ -40,11 +40,11 @@ fn single_leaf_hash_direct() {
 
     // Sparse trie: manually set up the leaf
     let mut sparse = SparseTrie::new();
-    let path_data = path.as_ref().to_vec();
+    let path_data = PathVec::from_slice(path.as_ref());
     sparse.upper.nodes.insert(
-        Vec::new(),
+        PathVec::new(),
         SparseNode::Leaf {
-            key: Nibbles::from_hex(path_data.clone()),
+            key: Nibbles::from_hex(path_data.to_vec()),
             hash: None,
         },
     );
@@ -76,7 +76,7 @@ fn single_leaf_hash_direct() {
 #[test]
 fn single_leaf_insert() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let path = Nibbles::from_bytes(&[0x01, 0x02]);
     let value = vec![0xAB, 0xCD];
@@ -99,7 +99,7 @@ fn single_leaf_insert() {
 #[test]
 fn two_leaves_same_prefix() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let path1 = Nibbles::from_bytes(&[0x01]);
     let path2 = Nibbles::from_bytes(&[0x02]);
@@ -126,7 +126,7 @@ fn two_leaves_same_prefix() {
 #[test]
 fn three_leaves_different_branches() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let entries = vec![
         (vec![0x10], vec![0xAA]),
@@ -156,7 +156,7 @@ fn three_leaves_different_branches() {
 #[test]
 fn update_existing_leaf() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let path = Nibbles::from_bytes(&[0x01, 0x02]);
     sparse
@@ -183,7 +183,7 @@ fn update_existing_leaf() {
 #[test]
 fn leaves_with_shared_prefix() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     // These share the first nibble pair (0x1_)
     let entries = vec![
@@ -214,7 +214,7 @@ fn leaves_with_shared_prefix() {
 #[test]
 fn remove_single_leaf() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let path = Nibbles::from_bytes(&[0x01, 0x02]);
     sparse
@@ -231,7 +231,7 @@ fn remove_single_leaf() {
 #[test]
 fn remove_one_of_two_leaves() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let path1 = Nibbles::from_bytes(&[0x01]);
     let path2 = Nibbles::from_bytes(&[0x02]);
@@ -257,7 +257,7 @@ fn remove_one_of_two_leaves() {
 #[test]
 fn multiple_operations_match_old_trie() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let mut old_trie = Trie::new_temp();
 
@@ -316,7 +316,7 @@ fn prefix_set_basic() {
 #[test]
 fn collect_updates_roundtrip_small() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     // Insert a few entries with short keys
     let entries = vec![
@@ -358,7 +358,7 @@ fn collect_updates_roundtrip_small() {
 #[test]
 fn collect_updates_roundtrip_32byte_keys() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     // Generate some 32-byte keys (simulating hashed addresses)
     let keys: Vec<[u8; 32]> = (0..5u8)
@@ -425,7 +425,7 @@ fn collect_updates_matches_old_trie_commit() {
 
     // New SparseTrie
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
     for (path, value) in &entries {
         sparse
             .update_leaf(Nibbles::from_bytes(path), value.clone(), &NullProvider)
@@ -636,7 +636,7 @@ fn roundtrip_existing_state_32byte_keys() {
 #[test]
 fn collect_updates_roundtrip_many_entries() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     // Generate 30 pseudo-random 32-byte keys (simulating keccak hashes of storage slots)
     let entries: Vec<([u8; 32], Vec<u8>)> = (0..30u8)
@@ -717,7 +717,7 @@ fn extension_spanning_subtrie_boundary() {
 
     // Build with SparseTrie
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
     sparse
         .update_leaf(Nibbles::from_bytes(&key1), value1.clone(), &NullProvider)
         .expect("insert key1");
@@ -834,7 +834,10 @@ fn multi_block_simulation() {
         .collect();
 
     let mut sparse1 = SparseTrie::new();
-    sparse1.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse1
+        .upper
+        .nodes
+        .insert(PathVec::new(), SparseNode::Empty);
 
     for (key, value) in &entries1 {
         sparse1
@@ -989,7 +992,7 @@ fn multi_block_simulation() {
 #[test]
 fn remove_from_multi_child_branch_invalidates_hash() {
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let mut old_trie = Trie::new_temp();
 
@@ -1045,7 +1048,7 @@ fn collect_updates_includes_deletion_markers() {
     // a deletion entry (path, vec![]), matching the old Trie's
     // pending_removal behavior.
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let path1 = Nibbles::from_bytes(&[0x01]);
     let path2 = Nibbles::from_bytes(&[0x02]);
@@ -1080,7 +1083,7 @@ fn removal_then_reinsert_cancels_deletion_marker() {
     // If a leaf is removed and then re-inserted, no deletion marker
     // should be produced (the re-insert cancels the removal).
     let mut sparse = SparseTrie::new();
-    sparse.upper.nodes.insert(Vec::new(), SparseNode::Empty);
+    sparse.upper.nodes.insert(PathVec::new(), SparseNode::Empty);
 
     let path = Nibbles::from_bytes(&[0x01]);
 
