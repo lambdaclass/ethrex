@@ -48,7 +48,7 @@ contract NativeRollup {
     // Reentrancy guard
     bool private _locked;
 
-    event StateAdvanced(uint256 indexed newBlockNumber, bytes32 newStateRoot, bytes32 withdrawalRoot);
+    event StateAdvanced(uint256 indexed newBlockNumber, bytes32 newStateRoot, bytes32 withdrawalRoot, uint256 burnedFees);
     event L1MessageRecorded(address indexed sender, address indexed to, uint256 value, uint256 gasLimit, bytes32 dataHash, uint256 indexed nonce);
     event WithdrawalClaimed(address indexed receiver, uint256 amount, uint256 indexed blockNumber, uint256 indexed messageId);
 
@@ -127,16 +127,23 @@ contract NativeRollup {
         bytes memory input = abi.encode(stateRoot, _block, _witness, l1MessagesRollingHash);
 
         (bool success, bytes memory result) = EXECUTE_PRECOMPILE.call(input);
-        require(success && result.length == 128, "EXECUTE precompile verification failed");
+        require(success && result.length == 160, "EXECUTE precompile verification failed");
 
-        // Decode new state root, block number, withdrawal root, and gas used from precompile return
-        (bytes32 newStateRoot, uint256 newBlockNumber, bytes32 withdrawalRoot) = abi.decode(result, (bytes32, uint256, bytes32));
+        // Decode new state root, block number, withdrawal root, gas used, and burned fees from precompile return
+        (bytes32 newStateRoot, uint256 newBlockNumber, bytes32 withdrawalRoot, , uint256 burnedFees) = abi.decode(result, (bytes32, uint256, bytes32, uint256, uint256));
 
         stateRoot = newStateRoot;
         blockNumber = newBlockNumber;
         withdrawalRoots[newBlockNumber] = withdrawalRoot;
 
-        emit StateAdvanced(newBlockNumber, newStateRoot, withdrawalRoot);
+        // Credit burned fees to the relayer (msg.sender) so they can be reimbursed on L1.
+        // A separate L2 process (out of scope for this PoC) will credit the relayer on L2.
+        if (burnedFees > 0) {
+            (bool sent, ) = msg.sender.call{value: burnedFees}("");
+            require(sent, "Burned fees transfer failed");
+        }
+
+        emit StateAdvanced(newBlockNumber, newStateRoot, withdrawalRoot, burnedFees);
     }
 
     /// @notice Claim a withdrawal that was initiated on L2.

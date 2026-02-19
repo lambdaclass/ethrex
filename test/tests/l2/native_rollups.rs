@@ -147,7 +147,8 @@ fn encode_process_l1_message_call(
     msg_data: &[u8],
     nonce: u64,
 ) -> Vec<u8> {
-    let selector = &keccak_hash(b"processL1Message(address,address,uint256,uint256,bytes,uint256)")[..4];
+    let selector =
+        &keccak_hash(b"processL1Message(address,address,uint256,uint256,bytes,uint256)")[..4];
 
     // ABI encoding with dynamic `bytes` at param index 4:
     // [selector][from][to][value][gasLimit][offset_to_data][nonce][data_length][data_bytes...]
@@ -206,7 +207,9 @@ fn encode_process_l1_message_call(
 ///
 /// Returns (input, block_rlp, witness_json, pre_state_root, post_state_root,
 ///          l1_messages_rolling_hash, gas_used_tx0).
-fn build_l2_state_transition(l1_sender: Address) -> (
+fn build_l2_state_transition(
+    l1_sender: Address,
+) -> (
     ExecutePrecompileInput,
     Vec<u8>,
     Vec<u8>,
@@ -1104,7 +1107,11 @@ async fn test_native_rollup_on_l1() {
         )
         .await
         .expect("get_storage_at failed");
-    assert_eq!(stored_l1_msg_index, U256::from(1), "l1MessageIndex mismatch");
+    assert_eq!(
+        stored_l1_msg_index,
+        U256::from(1),
+        "l1MessageIndex mismatch"
+    );
 
     // 9. Verify withdrawalRoots[1] was stored (zero since no withdrawals in this block)
     // Storage slot for mapping(uint256 => bytes32) at slot 4, key 1:
@@ -1294,7 +1301,9 @@ async fn test_native_rollup_on_l1() {
     println!("  Receiver balance after claim: {receiver_balance_after}");
     println!("  Withdrawal amount: {withdrawal_amount}");
 
-    println!("\nNativeRollup integration test passed (transfer + L1 message + withdrawal + claim)!");
+    println!(
+        "\nNativeRollup integration test passed (transfer + L1 message + withdrawal + claim)!"
+    );
     println!("  Contract:        {contract_address:?}");
     println!("  L2 blocks:       2");
     println!("  L1 message:      5 ETH to charlie");

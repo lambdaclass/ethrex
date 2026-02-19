@@ -51,8 +51,11 @@ static WITHDRAWAL_INITIATED_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
 });
 
 /// Event signature: L1MessageProcessed(address indexed from, address indexed to, uint256 value, uint256 gasLimit, bytes32 dataHash, uint256 indexed nonce)
-static L1_MESSAGE_PROCESSED_SELECTOR: LazyLock<H256> =
-    LazyLock::new(|| H256::from(keccak_hash(b"L1MessageProcessed(address,address,uint256,uint256,bytes32,uint256)")));
+static L1_MESSAGE_PROCESSED_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
+    H256::from(keccak_hash(
+        b"L1MessageProcessed(address,address,uint256,uint256,bytes32,uint256)",
+    ))
+});
 
 /// A withdrawal extracted from L2 block execution logs.
 #[derive(Clone, Debug)]
@@ -91,7 +94,7 @@ pub struct ExecutePrecompileInput {
 /// stored L1 message hashes. The precompile verifies it against L1MessageProcessed
 /// events emitted by the L2Bridge predeploy during block execution.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed)` -- 128 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees)` -- 160 bytes.
 pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
@@ -199,10 +202,12 @@ fn custom_err(msg: String) -> VMError {
 
 /// Core logic, separated so tests can call it directly with a structured input.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed)` -- 128 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees)` -- 160 bytes.
 /// The post-state root is extracted from `block.header.state_root` and verified
 /// against the actual computed state root after execution. The withdrawal root is
-/// computed from WithdrawalInitiated events emitted during block execution.
+/// computed from WithdrawalInitiated events emitted during block execution. The
+/// burned fees are `base_fee_per_gas * block_gas_used` (EIP-1559 base fees are
+/// constant per block).
 pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let ExecutePrecompileInput {
         pre_state_root,
@@ -307,8 +312,14 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let withdrawals = extract_withdrawals(&all_logs);
     let withdrawal_root = compute_withdrawals_merkle_root(&withdrawals);
 
-    // 8. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed) -- 128 bytes
-    let mut result = Vec::with_capacity(128);
+    // 8. Compute burned fees: base_fee_per_gas * block_gas_used (EIP-1559)
+    let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
+    let burned_fees = U256::from(base_fee)
+        .checked_mul(U256::from(block_gas_used))
+        .ok_or(VMError::Internal(InternalError::Overflow))?;
+
+    // 9. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed, burnedFees) -- 160 bytes
+    let mut result = Vec::with_capacity(160);
     result.extend_from_slice(expected_post_state_root.as_bytes());
     // block_number as uint256: 24 zero bytes + 8-byte big-endian
     result.extend_from_slice(&[0u8; 24]);
@@ -318,6 +329,8 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     // gasUsed as uint256: 24 zero bytes + 8-byte big-endian
     result.extend_from_slice(&[0u8; 24]);
     result.extend_from_slice(&block_gas_used.to_be_bytes());
+    // burnedFees as uint256: 32 bytes big-endian
+    result.extend_from_slice(&burned_fees.to_big_endian());
     Ok(Bytes::from(result))
 }
 
@@ -524,12 +537,12 @@ fn compute_l1_messages_rolling_hash(logs: &[Log]) -> H256 {
 
         // Per-message hash: keccak256(from[20] ++ to[20] ++ value[32] ++ gasLimit[32] ++ dataHash[32] ++ nonce[32]) = 168 bytes
         let mut message_preimage = Vec::with_capacity(168);
-        message_preimage.extend_from_slice(from_bytes);       // 20 bytes
-        message_preimage.extend_from_slice(to_bytes);         // 20 bytes
-        message_preimage.extend_from_slice(value_bytes);      // 32 bytes
-        message_preimage.extend_from_slice(gas_limit_bytes);  // 32 bytes
-        message_preimage.extend_from_slice(data_hash_bytes);  // 32 bytes
-        message_preimage.extend_from_slice(nonce_bytes);      // 32 bytes
+        message_preimage.extend_from_slice(from_bytes); // 20 bytes
+        message_preimage.extend_from_slice(to_bytes); // 20 bytes
+        message_preimage.extend_from_slice(value_bytes); // 32 bytes
+        message_preimage.extend_from_slice(gas_limit_bytes); // 32 bytes
+        message_preimage.extend_from_slice(data_hash_bytes); // 32 bytes
+        message_preimage.extend_from_slice(nonce_bytes); // 32 bytes
         let message_hash = H256::from(keccak_hash(&message_preimage));
 
         // Rolling hash: keccak256(rolling[32] ++ message_hash[32]) = 64 bytes
