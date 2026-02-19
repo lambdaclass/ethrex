@@ -991,7 +991,7 @@ mod tests {
                         "bpo4Time": null,
                         "bpo5Time": null,
                         "amsterdamTime": null,
-                        "terminalTotalDifficulty": 0,
+                        "terminalTotalDifficulty": "0x0",
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
                         "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
@@ -1086,7 +1086,8 @@ mod tests {
         let ttd = value
             .pointer("/protocols/eth/terminalTotalDifficulty")
             .expect("terminalTotalDifficulty should be present in response");
-        assert!(ttd.is_number(), "terminalTotalDifficulty should be a number");
+        // Serialized as a hex string to avoid serde_json Value::Number u64 limitation.
+        assert_eq!(ttd.as_str().unwrap(), "0xc70d808a128d7380000");
     }
 
     #[tokio::test]

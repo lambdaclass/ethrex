@@ -44,7 +44,17 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
     let mut protocols = HashMap::new();
 
     let chain_config = storage.get_chain_config();
-    protocols.insert("eth".to_string(), Protocol::Eth(chain_config));
+    // Save terminal_total_difficulty before serialization: serde_json::to_value()
+    // can't represent u128 > u64::MAX (e.g. mainnet's 58750000000000000000000)
+    // because Value::Number only holds u64/i64/f64. We serialize it separately
+    // as a hex string, consistent with ExchangeTransitionConfigPayload.
+    let ttd = chain_config.terminal_total_difficulty;
+    let mut config_for_serialization = chain_config;
+    config_for_serialization.terminal_total_difficulty = None;
+    protocols.insert(
+        "eth".to_string(),
+        Protocol::Eth(config_for_serialization),
+    );
 
     let node_info = NodeInfo {
         enode: enode_url,
@@ -58,13 +68,16 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
         },
         protocols,
     };
-    // Serialize to string first, then parse back to Value.
-    // serde_json::to_value() can't handle u128 > u64::MAX (e.g. mainnet's
-    // terminal_total_difficulty) because Value::Number only holds u64/i64/f64.
-    // The string serializer handles u128 natively.
-    let json_string =
-        serde_json::to_string(&node_info).map_err(|error| RpcErr::Internal(error.to_string()))?;
-    serde_json::from_str(&json_string).map_err(|error| RpcErr::Internal(error.to_string()))
+    let mut value =
+        serde_json::to_value(node_info).map_err(|error| RpcErr::Internal(error.to_string()))?;
+
+    // Patch terminal_total_difficulty back in as a hex string.
+    if let Some(ttd) = ttd {
+        value["protocols"]["eth"]["terminalTotalDifficulty"] =
+            Value::String(format!("{ttd:#x}"));
+    }
+
+    Ok(value)
 }
 
 pub fn set_log_level(
