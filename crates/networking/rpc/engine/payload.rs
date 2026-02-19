@@ -211,7 +211,7 @@ impl RpcHandler for NewPayloadV4Request {
         let chain_config = context.storage.get_chain_config();
 
         if !chain_config.is_prague_activated(block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
+            return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
             )));
@@ -234,6 +234,9 @@ pub struct NewPayloadV5Request {
     pub expected_blob_versioned_hashes: Vec<H256>,
     pub parent_beacon_block_root: H256,
     pub execution_requests: Vec<EncodedRequests>,
+    /// The BAL hash computed from the raw RLP bytes as received (no re-encoding/sorting).
+    /// This preserves the exact encoding from the payload for block hash validation.
+    pub raw_bal_hash: Option<H256>,
 }
 
 impl From<NewPayloadV5Request> for RpcRequest {
@@ -259,6 +262,22 @@ impl RpcHandler for NewPayloadV5Request {
         if params.len() != 4 {
             return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
         }
+
+        // Extract the raw BAL hash from the JSON payload before deserialization.
+        // We hash the raw RLP bytes as-received to preserve the exact encoding
+        // (including any ordering) for accurate block hash validation.
+        let raw_bal_hash = params[0]
+            .get("blockAccessList")
+            .map(|v| {
+                let hex_str = v
+                    .as_str()
+                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
+                let bytes = hex::decode(hex_str.trim_start_matches("0x"))
+                    .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
+                Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
+            })
+            .transpose()?;
+
         Ok(Self {
             payload: serde_json::from_value(params[0].clone())
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
@@ -268,6 +287,7 @@ impl RpcHandler for NewPayloadV5Request {
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
             execution_requests: serde_json::from_value(params[3].clone())
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+            raw_bal_hash,
         })
     }
 
@@ -278,11 +298,10 @@ impl RpcHandler for NewPayloadV5Request {
         validate_execution_requests(&self.execution_requests)?;
 
         let requests_hash = compute_requests_hash(&self.execution_requests);
-        let block_access_list_hash = self
-            .payload
-            .block_access_list
-            .as_ref()
-            .map(|b| b.compute_hash());
+        // Use the hash computed from the raw RLP bytes as-received.
+        // This preserves the exact encoding (including any ordering) from the payload,
+        // so the block hash check correctly detects BAL corruption.
+        let block_access_list_hash = self.raw_bal_hash;
 
         let block = match get_block_from_payload(
             &self.payload,
@@ -301,11 +320,12 @@ impl RpcHandler for NewPayloadV5Request {
         let chain_config = context.storage.get_chain_config();
 
         if !chain_config.is_amsterdam_activated(block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
+            return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
             )));
         }
+
         let payload_status = handle_new_payload_v4(
             &self.payload,
             context,
@@ -430,13 +450,13 @@ impl RpcHandler for GetPayloadV4Request {
         let chain_config = &context.storage.get_chain_config();
 
         if !chain_config.is_prague_activated(payload_bundle.block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
+            return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
         if chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!("{:?}", Fork::Osaka)));
+            return Err(RpcErr::UnsupportedFork(format!("{:?}", Fork::Osaka)));
         }
 
         // V4 doesn't support BAL (Prague fork, pre-EIP-7928)
@@ -483,13 +503,66 @@ impl RpcHandler for GetPayloadV5Request {
         let chain_config = &context.storage.get_chain_config();
 
         if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
+            return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
 
         // V5 supports BAL (Amsterdam fork, EIP-7928)
+        let response = ExecutionPayloadResponse {
+            execution_payload: ExecutionPayload::from_block(
+                payload_bundle.block,
+                payload_bundle.block_access_list,
+            ),
+            block_value: payload_bundle.block_value,
+            blobs_bundle: Some(payload_bundle.blobs_bundle),
+            should_override_builder: Some(false),
+            execution_requests: Some(
+                payload_bundle
+                    .requests
+                    .into_iter()
+                    .filter(|r| !r.is_empty())
+                    .collect(),
+            ),
+        };
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+pub struct GetPayloadV6Request {
+    pub payload_id: u64,
+}
+
+impl From<GetPayloadV6Request> for RpcRequest {
+    fn from(val: GetPayloadV6Request) -> Self {
+        RpcRequest {
+            method: "engine_getPayloadV6".to_string(),
+            params: Some(vec![serde_json::json!(U256::from(val.payload_id))]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for GetPayloadV6Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let payload_id = parse_get_payload_request(params)?;
+        Ok(Self { payload_id })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let payload_bundle = get_payload(self.payload_id, &context).await?;
+        let chain_config = &context.storage.get_chain_config();
+
+        if !chain_config.is_amsterdam_activated(payload_bundle.block.header.timestamp) {
+            return Err(RpcErr::UnsupportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(payload_bundle.block.header.timestamp)
+            )));
+        }
+
+        // V6 supports BAL (Amsterdam/Gloas fork, EIP-7928)
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(
                 payload_bundle.block,
@@ -771,7 +844,7 @@ fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcEr
 fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
     let chain_config = &context.storage.get_chain_config();
     if chain_config.is_cancun_activated(block.header.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
+        return Err(RpcErr::UnsupportedFork(
             "Cancun payload received".to_string(),
         ));
     }
@@ -1044,7 +1117,7 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     let current_fork = chain_config.get_fork(block.header.timestamp);
 
     if current_fork != fork {
-        return Err(RpcErr::UnsuportedFork(format!("{current_fork:?}")));
+        return Err(RpcErr::UnsupportedFork(format!("{current_fork:?}")));
     }
     Ok(())
 }

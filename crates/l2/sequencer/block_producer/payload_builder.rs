@@ -225,6 +225,7 @@ pub async fn fill_transactions(
         // Execute tx
         let previous_remaining_gas = context.remaining_gas;
         let previous_block_value = context.block_value;
+        let previous_cumulative_gas_spent = context.cumulative_gas_spent;
         let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => receipt,
             Err(e) => {
@@ -244,6 +245,7 @@ pub async fn fill_transactions(
                 context.vm.undo_last_tx()?;
                 context.remaining_gas = previous_remaining_gas;
                 context.block_value = previous_block_value;
+                context.cumulative_gas_spent = previous_cumulative_gas_spent;
                 found_invalid_message = true;
                 break;
             }

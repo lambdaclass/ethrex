@@ -101,28 +101,36 @@ impl Evm {
     }
 
     /// Wraps [LEVM::execute_tx].
-    /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
+    /// Updates `remaining_gas` (pre-refund) for block gas accounting and
+    /// `cumulative_gas_spent` (post-refund) for receipt cumulative tracking.
+    /// Returns (Receipt, gas_spent) where gas_spent is post-refund for block value calculation.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_tx(
         &mut self,
         tx: &Transaction,
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
+        cumulative_gas_spent: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
         let execution_report =
             LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
 
+        // Use gas_used (pre-refund for EIP-7778/Amsterdam+) for block gas accounting
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
+
+        // Track cumulative post-refund gas for receipt
+        *cumulative_gas_spent += execution_report.gas_spent;
 
         let receipt = Receipt::new(
             tx.tx_type(),
             execution_report.is_success(),
-            block_header.gas_limit - *remaining_gas,
+            *cumulative_gas_spent,
             execution_report.logs.clone(),
         );
 
-        Ok((receipt, execution_report.gas_used))
+        // Return gas_spent (post-refund) for block value calculation
+        Ok((receipt, execution_report.gas_spent))
     }
 
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {

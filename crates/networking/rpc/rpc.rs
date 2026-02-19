@@ -3,7 +3,7 @@ use crate::debug::block_access_list::BlockAccessListRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
-use crate::engine::payload::{GetPayloadV5Request, NewPayloadV5Request};
+use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -356,7 +356,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::MissingParam(_) => "MissingParam",
         RpcErr::TooLargeRequest => "TooLargeRequest",
         RpcErr::BadHexFormat(_) => "BadHexFormat",
-        RpcErr::UnsuportedFork(_) => "UnsuportedFork",
+        RpcErr::UnsupportedFork(_) => "UnsupportedFork",
         RpcErr::Internal(_) => "Internal",
         RpcErr::Vm(_) => "Vm",
         RpcErr::Revert { .. } => "Revert",
@@ -811,6 +811,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
+        "engine_getPayloadV6" => GetPayloadV6Request::call(req, context).await,
         "engine_getPayloadV5" => GetPayloadV5Request::call(req, context).await,
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,

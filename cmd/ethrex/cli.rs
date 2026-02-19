@@ -454,6 +454,20 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[command(name = "repl", about = "Interactive REPL for Ethereum JSON-RPC")]
+    Repl {
+        /// JSON-RPC endpoint URL
+        #[arg(short = 'e', long, default_value = "http://localhost:8545")]
+        endpoint: String,
+
+        /// Path to command history file
+        #[arg(long, default_value = "~/.ethrex/history")]
+        history_file: String,
+
+        /// Execute a single command and exit
+        #[arg(short = 'x', long)]
+        execute: Option<String>,
+    },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
@@ -531,6 +545,13 @@ impl Subcommand {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
+            }
+            Subcommand::Repl {
+                endpoint,
+                history_file,
+                execute,
+            } => {
+                ethrex_repl::run(endpoint, history_file, execute).await;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,

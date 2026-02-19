@@ -86,6 +86,12 @@ jobs:
         run: |
           echo "timestamp=$EPOCHSECONDS" >> "$GITHUB_OUTPUT"
 
+      - name: Cleanup stale Docker and Kurtosis resources
+        run: |
+          kurtosis engine stop || true
+          docker network prune -f
+          docker image prune -f
+
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
         id: snapsync
@@ -126,6 +132,12 @@ jobs:
         id: start
         run: |
           echo "timestamp=$EPOCHSECONDS" >> "$GITHUB_OUTPUT"
+
+      - name: Cleanup stale Docker and Kurtosis resources
+        run: |
+          kurtosis engine stop || true
+          docker network prune -f
+          docker image prune -f
 
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
