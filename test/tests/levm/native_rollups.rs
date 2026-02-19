@@ -21,9 +21,8 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        Account, AccountInfo, AccountState, Block, BlockBody, BlockHeader, ChainConfig, Code,
-        CodeMetadata, EIP1559Transaction, EIP4844Transaction, Receipt, Transaction, TxKind,
-        Withdrawal,
+        Account, AccountInfo, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata,
+        EIP1559Transaction, EIP4844Transaction, Receipt, Transaction, TxKind,
         block_execution_witness::{ExecutionWitness, GuestProgramState},
     },
 };
@@ -184,20 +183,39 @@ fn encode_process_l1_message_call(
     calldata
 }
 
-/// Build ABI-encoded calldata for the EXECUTE precompile.
+/// Build ABI-encoded calldata for the EXECUTE precompile (14-slot ABI).
 ///
-/// Format: abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 l1MessagesRollingHash)
-///
-/// ABI layout:
-///   slot 0: preStateRoot            (bytes32, static)
-///   slot 1: offset_to_blockRlp      (uint256, dynamic pointer -> 0x80)
-///   slot 2: offset_to_witness       (uint256, dynamic pointer)
-///   slot 3: l1MessagesRollingHash   (bytes32, static -- NOT a pointer)
-///   tail:   [block data] [witness data]
+/// Format: abi.encode(
+///     bytes32 preStateRoot,           // slot 0
+///     bytes32 postStateRoot,          // slot 1
+///     bytes32 postReceiptsRoot,       // slot 2
+///     uint256 blockNumber,            // slot 3
+///     uint256 blockGasLimit,          // slot 4
+///     address coinbase,               // slot 5 (left-padded to 32 bytes)
+///     bytes32 prevRandao,             // slot 6
+///     uint256 timestamp,              // slot 7
+///     uint256 parentBaseFee,          // slot 8
+///     uint256 parentGasLimit,         // slot 9
+///     uint256 parentGasUsed,          // slot 10
+///     bytes32 l1MessagesRollingHash,  // slot 11
+///     bytes   transactions,           // slot 12 (dynamic offset pointer)
+///     bytes   witnessJson             // slot 13 (dynamic offset pointer)
+/// )
+#[allow(clippy::too_many_arguments)]
 fn build_precompile_calldata(
     pre_state_root: H256,
+    post_state_root: H256,
+    post_receipts_root: H256,
+    block_number: u64,
+    block_gas_limit: u64,
+    coinbase: Address,
+    prev_randao: H256,
+    timestamp: u64,
+    parent_base_fee: u64,
+    parent_gas_limit: u64,
+    parent_gas_used: u64,
     l1_messages_rolling_hash: H256,
-    block_rlp: &[u8],
+    transactions_rlp: &[u8],
     witness_json: &[u8],
 ) -> Vec<u8> {
     // Helper: pad to 32-byte boundary
@@ -205,35 +223,80 @@ fn build_precompile_calldata(
         len + ((32 - (len % 32)) % 32)
     }
 
-    // Head is 4 * 32 = 128 bytes. Dynamic data starts after the head.
-    let block_offset: usize = 128;
-    let block_padded = pad32(block_rlp.len());
-    let witness_offset: usize = block_offset + 32 + block_padded;
+    // Head is 14 * 32 = 448 bytes. Dynamic data starts after the head.
+    let head_size: usize = 448;
+    let txs_offset: usize = head_size;
+    let txs_padded = pad32(transactions_rlp.len());
+    let witness_offset: usize = txs_offset + 32 + txs_padded;
 
     let mut data = Vec::new();
 
     // slot 0: preStateRoot (bytes32)
     data.extend_from_slice(pre_state_root.as_bytes());
 
-    // slot 1: offset to blockRlp
+    // slot 1: postStateRoot (bytes32)
+    data.extend_from_slice(post_state_root.as_bytes());
+
+    // slot 2: postReceiptsRoot (bytes32)
+    data.extend_from_slice(post_receipts_root.as_bytes());
+
+    // slot 3: blockNumber (uint256)
+    let mut num_bytes = [0u8; 32];
+    num_bytes[24..].copy_from_slice(&block_number.to_be_bytes());
+    data.extend_from_slice(&num_bytes);
+
+    // slot 4: blockGasLimit (uint256)
+    let mut gas_bytes = [0u8; 32];
+    gas_bytes[24..].copy_from_slice(&block_gas_limit.to_be_bytes());
+    data.extend_from_slice(&gas_bytes);
+
+    // slot 5: coinbase (address, left-padded to 32 bytes)
+    let mut coinbase_bytes = [0u8; 32];
+    coinbase_bytes[12..].copy_from_slice(coinbase.as_bytes());
+    data.extend_from_slice(&coinbase_bytes);
+
+    // slot 6: prevRandao (bytes32)
+    data.extend_from_slice(prev_randao.as_bytes());
+
+    // slot 7: timestamp (uint256)
+    let mut ts_bytes = [0u8; 32];
+    ts_bytes[24..].copy_from_slice(&timestamp.to_be_bytes());
+    data.extend_from_slice(&ts_bytes);
+
+    // slot 8: parentBaseFee (uint256)
+    let mut pbf_bytes = [0u8; 32];
+    pbf_bytes[24..].copy_from_slice(&parent_base_fee.to_be_bytes());
+    data.extend_from_slice(&pbf_bytes);
+
+    // slot 9: parentGasLimit (uint256)
+    let mut pgl_bytes = [0u8; 32];
+    pgl_bytes[24..].copy_from_slice(&parent_gas_limit.to_be_bytes());
+    data.extend_from_slice(&pgl_bytes);
+
+    // slot 10: parentGasUsed (uint256)
+    let mut pgu_bytes = [0u8; 32];
+    pgu_bytes[24..].copy_from_slice(&parent_gas_used.to_be_bytes());
+    data.extend_from_slice(&pgu_bytes);
+
+    // slot 11: l1MessagesRollingHash (bytes32)
+    data.extend_from_slice(l1_messages_rolling_hash.as_bytes());
+
+    // slot 12: offset to transactions
     let mut offset_bytes = [0u8; 32];
-    offset_bytes[24..].copy_from_slice(&(block_offset as u64).to_be_bytes());
+    offset_bytes[24..].copy_from_slice(&(txs_offset as u64).to_be_bytes());
     data.extend_from_slice(&offset_bytes);
 
-    // slot 2: offset to witnessJson
+    // slot 13: offset to witnessJson
     let mut offset_bytes = [0u8; 32];
     offset_bytes[24..].copy_from_slice(&(witness_offset as u64).to_be_bytes());
     data.extend_from_slice(&offset_bytes);
 
-    // slot 3: l1MessagesRollingHash (bytes32, static)
-    data.extend_from_slice(l1_messages_rolling_hash.as_bytes());
-
-    // tail: blockRlp (length + data + padding)
+    // tail: transactions (length + data + padding)
     let mut len_bytes = [0u8; 32];
-    len_bytes[24..].copy_from_slice(&(block_rlp.len() as u64).to_be_bytes());
+    len_bytes[24..].copy_from_slice(&(transactions_rlp.len() as u64).to_be_bytes());
     data.extend_from_slice(&len_bytes);
-    data.extend_from_slice(block_rlp);
-    data.resize(data.len() + (block_padded - block_rlp.len()), 0);
+    data.extend_from_slice(transactions_rlp);
+    data.resize(data.len() + (txs_padded - transactions_rlp.len()), 0);
 
     // tail: witnessJson (length + data + padding)
     let witness_padded = pad32(witness_json.len());
@@ -249,8 +312,12 @@ fn build_precompile_calldata(
 /// Helper: build a minimal ExecutePrecompileInput for rejection tests.
 ///
 /// Creates a genesis state with a single account, builds an ExecutionWitness,
-/// and wraps the given block in an ExecutePrecompileInput.
-fn build_rejection_test_input(block: Block) -> ExecutePrecompileInput {
+/// and wraps the given transactions in an ExecutePrecompileInput with individual fields.
+fn build_rejection_test_input(
+    transactions: Vec<Transaction>,
+    block_number: u64,
+    timestamp: u64,
+) -> ExecutePrecompileInput {
     let account = Address::from_low_u64_be(0xA);
 
     let mut state_trie = Trie::new_temp();
@@ -265,10 +332,21 @@ fn build_rejection_test_input(block: Block) -> ExecutePrecompileInput {
     let pre_state_root = state_trie.hash_no_commit();
 
     let parent_header = BlockHeader {
-        number: block.header.number.saturating_sub(1),
+        number: block_number.saturating_sub(1),
         state_root: pre_state_root,
         gas_limit: 30_000_000,
-        timestamp: block.header.timestamp.saturating_sub(12),
+        gas_used: 15_000_000,
+        base_fee_per_gas: Some(1_000_000_000),
+        timestamp: timestamp.saturating_sub(12),
+        ..Default::default()
+    };
+
+    // Build a temporary header for the witness block_headers_bytes
+    let temp_header = BlockHeader {
+        parent_hash: parent_header.compute_block_hash(),
+        number: block_number,
+        gas_limit: 30_000_000,
+        timestamp,
         ..Default::default()
     };
 
@@ -276,8 +354,8 @@ fn build_rejection_test_input(block: Block) -> ExecutePrecompileInput {
 
     let witness = ExecutionWitness {
         codes: vec![],
-        block_headers_bytes: vec![parent_header.encode_to_vec(), block.header.encode_to_vec()],
-        first_block_number: block.header.number,
+        block_headers_bytes: vec![parent_header.encode_to_vec(), temp_header.encode_to_vec()],
+        first_block_number: block_number,
         chain_config,
         state_trie_root: get_trie_root_node(&state_trie),
         storage_trie_roots: BTreeMap::new(),
@@ -286,13 +364,24 @@ fn build_rejection_test_input(block: Block) -> ExecutePrecompileInput {
 
     ExecutePrecompileInput {
         pre_state_root,
+        post_state_root: H256::zero(), // doesn't matter for rejection tests
+        post_receipts_root: H256::zero(),
+        block_number,
+        block_gas_limit: 30_000_000,
+        coinbase: Address::zero(),
+        prev_randao: H256::zero(),
+        timestamp,
+        parent_base_fee: 1_000_000_000,
+        parent_gas_limit: 30_000_000,
+        parent_gas_used: 15_000_000,
         l1_messages_rolling_hash: H256::zero(),
+        transactions,
         execution_witness: witness,
-        block,
     }
 }
 
 /// Convenience wrapper using the default L1 sender address (0x1A1).
+#[allow(clippy::type_complexity)]
 fn build_l2_state_transition() -> (ExecutePrecompileInput, Vec<u8>, Vec<u8>, H256, H256, H256) {
     build_l2_state_transition_with_sender(Address::from_low_u64_be(0x1A1))
 }
@@ -306,11 +395,12 @@ fn build_l2_state_transition() -> (ExecutePrecompileInput, Vec<u8>, Vec<u8>, H25
 ///
 /// Returns:
 ///   - ExecutePrecompileInput (for direct execute_inner calls)
-///   - block RLP bytes (for binary calldata / contract call)
+///   - transactions RLP bytes (for binary calldata / contract call)
 ///   - witness JSON bytes (for binary calldata / contract call)
 ///   - pre_state_root
 ///   - post_state_root
 ///   - l1_messages_rolling_hash
+#[allow(clippy::type_complexity)]
 fn build_l2_state_transition_with_sender(
     l1_sender: Address,
 ) -> (ExecutePrecompileInput, Vec<u8>, Vec<u8>, H256, H256, H256) {
@@ -370,8 +460,6 @@ fn build_l2_state_transition_with_sender(
     insert_account(&mut state_trie, bob, &AccountState::default());
     insert_account(&mut state_trie, charlie, &AccountState::default());
     insert_account(&mut state_trie, coinbase, &AccountState::default());
-    // Burn address used by L2Bridge.withdraw()
-    insert_account(&mut state_trie, Address::zero(), &AccountState::default());
     insert_account(
         &mut state_trie,
         L2_BRIDGE,
@@ -588,33 +676,26 @@ fn build_l2_state_transition_with_sender(
         .state_trie_root()
         .expect("state root");
 
-    // ===== Build final block =====
-    let block = Block {
-        header: BlockHeader {
-            parent_hash: parent_header.compute_block_hash(),
-            number: 1,
-            gas_used: total_gas_used,
-            gas_limit: 30_000_000,
-            base_fee_per_gas: Some(base_fee),
-            timestamp: 1_000_012,
-            coinbase,
-            transactions_root,
-            receipts_root,
-            state_root: post_state_root,
-            withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[])),
-            ..Default::default()
-        },
-        body: BlockBody {
-            transactions,
-            ommers: vec![],
-            withdrawals: Some(vec![]),
-        },
+    // ===== Build final block header (for witness block_headers_bytes) =====
+    let final_header = BlockHeader {
+        parent_hash: parent_header.compute_block_hash(),
+        number: 1,
+        gas_used: total_gas_used,
+        gas_limit: 30_000_000,
+        base_fee_per_gas: Some(base_fee),
+        timestamp: 1_000_012,
+        coinbase,
+        transactions_root,
+        receipts_root,
+        state_root: post_state_root,
+        withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[])),
+        ..Default::default()
     };
 
     // ===== Build final witness (with correct block header) =====
     let witness = ExecutionWitness {
         codes: vec![bridge_runtime],
-        block_headers_bytes: vec![parent_header.encode_to_vec(), block.header.encode_to_vec()],
+        block_headers_bytes: vec![parent_header.encode_to_vec(), final_header.encode_to_vec()],
         first_block_number: 1,
         chain_config,
         state_trie_root: get_trie_root_node(&state_trie),
@@ -641,19 +722,29 @@ fn build_l2_state_transition_with_sender(
     rolling_preimage[32..].copy_from_slice(message_hash.as_bytes());
     let l1_messages_rolling_hash = H256::from(keccak_hash(rolling_preimage));
 
-    let block_rlp = block.encode_to_vec();
+    let transactions_rlp = transactions.encode_to_vec();
     let witness_json = serde_json::to_vec(&witness).expect("witness JSON serialization failed");
 
     let input = ExecutePrecompileInput {
         pre_state_root,
+        post_state_root,
+        post_receipts_root: receipts_root,
+        block_number: 1,
+        block_gas_limit: 30_000_000,
+        coinbase,
+        prev_randao: H256::zero(),
+        timestamp: 1_000_012,
+        parent_base_fee: base_fee,
+        parent_gas_limit: 30_000_000,
+        parent_gas_used: 15_000_000,
         l1_messages_rolling_hash,
+        transactions,
         execution_witness: witness,
-        block,
     };
 
     (
         input,
-        block_rlp,
+        transactions_rlp,
         witness_json,
         pre_state_root,
         post_state_root,
@@ -668,13 +759,13 @@ fn build_l2_state_transition_with_sender(
 /// Flow:
 ///   1. Build L2 genesis with L2Bridge (preminted) + relayer
 ///   2. L2 block has 2 txs: processL1Message(l1_sender, charlie, 5 ETH, 100000, "", 0) + Alice->Bob 1 ETH
-///   3. Call EXECUTE precompile with the block, witness, and L1 messages rolling hash
+///   3. Call EXECUTE precompile with individual fields, transactions, witness, and L1 messages rolling hash
 ///   4. Verify returned state root, block number, and gas used
 #[test]
 fn test_execute_precompile_transfer_and_l1_message() {
     let (
-        _input,
-        block_rlp,
+        input,
+        transactions_rlp,
         witness_json,
         pre_state_root,
         post_state_root,
@@ -684,8 +775,18 @@ fn test_execute_precompile_transfer_and_l1_message() {
     // Build ABI-encoded calldata and execute via execute_precompile()
     let calldata = build_precompile_calldata(
         pre_state_root,
+        input.post_state_root,
+        input.post_receipts_root,
+        input.block_number,
+        input.block_gas_limit,
+        input.coinbase,
+        input.prev_randao,
+        input.timestamp,
+        input.parent_base_fee,
+        input.parent_gas_limit,
+        input.parent_gas_used,
         l1_messages_rolling_hash,
-        &block_rlp,
+        &transactions_rlp,
         &witness_json,
     );
     println!("ABI-encoded EXECUTE calldata: {} bytes", calldata.len());
@@ -753,60 +854,13 @@ fn test_execute_precompile_rejects_blob_transactions() {
         ..Default::default()
     });
 
-    let block = Block {
-        header: BlockHeader {
-            number: 1,
-            gas_limit: 30_000_000,
-            timestamp: 1_000_012,
-            ..Default::default()
-        },
-        body: BlockBody {
-            transactions: vec![blob_tx],
-            ommers: vec![],
-            withdrawals: Some(vec![]),
-        },
-    };
-
-    let result = execute_inner(build_rejection_test_input(block));
+    let result = execute_inner(build_rejection_test_input(vec![blob_tx], 1, 1_000_012));
     assert!(
         result
             .unwrap_err()
             .to_string()
             .contains("Blob transactions"),
         "Expected blob transaction rejection"
-    );
-}
-
-/// Test that blocks with non-empty withdrawals are rejected in native rollups.
-#[test]
-fn test_execute_precompile_rejects_withdrawals() {
-    let block = Block {
-        header: BlockHeader {
-            number: 1,
-            gas_used: 0,
-            gas_limit: 30_000_000,
-            timestamp: 1_000_012,
-            ..Default::default()
-        },
-        body: BlockBody {
-            transactions: vec![],
-            ommers: vec![],
-            withdrawals: Some(vec![Withdrawal {
-                index: 0,
-                validator_index: 0,
-                address: Address::from_low_u64_be(0xA),
-                amount: 1000,
-            }]),
-        },
-    };
-
-    let result = execute_inner(build_rejection_test_input(block));
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("must not contain withdrawals"),
-        "Expected withdrawal rejection"
     );
 }
 
@@ -857,11 +911,11 @@ impl ethrex_levm::db::Database for TestDb {
     }
 }
 
-/// NativeRollup.sol runtime bytecode (compiled with solc 0.8.31).
+/// NativeRollup.sol runtime bytecode (compiled with solc 0.8.31 --via-ir --optimize).
 ///
 /// Source: crates/vm/levm/contracts/NativeRollup.sol
-/// Compile: cd crates/vm/levm/contracts && solc --bin-runtime NativeRollup.sol -o solc_out --overwrite
-const NATIVE_ROLLUP_RUNTIME_HEX: &str = "608060405260043610610089575f3560e01c806357e871e71161005857806357e871e7146101be5780635eaadcc7146101e85780639588eca214610204578063a623f02e1461022e578063ed3133f21461026a576100f0565b806307132c05146100f45780630a045444146101305780631ed873c7146101585780633e67267f14610182576100f0565b366100f0575f34116100d0576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016100c790610c2a565b60405180910390fd5b6100ee333334620186a060405180602001604052805f815250610292565b005b5f5ffd5b3480156100ff575f5ffd5b5061011a60048036038101906101159190610c83565b610374565b6040516101279190610cc8565b60405180910390f35b34801561013b575f5ffd5b5061015660048036038101906101519190610dcf565b610391565b005b348015610163575f5ffd5b5061016c61076c565b6040516101799190610e88565b60405180910390f35b34801561018d575f5ffd5b506101a860048036038101906101a39190610ea1565b610772565b6040516101b59190610edb565b60405180910390f35b3480156101c9575f5ffd5b506101d2610792565b6040516101df9190610e88565b60405180910390f35b61020260048036038101906101fd9190610f49565b610798565b005b34801561020f575f5ffd5b506102186107ee565b6040516102259190610edb565b60405180910390f35b348015610239575f5ffd5b50610254600480360381019061024f9190610ea1565b6107f3565b6040516102619190610edb565b60405180910390f35b348015610275575f5ffd5b50610290600480360381019061028b9190610fba565b610808565b005b5f60028054905090505f828051906020012090505f8787878785876040516020016102c2969594939291906110d0565b604051602081830303815290604052805190602001209050600281908060018154018082558091505060019003905f5260205f20015f9091909190915055828773ffffffffffffffffffffffffffffffffffffffff168973ffffffffffffffffffffffffffffffffffffffff167fb42098fed77baca4d18a86b35f7bbfc750de2275ad10e0837fd550faf3c9d56f8989876040516103629392919061113f565b60405180910390a45050505050505050565b6005602052805f5260405f205f915054906101000a900460ff1681565b60065f9054906101000a900460ff16156103e0576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016103d7906111be565b60405180910390fd5b600160065f6101000a81548160ff02191690831515021790555060015483111561043f576040517f08c379a000000000000000000000000000000000000000000000000000000000815260040161043690611226565b60405180910390fd5b5f73ffffffffffffffffffffffffffffffffffffffff168673ffffffffffffffffffffffffffffffffffffffff16036104ad576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016104a49061128e565b60405180910390fd5b5f85116104ef576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016104e6906112f6565b60405180910390fd5b5f878787876040516020016105079493929190611314565b60405160208183030381529060405280519060200120905060055f8281526020019081526020015f205f9054906101000a900460ff161561057d576040517f08c379a0000000000000000000000000000000000000000000000000000000008152600401610574906113ab565b60405180910390fd5b5f60045f8681526020019081526020015f205490505f5f1b81036105d6576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016105cd90611413565b60405180910390fd5b5f6105e385858486610b0f565b905080610625576040517f08c379a000000000000000000000000000000000000000000000000000000000815260040161061c9061147b565b60405180910390fd5b600160055f8581526020019081526020015f205f6101000a81548160ff0219169083151502179055505f8973ffffffffffffffffffffffffffffffffffffffff1689604051610673906114c6565b5f6040518083038185875af1925050503d805f81146106ad576040519150601f19603f3d011682016040523d82523d5f602084013e6106b2565b606091505b50509050806106f6576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016106ed90611524565b60405180910390fd5b87878b73ffffffffffffffffffffffffffffffffffffffff167f1113af8a2f367ad0f39a44a9985b12833c5e9dcb54532dd60575fc4ccbd5f9818c60405161073e9190610e88565b60405180910390a4505050505f60065f6101000a81548160ff02191690831515021790555050505050505050565b60035481565b60028181548110610781575f80fd5b905f5260205f20015f915090505481565b60015481565b6107e83385348686868080601f0160208091040260200160405190810160405280939291908181526020018383808284375f81840152601f19601f82011690508083019250505050505050610292565b50505050565b5f5481565b6004602052805f5260405f205f915090505481565b5f60035490506002805490508682610820919061156f565b1115610861576040517f08c379a0000000000000000000000000000000000000000000000000000000008152600401610858906115ec565b60405180910390fd5b5f5f5f1b90505f5f90505b878110156108d3578160028285610883919061156f565b815481106108945761089361160a565b5b905f5260205f2001546040516020016108ae929190611637565b604051602081830303815290604052805190602001209150808060010191505061086c565b5086826108e0919061156f565b6003819055505f5f548787878786604051602001610903969594939291906116bc565b60405160208183030381529060405290505f5f61010173ffffffffffffffffffffffffffffffffffffffff168360405161093d9190611759565b5f604051808303815f865af19150503d805f8114610976576040519150601f19603f3d011682016040523d82523d5f602084013e61097b565b606091505b509150915081801561098e575060a08151145b6109cd576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016109c4906117df565b60405180910390fd5b5f5f5f5f848060200190518101906109e59190611825565b945050935093509350835f81905550826001819055508160045f8581526020019081526020015f20819055505f811115610ac3575f3373ffffffffffffffffffffffffffffffffffffffff1682604051610a3e906114c6565b5f6040518083038185875af1925050503d805f8114610a78576040519150601f19603f3d011682016040523d82523d5f602084013e610a7d565b606091505b5050905080610ac1576040517f08c379a0000000000000000000000000000000000000000000000000000000008152600401610ab8906118e6565b60405180910390fd5b505b827f90575f875cc6b35d0dca93d3812abea93f955cf5ec0a36576a5bce85e1687305858484604051610af793929190611904565b60405180910390a25050505050505050505050505050565b5f5f8290505f5f90505b86869050811015610b5657610b4782888884818110610b3b57610b3a61160a565b5b90506020020135610b65565b91508080600101915050610b19565b50838114915050949350505050565b5f81831015610b9e578282604051602001610b81929190611637565b604051602081830303815290604052805190602001209050610bca565b8183604051602001610bb1929190611637565b6040516020818303038152906040528051906020012090505b92915050565b5f82825260208201905092915050565b7f4d7573742073656e6420455448000000000000000000000000000000000000005f82015250565b5f610c14600d83610bd0565b9150610c1f82610be0565b602082019050919050565b5f6020820190508181035f830152610c4181610c08565b9050919050565b5f5ffd5b5f5ffd5b5f819050919050565b610c6281610c50565b8114610c6c575f5ffd5b50565b5f81359050610c7d81610c59565b92915050565b5f60208284031215610c9857610c97610c48565b5b5f610ca584828501610c6f565b91505092915050565b5f8115159050919050565b610cc281610cae565b82525050565b5f602082019050610cdb5f830184610cb9565b92915050565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f610d0a82610ce1565b9050919050565b610d1a81610d00565b8114610d24575f5ffd5b50565b5f81359050610d3581610d11565b92915050565b5f819050919050565b610d4d81610d3b565b8114610d57575f5ffd5b50565b5f81359050610d6881610d44565b92915050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83601f840112610d8f57610d8e610d6e565b5b8235905067ffffffffffffffff811115610dac57610dab610d72565b5b602083019150836020820283011115610dc857610dc7610d76565b5b9250929050565b5f5f5f5f5f5f5f60c0888a031215610dea57610de9610c48565b5b5f610df78a828b01610d27565b9750506020610e088a828b01610d27565b9650506040610e198a828b01610d5a565b9550506060610e2a8a828b01610d5a565b9450506080610e3b8a828b01610d5a565b93505060a088013567ffffffffffffffff811115610e5c57610e5b610c4c565b5b610e688a828b01610d7a565b925092505092959891949750929550565b610e8281610d3b565b82525050565b5f602082019050610e9b5f830184610e79565b92915050565b5f60208284031215610eb657610eb5610c48565b5b5f610ec384828501610d5a565b91505092915050565b610ed581610c50565b82525050565b5f602082019050610eee5f830184610ecc565b92915050565b5f5f83601f840112610f0957610f08610d6e565b5b8235905067ffffffffffffffff811115610f2657610f25610d72565b5b602083019150836001820283011115610f4257610f41610d76565b5b9250929050565b5f5f5f5f60608587031215610f6157610f60610c48565b5b5f610f6e87828801610d27565b9450506020610f7f87828801610d5a565b935050604085013567ffffffffffffffff811115610fa057610f9f610c4c565b5b610fac87828801610ef4565b925092505092959194509250565b5f5f5f5f5f60608688031215610fd357610fd2610c48565b5b5f610fe088828901610d5a565b955050602086013567ffffffffffffffff81111561100157611000610c4c565b5b61100d88828901610ef4565b9450945050604086013567ffffffffffffffff8111156110305761102f610c4c565b5b61103c88828901610ef4565b92509250509295509295909350565b5f8160601b9050919050565b5f6110618261104b565b9050919050565b5f61107282611057565b9050919050565b61108a61108582610d00565b611068565b82525050565b5f819050919050565b6110aa6110a582610d3b565b611090565b82525050565b5f819050919050565b6110ca6110c582610c50565b6110b0565b82525050565b5f6110db8289611079565b6014820191506110eb8288611079565b6014820191506110fb8287611099565b60208201915061110b8286611099565b60208201915061111b82856110b9565b60208201915061112b8284611099565b602082019150819050979650505050505050565b5f6060820190506111525f830186610e79565b61115f6020830185610e79565b61116c6040830184610ecc565b949350505050565b7f5265656e7472616e637947756172643a207265656e7472616e742063616c6c005f82015250565b5f6111a8601f83610bd0565b91506111b382611174565b602082019050919050565b5f6020820190508181035f8301526111d58161119c565b9050919050565b7f426c6f636b206e6f74207965742066696e616c697a65640000000000000000005f82015250565b5f611210601783610bd0565b915061121b826111dc565b602082019050919050565b5f6020820190508181035f83015261123d81611204565b9050919050565b7f496e76616c6964207265636569766572000000000000000000000000000000005f82015250565b5f611278601083610bd0565b915061128382611244565b602082019050919050565b5f6020820190508181035f8301526112a58161126c565b9050919050565b7f416d6f756e74206d75737420626520706f7369746976650000000000000000005f82015250565b5f6112e0601783610bd0565b91506112eb826112ac565b602082019050919050565b5f6020820190508181035f83015261130d816112d4565b9050919050565b5f61131f8287611079565b60148201915061132f8286611079565b60148201915061133f8285611099565b60208201915061134f8284611099565b60208201915081905095945050505050565b7f5769746864726177616c20616c726561647920636c61696d65640000000000005f82015250565b5f611395601a83610bd0565b91506113a082611361565b602082019050919050565b5f6020820190508181035f8301526113c281611389565b9050919050565b7f4e6f207769746864726177616c7320666f72207468697320626c6f636b0000005f82015250565b5f6113fd601d83610bd0565b9150611408826113c9565b602082019050919050565b5f6020820190508181035f83015261142a816113f1565b9050919050565b7f496e76616c6964204d65726b6c652070726f6f660000000000000000000000005f82015250565b5f611465601483610bd0565b915061147082611431565b602082019050919050565b5f6020820190508181035f83015261149281611459565b9050919050565b5f81905092915050565b50565b5f6114b15f83611499565b91506114bc826114a3565b5f82019050919050565b5f6114d0826114a6565b9150819050919050565b7f455448207472616e73666572206661696c6564000000000000000000000000005f82015250565b5f61150e601383610bd0565b9150611519826114da565b602082019050919050565b5f6020820190508181035f83015261153b81611502565b9050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61157982610d3b565b915061158483610d3b565b925082820190508082111561159c5761159b611542565b5b92915050565b7f4e6f7420656e6f756768204c31206d65737361676573000000000000000000005f82015250565b5f6115d6601683610bd0565b91506115e1826115a2565b602082019050919050565b5f6020820190508181035f830152611603816115ca565b9050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b5f61164282856110b9565b60208201915061165282846110b9565b6020820191508190509392505050565b5f82825260208201905092915050565b828183375f83830152505050565b5f601f19601f8301169050919050565b5f61169b8385611662565b93506116a8838584611672565b6116b183611680565b840190509392505050565b5f6080820190506116cf5f830189610ecc565b81810360208301526116e2818789611690565b905081810360408301526116f7818587611690565b90506117066060830184610ecc565b979650505050505050565b5f81519050919050565b8281835e5f83830152505050565b5f61173382611711565b61173d8185611499565b935061174d81856020860161171b565b80840191505092915050565b5f6117648284611729565b915081905092915050565b7f4558454355544520707265636f6d70696c6520766572696669636174696f6e205f8201527f6661696c65640000000000000000000000000000000000000000000000000000602082015250565b5f6117c9602683610bd0565b91506117d48261176f565b604082019050919050565b5f6020820190508181035f8301526117f6816117bd565b9050919050565b5f8151905061180b81610c59565b92915050565b5f8151905061181f81610d44565b92915050565b5f5f5f5f5f60a0868803121561183e5761183d610c48565b5b5f61184b888289016117fd565b955050602061185c88828901611811565b945050604061186d888289016117fd565b935050606061187e88828901611811565b925050608061188f88828901611811565b9150509295509295909350565b7f4275726e65642066656573207472616e73666572206661696c656400000000005f82015250565b5f6118d0601b83610bd0565b91506118db8261189c565b602082019050919050565b5f6020820190508181035f8301526118fd816118c4565b9050919050565b5f6060820190506119175f830186610ecc565b6119246020830185610ecc565b6119316040830184610e79565b94935050505056fea2646970667358221220c8933a81e67b543ef55f6572b5bce087fa608fb7ec9a9ec8101292dc1b4843be64736f6c634300081f0033";
+/// Compile: cd crates/vm/levm/contracts && solc --bin-runtime --via-ir --optimize NativeRollup.sol -o /tmp/solc_native_out --overwrite
+const NATIVE_ROLLUP_RUNTIME_HEX: &str = "6080806040526004361015610162575b50361561001a575f80fd5b341561012d5760405161002e602082610b4a565b5f90526002546040513360601b6bffffffffffffffffffffffff1916602082018181526034830191909152346048830152620186a060688301527fc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4706088830181905260a88084018590528352916100a660c882610b4a565b519020600160401b83101561011957600183016002556100c583610af0565b819291549060031b91821b915f19901b191617905560405190348252620186a06020830152604082015233907fb42098fed77baca4d18a86b35f7bbfc750de2275ad10e0837fd550faf3c9d56f60603392a4005b634e487b7160e01b5f52604160045260245ffd5b60405162461bcd60e51b815260206004820152600d60248201526c09aeae6e840e6cadcc8408aa89609b1b6044820152606490fd5b5f3560e01c90816307132c0514610aaf575080630a045444146106fe5780631ed873c7146106e15780633e67267f146106a957806357e871e71461068c5780635eaadcc7146105505780639588eca214610534578063a623f02e1461050a5763ed933825146101d1575f61000f565b34610423576101a036600319011261042357600435610140366023190112610423576101643567ffffffffffffffff811161042357610214903690600401610b1c565b91906101843567ffffffffffffffff811161042357610237903690600401610b1c565b929093600354916102488184610bb7565b600254106104cc575f925f5b82811061048657509061026691610bb7565b6003555f549260a4356001600160a01b0381169190829003610423575f96879661030c61031f9361032d96604051988997602089019b8c5260243560408a015260443560608a015260643560808a015260843560a08a015260c089015260c43560e089015260e4356101008901526101043561012089015261012435610140890152610144356101608901526101808801526101c06101a08801526101e0870191610bd8565b848103601f19016101c086015291610bd8565b03601f198101835282610b4a565b5190826101015af161033d610b88565b908061047b575b156104275760a0818051810103126104235760208101519060408101519160a0606083015192015191815f5583600155835f5260046020528060405f2055826103c1575b907f90575f875cc6b35d0dca93d3812abea93f955cf5ec0a36576a5bce85e16873059260609260405192835260208301526040820152a2005b905f80808086335af16103d2610b88565b50156103de5790610388565b60405162461bcd60e51b815260206004820152601b60248201527f4275726e65642066656573207472616e73666572206661696c656400000000006044820152606490fd5b5f80fd5b60405162461bcd60e51b815260206004820152602660248201527f4558454355544520707265636f6d70696c6520766572696669636174696f6e2060448201526519985a5b195960d21b6064820152608490fd5b5060a0815114610344565b9360019061049c6104978785610bb7565b610af0565b90549060031b1c60405190602082019283526040820152604081526104c2606082610b4a565b5190209401610254565b60405162461bcd60e51b81526020600482015260166024820152754e6f7420656e6f756768204c31206d6573736167657360501b6044820152606490fd5b34610423576020366003190112610423576004355f526004602052602060405f2054604051908152f35b34610423575f3660031901126104235760205f54604051908152f35b606036600319011261042357610564610ada565b60243560443567ffffffffffffffff811161042357610587903690600401610b1c565b929061059284610b6c565b936105a06040519586610b4a565b8085526020850191368282011161042357815f926020928537860101526002549351902060405160208101906001600160601b03193360601b1682526001600160601b03198460601b1660348201523460488201528460688201528260888201528560a882015260a8815261061660c882610b4a565b519020600160401b851015610119576001850160025561063585610af0565b819291549060031b91821b915f19901b1916179055604051923484526020840152604083015260018060a01b0316907fb42098fed77baca4d18a86b35f7bbfc750de2275ad10e0837fd550faf3c9d56f60603392a4005b34610423575f366003190112610423576020600154604051908152f35b3461042357602036600319011261042357600435600254811015610423576106d2602091610af0565b90549060031b1c604051908152f35b34610423575f366003190112610423576020600354604051908152f35b346104235760c036600319011261042357610717610ada565b6024356001600160a01b0381168082036104235760a43590606435906084359060443567ffffffffffffffff851161042357366023860112156104235784600401359667ffffffffffffffff8811610423573660248960051b880101116104235760065460ff8116610a6a5760ff19166001908117600655548411610a255782156109ed5781156109a85760405160208101916001600160601b03199060601b1682526001600160601b03198860601b166034820152826048820152856068820152606881526107e8608882610b4a565b519020805f52600560205260ff60405f20541661096357835f52600460205260405f205496871561091e575f97825b8a8a101561083d5761083560019160248c60051b8c01013590610bf8565b990198610817565b036108e2575f808481949382948352600560205260408320600160ff198254161790555af161086a610b88565b50156108a75760207f1113af8a2f367ad0f39a44a9985b12833c5e9dcb54532dd60575fc4ccbd5f98191604051908152a46006805460ff19169055005b60405162461bcd60e51b8152602060048201526013602482015272115512081d1c985b9cd9995c8819985a5b1959606a1b6044820152606490fd5b60405162461bcd60e51b815260206004820152601460248201527324b73b30b634b21026b2b935b63290383937b7b360611b6044820152606490fd5b60405162461bcd60e51b815260206004820152601d60248201527f4e6f207769746864726177616c7320666f72207468697320626c6f636b0000006044820152606490fd5b60405162461bcd60e51b815260206004820152601a60248201527f5769746864726177616c20616c726561647920636c61696d65640000000000006044820152606490fd5b60405162461bcd60e51b815260206004820152601760248201527f416d6f756e74206d75737420626520706f7369746976650000000000000000006044820152606490fd5b60405162461bcd60e51b815260206004820152601060248201526f24b73b30b634b2103932b1b2b4bb32b960811b6044820152606490fd5b60405162461bcd60e51b815260206004820152601760248201527f426c6f636b206e6f74207965742066696e616c697a65640000000000000000006044820152606490fd5b60405162461bcd60e51b815260206004820152601f60248201527f5265656e7472616e637947756172643a207265656e7472616e742063616c6c006044820152606490fd5b34610423576020366003190112610423576020906004355f526005825260ff60405f20541615158152f35b600435906001600160a01b038216820361042357565b600254811015610b085760025f5260205f2001905f90565b634e487b7160e01b5f52603260045260245ffd5b9181601f840112156104235782359167ffffffffffffffff8311610423576020838186019501011161042357565b90601f8019910116810190811067ffffffffffffffff82111761011957604052565b67ffffffffffffffff811161011957601f01601f191660200190565b3d15610bb2573d90610b9982610b6c565b91610ba76040519384610b4a565b82523d5f602084013e565b606090565b91908201809211610bc457565b634e487b7160e01b5f52601160045260245ffd5b908060209392818452848401375f828201840152601f01601f1916010190565b9080821015610c26576040519060208201928352604082015260408152610c20606082610b4a565b51902090565b906040519060208201928352604082015260408152610c20606082610b4a56fea2646970667358221220dc53a2576363e78c7eb3b8ed5e283d5b42dc8d6788bb06a80b1fca1e5ecc428d64736f6c634300081f0033";
 
 /// L2Bridge.sol runtime bytecode (compiled with solc 0.8.31).
 ///
@@ -902,39 +956,108 @@ fn encode_send_l1_message_call(to: Address, data: &[u8]) -> Vec<u8> {
     encoded
 }
 
-/// Encode a call to NativeRollup.advance(uint256, bytes, bytes).
-fn encode_advance_call(l1_messages_count: u64, block_rlp: &[u8], witness_json: &[u8]) -> Vec<u8> {
+/// Parameters for the BlockParams struct in NativeRollup.advance().
+struct BlockParams {
+    post_state_root: H256,
+    post_receipts_root: H256,
+    block_number: u64,
+    block_gas_limit: u64,
+    coinbase: Address,
+    prev_randao: H256,
+    timestamp: u64,
+    parent_base_fee: u64,
+    parent_gas_limit: u64,
+    parent_gas_used: u64,
+}
+
+/// Encode a call to NativeRollup.advance(uint256,(bytes32,bytes32,uint256,uint256,address,bytes32,uint256,uint256,uint256,uint256),bytes,bytes).
+///
+/// Function selector: advance(uint256,(bytes32,bytes32,uint256,uint256,address,bytes32,uint256,uint256,uint256,uint256),bytes,bytes) = 0xed933825
+fn encode_advance_call(
+    l1_messages_count: u64,
+    block_params: &BlockParams,
+    transactions_rlp: &[u8],
+    witness_json: &[u8],
+) -> Vec<u8> {
+    fn pad32(len: usize) -> usize {
+        len + ((32 - (len % 32)) % 32)
+    }
+
     let mut encoded = Vec::new();
 
-    // Function selector: advance(uint256,bytes,bytes) = 0xed3133f2
-    encoded.extend_from_slice(&[0xed, 0x31, 0x33, 0xf2]);
+    // Function selector: 0xed933825
+    encoded.extend_from_slice(&[0xed, 0x93, 0x38, 0x25]);
 
-    // _l1MessagesCount (uint256)
+    // Param 0: _l1MessagesCount (uint256)
     let mut count_bytes = [0u8; 32];
     count_bytes[24..].copy_from_slice(&l1_messages_count.to_be_bytes());
     encoded.extend_from_slice(&count_bytes);
 
-    // Offset to _block: 3 static params * 32 = 96 = 0x60
-    let mut block_offset = [0u8; 32];
-    block_offset[31] = 0x60;
-    encoded.extend_from_slice(&block_offset);
+    // Param 1: _blockParams (struct — 10 fields encoded inline as a tuple)
+    // All fields are value types, so they are encoded in-place (no offset pointer)
+    // postStateRoot (bytes32)
+    encoded.extend_from_slice(block_params.post_state_root.as_bytes());
+    // postReceiptsRoot (bytes32)
+    encoded.extend_from_slice(block_params.post_receipts_root.as_bytes());
+    // blockNumber (uint256)
+    let mut num_bytes = [0u8; 32];
+    num_bytes[24..].copy_from_slice(&block_params.block_number.to_be_bytes());
+    encoded.extend_from_slice(&num_bytes);
+    // blockGasLimit (uint256)
+    let mut gas_bytes = [0u8; 32];
+    gas_bytes[24..].copy_from_slice(&block_params.block_gas_limit.to_be_bytes());
+    encoded.extend_from_slice(&gas_bytes);
+    // coinbase (address, left-padded to 32 bytes)
+    let mut coinbase_bytes = [0u8; 32];
+    coinbase_bytes[12..].copy_from_slice(block_params.coinbase.as_bytes());
+    encoded.extend_from_slice(&coinbase_bytes);
+    // prevRandao (bytes32)
+    encoded.extend_from_slice(block_params.prev_randao.as_bytes());
+    // timestamp (uint256)
+    let mut ts_bytes = [0u8; 32];
+    ts_bytes[24..].copy_from_slice(&block_params.timestamp.to_be_bytes());
+    encoded.extend_from_slice(&ts_bytes);
+    // parentBaseFee (uint256)
+    let mut pbf_bytes = [0u8; 32];
+    pbf_bytes[24..].copy_from_slice(&block_params.parent_base_fee.to_be_bytes());
+    encoded.extend_from_slice(&pbf_bytes);
+    // parentGasLimit (uint256)
+    let mut pgl_bytes = [0u8; 32];
+    pgl_bytes[24..].copy_from_slice(&block_params.parent_gas_limit.to_be_bytes());
+    encoded.extend_from_slice(&pgl_bytes);
+    // parentGasUsed (uint256)
+    let mut pgu_bytes = [0u8; 32];
+    pgu_bytes[24..].copy_from_slice(&block_params.parent_gas_used.to_be_bytes());
+    encoded.extend_from_slice(&pgu_bytes);
 
-    // Offset to _witness: 0x60 + 32 (block length) + padded block data
-    let padded_block_len = block_rlp.len() + ((32 - (block_rlp.len() % 32)) % 32);
-    let witness_offset: u64 = 96 + 32 + padded_block_len as u64;
+    // Param 2: offset to _transactions (dynamic)
+    // Head = 4 (selector) + 32 (_l1MessagesCount) + 10*32 (struct inline) + 32 (tx offset) + 32 (witness offset)
+    // = 4 + 32 + 320 + 32 + 32 = 420
+    // But ABI encoding offsets are relative to the start of params (after selector),
+    // so the head for params is: 32 + 320 + 32 + 32 = 416
+    let head_size: usize = 32 + 320 + 32 + 32; // = 416
+    let txs_offset = head_size;
+    let txs_padded = pad32(transactions_rlp.len());
+    let witness_offset = txs_offset + 32 + txs_padded;
+
+    let mut txs_offset_bytes = [0u8; 32];
+    txs_offset_bytes[24..].copy_from_slice(&(txs_offset as u64).to_be_bytes());
+    encoded.extend_from_slice(&txs_offset_bytes);
+
+    // Param 3: offset to _witness (dynamic)
     let mut witness_offset_bytes = [0u8; 32];
-    witness_offset_bytes[24..].copy_from_slice(&witness_offset.to_be_bytes());
+    witness_offset_bytes[24..].copy_from_slice(&(witness_offset as u64).to_be_bytes());
     encoded.extend_from_slice(&witness_offset_bytes);
 
-    // _block: length + data (padded to 32-byte boundary)
-    let mut block_len = [0u8; 32];
-    block_len[24..].copy_from_slice(&(block_rlp.len() as u64).to_be_bytes());
-    encoded.extend_from_slice(&block_len);
-    encoded.extend_from_slice(block_rlp);
-    let block_padding = (32 - (block_rlp.len() % 32)) % 32;
-    encoded.resize(encoded.len() + block_padding, 0);
+    // Tail: _transactions (length + data + padding)
+    let mut txs_len = [0u8; 32];
+    txs_len[24..].copy_from_slice(&(transactions_rlp.len() as u64).to_be_bytes());
+    encoded.extend_from_slice(&txs_len);
+    encoded.extend_from_slice(transactions_rlp);
+    let txs_padding = (32 - (transactions_rlp.len() % 32)) % 32;
+    encoded.resize(encoded.len() + txs_padding, 0);
 
-    // _witness: length + data (padded to 32-byte boundary)
+    // Tail: _witness (length + data + padding)
     let mut witness_len = [0u8; 32];
     witness_len[24..].copy_from_slice(&(witness_json.len() as u64).to_be_bytes());
     encoded.extend_from_slice(&witness_len);
@@ -964,8 +1087,8 @@ fn test_native_rollup_contract() {
 
     // Build L2 state with sender as the L1 message originator (must match msg.sender on L1)
     let (
-        _input,
-        block_rlp,
+        input,
+        transactions_rlp,
         witness_json,
         pre_state_root,
         post_state_root,
@@ -1061,8 +1184,21 @@ fn test_native_rollup_contract() {
     // Record sender balance before advance (to verify burned fees transfer)
     let sender_balance_before = db.get_account(sender).expect("sender account").info.balance;
 
-    // === TX 2: advance(1, blockRlp, witnessJson) ===
-    let advance_calldata = encode_advance_call(1, &block_rlp, &witness_json);
+    // === TX 2: advance(1, blockParams, transactionsRlp, witnessJson) ===
+    let advance_block_params = BlockParams {
+        post_state_root: input.post_state_root,
+        post_receipts_root: input.post_receipts_root,
+        block_number: input.block_number,
+        block_gas_limit: input.block_gas_limit,
+        coinbase: input.coinbase,
+        prev_randao: input.prev_randao,
+        timestamp: input.timestamp,
+        parent_base_fee: input.parent_base_fee,
+        parent_gas_limit: input.parent_gas_limit,
+        parent_gas_used: input.parent_gas_used,
+    };
+    let advance_calldata =
+        encode_advance_call(1, &advance_block_params, &transactions_rlp, &witness_json);
 
     let advance_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
         chain_id: 1,

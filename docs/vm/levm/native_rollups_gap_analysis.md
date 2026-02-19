@@ -171,23 +171,34 @@ A separate L2 process (out of scope for this PoC) would be responsible for credi
 
 ---
 
-## Gap 6: EXECUTE Variant — Individual Field Inputs
+## Gap 6: EXECUTE Variant — Individual Field Inputs — IMPLEMENTED
 
-**Status:** Partial
-**Current:** Full RLP block + witness JSON
-**Spec (`apply_body` variant):** Individual fields (chain_id, number, pre/post state, receipts, gas_limit, coinbase, prev_randao, transactions, parent gas info)
+**Status:** Implemented
+**Spec (`apply_body` variant):** Individual fields (number, pre/post state, receipts, gas_limit, coinbase, prev_randao, transactions, parent gas info)
 
-### Plan
+### After Implementation
 
-1. Change ABI encoding to individual fields instead of RLP block.
-2. Precompile receives fields directly — no RLP block decode.
-3. `NativeRollup.sol` constructs these fields from its state.
+The EXECUTE precompile now uses the `apply_body` variant with individual field inputs instead of a full RLP-encoded block. The ABI format has 14 slots (12 static + 2 dynamic offset pointers):
 
-### Files
+- Slots 0-2: `preStateRoot`, `postStateRoot`, `postReceiptsRoot` (bytes32)
+- Slots 3-4: `blockNumber`, `blockGasLimit` (uint256)
+- Slot 5: `coinbase` (address, ABI-padded to 32 bytes)
+- Slot 6: `prevRandao` (bytes32)
+- Slots 7-10: `timestamp`, `parentBaseFee`, `parentGasLimit`, `parentGasUsed` (uint256)
+- Slot 11: `l1MessagesRollingHash` (bytes32)
+- Slots 12-13: `transactions` (RLP list), `witnessJson` (dynamic offset pointers)
 
-- Modified: `crates/vm/levm/src/execute_precompile.rs`
-- Modified: `crates/vm/levm/contracts/NativeRollup.sol`
-- Modified: tests
+The precompile computes the base fee from explicit parent fields (`parentBaseFee`, `parentGasLimit`, `parentGasUsed`) using EIP-1559 `calculate_base_fee_per_gas`, builds a synthetic block header from the individual fields, and executes the block. No RLP block decoding is needed.
+
+NativeRollup.sol uses a `BlockParams` struct to group block parameters and builds the 14-slot calldata via `abi.encode()`. The contract was compiled with `solc --via-ir --optimize` to handle the stack depth.
+
+### Files Changed
+
+- Modified: `crates/vm/levm/src/execute_precompile.rs` — replaced `ExecutePrecompileInput` struct (individual fields instead of `Block`), rewrote `parse_abi_calldata` (14-slot ABI), added `decode_transactions_from_rlp` and `read_u64_slot` helpers, rewrote `execute_inner` (synthetic header construction, base fee computation from parent fields)
+- Modified: `crates/vm/levm/contracts/NativeRollup.sol` — added `BlockParams` struct, updated `advance()` signature and calldata construction
+- Modified: `test/tests/levm/native_rollups.rs` — updated `build_precompile_calldata` (14-slot), `build_l2_state_transition_with_sender`, `encode_advance_call` (BlockParams struct), removed withdrawal rejection test
+- Modified: `test/tests/l2/native_rollups.rs` — updated `build_l2_state_transition`, `build_l2_withdrawal_block`, advance call encoding
+- Modified: `docs/vm/levm/native_rollups.md` — updated architecture, calldata format, encoding details, spec comparison
 
 ---
 
@@ -226,7 +237,7 @@ A separate L2 process (out of scope for this PoC) would be responsible for credi
 |-------|-----|--------|--------|--------|
 | 1 | Gaps 1-4 (unified) | High | High — foundational redesign | **Done** |
 | 2 | Gap 5: Burned fees | Low | Medium | **Done** |
-| 3 | Gap 7: Finality delay | Low | Low | Pending |
-| 4 | Gap 6: Individual fields | Medium-High | Medium | Pending |
+| 3 | Gap 6: Individual fields | Medium-High | Medium | **Done** |
+| 4 | Gap 7: Finality delay | Low | Low | Pending |
 
-Gaps 1-5 are implemented. Gaps 6, 7 are independent and can be done in any order.
+Gaps 1-6 are implemented. Gap 7 is independent and can be done next.

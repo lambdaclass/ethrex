@@ -9,6 +9,9 @@ pragma solidity ^0.8.27;
 /// the precompile returns the new state root, block number, and withdrawal
 /// Merkle root, and the contract updates its state.
 ///
+/// The EXECUTE precompile uses the `apply_body` variant: individual block fields
+/// are provided instead of a full RLP-encoded block.
+///
 /// L1 messages are recorded via `sendL1Message(to, gasLimit, data)` or by
 /// sending ETH directly to the contract. Each message is hashed as
 /// keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))
@@ -29,6 +32,20 @@ pragma solidity ^0.8.27;
 ///   Slot 4: withdrawalRoots (mapping)
 ///   Slot 5: claimedWithdrawals (mapping)
 ///   Slot 6: _locked (bool)
+
+struct BlockParams {
+    bytes32 postStateRoot;
+    bytes32 postReceiptsRoot;
+    uint256 blockNumber;
+    uint256 blockGasLimit;
+    address coinbase;
+    bytes32 prevRandao;
+    uint256 timestamp;
+    uint256 parentBaseFee;
+    uint256 parentGasLimit;
+    uint256 parentGasUsed;
+}
+
 contract NativeRollup {
     bytes32 public stateRoot;
     uint256 public blockNumber;
@@ -96,11 +113,13 @@ contract NativeRollup {
 
     /// @notice Advance the L2 by one block.
     /// @param _l1MessagesCount Number of pending L1 messages to consume from the queue.
-    /// @param _block RLP-encoded L2 block.
+    /// @param _blockParams Block parameters struct (postStateRoot, postReceiptsRoot, blockNumber, blockGasLimit, coinbase, prevRandao, timestamp, parentBaseFee, parentGasLimit, parentGasUsed).
+    /// @param _transactions RLP-encoded transaction list.
     /// @param _witness JSON-serialized ExecutionWitness.
     function advance(
         uint256 _l1MessagesCount,
-        bytes calldata _block,
+        BlockParams calldata _blockParams,
+        bytes calldata _transactions,
         bytes calldata _witness
     ) external {
         uint256 startIdx = l1MessageIndex;
@@ -118,13 +137,25 @@ contract NativeRollup {
 
         l1MessageIndex = startIdx + _l1MessagesCount;
 
-        // ABI layout for the EXECUTE precompile:
-        //   slot 0: preStateRoot              (bytes32, static)
-        //   slot 1: offset_to_block           (uint256, dynamic pointer -> 0x80)
-        //   slot 2: offset_to_witness         (uint256, dynamic pointer)
-        //   slot 3: l1MessagesRollingHash     (bytes32, static -- NOT a pointer)
-        //   tail:   [block data] [witness data]
-        bytes memory input = abi.encode(stateRoot, _block, _witness, l1MessagesRollingHash);
+        // Build EXECUTE precompile calldata with 14 ABI slots:
+        //   slots 0-11: static fields
+        //   slots 12-13: dynamic offset pointers (transactions, witness)
+        bytes memory input = abi.encode(
+            stateRoot,                        // preStateRoot from contract storage
+            _blockParams.postStateRoot,
+            _blockParams.postReceiptsRoot,
+            _blockParams.blockNumber,
+            _blockParams.blockGasLimit,
+            _blockParams.coinbase,
+            _blockParams.prevRandao,
+            _blockParams.timestamp,
+            _blockParams.parentBaseFee,
+            _blockParams.parentGasLimit,
+            _blockParams.parentGasUsed,
+            l1MessagesRollingHash,
+            _transactions,
+            _witness
+        );
 
         (bool success, bytes memory result) = EXECUTE_PRECOMPILE.call(input);
         require(success && result.length == 160, "EXECUTE precompile verification failed");

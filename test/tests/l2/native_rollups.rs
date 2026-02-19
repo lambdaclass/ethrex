@@ -205,8 +205,9 @@ fn encode_process_l1_message_call(
 ///   - TX0: relayer calls L2Bridge.processL1Message(l1_sender, charlie, 5 ETH, 100k, "", 0)
 ///   - TX1: alice sends 1 ETH to bob
 ///
-/// Returns (input, block_rlp, witness_json, pre_state_root, post_state_root,
-///          l1_messages_rolling_hash, gas_used_tx0).
+/// Returns (input, transactions_rlp, witness_json, pre_state_root, post_state_root,
+///          l1_messages_rolling_hash, gas_used_tx0, block).
+#[allow(clippy::type_complexity)]
 fn build_l2_state_transition(
     l1_sender: Address,
 ) -> (
@@ -217,6 +218,7 @@ fn build_l2_state_transition(
     H256,
     H256,
     u64,
+    Block,
 ) {
     let alice_key = SigningKey::from_bytes(&[1u8; 32].into()).expect("valid key");
     let alice = address_from_key(&alice_key);
@@ -483,24 +485,27 @@ fn build_l2_state_transition(
         .state_trie_root()
         .expect("state root");
 
-    // ===== Build final block =====
+    // ===== Build final block header (for witness block_headers_bytes) =====
+    let final_header = BlockHeader {
+        parent_hash: parent_header.compute_block_hash(),
+        number: 1,
+        gas_used: total_gas_used,
+        gas_limit: 30_000_000,
+        base_fee_per_gas: Some(base_fee),
+        timestamp: 1_000_012,
+        coinbase,
+        transactions_root,
+        receipts_root,
+        state_root: post_state_root,
+        withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[])),
+        ..Default::default()
+    };
+
+    // We still need a Block for build_l2_withdrawal_block (which reads block1.header)
     let block = Block {
-        header: BlockHeader {
-            parent_hash: parent_header.compute_block_hash(),
-            number: 1,
-            gas_used: total_gas_used,
-            gas_limit: 30_000_000,
-            base_fee_per_gas: Some(base_fee),
-            timestamp: 1_000_012,
-            coinbase,
-            transactions_root,
-            receipts_root,
-            state_root: post_state_root,
-            withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[])),
-            ..Default::default()
-        },
+        header: final_header.clone(),
         body: BlockBody {
-            transactions,
+            transactions: transactions.clone(),
             ommers: vec![],
             withdrawals: Some(vec![]),
         },
@@ -509,7 +514,7 @@ fn build_l2_state_transition(
     // ===== Build final witness (with correct block header) =====
     let witness = ExecutionWitness {
         codes: vec![bridge_runtime.clone()],
-        block_headers_bytes: vec![parent_header.encode_to_vec(), block.header.encode_to_vec()],
+        block_headers_bytes: vec![parent_header.encode_to_vec(), final_header.encode_to_vec()],
         first_block_number: 1,
         chain_config,
         state_trie_root: get_trie_root_node(&state_trie),
@@ -535,24 +540,35 @@ fn build_l2_state_transition(
     rolling_preimage[32..].copy_from_slice(l1_msg_hash.as_bytes());
     let l1_messages_rolling_hash = H256::from(keccak_hash(rolling_preimage));
 
-    let block_rlp = block.encode_to_vec();
+    let transactions_rlp = transactions.encode_to_vec();
     let witness_json = serde_json::to_vec(&witness).expect("witness JSON serialization failed");
 
     let input = ExecutePrecompileInput {
         pre_state_root,
+        post_state_root,
+        post_receipts_root: receipts_root,
+        block_number: 1,
+        block_gas_limit: 30_000_000,
+        coinbase,
+        prev_randao: H256::zero(),
+        timestamp: 1_000_012,
+        parent_base_fee: base_fee,
+        parent_gas_limit: 30_000_000,
+        parent_gas_used: 15_000_000,
         l1_messages_rolling_hash,
+        transactions: block.body.transactions.clone(),
         execution_witness: witness,
-        block,
     };
 
     (
         input,
-        block_rlp,
+        transactions_rlp,
         witness_json,
         pre_state_root,
         post_state_root,
         l1_messages_rolling_hash,
         gas_used0,
+        block,
     )
 }
 
@@ -561,13 +577,13 @@ fn build_l2_state_transition(
 /// Executes Alice → L2Bridge.withdraw(receiver) with `withdrawal_amount` ETH.
 /// Uses LEVM to compute exact gas_used and post-state root for the block.
 ///
-/// Returns (block2_rlp, witness2_json, block2_post_state_root).
+/// Returns (transactions_rlp, witness_json, block2_post_state_root, receipts_root, base_fee).
 fn build_l2_withdrawal_block(
     block1: &Block,
     block1_post_state_root: H256,
     withdrawal_receiver: Address,
     gas_used_tx0: u64,
-) -> (Vec<u8>, Vec<u8>, H256) {
+) -> (Vec<u8>, Vec<u8>, H256, H256, u64) {
     let alice_key = SigningKey::from_bytes(&[1u8; 32].into()).expect("valid key");
     let alice = address_from_key(&alice_key);
     let relayer_key = SigningKey::from_bytes(&[2u8; 32].into()).expect("valid key");
@@ -829,32 +845,25 @@ fn build_l2_withdrawal_block(
     let receipt = Receipt::new(transaction.tx_type(), true, gas_used, report.logs);
     let receipts_root = ethrex_common::types::compute_receipts_root(&[receipt]);
 
-    let block2 = Block {
-        header: BlockHeader {
-            parent_hash: block1_hash,
-            number: block2_number,
-            gas_used,
-            gas_limit: 30_000_000,
-            base_fee_per_gas: Some(base_fee),
-            timestamp: block2_timestamp,
-            coinbase,
-            transactions_root,
-            receipts_root,
-            state_root: post_state_root,
-            withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[])),
-            ..Default::default()
-        },
-        body: BlockBody {
-            transactions,
-            ommers: vec![],
-            withdrawals: Some(vec![]),
-        },
+    let block2_header = BlockHeader {
+        parent_hash: block1_hash,
+        number: block2_number,
+        gas_used,
+        gas_limit: 30_000_000,
+        base_fee_per_gas: Some(base_fee),
+        timestamp: block2_timestamp,
+        coinbase,
+        transactions_root,
+        receipts_root,
+        state_root: post_state_root,
+        withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[])),
+        ..Default::default()
     };
 
     // Build final witness with correct block 2 header
     let witness2 = ExecutionWitness {
         codes: vec![bridge_runtime],
-        block_headers_bytes: vec![block1.header.encode_to_vec(), block2.header.encode_to_vec()],
+        block_headers_bytes: vec![block1.header.encode_to_vec(), block2_header.encode_to_vec()],
         first_block_number: block2_number,
         chain_config,
         state_trie_root: get_trie_root_node(&pre_trie),
@@ -869,10 +878,16 @@ fn build_l2_withdrawal_block(
         keys: vec![],
     };
 
-    let block2_rlp = block2.encode_to_vec();
+    let transactions_rlp = transactions.encode_to_vec();
     let witness2_json = serde_json::to_vec(&witness2).expect("witness JSON serialization failed");
 
-    (block2_rlp, witness2_json, post_state_root)
+    (
+        transactions_rlp,
+        witness2_json,
+        post_state_root,
+        receipts_root,
+        base_fee,
+    )
 }
 
 /// Integration test: compile and deploy NativeRollup on a real L1, then advance
@@ -934,12 +949,13 @@ async fn test_native_rollup_on_l1() {
 
     let (
         input,
-        block_rlp,
+        transactions_rlp,
         witness_json,
         pre_state_root,
         post_state_root,
         _l1_messages_rolling_hash,
         gas_used_tx0,
+        block1,
     ) = build_l2_state_transition(l1_sender);
     let charlie = Address::from_low_u64_be(0xC4A);
     let l1_msg_value = U256::from(5) * U256::from(10).pow(U256::from(18)); // 5 ETH
@@ -948,8 +964,14 @@ async fn test_native_rollup_on_l1() {
     let l1_withdrawal_receiver = Address::from_low_u64_be(0xDEAD);
 
     // Build block 2 (withdrawal block)
-    let (block2_rlp, witness2_json, block2_post_state_root) = build_l2_withdrawal_block(
-        &input.block,
+    let (
+        block2_txs_rlp,
+        witness2_json,
+        block2_post_state_root,
+        block2_receipts_root,
+        _block2_base_fee,
+    ) = build_l2_withdrawal_block(
+        &block1,
         post_state_root,
         l1_withdrawal_receiver,
         gas_used_tx0,
@@ -1034,12 +1056,24 @@ async fn test_native_rollup_on_l1() {
     );
     println!("  sendL1Message() tx: {l1_msg_tx_hash:?}");
 
-    // 7. Call advance(1, block_rlp, witness_json) — 1 L1 message consumed
+    // 7. Call advance(1, blockParams, transactionsRlp, witnessJson) — 1 L1 message consumed
     let advance_calldata = encode_calldata(
-        "advance(uint256,bytes,bytes)",
+        "advance(uint256,(bytes32,bytes32,uint256,uint256,address,bytes32,uint256,uint256,uint256,uint256),bytes,bytes)",
         &[
             Value::Uint(U256::from(1)), // 1 L1 message
-            Value::Bytes(Bytes::from(block_rlp)),
+            Value::Tuple(vec![
+                Value::FixedBytes(Bytes::from(input.post_state_root.as_bytes().to_vec())),
+                Value::FixedBytes(Bytes::from(input.post_receipts_root.as_bytes().to_vec())),
+                Value::Uint(U256::from(input.block_number)),
+                Value::Uint(U256::from(input.block_gas_limit)),
+                Value::Address(input.coinbase),
+                Value::FixedBytes(Bytes::from(input.prev_randao.as_bytes().to_vec())),
+                Value::Uint(U256::from(input.timestamp)),
+                Value::Uint(U256::from(input.parent_base_fee)),
+                Value::Uint(U256::from(input.parent_gas_limit)),
+                Value::Uint(U256::from(input.parent_gas_used)),
+            ]),
+            Value::Bytes(Bytes::from(transactions_rlp)),
             Value::Bytes(Bytes::from(witness_json)),
         ],
     )
@@ -1145,12 +1179,26 @@ async fn test_native_rollup_on_l1() {
     // ===== Phase 2: Withdrawal =====
     // Advance with block 2 (contains Alice → bridge.withdraw(l1_receiver) with 1 ETH)
 
-    // 10. advance(0, block2_rlp, witness2_json) — 0 L1 messages for block 2
+    // 10. advance(0, blockParams2, block2_txs_rlp, witness2_json) — 0 L1 messages for block 2
+    let block2_coinbase = Address::from_low_u64_be(0xC01);
+    let block2_timestamp = block1.header.timestamp + 12;
     let advance2_calldata = encode_calldata(
-        "advance(uint256,bytes,bytes)",
+        "advance(uint256,(bytes32,bytes32,uint256,uint256,address,bytes32,uint256,uint256,uint256,uint256),bytes,bytes)",
         &[
             Value::Uint(U256::from(0)), // no L1 messages consumed
-            Value::Bytes(Bytes::from(block2_rlp)),
+            Value::Tuple(vec![
+                Value::FixedBytes(Bytes::from(block2_post_state_root.as_bytes().to_vec())),
+                Value::FixedBytes(Bytes::from(block2_receipts_root.as_bytes().to_vec())),
+                Value::Uint(U256::from(2u64)),
+                Value::Uint(U256::from(30_000_000u64)),
+                Value::Address(block2_coinbase),
+                Value::FixedBytes(Bytes::from(H256::zero().as_bytes().to_vec())),
+                Value::Uint(U256::from(block2_timestamp)),
+                Value::Uint(U256::from(block1.header.base_fee_per_gas.unwrap_or(1_000_000_000))),
+                Value::Uint(U256::from(block1.header.gas_limit)),
+                Value::Uint(U256::from(block1.header.gas_used)),
+            ]),
+            Value::Bytes(Bytes::from(block2_txs_rlp)),
             Value::Bytes(Bytes::from(witness2_json)),
         ],
     )

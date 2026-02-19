@@ -1,9 +1,13 @@
 //! EXECUTE precompile for Native Rollups (EIP-8079 PoC).
 //!
 //! Verifies L2 state transitions by re-executing them inside the L1 EVM.
-//! The precompile receives an execution witness, a block, and an L1 messages
-//! rolling hash, re-executes the block, and verifies the resulting state root,
-//! receipts root, and L1 message inclusion.
+//! The precompile receives individual block fields, transactions (RLP), an
+//! execution witness (JSON), and an L1 messages rolling hash, re-executes
+//! the transactions, and verifies the resulting state root, receipts root,
+//! and L1 message inclusion.
+//!
+//! This implements the `apply_body` variant from the native rollups spec:
+//! individual execution parameters are provided instead of a full block.
 //!
 //! After execution, it scans L1MessageProcessed events from the L2Bridge predeploy
 //! to reconstruct the L1 messages rolling hash and verify it matches the one provided
@@ -14,7 +18,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        Block, ELASTICITY_MULTIPLIER, Fork, INITIAL_BASE_FEE, Log, Receipt, Transaction,
+        Block, ELASTICITY_MULTIPLIER, Fork, Log, Receipt, Transaction,
         block_execution_witness::{ExecutionWitness, GuestProgramState},
         calculate_base_fee_per_gas,
     },
@@ -66,30 +70,52 @@ pub struct Withdrawal {
     pub message_id: U256,
 }
 
-/// Input to the EXECUTE precompile.
+/// Input to the EXECUTE precompile (`apply_body` variant).
+///
+/// Individual block fields are provided instead of a full RLP-encoded block.
+/// Transactions are decoded from RLP and the witness provides stateless
+/// execution data (state tries, storage tries, code, block headers).
 pub struct ExecutePrecompileInput {
     pub pre_state_root: H256,
+    pub post_state_root: H256,
+    pub post_receipts_root: H256,
+    pub block_number: u64,
+    pub block_gas_limit: u64,
+    pub coinbase: Address,
+    pub prev_randao: H256,
+    pub timestamp: u64,
+    pub parent_base_fee: u64,
+    pub parent_gas_limit: u64,
+    pub parent_gas_used: u64,
     pub l1_messages_rolling_hash: H256,
+    pub transactions: Vec<Transaction>,
     pub execution_witness: ExecutionWitness,
-    pub block: Block,
 }
 
 /// Entrypoint matching the precompile function signature.
 ///
-/// Parses ABI-encoded calldata:
+/// Parses ABI-encoded calldata with 14 slots (12 static + 2 dynamic):
 /// ```text
-/// abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 l1MessagesRollingHash)
+/// abi.encode(
+///     bytes32 preStateRoot,           // slot 0
+///     bytes32 postStateRoot,          // slot 1
+///     bytes32 postReceiptsRoot,       // slot 2
+///     uint256 blockNumber,            // slot 3
+///     uint256 blockGasLimit,          // slot 4
+///     address coinbase,               // slot 5 (ABI-padded to 32 bytes)
+///     bytes32 prevRandao,             // slot 6
+///     uint256 timestamp,              // slot 7
+///     uint256 parentBaseFee,          // slot 8
+///     uint256 parentGasLimit,         // slot 9
+///     uint256 parentGasUsed,          // slot 10
+///     bytes32 l1MessagesRollingHash,  // slot 11
+///     bytes   transactions,           // slot 12 (dynamic offset pointer)
+///     bytes   witnessJson             // slot 13 (dynamic offset pointer)
+/// )
 /// ```
 ///
-/// ABI layout:
-///   slot 0: preStateRoot            (bytes32, static)
-///   slot 1: offset_to_blockRlp      (uint256, dynamic pointer -> 0x80)
-///   slot 2: offset_to_witness       (uint256, dynamic pointer)
-///   slot 3: l1MessagesRollingHash   (bytes32, static -- NOT a pointer)
-///   tail:   block RLP data, witness JSON data
-///
-/// Block uses RLP encoding (already implemented in ethrex). ExecutionWitness
-/// uses JSON because it doesn't have RLP support (it uses serde/rkyv instead).
+/// Transactions are RLP-encoded as a list. ExecutionWitness uses JSON because
+/// it doesn't have RLP support (it uses serde/rkyv instead).
 /// The l1MessagesRollingHash is computed by NativeRollup.advance() on L1 from
 /// stored L1 message hashes. The precompile verifies it against L1MessageProcessed
 /// events emitted by the L2Bridge predeploy during block execution.
@@ -149,50 +175,106 @@ fn read_abi_bytes(calldata: &[u8], abi_offset: usize) -> Result<&[u8], VMError> 
     read_calldata(calldata, &mut pos, len)
 }
 
+/// Decode an RLP-encoded transaction list into a `Vec<Transaction>`.
+fn decode_transactions_from_rlp(rlp_bytes: &[u8]) -> Result<Vec<Transaction>, VMError> {
+    Vec::<Transaction>::decode(rlp_bytes)
+        .map_err(|e| custom_err(format!("Failed to RLP-decode transactions: {e}")))
+}
+
+/// Read a uint256 from calldata as a u64, failing if the value overflows.
+fn read_u64_slot(calldata: &[u8], offset: &mut usize) -> Result<u64, VMError> {
+    let bytes = read_calldata(calldata, offset, 32)?;
+    let val = U256::from_big_endian(bytes);
+    val.try_into()
+        .map_err(|_| custom_err("ABI uint256 value overflows u64".to_string()))
+}
+
 /// Parse ABI-encoded calldata into an [`ExecutePrecompileInput`].
 ///
-/// Format: `abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 l1MessagesRollingHash)`
-///
-/// The head is 4 x 32 = 128 bytes:
-///   - slot 0: preStateRoot (bytes32, static)
-///   - slot 1: offset to blockRlp (dynamic pointer)
-///   - slot 2: offset to witnessJson (dynamic pointer)
-///   - slot 3: l1MessagesRollingHash (bytes32, static -- NOT a pointer)
+/// The head is 14 x 32 = 448 bytes:
+///   - slots 0-11: static fields (bytes32, uint256, address)
+///   - slot 12: offset to transactions RLP bytes (dynamic)
+///   - slot 13: offset to witness JSON bytes (dynamic)
 fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError> {
     let mut offset: usize = 0;
 
-    // 1. pre_state_root (bytes32, static -- 32 bytes)
+    // Slot 0: preStateRoot (bytes32)
     let pre_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
-    // 2. Read offsets for the 2 dynamic params
-    let block_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
-    let block_offset: usize = U256::from_big_endian(block_offset_bytes)
-        .try_into()
-        .map_err(|_| custom_err("Block offset too large".to_string()))?;
+    // Slot 1: postStateRoot (bytes32)
+    let post_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
+    // Slot 2: postReceiptsRoot (bytes32)
+    let post_receipts_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // Slot 3: blockNumber (uint256 -> u64)
+    let block_number = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 4: blockGasLimit (uint256 -> u64)
+    let block_gas_limit = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 5: coinbase (address, left-padded to 32 bytes)
+    let coinbase_bytes = read_calldata(calldata, &mut offset, 32)?;
+    let coinbase = Address::from_slice(
+        coinbase_bytes
+            .get(12..)
+            .ok_or(InternalError::Custom("coinbase slot too short".to_string()))?,
+    );
+
+    // Slot 6: prevRandao (bytes32)
+    let prev_randao = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // Slot 7: timestamp (uint256 -> u64)
+    let timestamp = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 8: parentBaseFee (uint256 -> u64)
+    let parent_base_fee = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 9: parentGasLimit (uint256 -> u64)
+    let parent_gas_limit = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 10: parentGasUsed (uint256 -> u64)
+    let parent_gas_used = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 11: l1MessagesRollingHash (bytes32)
+    let l1_messages_rolling_hash = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // Slot 12: offset to transactions (dynamic)
+    let txs_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
+    let txs_offset: usize = U256::from_big_endian(txs_offset_bytes)
+        .try_into()
+        .map_err(|_| custom_err("Transactions offset too large".to_string()))?;
+
+    // Slot 13: offset to witnessJson (dynamic)
     let witness_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
     let witness_offset: usize = U256::from_big_endian(witness_offset_bytes)
         .try_into()
         .map_err(|_| custom_err("Witness offset too large".to_string()))?;
 
-    // 3. l1MessagesRollingHash (bytes32, static -- NOT a dynamic offset)
-    let l1_messages_rolling_hash = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+    // Read transactions RLP bytes and decode
+    let txs_rlp = read_abi_bytes(calldata, txs_offset)?;
+    let transactions = decode_transactions_from_rlp(txs_rlp)?;
 
-    // 4. Read block RLP bytes
-    let block_rlp = read_abi_bytes(calldata, block_offset)?;
-    let block = Block::decode(block_rlp)
-        .map_err(|e| custom_err(format!("Failed to RLP-decode block: {e}")))?;
-
-    // 5. Read witness JSON bytes
+    // Read witness JSON bytes and deserialize
     let witness_bytes = read_abi_bytes(calldata, witness_offset)?;
     let execution_witness: ExecutionWitness = serde_json::from_slice(witness_bytes)
         .map_err(|e| custom_err(format!("Failed to deserialize ExecutionWitness JSON: {e}")))?;
 
     Ok(ExecutePrecompileInput {
         pre_state_root,
+        post_state_root,
+        post_receipts_root,
+        block_number,
+        block_gas_limit,
+        coinbase,
+        prev_randao,
+        timestamp,
+        parent_base_fee,
+        parent_gas_limit,
+        parent_gas_used,
         l1_messages_rolling_hash,
+        transactions,
         execution_witness,
-        block,
     })
 }
 
@@ -202,32 +284,42 @@ fn custom_err(msg: String) -> VMError {
 
 /// Core logic, separated so tests can call it directly with a structured input.
 ///
+/// Implements the `apply_body` variant: receives individual block fields,
+/// builds a synthetic block header internally, re-executes, and verifies.
+///
 /// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees)` -- 160 bytes.
-/// The post-state root is extracted from `block.header.state_root` and verified
-/// against the actual computed state root after execution. The withdrawal root is
-/// computed from WithdrawalInitiated events emitted during block execution. The
-/// burned fees are `base_fee_per_gas * block_gas_used` (EIP-1559 base fees are
-/// constant per block).
+/// The post-state root is verified against the actual computed state root after
+/// execution. The withdrawal root is computed from WithdrawalInitiated events
+/// emitted during block execution. The burned fees are `base_fee_per_gas *
+/// block_gas_used` (EIP-1559 base fees are constant per block).
 pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let ExecutePrecompileInput {
         pre_state_root,
+        post_state_root: expected_post_state_root,
+        post_receipts_root,
+        block_number,
+        block_gas_limit,
+        coinbase,
+        prev_randao,
+        timestamp,
+        parent_base_fee,
+        parent_gas_limit,
+        parent_gas_used,
         l1_messages_rolling_hash,
+        transactions,
         execution_witness,
-        block,
     } = input;
-
-    // Extract expected values from the block header
-    let expected_post_state_root = block.header.state_root;
-    let block_number = block.header.number;
 
     // 1. Build GuestProgramState from witness
     let guest_state: GuestProgramState = execution_witness
         .try_into()
         .map_err(|e| custom_err(format!("Failed to build GuestProgramState: {e}")))?;
 
-    // Initialize block header hashes
+    // Initialize block header hashes from witness headers (empty blocks slice
+    // since we no longer have a full block — the witness already contains the
+    // relevant headers for BLOCKHASH).
     guest_state
-        .initialize_block_header_hashes(std::slice::from_ref(&block))
+        .initialize_block_header_hashes(&[])
         .map_err(|e| custom_err(format!("Failed to initialize block header hashes: {e}")))?;
 
     // 2. Verify initial state root
@@ -240,30 +332,48 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         )));
     }
 
-    // 3. Verify base fee against parent header (EIP-1559)
-    let parent_base_fee = guest_state
-        .parent_block_header
-        .base_fee_per_gas
-        .unwrap_or(INITIAL_BASE_FEE);
-    if let Some(block_base_fee) = block.header.base_fee_per_gas {
-        let expected_base_fee = calculate_base_fee_per_gas(
-            block.header.gas_limit,
-            guest_state.parent_block_header.gas_limit,
-            guest_state.parent_block_header.gas_used,
-            parent_base_fee,
-            ELASTICITY_MULTIPLIER,
-        )
-        .ok_or_else(|| {
-            custom_err("Base fee calculation failed (gas limit out of bounds)".to_string())
-        })?;
-        if block_base_fee != expected_base_fee {
-            return Err(custom_err(format!(
-                "Base fee mismatch: block header has {block_base_fee}, expected {expected_base_fee}"
-            )));
-        }
-    }
+    // 3. Compute base fee from explicit parent fields (EIP-1559)
+    let base_fee_per_gas = calculate_base_fee_per_gas(
+        block_gas_limit,
+        parent_gas_limit,
+        parent_gas_used,
+        parent_base_fee,
+        ELASTICITY_MULTIPLIER,
+    )
+    .ok_or_else(|| {
+        custom_err("Base fee calculation failed (gas limit out of bounds)".to_string())
+    })?;
 
-    // 4. Execute the block and collect logs
+    // 4. Build synthetic block header from individual fields
+    let parent_hash = guest_state.parent_block_header.compute_block_hash();
+    let transactions_root = ethrex_common::types::compute_transactions_root(&transactions);
+
+    let header = ethrex_common::types::BlockHeader {
+        parent_hash,
+        number: block_number,
+        gas_limit: block_gas_limit,
+        coinbase,
+        prev_randao,
+        timestamp,
+        base_fee_per_gas: Some(base_fee_per_gas),
+        receipts_root: post_receipts_root,
+        state_root: expected_post_state_root,
+        transactions_root,
+        difficulty: U256::zero(),
+        withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[])),
+        ..Default::default()
+    };
+
+    let block = Block {
+        header,
+        body: ethrex_common::types::BlockBody {
+            transactions,
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        },
+    };
+
+    // 5. Execute the block and collect logs
     let db = Arc::new(GuestProgramStateDb::new(guest_state));
 
     let (all_logs, block_gas_used) = {
@@ -286,7 +396,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         (logs, gas_used)
     };
 
-    // 5. Verify final state root
+    // 6. Verify final state root
     let final_root = db
         .state
         .lock()
@@ -300,7 +410,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         )));
     }
 
-    // 6. Verify L1 messages rolling hash against L1MessageProcessed events
+    // 7. Verify L1 messages rolling hash against L1MessageProcessed events
     let computed_rolling_hash = compute_l1_messages_rolling_hash(&all_logs);
     if computed_rolling_hash != l1_messages_rolling_hash {
         return Err(custom_err(format!(
@@ -308,17 +418,16 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         )));
     }
 
-    // 7. Extract withdrawals from logs and compute Merkle root
+    // 8. Extract withdrawals from logs and compute Merkle root
     let withdrawals = extract_withdrawals(&all_logs);
     let withdrawal_root = compute_withdrawals_merkle_root(&withdrawals);
 
-    // 8. Compute burned fees: base_fee_per_gas * block_gas_used (EIP-1559)
-    let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
-    let burned_fees = U256::from(base_fee)
+    // 9. Compute burned fees: base_fee_per_gas * block_gas_used (EIP-1559)
+    let burned_fees = U256::from(base_fee_per_gas)
         .checked_mul(U256::from(block_gas_used))
         .ok_or(VMError::Internal(InternalError::Overflow))?;
 
-    // 9. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed, burnedFees) -- 160 bytes
+    // 10. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed, burnedFees) -- 160 bytes
     let mut result = Vec::with_capacity(160);
     result.extend_from_slice(expected_post_state_root.as_bytes());
     // block_number as uint256: 24 zero bytes + 8-byte big-endian
@@ -433,20 +542,6 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(Vec<Log
             receipt_logs,
         ));
     }
-
-    // Native rollup L2 blocks do not have validator withdrawals.
-    if let Some(withdrawals) = &block.body.withdrawals
-        && !withdrawals.is_empty()
-    {
-        return Err(custom_err(format!(
-            "Native rollup blocks must not contain withdrawals, found {}",
-            withdrawals.len()
-        )));
-    }
-
-    // Validate gas used
-    ethrex_common::validate_gas_used(cumulative_gas_used, &block.header)
-        .map_err(|e| custom_err(format!("Gas validation failed: {e}")))?;
 
     // Validate receipts root
     ethrex_common::validate_receipts_root(&block.header, &receipts)
