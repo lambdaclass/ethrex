@@ -788,7 +788,12 @@ impl Blockchain {
 
         // === Stage B: Parallel per-account storage root computation ===
 
-        // Sort by storage weight (descending) for greedy bin packing
+        // Sort by storage weight (descending) for greedy bin packing.
+        // Every item with real Stage B work MUST have weight >= 1: the greedy
+        // algorithm does `bin_weights[min] += weight`, so weight-0 items never
+        // change the bin weight and `min_by_key` keeps returning the same bin,
+        // piling ALL of them into a single worker. Removed accounts are cheap
+        // individually (just push EMPTY_TRIE_HASH) but must still be distributed.
         let mut work_indices: Vec<(usize, usize)> = accounts
             .iter()
             .enumerate()
