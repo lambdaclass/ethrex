@@ -15,12 +15,12 @@ use crate::peer_table::PeerTableError;
 use crate::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
-use ethrex_common::H256;
+use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
     Arc,
@@ -29,7 +29,7 @@ use std::sync::{
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 // Re-export types used by submodules
 pub use snap_sync::{
@@ -161,16 +161,274 @@ impl Syncer {
     }
 }
 
+/// An inclusive hash range representing a portion of a storage trie that needs to be downloaded.
+#[derive(Debug, Clone)]
+pub struct Interval {
+    pub start: H256,
+    pub end: H256,
+}
+
+/// A single storage slot: a hashed key and its value.
+#[derive(Debug, Clone)]
+pub struct Slot {
+    pub hash: H256,
+    pub value: U256,
+}
+
+/// A storage trie that fits in a single `request_storage_ranges` request.
+#[derive(Debug, Clone)]
+pub struct SmallTrie {
+    pub accounts: Vec<H256>,
+    pub slots: Vec<Slot>,
+}
+
+/// A storage trie too large to fit in a single `request_storage_ranges` request.
+/// It is downloaded in multiple sub-range requests tracked by `intervals`.
+#[derive(Debug, Clone)]
+pub struct BigTrie {
+    pub accounts: Vec<H256>,
+    pub slots: Vec<Slot>,
+    pub intervals: Vec<Interval>,
+}
+
+/// Tracks the download state of storage tries during snap sync.
+///
+/// All tries start as small (in `small_tries`). When a request fails to download
+/// a trie in its entirety, it is promoted to big (moved to `big_tries`) and split
+/// into sub-range intervals that are downloaded independently.
+///
+/// Both maps are keyed by the storage trie root hash. A healing function is
+/// responsible for reconciling partially downloaded tries after the download phase.
 #[derive(Debug, Default)]
-#[allow(clippy::type_complexity)]
-/// We store for optimization the accounts that need to heal storage
-pub struct AccountStorageRoots {
-    /// The accounts that have not been healed are guaranteed to have the original storage root
-    /// we can read this storage root
-    pub accounts_with_storage_root: BTreeMap<H256, (Option<H256>, Vec<(H256, H256)>)>,
-    /// If an account has been healed, it may return to a previous state, so we just store the account
-    /// in a hashset
+pub struct StorageTrieTracker {
+    pub small_tries: HashMap<H256, SmallTrie>,
+    pub big_tries: HashMap<H256, BigTrie>,
+    /// Accounts that need storage trie healing (big accounts, healed accounts, etc.)
     pub healed_accounts: HashSet<H256>,
+    /// Reverse lookup: account hash -> current storage root
+    pub account_to_root: HashMap<H256, H256>,
+}
+
+impl StorageTrieTracker {
+    /// Inserts an account into the tracker, grouping by storage root.
+    /// If the root already exists (in small or big), appends the account to it.
+    pub fn insert_account(&mut self, account_hash: H256, storage_root: H256) {
+        self.account_to_root.insert(account_hash, storage_root);
+        if let Some(big) = self.big_tries.get_mut(&storage_root) {
+            big.accounts.push(account_hash);
+            return;
+        }
+        self.small_tries
+            .entry(storage_root)
+            .or_insert_with(|| SmallTrie {
+                accounts: Vec::new(),
+                slots: Vec::new(),
+            })
+            .accounts
+            .push(account_hash);
+    }
+
+    /// Promotes a small trie to a big trie with downloaded slots and computed intervals.
+    /// `accounts` must be provided by the caller since the small trie may have already
+    /// been taken out of `small_tries` by `take_small_batch`.
+    pub fn promote_to_big(
+        &mut self,
+        root: H256,
+        accounts: Vec<H256>,
+        first_slots: Vec<Slot>,
+        intervals: Vec<Interval>,
+    ) {
+        // Clean up small_tries in case it wasn't already removed
+        self.small_tries.remove(&root);
+        self.big_tries.insert(
+            root,
+            BigTrie {
+                accounts,
+                slots: first_slots,
+                intervals,
+            },
+        );
+    }
+
+    /// Drains up to `batch_size` entries from `small_tries`, returning owned data.
+    pub fn take_small_batch(&mut self, batch_size: usize) -> Vec<(H256, SmallTrie)> {
+        let keys: Vec<H256> = self.small_tries.keys().take(batch_size).copied().collect();
+        let mut batch = Vec::with_capacity(keys.len());
+        for key in keys {
+            if let Some(trie) = self.small_tries.remove(&key) {
+                batch.push((key, trie));
+            }
+        }
+        batch
+    }
+
+    /// Re-inserts failed small tries back into `small_tries`.
+    pub fn return_small_tries(&mut self, tries: Vec<(H256, SmallTrie)>) {
+        for (root, trie) in tries {
+            let entry = self.small_tries.entry(root).or_insert_with(|| SmallTrie {
+                accounts: Vec::new(),
+                slots: Vec::new(),
+            });
+            entry.accounts.extend(trie.accounts);
+            if entry.slots.is_empty() {
+                entry.slots = trie.slots;
+            }
+        }
+    }
+
+    /// Called by state healing when an account's storage root changes.
+    pub fn handle_healed_account(&mut self, account_hash: H256, old_root: H256, new_root: H256) {
+        // Always mark for healing
+        self.healed_accounts.insert(account_hash);
+
+        if old_root == new_root {
+            return;
+        }
+
+        // Determine where the old root lives
+        let in_big = self.big_tries.contains_key(&old_root);
+
+        if in_big {
+            // Old root was in big_tries
+            let big = self
+                .big_tries
+                .get(&old_root)
+                .expect("big_tries should contain old_root");
+            let is_only_account = big.accounts.len() == 1 && big.accounts[0] == account_hash;
+            if is_only_account {
+                // Only account: re-key
+                let big = self
+                    .big_tries
+                    .remove(&old_root)
+                    .expect("big_tries should contain old_root");
+                if let Some(existing) = self.big_tries.get_mut(&new_root) {
+                    existing.accounts.push(account_hash);
+                } else {
+                    self.big_tries.insert(new_root, big);
+                }
+            } else {
+                // Multiple accounts: remove account from old entry, add to new root
+                let new_root_exists = self.big_tries.contains_key(&new_root);
+                if new_root_exists {
+                    // new_root already tracked: just move the account, no clone needed
+                    self.big_tries
+                        .get_mut(&old_root)
+                        .expect("big_tries should contain old_root")
+                        .accounts
+                        .retain(|a| *a != account_hash);
+                    self.big_tries
+                        .get_mut(&new_root)
+                        .expect("big_tries should contain new_root")
+                        .accounts
+                        .push(account_hash);
+                } else {
+                    // new_root not tracked: clone slots/intervals for the new entry
+                    let big = self
+                        .big_tries
+                        .get_mut(&old_root)
+                        .expect("big_tries should contain old_root");
+                    let new_big = BigTrie {
+                        accounts: vec![account_hash],
+                        slots: big.slots.clone(),
+                        intervals: big.intervals.clone(),
+                    };
+                    big.accounts.retain(|a| *a != account_hash);
+                    self.big_tries.insert(new_root, new_big);
+                }
+            }
+        } else {
+            // Old root was in small_tries or not registered
+            if let Some(small) = self.small_tries.get_mut(&old_root) {
+                small.accounts.retain(|a| *a != account_hash);
+                if small.accounts.is_empty() {
+                    self.small_tries.remove(&old_root);
+                }
+            }
+
+            // Add to new root's trie
+            if let Some(big) = self.big_tries.get_mut(&new_root) {
+                big.accounts.push(account_hash);
+            } else {
+                self.small_tries
+                    .entry(new_root)
+                    .or_insert_with(|| SmallTrie {
+                        accounts: Vec::new(),
+                        slots: Vec::new(),
+                    })
+                    .accounts
+                    .push(account_hash);
+            }
+        }
+
+        self.account_to_root.insert(account_hash, new_root);
+    }
+
+    /// Moves all accounts from both maps into `healed_accounts` and clears the maps.
+    pub fn drain_all_to_healed(&mut self) {
+        for small in self.small_tries.values() {
+            self.healed_accounts.extend(small.accounts.iter());
+        }
+        for big in self.big_tries.values() {
+            self.healed_accounts.extend(big.accounts.iter());
+        }
+        self.small_tries.clear();
+        self.big_tries.clear();
+    }
+
+    /// Returns the total number of remaining tries to download.
+    pub fn remaining_count(&self) -> usize {
+        self.small_tries.len() + self.big_tries.len()
+    }
+}
+
+impl BigTrie {
+    /// Computes download intervals for a big trie based on its download progress.
+    pub fn compute_intervals(
+        last_downloaded_hash: H256,
+        slot_count: usize,
+        slots_per_chunk: usize,
+    ) -> Vec<Interval> {
+        let start_hash_u256 = U256::from_big_endian(&last_downloaded_hash.0);
+        let missing_storage_range = U256::MAX - start_hash_u256;
+        let slot_count = slot_count.max(1);
+        let storage_density = start_hash_u256 / slot_count;
+        let chunk_size = storage_density
+            .checked_mul(U256::from(slots_per_chunk))
+            .unwrap_or(U256::MAX);
+        // chunk_size is zero only when last_downloaded_hash < slot_count (integer division
+        // floors to zero). In practice this requires either empty slots (H256::zero() fallback)
+        // or keccak256 hashes smaller than the slot count, both of which indicate an unexpected
+        // state earlier in the pipeline. We fall back to a single interval but warn so the
+        // root cause can be investigated.
+        let chunk_size = if chunk_size.is_zero() {
+            warn!(
+                "compute_intervals: chunk_size is zero (last_downloaded_hash={last_downloaded_hash:?}, slot_count={slot_count}), falling back to single interval"
+            );
+            U256::MAX
+        } else {
+            chunk_size
+        };
+        let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
+
+        let mut intervals = Vec::with_capacity(chunk_count);
+        for i in 0..chunk_count {
+            let interval_start_u256 = start_hash_u256 + chunk_size * i;
+            let interval_start = H256::from_uint(&interval_start_u256);
+            let interval_end = if i == chunk_count - 1 {
+                H256([0xFF; 32])
+            } else {
+                let end_u256 = interval_start_u256
+                    .checked_add(chunk_size)
+                    .unwrap_or(U256::MAX);
+                H256::from_uint(&end_u256)
+            };
+            intervals.push(Interval {
+                start: interval_start,
+                end: interval_end,
+            });
+        }
+        intervals
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
