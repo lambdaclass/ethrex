@@ -64,6 +64,10 @@ pub const MAX_WITNESSES: u64 = 128;
 const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
+/// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
+/// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
+const BATCH_COMMIT_THRESHOLD: usize = 4;
+
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
 enum FKVGeneratorControlMessage {
@@ -1335,6 +1339,8 @@ impl Store {
             .state_root;
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
+        let is_batch = update_batch.blocks.len() > 1;
+
         let UpdateBatch {
             account_updates,
             storage_updates,
@@ -1350,6 +1356,7 @@ impl Store {
             storage_updates,
             result_sender: notify_tx,
             child_state_root: last_state_root,
+            is_batch,
         };
         trie_upd_worker_tx.send(trie_update).map_err(|e| {
             StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
@@ -2665,6 +2672,7 @@ struct TrieUpdate {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    is_batch: bool,
 }
 
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
@@ -2681,6 +2689,7 @@ fn apply_trie_updates(
         child_state_root,
         account_updates,
         storage_updates,
+        is_batch,
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
@@ -2708,7 +2717,12 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?;
 
     // Phase 2: update disk layer.
-    let Some(root) = trie.get_commitable(parent_state_root) else {
+    let commitable = if is_batch {
+        trie.get_commitable_with_threshold(parent_state_root, BATCH_COMMIT_THRESHOLD)
+    } else {
+        trie.get_commitable(parent_state_root)
+    };
+    let Some(root) = commitable else {
         // Nothing to commit to disk, move on.
         return Ok(());
     };
