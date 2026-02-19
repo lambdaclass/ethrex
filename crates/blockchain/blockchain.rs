@@ -793,13 +793,14 @@ impl Blockchain {
             .iter()
             .enumerate()
             .map(|(i, (_, update))| {
-                let weight =
-                    if update.removed || update.removed_storage || !update.added_storage.is_empty()
-                    {
-                        1.max(update.added_storage.len())
-                    } else {
-                        0
-                    };
+                let weight = if update.removed {
+                    // Removed accounts are trivially cheap (just push EMPTY_TRIE_HASH)
+                    0
+                } else if update.removed_storage || !update.added_storage.is_empty() {
+                    1.max(update.added_storage.len())
+                } else {
+                    0
+                };
                 (i, weight)
             })
             .collect();
@@ -930,6 +931,10 @@ impl Blockchain {
         let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
 
+        // All 16 shard threads must run, even for empty shards: each worker
+        // opens the parent state trie and returns its existing subtree so the
+        // root can be correctly assembled via `collect_trie`. Skipping unchanged
+        // shards (unlike Stage B's filter_map) would leave holes in the root.
         std::thread::scope(|s| -> Result<(), StoreError> {
             let handles: Vec<_> = shards
                 .into_iter()
@@ -950,7 +955,10 @@ impl Blockchain {
                                     let mut account_state = match state_trie.get(path)? {
                                         Some(rlp) => {
                                             let state = AccountState::decode(&rlp)?;
-                                            // Re-insert to materialize path in trie
+                                            // Re-insert to materialize the trie path so
+                                            // collect_changes_since_last_hash includes this
+                                            // node in the diff (needed for both updates and
+                                            // removals via collect_trie).
                                             state_trie.insert(path.to_vec(), rlp)?;
                                             state
                                         }
@@ -970,6 +978,8 @@ impl Blockchain {
                                         }
                                     }
 
+                                    // EIP-161: remove empty accounts (zero nonce, zero balance,
+                                    // empty code, empty storage) from the state trie.
                                     if account_state != AccountState::default() {
                                         state_trie
                                             .insert(path.to_vec(), account_state.encode_to_vec())?;
