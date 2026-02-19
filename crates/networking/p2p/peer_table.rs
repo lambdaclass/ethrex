@@ -973,29 +973,56 @@ impl PeerTableServer {
 
     async fn new_contact_records(&mut self, node_records: Vec<NodeRecord>, local_node_id: H256) {
         for node_record in node_records {
+            if !node_record.verify_signature() {
+                continue;
+            }
             if let Ok(node) = Node::from_enr(&node_record) {
                 let node_id = node.node_id();
-                if let Entry::Vacant(vacant_entry) = self.contacts.entry(node_id)
-                    && !self.discarded_contacts.contains(&node_id)
-                    && node_id != local_node_id
-                {
-                    // NodeRecords are only received via discv5
-                    let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
-                    let is_fork_id_valid =
-                        if let Some(remote_fork_id) = node_record.decode_pairs().eth {
-                            backend::is_fork_id_valid(&self.store, &remote_fork_id)
-                                .await
-                                .ok()
-                                .or(Some(false))
-                        } else {
-                            Some(false)
+                if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+                    continue;
+                }
+                match self.contacts.entry(node_id) {
+                    Entry::Vacant(vacant_entry) => {
+                        let is_fork_id_valid =
+                            Self::evaluate_fork_id(&node_record, &self.store).await;
+                        let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
+                        contact.is_fork_id_valid = is_fork_id_valid;
+                        contact.record = Some(node_record);
+                        vacant_entry.insert(contact);
+                        METRICS.record_new_discovery().await;
+                    }
+                    Entry::Occupied(mut occupied_entry) => {
+                        let should_update = match occupied_entry.get().record.as_ref() {
+                            None => true,
+                            Some(r) => node_record.seq > r.seq,
                         };
-                    contact.is_fork_id_valid = is_fork_id_valid;
-                    contact.record = Some(node_record);
-                    vacant_entry.insert(contact);
-                    METRICS.record_new_discovery().await;
+                        if should_update {
+                            let is_fork_id_valid =
+                                Self::evaluate_fork_id(&node_record, &self.store).await;
+                            let contact = occupied_entry.get_mut();
+                            if contact.node.ip != node.ip || contact.node.udp_port != node.udp_port
+                            {
+                                contact.validation_timestamp = None;
+                                contact.ping_id = None;
+                            }
+                            contact.node = node;
+                            contact.record = Some(node_record);
+                            contact.is_fork_id_valid = is_fork_id_valid;
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
+        if let Some(remote_fork_id) = record.decode_pairs().eth {
+            backend::is_fork_id_valid(store, &remote_fork_id)
+                .await
+                .ok()
+                .or(Some(false))
+        } else {
+            Some(false)
         }
     }
 

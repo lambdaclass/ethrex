@@ -443,7 +443,7 @@ impl DiscoveryServer {
             }
         }
         Message::FindNode(FindNodeMessage {
-            req_id: Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec()),
+            req_id: generate_req_id(),
             distances,
         })
     }
@@ -498,13 +498,15 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         // Validate and record PONG (clears ping_req_id if matches)
         self.peer_table
-            .record_pong_received(&sender_id, pong_message.req_id.clone())
+            .record_pong_received(&sender_id, pong_message.req_id)
             .await?;
 
-        // If sender's enr_seq > our cached version, request updated ENR
+        // If sender's enr_seq is higher than our cached version, request updated ENR.
         if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
+            // If we have no cached record, default to 0 so any PONG with enr_seq > 0
+            // triggers a FINDNODE to fetch the ENR we're missing.
             let cached_seq = contact.record.as_ref().map_or(0, |r| r.seq);
-            if pong_message.enr_seq != cached_seq {
+            if pong_message.enr_seq > cached_seq {
                 trace!(
                     protocol = "discv5",
                     from = %sender_id,
@@ -513,7 +515,7 @@ impl DiscoveryServer {
                     "ENR seq mismatch, requesting updated ENR (FINDNODE distance 0)"
                 );
                 let find_node = Message::FindNode(FindNodeMessage {
-                    req_id: pong_message.req_id,
+                    req_id: generate_req_id(),
                     distances: vec![0],
                 });
                 self.send_ordinary(find_node, &contact.node).await?;
@@ -579,8 +581,7 @@ impl DiscoveryServer {
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
-        let mut rng = OsRng;
-        let req_id = Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec());
+        let req_id = generate_req_id();
 
         let ping = Message::Ping(PingMessage {
             req_id: req_id.clone(),
@@ -1010,6 +1011,11 @@ pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f6
     )
 }
 
+fn generate_req_id() -> Bytes {
+    let mut rng = OsRng;
+    Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -1204,18 +1210,37 @@ mod tests {
             recipient_addr: "127.0.0.1:30303".parse().unwrap(),
         };
         let initial_pending_count = server.pending_by_nonce.len();
-        let _ = server.handle_pong(pong_same_seq, remote_node_id).await;
+        server
+            .handle_pong(pong_same_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for matching enr_seq");
         // No new message should be pending (no FINDNODE sent)
         assert_eq!(server.pending_by_nonce.len(), initial_pending_count);
 
-        // Test 2: PONG with different enr_seq should trigger FINDNODE
-        let pong_different_seq = PongMessage {
+        // Test 2: PONG with higher enr_seq should trigger FINDNODE
+        let pong_higher_seq = PongMessage {
             req_id: Bytes::from(vec![4, 5, 6]),
-            enr_seq: 10, // Different from cached (5)
+            enr_seq: 10, // Higher than cached (5)
             recipient_addr: "127.0.0.1:30303".parse().unwrap(),
         };
-        let _ = server.handle_pong(pong_different_seq, remote_node_id).await;
+        server
+            .handle_pong(pong_higher_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for higher enr_seq");
         // A new message should be pending (FINDNODE sent)
+        assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
+
+        // Test 3: PONG with lower enr_seq should NOT trigger FINDNODE
+        let pong_lower_seq = PongMessage {
+            req_id: Bytes::from(vec![7, 8, 9]),
+            enr_seq: 3, // Lower than cached (5)
+            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
+        };
+        server
+            .handle_pong(pong_lower_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for lower enr_seq");
+        // No new message should be pending
         assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
     }
 

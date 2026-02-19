@@ -104,7 +104,7 @@ runs:
       uses: ethpandaops/kurtosis-assertoor-github-action@v1
       with:
         enclave_name: ethrex-assertoor-${{ inputs.network }}-${{ inputs.cl_type }}
-        kurtosis_version: 1.10.2
+        kurtosis_version: 1.15.2
         ethereum_package_url: github.com/ethpandaops/ethereum-package
         ethereum_package_branch: 82e5a7178138d892c0c31c3839c89d53ffd42d9a
         ethereum_package_args: .github/config/assertoor/network_params.generated.yaml

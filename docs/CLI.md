@@ -15,6 +15,7 @@ Commands:
   import-bench        Import blocks to the database for benchmarking
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
+  repl                Interactive REPL for Ethereum JSON-RPC
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -487,12 +488,12 @@ L1 Committer options:
 
 Proof coordinator options:
       --proof-coordinator.l1-private-key <PRIVATE_KEY>
-          Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
+          Private key of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
 
           [env: ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=]
 
       --proof-coordinator.tdx-private-key <PRIVATE_KEY>
-          Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.
+          Private key of a funded account that the TDX tool will use to send the tdx attestation to L1.
 
           [env: ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=]
 
@@ -565,6 +566,11 @@ Aligned options:
 
           [env: ETHREX_ALIGNED_NETWORK=]
           [default: devnet]
+
+      --aligned.from-block <BLOCK_NUMBER>
+          Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.
+
+          [env: ETHREX_ALIGNED_FROM_BLOCK=]
 
       --aligned.fee-estimate <FEE_ESTIMATE>
           Fee estimate for Aligned sdk

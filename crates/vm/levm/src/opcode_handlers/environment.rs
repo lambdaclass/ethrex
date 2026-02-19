@@ -28,15 +28,22 @@ impl<'a> VM<'a> {
     // BALANCE operation
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
-
         let address_was_cold = !self.substate.add_accessed_address(address);
+
+        // Gas check MUST pass before state access per EIP-7928:
+        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
+
+        // State access AFTER gas check passes
         let account_balance = self.db.get_account(address)?.info.balance;
 
-        let current_call_frame = &mut self.current_call_frame;
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
-        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
-
-        current_call_frame.stack.push(account_balance)?;
+        self.current_call_frame.stack.push(account_balance)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -261,13 +268,21 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
+
+        // Gas check MUST pass before state access per EIP-7928:
+        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
+
+        // State access AFTER gas check passes (using optimized code length lookup)
         let account_code_length = self.db.get_code_length(address)?.into();
 
-        let current_call_frame = &mut self.current_call_frame;
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
-
-        current_call_frame.stack.push(account_code_length)?;
+        self.current_call_frame.stack.push(account_code_length)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -285,6 +300,8 @@ impl<'a> VM<'a> {
         let address_was_cold = !self.substate.add_accessed_address(address);
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
+        // Gas check MUST pass before recording address in BAL per EIP-7928:
+        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
         self.current_call_frame
             .increase_consumed_gas(gas_cost::extcodecopy(
                 size,
@@ -292,6 +309,11 @@ impl<'a> VM<'a> {
                 current_memory_size,
                 address_was_cold,
             )?)?;
+
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
         if size == 0 {
             return Ok(OpcodeResult::Continue);
@@ -394,21 +416,30 @@ impl<'a> VM<'a> {
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
+
+        // Gas check MUST pass before state access per EIP-7928:
+        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
+
+        // State access AFTER gas check passes
         let account = self.db.get_account(address)?;
         let account_is_empty = account.is_empty();
         let account_code_hash = account.info.code_hash.0;
-        let current_call_frame = &mut self.current_call_frame;
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
+        // Record address touch for BAL (after gas check passes)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {
-            current_call_frame.stack.push_zero()?;
+            self.current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue);
         }
 
         let hash = u256_from_big_endian_const(account_code_hash);
-        current_call_frame.stack.push(hash)?;
+        self.current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeResult::Continue)
     }
