@@ -68,13 +68,9 @@ impl SyncManager {
                 false
             };
             if is_synced {
-                info!(
-                    "Node has synced state (block {latest_block}), switching to full sync"
-                );
+                info!("Node has synced state (block {latest_block}), switching to full sync");
                 snap_enabled.store(false, Ordering::Relaxed);
-                if has_checkpoint
-                    && let Err(e) = store.clear_snap_state().await
-                {
+                if has_checkpoint && let Err(e) = store.clear_snap_state().await {
                     warn!("Failed to clear stale snap state: {e}");
                 }
             }
