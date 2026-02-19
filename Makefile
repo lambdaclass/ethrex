@@ -91,6 +91,27 @@ stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
 
+BENCHMARK_WORKTREE := /tmp/ethrex-main-worktree
+BENCHMARK_ENCLAVE ?= lambdanet-benchmark
+
+build-benchmark-images: ## 🐳 Build ethrex:bal-opt (current worktree) and ethrex:main images for benchmarking
+	docker build -t ethrex:bal-opt .
+	@if [ ! -d "$(BENCHMARK_WORKTREE)" ]; then \
+		git worktree add $(BENCHMARK_WORKTREE) main; \
+	fi
+	docker build -t ethrex:main $(BENCHMARK_WORKTREE)
+	git worktree remove --force $(BENCHMARK_WORKTREE) 2>/dev/null || true
+
+localnet-benchmark: build-benchmark-images checkout-ethereum-package ## 🔬 Start benchmark network (ethrex:main vs ethrex:bal-opt)
+	@set -e; \
+	trap 'printf "\nStopping benchmark localnet...\n"; kurtosis enclave stop $(BENCHMARK_ENCLAVE) || true; kurtosis enclave rm $(BENCHMARK_ENCLAVE) --force || true; exit 0' INT TERM HUP QUIT; \
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json; \
+	kurtosis run --enclave $(BENCHMARK_ENCLAVE) ethereum-package --args-file ./fixtures/networks/bal-benchmark.yaml
+
+stop-localnet-benchmark: ## 🛑 Stop benchmark network
+	kurtosis enclave stop $(BENCHMARK_ENCLAVE)
+	kurtosis enclave rm $(BENCHMARK_ENCLAVE) --force
+
 HIVE_BRANCH ?= master
 
 setup-hive: ## 🐝 Set up Hive testing framework

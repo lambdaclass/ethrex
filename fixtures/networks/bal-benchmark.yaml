@@ -1,0 +1,69 @@
+participants:
+  - cl_type: lodestar
+    cl_image: ethpandaops/lodestar:bal-devnet-2
+    el_type: besu
+    el_image: ethpandaops/besu:bal-devnet-2
+  - cl_type: lodestar
+    cl_image: ethpandaops/lodestar:bal-devnet-2
+    el_type: nimbus
+    el_image: ethpandaops/nimbus-eth1:bal-devnet-2
+  - cl_type: lighthouse
+    supernode: true
+    cl_image: ethpandaops/lighthouse:bal-devnet-2
+    el_type: nethermind
+    el_image: ethpandaops/nethermind:bal-devnet-2
+  - cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:bal-devnet-2
+    supernode: true
+    el_type: geth
+    el_image: ethpandaops/geth:bal-devnet-2
+  - cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:bal-devnet-2
+    el_type: ethrex
+    el_image: ethrex:main
+    validator_count: 80
+    el_extra_params:
+      - "--syncmode=full"
+    el_extra_env_vars:
+      RUST_LOG: "debug,ethrex_p2p::tx_broadcaster=info,ethrex_blockchain::payload=info"
+  - cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:bal-devnet-2
+    el_type: ethrex
+    el_image: ethrex:bal-opt
+    validator_count: 80
+    el_extra_params:
+      - "--syncmode=full"
+    el_extra_env_vars:
+      RUST_LOG: "debug,ethrex_p2p::tx_broadcaster=info,ethrex_blockchain::payload=info"
+global_log_level: 'debug'
+network_params:
+  genesis_delay: 20
+  fulu_fork_epoch: 0
+  gloas_fork_epoch: 1
+  seconds_per_slot: 6
+snooper_enabled: true
+ethereum_genesis_generator_params:
+  image: ethpandaops/ethereum-genesis-generator:master
+dora_params:
+  image: ethpandaops/dora:eip7928-support
+additional_services:
+  - dora
+  - spamoor
+port_publisher:
+  additional_services:
+    enabled: true
+    public_port_start: 64400
+spamoor_params:
+  image: ethpandaops/spamoor:master
+  spammers:
+    - scenario: evm-fuzz
+      config:
+        throughput: 220
+        payload_seed: "0x233456"
+        tx_id_offset: 0
+    - scenario: eoatx
+      config:
+        throughput: 30
+    - scenario: uniswap-swaps
+      config:
+        throughput: 30
