@@ -404,9 +404,7 @@ pub const FILTER_DURATION: Duration = {
 /// # Panics
 ///
 /// Panics if the worker thread cannot be spawned.
-pub fn start_block_executor(
-    blockchain: Arc<Blockchain>,
-) -> UnboundedSender<BlockWorkerMessage> {
+pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<BlockWorkerMessage> {
     let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
     std::thread::Builder::new()
         .name("block_executor".to_string())
