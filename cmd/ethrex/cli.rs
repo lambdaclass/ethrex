@@ -476,6 +476,20 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[command(name = "repl", about = "Interactive REPL for Ethereum JSON-RPC")]
+    Repl {
+        /// JSON-RPC endpoint URL
+        #[arg(short = 'e', long, default_value = "http://localhost:8545")]
+        endpoint: String,
+
+        /// Path to command history file
+        #[arg(long, default_value = "~/.ethrex/history")]
+        history_file: String,
+
+        /// Execute a single command and exit
+        #[arg(short = 'x', long)]
+        execute: Option<String>,
+    },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
@@ -553,6 +567,13 @@ impl Subcommand {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
+            }
+            Subcommand::Repl {
+                endpoint,
+                history_file,
+                execute,
+            } => {
+                ethrex_repl::run(endpoint, history_file, execute).await;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
@@ -874,6 +895,7 @@ pub async fn export_blocks(
         Ok(store) => store,
     };
     let start = first_number.unwrap_or_default();
+
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {
         Ok(number) => number,
@@ -883,6 +905,20 @@ pub async fn export_blocks(
         }
         Err(_) => panic!("Internal DB Error"),
     };
+
+    // Get the earliest available block number to detect pruned blocks
+    let earliest_number = match store.get_earliest_block_number().await {
+        Ok(number) => number,
+        Err(StoreError::MissingEarliestBlockNumber) => {
+            // No earliest block set means everything from genesis is available
+            0
+        }
+        Err(err) => {
+            error!("Failed to get earliest block number: {err}");
+            return;
+        }
+    };
+
     // Check that the requested range doesn't exceed our current chain length
     if last_number.is_some_and(|number| number > latest_number) {
         warn!(
@@ -891,34 +927,73 @@ pub async fn export_blocks(
         return;
     }
     let end = last_number.unwrap_or(latest_number);
+
+    // Check if start is before earliest available block (pruned data)
+    let adjusted_start = if start < earliest_number {
+        warn!(
+            requested_start = start,
+            earliest_available = earliest_number,
+            "Requested start block has been pruned, adjusting to earliest available block"
+        );
+        earliest_number
+    } else {
+        start
+    };
+
     // Check that the requested range makes sense
-    if start > end {
-        warn!("Cannot export block range [{start}..{end}], please input a valid range");
+    if adjusted_start > end {
+        warn!("Cannot export block range [{adjusted_start}..{end}], please input a valid range");
         return;
     }
+
     // Fetch blocks from the store and export them to the file
     let mut file = File::create(path).expect("Failed to open file");
     let mut buffer = vec![];
     let mut last_output = Instant::now();
+    let mut exported_count: u64 = 0;
+
     // Denominator for percent completed; avoid division by zero
-    let denom = end.saturating_sub(start) + 1;
-    for n in start..=end {
-        let block = store
-            .get_block_by_number(n)
-            .await
-            .ok()
-            .flatten()
-            .expect("Failed to read block from DB");
+    let denom = end.saturating_sub(adjusted_start) + 1;
+    for n in adjusted_start..=end {
+        let block = match store.get_block_by_number(n).await {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                error!(
+                    block_number = n,
+                    earliest_available = earliest_number,
+                    latest_available = latest_number,
+                    "Block is missing within the available range - this indicates database corruption or unexpected state"
+                );
+                return;
+            }
+            Err(err) => {
+                error!(block_number = n, error = %err, "Failed to read block from DB");
+                return;
+            }
+        };
         block.encode(&mut buffer);
-        // Exporting the whole chain can take a while, so we need to show some output in the meantime
-        if last_output.elapsed() > Duration::from_secs(5) {
-            let completed = n.saturating_sub(start) + 1;
-            let percent = (completed * 100) / denom;
-            info!(n, end, percent, "Exporting blocks");
-            last_output = Instant::now();
-        }
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
+        exported_count += 1;
+
+        // Exporting the whole chain can take a while, so we need to show some output in the meantime
+        if last_output.elapsed() > Duration::from_secs(5) {
+            let percent = (exported_count * 100) / denom;
+            info!(
+                current_block = n,
+                end_block = end,
+                percent_complete = percent,
+                blocks_exported = exported_count,
+                "Exporting blocks"
+            );
+            last_output = Instant::now();
+        }
     }
-    info!(blocks = end.saturating_sub(start) + 1, path = %path, "Exported blocks to file");
+
+    info!(
+        blocks_exported = exported_count,
+        blocks_requested = end.saturating_sub(start) + 1,
+        path = %path,
+        "Exported blocks to file"
+    );
 }
