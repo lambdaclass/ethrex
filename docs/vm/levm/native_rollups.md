@@ -9,93 +9,97 @@ This is a Phase 1 proof-of-concept implementation that demonstrates the concept 
 ## Architecture
 
 ```
-L2 Block + ExecutionWitness + Deposits
+L2 Block + ExecutionWitness + Deposits Rolling Hash
         |
   EXECUTE precompile (in LEVM)
         |
-  1. Parse ABI-encoded calldata (pre-state root, block RLP, witness JSON, deposits)
+  1. Parse ABI-encoded calldata (pre-state root, block RLP, witness JSON, deposits rolling hash)
   2. Build GuestProgramState from witness
   3. Verify pre-state root
-  4. Apply deposits to state (anchor)
-  5. Execute block transactions via LEVM, collect logs
-  6. Verify post-state root (from block header) matches computed root
-  7. Extract WithdrawalInitiated events from logs → compute Merkle root
+  4. Execute block transactions via LEVM, collect logs and receipts
+  5. Verify post-state root (from block header) matches computed root
+  6. Verify receipts root (from block header) matches computed receipts
+  7. Scan DepositProcessed events from L2Bridge → rebuild rolling hash → verify it matches
+  8. Extract WithdrawalInitiated events from L2Bridge logs → compute Merkle root
         |
-  Returns abi.encode(postStateRoot, blockNumber, withdrawalRoot) or reverts
+  Returns abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed) or reverts
 ```
 
 ### Components
 
-**`execute_precompile.rs`** — The core precompile logic. Parses ABI-encoded calldata containing the pre-state root, an RLP-encoded block, a JSON-serialized witness, and packed deposit data. Orchestrates the full verification flow: calldata parsing, state root checks, deposit application, block execution, withdrawal extraction, and final state root verification. After execution, it scans transaction logs for `WithdrawalInitiated` events emitted by the L2 withdrawal bridge (`0x00...fffd`) and computes a commutative Keccak256 Merkle root (OpenZeppelin-compatible). The post-state root, block number, and withdrawal root are returned as `abi.encode(postStateRoot, blockNumber, withdrawalRoot)` — 96 bytes. Also contains helpers for block execution (`execute_block`), gas price calculation, transaction type validation, deposit application, Merkle tree construction, and Merkle proof generation.
+**`execute_precompile.rs`** — The core precompile logic. Parses ABI-encoded calldata containing the pre-state root, an RLP-encoded block, a JSON-serialized witness, and a deposits rolling hash. Orchestrates the full verification flow: calldata parsing, state root checks, block execution, receipts root verification, deposit rolling hash verification, withdrawal extraction, and final state root verification. After execution, it scans transaction logs for `DepositProcessed` events from the L2Bridge (`0x00...fffd`) to reconstruct the deposits rolling hash and verify it matches the one provided by the L1 contract. It also scans for `WithdrawalInitiated` events and computes a commutative Keccak256 Merkle root (OpenZeppelin-compatible). The post-state root, block number, withdrawal root, and gas used are returned as `abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed)` — 128 bytes. Also contains helpers for block execution (`execute_block`), gas price calculation, transaction type validation, rolling hash computation, Merkle tree construction, and Merkle proof generation.
 
 **`guest_program_state_db.rs`** — A thin adapter that implements LEVM's `Database` trait backed by `GuestProgramState`. This bridges the gap between the stateless execution witness (which provides account/storage/code data via tries) and LEVM's database interface. Uses a `Mutex` for interior mutability since `GuestProgramState` requires `&mut self` while `Database` methods take `&self`.
 
 **`precompiles.rs` (modified)** — Registers the EXECUTE precompile at address `0x0101`, dispatched at runtime before the standard const precompile table lookup.
 
-**`NativeRollup.sol`** — A Solidity contract that manages L2 state on-chain. Maintains `stateRoot` (slot 0), `blockNumber` (slot 1), a `pendingDeposits` array (slot 2), `depositIndex` (slot 3), `withdrawalRoots` mapping (slot 4), `claimedWithdrawals` mapping (slot 5), and a reentrancy guard (slot 6). Exposes:
-- `deposit(address)` — payable function that records pending deposits
+**`NativeRollup.sol`** — A Solidity contract that manages L2 state on-chain. Maintains `stateRoot` (slot 0), `blockNumber` (slot 1), a `pendingDeposits` array of deposit hashes (slot 2), `depositIndex` (slot 3), `withdrawalRoots` mapping (slot 4), `claimedWithdrawals` mapping (slot 5), and a reentrancy guard (slot 6). Exposes:
+- `deposit(address)` — payable function that records `keccak256(abi.encodePacked(recipient, msg.value, nonce))` as a deposit hash
 - `receive()` — payable fallback that deposits for `msg.sender`
-- `advance(uint256, bytes, bytes)` — consumes pending deposits, builds ABI-encoded precompile calldata via `abi.encode(stateRoot, _block, _witness, depositsData)`, calls EXECUTE at `0x0101`, decodes the returned `(postStateRoot, blockNumber, withdrawalRoot)`, stores the withdrawal root keyed by block number, and updates state
+- `advance(uint256, bytes, bytes)` — computes a rolling hash over consumed deposit hashes, builds ABI-encoded precompile calldata via `abi.encode(stateRoot, _block, _witness, depositsRollingHash)`, calls EXECUTE at `0x0101`, decodes the returned `(postStateRoot, blockNumber, withdrawalRoot)`, stores the withdrawal root keyed by block number, and updates state
 - `claimWithdrawal(address, address, uint256, uint256, uint256, bytes32[])` — allows users to claim withdrawals initiated on L2, verifying a Merkle proof against the stored withdrawal root for the given block number. Uses checks-effects-interactions pattern with reentrancy guard.
 
-**`L2WithdrawalBridge.sol`** — An L2 contract deployed at `0x00...fffd` where users initiate withdrawals. Calling `withdraw(address receiver)` with ETH value emits a `WithdrawalInitiated(from, receiver, amount, messageId)` event. The EXECUTE precompile scans for these events and includes them in the withdrawal Merkle root.
+**`L2Bridge.sol`** — A unified L2 bridge contract deployed at `0x00...fffd` that handles both deposits and withdrawals. The relayer calls `processDeposit(address, uint256, uint256)` to transfer ETH from the bridge's preminted balance to deposit recipients, emitting `DepositProcessed` events. Users call `withdraw(address receiver)` with ETH value to initiate L2→L1 withdrawals, which burns ETH by sending to `address(0)` and emits `WithdrawalInitiated` events. The EXECUTE precompile scans for both event types.
 
 ### Why a Separate Database Adapter?
 
 The existing `GuestProgramStateWrapper` in `crates/vm/witness_db.rs` bridges `GuestProgramState` to the `VmDatabase` trait, which then gets adapted to LEVM's `Database` trait via `DynVmDatabase`. However, `ethrex-levm` cannot depend on `ethrex-vm` (it's the other way around), so a direct adapter is needed. The `GuestProgramStateDb` is this direct bridge — about 100 lines, doing the same job without the intermediate layer.
 
-### Deposit/Anchor Mechanism
+### Deposit Mechanism (Relayer-Based)
 
-Per EIP-8079, an "anchor" injects L1 data into L2 state before block execution. The deposit flow works as follows:
+The deposit flow uses a relayer and a prefunded L2 bridge contract, following the Linea/Taiko preminted-token pattern:
 
-1. Users call `NativeRollup.deposit(recipient)` with ETH value — this records a `PendingDeposit{recipient, amount}` in the contract's storage array
-2. When `advance()` is called with `_depositsCount`, it pops that many deposits from the queue (advancing `depositIndex`) and includes them in the binary calldata sent to the EXECUTE precompile
-3. The precompile parses the deposits from calldata and credits each recipient's balance directly in the state trie before executing the block
-4. The expected `post_state_root` must account for these credits
+1. Users call `NativeRollup.deposit(recipient)` on L1 with ETH value — this records `keccak256(abi.encodePacked(recipient, msg.value, nonce))` as a deposit hash in the contract's `pendingDeposits` array
+2. When `advance()` is called with `_depositsCount`, it computes a rolling hash over the consumed deposit hashes: `rolling_i = keccak256(abi.encodePacked(rolling_{i-1}, deposit_hash_i))`, starting from `bytes32(0)`
+3. The rolling hash is passed to the EXECUTE precompile as a static `bytes32` parameter
+4. On L2, a relayer sends real transactions calling `L2Bridge.processDeposit(recipient, amount, nonce)`, which transfers ETH from the bridge's preminted balance to the recipient and emits `DepositProcessed` events
+5. The EXECUTE precompile, after re-executing the L2 block, scans for `DepositProcessed` events from `L2Bridge` and rebuilds the rolling hash from the event data. If it matches the hash provided by the L1 contract, the deposits are valid.
+
+This ensures the L2 block included the correct deposit transactions without requiring custom transaction types or direct state manipulation. The relayer pays gas for deposit transactions, solving the "first deposit problem".
 
 ### Calldata Format (ABI-encoded)
 
 The EXECUTE precompile uses standard ABI encoding:
 
 ```
-abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes deposits)
+abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 depositsRollingHash)
 
 Offset  Contents
 0x00    bytes32 preStateRoot           (static, 32 bytes)
 0x20    uint256 offset_to_block        (points to block data)
 0x40    uint256 offset_to_witness      (points to witness data)
-0x60    uint256 offset_to_deposits     (points to deposits data)
+0x60    bytes32 depositsRollingHash    (static, 32 bytes — NOT a dynamic pointer)
 0x80+   dynamic data:
           block:    [32 length][block RLP bytes][padding]
           witness:  [32 length][witness JSON bytes][padding]
-          deposits: [32 length][packed deposit data: (20 addr + 32 amount) * N][padding]
 ```
 
 ### Return Value
 
 ```
-abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot)  — 96 bytes
+abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed)  — 128 bytes
 ```
 
-The post-state root is extracted from `block.header.state_root` and verified against the computed state root after execution. The block number is extracted from `block.header.number`. The withdrawal root is the Merkle root of all `WithdrawalInitiated` events emitted during block execution (zero if none).
+The post-state root is extracted from `block.header.state_root` and verified against the computed state root after execution. The block number is extracted from `block.header.number`. The withdrawal root is the Merkle root of all `WithdrawalInitiated` events emitted during block execution (zero if none). The gas used is the cumulative gas consumed by all transactions in the block (pre-refund, matching `block.header.gas_used`).
 
 ### Encoding Details
 
 - **Block** uses RLP encoding (already implemented in ethrex via `RLPEncode`/`RLPDecode`)
 - **ExecutionWitness** uses JSON because it doesn't have RLP support — it uses serde/rkyv for serialization instead
-- **Deposits** use packed binary encoding: each deposit is 52 bytes (20-byte address + 32-byte amount)
+- **Deposits rolling hash** is a static `bytes32` computed by the L1 NativeRollup contract from pending deposit hashes
 
-The NativeRollup contract fills in `preStateRoot` from its own storage, deposits from its pending queue, and passes through block/witness bytes unchanged (opaque to the contract). The contract decodes the precompile's return value to extract the new state root, block number, and withdrawal Merkle root.
+The NativeRollup contract fills in `preStateRoot` from its own storage, computes the `depositsRollingHash` from its pending deposit queue, and passes through block/witness bytes unchanged (opaque to the contract). The contract decodes the precompile's return value to extract the new state root, block number, and withdrawal Merkle root.
 
 ### Withdrawal Mechanism
 
 Withdrawals allow users to move ETH from L2 back to L1. The flow is:
 
 ```
-L2: User calls L2WithdrawalBridge.withdraw(receiverOnL1) with ETH
+L2: User calls L2Bridge.withdraw(receiverOnL1) with ETH
+     → burns ETH by sending to address(0)
      → emits WithdrawalInitiated(from, receiver, amount, messageId)
 
-EXECUTE precompile: Scans logs for WithdrawalInitiated events from 0x00...fffd
+EXECUTE precompile: Scans logs for WithdrawalInitiated events from L2Bridge (0x00...fffd)
      → computes withdrawal hashes: keccak256(abi.encodePacked(from, receiver, amount, messageId))
      → builds commutative Keccak256 Merkle tree (OpenZeppelin-compatible)
      → returns withdrawalRoot as third return value
@@ -108,7 +112,7 @@ L1: User calls NativeRollup.claimWithdrawal(from, receiver, amount, messageId, b
      → transfers ETH to receiver
 ```
 
-Each withdrawal is uniquely identified by `keccak256(abi.encodePacked(from, receiver, amount, messageId))`. The `messageId` is a counter maintained by the L2 bridge contract, starting at 0 and incrementing per withdrawal.
+Each withdrawal is uniquely identified by `keccak256(abi.encodePacked(from, receiver, amount, messageId))`. The `messageId` is a counter maintained by the L2Bridge contract (`withdrawalNonce`), starting at 0 and incrementing per withdrawal.
 
 ## Feature Flag
 
@@ -162,7 +166,7 @@ This runs all 4 offline tests:
 
 | Test | What it verifies |
 |------|-----------------|
-| `test_execute_precompile_transfer_and_deposit` | Full precompile flow: transfer + deposit + state root verification |
+| `test_execute_precompile_transfer_and_deposit` | Full precompile flow: relayer processDeposit + transfer + state root + rolling hash verification |
 | `test_native_rollup_contract` | NativeRollup.sol running in LEVM calling the EXECUTE precompile |
 | `test_execute_precompile_rejects_blob_transactions` | EIP-4844 blob transactions are rejected |
 | `test_execute_precompile_rejects_withdrawals` | Blocks with withdrawals are rejected |
@@ -173,21 +177,22 @@ Expected output:
 running 4 tests
 test levm::native_rollups::test_execute_precompile_rejects_blob_transactions ... ok
 test levm::native_rollups::test_execute_precompile_rejects_withdrawals ... ok
-ABI-encoded EXECUTE calldata: 7648 bytes
+ABI-encoded EXECUTE calldata: 18272 bytes
 EXECUTE precompile succeeded!
-  Pre-state root:  0x453ce276913130ed26928c276ae51759ff45ba62c4ab3389452355d56a485c13
-  Post-state root: 0x615cd8914a432a898d1d9998c8b8bce16c0bed49cd9e241cd3aca2ff41a449de
+  Pre-state root:  0xd0af...
+  Post-state root: 0x042b...
+  Relayer processed deposit of 5 ETH for charlie
   Alice sent 1 ETH to Bob
-  Charlie received 5 ETH deposit
+  Gas used: 104506
 test levm::native_rollups::test_execute_precompile_transfer_and_deposit ... ok
 Deposit TX succeeded (5 ETH for charlie)
 NativeRollup contract demo succeeded!
   L2 state transition verified via deposit() + advance():
-    Pre-state root:  0x453ce276913130ed26928c276ae51759ff45ba62c4ab3389452355d56a485c13
-    Post-state root: 0x615cd8914a432a898d1d9998c8b8bce16c0bed49cd9e241cd3aca2ff41a449de
+    Pre-state root:  0xd0af...
+    Post-state root: 0x042b...
     Block number:    1
     Deposit index:   1
-  Gas used: 303139
+  Gas used: 478801
 test levm::native_rollups::test_native_rollup_contract ... ok
 
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; ...
@@ -195,15 +200,16 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; ...
 
 #### What the main test does (`test_execute_precompile_transfer_and_deposit`)
 
-This test simulates a complete L2 block verification:
+This test simulates a complete L2 block verification with the relayer-based deposit flow:
 
-1. **Setup genesis state** — Creates 4 accounts: Alice (10 ETH), Bob (0), Charlie (0), Coinbase (0). Inserts them into a state trie and computes the pre-state root.
-2. **Build L2 transaction** — Signs an EIP-1559 transfer: Alice sends 1 ETH to Bob (gas limit 21,000, 1 gwei priority fee, 2 gwei max fee).
-3. **Compute expected post-state** — Calculates the final balances after the transfer (Alice loses 1 ETH + gas, Bob gains 1 ETH, Coinbase gets priority fee) and after the deposit (Charlie gains 5 ETH). Computes the expected post-state root.
-4. **Build witness** — Creates an `ExecutionWitness` containing the state trie, chain config, and block headers. This is the minimal data needed to re-execute the block without full node state.
-5. **Build ABI-encoded calldata** — Encodes `abi.encode(preStateRoot, blockRlp, witnessJson, deposits)` matching what the NativeRollup contract would produce.
-6. **Call the precompile** — Invokes `execute_precompile()` directly with the calldata. Inside, the precompile parses the ABI data, rebuilds the state from the witness, applies the deposit, re-executes the block, and verifies the computed state root matches the expected one.
-7. **Verify result** — Asserts the precompile returns `abi.encode(postStateRoot, blockNumber, withdrawalRoot)` (96 bytes). The withdrawal root is zero since the test block contains no withdrawal events.
+1. **Setup genesis state** — Creates accounts: Alice (10 ETH), Relayer (1 ETH for gas), L2Bridge at `0x00...fffd` (100 ETH preminted, storage: slot 0 = relayer address), Bob (0), Charlie (0), Coinbase (0), address(0). Inserts them into a state trie and computes the pre-state root.
+2. **Build L2 transactions** — Two EIP-1559 transactions: (1) Relayer calls `L2Bridge.processDeposit(charlie, 5 ETH, 0)` (gas limit 100k), (2) Alice sends 1 ETH to Bob (gas limit 21k).
+3. **Execute through LEVM** — Runs both transactions via `GuestProgramState → GuestProgramStateDb → VM` to get exact gas usage, receipts with logs, and the post-state root. No manual balance computation needed.
+4. **Build witness** — Creates an `ExecutionWitness` containing the state trie, bridge storage trie, bridge bytecode, chain config, and block headers.
+5. **Compute deposits rolling hash** — `rolling = keccak256(bytes32(0) || keccak256(abi.encodePacked(charlie, 5 ETH, 0)))`.
+6. **Build ABI-encoded calldata** — Encodes `abi.encode(preStateRoot, blockRlp, witnessJson, depositsRollingHash)` matching what the NativeRollup contract would produce.
+7. **Call the precompile** — Invokes `execute_precompile()` directly. The precompile re-executes the block, scans `DepositProcessed` events to verify the rolling hash matches, and verifies state/receipts roots.
+8. **Verify result** — Asserts the precompile returns `abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed)` (128 bytes). The withdrawal root is zero since no withdrawals occurred.
 
 #### What the contract test does (`test_native_rollup_contract`)
 
@@ -211,15 +217,17 @@ This test runs the NativeRollup.sol contract inside LEVM, which in turn calls th
 
 ```
 L1 tx1 -> NativeRollup.deposit(charlie) {value: 5 ETH}
-  -> records PendingDeposit{charlie, 5 ETH} in contract storage
+  -> records keccak256(abi.encodePacked(charlie, 5 ETH, 0)) as deposit hash
 
 L1 tx2 -> NativeRollup.advance(1, blockRlp, witnessJson)
   -> reads stateRoot from slot 0
-  -> pops 1 deposit from pendingDeposits array
-  -> builds calldata: abi.encode(stateRoot, block, witness, depositsData)
+  -> computes rolling hash over 1 consumed deposit hash
+  -> builds calldata: abi.encode(stateRoot, block, witness, depositsRollingHash)
   -> CALL to 0x0101 (EXECUTE precompile)
-    -> precompile re-executes the L2 block and verifies state roots
-  -> returns abi.encode(postStateRoot, blockNumber, withdrawalRoot)
+    -> precompile re-executes the L2 block (which includes relayer's processDeposit tx)
+    -> scans DepositProcessed events and verifies rolling hash matches
+    -> verifies state roots and receipts root
+  -> returns abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed)
   -> contract decodes return value
   -> updates storage: stateRoot (slot 0), blockNumber (slot 1), depositIndex (slot 3), withdrawalRoots[blockNumber] (slot 4 mapping)
 ```
@@ -284,8 +292,8 @@ The test exercises the full lifecycle: deploy, deposit, advance (2 blocks), and 
 **Phase 1 — Transfer + Deposit (L2 block 1):**
 
 1. **Connect to L1** — Creates an `EthClient` pointing at `localhost:8545` and loads the pre-funded signer from the Makefile's private key.
-2. **Build L2 state transitions** — Calls `build_l2_state_transition()` to create L2 block 1 (Alice→Bob transfer + Charlie deposit) and `build_l2_withdrawal_block()` to create L2 block 2 (Alice withdraws 1 ETH via the L2 bridge).
-3. **Compile contracts** — Calls `solc` via `compile_contract()` for both `NativeRollup.sol` and `L2WithdrawalBridge.sol`.
+2. **Build L2 state transitions** — Calls `build_l2_state_transition()` to create L2 block 1 (relayer processDeposit + Alice→Bob transfer) and `build_l2_withdrawal_block()` to create L2 block 2 (Alice withdraws 1 ETH via the L2Bridge).
+3. **Compile contracts** — Calls `solc` via `compile_contract()` for both `NativeRollup.sol` and `L2Bridge.sol`.
 4. **Deploy NativeRollup** — Sends a CREATE transaction with `deployBytecode + abi.encode(preStateRoot)` as constructor arg.
 5. **Verify initial state** — Reads storage slot 0 via `eth_getStorageAt` and asserts it matches the pre-state root.
 6. **Deposit** — Sends `deposit(charlie)` with 5 ETH via SDK helpers.
@@ -294,7 +302,7 @@ The test exercises the full lifecycle: deploy, deposit, advance (2 blocks), and 
 
 **Phase 2 — Withdrawal + Claim (L2 block 2):**
 
-9. **Advance (block 2)** — Sends `advance(0, block2Rlp, witness2Json)` with 0 deposits. Block 2 contains Alice calling `L2WithdrawalBridge.withdraw(receiver)` with 1 ETH.
+9. **Advance (block 2)** — Sends `advance(0, block2Rlp, witness2Json)` with 0 deposits. Block 2 contains Alice calling `L2Bridge.withdraw(receiver)` with 1 ETH.
 10. **Verify block 2 state** — Asserts stateRoot updated, blockNumber=2, and withdrawalRoots[2] is non-zero (withdrawal Merkle root stored).
 11. **Check receiver balance** — Reads the L1 receiver's balance (should be 0 before claiming).
 12. **Claim withdrawal** — Sends `claimWithdrawal(aliceL2, receiver, 1 ETH, messageId=0, blockNumber=2, proof=[])`. The proof is empty because a single-leaf Merkle tree has root = leaf hash.
@@ -304,8 +312,8 @@ The test exercises the full lifecycle: deploy, deposit, advance (2 blocks), and 
 
 The withdrawal block requires computing exact `gas_used` and `post_state_root` before building the final block (since the EXECUTE precompile validates both). The helper:
 
-1. Reconstructs the block 1 post-state (including the L2WithdrawalBridge contract at `0x00...fffd`)
-2. Builds a withdrawal transaction: Alice → bridge.withdraw(receiver) with 1 ETH
+1. Reconstructs the block 1 post-state (including the L2Bridge contract at `0x00...fffd` with storage: slot 0 = relayer, slot 1 = depositNonce = 1, and balance = 95 ETH after the 5 ETH deposit)
+2. Builds a withdrawal transaction: Alice → L2Bridge.withdraw(receiver) with 1 ETH
 3. Executes through LEVM via `GuestProgramState → GuestProgramStateDb → GeneralizedDatabase → VM` to get gas_used and state transitions
 4. Applies state transitions and computes the post-state root
 5. Builds the final block and witness with correct header values
@@ -322,22 +330,146 @@ The withdrawal block requires computing exact `gas_used` and `post_state_root` b
 | `crates/vm/levm/Cargo.toml` | Feature flag (modified) |
 | `crates/vm/Cargo.toml` | Feature flag propagation (modified) |
 | `cmd/ethrex/Cargo.toml` | Feature flag for ethrex binary (modified) |
-| `crates/vm/levm/contracts/NativeRollup.sol` | L1 contract: L2 state manager with deposits, advance, and withdrawal claiming |
-| `crates/vm/levm/contracts/L2WithdrawalBridge.sol` | L2 contract: withdrawal bridge where users burn ETH to initiate L2→L1 withdrawals |
+| `crates/vm/levm/contracts/NativeRollup.sol` | L1 contract: L2 state manager with deposit hash queue, rolling hash advance, and withdrawal claiming |
+| `crates/vm/levm/contracts/L2Bridge.sol` | L2 contract: unified bridge for deposits (processDeposit) and withdrawals (withdraw) |
 | `test/tests/levm/native_rollups.rs` | Unit tests and contract-based test |
 | `test/tests/l2/native_rollups.rs` | Integration test (requires running L1) |
 | `test/Cargo.toml` | Feature flag for test crate (modified) |
 | `crates/l2/Makefile` | `init-l1` supports `NATIVE_ROLLUPS=1` (modified) |
+
+## Spec Comparison: Native Rollups Book vs Our Implementation
+
+This section compares [the L2Beat native rollups book](https://native-rollups.l2beat.com/) against our PoC implementation, aspect by aspect.
+
+### EXECUTE Precompile Variant
+
+**Book:** Defines two variants. The `apply_body` variant receives individual execution parameters (chain_id, number, pre/post state roots, receipts root, gas limit, coinbase, prev_randao, transactions, parent gas info, l1_anchor) and skips header validation — it only re-executes transactions and verifies the resulting state root and receipts root match. The `state_transition` variant receives full current and parent block headers, reconstructs canonical `Block` and `BlockChain` objects, and runs the complete Ethereum state transition including all header-level consensus checks (parent hash, timestamp, gas limit bounds, etc.).
+
+**Us:** Closer to `apply_body`. We receive a full RLP-encoded block + execution witness + deposits rolling hash. We skip full header validation (no parent hash chain, no timestamp ordering, no ommers hash check). We do verify: pre-state root, base fee from parent header (EIP-1559), post-state root, receipts root, and deposits rolling hash (against DepositProcessed events). We return `abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed)` — 128 bytes.
+
+**Gaps:** The spec's `apply_body` takes individual fields; we pass a full RLP block. The spec references transactions via blob hashes; we embed them in the RLP block via calldata. The spec's output format is still TBD — we defined our own 128-byte return.
+
+### L1 Anchoring
+
+**Book:** Proposes an `L1_ANCHOR` system contract deployed on L2 that receives an arbitrary `bytes32` value from L1 (typically an L1 block hash). This value is written to L2 storage via a "system transaction" — a special unchecked transaction processed before regular block transactions. The format and validation are left to the rollup contract on L1. Higher-level messaging is built on top by passing roots and providing inclusion proofs on L2.
+
+**Us:** We use a deposits rolling hash approach — the L1 NativeRollup contract computes a rolling hash of pending deposit hashes and passes it to the EXECUTE precompile as a static `bytes32`. The precompile verifies this hash by scanning `DepositProcessed` events emitted by the L2Bridge predeploy during block execution. There is no system transaction or `L1_ANCHOR` contract; deposit processing happens via regular signed transactions from a relayer.
+
+**Gaps:** No `L1_ANCHOR` system contract on L2. No system transaction mechanism. No arbitrary `bytes32` anchoring — we only verify deposit inclusion via rolling hash. A production implementation would need the predeploy + system transaction pattern to support generic L1→L2 data anchoring beyond deposits.
+
+### L1 to L2 Messaging
+
+**Book:** Recommends avoiding custom transaction types (design principle). Instead, messages should be claimed against anchored hashes using inclusion proofs. L1 contracts store message hashes; after the L1 block hash is anchored on L2 via the `L1_ANCHOR` contract, L2 contracts can verify message inclusion against that root. This is similar to Linea/Taiko's approach. The book surveys four existing stacks (OP Stack, Linea, Taiko, Orbit) and favors the proof-based approach over custom deposit transaction types.
+
+**Us:** We use a relayer-based approach — the L1 NativeRollup contract stores deposit hashes, and a relayer on L2 sends real transactions calling `L2Bridge.processDeposit()` to transfer ETH from the bridge's preminted balance to recipients. The EXECUTE precompile verifies deposit inclusion by comparing a rolling hash of `DepositProcessed` events against the hash provided by the L1 contract. No custom transaction types are used — all deposits are regular signed transactions.
+
+**Gaps:** No general-purpose L1→L2 message passing beyond ETH deposits (though the pattern supports arbitrary calldata). No inclusion proof verification against L1 block hashes. The proof-based approach from the book would be needed for general L1→L2 messaging.
+
+### L2 to L1 Messaging (Withdrawals)
+
+**Book:** Acknowledges uncertainty about exposing custom data structures from L2 to L1. The `EXECUTE` precompile naturally exposes the state root, and potentially the receipts root. The book suggests statelessness (EIP-7864) will reduce the cost of inclusion proofs against the state root. Existing stacks use different approaches: OP Stack uses a `L2ToL1MessagePasser` with output roots; Linea uses a custom Merkle tree; Taiko uses `SignalService` with storage proofs.
+
+**Us:** We use event-based extraction. The L2 has a unified `L2Bridge` contract at `0x00...fffd` where users call `withdraw(receiver)` with ETH to emit `WithdrawalInitiated` events (ETH is burned by sending to address(0)). The EXECUTE precompile scans execution logs for these events, computes withdrawal hashes via `keccak256(abi.encodePacked(from, receiver, amount, messageId))`, and builds a commutative Keccak256 Merkle tree (OpenZeppelin-compatible). The withdrawal root is returned as the third field in the precompile output, and the L1 `NativeRollup` contract stores it per block number. Users claim via Merkle proof on L1.
+
+**Gaps:** Our approach is PoC-specific — production would likely use state root proofs against the `L2ToL1MessagePasser` storage (like OP Stack) or receipts root proofs. Our event scanning is done inside the precompile, which wouldn't be necessary if the spec settles on a receipts-root-based approach. No finality delay before claims.
+
+### Gas Token Deposits
+
+**Book:** Favors the "preminted token" approach (like Linea/Taiko) — a predeployed L2 contract holds preminted gas tokens that are unlocked when L1→L2 messages are processed. This avoids custom transaction types and supports arbitrary gas tokens (ETH, ERC20, NFTs). The book identifies the "first deposit problem" as unresolved: users need gas to claim their initial deposit, but they don't have gas tokens yet.
+
+**Us:** We use the preminted-token approach (aligned with the book's recommendation). The L2Bridge predeploy at `0x00...fffd` is deployed in genesis with preminted ETH. A relayer calls `processDeposit()` to transfer ETH to recipients from the bridge's balance. The relayer pays gas, solving the "first deposit problem" — users don't need gas to receive deposits. The L2Bridge's balance on L2 is backed by the NativeRollup contract's ETH balance on L1.
+
+**Gaps:** No support for custom gas tokens (ERC20, NFTs) — only native ETH. Relayer gas reimbursement is not yet implemented (future work). The relayer is permissioned (centralized sequencer model) for the PoC.
+
+### L2 Fee Market
+
+**Book:** Priority fees are collected by the rollup via a configurable `coinbase` address (exposed as an EXECUTE input). Base fees are burned per EIP-1559. The spec proposes exposing cumulative burned fees in the `block_output` so the L1 bridge contract can credit burned amounts to a designated address. DA cost handling is marked WIP.
+
+**Us:** We verify the base fee computation from parent header fields (EIP-1559 `calculate_base_fee_per_gas`). Priority fees go to the coinbase address set in the block header. We return `gasUsed` in the precompile output. We do not expose burned fees separately — they are implicitly part of the state transition.
+
+**Gaps:** No explicit burned fee tracking or reporting. No DA cost mechanism. The coinbase is set in the RLP block header rather than as a separate precompile input.
+
+### Transaction Type Filtering
+
+**Book:** The precompile must reject type-3 blob-carrying transactions before calling the state transition function, since L2 blocks have no blob consensus layer. `BLOBHASH` and point evaluation precompile work identically to L1 blocks without blobs.
+
+**Us:** We reject EIP-4844 blob transactions. We also reject ethrex-specific L2 types (Privileged L2 transactions, Fee token transactions) and blocks with validator withdrawals. Legacy, EIP-2930, EIP-1559, and EIP-7702 transactions are allowed.
+
+**Match:** Aligned with the spec. Our additional rejection of ethrex-specific types is a superset of the spec's requirements.
+
+### Block Execution Validation
+
+**Book:** Both variants verify: (1) computed state root equals expected `post_state`, (2) computed receipts root equals expected `post_receipts`. Mismatches trigger `ExecuteError`.
+
+**Us:** We verify both. State root is checked by comparing `block.header.state_root` against the computed root after execution. Receipts root is checked via `validate_receipts_root(&block.header, &receipts)`. Receipts are built for all transactions (including reverted ones, with empty logs).
+
+**Match:** Aligned with the spec.
+
+### RANDAO and Beacon Root
+
+**Book:** `prev_randao` is left configurable — different rollups use different values (OP Stack uses latest L1 value, Orbit returns constant 1, Linea uses 2, etc.). `parent_beacon_block_root` is not universally supported since rollups lack beacon chain connections.
+
+**Us:** These are set in the block header and passed through the RLP-encoded block. We don't enforce any particular value.
+
+**Match:** Compatible — we allow any value, which is consistent with the spec's "configurable" approach.
+
+### Forced Transactions
+
+**Book:** Describes mechanisms for censorship resistance: threshold detection (reject blocks if forced transactions from L1 queue are too old), storage/calldata reference (extend EXECUTE to read from L1 storage), and FOCIL (EIP-7805) inclusion lists from smart contracts. All marked as WIP.
+
+**Us:** Not implemented. The PoC has no forced transaction mechanism.
+
+**Gap:** Full gap — not in scope for Phase 1.
+
+### Statelessness
+
+**Book:** Lists statelessness (EIP-7864) as a critical dependency. L1 validators must verify precompile execution without storing L2 state, which requires execution witnesses.
+
+**Us:** We use `ExecutionWitness` / `GuestProgramState` to provide stateless execution. The precompile receives a JSON-serialized witness containing the state trie, storage tries, and code for all accounts touched during execution. This enables the precompile to re-execute without persistent L2 state.
+
+**Match:** Aligned — stateless execution via witness is implemented.
+
+### Gas Metering
+
+**Book:** Gas charging for the EXECUTE precompile is TBD. The precompile needs to meter execution properly to prevent DoS.
+
+**Us:** We use a flat 100,000 gas cost (`EXECUTE_GAS_COST`). This is a placeholder — real metering would need to account for the cost of re-executing the L2 block.
+
+**Gap:** Placeholder cost, not production-ready.
+
+### Summary Table
+
+| Aspect | Spec Status | Our Status | Alignment |
+|--------|-------------|------------|-----------|
+| EXECUTE variant | Two variants defined | `apply_body`-like | Partial |
+| L1 anchoring | System contract + system tx | Rolling hash + event verification | Partial |
+| L1→L2 messaging | Proof-based, no custom tx types | Relayer txs + rolling hash verification | Partial |
+| L2→L1 messaging | State/receipts root proofs (WIP) | Event extraction + Merkle tree | Divergent |
+| Gas token deposits | Preminted tokens in predeploy | Preminted L2Bridge + relayer | Aligned |
+| L2 fee market | Configurable coinbase, burned fees | Base fee verified, coinbase in header | Partial |
+| Transaction filtering | Reject blob txs | Reject blob + ethrex-specific txs | Aligned+ |
+| State root validation | Required | Implemented | Aligned |
+| Receipts root validation | Required | Implemented | Aligned |
+| Base fee verification | From parent gas params | From parent header (EIP-1559) | Aligned |
+| RANDAO / beacon root | Configurable | Passed through block header | Aligned |
+| Forced transactions | WIP (FOCIL, threshold) | Not implemented | Gap |
+| Statelessness | Required (EIP-7864) | ExecutionWitness-based | Aligned |
+| Gas metering | TBD | Flat 100k gas | Placeholder |
+| Serialization | Blob references for txs | RLP block + JSON witness + ABI | Different |
 
 ## Limitations (Phase 1)
 
 This PoC intentionally omits several things that would be needed for production:
 
 - **Fixed gas cost** — Uses a flat 100,000 gas cost instead of real metering
-- **No blob data support** — Only calldata-based input
-- **No anchoring predeploy** — Deposits modify state directly instead of going through a contract
+- **No blob data support** — Only calldata-based input (spec proposes blob references for transactions)
+- **No L1_ANCHOR system contract** — Deposit verification uses rolling hash + event scanning instead of the spec's system contract + system transaction pattern
+- **No general L1→L2 messaging** — Only ETH deposits via relayer, no arbitrary message passing with L1 block hash anchoring
+- **No relayer gas reimbursement** — The relayer pays gas for processDeposit transactions but is not yet reimbursed (future work, Gap 5)
 - **No finality delay for withdrawals** — Withdrawals can be claimed immediately after the block is processed (production would require a challenge period)
+- **No forced transaction mechanism** — No censorship resistance guarantees
+- **No burned fee tracking** — Base fees are burned implicitly but not exposed separately
 - **No L2 production stack changes** — The existing L2 sequencer, OnChainProposer, and production genesis are unchanged; this PoC only adds the L1-side precompile and contracts
-- **Hybrid serialization** — ABI envelope + RLP block + JSON witness (ExecutionWitness lacks RLP support)
+- **Hybrid serialization** — ABI envelope + RLP block + JSON witness (spec envisions blob-referenced transactions)
 
 These are all Phase 2+ concerns.

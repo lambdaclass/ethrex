@@ -9,23 +9,30 @@ pragma solidity ^0.8.27;
 /// the precompile returns the new state root, block number, and withdrawal
 /// Merkle root, and the contract updates its state.
 ///
-/// Deposits are recorded via `deposit(address)` and consumed by `advance()`.
-/// ETH sent directly to the contract is deposited for `msg.sender`.
+/// Deposits are recorded via `deposit(address)` as keccak256 hashes. When
+/// `advance()` is called, it computes a rolling hash over the consumed deposits
+/// and passes it to the EXECUTE precompile, which verifies it against
+/// DepositProcessed events from the L2Bridge predeploy.
 ///
-/// Withdrawals are initiated on L2 via the L2WithdrawalBridge contract. The
-/// EXECUTE precompile extracts withdrawal events and computes a Merkle root.
-/// Users can claim withdrawals on L1 via `claimWithdrawal()` with a Merkle proof.
+/// Withdrawals are initiated on L2 via the L2Bridge contract. The EXECUTE
+/// precompile extracts withdrawal events and computes a Merkle root. Users can
+/// claim withdrawals on L1 via `claimWithdrawal()` with a Merkle proof.
+///
+/// Storage layout:
+///   Slot 0: stateRoot (bytes32)
+///   Slot 1: blockNumber (uint256)
+///   Slot 2: pendingDeposits (bytes32[])
+///   Slot 3: depositIndex (uint256)
+///   Slot 4: withdrawalRoots (mapping)
+///   Slot 5: claimedWithdrawals (mapping)
+///   Slot 6: _locked (bool)
 contract NativeRollup {
     bytes32 public stateRoot;
     uint256 public blockNumber;
 
     address constant EXECUTE_PRECOMPILE = address(0x0101);
 
-    struct PendingDeposit {
-        address recipient;
-        uint256 amount;
-    }
-    PendingDeposit[] public pendingDeposits;
+    bytes32[] public pendingDeposits;
     uint256 public depositIndex;
 
     // Withdrawal state
@@ -36,7 +43,7 @@ contract NativeRollup {
     bool private _locked;
 
     event StateAdvanced(uint256 indexed newBlockNumber, bytes32 newStateRoot, bytes32 withdrawalRoot);
-    event DepositRecorded(address indexed recipient, uint256 amount);
+    event DepositRecorded(address indexed recipient, uint256 amount, uint256 indexed nonce);
     event WithdrawalClaimed(address indexed receiver, uint256 amount, uint256 indexed blockNumber, uint256 indexed messageId);
 
     modifier nonReentrant() {
@@ -50,19 +57,23 @@ contract NativeRollup {
         stateRoot = _initialStateRoot;
     }
 
-    /// @notice Record a deposit to be included in the next L2 block.
+    /// @notice Record a deposit to be included in a future L2 block.
     /// @param _recipient The L2 address that will receive the deposited ETH.
     function deposit(address _recipient) external payable {
         require(msg.value > 0, "Must send ETH");
-        pendingDeposits.push(PendingDeposit(_recipient, msg.value));
-        emit DepositRecorded(_recipient, msg.value);
+        uint256 nonce = pendingDeposits.length;
+        bytes32 depositHash = keccak256(abi.encodePacked(_recipient, msg.value, nonce));
+        pendingDeposits.push(depositHash);
+        emit DepositRecorded(_recipient, msg.value, nonce);
     }
 
     /// @notice Receive ETH and record a deposit for msg.sender.
     receive() external payable {
         require(msg.value > 0, "Must send ETH");
-        pendingDeposits.push(PendingDeposit(msg.sender, msg.value));
-        emit DepositRecorded(msg.sender, msg.value);
+        uint256 nonce = pendingDeposits.length;
+        bytes32 depositHash = keccak256(abi.encodePacked(msg.sender, msg.value, nonce));
+        pendingDeposits.push(depositHash);
+        emit DepositRecorded(msg.sender, msg.value, nonce);
     }
 
     /// @notice Advance the L2 by one block.
@@ -77,23 +88,30 @@ contract NativeRollup {
         uint256 startIdx = depositIndex;
         require(startIdx + _depositsCount <= pendingDeposits.length, "Not enough deposits");
 
-        // Build packed deposits data: each deposit = 20 bytes address + 32 bytes amount
-        bytes memory depositsData;
+        // Compute rolling hash over the consumed deposit batch.
+        // Each pendingDeposits[i] is keccak256(abi.encodePacked(recipient, amount, nonce)).
+        // The rolling hash is: rolling_i = keccak256(abi.encodePacked(rolling_{i-1}, deposit_hash_i))
+        bytes32 depositsRollingHash = bytes32(0);
         for (uint256 i = 0; i < _depositsCount; i++) {
-            PendingDeposit storage dep = pendingDeposits[startIdx + i];
-            depositsData = bytes.concat(depositsData, abi.encodePacked(dep.recipient, dep.amount));
+            depositsRollingHash = keccak256(
+                abi.encodePacked(depositsRollingHash, pendingDeposits[startIdx + i])
+            );
         }
 
         depositIndex = startIdx + _depositsCount;
 
-        // Build ABI-encoded precompile input:
-        //   abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes depositsData)
-        bytes memory input = abi.encode(stateRoot, _block, _witness, depositsData);
+        // ABI layout for the EXECUTE precompile:
+        //   slot 0: preStateRoot        (bytes32, static)
+        //   slot 1: offset_to_block     (uint256, dynamic pointer → 0x80)
+        //   slot 2: offset_to_witness   (uint256, dynamic pointer)
+        //   slot 3: depositsRollingHash (bytes32, static — NOT a pointer)
+        //   tail:   [block data] [witness data]
+        bytes memory input = abi.encode(stateRoot, _block, _witness, depositsRollingHash);
 
         (bool success, bytes memory result) = EXECUTE_PRECOMPILE.call(input);
-        require(success && result.length == 96, "EXECUTE precompile verification failed");
+        require(success && result.length == 128, "EXECUTE precompile verification failed");
 
-        // Decode new state root, block number, and withdrawal root from precompile return
+        // Decode new state root, block number, withdrawal root, and gas used from precompile return
         (bytes32 newStateRoot, uint256 newBlockNumber, bytes32 withdrawalRoot) = abi.decode(result, (bytes32, uint256, bytes32));
 
         stateRoot = newStateRoot;

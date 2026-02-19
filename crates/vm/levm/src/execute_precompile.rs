@@ -1,18 +1,22 @@
 //! EXECUTE precompile for Native Rollups (EIP-8079 PoC).
 //!
 //! Verifies L2 state transitions by re-executing them inside the L1 EVM.
-//! The precompile receives an execution witness, a block, and deposit data,
-//! re-executes the block, and verifies the resulting state root matches.
+//! The precompile receives an execution witness, a block, and a deposits rolling
+//! hash, re-executes the block, and verifies the resulting state root, receipts
+//! root, and deposit inclusion.
 //!
-//! After execution, it extracts withdrawal events from the L2 block's logs
+//! After execution, it scans DepositProcessed events from the L2Bridge predeploy
+//! to reconstruct the deposits rolling hash and verify it matches the one provided
+//! by the L1 NativeRollup contract. It also extracts WithdrawalInitiated events
 //! and computes a Merkle root for withdrawal claiming on L1.
 
 use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        Block, Fork, Log, Transaction,
+        Block, ELASTICITY_MULTIPLIER, Fork, INITIAL_BASE_FEE, Log, Receipt, Transaction,
         block_execution_witness::{ExecutionWitness, GuestProgramState},
+        calculate_base_fee_per_gas,
     },
 };
 use ethrex_crypto::keccak::keccak_hash;
@@ -32,9 +36,9 @@ use crate::{
 /// Fixed gas cost for the PoC. Real cost TBD in the EIP.
 const EXECUTE_GAS_COST: u64 = 100_000;
 
-/// Address of the L2 withdrawal bridge contract.
+/// Address of the L2 bridge predeploy (handles both deposits and withdrawals).
 /// Must match the deployed address in the L2 genesis state.
-pub const L2_WITHDRAWAL_BRIDGE: Address = H160([
+pub const L2_BRIDGE: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfd,
 ]);
@@ -46,12 +50,9 @@ static WITHDRAWAL_INITIATED_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
     ))
 });
 
-/// A deposit: credit `amount` to `address` before block execution.
-#[derive(Clone, Debug)]
-pub struct Deposit {
-    pub address: Address,
-    pub amount: U256,
-}
+/// Event signature: DepositProcessed(address indexed recipient, uint256 amount, uint256 indexed depositNonce)
+static DEPOSIT_PROCESSED_SELECTOR: LazyLock<H256> =
+    LazyLock::new(|| H256::from(keccak_hash(b"DepositProcessed(address,uint256,uint256)")));
 
 /// A withdrawal extracted from L2 block execution logs.
 #[derive(Clone, Debug)]
@@ -65,7 +66,7 @@ pub struct Withdrawal {
 /// Input to the EXECUTE precompile.
 pub struct ExecutePrecompileInput {
     pub pre_state_root: H256,
-    pub deposits: Vec<Deposit>,
+    pub deposits_rolling_hash: H256,
     pub execution_witness: ExecutionWitness,
     pub block: Block,
 }
@@ -74,15 +75,23 @@ pub struct ExecutePrecompileInput {
 ///
 /// Parses ABI-encoded calldata:
 /// ```text
-/// abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes deposits)
+/// abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 depositsRollingHash)
 /// ```
 ///
-/// ABI layout: first param is static (32 bytes), rest are dynamic (offset → length-prefixed data).
+/// ABI layout:
+///   slot 0: preStateRoot        (bytes32, static)
+///   slot 1: offset_to_blockRlp  (uint256, dynamic pointer → 0x80)
+///   slot 2: offset_to_witness   (uint256, dynamic pointer)
+///   slot 3: depositsRollingHash (bytes32, static — NOT a pointer)
+///   tail:   block RLP data, witness JSON data
+///
 /// Block uses RLP encoding (already implemented in ethrex). ExecutionWitness
 /// uses JSON because it doesn't have RLP support (it uses serde/rkyv instead).
-/// Deposits use packed encoding: each deposit is 52 bytes (20 address + 32 amount).
+/// The depositsRollingHash is computed by NativeRollup.advance() on L1 from
+/// stored deposit hashes. The precompile verifies it against DepositProcessed
+/// events emitted by the L2Bridge predeploy during block execution.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot)` — 96 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed)` — 128 bytes.
 pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
@@ -139,14 +148,20 @@ fn read_abi_bytes(calldata: &[u8], abi_offset: usize) -> Result<&[u8], VMError> 
 
 /// Parse ABI-encoded calldata into an [`ExecutePrecompileInput`].
 ///
-/// Format: `abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes deposits)`
+/// Format: `abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 depositsRollingHash)`
+///
+/// The head is 4 × 32 = 128 bytes:
+///   - slot 0: preStateRoot (bytes32, static)
+///   - slot 1: offset to blockRlp (dynamic pointer)
+///   - slot 2: offset to witnessJson (dynamic pointer)
+///   - slot 3: depositsRollingHash (bytes32, static — NOT a pointer)
 fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError> {
     let mut offset: usize = 0;
 
     // 1. pre_state_root (bytes32, static — 32 bytes)
     let pre_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
-    // 2. Read offsets for the 3 dynamic params (each is a uint256 offset)
+    // 2. Read offsets for the 2 dynamic params
     let block_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
     let block_offset: usize = U256::from_big_endian(block_offset_bytes)
         .try_into()
@@ -157,40 +172,22 @@ fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError
         .try_into()
         .map_err(|_| custom_err("Witness offset too large".to_string()))?;
 
-    let deposits_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
-    let deposits_offset: usize = U256::from_big_endian(deposits_offset_bytes)
-        .try_into()
-        .map_err(|_| custom_err("Deposits offset too large".to_string()))?;
+    // 3. depositsRollingHash (bytes32, static — NOT a dynamic offset)
+    let deposits_rolling_hash = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
-    // 3. Read block RLP bytes
+    // 4. Read block RLP bytes
     let block_rlp = read_abi_bytes(calldata, block_offset)?;
     let block = Block::decode(block_rlp)
         .map_err(|e| custom_err(format!("Failed to RLP-decode block: {e}")))?;
 
-    // 4. Read witness JSON bytes
+    // 5. Read witness JSON bytes
     let witness_bytes = read_abi_bytes(calldata, witness_offset)?;
     let execution_witness: ExecutionWitness = serde_json::from_slice(witness_bytes)
         .map_err(|e| custom_err(format!("Failed to deserialize ExecutionWitness JSON: {e}")))?;
 
-    // 5. Read deposits (packed: each 52 bytes = 20 address + 32 amount)
-    let deposits_bytes = read_abi_bytes(calldata, deposits_offset)?;
-    let mut deposits = Vec::new();
-    let mut dep_offset: usize = 0;
-    while dep_offset
-        .checked_add(52)
-        .is_some_and(|end| end <= deposits_bytes.len())
-    {
-        let addr_bytes = read_calldata(deposits_bytes, &mut dep_offset, 20)?;
-        let amount_bytes = read_calldata(deposits_bytes, &mut dep_offset, 32)?;
-        deposits.push(Deposit {
-            address: Address::from_slice(addr_bytes),
-            amount: U256::from_big_endian(amount_bytes),
-        });
-    }
-
     Ok(ExecutePrecompileInput {
         pre_state_root,
-        deposits,
+        deposits_rolling_hash,
         execution_witness,
         block,
     })
@@ -202,14 +199,14 @@ fn custom_err(msg: String) -> VMError {
 
 /// Core logic, separated so tests can call it directly with a structured input.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot)` — 96 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed)` — 128 bytes.
 /// The post-state root is extracted from `block.header.state_root` and verified
 /// against the actual computed state root after execution. The withdrawal root is
 /// computed from WithdrawalInitiated events emitted during block execution.
 pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let ExecutePrecompileInput {
         pre_state_root,
-        deposits,
+        deposits_rolling_hash,
         execution_witness,
         block,
     } = input;
@@ -219,7 +216,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let block_number = block.header.number;
 
     // 1. Build GuestProgramState from witness
-    let mut guest_state: GuestProgramState = execution_witness
+    let guest_state: GuestProgramState = execution_witness
         .try_into()
         .map_err(|e| custom_err(format!("Failed to build GuestProgramState: {e}")))?;
 
@@ -238,24 +235,37 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         )));
     }
 
-    // 3. Apply deposits (anchor): credit balances in the state trie
-    for deposit in &deposits {
-        apply_deposit(&mut guest_state, deposit).map_err(|e| {
-            custom_err(format!(
-                "Failed to apply deposit to {}: {e}",
-                deposit.address
-            ))
+    // 3. Verify base fee against parent header (EIP-1559)
+    let parent_base_fee = guest_state
+        .parent_block_header
+        .base_fee_per_gas
+        .unwrap_or(INITIAL_BASE_FEE);
+    if let Some(block_base_fee) = block.header.base_fee_per_gas {
+        let expected_base_fee = calculate_base_fee_per_gas(
+            block.header.gas_limit,
+            guest_state.parent_block_header.gas_limit,
+            guest_state.parent_block_header.gas_used,
+            parent_base_fee,
+            ELASTICITY_MULTIPLIER,
+        )
+        .ok_or_else(|| {
+            custom_err("Base fee calculation failed (gas limit out of bounds)".to_string())
         })?;
+        if block_base_fee != expected_base_fee {
+            return Err(custom_err(format!(
+                "Base fee mismatch: block header has {block_base_fee}, expected {expected_base_fee}"
+            )));
+        }
     }
 
     // 4. Execute the block and collect logs
     let db = Arc::new(GuestProgramStateDb::new(guest_state));
 
-    let all_logs = {
+    let (all_logs, block_gas_used) = {
         let db_dyn: Arc<dyn crate::db::Database> = db.clone();
         let mut gen_db = GeneralizedDatabase::new(db_dyn);
 
-        let logs = execute_block(&block, &mut gen_db)?;
+        let (logs, gas_used) = execute_block(&block, &mut gen_db)?;
 
         // Apply state transitions back to the GuestProgramState
         let account_updates = gen_db
@@ -268,7 +278,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
             .apply_account_updates(&account_updates)
             .map_err(|e| custom_err(format!("Failed to apply account updates: {e}")))?;
 
-        logs
+        (logs, gas_used)
     };
 
     // 5. Verify final state root
@@ -285,23 +295,37 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         )));
     }
 
-    // 6. Extract withdrawals from logs and compute Merkle root
+    // 6. Verify deposits rolling hash against DepositProcessed events
+    let computed_rolling_hash = compute_deposits_rolling_hash(&all_logs);
+    if computed_rolling_hash != deposits_rolling_hash {
+        return Err(custom_err(format!(
+            "Deposits rolling hash mismatch: expected {deposits_rolling_hash:?}, got {computed_rolling_hash:?}"
+        )));
+    }
+
+    // 7. Extract withdrawals from logs and compute Merkle root
     let withdrawals = extract_withdrawals(&all_logs);
     let withdrawal_root = compute_withdrawals_merkle_root(&withdrawals);
 
-    // 7. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot) — 96 bytes
-    let mut result = Vec::with_capacity(96);
+    // 8. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed) — 128 bytes
+    let mut result = Vec::with_capacity(128);
     result.extend_from_slice(expected_post_state_root.as_bytes());
     // block_number as uint256: 24 zero bytes + 8-byte big-endian
     result.extend_from_slice(&[0u8; 24]);
     result.extend_from_slice(&block_number.to_be_bytes());
     // withdrawal Merkle root as bytes32
     result.extend_from_slice(withdrawal_root.as_bytes());
+    // gasUsed as uint256: 24 zero bytes + 8-byte big-endian
+    result.extend_from_slice(&[0u8; 24]);
+    result.extend_from_slice(&block_gas_used.to_be_bytes());
     Ok(Bytes::from(result))
 }
 
-/// Execute a block's transactions and return all logs from successful transactions.
-fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<Vec<Log>, VMError> {
+/// Execute a block's transactions, returning all logs and total gas used.
+///
+/// Builds receipts for every transaction (including reverted ones) and validates
+/// the receipts root against the block header.
+fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(Vec<Log>, u64), VMError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
 
@@ -337,8 +361,8 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<Vec<Log>
     })?;
 
     let mut all_logs = Vec::new();
+    let mut receipts: Vec<Receipt> = Vec::new();
     let mut cumulative_gas_used = 0_u64;
-    let mut block_gas_used = 0_u64;
 
     for (tx, tx_sender) in &transactions_with_sender {
         let gas_price = calculate_gas_price(tx, block.header.base_fee_per_gas.unwrap_or_default())?;
@@ -376,17 +400,25 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<Vec<Log>
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), VMType::L1)?;
         let report = vm.execute()?;
 
-        // Collect logs from successful transactions
-        if matches!(report.result, TxResult::Success) {
-            all_logs.extend(report.logs);
-        }
-
         cumulative_gas_used = cumulative_gas_used
-            .checked_add(report.gas_spent)
-            .ok_or(VMError::Internal(InternalError::Overflow))?;
-        block_gas_used = block_gas_used
             .checked_add(report.gas_used)
             .ok_or(VMError::Internal(InternalError::Overflow))?;
+
+        // Build receipt for every transaction (including reverted ones)
+        let succeeded = matches!(report.result, TxResult::Success);
+        let receipt_logs = if succeeded {
+            all_logs.extend(report.logs.clone());
+            report.logs
+        } else {
+            vec![]
+        };
+
+        receipts.push(Receipt::new(
+            tx.tx_type(),
+            succeeded,
+            cumulative_gas_used,
+            receipt_logs,
+        ));
     }
 
     // Native rollup L2 blocks do not have validator withdrawals.
@@ -400,10 +432,14 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<Vec<Log>
     }
 
     // Validate gas used
-    ethrex_common::validate_gas_used(block_gas_used, &block.header)
+    ethrex_common::validate_gas_used(cumulative_gas_used, &block.header)
         .map_err(|e| custom_err(format!("Gas validation failed: {e}")))?;
 
-    Ok(all_logs)
+    // Validate receipts root
+    ethrex_common::validate_receipts_root(&block.header, &receipts)
+        .map_err(|e| custom_err(format!("Receipts root validation failed: {e}")))?;
+
+    Ok((all_logs, cumulative_gas_used))
 }
 
 /// Calculate effective gas price for a transaction (simplified L1 version).
@@ -432,35 +468,61 @@ fn calculate_gas_price(tx: &Transaction, base_fee_per_gas: u64) -> Result<U256, 
     .into())
 }
 
-/// Apply a single deposit by crediting the recipient's balance in the state trie.
-fn apply_deposit(
-    state: &mut GuestProgramState,
-    deposit: &Deposit,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use ethrex_common::types::AccountState;
-    use ethrex_rlp::decode::RLPDecode;
-    use ethrex_rlp::encode::RLPEncode;
+// ===== Deposit rolling hash verification =====
 
-    let hashed_address = state
-        .account_hashes_by_address
-        .entry(deposit.address)
-        .or_insert_with(|| keccak_hash(deposit.address.to_fixed_bytes()).to_vec());
+/// Reconstruct the deposits rolling hash from DepositProcessed events emitted
+/// during block execution by the L2Bridge predeploy at [`L2_BRIDGE`].
+///
+/// Per-deposit hash (matches NativeRollup.deposit() on L1):
+///   `keccak256(abi.encodePacked(recipient, amount, nonce))`
+///   = keccak256(recipient[20 bytes] ++ amount[32 bytes BE] ++ nonce[32 bytes BE])
+///
+/// Rolling hash (matches NativeRollup.advance() on L1):
+///   `rolling_i = keccak256(abi.encodePacked(rolling_{i-1}, deposit_hash_i))`
+///   = keccak256(rolling[32 bytes] ++ deposit_hash[32 bytes])
+///
+/// Returns `H256::zero()` when no DepositProcessed events are found.
+fn compute_deposits_rolling_hash(logs: &[Log]) -> H256 {
+    let mut rolling = H256::zero();
 
-    let mut account_state = match state.state_trie.get(hashed_address)? {
-        Some(encoded) => AccountState::decode(&encoded)?,
-        None => AccountState::default(),
-    };
+    for log in logs {
+        if log.address != L2_BRIDGE
+            || log.topics.first() != Some(&*DEPOSIT_PROCESSED_SELECTOR)
+            || log.topics.len() != 3
+        {
+            continue;
+        }
 
-    account_state.balance = account_state
-        .balance
-        .checked_add(deposit.amount)
-        .ok_or("Deposit would overflow balance")?;
+        // topics[0] = event selector
+        // topics[1] = recipient (address, indexed — left-padded to 32 bytes)
+        // topics[2] = depositNonce (uint256, indexed)
+        // data[0..32] = amount (uint256, non-indexed)
+        let Some(recipient_bytes) = log.topics.get(1).and_then(|t| t.as_bytes().get(12..32)) else {
+            continue;
+        };
+        let Some(amount_bytes) = log.data.get(..32) else {
+            continue;
+        };
+        let Some(nonce_topic) = log.topics.get(2) else {
+            continue;
+        };
+        let nonce_bytes = nonce_topic.as_bytes();
 
-    state
-        .state_trie
-        .insert(hashed_address.clone(), account_state.encode_to_vec())?;
+        // Per-deposit hash: keccak256(recipient[20] ++ amount[32] ++ nonce[32]) = 84 bytes
+        let mut deposit_preimage = Vec::with_capacity(84);
+        deposit_preimage.extend_from_slice(recipient_bytes); // 20 bytes
+        deposit_preimage.extend_from_slice(amount_bytes); // 32 bytes
+        deposit_preimage.extend_from_slice(nonce_bytes); // 32 bytes
+        let deposit_hash = H256::from(keccak_hash(&deposit_preimage));
 
-    Ok(())
+        // Rolling hash: keccak256(rolling[32] ++ deposit_hash[32]) = 64 bytes
+        let mut rolling_preimage = [0u8; 64];
+        rolling_preimage[..32].copy_from_slice(rolling.as_bytes());
+        rolling_preimage[32..].copy_from_slice(deposit_hash.as_bytes());
+        rolling = H256::from(keccak_hash(rolling_preimage));
+    }
+
+    rolling
 }
 
 // ===== Withdrawal extraction and Merkle tree =====
@@ -468,11 +530,11 @@ fn apply_deposit(
 /// Extract withdrawals from block execution logs.
 ///
 /// Scans for `WithdrawalInitiated(address indexed from, address indexed receiver, uint256 amount, uint256 indexed messageId)`
-/// events emitted by the L2 withdrawal bridge at [`L2_WITHDRAWAL_BRIDGE`].
+/// events emitted by the L2 withdrawal bridge at [`L2_BRIDGE`].
 fn extract_withdrawals(logs: &[Log]) -> Vec<Withdrawal> {
     logs.iter()
         .filter(|log| {
-            log.address == L2_WITHDRAWAL_BRIDGE
+            log.address == L2_BRIDGE
                 && log.topics.first() == Some(&*WITHDRAWAL_INITIATED_SELECTOR)
                 && log.topics.len() == 4
         })
