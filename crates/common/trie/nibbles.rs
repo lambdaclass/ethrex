@@ -271,6 +271,28 @@ impl Nibbles {
     }
 }
 
+/// Encode nibble data in compact (hex-prefix) form into a reusable buffer.
+/// Works with any `&[u8]` slice of nibbles (both `Nibbles` and `PathVec`).
+pub fn encode_compact_into(data: &[u8], is_leaf: bool, buf: &mut Vec<u8>) {
+    buf.clear();
+    let hex = if is_leaf && !data.is_empty() {
+        &data[..data.len() - 1]
+    } else {
+        data
+    };
+    let v = if hex.len() % 2 == 1 {
+        let v = 0x10 + hex[0];
+        buf.push(v + if is_leaf { 0x20 } else { 0x00 });
+        1
+    } else {
+        buf.push(if is_leaf { 0x20 } else { 0x00 });
+        0
+    };
+    for i in (v..hex.len()).step_by(2) {
+        buf.push(hex[i] * 16 + hex[i + 1]);
+    }
+}
+
 impl AsRef<[u8]> for Nibbles {
     fn as_ref(&self) -> &[u8] {
         &self.data
