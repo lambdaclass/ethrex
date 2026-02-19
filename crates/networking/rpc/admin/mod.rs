@@ -58,14 +58,7 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
         },
         protocols,
     };
-    // Serialize to string first, then parse back to Value.
-    // serde_json::to_value() can't handle u128 > u64::MAX (e.g. mainnet's
-    // terminal_total_difficulty) because Value::Number only holds u64/i64/f64.
-    // The string serializer handles u128 natively, and the roundtrip through
-    // f64 matches geth's output format (e.g. 5.875e+22).
-    let json_string =
-        serde_json::to_string(&node_info).map_err(|error| RpcErr::Internal(error.to_string()))?;
-    serde_json::from_str(&json_string).map_err(|error| RpcErr::Internal(error.to_string()))
+    serde_json::to_value(node_info).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 pub fn set_log_level(

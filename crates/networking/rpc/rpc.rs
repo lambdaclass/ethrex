@@ -991,7 +991,7 @@ mod tests {
                         "bpo4Time": null,
                         "bpo5Time": null,
                         "amsterdamTime": null,
-                        "terminalTotalDifficulty": 0,
+                        "terminalTotalDifficulty": "0x0",
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
                         "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
@@ -1086,10 +1086,8 @@ mod tests {
         let ttd = value
             .pointer("/protocols/eth/terminalTotalDifficulty")
             .expect("terminalTotalDifficulty should be present in response");
-        // Stored as f64 internally by serde_json (Value::Number can't hold u128 > u64::MAX).
-        // This matches geth's output format (5.875e+22).
-        assert!(ttd.is_f64(), "terminalTotalDifficulty should be a number");
-        assert_eq!(ttd.as_f64().unwrap(), 5.875e22);
+        // Serialized as a hex string to avoid serde_json Value::Number u64 limitation.
+        assert_eq!(ttd.as_str().unwrap(), "0xc70d808a128d7380000");
     }
 
     #[tokio::test]
