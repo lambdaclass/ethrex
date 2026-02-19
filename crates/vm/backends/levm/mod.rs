@@ -382,8 +382,8 @@ impl LEVM {
     /// Two-phase approach:
     /// - Phase 1: Load all account states (parallel via rayon) -> warms CachingDatabase
     ///   account cache AND trie layer cache nodes
-    /// - Phase 2: Load all storage slots + contract code (parallel via rayon, per-account)
-    ///   -> benefits from trie nodes cached in Phase 1
+    /// - Phase 2: Load all storage slots (parallel via rayon, per-slot) + contract code
+    ///   (parallel via rayon, per-account) -> benefits from trie nodes cached in Phase 1
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
@@ -401,15 +401,23 @@ impl LEVM {
         });
 
         // Phase 2: Prefetch storage slots and contract code in parallel.
-        // Each account's storage reads + writes need their pre-state loaded.
-        // Also prefetch code for all accounts with non-empty code_hash.
+        // Storage is flattened to (address, slot) pairs so rayon can distribute
+        // work across threads regardless of how many slots each account has.
+        // Without flattening, a hot contract with hundreds of slots (e.g. a DEX
+        // pool) would monopolize a single thread while others go idle.
+        let slots: Vec<(ethrex_common::Address, ethrex_common::H256)> = accounts
+            .iter()
+            .flat_map(|ac| {
+                ac.all_storage_slots()
+                    .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
+            })
+            .collect();
+        slots.par_iter().for_each(|(addr, key)| {
+            let _ = store.get_storage_value(*addr, *key);
+        });
+
+        // Code prefetch: get_account_state is a cache hit from Phase 1
         accounts.par_iter().for_each(|ac| {
-            // Storage: both reads and writes need pre-state
-            for slot in ac.all_storage_slots() {
-                let key = ethrex_common::H256::from_uint(&slot);
-                let _ = store.get_storage_value(ac.address, key);
-            }
-            // Code prefetch: get_account_state is a cache hit from Phase 1
             if let Ok(acct) = store.get_account_state(ac.address)
                 && acct.code_hash != *EMPTY_KECCACK_HASH
             {
