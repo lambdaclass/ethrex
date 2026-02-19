@@ -5,7 +5,7 @@ use crate::nibbles::Nibbles;
 use crate::node::Node;
 use crate::node_hash::NodeHash;
 
-use super::{LowerSubtrie, SparseNode, SparseSubtrie, SparseTrieProvider};
+use super::{LowerSubtrie, PathVec, SparseNode, SparseSubtrie, SparseTrieProvider};
 
 /// Determine which subtrie a path belongs to.
 /// Returns None for upper subtrie, Some(idx) for lower subtrie.
@@ -47,7 +47,7 @@ pub fn reveal_node_into(
     rlp: &[u8],
 ) -> Result<(), TrieError> {
     let node = Node::decode(rlp).map_err(TrieError::RLPDecode)?;
-    let path_data = path.as_ref().to_vec();
+    let path_data = PathVec::from_slice(path.as_ref());
     // Compute the hash of this node from the original RLP, so revealed-but-unmodified
     // nodes retain their hash. Only nodes explicitly modified during update_leaf/remove_leaf
     // will have hash set to None.
@@ -70,7 +70,7 @@ pub fn reveal_node_into(
             );
             target
                 .values
-                .insert(full_path.as_ref().to_vec(), leaf.value);
+                .insert(PathVec::from_slice(full_path.as_ref()), leaf.value);
         }
         Node::Extension(ext) => {
             let child_path = path.concat(&ext.prefix);
@@ -88,7 +88,7 @@ pub fn reveal_node_into(
                 },
             );
 
-            let child_path_data = child_path.as_ref().to_vec();
+            let child_path_data = PathVec::from_slice(child_path.as_ref());
             let child_target = match route_path(&child_path_data) {
                 Some(idx) => get_or_create_lower(lower, idx),
                 None => upper,
@@ -216,7 +216,7 @@ fn get_node_mut<'a>(
 fn insert_node(
     upper: &mut SparseSubtrie,
     lower: &mut [LowerSubtrie],
-    path_data: Vec<u8>,
+    path_data: PathVec,
     node: SparseNode,
 ) {
     match route_path(&path_data) {
@@ -253,7 +253,7 @@ fn insert_value(
     upper: &mut SparseSubtrie,
     lower: &mut [LowerSubtrie],
     node_path: &[u8],
-    value_key: Vec<u8>,
+    value_key: PathVec,
     value: Vec<u8>,
 ) {
     match route_path(node_path) {
@@ -309,11 +309,11 @@ fn get_value<'a>(
 fn mark_node_dirty(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], path_data: &[u8]) {
     match route_path(path_data) {
         None => {
-            upper.dirty_nodes.insert(path_data.to_vec());
+            upper.dirty_nodes.insert(PathVec::from_slice(path_data));
         }
         Some(idx) => match &mut lower[idx] {
             LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => {
-                s.dirty_nodes.insert(path_data.to_vec());
+                s.dirty_nodes.insert(PathVec::from_slice(path_data));
             }
             LowerSubtrie::Blind(None) => {}
         },
@@ -335,8 +335,8 @@ pub fn update_leaf(
     value: Vec<u8>,
     provider: &dyn SparseTrieProvider,
 ) -> Result<(), TrieError> {
-    let path_data = full_path.as_ref().to_vec();
-    let mut current_path: Vec<u8> = Vec::new();
+    let path_data = PathVec::from_slice(full_path.as_ref());
+    let mut current_path = PathVec::new();
 
     loop {
         ensure_revealed(upper, lower, &current_path, provider)?;
@@ -402,7 +402,7 @@ pub fn update_leaf(
                     .take_while(|(a, b)| a == b)
                     .count();
 
-                let old_full_path: Vec<u8> = current_path
+                let old_full_path: PathVec = current_path
                     .iter()
                     .chain(existing_key_data.iter())
                     .copied()
@@ -411,7 +411,7 @@ pub fn update_leaf(
                 let old_value = remove_value(upper, lower, &current_path, &old_full_path);
                 remove_node(upper, lower, &current_path);
 
-                let branch_insert_path: Vec<u8> = if common_len > 0 {
+                let branch_insert_path: PathVec = if common_len > 0 {
                     insert_node(
                         upper,
                         lower,
@@ -502,7 +502,7 @@ pub fn update_leaf(
 
                 remove_node(upper, lower, &current_path);
 
-                let branch_insert_path: Vec<u8> = if common_len > 0 {
+                let branch_insert_path: PathVec = if common_len > 0 {
                     insert_node(
                         upper,
                         lower,
@@ -539,7 +539,7 @@ pub fn update_leaf(
                 old_child_path.push(ext_nibble);
                 let ext_remainder = &ext_key_data[common_len + 1..];
                 if ext_remainder.is_empty() {
-                    let old_ext_child_path: Vec<u8> = current_path
+                    let old_ext_child_path: PathVec = current_path
                         .iter()
                         .chain(ext_key_data.iter())
                         .copied()
@@ -557,12 +557,12 @@ pub fn update_leaf(
                             hash: None,
                         },
                     );
-                    let old_ext_child_path: Vec<u8> = current_path
+                    let old_ext_child_path: PathVec = current_path
                         .iter()
                         .chain(ext_key_data.iter())
                         .copied()
                         .collect();
-                    let new_ext_child_path: Vec<u8> = old_child_path
+                    let new_ext_child_path: PathVec = old_child_path
                         .iter()
                         .chain(ext_remainder.iter())
                         .copied()
@@ -633,9 +633,9 @@ pub fn remove_leaf(
     full_path: Nibbles,
     provider: &dyn SparseTrieProvider,
 ) -> Result<(), TrieError> {
-    let path_data = full_path.as_ref().to_vec();
-    let mut walk_path: Vec<u8> = Vec::new();
-    let mut parent_stack: Vec<Vec<u8>> = Vec::new();
+    let path_data = PathVec::from_slice(full_path.as_ref());
+    let mut walk_path = PathVec::new();
+    let mut parent_stack: Vec<PathVec> = Vec::new();
 
     loop {
         ensure_revealed(upper, lower, &walk_path, provider)?;
@@ -707,7 +707,7 @@ pub fn remove_leaf(
 fn collapse_after_removal(
     upper: &mut SparseSubtrie,
     lower: &mut [LowerSubtrie],
-    parent_stack: &[Vec<u8>],
+    parent_stack: &[PathVec],
     provider: &dyn SparseTrieProvider,
 ) -> Result<(), TrieError> {
     for (i, parent_path) in parent_stack.iter().enumerate().rev() {
@@ -737,7 +737,7 @@ fn merge_extension_child(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], 
         return;
     };
 
-    let child_path: Vec<u8> = ext_path
+    let child_path: PathVec = ext_path
         .iter()
         .chain(ext_key.as_ref().iter())
         .copied()
@@ -747,7 +747,7 @@ fn merge_extension_child(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], 
     match child {
         Some(SparseNode::Leaf { key: leaf_key, .. }) => {
             // Extension + Leaf → single Leaf with combined key
-            let child_full_path: Vec<u8> = child_path
+            let child_full_path: PathVec = child_path
                 .iter()
                 .chain(leaf_key.as_ref().iter())
                 .copied()
@@ -759,7 +759,7 @@ fn merge_extension_child(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], 
             let mut merged_key_data = ext_key.as_ref().to_vec();
             merged_key_data.extend_from_slice(leaf_key.as_ref());
 
-            let new_full_path: Vec<u8> = ext_path
+            let new_full_path: PathVec = ext_path
                 .iter()
                 .copied()
                 .chain(merged_key_data.iter().copied())
@@ -768,7 +768,7 @@ fn merge_extension_child(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], 
             insert_node(
                 upper,
                 lower,
-                ext_path.to_vec(),
+                PathVec::from_slice(ext_path),
                 SparseNode::Leaf {
                     key: Nibbles::from_hex(merged_key_data),
                     hash: None,
@@ -782,7 +782,7 @@ fn merge_extension_child(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], 
             key: child_ext_key, ..
         }) => {
             // Extension + Extension → single Extension with combined key
-            let grandchild_path: Vec<u8> = child_path
+            let grandchild_path: PathVec = child_path
                 .iter()
                 .chain(child_ext_key.as_ref().iter())
                 .copied()
@@ -796,7 +796,7 @@ fn merge_extension_child(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], 
             insert_node(
                 upper,
                 lower,
-                ext_path.to_vec(),
+                PathVec::from_slice(ext_path),
                 SparseNode::Extension {
                     key: Nibbles::from_hex(merged_key_data.clone()),
                     hash: None,
@@ -804,12 +804,12 @@ fn merge_extension_child(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], 
             );
 
             // Move the grandchild node to the new child path
-            let new_child_path: Vec<u8> = ext_path
+            let new_child_path: PathVec = ext_path
                 .iter()
                 .chain(merged_key_data.iter())
                 .copied()
                 .collect();
-            if grandchild_path != new_child_path
+            if *grandchild_path != *new_child_path
                 && let Some(grandchild) = remove_node(upper, lower, &grandchild_path)
             {
                 insert_node(upper, lower, new_child_path, grandchild);
@@ -827,7 +827,7 @@ fn collapse_branch_if_needed(
     upper: &mut SparseSubtrie,
     lower: &mut [LowerSubtrie],
     branch_path: &[u8],
-    _parent_stack: &[Vec<u8>],
+    _parent_stack: &[PathVec],
     provider: &dyn SparseTrieProvider,
 ) -> Result<(), TrieError> {
     let branch = get_node(upper, lower, branch_path).cloned();
@@ -838,7 +838,7 @@ fn collapse_branch_if_needed(
     let mut remaining_children = Vec::new();
     for i in 0..16u8 {
         if state_mask & (1 << i) != 0 {
-            let mut child_path = branch_path.to_vec();
+            let mut child_path = PathVec::from_slice(branch_path);
             child_path.push(i);
             if get_node(upper, lower, &child_path).is_some() {
                 remaining_children.push(i);
@@ -846,7 +846,7 @@ fn collapse_branch_if_needed(
         }
     }
 
-    let mut value_path = branch_path.to_vec();
+    let mut value_path = PathVec::from_slice(branch_path);
     value_path.push(16);
     // Branch value is stored in the same subtrie as the branch node
     let has_value = get_value(upper, lower, branch_path, &value_path).is_some();
@@ -854,7 +854,12 @@ fn collapse_branch_if_needed(
     match (remaining_children.len(), has_value) {
         (0, false) => {
             remove_node(upper, lower, branch_path);
-            insert_node(upper, lower, branch_path.to_vec(), SparseNode::Empty);
+            insert_node(
+                upper,
+                lower,
+                PathVec::from_slice(branch_path),
+                SparseNode::Empty,
+            );
         }
         (0, true) => {
             // Branch with only a value, no children - collapse to leaf
@@ -863,14 +868,14 @@ fn collapse_branch_if_needed(
             insert_node(
                 upper,
                 lower,
-                branch_path.to_vec(),
+                PathVec::from_slice(branch_path),
                 SparseNode::Leaf {
                     key: Nibbles::from_hex(vec![16]),
                     hash: None,
                 },
             );
             if let Some(v) = value {
-                let leaf_full_path: Vec<u8> = branch_path
+                let leaf_full_path: PathVec = branch_path
                     .iter()
                     .chain(std::iter::once(&16u8))
                     .copied()
@@ -881,7 +886,7 @@ fn collapse_branch_if_needed(
         }
         (1, false) => {
             let only_child_nibble = remaining_children[0];
-            let mut child_path = branch_path.to_vec();
+            let mut child_path = PathVec::from_slice(branch_path);
             child_path.push(only_child_nibble);
 
             ensure_revealed(upper, lower, &child_path, provider)?;
@@ -889,7 +894,7 @@ fn collapse_branch_if_needed(
             let child = get_node(upper, lower, &child_path).cloned();
             match child {
                 Some(SparseNode::Leaf { key, .. }) => {
-                    let child_full_path: Vec<u8> = child_path
+                    let child_full_path: PathVec = child_path
                         .iter()
                         .chain(key.as_ref().iter())
                         .copied()
@@ -902,7 +907,7 @@ fn collapse_branch_if_needed(
                     let mut new_key_data = vec![only_child_nibble];
                     new_key_data.extend_from_slice(key.as_ref());
 
-                    let new_full_path: Vec<u8> = branch_path
+                    let new_full_path: PathVec = branch_path
                         .iter()
                         .copied()
                         .chain(new_key_data.iter().copied())
@@ -911,7 +916,7 @@ fn collapse_branch_if_needed(
                     insert_node(
                         upper,
                         lower,
-                        branch_path.to_vec(),
+                        PathVec::from_slice(branch_path),
                         SparseNode::Leaf {
                             key: Nibbles::from_hex(new_key_data),
                             hash: None,
@@ -923,7 +928,7 @@ fn collapse_branch_if_needed(
                     }
                 }
                 Some(SparseNode::Extension { key, .. }) => {
-                    let old_ext_child_path: Vec<u8> = child_path
+                    let old_ext_child_path: PathVec = child_path
                         .iter()
                         .chain(key.as_ref().iter())
                         .copied()
@@ -937,19 +942,19 @@ fn collapse_branch_if_needed(
                     insert_node(
                         upper,
                         lower,
-                        branch_path.to_vec(),
+                        PathVec::from_slice(branch_path),
                         SparseNode::Extension {
                             key: Nibbles::from_hex(new_key_data.clone()),
                             hash: None,
                         },
                     );
 
-                    let new_ext_child_path: Vec<u8> = branch_path
+                    let new_ext_child_path: PathVec = branch_path
                         .iter()
                         .chain(new_key_data.iter())
                         .copied()
                         .collect();
-                    if old_ext_child_path != new_ext_child_path
+                    if *old_ext_child_path != *new_ext_child_path
                         && let Some(ext_child) = remove_node(upper, lower, &old_ext_child_path)
                     {
                         insert_node(upper, lower, new_ext_child_path, ext_child);
@@ -960,7 +965,7 @@ fn collapse_branch_if_needed(
                     insert_node(
                         upper,
                         lower,
-                        branch_path.to_vec(),
+                        PathVec::from_slice(branch_path),
                         SparseNode::Extension {
                             key: Nibbles::from_hex(vec![only_child_nibble]),
                             hash: None,
