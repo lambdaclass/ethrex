@@ -249,19 +249,12 @@ impl GuestProgramState {
 
             if update.removed {
                 // Remove account from trie
-                self.state_trie
-                    .remove(hashed_address)
-                    .expect("failed to remove from trie");
+                self.state_trie.remove(hashed_address)?;
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
-                let mut account_state = match self
-                    .state_trie
-                    .get(hashed_address)
-                    .expect("failed to get account state from trie")
-                {
-                    Some(encoded_state) => AccountState::decode(&encoded_state)
-                        .expect("failed to decode account state"),
+                let mut account_state = match self.state_trie.get(hashed_address)? {
+                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
                     None => AccountState::default(),
                 };
                 if update.removed_storage {
@@ -291,15 +284,11 @@ impl GuestProgramState {
                         .partition(|(_k, v)| v.is_zero());
 
                     for (hashed_key, storage_value) in inserts {
-                        storage_trie
-                            .insert(hashed_key, storage_value.encode_to_vec())
-                            .expect("failed to insert in trie");
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
 
                     for (hashed_key, _) in deletes {
-                        storage_trie
-                            .remove(&hashed_key)
-                            .expect("failed to remove key");
+                        storage_trie.remove(&hashed_key)?;
                     }
 
                     let storage_root = storage_trie.hash_no_commit();
@@ -307,8 +296,7 @@ impl GuestProgramState {
                 }
 
                 self.state_trie
-                    .insert(hashed_address.clone(), account_state.encode_to_vec())
-                    .expect("failed to insert into storage");
+                    .insert(hashed_address.clone(), account_state.encode_to_vec())?;
             }
         }
         Ok(())
