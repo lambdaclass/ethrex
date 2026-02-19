@@ -58,6 +58,10 @@ pub struct Trie {
     pub root: NodeRef,
     pending_removal: FxHashSet<Nibbles>,
     dirty: FxHashSet<Nibbles>,
+    /// When true, skip dirty/pending_removal tracking. Use for bulk-insert
+    /// workloads (e.g. snap sync) where every node is new and `get()` is never
+    /// called before the trie is hashed.
+    skip_dirty_tracking: bool,
 }
 
 impl Default for Trie {
@@ -74,6 +78,7 @@ impl Trie {
             root: NodeRef::default(),
             pending_removal: Default::default(),
             dirty: Default::default(),
+            skip_dirty_tracking: false,
         }
     }
 
@@ -88,7 +93,15 @@ impl Trie {
             },
             pending_removal: Default::default(),
             dirty: Default::default(),
+            skip_dirty_tracking: false,
         }
+    }
+
+    /// Enable bulk-insert mode: skips dirty/pending_removal tracking.
+    /// Only safe when the trie is built from scratch and `get()` is never
+    /// called before hashing.
+    pub fn set_skip_dirty_tracking(&mut self, skip: bool) {
+        self.skip_dirty_tracking = skip;
     }
 
     /// Return a reference to the internal database.
@@ -131,8 +144,10 @@ impl Trie {
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
-        self.pending_removal.remove(&path);
-        self.dirty.insert(path.clone());
+        if !self.skip_dirty_tracking {
+            self.pending_removal.remove(&path);
+            self.dirty.insert(path.clone());
+        }
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -235,7 +250,8 @@ impl Trie {
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
     pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
-        let mut acc = Vec::new();
+        let estimated = self.dirty.len().max(self.pending_removal.len()) * 2 + 1;
+        let mut acc = Vec::with_capacity(estimated);
         if self.root.is_valid() {
             self.root.commit(Nibbles::default(), &mut acc);
         }

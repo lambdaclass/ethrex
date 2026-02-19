@@ -60,14 +60,14 @@ impl RLPxCodec {
         let mac_key = keccak([ephemeral_key_secret, aes_key.0].concat());
 
         // egress-mac = keccak256.init((mac-secret ^ remote-nonce) || auth)
-        let egress_mac = Keccak256::default()
-            .update(mac_key ^ remote_state.nonce)
-            .update(&local_state.init_message);
+        let mut egress_mac = Keccak256::default();
+        egress_mac.update(mac_key ^ remote_state.nonce);
+        egress_mac.update(&local_state.init_message);
 
         // ingress-mac = keccak256.init((mac-secret ^ initiator-nonce) || ack)
-        let ingress_mac = Keccak256::default()
-            .update(mac_key ^ local_state.nonce)
-            .update(&remote_state.init_message);
+        let mut ingress_mac = Keccak256::default();
+        ingress_mac.update(mac_key ^ local_state.nonce);
+        ingress_mac.update(&remote_state.init_message);
 
         let ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
         let egress_aes = ingress_aes.clone();

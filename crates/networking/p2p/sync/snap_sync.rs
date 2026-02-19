@@ -798,14 +798,8 @@ pub fn compute_storage_roots(
     account_hash: H256,
     key_value_pairs: &[(H256, U256)],
 ) -> Result<StorageRoots, SyncError> {
-    use ethrex_trie::{Nibbles, Node};
-
-    let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
-    let trie_hash = match storage_trie.db().get(Nibbles::default())? {
-        Some(noderlp) => Node::decode(&noderlp)?.compute_hash().finalize(),
-        None => *EMPTY_TRIE_HASH,
-    };
-    let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
+    let mut storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    storage_trie.set_skip_dirty_tracking(true);
 
     for (hashed_key, value) in key_value_pairs {
         if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
