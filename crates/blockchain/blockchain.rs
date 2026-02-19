@@ -800,13 +800,14 @@ impl Blockchain {
             .iter()
             .enumerate()
             .map(|(i, (_, update))| {
-                let weight =
-                    if update.removed || update.removed_storage || !update.added_storage.is_empty()
-                    {
-                        1.max(update.added_storage.len())
-                    } else {
-                        0
-                    };
+                let weight = if update.removed {
+                    // Removed accounts are trivially cheap (just push EMPTY_TRIE_HASH)
+                    0
+                } else if update.removed_storage || !update.added_storage.is_empty() {
+                    1.max(update.added_storage.len())
+                } else {
+                    0
+                };
                 (i, weight)
             })
             .collect();
