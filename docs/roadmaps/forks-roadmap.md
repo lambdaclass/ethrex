@@ -38,7 +38,7 @@
 | **8037** | State Creation Gas Cost Increase | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2040) | 🔴 | 🔴 | CFI |
 | **8038** | State-Access Gas Cost Update | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1941) | 🔴 | 🔴 | CFI |
 
-> **Priority note:** All core devnet EIPs are merged and EF state tests pass. **Up next: hive testing for Amsterdam** (PR [#6009](https://github.com/lambdaclass/ethrex/pull/6009)) — this is the current blocker before Amsterdam can be considered fully validated in ethrex. Gas repricing EIPs are **low priority** — no other client has started them. EIP-7904 and EIP-7954 are **medium priority** (Nethermind has draft PRs). Monitor CFI decisions at ACDE calls. If getting ahead, EIP-7954 is simplest (just a constant change: 24KiB → 32KiB).
+> **Priority note:** All core devnet EIPs are merged, EF state tests pass, and hive tests are updated (PR [#6009] merged). bal-devnet-2 is validated (PR [#6201] merged). **Up next for devnet-3:** EIP-8037 ([#6213]) and EIP-7954 ([#6214]) now have issues filed. Gas repricing EIPs are **low priority** — no other client has started them. EIP-7904 and EIP-7954 are **medium priority** (Nethermind has draft PRs). Monitor CFI decisions at ACDE calls.
 
 ### Other Amsterdam EIPs
 
@@ -73,9 +73,33 @@
 - [x] Added Amsterdam to default forks in state test runner ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
 
 ### Remaining
-- [ ] Update hive tests for Amsterdam (PR [#6009](https://github.com/lambdaclass/ethrex/pull/6009) open)
+- [x] Update hive tests for Amsterdam (PR [#6009] merged ✅)
+- [x] bal-devnet-2 fixes (PR [#6201] merged ✅)
 - [ ] Monitor EEST test changes / EIP spec changes
-- [ ] Start gas repricing EIPs (low priority, no other client has started)
+- [ ] Start gas repricing EIPs — EIP-8037 ([#6213]) and EIP-7954 ([#6214]) filed for devnet-3
+- [ ] BAL optimizations: parallel execution ([#6209]), parallel state root ([#6210]), batched reads ([#6211])
+- [ ] RPC: eth_simulateV1 ([#6212])
+
+---
+
+## February 16 Status Update
+
+### bal-devnet-2 ✅
+PR [#6201] merged — ethrex proposes and validates blocks post-Gloas in bal-devnet-2 kurtosis network:
+- `engine_getPayloadV6` + `engine_newPayloadV5` capability
+- Fix BAL hash validation (hash raw RLP bytes, not re-encoded)
+- Fix EIP-7778 receipt gas tracking in block building
+- Distinguish gas allowance exceeded vs block gas overflow
+- Fix `engine_getClientVersionV1` commit hash
+- bal-devnet-2 kurtosis fixture + ethereum-package update
+
+### Hive Tests ✅
+PR [#6009] merged — Amsterdam hive test support.
+
+### Next Priorities Filed
+- **devnet-3 EIPs:** EIP-8037 State Creation Gas Cost ([#6213]), EIP-7954 Max Contract Size ([#6214])
+- **BAL optimizations:** Parallel block execution ([#6209]), parallel state root calculation ([#6210]), batched state reads ([#6211])
+- **RPC:** eth_simulateV1 ([#6212])
 
 ---
 
@@ -129,6 +153,17 @@ Post-Glamsterdam fork, execution layer = **Bogota**
 
 ---
 
+## BAL Optimizations (Non-EIP)
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| [#6209] | Parallel block execution | Not started |
+| [#6210] | Parallel state root calculation | Not started |
+| [#6211] | Batched state reads | Not started |
+| [#6212] | eth_simulateV1 RPC | Not started |
+
+---
+
 ## Technical Debt / Action Items
 
 | Item | Location | Priority | Status |
@@ -137,7 +172,12 @@ Post-Glamsterdam fork, execution layer = **Bogota**
 | Complete BAL execution integration | PR [#6024](https://github.com/lambdaclass/ethrex/pull/6024) | High | ✅ Merged |
 | BAL recorder + EIP-7708 fixes | PR [#6149](https://github.com/lambdaclass/ethrex/pull/6149) | High | ✅ Done |
 | Enable Amsterdam EIP tests | `tooling/ef_tests/blockchain/tests/all.rs` | Medium | ✅ Done (skip list removed) |
-| Update hive tests for Amsterdam | PR [#6009](https://github.com/lambdaclass/ethrex/pull/6009) | Medium | In progress |
+| Update hive tests for Amsterdam | PR [#6009] | Medium | ✅ Done (merged) |
+| bal-devnet-2 fixes | PR [#6201] | High | ✅ Done (merged) |
+| EIP-8037 State Creation Gas Cost (devnet-3) | [#6213] | High | Not started |
+| EIP-7954 Max Contract Size (devnet-3) | [#6214] | Medium | Not started |
+| BAL optimizations (parallel exec, state root, batched reads) | [#6209], [#6210], [#6211] | Medium | Not started |
+| eth_simulateV1 RPC | [#6212] | Medium | Not started |
 | Gas repricing EIPs | Various | Low | Not started (no other client has either) |
 
 ---
@@ -177,3 +217,10 @@ Meetings on **Thursdays**. Track agendas and notes at [ethereum/pm](https://gith
 [#6118]: https://github.com/lambdaclass/ethrex/pull/6118
 [#6128]: https://github.com/lambdaclass/ethrex/pull/6128
 [#6149]: https://github.com/lambdaclass/ethrex/pull/6149
+[#6201]: https://github.com/lambdaclass/ethrex/pull/6201
+[#6209]: https://github.com/lambdaclass/ethrex/issues/6209
+[#6210]: https://github.com/lambdaclass/ethrex/issues/6210
+[#6211]: https://github.com/lambdaclass/ethrex/issues/6211
+[#6212]: https://github.com/lambdaclass/ethrex/issues/6212
+[#6213]: https://github.com/lambdaclass/ethrex/issues/6213
+[#6214]: https://github.com/lambdaclass/ethrex/issues/6214

@@ -870,8 +870,7 @@ impl PeerTableServer {
                             let is_fork_id_valid =
                                 Self::evaluate_fork_id(&node_record, &self.store).await;
                             let contact = occupied_entry.get_mut();
-                            if contact.node.ip != node.ip
-                                || contact.node.udp_port != node.udp_port
+                            if contact.node.ip != node.ip || contact.node.udp_port != node.udp_port
                             {
                                 contact.validation_timestamp = None;
                                 contact.ping_req_id = None;

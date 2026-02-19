@@ -17,9 +17,9 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info};
 
-use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::utils::state_reconstruct::get_batch;
 use crate::{SequencerConfig, sequencer::utils::node_is_up_to_date};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlockFetcherError {
@@ -348,7 +348,7 @@ impl GenServer for BlockFetcher {
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        if let SequencerStatus::Syncing = self.sequencer_state.status().await {
+        if let SequencerStatus::Syncing = self.sequencer_state.status() {
             let _ = self.fetch().await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });
