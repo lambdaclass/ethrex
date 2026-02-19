@@ -1,12 +1,12 @@
 //! EXECUTE precompile for Native Rollups (EIP-8079 PoC).
 //!
 //! Verifies L2 state transitions by re-executing them inside the L1 EVM.
-//! The precompile receives an execution witness, a block, and a deposits rolling
-//! hash, re-executes the block, and verifies the resulting state root, receipts
-//! root, and deposit inclusion.
+//! The precompile receives an execution witness, a block, and an L1 messages
+//! rolling hash, re-executes the block, and verifies the resulting state root,
+//! receipts root, and L1 message inclusion.
 //!
-//! After execution, it scans DepositProcessed events from the L2Bridge predeploy
-//! to reconstruct the deposits rolling hash and verify it matches the one provided
+//! After execution, it scans L1MessageProcessed events from the L2Bridge predeploy
+//! to reconstruct the L1 messages rolling hash and verify it matches the one provided
 //! by the L1 NativeRollup contract. It also extracts WithdrawalInitiated events
 //! and computes a Merkle root for withdrawal claiming on L1.
 
@@ -36,7 +36,7 @@ use crate::{
 /// Fixed gas cost for the PoC. Real cost TBD in the EIP.
 const EXECUTE_GAS_COST: u64 = 100_000;
 
-/// Address of the L2 bridge predeploy (handles both deposits and withdrawals).
+/// Address of the L2 bridge predeploy (handles both L1 messages and withdrawals).
 /// Must match the deployed address in the L2 genesis state.
 pub const L2_BRIDGE: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -50,9 +50,9 @@ static WITHDRAWAL_INITIATED_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
     ))
 });
 
-/// Event signature: DepositProcessed(address indexed recipient, uint256 amount, uint256 indexed depositNonce)
-static DEPOSIT_PROCESSED_SELECTOR: LazyLock<H256> =
-    LazyLock::new(|| H256::from(keccak_hash(b"DepositProcessed(address,uint256,uint256)")));
+/// Event signature: L1MessageProcessed(address indexed from, address indexed to, uint256 value, uint256 gasLimit, bytes32 dataHash, uint256 indexed nonce)
+static L1_MESSAGE_PROCESSED_SELECTOR: LazyLock<H256> =
+    LazyLock::new(|| H256::from(keccak_hash(b"L1MessageProcessed(address,address,uint256,uint256,bytes32,uint256)")));
 
 /// A withdrawal extracted from L2 block execution logs.
 #[derive(Clone, Debug)]
@@ -66,7 +66,7 @@ pub struct Withdrawal {
 /// Input to the EXECUTE precompile.
 pub struct ExecutePrecompileInput {
     pub pre_state_root: H256,
-    pub deposits_rolling_hash: H256,
+    pub l1_messages_rolling_hash: H256,
     pub execution_witness: ExecutionWitness,
     pub block: Block,
 }
@@ -75,23 +75,23 @@ pub struct ExecutePrecompileInput {
 ///
 /// Parses ABI-encoded calldata:
 /// ```text
-/// abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 depositsRollingHash)
+/// abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 l1MessagesRollingHash)
 /// ```
 ///
 /// ABI layout:
-///   slot 0: preStateRoot        (bytes32, static)
-///   slot 1: offset_to_blockRlp  (uint256, dynamic pointer → 0x80)
-///   slot 2: offset_to_witness   (uint256, dynamic pointer)
-///   slot 3: depositsRollingHash (bytes32, static — NOT a pointer)
+///   slot 0: preStateRoot            (bytes32, static)
+///   slot 1: offset_to_blockRlp      (uint256, dynamic pointer -> 0x80)
+///   slot 2: offset_to_witness       (uint256, dynamic pointer)
+///   slot 3: l1MessagesRollingHash   (bytes32, static -- NOT a pointer)
 ///   tail:   block RLP data, witness JSON data
 ///
 /// Block uses RLP encoding (already implemented in ethrex). ExecutionWitness
 /// uses JSON because it doesn't have RLP support (it uses serde/rkyv instead).
-/// The depositsRollingHash is computed by NativeRollup.advance() on L1 from
-/// stored deposit hashes. The precompile verifies it against DepositProcessed
+/// The l1MessagesRollingHash is computed by NativeRollup.advance() on L1 from
+/// stored L1 message hashes. The precompile verifies it against L1MessageProcessed
 /// events emitted by the L2Bridge predeploy during block execution.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed)` — 128 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed)` -- 128 bytes.
 pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
@@ -148,17 +148,17 @@ fn read_abi_bytes(calldata: &[u8], abi_offset: usize) -> Result<&[u8], VMError> 
 
 /// Parse ABI-encoded calldata into an [`ExecutePrecompileInput`].
 ///
-/// Format: `abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 depositsRollingHash)`
+/// Format: `abi.encode(bytes32 preStateRoot, bytes blockRlp, bytes witnessJson, bytes32 l1MessagesRollingHash)`
 ///
-/// The head is 4 × 32 = 128 bytes:
+/// The head is 4 x 32 = 128 bytes:
 ///   - slot 0: preStateRoot (bytes32, static)
 ///   - slot 1: offset to blockRlp (dynamic pointer)
 ///   - slot 2: offset to witnessJson (dynamic pointer)
-///   - slot 3: depositsRollingHash (bytes32, static — NOT a pointer)
+///   - slot 3: l1MessagesRollingHash (bytes32, static -- NOT a pointer)
 fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError> {
     let mut offset: usize = 0;
 
-    // 1. pre_state_root (bytes32, static — 32 bytes)
+    // 1. pre_state_root (bytes32, static -- 32 bytes)
     let pre_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
     // 2. Read offsets for the 2 dynamic params
@@ -172,8 +172,8 @@ fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError
         .try_into()
         .map_err(|_| custom_err("Witness offset too large".to_string()))?;
 
-    // 3. depositsRollingHash (bytes32, static — NOT a dynamic offset)
-    let deposits_rolling_hash = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+    // 3. l1MessagesRollingHash (bytes32, static -- NOT a dynamic offset)
+    let l1_messages_rolling_hash = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
     // 4. Read block RLP bytes
     let block_rlp = read_abi_bytes(calldata, block_offset)?;
@@ -187,7 +187,7 @@ fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError
 
     Ok(ExecutePrecompileInput {
         pre_state_root,
-        deposits_rolling_hash,
+        l1_messages_rolling_hash,
         execution_witness,
         block,
     })
@@ -199,14 +199,14 @@ fn custom_err(msg: String) -> VMError {
 
 /// Core logic, separated so tests can call it directly with a structured input.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed)` — 128 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed)` -- 128 bytes.
 /// The post-state root is extracted from `block.header.state_root` and verified
 /// against the actual computed state root after execution. The withdrawal root is
 /// computed from WithdrawalInitiated events emitted during block execution.
 pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let ExecutePrecompileInput {
         pre_state_root,
-        deposits_rolling_hash,
+        l1_messages_rolling_hash,
         execution_witness,
         block,
     } = input;
@@ -295,11 +295,11 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         )));
     }
 
-    // 6. Verify deposits rolling hash against DepositProcessed events
-    let computed_rolling_hash = compute_deposits_rolling_hash(&all_logs);
-    if computed_rolling_hash != deposits_rolling_hash {
+    // 6. Verify L1 messages rolling hash against L1MessageProcessed events
+    let computed_rolling_hash = compute_l1_messages_rolling_hash(&all_logs);
+    if computed_rolling_hash != l1_messages_rolling_hash {
         return Err(custom_err(format!(
-            "Deposits rolling hash mismatch: expected {deposits_rolling_hash:?}, got {computed_rolling_hash:?}"
+            "L1 messages rolling hash mismatch: expected {l1_messages_rolling_hash:?}, got {computed_rolling_hash:?}"
         )));
     }
 
@@ -307,7 +307,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let withdrawals = extract_withdrawals(&all_logs);
     let withdrawal_root = compute_withdrawals_merkle_root(&withdrawals);
 
-    // 8. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed) — 128 bytes
+    // 8. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed) -- 128 bytes
     let mut result = Vec::with_capacity(128);
     result.extend_from_slice(expected_post_state_root.as_bytes());
     // block_number as uint256: 24 zero bytes + 8-byte big-endian
@@ -468,57 +468,74 @@ fn calculate_gas_price(tx: &Transaction, base_fee_per_gas: u64) -> Result<U256, 
     .into())
 }
 
-// ===== Deposit rolling hash verification =====
+// ===== L1 messages rolling hash verification =====
 
-/// Reconstruct the deposits rolling hash from DepositProcessed events emitted
+/// Reconstruct the L1 messages rolling hash from L1MessageProcessed events emitted
 /// during block execution by the L2Bridge predeploy at [`L2_BRIDGE`].
 ///
-/// Per-deposit hash (matches NativeRollup.deposit() on L1):
-///   `keccak256(abi.encodePacked(recipient, amount, nonce))`
-///   = keccak256(recipient[20 bytes] ++ amount[32 bytes BE] ++ nonce[32 bytes BE])
+/// Per-message hash (matches NativeRollup._recordL1Message() on L1):
+///   `keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))`
+///   = keccak256(from[20 bytes] ++ to[20 bytes] ++ value[32 bytes BE] ++ gasLimit[32 bytes BE] ++ dataHash[32 bytes] ++ nonce[32 bytes BE])
+///   = 168 bytes preimage
 ///
 /// Rolling hash (matches NativeRollup.advance() on L1):
-///   `rolling_i = keccak256(abi.encodePacked(rolling_{i-1}, deposit_hash_i))`
-///   = keccak256(rolling[32 bytes] ++ deposit_hash[32 bytes])
+///   `rolling_i = keccak256(abi.encodePacked(rolling_{i-1}, message_hash_i))`
+///   = keccak256(rolling[32 bytes] ++ message_hash[32 bytes])
 ///
-/// Returns `H256::zero()` when no DepositProcessed events are found.
-fn compute_deposits_rolling_hash(logs: &[Log]) -> H256 {
+/// Returns `H256::zero()` when no L1MessageProcessed events are found.
+fn compute_l1_messages_rolling_hash(logs: &[Log]) -> H256 {
     let mut rolling = H256::zero();
 
     for log in logs {
         if log.address != L2_BRIDGE
-            || log.topics.first() != Some(&*DEPOSIT_PROCESSED_SELECTOR)
-            || log.topics.len() != 3
+            || log.topics.first() != Some(&*L1_MESSAGE_PROCESSED_SELECTOR)
+            || log.topics.len() != 4
         {
             continue;
         }
 
         // topics[0] = event selector
-        // topics[1] = recipient (address, indexed — left-padded to 32 bytes)
-        // topics[2] = depositNonce (uint256, indexed)
-        // data[0..32] = amount (uint256, non-indexed)
-        let Some(recipient_bytes) = log.topics.get(1).and_then(|t| t.as_bytes().get(12..32)) else {
+        // topics[1] = from (address, indexed -- left-padded to 32 bytes)
+        // topics[2] = to (address, indexed -- left-padded to 32 bytes)
+        // topics[3] = nonce (uint256, indexed)
+        // data[0..32] = value (uint256, non-indexed)
+        // data[32..64] = gasLimit (uint256, non-indexed)
+        // data[64..96] = dataHash (bytes32, non-indexed)
+        let Some(from_bytes) = log.topics.get(1).and_then(|t| t.as_bytes().get(12..32)) else {
             continue;
         };
-        let Some(amount_bytes) = log.data.get(..32) else {
+        let Some(to_bytes) = log.topics.get(2).and_then(|t| t.as_bytes().get(12..32)) else {
             continue;
         };
-        let Some(nonce_topic) = log.topics.get(2) else {
+        let Some(nonce_topic) = log.topics.get(3) else {
             continue;
         };
         let nonce_bytes = nonce_topic.as_bytes();
 
-        // Per-deposit hash: keccak256(recipient[20] ++ amount[32] ++ nonce[32]) = 84 bytes
-        let mut deposit_preimage = Vec::with_capacity(84);
-        deposit_preimage.extend_from_slice(recipient_bytes); // 20 bytes
-        deposit_preimage.extend_from_slice(amount_bytes); // 32 bytes
-        deposit_preimage.extend_from_slice(nonce_bytes); // 32 bytes
-        let deposit_hash = H256::from(keccak_hash(&deposit_preimage));
+        let Some(value_bytes) = log.data.get(..32) else {
+            continue;
+        };
+        let Some(gas_limit_bytes) = log.data.get(32..64) else {
+            continue;
+        };
+        let Some(data_hash_bytes) = log.data.get(64..96) else {
+            continue;
+        };
 
-        // Rolling hash: keccak256(rolling[32] ++ deposit_hash[32]) = 64 bytes
+        // Per-message hash: keccak256(from[20] ++ to[20] ++ value[32] ++ gasLimit[32] ++ dataHash[32] ++ nonce[32]) = 168 bytes
+        let mut message_preimage = Vec::with_capacity(168);
+        message_preimage.extend_from_slice(from_bytes);       // 20 bytes
+        message_preimage.extend_from_slice(to_bytes);         // 20 bytes
+        message_preimage.extend_from_slice(value_bytes);      // 32 bytes
+        message_preimage.extend_from_slice(gas_limit_bytes);  // 32 bytes
+        message_preimage.extend_from_slice(data_hash_bytes);  // 32 bytes
+        message_preimage.extend_from_slice(nonce_bytes);      // 32 bytes
+        let message_hash = H256::from(keccak_hash(&message_preimage));
+
+        // Rolling hash: keccak256(rolling[32] ++ message_hash[32]) = 64 bytes
         let mut rolling_preimage = [0u8; 64];
         rolling_preimage[..32].copy_from_slice(rolling.as_bytes());
-        rolling_preimage[32..].copy_from_slice(deposit_hash.as_bytes());
+        rolling_preimage[32..].copy_from_slice(message_hash.as_bytes());
         rolling = H256::from(keccak_hash(rolling_preimage));
     }
 
@@ -540,8 +557,8 @@ fn extract_withdrawals(logs: &[Log]) -> Vec<Withdrawal> {
         })
         .filter_map(|log| {
             // topics[0] = event selector
-            // topics[1] = from (address, indexed — left-padded to 32 bytes)
-            // topics[2] = receiver (address, indexed — left-padded to 32 bytes)
+            // topics[1] = from (address, indexed -- left-padded to 32 bytes)
+            // topics[2] = receiver (address, indexed -- left-padded to 32 bytes)
             // topics[3] = messageId (uint256, indexed)
             // data = amount (uint256, non-indexed, 32 bytes)
             let from = Address::from_slice(log.topics.get(1)?.as_bytes().get(12..32)?);

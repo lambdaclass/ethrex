@@ -5,7 +5,7 @@
 //!   2. Run: `cargo test -p ethrex-test --features native-rollups -- l2::native_rollups --nocapture`
 //!
 //! The test compiles and deploys NativeRollup.sol, builds an L2 state transition,
-//! calls deposit() + advance(), and verifies the contract state was updated.
+//! calls sendL1Message() + advance(), and verifies the contract state was updated.
 
 #![allow(
     clippy::expect_used,
@@ -138,31 +138,75 @@ fn test_chain_config() -> ChainConfig {
     }
 }
 
-/// Helper: encode L2Bridge.processDeposit(address,uint256,uint256) calldata.
-fn encode_process_deposit_call(recipient: Address, amount: U256, nonce: u64) -> Vec<u8> {
-    let selector = &keccak_hash(b"processDeposit(address,uint256,uint256)")[..4];
-    let mut data = Vec::with_capacity(4 + 96);
-    data.extend_from_slice(selector);
-    let mut addr_bytes = [0u8; 32];
-    addr_bytes[12..].copy_from_slice(recipient.as_bytes());
-    data.extend_from_slice(&addr_bytes);
-    data.extend_from_slice(&amount.to_big_endian());
+/// Helper: encode L2Bridge.processL1Message(address,address,uint256,uint256,bytes,uint256) calldata.
+fn encode_process_l1_message_call(
+    from: Address,
+    to: Address,
+    value: U256,
+    gas_limit: u64,
+    msg_data: &[u8],
+    nonce: u64,
+) -> Vec<u8> {
+    let selector = &keccak_hash(b"processL1Message(address,address,uint256,uint256,bytes,uint256)")[..4];
+
+    // ABI encoding with dynamic `bytes` at param index 4:
+    // [selector][from][to][value][gasLimit][offset_to_data][nonce][data_length][data_bytes...]
+    let mut calldata = Vec::with_capacity(4 + 7 * 32 + msg_data.len());
+    calldata.extend_from_slice(selector);
+
+    // Param 0: from (address)
+    let mut from_bytes = [0u8; 32];
+    from_bytes[12..].copy_from_slice(from.as_bytes());
+    calldata.extend_from_slice(&from_bytes);
+
+    // Param 1: to (address)
+    let mut to_bytes = [0u8; 32];
+    to_bytes[12..].copy_from_slice(to.as_bytes());
+    calldata.extend_from_slice(&to_bytes);
+
+    // Param 2: value (uint256)
+    calldata.extend_from_slice(&value.to_big_endian());
+
+    // Param 3: gasLimit (uint256)
+    let mut gas_bytes = [0u8; 32];
+    gas_bytes[24..].copy_from_slice(&gas_limit.to_be_bytes());
+    calldata.extend_from_slice(&gas_bytes);
+
+    // Param 4: offset to data (dynamic) — 6 static slots * 32 = 192
+    let mut offset_bytes = [0u8; 32];
+    offset_bytes[31] = 192;
+    calldata.extend_from_slice(&offset_bytes);
+
+    // Param 5: nonce (uint256)
     let mut nonce_bytes = [0u8; 32];
     nonce_bytes[24..].copy_from_slice(&nonce.to_be_bytes());
-    data.extend_from_slice(&nonce_bytes);
-    data
+    calldata.extend_from_slice(&nonce_bytes);
+
+    // Dynamic data: length + padded bytes
+    let mut len_bytes = [0u8; 32];
+    let data_len = msg_data.len() as u64;
+    len_bytes[24..].copy_from_slice(&data_len.to_be_bytes());
+    calldata.extend_from_slice(&len_bytes);
+
+    if !msg_data.is_empty() {
+        calldata.extend_from_slice(msg_data);
+        let padding = (32 - (msg_data.len() % 32)) % 32;
+        calldata.extend(std::iter::repeat(0u8).take(padding));
+    }
+
+    calldata
 }
 
-/// Build the L2 state transition (relayer→L2Bridge processDeposit + Alice→Bob transfer).
+/// Build the L2 state transition (relayer→L2Bridge processL1Message + Alice→Bob transfer).
 ///
 /// The L2 genesis state includes the L2Bridge contract at `L2_BRIDGE` with preminted ETH
 /// and a relayer account. Block 1 contains:
-///   - TX0: relayer calls L2Bridge.processDeposit(charlie, 5 ETH, 0)
+///   - TX0: relayer calls L2Bridge.processL1Message(l1_sender, charlie, 5 ETH, 100k, "", 0)
 ///   - TX1: alice sends 1 ETH to bob
 ///
 /// Returns (input, block_rlp, witness_json, pre_state_root, post_state_root,
-///          deposits_rolling_hash, gas_used_tx0).
-fn build_l2_state_transition() -> (
+///          l1_messages_rolling_hash, gas_used_tx0).
+fn build_l2_state_transition(l1_sender: Address) -> (
     ExecutePrecompileInput,
     Vec<u8>,
     Vec<u8>,
@@ -200,7 +244,8 @@ fn build_l2_state_transition() -> (
     let alice_balance = U256::from(10) * U256::from(10).pow(U256::from(18)); // 10 ETH
     let relayer_balance = U256::from(1) * U256::from(10).pow(U256::from(18)); // 1 ETH for gas
     let bridge_premint = U256::from(100) * U256::from(10).pow(U256::from(18)); // 100 ETH
-    let deposit_amount = U256::from(5) * U256::from(10).pow(U256::from(18)); // 5 ETH
+    let l1_msg_value = U256::from(5) * U256::from(10).pow(U256::from(18)); // 5 ETH
+    let l1_msg_gas_limit: u64 = 100_000; // subcall gas limit on L2
 
     // ===== Genesis state trie =====
     let mut state_trie = Trie::new_temp();
@@ -251,17 +296,18 @@ fn build_l2_state_transition() -> (
     };
 
     // ===== Build transactions =====
-    // TX0: relayer → L2Bridge.processDeposit(charlie, 5 ETH, 0)
-    let deposit_calldata = encode_process_deposit_call(charlie, deposit_amount, 0);
+    // TX0: relayer → L2Bridge.processL1Message(l1_sender, charlie, 5 ETH, 100k, "", 0)
+    let l1_msg_calldata =
+        encode_process_l1_message_call(l1_sender, charlie, l1_msg_value, l1_msg_gas_limit, &[], 0);
     let mut tx0 = EIP1559Transaction {
         chain_id,
         nonce: 0,
         max_priority_fee_per_gas: 1_000_000_000,
         max_fee_per_gas: 2_000_000_000,
-        gas_limit: 100_000,
+        gas_limit: 200_000,
         to: TxKind::Call(L2_BRIDGE),
         value: U256::zero(),
-        data: Bytes::from(deposit_calldata),
+        data: Bytes::from(l1_msg_calldata),
         access_list: vec![],
         ..Default::default()
     };
@@ -329,10 +375,10 @@ fn build_l2_state_transition() -> (
     let effective_gas_price =
         U256::from(std::cmp::min(1_000_000_000u64 + base_fee, 2_000_000_000u64));
 
-    // Execute TX0: processDeposit
+    // Execute TX0: processL1Message
     let env0 = Environment {
         origin: relayer,
-        gas_limit: 100_000,
+        gas_limit: 200_000,
         config,
         block_number: U256::from(1),
         coinbase,
@@ -367,7 +413,7 @@ fn build_l2_state_transition() -> (
     let report0 = vm0.execute().expect("TX0 execution failed");
     assert!(
         matches!(report0.result, TxResult::Success),
-        "processDeposit transaction failed: {:?}",
+        "processL1Message transaction failed: {:?}",
         report0.result
     );
     let gas_used0 = report0.gas_used;
@@ -470,26 +516,30 @@ fn build_l2_state_transition() -> (
         keys: vec![],
     };
 
-    // ===== Compute deposits rolling hash =====
-    // deposit_hash = keccak256(abi.encodePacked(charlie[20], amount[32], nonce[32]))
-    let mut deposit_preimage = Vec::with_capacity(84);
-    deposit_preimage.extend_from_slice(charlie.as_bytes());
-    deposit_preimage.extend_from_slice(&deposit_amount.to_big_endian());
-    deposit_preimage.extend_from_slice(&U256::zero().to_big_endian()); // nonce=0
-    let deposit_hash = H256::from(keccak_hash(&deposit_preimage));
+    // ===== Compute L1 messages rolling hash =====
+    // msg_hash = keccak256(abi.encodePacked(from[20], to[20], value[32], gasLimit[32], dataHash[32], nonce[32]))
+    let empty_data_hash = H256::from(keccak_hash(&[])); // keccak256("")
+    let mut msg_preimage = Vec::with_capacity(168);
+    msg_preimage.extend_from_slice(l1_sender.as_bytes()); // from: 20 bytes
+    msg_preimage.extend_from_slice(charlie.as_bytes()); // to: 20 bytes
+    msg_preimage.extend_from_slice(&l1_msg_value.to_big_endian()); // value: 32 bytes
+    msg_preimage.extend_from_slice(&U256::from(l1_msg_gas_limit).to_big_endian()); // gasLimit: 32 bytes
+    msg_preimage.extend_from_slice(empty_data_hash.as_bytes()); // dataHash: 32 bytes
+    msg_preimage.extend_from_slice(&U256::zero().to_big_endian()); // nonce: 32 bytes
+    let l1_msg_hash = H256::from(keccak_hash(&msg_preimage));
 
-    // rolling = keccak256(abi.encodePacked(H256::zero(), deposit_hash))
+    // rolling = keccak256(abi.encodePacked(H256::zero(), msg_hash))
     let mut rolling_preimage = [0u8; 64];
     rolling_preimage[..32].copy_from_slice(H256::zero().as_bytes());
-    rolling_preimage[32..].copy_from_slice(deposit_hash.as_bytes());
-    let deposits_rolling_hash = H256::from(keccak_hash(rolling_preimage));
+    rolling_preimage[32..].copy_from_slice(l1_msg_hash.as_bytes());
+    let l1_messages_rolling_hash = H256::from(keccak_hash(rolling_preimage));
 
     let block_rlp = block.encode_to_vec();
     let witness_json = serde_json::to_vec(&witness).expect("witness JSON serialization failed");
 
     let input = ExecutePrecompileInput {
         pre_state_root,
-        deposits_rolling_hash,
+        l1_messages_rolling_hash,
         execution_witness: witness,
         block,
     };
@@ -500,7 +550,7 @@ fn build_l2_state_transition() -> (
         witness_json,
         pre_state_root,
         post_state_root,
-        deposits_rolling_hash,
+        l1_messages_rolling_hash,
         gas_used0,
     )
 }
@@ -543,7 +593,7 @@ fn build_l2_withdrawal_block(
     let transfer_value = U256::from(10).pow(U256::from(18));
     let effective_gas_price: u64 = 2_000_000_000; // min(1gwei + 1gwei, 2gwei)
     let priority_fee: u64 = 1_000_000_000; // effective - base_fee (base_fee = 1gwei)
-    let deposit_amount = U256::from(5) * U256::from(10).pow(U256::from(18));
+    let l1_msg_value = U256::from(5) * U256::from(10).pow(U256::from(18));
     let bridge_premint = U256::from(100) * U256::from(10).pow(U256::from(18));
 
     // Relayer: nonce=1, balance = 1 ETH - gas_used_tx0 * 2gwei
@@ -554,7 +604,7 @@ fn build_l2_withdrawal_block(
     // Coinbase: balance = (gas_used_tx0 + 21000) * 1gwei (priority fee portion)
     let coinbase_reward = U256::from(gas_used_tx0 + 21_000u64) * U256::from(priority_fee);
 
-    // Build bridge storage trie for block 2 pre-state (after processDeposit: slot0=relayer, slot1=depositNonce=1)
+    // Build bridge storage trie for block 2 pre-state (after processL1Message: slot0=relayer, slot1=l1MessageNonce=1)
     let mut bridge_storage_trie = Trie::new_temp();
     // slot 0: relayer address
     let slot0_key = keccak_hash(&[0u8; 32]).to_vec();
@@ -564,7 +614,7 @@ fn build_l2_withdrawal_block(
     bridge_storage_trie
         .insert(slot0_key, relayer_u256.encode_to_vec())
         .expect("storage insert");
-    // slot 1: depositNonce = 1
+    // slot 1: l1MessageNonce = 1
     let mut slot1_raw = [0u8; 32];
     slot1_raw[31] = 1;
     let slot1_key = keccak_hash(&slot1_raw).to_vec();
@@ -613,7 +663,7 @@ fn build_l2_withdrawal_block(
         &mut pre_trie,
         charlie,
         &AccountState {
-            balance: deposit_amount,
+            balance: l1_msg_value,
             ..Default::default()
         },
     );
@@ -624,7 +674,7 @@ fn build_l2_withdrawal_block(
         L2_BRIDGE,
         &AccountState {
             nonce: 1,
-            balance: bridge_premint - deposit_amount,
+            balance: bridge_premint - l1_msg_value,
             code_hash: bridge_code_hash,
             storage_root: bridge_storage_root,
         },
@@ -825,12 +875,12 @@ fn build_l2_withdrawal_block(
 }
 
 /// Integration test: compile and deploy NativeRollup on a real L1, then advance
-/// with two L2 blocks — block 1 (transfer + deposit) and block 2 (withdrawal).
+/// with two L2 blocks — block 1 (transfer + L1 message) and block 2 (withdrawal).
 ///
 /// Flow:
 ///   1. Deploy NativeRollup contract
-///   2. deposit(charlie) with 5 ETH
-///   3. advance(block 1) — transfer + deposit
+///   2. sendL1Message(charlie, 100k, "") with 5 ETH
+///   3. advance(block 1) — transfer + L1 message
 ///   4. advance(block 2) — withdrawal: Alice withdraws 1 ETH to an L1 receiver
 ///   5. claimWithdrawal() — the L1 receiver claims the withdrawn ETH
 ///
@@ -874,17 +924,24 @@ async fn test_native_rollup_on_l1() {
     .expect("Failed to compile NativeRollup.sol");
 
     // 3. Build L2 state transitions
+    // Derive L1 sender address from the deployer key (matches msg.sender in sendL1Message)
+    let l1_key_bytes: [u8; 32] = hex::decode(L1_PRIVATE_KEY).unwrap()[..32]
+        .try_into()
+        .unwrap();
+    let l1_sender_key = SigningKey::from_bytes(&l1_key_bytes.into()).expect("valid l1 key");
+    let l1_sender = address_from_key(&l1_sender_key);
+
     let (
         input,
         block_rlp,
         witness_json,
         pre_state_root,
         post_state_root,
-        _deposits_rolling_hash,
+        _l1_messages_rolling_hash,
         gas_used_tx0,
-    ) = build_l2_state_transition();
+    ) = build_l2_state_transition(l1_sender);
     let charlie = Address::from_low_u64_be(0xC4A);
-    let deposit_amount = U256::from(5) * U256::from(10).pow(U256::from(18)); // 5 ETH
+    let l1_msg_value = U256::from(5) * U256::from(10).pow(U256::from(18)); // 5 ETH
 
     // The L1 receiver of the withdrawal (fresh address for easy balance verification)
     let l1_withdrawal_receiver = Address::from_low_u64_be(0xDEAD);
@@ -938,42 +995,49 @@ async fn test_native_rollup_on_l1() {
     );
     println!("  Initial stateRoot verified: {pre_state_root:?}");
 
-    // 6. Call deposit(charlie) with 5 ETH
-    let deposit_calldata =
-        encode_calldata("deposit(address)", &[Value::Address(charlie)]).expect("encode failed");
+    // 6. Call sendL1Message(charlie, 100_000, "") with 5 ETH
+    let send_l1_msg_calldata = encode_calldata(
+        "sendL1Message(address,uint256,bytes)",
+        &[
+            Value::Address(charlie),
+            Value::Uint(U256::from(100_000u64)),
+            Value::Bytes(Bytes::new()),
+        ],
+    )
+    .expect("encode failed");
 
-    let deposit_tx = build_generic_tx(
+    let l1_msg_tx = build_generic_tx(
         &eth_client,
         TxType::EIP1559,
         contract_address,
         signer.address(),
-        Bytes::from(deposit_calldata),
+        Bytes::from(send_l1_msg_calldata),
         Overrides {
-            value: Some(deposit_amount),
+            value: Some(l1_msg_value),
             ..Default::default()
         },
     )
     .await
-    .expect("Failed to build deposit tx");
+    .expect("Failed to build sendL1Message tx");
 
-    let deposit_tx_hash = send_generic_transaction(&eth_client, deposit_tx, &signer)
+    let l1_msg_tx_hash = send_generic_transaction(&eth_client, l1_msg_tx, &signer)
         .await
-        .expect("Failed to send deposit tx");
+        .expect("Failed to send sendL1Message tx");
 
-    let deposit_receipt = wait_for_transaction_receipt(deposit_tx_hash, &eth_client, 30)
+    let l1_msg_receipt = wait_for_transaction_receipt(l1_msg_tx_hash, &eth_client, 30)
         .await
-        .expect("Deposit receipt not found");
+        .expect("sendL1Message receipt not found");
     assert!(
-        deposit_receipt.receipt.status,
-        "NativeRollup.deposit() reverted!"
+        l1_msg_receipt.receipt.status,
+        "NativeRollup.sendL1Message() reverted!"
     );
-    println!("  deposit() tx: {deposit_tx_hash:?}");
+    println!("  sendL1Message() tx: {l1_msg_tx_hash:?}");
 
-    // 7. Call advance(1, block_rlp, witness_json)
+    // 7. Call advance(1, block_rlp, witness_json) — 1 L1 message consumed
     let advance_calldata = encode_calldata(
         "advance(uint256,bytes,bytes)",
         &[
-            Value::Uint(U256::from(1)),
+            Value::Uint(U256::from(1)), // 1 L1 message
             Value::Bytes(Bytes::from(block_rlp)),
             Value::Bytes(Bytes::from(witness_json)),
         ],
@@ -1034,7 +1098,7 @@ async fn test_native_rollup_on_l1() {
         .expect("get_storage_at failed");
     assert_eq!(stored_block_num, U256::from(1), "blockNumber mismatch");
 
-    let stored_deposit_index = eth_client
+    let stored_l1_msg_index = eth_client
         .get_storage_at(
             contract_address,
             U256::from(3),
@@ -1042,7 +1106,7 @@ async fn test_native_rollup_on_l1() {
         )
         .await
         .expect("get_storage_at failed");
-    assert_eq!(stored_deposit_index, U256::from(1), "depositIndex mismatch");
+    assert_eq!(stored_l1_msg_index, U256::from(1), "l1MessageIndex mismatch");
 
     // 9. Verify withdrawalRoots[1] was stored (zero since no withdrawals in this block)
     // Storage slot for mapping(uint256 => bytes32) at slot 4, key 1:
@@ -1067,20 +1131,20 @@ async fn test_native_rollup_on_l1() {
         "withdrawalRoots[1] should be zero (no withdrawals)"
     );
 
-    println!("\n  Phase 1 passed: transfer + deposit");
+    println!("\n  Phase 1 passed: transfer + L1 message");
     println!("  Pre-state root:  {pre_state_root:?}");
     println!("  Post-state root: {post_state_root:?}");
     println!("  Block number:    1");
-    println!("  Deposit index:   1");
+    println!("  L1 message index: 1");
 
     // ===== Phase 2: Withdrawal =====
     // Advance with block 2 (contains Alice → bridge.withdraw(l1_receiver) with 1 ETH)
 
-    // 10. advance(0, block2_rlp, witness2_json) — 0 deposits for block 2
+    // 10. advance(0, block2_rlp, witness2_json) — 0 L1 messages for block 2
     let advance2_calldata = encode_calldata(
         "advance(uint256,bytes,bytes)",
         &[
-            Value::Uint(U256::from(0)), // no deposits consumed
+            Value::Uint(U256::from(0)), // no L1 messages consumed
             Value::Bytes(Bytes::from(block2_rlp)),
             Value::Bytes(Bytes::from(witness2_json)),
         ],
@@ -1232,10 +1296,10 @@ async fn test_native_rollup_on_l1() {
     println!("  Receiver balance after claim: {receiver_balance_after}");
     println!("  Withdrawal amount: {withdrawal_amount}");
 
-    println!("\nNativeRollup integration test passed (transfer + deposit + withdrawal + claim)!");
+    println!("\nNativeRollup integration test passed (transfer + L1 message + withdrawal + claim)!");
     println!("  Contract:        {contract_address:?}");
     println!("  L2 blocks:       2");
-    println!("  Deposit:         5 ETH to charlie");
+    println!("  L1 message:      5 ETH to charlie");
     println!("  Withdrawal:      1 ETH from alice to {l1_withdrawal_receiver:?}");
 
     // Clean up compiled contract artifacts
