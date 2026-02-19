@@ -2,7 +2,6 @@ use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::payload::PayloadBundle;
-use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
