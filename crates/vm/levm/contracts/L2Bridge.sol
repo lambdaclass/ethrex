@@ -4,8 +4,9 @@ pragma solidity ^0.8.27;
 /// @title L2Bridge — Unified L1 message processing and withdrawal bridge for Native Rollups PoC.
 ///
 /// Deployed at 0x000000000000000000000000000000000000fffd (L2 predeploy).
-/// Preminted with ETH in L2 genesis. The NativeRollup contract on L1 holds the
-/// corresponding backing ETH.
+/// Preminted with a large ETH balance in L2 genesis to cover all future L1
+/// messages (similar to Taiko/Linea). The NativeRollup contract on L1
+/// accumulates ETH over time as users call sendL1Message().
 ///
 /// L1 Messages: the sequencer/relayer calls processL1Message() for each pending
 /// L1 message, executing the subcall and emitting L1MessageProcessed.
