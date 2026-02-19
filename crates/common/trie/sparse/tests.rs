@@ -44,10 +44,11 @@ fn single_leaf_hash_direct() {
     sparse.upper.nodes.insert(
         PathVec::new(),
         SparseNode::Leaf {
-            key: Nibbles::from_hex(path_data.to_vec()),
+            key: path_data.clone(),
             hash: None,
         },
     );
+    sparse.upper.dirty_nodes.insert(PathVec::new());
     sparse.upper.values.insert(path_data, value.clone());
     sparse.prefix_set.insert(&path);
 

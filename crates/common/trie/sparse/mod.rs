@@ -53,12 +53,12 @@ pub enum SparseNode {
     Hash(NodeHash),
     /// A leaf node storing the remaining key suffix.
     Leaf {
-        key: Nibbles,
+        key: PathVec,
         hash: Option<NodeHash>,
     },
     /// An extension node storing a shared prefix.
     Extension {
-        key: Nibbles,
+        key: PathVec,
         hash: Option<NodeHash>,
     },
     /// A branch node with a bitmask of which children exist.
@@ -74,6 +74,8 @@ struct SubtrieBuffers {
     rlp_buf: Vec<u8>,
     /// Reusable buffer for building child paths in branch node hashing.
     child_path_buf: PathVec,
+    /// Reusable buffer for compact (hex-prefix) encoding.
+    compact_buf: Vec<u8>,
 }
 
 /// A subtrie in the SparseTrie, containing nodes indexed by path.

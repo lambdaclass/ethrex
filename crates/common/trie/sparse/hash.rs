@@ -6,6 +6,7 @@ use rustc_hash::FxHashMap;
 
 use crate::EMPTY_TRIE_HASH;
 use crate::error::TrieError;
+use crate::nibbles::encode_compact_into;
 use crate::node_hash::NodeHash;
 
 use super::{LowerSubtrie, PathVec, SparseNode, SparseSubtrie, SubtrieBuffers};
@@ -122,17 +123,8 @@ fn propagate_cross_boundary_hashes(upper: &mut SparseSubtrie, lower: &[LowerSubt
 /// Hash all dirty nodes in a subtrie bottom-up using an iterative approach.
 /// Only processes nodes whose hash was invalidated (set to None).
 fn hash_subtrie(subtrie: &mut SparseSubtrie) -> Result<(), TrieError> {
-    // Collect only dirty paths (nodes whose hash was invalidated)
-    let mut dirty_paths: Vec<PathVec> = subtrie
-        .nodes
-        .iter()
-        .filter_map(|(path, node)| match node {
-            SparseNode::Leaf { hash: None, .. }
-            | SparseNode::Extension { hash: None, .. }
-            | SparseNode::Branch { hash: None, .. } => Some(path.clone()),
-            _ => None,
-        })
-        .collect();
+    // Use the dirty_nodes set directly — O(dirty) instead of O(total_nodes)
+    let mut dirty_paths: Vec<PathVec> = subtrie.dirty_nodes.iter().cloned().collect();
     // Sort deepest first for bottom-up processing
     dirty_paths.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
 
@@ -141,6 +133,18 @@ fn hash_subtrie(subtrie: &mut SparseSubtrie) -> Result<(), TrieError> {
 
     for path in &dirty_paths {
         if let Some(node) = subtrie.nodes.get(path.as_slice()) {
+            // Skip nodes already hashed (stale dirty_nodes entries from prior passes)
+            if matches!(
+                node,
+                SparseNode::Leaf { hash: Some(_), .. }
+                    | SparseNode::Extension { hash: Some(_), .. }
+                    | SparseNode::Branch { hash: Some(_), .. }
+                    | SparseNode::Hash(_)
+                    | SparseNode::Empty
+            ) {
+                continue;
+            }
+
             let hash = node_hash(node, &subtrie.values, &subtrie.nodes, path, &mut buffers);
             // Cache the RLP encoding (buffers.rlp_buf has this node's RLP)
             rlp_cache.insert(path.clone(), buffers.rlp_buf.clone());
@@ -181,43 +185,71 @@ fn node_hash(
             if let Some(h) = hash {
                 return *h;
             }
-            // Encode: RLP([compact_key, value])
-            let compact = key.encode_compact();
-            let full_path: PathVec = path.iter().chain(key.as_ref().iter()).copied().collect();
-            let empty_value = Vec::new();
-            let value = values.get(full_path.as_slice()).unwrap_or(&empty_value);
-            ethrex_rlp::structs::Encoder::new(&mut buffers.rlp_buf)
-                .encode_bytes(&compact)
-                .encode_bytes(value)
-                .finish();
+            // Encode compact key into reusable buffer
+            let is_leaf = key.last() == Some(&16);
+            encode_compact_into(key, is_leaf, &mut buffers.compact_buf);
+
+            // Build full_path for value lookup
+            buffers.child_path_buf.clear();
+            buffers.child_path_buf.extend_from_slice(path);
+            buffers.child_path_buf.extend_from_slice(key);
+            let empty_value: Vec<u8> = Vec::new();
+            let value = values
+                .get(buffers.child_path_buf.as_slice())
+                .unwrap_or(&empty_value);
+
+            // Manual RLP: [compact_key, value]
+            buffers.rlp_buf.clear();
+            let key_len = <[u8] as RLPEncode>::length(&buffers.compact_buf);
+            let val_len = <[u8] as RLPEncode>::length(value.as_slice());
+            encode_length(key_len + val_len, &mut buffers.rlp_buf);
+            <[u8] as RLPEncode>::encode(&buffers.compact_buf, &mut buffers.rlp_buf);
+            <[u8] as RLPEncode>::encode(value.as_slice(), &mut buffers.rlp_buf);
+
             NodeHash::from_encoded(&buffers.rlp_buf)
         }
         SparseNode::Extension { key, hash } => {
             if let Some(h) = hash {
                 return *h;
             }
-            // Encode: RLP([compact_key, child_hash])
-            let compact = key.encode_compact();
-            let child_path: PathVec = path.iter().chain(key.as_ref().iter()).copied().collect();
+            // Encode compact key into reusable buffer
+            encode_compact_into(key, false, &mut buffers.compact_buf);
+
+            // Build child_path for child lookup
+            buffers.child_path_buf.clear();
+            buffers.child_path_buf.extend_from_slice(path);
+            buffers.child_path_buf.extend_from_slice(key);
 
             // Read cached child hash (bottom-up order guarantees children are hashed)
-            let child_hash = match nodes.get(child_path.as_slice()) {
+            let child_hash = match nodes.get(buffers.child_path_buf.as_slice()) {
                 Some(child_node) => match child_node {
                     SparseNode::Leaf { hash: Some(h), .. }
                     | SparseNode::Extension { hash: Some(h), .. }
                     | SparseNode::Branch { hash: Some(h), .. } => *h,
                     SparseNode::Hash(h) => *h,
                     SparseNode::Empty => NodeHash::from_encoded(&[RLP_NULL]),
-                    _ => node_hash(child_node, values, nodes, &child_path, buffers),
+                    _ => {
+                        let child_path = buffers.child_path_buf.clone();
+                        node_hash(child_node, values, nodes, &child_path, buffers)
+                    }
                 },
                 None => NodeHash::default(),
             };
 
+            // Manual RLP: [compact_key, child_hash]
             buffers.rlp_buf.clear();
-            let mut encoder =
-                ethrex_rlp::structs::Encoder::new(&mut buffers.rlp_buf).encode_bytes(&compact);
-            encoder = child_hash.encode(encoder);
-            encoder.finish();
+            let key_len = <[u8] as RLPEncode>::length(&buffers.compact_buf);
+            let child_len = RLPEncode::length(&child_hash);
+            encode_length(key_len + child_len, &mut buffers.rlp_buf);
+            <[u8] as RLPEncode>::encode(&buffers.compact_buf, &mut buffers.rlp_buf);
+            match &child_hash {
+                NodeHash::Hashed(hash) => hash.0.encode(&mut buffers.rlp_buf),
+                NodeHash::Inline((_, 0)) => buffers.rlp_buf.push(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => {
+                    buffers.rlp_buf.extend_from_slice(&encoded[..*len as usize])
+                }
+            }
+
             NodeHash::from_encoded(&buffers.rlp_buf)
         }
         SparseNode::Branch { state_mask, hash } => {
@@ -297,30 +329,29 @@ pub fn encode_node(
         SparseNode::Empty => Some(vec![RLP_NULL]),
         SparseNode::Hash(_) => None,
         SparseNode::Leaf { key, .. } => {
-            let compact = key.encode_compact();
+            let is_leaf = key.last() == Some(&16);
+            let mut compact_buf = Vec::new();
+            encode_compact_into(key, is_leaf, &mut compact_buf);
+
             // Value key is the full path: position path + leaf key suffix
-            let full_path: PathVec = path_data
-                .iter()
-                .chain(key.as_ref().iter())
-                .copied()
-                .collect();
+            let full_path: PathVec = path_data.iter().chain(key.iter()).copied().collect();
             let empty_value = Vec::new();
             let value = values.get(full_path.as_slice()).unwrap_or(&empty_value);
+
             let mut buf = Vec::new();
-            ethrex_rlp::structs::Encoder::new(&mut buf)
-                .encode_bytes(&compact)
-                .encode_bytes(value)
-                .finish();
+            let key_len = <[u8] as RLPEncode>::length(&compact_buf);
+            let val_len = <[u8] as RLPEncode>::length(value.as_slice());
+            encode_length(key_len + val_len, &mut buf);
+            <[u8] as RLPEncode>::encode(&compact_buf, &mut buf);
+            <[u8] as RLPEncode>::encode(value.as_slice(), &mut buf);
             Some(buf)
         }
         SparseNode::Extension { key, .. } => {
-            let compact = key.encode_compact();
+            let mut compact_buf = Vec::new();
+            encode_compact_into(key, false, &mut compact_buf);
+
             // Look up the child node's hash (child is at path + extension key)
-            let child_path: PathVec = path_data
-                .iter()
-                .chain(key.as_ref().iter())
-                .copied()
-                .collect();
+            let child_path: PathVec = path_data.iter().chain(key.iter()).copied().collect();
             let child_hash = match nodes.get(child_path.as_slice()) {
                 Some(child_node) => match child_node {
                     SparseNode::Leaf { hash, .. }
@@ -331,10 +362,19 @@ pub fn encode_node(
                 },
                 None => NodeHash::default(),
             };
+
             let mut buf = Vec::new();
-            let mut encoder = ethrex_rlp::structs::Encoder::new(&mut buf).encode_bytes(&compact);
-            encoder = child_hash.encode(encoder);
-            encoder.finish();
+            let key_len = <[u8] as RLPEncode>::length(&compact_buf);
+            let child_len = RLPEncode::length(&child_hash);
+            encode_length(key_len + child_len, &mut buf);
+            <[u8] as RLPEncode>::encode(&compact_buf, &mut buf);
+            match &child_hash {
+                NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+                NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => {
+                    buf.extend_from_slice(&encoded[..*len as usize])
+                }
+            }
             Some(buf)
         }
         SparseNode::Branch { state_mask, .. } => {
