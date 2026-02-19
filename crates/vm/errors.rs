@@ -42,7 +42,7 @@ impl From<InternalError> for EvmError {
     fn from(value: InternalError) -> Self {
         match value {
             InternalError::Database(err) => err.into(),
-            other => EvmError::Custom(other.to_string()),
+            err => EvmError::Custom(err.to_string()),
         }
     }
 }
