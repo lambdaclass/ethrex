@@ -285,13 +285,18 @@ impl GeneralizedDatabase {
             // Edge cases that can make this true:
             //   1. Account was destroyed and created again afterwards.
             //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
-            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+            let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+            // Only emit removed_storage if the account actually had storage in the trie.
+            // If it didn't (e.g. account was created within the batch), there's nothing to
+            // remove, and emitting removed_storage=true would cause a spurious empty
+            // account to be inserted into the state trie.
+            let removed_storage = was_destroyed && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage: FxHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
-                let old_value = if !removed_storage {
+                let old_value = if !was_destroyed {
                     initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}")))})?
                 } else {
                     // There's not an "old value" if the contract was destroyed and re-created.
@@ -386,13 +391,18 @@ impl GeneralizedDatabase {
             // Edge cases that can make this true:
             //   1. Account was destroyed and created again afterwards.
             //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
-            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+            let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+            // Only emit removed_storage if the account actually had storage in the trie.
+            // If it didn't (e.g. account was created within the batch), there's nothing to
+            // remove, and emitting removed_storage=true would cause a spurious empty
+            // account to be inserted into the state trie.
+            let removed_storage = was_destroyed && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage: FxHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
-                let old_value = if !removed_storage {
+                let old_value = if !was_destroyed {
                     initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?
                 } else {
                     // There's not an "old value" if the contract was destroyed and re-created.
