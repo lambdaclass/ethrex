@@ -5,9 +5,7 @@ use crate::{
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     precompiles,
-    utils::{
-        address_to_word, create_eth_transfer_log, create_burn_log, word_to_address, *,
-    },
+    utils::{address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;

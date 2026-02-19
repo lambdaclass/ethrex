@@ -204,11 +204,13 @@ pub fn validate_block_access_list_size(
     let bal_items = computed_bal.item_count();
     let tx_count = transaction_count as u64;
 
-    let available_gas = header.gas_limit.saturating_sub(tx_count.saturating_mul(BAL_TX_BASE_COST));
+    let available_gas = header
+        .gas_limit
+        .saturating_sub(tx_count.saturating_mul(BAL_TX_BASE_COST));
 
-    let system_allowance =
-        (15 + 3 * (MAX_WITHDRAWAL_REQUESTS_PER_BLOCK + MAX_CONSOLIDATION_REQUESTS_PER_BLOCK))
-            * BAL_ITEM_COST;
+    let system_allowance = (15
+        + 3 * (MAX_WITHDRAWAL_REQUESTS_PER_BLOCK + MAX_CONSOLIDATION_REQUESTS_PER_BLOCK))
+        * BAL_ITEM_COST;
 
     let total_cost = bal_items.saturating_mul(BAL_ITEM_COST);
     let max_allowed = available_gas.saturating_add(system_allowance);
