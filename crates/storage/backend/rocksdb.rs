@@ -125,6 +125,19 @@ impl RocksDBBackend {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
+                    // Per-level compression: no compression for L0-L1 (recently flushed,
+                    // short-lived), LZ4 for L2-L4 (fast mid-tier), Zstd for L5-L6 (best
+                    // ratio for cold data). RLP-encoded trie nodes compress 40-70%.
+                    cf_opts.set_compression_per_level(&[
+                        rocksdb::DBCompressionType::None, // L0
+                        rocksdb::DBCompressionType::None, // L1
+                        rocksdb::DBCompressionType::Lz4,  // L2
+                        rocksdb::DBCompressionType::Lz4,  // L3
+                        rocksdb::DBCompressionType::Lz4,  // L4
+                        rocksdb::DBCompressionType::Zstd, // L5
+                        rocksdb::DBCompressionType::Zstd, // L6
+                    ]);
+
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
@@ -136,6 +149,19 @@ impl RocksDBBackend {
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+
+                    // Per-level compression: same strategy as trie CFs.
+                    // FKV data (account/storage flat key-values) is also highly
+                    // compressible RLP-encoded data with similar access patterns.
+                    cf_opts.set_compression_per_level(&[
+                        rocksdb::DBCompressionType::None, // L0
+                        rocksdb::DBCompressionType::None, // L1
+                        rocksdb::DBCompressionType::Lz4,  // L2
+                        rocksdb::DBCompressionType::Lz4,  // L3
+                        rocksdb::DBCompressionType::Lz4,  // L4
+                        rocksdb::DBCompressionType::Zstd, // L5
+                        rocksdb::DBCompressionType::Zstd, // L6
+                    ]);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
