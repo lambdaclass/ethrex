@@ -270,8 +270,6 @@ fn build_l2_state_transition(l1_sender: Address) -> (
     insert_account(&mut state_trie, coinbase, &AccountState::default());
     insert_account(&mut state_trie, bob, &AccountState::default());
     insert_account(&mut state_trie, charlie, &AccountState::default());
-    // address(0) is the burn address used by L2Bridge.withdraw()
-    insert_account(&mut state_trie, Address::zero(), &AccountState::default());
     insert_account(
         &mut state_trie,
         L2_BRIDGE,

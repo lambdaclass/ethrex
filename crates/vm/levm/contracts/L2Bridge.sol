@@ -13,7 +13,7 @@ pragma solidity ^0.8.27;
 /// messages rolling hash and verifies it matches the value committed in
 /// NativeRollup.advance().
 ///
-/// Withdrawals: users call withdraw() to burn ETH and emit WithdrawalInitiated.
+/// Withdrawals: users call withdraw() to lock ETH and emit WithdrawalInitiated.
 /// The EXECUTE precompile scans these events and builds a Merkle root for
 /// withdrawal claiming on L1.
 ///
@@ -73,6 +73,8 @@ contract L2Bridge {
     }
 
     /// @notice Initiate a withdrawal by sending ETH with the L1 receiver address.
+    /// @dev The ETH stays locked in the bridge contract (not burned). On L1,
+    ///      claimWithdrawal releases the corresponding ETH from NativeRollup.
     /// @param _receiver Address on L1 that will receive the withdrawn ETH.
     function withdraw(address _receiver) external payable {
         require(msg.value > 0, "Withdrawal amount must be positive");
@@ -80,9 +82,6 @@ contract L2Bridge {
 
         uint256 msgId = withdrawalNonce;
         withdrawalNonce = msgId + 1;
-
-        (bool ok, ) = address(0).call{value: msg.value}("");
-        require(ok, "Failed to burn Ether");
 
         emit WithdrawalInitiated(msg.sender, _receiver, msg.value, msgId);
     }
