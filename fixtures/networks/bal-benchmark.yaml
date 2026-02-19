@@ -23,7 +23,7 @@ global_log_level: 'info'
 network_params:
   genesis_delay: 20
   fulu_fork_epoch: 0
-  gloas_fork_epoch: 0
+  gloas_fork_epoch: 1
   seconds_per_slot: 6
 snooper_enabled: false
 ethereum_genesis_generator_params:
