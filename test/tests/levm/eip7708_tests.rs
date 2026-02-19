@@ -1225,14 +1225,8 @@ fn test_closure_logs_lexicographical_order() {
     let log7 = &report.logs[6];
     let log8 = &report.logs[7];
 
-    assert_eq!(
-        log7.topics[0], BURN_EVENT_TOPIC,
-        "7th log should be Burn"
-    );
-    assert_eq!(
-        log8.topics[0], BURN_EVENT_TOPIC,
-        "8th log should be Burn"
-    );
+    assert_eq!(log7.topics[0], BURN_EVENT_TOPIC, "7th log should be Burn");
+    assert_eq!(log8.topics[0], BURN_EVENT_TOPIC, "8th log should be Burn");
 
     // Extract addresses from the logs
     let addr7 = Address::from_slice(&log7.topics[1].as_bytes()[12..]);
