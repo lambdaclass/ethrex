@@ -122,6 +122,7 @@
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
   - [FAQ](./ethrex_replay/faq.md)
+- [Interactive REPL](./developers/repl.md)
 - [CLI reference](./CLI.md)
 - [Release Process](./developers/release-process.md)
 - [Troubleshooting]()
