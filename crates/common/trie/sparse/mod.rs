@@ -308,42 +308,41 @@ impl SparseTrie {
     /// Deletion entries are critical for the layer cache: without them,
     /// `Trie::get()` would find stale values from prior blocks via the
     /// FKV shortcut.
-    pub fn collect_updates(&self) -> Vec<(Nibbles, Vec<u8>)> {
+    pub fn collect_updates(&mut self) -> Vec<(Nibbles, Vec<u8>)> {
         let mut updates = Vec::new();
 
-        let collect_subtrie = |subtrie: &SparseSubtrie, updates: &mut Vec<(Nibbles, Vec<u8>)>| {
-            // Only emit dirty nodes (modified since last reveal), not all revealed nodes
-            for path_data in &subtrie.dirty_nodes {
-                if let Some(node) = subtrie.nodes.get(path_data.as_slice()) {
-                    // Check RLP cache first (populated during hashing), fall back to encode_node
-                    let rlp = subtrie
-                        .rlp_cache
-                        .get(path_data.as_slice())
-                        .cloned()
-                        .or_else(|| {
-                            hash::encode_node(node, &subtrie.values, &subtrie.nodes, path_data)
-                        });
-                    if let Some(rlp) = rlp {
-                        updates.push((Nibbles::from_hex(path_data.to_vec()), rlp));
-                    }
+        // Helper: drain dirty sets and move values out to avoid cloning.
+        let mut collect_subtrie = |subtrie: &mut SparseSubtrie| {
+            // Drain dirty_nodes so we can call rlp_cache.remove() without borrow conflict.
+            let dirty_nodes: Vec<PathVec> = subtrie.dirty_nodes.drain().collect();
+            for path_data in dirty_nodes {
+                // Try cached RLP first (move out), fall back to encode_node
+                if let Some(rlp) = subtrie.rlp_cache.remove(path_data.as_slice()) {
+                    updates.push((Nibbles::from_hex(path_data.to_vec()), rlp));
+                } else if let Some(node) = subtrie.nodes.get(path_data.as_slice())
+                    && let Some(rlp) =
+                        hash::encode_node(node, &subtrie.values, &subtrie.nodes, &path_data)
+                {
+                    updates.push((Nibbles::from_hex(path_data.to_vec()), rlp));
                 }
             }
-            // Only emit dirty values, not all revealed values
-            for path_data in &subtrie.dirty_values {
-                if let Some(value) = subtrie.values.get(path_data.as_slice()) {
-                    updates.push((Nibbles::from_hex(path_data.to_vec()), value.clone()));
+            // Drain dirty_values and move values out to avoid cloning.
+            let dirty_values: Vec<PathVec> = subtrie.dirty_values.drain().collect();
+            for path_data in dirty_values {
+                if let Some(value) = subtrie.values.remove(path_data.as_slice()) {
+                    updates.push((Nibbles::from_hex(path_data.to_vec()), value));
                 }
             }
         };
 
         // Collect from upper subtrie
-        collect_subtrie(&self.upper, &mut updates);
+        collect_subtrie(&mut self.upper);
 
         // Collect from lower subtries
-        for lower in &self.lower {
+        for lower in &mut self.lower {
             match lower {
                 LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => {
-                    collect_subtrie(s, &mut updates);
+                    collect_subtrie(s);
                 }
                 LowerSubtrie::Blind(None) => {}
             }
@@ -351,7 +350,7 @@ impl SparseTrie {
 
         // Append deletion markers for removed leaves.
         // These correspond to the old Trie's `pending_removal` entries.
-        for path in &self.removed_leaves {
+        for path in self.removed_leaves.drain() {
             updates.push((Nibbles::from_hex(path.to_vec()), vec![]));
         }
 
