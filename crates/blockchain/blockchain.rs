@@ -433,8 +433,8 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, bal) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                        let (execution_result, produced_bal) =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal)?;
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -444,7 +444,7 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
-                        if let Some(bal) = &bal {
+                        if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
                                 &chain_config,
@@ -1949,7 +1949,26 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
+        ) = match self.execute_block_pipeline(&block, &parent_header, &mut vm, bal) {
+            Ok(result) => result,
+            Err(
+                ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch(..))
+                | ChainError::InvalidBlock(InvalidBlockError::ReceiptsRootMismatch)
+                | ChainError::InvalidBlock(InvalidBlockError::StateRootMismatch),
+            ) if bal.is_some() => {
+                // Parallel execution produced wrong results (missed RAW dependency).
+                // Retry with sequential execution using a fresh VM.
+                warn!(
+                    "Parallel execution mismatch for block {}, falling back to sequential",
+                    block.header.number
+                );
+                let vm_db =
+                    StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+                let mut fresh_vm = self.new_evm(vm_db)?;
+                self.execute_block_pipeline(&block, &parent_header, &mut fresh_vm, None)?
+            }
+            Err(e) => return Err(e),
+        };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
