@@ -1080,7 +1080,10 @@ mod tests {
         let context = default_context_with_storage(storage).await;
 
         let result = map_http_requests(&request, context).await;
-        assert!(result.is_ok(), "admin_nodeInfo should not fail with large terminal_total_difficulty");
+        assert!(
+            result.is_ok(),
+            "admin_nodeInfo should not fail with large terminal_total_difficulty"
+        );
 
         let value = result.unwrap();
         let ttd = value
