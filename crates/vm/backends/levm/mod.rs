@@ -83,12 +83,23 @@ fn uf_union(parent: &mut Vec<usize>, a: usize, b: usize) {
 /// - **Read-after-write (RAW)**: tx_j reads a resource that an earlier tx_i wrote → tx_j
 ///   must see tx_i's write, so they must be in the same sequential group (unioned).
 ///
-/// Read sets are approximated from static tx metadata (sender, to-address, EIP-2930 access list)
-/// plus all BAL-written storage slots of directly-accessed addresses. The latter catches the
-/// common RAW pattern where tx_j calls a contract whose storage was written by an earlier tx_i
-/// (internal reads are invisible from static metadata, so we conservatively include all written
-/// slots of any address tx_j directly accesses). This cannot catch multi-hop internal calls
-/// where the accessed address is not in tx_j's metadata.
+/// # EIP-7928 BAL limitation
+///
+/// The BAL (EIP-7928) only records **writes** (balance_changes, nonce_changes, code_changes,
+/// storage_changes). It does NOT record reads. This means read sets must be approximated
+/// statically from tx metadata — an inherently incomplete process, since a contract can read
+/// arbitrary state at runtime (BALANCE, EXTCODESIZE, SLOAD via sub-calls, etc.).
+///
+/// We conservatively add all block-level written storage, code, and non-sender balance
+/// resources to every CALL tx's read set. This catches most conflicts but cannot be
+/// exhaustive: for example, a sender that is also a contract (EIP-7702) whose balance is
+/// read by another tx's sub-call would be missed (sender balances are excluded to avoid
+/// serializing every tx pair, since all txs write their sender's balance via gas fees).
+///
+/// The caller (`add_block_pipeline`) has a sequential fallback for the rare cases this
+/// approximation misses: if parallel execution produces a gas/state/receipts mismatch,
+/// the block is re-executed sequentially.
+///
 /// Coinbase is excluded from all conflict detection (every tx writes it).
 fn build_parallel_groups(
     bal: &BlockAccessList,
@@ -137,17 +148,26 @@ fn build_parallel_groups(
         }
     }
 
-    // Build the union of all written storage slots across all txs.
-    // Used in Phase 2: any CALL tx may transitively read ANY written storage slot via
-    // sub-calls, so we conservatively add the full block-level write set to every call
-    // tx's read set.  This avoids multi-hop RAW misses (tx_j calls B → B calls A →
-    // A reads slot written by tx_i) that we cannot detect statically without a call graph.
-    let all_written_storage: Vec<Resource> = {
+    // Build the set of all written resources that a CALL tx might read transitively.
+    // A contract can read any storage slot (via sub-calls), any account balance (BALANCE
+    // opcode), or any account code (EXTCODESIZE/EXTCODECOPY/DELEGATECALL).
+    //
+    // Storage + Code: included unconditionally (contracts can read any address's code/storage).
+    // Balance: only non-sender writes are included. Every tx writes Balance(sender) via gas
+    // fees, so including those would union every CALL tx with every other tx, defeating
+    // parallelism. Non-sender balance writes (ETH transfer recipients, SELFDESTRUCT
+    // beneficiaries, etc.) are the ones contracts are likely to observe.
+    let senders: FxHashSet<Address> = txs_with_sender.iter().map(|(_, s)| *s).collect();
+    let all_written_callable: Vec<Resource> = {
         let mut seen: FxHashSet<Resource> = FxHashSet::default();
         writes
             .iter()
             .flat_map(|ws| ws.iter())
-            .filter(|r| matches!(r, Resource::Storage(_, _)))
+            .filter(|r| match r {
+                Resource::Storage(_, _) | Resource::Code(_) => true,
+                Resource::Balance(addr) => !senders.contains(addr),
+                Resource::Nonce(_) => false, // no opcode reads another account's nonce
+            })
             .filter(|r| seen.insert((*r).clone()))
             .cloned()
             .collect()
@@ -169,9 +189,12 @@ fn build_parallel_groups(
             if to != coinbase {
                 tx_reads[i].insert(Resource::Balance(to));
                 tx_reads[i].insert(Resource::Code(to));
-                // Conservative multi-hop RAW: this call may reach any written storage via
-                // sub-calls.  We cannot determine the full call graph statically.
-                for r in &all_written_storage {
+                // Conservative multi-hop RAW: a contract call can transitively read any
+                // storage slot (via sub-calls), any balance (BALANCE opcode), or any code
+                // (EXTCODESIZE/DELEGATECALL). We cannot determine the call graph statically,
+                // so we conservatively include all written storage, code, and non-sender
+                // balance resources.
+                for r in &all_written_callable {
                     tx_reads[i].insert(r.clone());
                 }
             }
