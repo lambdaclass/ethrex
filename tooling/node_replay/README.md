@@ -322,6 +322,63 @@ jq -s '
 ' "$WS/runs/$RUN_ID/events.ndjson"
 ```
 
+## CPU profiling
+
+Recommended build flags for CPU profiling:
+
+```bash
+cargo build -p node-replay --config .cargo/profiling.toml --profile release-with-debug
+```
+
+This enables frame pointers (`.cargo/profiling.toml`) and keeps debug symbols
+(`release-with-debug`) for useful call stacks in `perf`.
+
+### One-command profiling workflow
+
+Use:
+
+```bash
+tooling/node_replay/scripts/profile_replay_range.sh \
+  --workspace "$WS" \
+  --datadir "$DATADIR" \
+  --checkpoint "$CHECKPOINT_ID" \
+  --blocks 10 \
+  --out-dir /tmp/node-replay-profile-mainnet
+```
+
+What it does:
+
+- builds `node-replay` with profiling flags,
+- runs a `perf stat` pass on one replay run,
+- runs a `perf record` pass on another replay run with the same range,
+- writes profiling artifacts and per-block metrics tables.
+
+Artifacts written under `--out-dir`:
+
+- `perf_stat.csv`
+- `perf.data`
+- `perf_report.txt`
+- `plan_stat.json`, `run_stat.json`, `status_stat.json`, `verify_stat.json`
+- `plan_record.json`, `run_record.json`, `status_record.json`, `verify_record.json`
+- `block_metrics_stat.tsv`, `block_metrics_record.tsv`
+- `meta_stat.json`, `meta_record.json`, `profile_session.json`
+
+### Manual perf commands
+
+If you only want the perf tools:
+
+```bash
+perf stat -d -d -d -- \
+  target/release-with-debug/node-replay --workspace "$WS" run \
+    --manifest "$WS/runs/$RUN_ID/run_manifest.json" --mode isolated
+
+perf record -F 999 -g --call-graph fp -o /tmp/node-replay.perf -- \
+  target/release-with-debug/node-replay --workspace "$WS" run \
+    --manifest "$WS/runs/$RUN_ID/run_manifest.json" --mode isolated
+
+perf report --stdio -i /tmp/node-replay.perf --sort comm,dso,symbol
+```
+
 ## Agent-facing contracts
 
 ### Response envelope
