@@ -709,7 +709,7 @@ impl Blockchain {
         let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>)>, TrieError> = storage_vec
             .par_iter_mut()
             .map(|(addr, sparse)| {
-                let root = sparse.root()?;
+                let root = sparse.root_sequential()?;
                 let updates = sparse.collect_updates();
                 Ok((*addr, root, updates))
             })
