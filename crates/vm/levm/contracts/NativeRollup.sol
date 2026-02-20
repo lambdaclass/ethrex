@@ -125,13 +125,13 @@ contract NativeRollup {
     }
 
     /// @notice Advance the L2 by one block.
-    /// @dev The Merkle root over consumed L1 messages is computed here BEFORE the
-    ///      block is executed by the EXECUTE precompile. This means the block builder
-    ///      MUST include the corresponding processL1Message() transactions in the L2
-    ///      block — if they are missing or incorrect, the state root will not match
-    ///      because the anchored Merkle root won't correspond to the actual messages
-    ///      processed. This effectively enforces L1 message inclusion at the protocol
-    ///      level via the state root check.
+    /// @dev The relayer chooses how many L1 messages to consume via `_l1MessagesCount`
+    ///      (can be 0). The Merkle root over those messages is computed here and anchored
+    ///      in the L1Anchor predeploy BEFORE the block transactions execute. This means
+    ///      the block builder must know the Merkle root at block construction time and
+    ///      include the matching processL1Message() transactions in the block — if they
+    ///      don't match, the L2Bridge proof verification will produce a different state
+    ///      root and the EXECUTE precompile will revert.
     /// @param _l1MessagesCount Number of pending L1 messages to consume from the queue.
     /// @param _blockParams Block parameters struct (postStateRoot, postReceiptsRoot, coinbase, prevRandao, timestamp).
     /// @param _transactions RLP-encoded transaction list.
