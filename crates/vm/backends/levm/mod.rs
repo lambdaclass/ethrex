@@ -13,9 +13,10 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
     Address, U256,
+    constants::EMPTY_KECCACK_HASH,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
-        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
+        GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind, Withdrawal,
         requests::Requests,
     },
 };
@@ -24,13 +25,17 @@ use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
 };
+use ethrex_levm::gas_cost::{ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST};
 use ethrex_levm::db::Database;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
+use ethrex_levm::precompiles::is_precompile;
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::utils::get_base_fee_per_blob_gas;
+use ethrex_levm::utils::{
+    code_has_delegation, create_eth_transfer_log, get_base_fee_per_blob_gas,
+};
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -447,6 +452,11 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+
+        if let Some(result) = try_simple_transfer(tx, tx_sender, &env, db, vm_type) {
+            return result;
+        }
+
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -465,6 +475,11 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+
+        if let Some(result) = try_simple_transfer(tx, tx_sender, &env, db, vm_type) {
+            return result;
+        }
+
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
@@ -822,6 +837,307 @@ pub fn extract_all_requests_levm(
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
     Ok(vec![deposits, withdrawals, consolidation])
+}
+
+/// Attempts a fast-path execution for simple ETH transfers.
+///
+/// Returns `Some(result)` if the transaction qualifies and was executed,
+/// `None` if the transaction should use the normal VM path.
+///
+/// A simple transfer qualifies when ALL are true:
+/// - `to` exists (not a contract creation)
+/// - calldata is empty
+/// - no blob versioned hashes (not a type 3 tx)
+/// - no authorization list (not a type 4 tx)
+/// - destination is NOT a precompile
+/// - destination has `code_hash == EMPTY_CODE_HASH` (is an EOA)
+fn try_simple_transfer(
+    tx: &Transaction,
+    tx_sender: Address,
+    env: &Environment,
+    db: &mut GeneralizedDatabase,
+    vm_type: VMType,
+) -> Option<Result<ExecutionReport, EvmError>> {
+    // --- PREDICATE CHECKS (cheapest first) ---
+    let to = match tx.to() {
+        TxKind::Call(addr) => addr,
+        TxKind::Create => return None,
+    };
+    if !tx.data().is_empty() {
+        return None;
+    }
+    if !tx.blob_versioned_hashes().is_empty() {
+        return None;
+    }
+    if tx.authorization_list().is_some() {
+        return None;
+    }
+    if is_precompile(&to, env.config.fork, vm_type) {
+        return None;
+    }
+    // DB read: check destination code hash
+    let to_code_hash = match db.get_account(to) {
+        Ok(acc) => acc.info.code_hash,
+        Err(_) => return None,
+    };
+    if to_code_hash != *EMPTY_KECCACK_HASH {
+        return None;
+    }
+
+    Some(execute_simple_transfer(tx, tx_sender, to, env, db).map_err(VMError::into))
+}
+
+/// Execute a simple ETH transfer without creating a VM.
+///
+/// Replicates the exact semantics of prepare_execution + empty run_execution +
+/// finalize_execution for a call to an EOA with empty calldata.
+fn execute_simple_transfer(
+    tx: &Transaction,
+    tx_sender: Address,
+    to: Address,
+    env: &Environment,
+    db: &mut GeneralizedDatabase,
+) -> Result<ExecutionReport, VMError> {
+    let sender_info = db.get_account(tx_sender)?.info.clone();
+    let value = tx.value();
+
+    // --- VALIDATIONS (all read-only, no state mutations) ---
+
+    // Nonce match (must check BEFORE increment, using original nonce)
+    if sender_info.nonce != env.tx_nonce {
+        return Err(TxValidationError::NonceMismatch {
+            expected: sender_info.nonce,
+            actual: env.tx_nonce,
+        }
+        .into());
+    }
+
+    // Sender EOA check (allows EIP-7702 delegated accounts)
+    let sender_code = db.get_code(sender_info.code_hash)?;
+    if !sender_code.bytecode.is_empty() && !code_has_delegation(&sender_code.bytecode)? {
+        return Err(TxValidationError::SenderNotEOA(tx_sender).into());
+    }
+
+    // Gas limit * price overflow check
+    let gaslimit_price_product = env
+        .gas_price
+        .checked_mul(env.gas_limit.into())
+        .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
+
+    // Intrinsic gas = TX_BASE_COST + access list cost (no calldata, no create)
+    let mut intrinsic_gas: u64 = TX_BASE_COST;
+    for (_, keys) in tx.access_list() {
+        intrinsic_gas = intrinsic_gas
+            .checked_add(ACCESS_LIST_ADDRESS_COST)
+            .ok_or(InternalError::Overflow)?;
+        let key_count: u64 = keys
+            .len()
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+        intrinsic_gas = intrinsic_gas
+            .checked_add(
+                key_count
+                    .checked_mul(ACCESS_LIST_STORAGE_KEY_COST)
+                    .ok_or(InternalError::Overflow)?,
+            )
+            .ok_or(InternalError::Overflow)?;
+    }
+
+    // Intrinsic gas check
+    if env.gas_limit < intrinsic_gas {
+        return Err(TxValidationError::IntrinsicGasTooLow.into());
+    }
+
+    // Prague+ floor gas check (empty calldata → floor = TX_BASE_COST)
+    if env.config.fork >= Fork::Prague {
+        if env.gas_limit < TX_BASE_COST {
+            return Err(TxValidationError::IntrinsicGasBelowFloorGasCost.into());
+        }
+        if env.config.fork >= Fork::Osaka && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
+            return Err(TxValidationError::TxMaxGasLimitExceeded {
+                tx_hash: tx.hash(),
+                tx_gas_limit: tx.gas_limit(),
+            }
+            .into());
+        }
+    }
+
+    // Max fee per gas check
+    if env.tx_max_fee_per_gas.unwrap_or(env.gas_price) < env.base_fee_per_gas {
+        return Err(TxValidationError::InsufficientMaxFeePerGas.into());
+    }
+
+    // Priority fee check
+    if let (Some(priority), Some(max_fee)) =
+        (env.tx_max_priority_fee_per_gas, env.tx_max_fee_per_gas)
+    {
+        if priority > max_fee {
+            return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                priority_fee: priority,
+                max_fee_per_gas: max_fee,
+            }
+            .into());
+        }
+    }
+
+    // Gas allowance check
+    if env.gas_limit > env.block_gas_limit {
+        return Err(TxValidationError::GasAllowanceExceeded {
+            block_gas_limit: env.block_gas_limit,
+            tx_gas_limit: env.gas_limit,
+        }
+        .into());
+    }
+
+    // Sender balance check (no blob gas cost since we excluded blob txs)
+    let gas_fee_for_valid_tx = env
+        .tx_max_fee_per_gas
+        .unwrap_or(env.gas_price)
+        .checked_mul(env.gas_limit.into())
+        .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
+    let balance_for_valid_tx = gas_fee_for_valid_tx
+        .checked_add(value)
+        .ok_or(TxValidationError::InsufficientAccountFunds)?;
+    if sender_info.balance < balance_for_valid_tx {
+        return Err(TxValidationError::InsufficientAccountFunds.into());
+    }
+
+    // --- GAS ACCOUNTING (computed before mutations) ---
+
+    // For simple transfers: no execution gas, no storage refunds.
+    // gas_spent = max(intrinsic_gas, floor) for Prague+, else intrinsic_gas.
+    // With empty calldata, floor = TX_BASE_COST ≤ intrinsic_gas, so gas_spent = intrinsic_gas.
+    let gas_spent = intrinsic_gas;
+
+    // EIP-7778: block accounting uses pre-refund gas with floor for Amsterdam+
+    let gas_used = if env.config.fork >= Fork::Amsterdam {
+        intrinsic_gas.max(TX_BASE_COST)
+    } else {
+        gas_spent
+    };
+
+    let gas_to_return = env
+        .gas_limit
+        .checked_sub(gas_spent)
+        .ok_or(InternalError::Underflow)?;
+    let wei_return = env
+        .gas_price
+        .checked_mul(U256::from(gas_to_return))
+        .ok_or(InternalError::Overflow)?;
+
+    let priority_fee_per_gas = env
+        .gas_price
+        .checked_sub(env.base_fee_per_gas)
+        .ok_or(InternalError::Underflow)?;
+    let coinbase_fee = U256::from(gas_spent)
+        .checked_mul(priority_fee_per_gas)
+        .ok_or(InternalError::Overflow)?;
+
+    // Up-front cost: gas_limit * gas_price + value (no blob gas since blob txs excluded)
+    let up_front_cost = gaslimit_price_product
+        .checked_add(value)
+        .ok_or(TxValidationError::InsufficientAccountFunds)?;
+
+    // --- STATE MUTATIONS ---
+    // All mutations below use db.get_account_mut() which marks accounts as modified
+    // and handles BAL recording for balance/nonce changes.
+
+    // 1. Deduct sender: up_front_cost, then refund unused gas, net = gas_spent*price + value
+    {
+        let sender = db.get_account_mut(tx_sender)?;
+        let initial_balance = sender.info.balance;
+        sender.info.balance = sender
+            .info
+            .balance
+            .checked_sub(up_front_cost)
+            .ok_or(InternalError::Underflow)?;
+        // Refund unused gas in same step to minimize mutations
+        sender.info.balance = sender
+            .info
+            .balance
+            .checked_add(wei_return)
+            .ok_or(InternalError::Overflow)?;
+        let new_balance = sender.info.balance;
+        // BAL recording
+        if let Some(recorder) = db.bal_recorder.as_mut() {
+            recorder.set_initial_balance(tx_sender, initial_balance);
+            recorder.record_balance_change(tx_sender, new_balance);
+        }
+    }
+
+    // 2. Increment sender nonce
+    {
+        let sender = db.get_account_mut(tx_sender)?;
+        sender.info.nonce = sender
+            .info
+            .nonce
+            .checked_add(1)
+            .ok_or(InternalError::Overflow)?;
+        let new_nonce = sender.info.nonce;
+        if let Some(recorder) = db.bal_recorder.as_mut() {
+            recorder.record_nonce_change(tx_sender, new_nonce);
+        }
+    }
+
+    // 3. Transfer value to recipient
+    if !value.is_zero() {
+        let recipient = db.get_account_mut(to)?;
+        let initial_balance = recipient.info.balance;
+        recipient.info.balance = recipient
+            .info
+            .balance
+            .checked_add(value)
+            .ok_or(InternalError::Overflow)?;
+        let new_balance = recipient.info.balance;
+        if let Some(recorder) = db.bal_recorder.as_mut() {
+            recorder.set_initial_balance(to, initial_balance);
+            recorder.record_balance_change(to, new_balance);
+        }
+    }
+
+    // 4. Pay coinbase
+    // BAL: Record coinbase as touched for user transactions (gas_price > 0)
+    if !env.gas_price.is_zero() {
+        if let Some(recorder) = db.bal_recorder.as_mut() {
+            recorder.record_touched_address(env.coinbase);
+        }
+    }
+    if !coinbase_fee.is_zero() {
+        let coinbase_acc = db.get_account_mut(env.coinbase)?;
+        let initial_balance = coinbase_acc.info.balance;
+        coinbase_acc.info.balance = coinbase_acc
+            .info
+            .balance
+            .checked_add(coinbase_fee)
+            .ok_or(InternalError::Overflow)?;
+        let new_balance = coinbase_acc.info.balance;
+        if let Some(recorder) = db.bal_recorder.as_mut() {
+            recorder.set_initial_balance(env.coinbase, initial_balance);
+            recorder.record_balance_change(env.coinbase, new_balance);
+        }
+    }
+
+    // --- LOGS ---
+    let mut logs: Vec<Log> = Vec::new();
+
+    // EIP-7708: Transfer log for Amsterdam+ with nonzero value to different account
+    if env.config.fork >= Fork::Amsterdam && !value.is_zero() && tx_sender != to {
+        logs.push(create_eth_transfer_log(tx_sender, to, value));
+    }
+
+    // BAL: Record tx.to as touched (replicates set_bytecode_and_code_address BAL recording)
+    if let Some(recorder) = db.bal_recorder.as_mut() {
+        recorder.record_touched_address(to);
+    }
+
+    Ok(ExecutionReport {
+        result: TxResult::Success,
+        gas_used,
+        gas_spent,
+        gas_refunded: 0,
+        output: Bytes::new(),
+        logs,
+    })
 }
 
 /// Calculating gas_price according to EIP-1559 rules
