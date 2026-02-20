@@ -23,6 +23,7 @@ members = [
   "crates/vm/levm",
   "crates/vm/levm/runner",
   "crates/common/config",
+  "tooling/repl",
   "test",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
@@ -75,6 +76,7 @@ ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 ethrex-monitor = { path = "./tooling/monitor" }
+ethrex-repl = { path = "./tooling/repl" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
