@@ -435,8 +435,8 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, bal) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                        let (execution_result, produced_bal) =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal)?;
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -446,7 +446,7 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
-                        if let Some(bal) = &bal {
+                        if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
                                 &chain_config,
