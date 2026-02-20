@@ -11,13 +11,138 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
-    WriteBatch,
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MultiThreaded, Options,
+    SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
+use std::env;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+#[derive(Debug, Clone)]
+struct RocksDbPerfTuning {
+    block_cache_bytes: Option<usize>,
+    cache_index_and_filter_blocks: bool,
+    pin_l0_filter_and_index_blocks: bool,
+    optimize_filters_for_hits: bool,
+    cache_trie_only: bool,
+    disable_state_bloom_filter: bool,
+    advise_random_on_open: Option<bool>,
+    use_direct_reads: Option<bool>,
+    read_only_max_open_files: Option<i32>,
+    read_only_file_opening_threads: Option<i32>,
+    enable_statistics: bool,
+    stats_dump_period_sec: Option<u32>,
+}
+
+impl RocksDbPerfTuning {
+    fn from_env() -> Self {
+        let block_cache_mb = env::var("ETHREX_PERF_ROCKSDB_BLOCK_CACHE_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0);
+        let block_cache_bytes = block_cache_mb
+            .map(|mb| mb.saturating_mul(1024).saturating_mul(1024))
+            .filter(|bytes| *bytes > 0);
+
+        let stats_dump_period_sec = env::var("ETHREX_PERF_ROCKSDB_STATS_DUMP_SEC")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|v| *v > 0);
+        let read_only_max_open_files = env::var("ETHREX_PERF_ROCKSDB_READ_ONLY_MAX_OPEN_FILES")
+            .ok()
+            .and_then(|v| v.parse::<i32>().ok());
+        let read_only_file_opening_threads =
+            env::var("ETHREX_PERF_ROCKSDB_READ_ONLY_FILE_OPENING_THREADS")
+                .ok()
+                .and_then(|v| v.parse::<i32>().ok())
+                .filter(|v| *v > 0);
+
+        Self {
+            block_cache_bytes,
+            cache_index_and_filter_blocks: parse_bool_env(
+                "ETHREX_PERF_ROCKSDB_CACHE_INDEX_FILTER",
+                false,
+            ),
+            pin_l0_filter_and_index_blocks: parse_bool_env(
+                "ETHREX_PERF_ROCKSDB_PIN_L0_INDEX_FILTER",
+                false,
+            ),
+            optimize_filters_for_hits: parse_bool_env(
+                "ETHREX_PERF_ROCKSDB_OPTIMIZE_FILTERS_FOR_HITS",
+                false,
+            ),
+            cache_trie_only: parse_bool_env("ETHREX_PERF_ROCKSDB_CACHE_TRIE_ONLY", false),
+            disable_state_bloom_filter: parse_bool_env(
+                "ETHREX_PERF_ROCKSDB_DISABLE_STATE_BLOOM_FILTER",
+                false,
+            ),
+            advise_random_on_open: parse_optional_bool_env(
+                "ETHREX_PERF_ROCKSDB_ADVISE_RANDOM_ON_OPEN",
+            ),
+            use_direct_reads: parse_optional_bool_env("ETHREX_PERF_ROCKSDB_USE_DIRECT_READS"),
+            read_only_max_open_files,
+            read_only_file_opening_threads,
+            enable_statistics: parse_bool_env("ETHREX_PERF_ROCKSDB_ENABLE_STATS", false),
+            stats_dump_period_sec,
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.block_cache_bytes.is_some()
+            || self.cache_index_and_filter_blocks
+            || self.pin_l0_filter_and_index_blocks
+            || self.optimize_filters_for_hits
+            || self.cache_trie_only
+            || self.disable_state_bloom_filter
+            || self.advise_random_on_open.is_some()
+            || self.use_direct_reads.is_some()
+            || self.read_only_max_open_files.is_some()
+            || self.read_only_file_opening_threads.is_some()
+            || self.enable_statistics
+            || self.stats_dump_period_sec.is_some()
+    }
+}
+
+fn parse_bool_env(name: &str, default: bool) -> bool {
+    match env::var(name) {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default,
+        },
+        Err(_) => default,
+    }
+}
+
+fn parse_optional_bool_env(name: &str) -> Option<bool> {
+    match env::var(name) {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        Err(_) => None,
+    }
+}
+
+fn apply_perf_block_options(
+    block_opts: &mut BlockBasedOptions,
+    tuning: &RocksDbPerfTuning,
+    shared_block_cache: Option<&Cache>,
+    apply_block_cache: bool,
+) {
+    if apply_block_cache && let Some(cache) = shared_block_cache {
+        block_opts.set_block_cache(cache);
+    }
+    if tuning.cache_index_and_filter_blocks {
+        block_opts.set_cache_index_and_filter_blocks(true);
+    }
+    if tuning.pin_l0_filter_and_index_blocks {
+        block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+    }
+}
 
 /// RocksDB backend
 #[derive(Debug)]
@@ -40,14 +165,17 @@ impl RocksDBBackend {
     fn open_internal(path: impl AsRef<Path>, read_only: bool) -> Result<Self, StoreError> {
         // Rocksdb optimizations options
         let mut opts = Options::default();
+        let perf_tuning = RocksDbPerfTuning::from_env();
         opts.create_if_missing(!read_only);
         opts.create_missing_column_families(!read_only);
 
         if read_only {
             // Replay/planning tools open a second handle to an already-running
             // live DB. Keep FD usage bounded to avoid EMFILE on production hosts.
-            opts.set_max_open_files(256);
-            opts.set_max_file_opening_threads(4);
+            opts.set_max_open_files(perf_tuning.read_only_max_open_files.unwrap_or(256));
+            opts.set_max_file_opening_threads(
+                perf_tuning.read_only_file_opening_threads.unwrap_or(4),
+            );
         } else {
             opts.set_max_open_files(-1);
             opts.set_max_file_opening_threads(16);
@@ -78,8 +206,21 @@ impl RocksDBBackend {
         opts.set_allow_concurrent_memtable_write(true);
         opts.set_enable_write_thread_adaptive_yield(true);
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
-        opts.set_advise_random_on_open(false);
+        opts.set_advise_random_on_open(perf_tuning.advise_random_on_open.unwrap_or(false));
+        if let Some(use_direct_reads) = perf_tuning.use_direct_reads {
+            opts.set_use_direct_reads(use_direct_reads);
+        }
         opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+        if perf_tuning.optimize_filters_for_hits {
+            opts.set_optimize_filters_for_hits(true);
+        }
+        if perf_tuning.enable_statistics {
+            opts.enable_statistics();
+            if let Some(period) = perf_tuning.stats_dump_period_sec {
+                opts.set_stats_dump_period_sec(period);
+            }
+        }
 
         let compressible_tables = [
             BLOCK_NUMBERS,
@@ -89,9 +230,14 @@ impl RocksDBBackend {
             TRANSACTION_LOCATIONS,
             FULLSYNC_HEADERS,
         ];
-
-        // opts.enable_statistics();
-        // opts.set_stats_dump_period_sec(600);
+        let shared_block_cache = perf_tuning.block_cache_bytes.map(Cache::new_lru_cache);
+        if perf_tuning.enabled() {
+            info!(
+                read_only,
+                ?perf_tuning,
+                "RocksDB performance tuning enabled via environment"
+            );
+        }
 
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
@@ -125,6 +271,12 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
+                    apply_perf_block_options(
+                        &mut block_opts,
+                        &perf_tuning,
+                        shared_block_cache.as_ref(),
+                        true,
+                    );
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
@@ -135,6 +287,12 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
+                    apply_perf_block_options(
+                        &mut block_opts,
+                        &perf_tuning,
+                        shared_block_cache.as_ref(),
+                        !perf_tuning.cache_trie_only,
+                    );
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
@@ -146,7 +304,15 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    if !perf_tuning.disable_state_bloom_filter {
+                        block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    }
+                    apply_perf_block_options(
+                        &mut block_opts,
+                        &perf_tuning,
+                        shared_block_cache.as_ref(),
+                        true,
+                    );
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -158,7 +324,15 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    if !perf_tuning.disable_state_bloom_filter {
+                        block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    }
+                    apply_perf_block_options(
+                        &mut block_opts,
+                        &perf_tuning,
+                        shared_block_cache.as_ref(),
+                        true,
+                    );
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {
@@ -173,6 +347,12 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
+                    apply_perf_block_options(
+                        &mut block_opts,
+                        &perf_tuning,
+                        shared_block_cache.as_ref(),
+                        !perf_tuning.cache_trie_only,
+                    );
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 RECEIPTS => {
@@ -182,6 +362,12 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
+                    apply_perf_block_options(
+                        &mut block_opts,
+                        &perf_tuning,
+                        shared_block_cache.as_ref(),
+                        !perf_tuning.cache_trie_only,
+                    );
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 _ => {
@@ -192,6 +378,12 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
+                    apply_perf_block_options(
+                        &mut block_opts,
+                        &perf_tuning,
+                        shared_block_cache.as_ref(),
+                        !perf_tuning.cache_trie_only,
+                    );
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
             }

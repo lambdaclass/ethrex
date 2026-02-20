@@ -2141,6 +2141,32 @@ impl Store {
             .transpose()
     }
 
+    /// Read a storage slot at `state_root` using a pre-resolved account storage root.
+    ///
+    /// This avoids reopening the state trie to resolve account storage root repeatedly
+    /// across multiple storage reads for the same account.
+    pub fn get_storage_at_root_with_storage_root(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let account_hash = hash_address_fixed(&address);
+        let effective_storage_root = if self.flatkeyvalue_computed(account_hash)? {
+            *EMPTY_TRIE_HASH
+        } else {
+            storage_root
+        };
+        let storage_trie =
+            self.open_storage_trie(account_hash, state_root, effective_storage_root)?;
+        let hashed_key = hash_key_fixed(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
     pub fn get_chain_config(&self) -> ChainConfig {
         self.chain_config
     }

@@ -92,9 +92,10 @@ use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::env;
 use std::sync::mpsc::Sender;
 use std::sync::{
-    Arc, RwLock,
+    Arc, OnceLock, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
@@ -122,6 +123,22 @@ type BlockExecutionPipelineResult = (
     [Instant; 6], // timing instants
     Duration,     // warmer duration
 );
+
+fn parse_bool_env(name: &str, default: bool) -> bool {
+    match env::var(name) {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default,
+        },
+        Err(_) => default,
+    }
+}
+
+fn pipeline_warmer_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| !parse_bool_env("ETHREX_PERF_PIPELINE_DISABLE_WARMER", false))
+}
 
 /// Structured block-pipeline metrics for a single `add_block_pipeline` execution.
 #[derive(Debug, Clone)]
@@ -424,17 +441,24 @@ impl Blockchain {
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
-                let warm_handle = std::thread::Builder::new()
-                    .name("block_executor_warmer".to_string())
-                    .spawn_scoped(s, move || {
-                        // Warming uses the same caching store, sharing cached state with execution
-                        let start = Instant::now();
-                        let _ = LEVM::warm_block(block, caching_store, vm_type);
-                        start.elapsed()
-                    })
-                    .map_err(|e| {
-                        ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
-                    })?;
+                let warm_handle = if pipeline_warmer_enabled() {
+                    let warm_store = caching_store.clone();
+                    Some(
+                        std::thread::Builder::new()
+                            .name("block_executor_warmer".to_string())
+                            .spawn_scoped(s, move || {
+                                // Warming uses the same caching store, sharing cached state with execution
+                                let start = Instant::now();
+                                let _ = LEVM::warm_block(block, warm_store, vm_type);
+                                start.elapsed()
+                            })
+                            .map_err(|e| {
+                                ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
+                            })?,
+                    )
+                } else {
+                    None
+                };
                 let max_queue_length_ref = &mut max_queue_length;
                 let (tx, rx) = channel();
                 let execution_handle = std::thread::Builder::new()
@@ -489,9 +513,13 @@ impl Blockchain {
                         ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
                     })?;
                 let warmer_duration = warm_handle
-                    .join()
-                    .inspect_err(|e| warn!("Warming thread error: {e:?}"))
-                    .ok()
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                            .ok()
+                            .unwrap_or(Duration::ZERO)
+                    })
                     .unwrap_or(Duration::ZERO);
                 Ok((
                     execution_handle.join().unwrap_or_else(|_| {
