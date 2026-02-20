@@ -277,6 +277,23 @@ impl SparseTrie {
         update::remove_leaf(&mut self.upper, &mut self.lower, full_path, provider)
     }
 
+    /// Pre-reveal trie nodes along the given paths to reduce sequential DB
+    /// lookups during subsequent update_leaf/remove_leaf calls.
+    ///
+    /// Upper subtrie nodes are revealed sequentially (at most ~17 DB reads).
+    /// Lower subtrie nodes are revealed in parallel across 256 subtries.
+    pub fn prefetch_paths(
+        &mut self,
+        paths: &[Nibbles],
+        provider: &dyn SparseTrieProvider,
+    ) -> Result<(), TrieError> {
+        let path_vecs: Vec<PathVec> = paths
+            .iter()
+            .map(|n| PathVec::from_slice(n.as_ref()))
+            .collect();
+        update::prefetch_paths(&mut self.upper, &mut self.lower, &path_vecs, provider)
+    }
+
     /// Compute the root hash of the trie, using rayon to parallelize
     /// hashing of lower subtries.
     pub fn root(&mut self) -> Result<H256, TrieError> {

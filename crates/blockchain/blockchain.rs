@@ -595,7 +595,10 @@ impl Blockchain {
             };
 
         // Process all account update batches
+        let mut rx_batch_count = 0u32;
+        let mut rx_storage_time = std::time::Duration::ZERO;
         for updates in rx {
+            rx_batch_count += 1;
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
 
@@ -636,6 +639,7 @@ impl Blockchain {
                 }
 
                 // Process storage updates
+                let storage_start = Instant::now();
                 for (key, value) in update.added_storage {
                     let hashed_key = keccak(key);
                     let hashed_key_nibbles = Nibbles::from_bytes(hashed_key.as_bytes());
@@ -687,6 +691,8 @@ impl Blockchain {
                     }
                 }
 
+                rx_storage_time += storage_start.elapsed();
+
                 // Track account info changes
                 if let Some(info) = update.info {
                     if let Some(code) = update.code {
@@ -720,6 +726,7 @@ impl Blockchain {
         let phase2a_elapsed = phase2_start.elapsed();
 
         // Phase 2b: Collect state trie updates (defer application for sorted order)
+        let phase2b_start = Instant::now();
         let mut state_trie_updates: Vec<(H256, Option<Vec<u8>>)> = Vec::new();
 
         for (hashed_address, storage_root, updates) in storage_results {
@@ -810,6 +817,8 @@ impl Blockchain {
             }
         }
 
+        let phase2b_elapsed = phase2b_start.elapsed();
+
         // Sort state trie updates by hashed_address for trie locality.
         // Consecutive updates share trie prefix nodes, reducing DB reads.
         let num_state_updates = state_trie_updates.len();
@@ -817,7 +826,14 @@ impl Blockchain {
 
         let apply_start = Instant::now();
 
-        // Apply all state trie updates in sorted order
+        // Pre-reveal trie nodes in parallel for all paths we're about to update.
+        let prefetch_paths: Vec<Nibbles> = state_trie_updates
+            .iter()
+            .map(|(addr, _)| Nibbles::from_bytes(addr.as_bytes()))
+            .collect();
+        sparse_state.prefetch_paths(&prefetch_paths, &state_provider)?;
+
+        // Apply all state trie updates in sorted order (now mostly in-memory)
         for (hashed_address, update) in state_trie_updates {
             let path = Nibbles::from_bytes(hashed_address.as_bytes());
             match update {
@@ -834,15 +850,20 @@ impl Blockchain {
         // Phase 3: Compute state root
         let phase3_start = Instant::now();
         let state_trie_hash = sparse_state.root()?;
+        let root_elapsed = phase3_start.elapsed();
+        let collect_start = Instant::now();
         let state_updates = sparse_state.collect_updates();
-        let phase3_elapsed = phase3_start.elapsed();
+        let collect_elapsed = collect_start.elapsed();
 
         info!(
-            "  |- merkle phases: storage_roots={}ms state_updates={}ms ({} accounts) state_root={}ms",
+            "  |- merkle phases: rx_stor={}ms stor_roots={}ms build={}ms apply={}ms ({} accts) root={}ms collect={}ms",
+            rx_storage_time.as_millis(),
             phase2a_elapsed.as_millis(),
+            phase2b_elapsed.as_millis(),
             apply_elapsed.as_millis(),
             num_state_updates,
-            phase3_elapsed.as_millis()
+            root_elapsed.as_millis(),
+            collect_elapsed.as_millis()
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
