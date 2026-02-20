@@ -412,6 +412,8 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Opcode dispatch table, built dynamically per fork.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    /// Cached calldata cost (avoids re-iterating calldata bytes multiple times per tx).
+    pub cached_calldata_cost: Option<u64>,
 }
 
 impl<'a> VM<'a> {
@@ -460,6 +462,7 @@ impl<'a> VM<'a> {
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+            cached_calldata_cost: None,
         };
 
         let call_type = if is_create {
