@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 use ethrex_rlp::decode::RLPDecode;
 
 use crate::error::TrieError;
@@ -991,6 +993,215 @@ fn collapse_branch_if_needed(
             mark_node_dirty(upper, lower, branch_path);
         }
     }
+
+    Ok(())
+}
+
+// --- Parallel prefetch support ---
+
+/// Reveal a node within a single subtrie (without routing to upper/lower).
+/// Used during parallel prefetching where each subtrie is processed independently.
+fn reveal_node_into_subtrie(
+    subtrie: &mut SparseSubtrie,
+    path_data: &[u8],
+    rlp: &[u8],
+) -> Result<(), TrieError> {
+    let node = Node::decode(rlp).map_err(TrieError::RLPDecode)?;
+    let revealed_hash = Some(NodeHash::from_encoded(rlp));
+
+    match node {
+        Node::Leaf(leaf) => {
+            let full_path: PathVec = path_data
+                .iter()
+                .chain(leaf.partial.as_ref().iter())
+                .copied()
+                .collect();
+            let key = PathVec::from_slice(leaf.partial.as_ref());
+            subtrie.nodes.insert(
+                PathVec::from_slice(path_data),
+                SparseNode::Leaf {
+                    key,
+                    hash: revealed_hash,
+                },
+            );
+            subtrie.values.insert(full_path, leaf.value);
+        }
+        Node::Extension(ext) => {
+            let key = PathVec::from_slice(ext.prefix.as_ref());
+            let child_hash = ext.child.compute_hash();
+            let child_path: PathVec = path_data
+                .iter()
+                .chain(ext.prefix.as_ref().iter())
+                .copied()
+                .collect();
+            subtrie.nodes.insert(
+                PathVec::from_slice(path_data),
+                SparseNode::Extension {
+                    key,
+                    hash: revealed_hash,
+                },
+            );
+            subtrie
+                .nodes
+                .entry(child_path)
+                .or_insert(SparseNode::Hash(child_hash));
+        }
+        Node::Branch(branch) => {
+            let mut state_mask = 0u16;
+            for (i, child_ref) in branch.choices.iter().enumerate() {
+                if !child_ref.is_valid() {
+                    continue;
+                }
+                state_mask |= 1 << i;
+                let child_hash = child_ref.compute_hash();
+                let mut child_path = PathVec::from_slice(path_data);
+                child_path.push(i as u8);
+                subtrie
+                    .nodes
+                    .entry(child_path)
+                    .or_insert(SparseNode::Hash(child_hash));
+            }
+            if !branch.value.is_empty() {
+                let mut value_path = PathVec::from_slice(path_data);
+                value_path.push(16);
+                subtrie.values.insert(value_path, branch.value);
+            }
+            subtrie.nodes.insert(
+                PathVec::from_slice(path_data),
+                SparseNode::Branch {
+                    state_mask,
+                    hash: revealed_hash,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Ensure a Hash node at the given path is revealed within a single subtrie.
+/// Like `ensure_revealed` but doesn't use upper/lower routing.
+fn ensure_revealed_in_subtrie(
+    subtrie: &mut SparseSubtrie,
+    path_data: &[u8],
+    provider: &dyn SparseTrieProvider,
+) -> Result<(), TrieError> {
+    let rlp = match subtrie.nodes.get(path_data) {
+        Some(SparseNode::Hash(hash)) => match hash {
+            NodeHash::Inline(_) => hash.as_ref().to_vec(),
+            NodeHash::Hashed(h256) => {
+                let h256 = *h256;
+                provider.get_node(path_data)?.ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(
+                        crate::error::InconsistentTreeError::SparseNodeNotFound {
+                            path: Nibbles::from_hex(path_data.to_vec()),
+                            hash: h256,
+                        },
+                    ))
+                })?
+            }
+        },
+        _ => return Ok(()),
+    };
+
+    subtrie.nodes.remove(path_data);
+    reveal_node_into_subtrie(subtrie, path_data, &rlp)
+}
+
+/// Pre-reveal Hash nodes along the paths that will be updated.
+/// Upper subtrie is walked sequentially (at most ~17 DB reads),
+/// then lower subtries are walked in parallel via rayon.
+pub fn prefetch_paths(
+    upper: &mut SparseSubtrie,
+    lower: &mut [LowerSubtrie],
+    paths: &[PathVec],
+    provider: &dyn SparseTrieProvider,
+) -> Result<(), TrieError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    // Phase 1: Walk upper subtrie for each path (sequential).
+    // Determine where each path enters a lower subtrie.
+    // Upper subtrie has nodes at depth < 2, so this is at most ~17 DB reads.
+    let mut lower_entries: Vec<Vec<(usize, PathVec)>> = vec![Vec::new(); 256];
+
+    for (path_idx, path) in paths.iter().enumerate() {
+        let mut current = PathVec::new();
+        loop {
+            if let Some(idx) = route_path(&current) {
+                // Path has entered a lower subtrie
+                lower_entries[idx].push((path_idx, current));
+                break;
+            }
+            // Still in upper — reveal if needed
+            ensure_revealed(upper, lower, &current, provider)?;
+            match upper.nodes.get(current.as_slice()) {
+                Some(SparseNode::Branch { state_mask, .. }) => {
+                    let state_mask = *state_mask;
+                    if current.len() >= path.len() {
+                        break;
+                    }
+                    let nibble = path[current.len()];
+                    if nibble >= 16 || state_mask & (1 << nibble) == 0 {
+                        break;
+                    }
+                    current.push(nibble);
+                }
+                Some(SparseNode::Extension { key, .. }) => {
+                    let key_clone = key.clone();
+                    current.extend_from_slice(&key_clone);
+                }
+                _ => break,
+            }
+        }
+    }
+
+    // Phase 2: Ensure needed lower subtries exist (sequential).
+    for (idx, entries) in lower_entries.iter().enumerate() {
+        if !entries.is_empty() {
+            get_or_create_lower(lower, idx);
+        }
+    }
+
+    // Phase 3: Parallel prefetch within lower subtries.
+    lower.par_iter_mut().enumerate().try_for_each(
+        |(idx, lower_subtrie)| -> Result<(), TrieError> {
+            let entries = &lower_entries[idx];
+            if entries.is_empty() {
+                return Ok(());
+            }
+            let subtrie = match lower_subtrie {
+                LowerSubtrie::Revealed(s) => s,
+                _ => return Ok(()),
+            };
+            for (path_idx, start) in entries {
+                let full_path = &paths[*path_idx];
+                let mut current = start.clone();
+                loop {
+                    ensure_revealed_in_subtrie(subtrie, &current, provider)?;
+                    match subtrie.nodes.get(current.as_slice()) {
+                        Some(SparseNode::Branch { state_mask, .. }) => {
+                            let state_mask = *state_mask;
+                            if current.len() >= full_path.len() {
+                                break;
+                            }
+                            let nibble = full_path[current.len()];
+                            if nibble >= 16 || state_mask & (1 << nibble) == 0 {
+                                break;
+                            }
+                            current.push(nibble);
+                        }
+                        Some(SparseNode::Extension { key, .. }) => {
+                            let key_clone = key.clone();
+                            current.extend_from_slice(&key_clone);
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            Ok(())
+        },
+    )?;
 
     Ok(())
 }
