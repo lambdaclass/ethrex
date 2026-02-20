@@ -78,10 +78,7 @@ pub fn compute_root_sequential(
 }
 
 /// Common finalization: propagate hashes and compute upper root.
-fn finalize_root(
-    upper: &mut SparseSubtrie,
-    lower: &mut [LowerSubtrie],
-) -> Result<H256, TrieError> {
+fn finalize_root(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie]) -> Result<H256, TrieError> {
     // Propagate lower subtrie root hashes to the upper subtrie.
     // Read cached hashes directly instead of recomputing them.
     for (i, lower_subtrie) in lower.iter().enumerate() {
