@@ -570,9 +570,9 @@ impl Blockchain {
         let mut sparse_state = SparseTrie::new();
         sparse_state.reveal_root(parent_header.state_root, &state_provider)?;
 
-        // Per-account storage tries and their DB backings
-        let mut storage_db_tries: FxHashMap<H256, Trie> = Default::default();
-        let mut storage_sparse_tries: FxHashMap<H256, SparseTrie> = Default::default();
+        // Deferred storage updates: hashed_address → [(hashed_key, value)]
+        // Applied in parallel after all batches are received.
+        let mut deferred_storage: FxHashMap<H256, Vec<(H256, U256)>> = Default::default();
 
         // Track accounts with cleared storage (from removed or removed_storage)
         let mut cleared_storage: rustc_hash::FxHashSet<H256> = Default::default();
@@ -595,10 +595,7 @@ impl Blockchain {
             };
 
         // Process all account update batches
-        let mut rx_batch_count = 0u32;
-        let mut rx_storage_time = std::time::Duration::ZERO;
         for updates in rx {
-            rx_batch_count += 1;
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
 
@@ -625,73 +622,33 @@ impl Blockchain {
                     // Mark account for removal: set info to default so state
                     // becomes default → removed from state trie.
                     account_infos.insert(hashed_address, Some(AccountInfo::default()));
-                    // Clear storage
-                    storage_sparse_tries.remove(&hashed_address);
-                    storage_db_tries.remove(&hashed_address);
+                    deferred_storage.remove(&hashed_address);
                     cleared_storage.insert(hashed_address);
                     continue;
                 }
 
                 if update.removed_storage {
-                    storage_sparse_tries.remove(&hashed_address);
-                    storage_db_tries.remove(&hashed_address);
+                    deferred_storage.remove(&hashed_address);
                     cleared_storage.insert(hashed_address);
                 }
 
-                // Process storage updates
-                let storage_start = Instant::now();
-                for (key, value) in update.added_storage {
-                    let hashed_key = keccak(key);
-                    let hashed_key_nibbles = Nibbles::from_bytes(hashed_key.as_bytes());
-
-                    // Get or create storage SparseTrie for this account
-                    if let Entry::Vacant(e) = storage_sparse_tries.entry(hashed_address) {
-                        let storage_root = if cleared_storage.contains(&hashed_address) {
-                            *EMPTY_TRIE_HASH
-                        } else {
-                            if let Entry::Vacant(e) = account_state_cache.entry(hashed_address) {
-                                let state = match state_db_trie.get(hashed_address.as_bytes())? {
-                                    Some(rlp) => Some(AccountState::decode(&rlp)?),
-                                    None => None,
-                                };
-                                e.insert(state);
-                            }
-                            account_state_cache[&hashed_address]
-                                .as_ref()
-                                .map(|s| s.storage_root)
-                                .unwrap_or(*EMPTY_TRIE_HASH)
-                        };
-
-                        // Open storage trie DB (for on-demand node loading)
-                        let storage_trie = self.storage.open_storage_trie(
-                            hashed_address,
-                            parent_header.state_root,
-                            storage_root,
-                        )?;
-                        storage_db_tries.insert(hashed_address, storage_trie);
-
-                        // Create sparse storage trie and reveal root
-                        let mut sparse = SparseTrie::new();
-                        let storage_provider =
-                            TrieDBProvider(storage_db_tries[&hashed_address].db());
-                        sparse.reveal_root(storage_root, &storage_provider)?;
-                        e.insert(sparse);
+                // Collect storage updates (deferred — applied in parallel later)
+                if !update.added_storage.is_empty() {
+                    let entry = deferred_storage.entry(hashed_address).or_default();
+                    for (key, value) in update.added_storage {
+                        entry.push((keccak(key), value));
                     }
-
-                    // SAFETY: entry was just inserted above if it was vacant
-                    let Some(sparse) = storage_sparse_tries.get_mut(&hashed_address) else {
-                        unreachable!("storage sparse trie was just inserted")
-                    };
-                    let provider = TrieDBProvider(storage_db_tries[&hashed_address].db());
-
-                    if value.is_zero() {
-                        sparse.remove_leaf(hashed_key_nibbles, &provider)?;
-                    } else {
-                        sparse.update_leaf(hashed_key_nibbles, value.encode_to_vec(), &provider)?;
+                    // Pre-populate account state cache for storage root lookup
+                    if !cleared_storage.contains(&hashed_address) {
+                        if let Entry::Vacant(e) = account_state_cache.entry(hashed_address) {
+                            let state = match state_db_trie.get(hashed_address.as_bytes())? {
+                                Some(rlp) => Some(AccountState::decode(&rlp)?),
+                                None => None,
+                            };
+                            e.insert(state);
+                        }
                     }
                 }
-
-                rx_storage_time += storage_start.elapsed();
 
                 // Track account info changes
                 if let Some(info) = update.info {
@@ -705,28 +662,57 @@ impl Blockchain {
 
         let phase2_start = Instant::now();
 
-        // Phase 2: Compute storage roots in parallel, then update state trie
+        // Phase 2: Process storage tries in parallel, then update state trie
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
         // Track which cleared_storage accounts have been processed
         let mut processed_cleared: rustc_hash::FxHashSet<H256> = Default::default();
 
-        // Phase 2a: Compute all storage roots and collect updates in parallel.
-        // Each SparseTrie is independent so they can be processed concurrently.
-        let mut storage_vec: Vec<(H256, _)> = storage_sparse_tries.drain().collect();
-        let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>)>, TrieError> = storage_vec
-            .par_iter_mut()
-            .map(|(addr, sparse)| {
+        // Phase 2a: Apply storage updates + compute roots in parallel.
+        // Each account's storage trie is independent: open DB, apply updates,
+        // compute root hash, collect trie node updates — all in parallel.
+        let parent_state_root = parent_header.state_root;
+        let deferred_vec: Vec<(H256, Vec<(H256, U256)>)> = deferred_storage.drain().collect();
+        let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> = deferred_vec
+            .par_iter()
+            .map(|(hashed_address, slot_updates)| {
+                let storage_root = if cleared_storage.contains(hashed_address) {
+                    *EMPTY_TRIE_HASH
+                } else {
+                    account_state_cache[hashed_address]
+                        .as_ref()
+                        .map(|s| s.storage_root)
+                        .unwrap_or(*EMPTY_TRIE_HASH)
+                };
+
+                let storage_trie = self.storage.open_storage_trie(
+                    *hashed_address,
+                    parent_state_root,
+                    storage_root,
+                )?;
+
+                let mut sparse = SparseTrie::new();
+                let provider = TrieDBProvider(storage_trie.db());
+                sparse.reveal_root(storage_root, &provider)?;
+
+                for (hashed_key, value) in slot_updates {
+                    let nibbles = Nibbles::from_bytes(hashed_key.as_bytes());
+                    if value.is_zero() {
+                        sparse.remove_leaf(nibbles, &provider)?;
+                    } else {
+                        sparse.update_leaf(nibbles, value.encode_to_vec(), &provider)?;
+                    }
+                }
+
                 let root = sparse.root_sequential()?;
                 let updates = sparse.collect_updates();
-                Ok((*addr, root, updates))
+                Ok((*hashed_address, root, updates))
             })
             .collect();
         let storage_results = storage_results?;
         let phase2a_elapsed = phase2_start.elapsed();
 
         // Phase 2b: Collect state trie updates (defer application for sorted order)
-        let phase2b_start = Instant::now();
         let mut state_trie_updates: Vec<(H256, Option<Vec<u8>>)> = Vec::new();
 
         for (hashed_address, storage_root, updates) in storage_results {
@@ -817,8 +803,6 @@ impl Blockchain {
             }
         }
 
-        let phase2b_elapsed = phase2b_start.elapsed();
-
         // Sort state trie updates by hashed_address for trie locality.
         // Consecutive updates share trie prefix nodes, reducing DB reads.
         let num_state_updates = state_trie_updates.len();
@@ -848,22 +832,14 @@ impl Blockchain {
         let apply_elapsed = apply_start.elapsed();
 
         // Phase 3: Compute state root
-        let phase3_start = Instant::now();
         let state_trie_hash = sparse_state.root()?;
-        let root_elapsed = phase3_start.elapsed();
-        let collect_start = Instant::now();
         let state_updates = sparse_state.collect_updates();
-        let collect_elapsed = collect_start.elapsed();
 
         info!(
-            "  |- merkle phases: rx_stor={}ms stor_roots={}ms build={}ms apply={}ms ({} accts) root={}ms collect={}ms",
-            rx_storage_time.as_millis(),
+            "  |- merkle phases: storage={}ms state={}ms ({} accts)",
             phase2a_elapsed.as_millis(),
-            phase2b_elapsed.as_millis(),
             apply_elapsed.as_millis(),
             num_state_updates,
-            root_elapsed.as_millis(),
-            collect_elapsed.as_millis()
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
