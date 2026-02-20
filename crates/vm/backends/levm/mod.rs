@@ -460,6 +460,39 @@ impl LEVM {
         ))
     }
 
+    /// Run all txs sequentially on `db` (must be in post-system-call state).
+    /// Returns receipts, block gas used, and the merged AccountUpdates for all txs.
+    /// Used as a fallback from the parallel path when RAW conflicts are detected.
+    fn execute_txs_sequential(
+        block: &Block,
+        txs_with_sender: &[(&Transaction, Address)],
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+    ) -> Result<(Vec<Receipt>, u64, Vec<AccountUpdate>), EvmError> {
+        let header = &block.header;
+        let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
+        let mut all_updates = Vec::new();
+        let mut receipts = Vec::new();
+        let mut cumulative_gas = 0u64;
+        let mut block_gas = 0u64;
+        for (tx, sender) in txs_with_sender {
+            let report =
+                LEVM::execute_tx_in_block(tx, *sender, header, db, vm_type, &mut stack_pool)?;
+            let updates = LEVM::get_state_transitions_tx(db)?;
+            all_updates.extend(updates);
+            cumulative_gas += report.gas_spent;
+            block_gas += report.gas_used;
+            let receipt = Receipt::new(
+                tx.tx_type(),
+                matches!(report.result, TxResult::Success),
+                cumulative_gas,
+                report.logs,
+            );
+            receipts.push(receipt);
+        }
+        Ok((receipts, block_gas, all_updates))
+    }
+
     /// Execute block transactions in parallel using BAL conflict graph.
     /// Only called for Amsterdam+ blocks when the header BAL is available.
     ///
@@ -497,12 +530,11 @@ impl LEVM {
         let store = db.store.clone();
         let header = &block.header;
 
-        // GroupResult: per-tx results + final coinbase balance after all txs in the group.
-        // The final coinbase balance is read from initial_accounts_state after the last
-        // get_state_transitions_tx, giving the true accumulated fee for the whole group.
+        // GroupResult: per-tx results + final coinbase balance + read set for RAW detection.
         type GroupResult = (
             Vec<(usize, TxType, ExecutionReport, Vec<AccountUpdate>)>,
-            U256, // final coinbase balance in this group
+            U256,              // final coinbase balance in this group
+            FxHashSet<Address>, // addresses read from initial/store (RAW conflict detection)
         );
         // Execute each group in parallel; within each group txs are sequential
         let all_results: Result<Vec<GroupResult>, EvmError> = groups
@@ -513,6 +545,8 @@ impl LEVM {
                 group_db
                     .initial_accounts_state
                     .extend(system_seed.iter().map(|(a, ac)| (*a, ac.clone())));
+                // Enable read tracking for RAW conflict detection
+                group_db.reads = Some(FxHashSet::default());
                 let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
                 let mut per_tx = Vec::new();
                 for &tx_idx in &group {
@@ -538,18 +572,53 @@ impl LEVM {
                     .get(&coinbase)
                     .map(|a| a.info.balance)
                     .unwrap_or(coinbase_initial_balance);
-                Ok((per_tx, final_coinbase))
+                let reads = group_db.reads.take().unwrap_or_default();
+                Ok((per_tx, final_coinbase, reads))
             })
             .collect();
 
         let all_results = all_results?;
 
-        // Merge all AccountUpdates; accumulate per-group coinbase deltas (one per group)
+        // RAW conflict detection: check if any group reads an address that another group writes.
+        // If so, the parallel results would be incorrect — fall back to sequential execution.
+        if all_results.len() > 1 {
+            let write_sets: Vec<FxHashSet<Address>> = all_results
+                .iter()
+                .map(|(group_txs, _, _)| {
+                    group_txs
+                        .iter()
+                        .flat_map(|(_, _, _, updates)| updates.iter().map(|u| u.address))
+                        .filter(|&a| a != coinbase)
+                        .collect()
+                })
+                .collect();
+
+            let has_raw_conflict = all_results.iter().enumerate().any(|(i, (_, _, reads))| {
+                write_sets
+                    .iter()
+                    .enumerate()
+                    .any(|(j, writes)| i != j && !reads.is_disjoint(writes))
+            });
+
+            if has_raw_conflict {
+                // Discard parallel results; re-run all txs sequentially on the main db
+                // (which is already in post-system-call state, current_accounts_state empty)
+                let (receipts, block_gas, seq_updates) =
+                    Self::execute_txs_sequential(block, txs_with_sender, db, vm_type)?;
+                merkleizer
+                    .send(seq_updates)
+                    .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
+                queue_length.fetch_add(1, Ordering::Relaxed);
+                return Ok((receipts, block_gas));
+            }
+        }
+
+        // No RAW conflicts — merge all AccountUpdates; accumulate per-group coinbase deltas
         let mut indexed_reports: Vec<(usize, TxType, ExecutionReport)> = Vec::new();
         let mut merged: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
         let mut coinbase_delta = U256::zero();
 
-        for (group_txs, final_coinbase) in all_results {
+        for (group_txs, final_coinbase, _reads) in all_results {
             // One delta per group, computed from the final coinbase balance in that group
             coinbase_delta += final_coinbase.saturating_sub(coinbase_initial_balance);
             for (tx_idx, tx_type, report, updates) in group_txs {
