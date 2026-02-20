@@ -427,7 +427,7 @@ impl<'a> VM<'a> {
 
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
-        let callframe_backup = self.current_call_frame.call_frame_backup.clone();
+        let callframe_backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
         restore_cache_state(self.db, callframe_backup)
     }
 
@@ -437,30 +437,27 @@ impl<'a> VM<'a> {
     //   - Do the same for every individual storage slot.
     pub fn merge_call_frame_backup_with_parent(
         &mut self,
-        child_call_frame_backup: &CallFrameBackup,
+        child_call_frame_backup: CallFrameBackup,
     ) -> Result<(), VMError> {
         let parent_backup_accounts = &mut self
             .current_call_frame
             .call_frame_backup
             .original_accounts_info;
-        for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
-            if parent_backup_accounts.get(address).is_none() {
-                parent_backup_accounts.insert(*address, account.clone());
-            }
+        for (address, account) in child_call_frame_backup.original_accounts_info {
+            parent_backup_accounts.entry(address).or_insert(account);
         }
 
         let parent_backup_storage = &mut self
             .current_call_frame
             .call_frame_backup
             .original_account_storage_slots;
-        for (address, storage) in child_call_frame_backup
-            .original_account_storage_slots
-            .iter()
-        {
-            let parent_storage = parent_backup_storage.entry(*address).or_default();
-            for (key, value) in storage {
-                if parent_storage.get(key).is_none() {
-                    parent_storage.insert(*key, *value);
+        for (address, storage) in child_call_frame_backup.original_account_storage_slots {
+            if let std::collections::hash_map::Entry::Vacant(e) = parent_backup_storage.entry(address) {
+                e.insert(storage);
+            } else {
+                let existing = parent_backup_storage.get_mut(&address).unwrap();
+                for (key, value) in storage {
+                    existing.entry(key).or_insert(value);
                 }
             }
         }

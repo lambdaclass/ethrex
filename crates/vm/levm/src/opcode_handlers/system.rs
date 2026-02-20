@@ -1123,6 +1123,7 @@ impl<'a> VM<'a> {
             gas_limit,
             ret_offset,
             ret_size,
+            call_frame_backup,
             memory: old_callframe_memory,
             ..
         } = executed_call_frame;
@@ -1159,7 +1160,7 @@ impl<'a> VM<'a> {
         match &ctx_result.result {
             TxResult::Success => {
                 self.current_call_frame.stack.push(SUCCESS)?;
-                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(call_frame_backup)?;
             }
             TxResult::Revert(_) => {
                 self.current_call_frame.stack.push(FAIL)?;
@@ -1206,7 +1207,7 @@ impl<'a> VM<'a> {
         match ctx_result.result.clone() {
             TxResult::Success => {
                 parent_call_frame.stack.push(address_to_word(to))?;
-                self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(call_frame_backup)?;
             }
             TxResult::Revert(err) => {
                 // If revert we have to copy the return_data
