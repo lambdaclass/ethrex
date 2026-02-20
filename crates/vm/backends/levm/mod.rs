@@ -1490,12 +1490,58 @@ pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
 #[cfg(test)]
 mod parallel_group_tests {
     use super::*;
-    use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange};
+    use ethrex_common::types::block_access_list::{
+        AccountChanges, BalanceChange, SlotChange, StorageChange,
+    };
 
     fn addr(byte: u8) -> Address {
         let mut a = Address::zero();
         a.0[19] = byte;
         a
+    }
+
+    fn slot(byte: u8) -> H256 {
+        H256::from_low_u64_be(byte as u64)
+    }
+
+    /// Build a BAL with storage writes: `(block_access_index, address, slot)`.
+    fn bal_storage_writes(entries: &[(u16, Address, H256)]) -> BlockAccessList {
+        let mut by_addr: FxHashMap<Address, FxHashMap<H256, Vec<u16>>> = FxHashMap::default();
+        for &(idx, address, s) in entries {
+            by_addr
+                .entry(address)
+                .or_default()
+                .entry(s)
+                .or_default()
+                .push(idx);
+        }
+        let accounts = by_addr
+            .into_iter()
+            .map(|(address, slots)| {
+                let storage_changes = slots
+                    .into_iter()
+                    .map(|(s, indices)| {
+                        SlotChange::with_changes(
+                            s.into_uint(),
+                            indices
+                                .into_iter()
+                                .map(|idx| StorageChange::new(idx, U256::zero()))
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                AccountChanges::new(address).with_storage_changes(storage_changes)
+            })
+            .collect();
+        BlockAccessList::from_accounts(accounts)
+    }
+
+    /// A CALL transaction to the given address.
+    fn call_tx(to: Address) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: TxKind::Call(to),
+            ..Default::default()
+        })
     }
 
     /// Build a BAL where the given (1-indexed tx index, address) pairs mark balance writes.
@@ -1652,5 +1698,101 @@ mod parallel_group_tests {
         ];
         let groups = build_parallel_groups(&bal, &txs, addr(0xff));
         assert_eq!(groups, vec![vec![0, 1, 2]]);
+    }
+
+    // ── Storage-write / CALL tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_call_tx_grouped_with_storage_writer_direct() {
+        // tx0 (CALL to addr_a) writes Storage(addr_a, slot1).
+        // tx1 (CALL to addr_a) also writes Storage(addr_a, slot1) — same slot, W-W conflict.
+        // Both should be in one group regardless.
+        let addr_a = addr(1);
+        let s1 = slot(1);
+        let bal = bal_storage_writes(&[(1, addr_a, s1), (2, addr_a, s1)]);
+        let tx = call_tx(addr_a);
+        let txs = vec![(&tx, addr(10)), (&tx, addr(11))];
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        assert_eq!(groups, vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn test_call_tx_grouped_with_unrelated_storage_writer() {
+        // tx0 (CALL to addr_b) writes Storage(addr_a, slot1) — a different address.
+        // tx1 (CALL to addr_b) is a call tx: it reads all_written_storage including
+        // Storage(addr_a, slot1), so it must be serialized after tx0.
+        let addr_a = addr(1);
+        let addr_b = addr(2);
+        let s1 = slot(1);
+        let bal = bal_storage_writes(&[(1, addr_a, s1)]);
+        let tx_b = call_tx(addr_b);
+        let txs = vec![(&tx_b, addr(10)), (&tx_b, addr(11))];
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        // tx0 writes storage, tx1 is a CALL that reads all written storage → RAW → same group
+        assert_eq!(groups, vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn test_multihop_raw_all_call_txs_grouped_with_storage_writers() {
+        // Three txs: tx0 writes Storage(A, s1), tx1 writes Storage(B, s2),
+        // tx2 (CALL to C) has no direct connection to A or B, but might call A or B
+        // transitively.  Conservative: tx2 reads all written storage → conflicts with both.
+        let addr_a = addr(1);
+        let addr_b = addr(2);
+        let addr_c = addr(3);
+        let s1 = slot(1);
+        let s2 = slot(2);
+        let bal = bal_storage_writes(&[(1, addr_a, s1), (2, addr_b, s2)]);
+        let tx_a = call_tx(addr_a);
+        let tx_b = call_tx(addr_b);
+        let tx_c = call_tx(addr_c);
+        let txs = vec![(&tx_a, addr(10)), (&tx_b, addr(11)), (&tx_c, addr(12))];
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        // All three are call txs touching written storage → one group
+        assert_eq!(groups, vec![vec![0, 1, 2]]);
+    }
+
+    #[test]
+    fn test_create_tx_not_grouped_with_unrelated_storage_writer() {
+        // tx0 (CREATE) writes Storage(addr_a, slot1) — e.g., the new contract initialises
+        // its own storage.  tx1 (CREATE) has a disjoint write set; no CALL → no multi-hop
+        // read set added → they can run in parallel.
+        let addr_a = addr(1);
+        let addr_b = addr(2);
+        let s1 = slot(1);
+        let s2 = slot(2);
+        let bal = bal_storage_writes(&[(1, addr_a, s1), (2, addr_b, s2)]);
+        let tx = dummy_tx(); // TxKind::Create — does NOT trigger the CALL branch
+        let txs = vec![(&tx, addr(10)), (&tx, addr(11))];
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        // CREATE txs with disjoint write sets can still parallelize
+        assert_eq!(groups, vec![vec![0], vec![1]]);
+    }
+
+    #[test]
+    fn test_call_tx_after_storage_writer_is_rawd_before_is_not() {
+        // tx0 writes Storage(A, s1).  tx1 (CALL, index 1 > 0) reads all written storage
+        // including Storage(A, s1) → RAW hazard → same group.
+        // A hypothetical tx-1 (index < 0 impossible) would be a WAR (safe), but we can
+        // test with ordering: tx0=CALL, tx1=storage writer.  Here tx0 READS and tx1 WRITES
+        // later → WAR (no serialization needed for tx0).
+        let addr_a = addr(1);
+        let addr_b = addr(2);
+        let s1 = slot(1);
+        // Only tx1 (index 1) writes storage
+        let bal = bal_storage_writes(&[(2, addr_a, s1)]);
+        let tx_call = call_tx(addr_b);
+        let tx_write = call_tx(addr_a);
+        // tx0=CALL(B), tx1=CALL(A) writer
+        let txs = vec![(&tx_call, addr(10)), (&tx_write, addr(11))];
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        // tx0 is before tx1 (WAR: tx0 reads slot that tx1 will write — tx0 correctly reads
+        // initial state, no serialization needed). tx1 writes, tx0 reads: first_writer=1,
+        // reader i=0, 1 < 0 is false → no RAW union.
+        // Additionally, both are CALL txs; tx0 reads all_written_storage including
+        // Storage(A,s1) written by tx1.  first_writer for Storage(A,s1) = index 1.
+        // Condition: first_writer (1) < i (0)? NO → no RAW union triggered.
+        // They CAN run in parallel (tx0 reads pre-write value of Storage(A,s1), which is correct).
+        assert_eq!(groups, vec![vec![0], vec![1]]);
     }
 }
