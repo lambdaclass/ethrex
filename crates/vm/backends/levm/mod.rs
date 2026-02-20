@@ -370,11 +370,15 @@ impl LEVM {
             sender_groups.entry(*sender).or_default().push(tx);
         }
 
-        // Skip rayon for small blocks where scheduling overhead exceeds parallelism benefit
-        if sender_groups.len() <= 4 {
-            let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
-            for (sender, txs) in sender_groups {
+        // Parallel across sender groups, sequential within each group
+        sender_groups.into_par_iter().for_each_with(
+            Vec::with_capacity(STACK_LIMIT),
+            |stack_pool, (sender, txs)| {
+                // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
+
+                // Execute transactions sequentially within sender group
+                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
                 for tx in txs {
                     let _ = Self::execute_tx_in_block(
                         tx,
@@ -382,33 +386,11 @@ impl LEVM {
                         &block.header,
                         &mut group_db,
                         vm_type,
-                        &mut stack_pool,
+                        stack_pool,
                     );
                 }
-            }
-        } else {
-            // Parallel across sender groups, sequential within each group
-            sender_groups.into_par_iter().for_each_with(
-                Vec::with_capacity(STACK_LIMIT),
-                |stack_pool, (sender, txs)| {
-                    // Each sender group gets its own db instance for state propagation
-                    let mut group_db = GeneralizedDatabase::new(store.clone());
-
-                    // Execute transactions sequentially within sender group
-                    // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
-                    for tx in txs {
-                        let _ = Self::execute_tx_in_block(
-                            tx,
-                            sender,
-                            &block.header,
-                            &mut group_db,
-                            vm_type,
-                            stack_pool,
-                        );
-                    }
-                },
-            );
-        }
+            },
+        );
 
         for withdrawal in block
             .body
