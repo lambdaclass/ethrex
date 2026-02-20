@@ -671,7 +671,12 @@ impl Blockchain {
         // Phase 2a: Apply storage updates + compute roots in parallel.
         // Each account's storage trie is independent: open DB, apply updates,
         // compute root hash, collect trie node updates — all in parallel.
-        let parent_state_root = parent_header.state_root;
+        //
+        // StorageTrieFactory snapshots trie_cache + last_written once,
+        // eliminating per-account mutex locks under rayon parallelism.
+        let storage_factory = self
+            .storage
+            .storage_trie_factory(parent_header.state_root)?;
         let deferred_vec: Vec<(H256, Vec<(H256, U256)>)> = deferred_storage.drain().collect();
         let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> = deferred_vec
             .par_iter()
@@ -685,13 +690,9 @@ impl Blockchain {
                         .unwrap_or(*EMPTY_TRIE_HASH)
                 };
 
-                let storage_trie = self.storage.open_storage_trie(
-                    *hashed_address,
-                    parent_state_root,
-                    storage_root,
-                )?;
+                let storage_trie = storage_factory.open(*hashed_address, storage_root)?;
 
-                let mut sparse = SparseTrie::new();
+                let mut sparse = SparseTrie::new_flat();
                 let provider = TrieDBProvider(storage_trie.db());
                 sparse.reveal_root(storage_root, &provider)?;
 

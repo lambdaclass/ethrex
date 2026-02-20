@@ -253,6 +253,32 @@ pub struct AccountUpdatesList {
     pub code_updates: Vec<(H256, Code)>,
 }
 
+/// Pre-snapshotted factory for opening storage tries without mutex locks.
+/// Created via `Store::storage_trie_factory()`.  Safe to share across rayon
+/// threads — each `open()` call only does an Arc clone + struct construction.
+pub struct StorageTrieFactory {
+    trie_cache: Arc<TrieLayerCache>,
+    last_written: Vec<u8>,
+    backend: Arc<dyn StorageBackend>,
+    state_root: H256,
+}
+
+impl StorageTrieFactory {
+    /// Open a storage trie for the given account without any mutex locks.
+    pub fn open(&self, account_hash: H256, storage_root: H256) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper {
+            state_root: self.state_root,
+            inner: self.trie_cache.clone(),
+            db: Box::new(BackendTrieDB::new_for_storages(
+                self.backend.clone(),
+                self.last_written.clone(),
+            )?),
+            prefix: Some(account_hash),
+        };
+        Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+}
+
 impl Store {
     /// Add a block in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
@@ -2559,6 +2585,22 @@ impl Store {
             Some(account_hash),
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
+    /// Create a factory for opening storage tries without per-call mutex locks.
+    /// Snapshots `trie_cache` and `last_written` once; each subsequent
+    /// `factory.open()` only does an Arc clone and struct construction.
+    pub fn storage_trie_factory(&self, state_root: H256) -> Result<StorageTrieFactory, StoreError> {
+        Ok(StorageTrieFactory {
+            trie_cache: self
+                .trie_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
+            last_written: self.last_written()?,
+            backend: self.backend.clone(),
+            state_root,
+        })
     }
 
     /// Obtain a storage trie from the given address and storage_root.
