@@ -1,0 +1,37 @@
+[package]
+name = "node-replay"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "node_replay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "node-replay"
+path = "src/main.rs"
+
+[dependencies]
+ethrex-storage = { path = "../../crates/storage", features = ["rocksdb"] }
+ethrex-blockchain = { path = "../../crates/blockchain", default-features = false, features = ["secp256k1"] }
+ethrex-common = { path = "../../crates/common", default-features = false, features = ["secp256k1"] }
+ethrex-vm = { path = "../../crates/vm", default-features = false, features = ["secp256k1"] }
+clap = { version = "4.3", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.18", features = ["v4"] }
+thiserror = "2.0"
+eyre = "0.6"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+libc = "0.2"
+tikv-jemallocator = { version = "0.6.0", optional = true, features = ["background_threads"] }
+
+[features]
+default = ["jemalloc"]
+jemalloc = ["dep:tikv-jemallocator"]
+
+[dev-dependencies]
+tempfile = "3"

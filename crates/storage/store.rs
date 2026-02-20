@@ -893,6 +893,17 @@ impl Store {
         self.write_async(CHAIN_DATA, key, value).await
     }
 
+    /// Loads the chain configuration values from the database into the in-memory cache.
+    pub async fn load_chain_config(&mut self) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::ChainConfig);
+        let value = self
+            .read_async(CHAIN_DATA, key)
+            .await?
+            .ok_or_else(|| StoreError::Custom("Missing chain config".to_string()))?;
+        self.chain_config = serde_json::from_slice(&value)?;
+        Ok(())
+    }
+
     /// Update earliest block number
     pub async fn update_earliest_block_number(
         &self,
@@ -1419,6 +1430,31 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+            }
+            EngineType::InMemory => {
+                let backend = Arc::new(InMemoryBackend::open()?);
+                Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+            }
+        }
+    }
+
+    pub fn new_read_only(
+        path: impl AsRef<Path>,
+        engine_type: EngineType,
+    ) -> Result<Self, StoreError> {
+        // Ignore unused variable warning when compiling without DB features
+        let db_path = path.as_ref().to_path_buf();
+
+        if engine_type != EngineType::InMemory {
+            // Read-only open must never create or mutate metadata files.
+            validate_store_schema_version_read_only(&db_path)?;
+        }
+
+        match engine_type {
+            #[cfg(feature = "rocksdb")]
+            EngineType::RocksDB => {
+                let backend = Arc::new(RocksDBBackend::open_read_only(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
@@ -2121,6 +2157,32 @@ impl Store {
             last_written,
         )?;
 
+        let hashed_key = hash_key_fixed(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
+    /// Read a storage slot at `state_root` using a pre-resolved account storage root.
+    ///
+    /// This avoids reopening the state trie to resolve account storage root repeatedly
+    /// across multiple storage reads for the same account.
+    pub fn get_storage_at_root_with_storage_root(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let account_hash = hash_address_fixed(&address);
+        let effective_storage_root = if self.flatkeyvalue_computed(account_hash)? {
+            *EMPTY_TRIE_HASH
+        } else {
+            storage_root
+        };
+        let storage_trie =
+            self.open_storage_trie(account_hash, state_root, effective_storage_root)?;
         let hashed_key = hash_key_fixed(&storage_key);
         storage_trie
             .get(&hashed_key)?
@@ -3097,9 +3159,22 @@ impl StoreMetadata {
 }
 
 fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
+    validate_store_schema_version_internal(path, true)
+}
+
+fn validate_store_schema_version_read_only(path: &Path) -> Result<(), StoreError> {
+    validate_store_schema_version_internal(path, false)
+}
+
+fn validate_store_schema_version_internal(path: &Path, allow_init: bool) -> Result<(), StoreError> {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
     // If metadata file does not exist, try to create it
     if !metadata_path.exists() {
+        if !allow_init {
+            return Err(StoreError::NotFoundDBVersion {
+                expected: STORE_SCHEMA_VERSION,
+            });
+        }
         // If datadir exists but is not empty, this is probably a DB for an
         // old ethrex version and we should return an error
         if path.exists() && !dir_is_empty(path)? {

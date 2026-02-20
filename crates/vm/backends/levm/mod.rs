@@ -40,7 +40,9 @@ use ethrex_levm::{
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::cmp::min;
+use std::env;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -51,6 +53,35 @@ use std::sync::mpsc::Sender;
 /// [LEVM::process_withdrawals]
 #[derive(Debug)]
 pub struct LEVM;
+
+#[derive(Debug, Clone, Copy)]
+struct PipelineFlushConfig {
+    flush_after_txs: usize,
+    max_queue_for_flush: usize,
+}
+
+fn parse_usize_env(name: &str, default: usize) -> usize {
+    env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+fn pipeline_flush_config() -> PipelineFlushConfig {
+    static CONFIG: OnceLock<PipelineFlushConfig> = OnceLock::new();
+    *CONFIG.get_or_init(|| {
+        let cfg = PipelineFlushConfig {
+            flush_after_txs: parse_usize_env("ETHREX_PERF_PIPELINE_FLUSH_AFTER_TXS", 5),
+            max_queue_for_flush: parse_usize_env("ETHREX_PERF_PIPELINE_MAX_QUEUE_FOR_FLUSH", 0),
+        };
+        if env::var("ETHREX_PERF_PIPELINE_FLUSH_AFTER_TXS").is_ok()
+            || env::var("ETHREX_PERF_PIPELINE_MAX_QUEUE_FOR_FLUSH").is_ok()
+        {
+            ::tracing::info!("Using pipeline flush tuning: {:?}", cfg);
+        }
+        cfg
+    })
+}
 
 /// Checks that adding `tx_gas_limit` to `block_gas_used` doesn't exceed `block_gas_limit`.
 /// NOTE: Message must contain "Gas allowance exceeded" and "Block gas used overflow"
@@ -204,6 +235,7 @@ impl LEVM {
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
+        let flush_config = pipeline_flush_config();
 
         let transactions_with_sender =
             block.body.get_transactions_with_sender().map_err(|error| {
@@ -235,7 +267,9 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
             )?;
-            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+            if queue_length.load(Ordering::Relaxed) <= flush_config.max_queue_for_flush
+                && tx_since_last_flush > flush_config.flush_after_txs
+            {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
                 tx_since_last_flush = 0;
             } else {

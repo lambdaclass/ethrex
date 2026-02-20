@@ -7,7 +7,9 @@ use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
 use std::{
     cmp::Ordering,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
+    env,
+    sync::OnceLock,
     sync::{Arc, Mutex},
 };
 use tracing::instrument;
@@ -21,6 +23,8 @@ pub struct StoreVmDatabase {
     // and may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: Arc<Mutex<BTreeMap<BlockNumber, BlockHash>>>,
     pub state_root: H256,
+    pub account_state_cache: Arc<Mutex<HashMap<Address, Option<AccountState>>>>,
+    pub storage_slot_cache: Arc<Mutex<HashMap<(Address, H256), Option<U256>>>>,
 }
 
 impl StoreVmDatabase {
@@ -40,6 +44,8 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             state_root: block_header.state_root,
+            account_state_cache: Arc::new(Mutex::new(HashMap::new())),
+            storage_slot_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -60,7 +66,39 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             state_root: block_header.state_root,
+            account_state_cache: Arc::new(Mutex::new(HashMap::new())),
+            storage_slot_cache: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+}
+
+fn vm_read_cache_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| parse_bool_env("ETHREX_PERF_VM_READ_CACHE", false))
+}
+
+fn vm_account_cache_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        vm_read_cache_enabled() || parse_bool_env("ETHREX_PERF_VM_ACCOUNT_CACHE", false)
+    })
+}
+
+fn vm_storage_cache_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        vm_read_cache_enabled() || parse_bool_env("ETHREX_PERF_VM_STORAGE_CACHE", false)
+    })
+}
+
+fn parse_bool_env(name: &str, default: bool) -> bool {
+    match env::var(name) {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default,
+        },
+        Err(_) => default,
     }
 }
 
@@ -72,9 +110,30 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-        self.store
+        if vm_account_cache_enabled()
+            && let Some(cached) = self
+                .account_state_cache
+                .lock()
+                .map_err(|_| EvmError::Custom("LockError".to_string()))?
+                .get(&address)
+                .cloned()
+        {
+            return Ok(cached);
+        }
+
+        let account_state = self
+            .store
             .get_account_state_by_root(self.state_root, address)
-            .map_err(|e| EvmError::DB(e.to_string()))
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        if vm_account_cache_enabled() {
+            self.account_state_cache
+                .lock()
+                .map_err(|_| EvmError::Custom("LockError".to_string()))?
+                .insert(address, account_state.clone());
+        }
+
+        Ok(account_state)
     }
 
     #[instrument(
@@ -84,9 +143,45 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        self.store
-            .get_storage_at_root(self.state_root, address, key)
-            .map_err(|e| EvmError::DB(e.to_string()))
+        if vm_storage_cache_enabled()
+            && let Some(cached) = self
+                .storage_slot_cache
+                .lock()
+                .map_err(|_| EvmError::Custom("LockError".to_string()))?
+                .get(&(address, key))
+                .cloned()
+        {
+            return Ok(cached);
+        }
+
+        let slot = if vm_account_cache_enabled() {
+            let account_state = self.get_account_state(address)?;
+            if let Some(account_state) = account_state {
+                self.store
+                    .get_storage_at_root_with_storage_root(
+                        self.state_root,
+                        address,
+                        account_state.storage_root,
+                        key,
+                    )
+                    .map_err(|e| EvmError::DB(e.to_string()))?
+            } else {
+                None
+            }
+        } else {
+            self.store
+                .get_storage_at_root(self.state_root, address, key)
+                .map_err(|e| EvmError::DB(e.to_string()))?
+        };
+
+        if vm_storage_cache_enabled() {
+            self.storage_slot_cache
+                .lock()
+                .map_err(|_| EvmError::Custom("LockError".to_string()))?
+                .insert((address, key), slot);
+        }
+
+        Ok(slot)
     }
 
     #[instrument(
