@@ -24,17 +24,34 @@ use tracing::{info, warn};
 pub struct RocksDBBackend {
     /// Optimistric transaction database
     db: Arc<DBWithThreadMode<MultiThreaded>>,
+    /// Whether the DB was opened in read-only mode.
+    read_only: bool,
 }
 
 impl RocksDBBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        Self::open_internal(path, false)
+    }
+
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        Self::open_internal(path, true)
+    }
+
+    fn open_internal(path: impl AsRef<Path>, read_only: bool) -> Result<Self, StoreError> {
         // Rocksdb optimizations options
         let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
+        opts.create_if_missing(!read_only);
+        opts.create_missing_column_families(!read_only);
 
-        opts.set_max_open_files(-1);
-        opts.set_max_file_opening_threads(16);
+        if read_only {
+            // Replay/planning tools open a second handle to an already-running
+            // live DB. Keep FD usage bounded to avoid EMFILE on production hosts.
+            opts.set_max_open_files(256);
+            opts.set_max_file_opening_threads(4);
+        } else {
+            opts.set_max_open_files(-1);
+            opts.set_max_file_opening_threads(16);
+        }
 
         opts.set_max_background_jobs(8);
 
@@ -82,7 +99,9 @@ impl RocksDBBackend {
 
         let mut all_cfs_to_open = HashSet::new();
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
-        all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
+        if !read_only {
+            all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
+        }
 
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
@@ -180,26 +199,43 @@ impl RocksDBBackend {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
-            &opts,
-            path.as_ref(),
-            cf_descriptors,
-        )
-        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
+        let db = if read_only {
+            DBWithThreadMode::<MultiThreaded>::open_cf_descriptors_read_only(
+                &opts,
+                path.as_ref(),
+                cf_descriptors,
+                false,
+            )
+            .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB (read-only): {}", e)))?
+        } else {
+            DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+                &opts,
+                path.as_ref(),
+                cf_descriptors,
+            )
+            .map_err(|e| {
+                StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e))
+            })?
+        };
 
         // Clean up obsolete column families
-        for cf_name in &existing_cfs {
-            if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
-                warn!("Dropping obsolete column family: {}", cf_name);
-                let _ = db
-                    .drop_cf(cf_name)
-                    .inspect(|_| info!("Successfully dropped column family: {}", cf_name))
-                    .inspect_err(|e|
-                        // Log error but don't fail initialization - the database is still usable
-                        warn!("Failed to drop column family '{}': {}", cf_name, e));
+        if !read_only {
+            for cf_name in &existing_cfs {
+                if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
+                    warn!("Dropping obsolete column family: {}", cf_name);
+                    let _ = db
+                        .drop_cf(cf_name)
+                        .inspect(|_| info!("Successfully dropped column family: {}", cf_name))
+                        .inspect_err(|e|
+                            // Log error but don't fail initialization - the database is still usable
+                            warn!("Failed to drop column family '{}': {}", cf_name, e));
+                }
             }
         }
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            read_only,
+        })
     }
 }
 
@@ -215,6 +251,12 @@ impl Drop for RocksDBBackend {
 
 impl StorageBackend for RocksDBBackend {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
+        if self.read_only {
+            return Err(StoreError::Custom(
+                "cannot clear table on read-only RocksDB backend".to_string(),
+            ));
+        }
+
         let cf = self
             .db
             .cf_handle(table)
@@ -239,6 +281,12 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
+        if self.read_only {
+            return Err(StoreError::Custom(
+                "cannot open write transaction on read-only RocksDB backend".to_string(),
+            ));
+        }
+
         let batch = WriteBatch::default();
 
         Ok(Box::new(RocksDBWriteTx {

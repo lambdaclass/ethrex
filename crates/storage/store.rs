@@ -893,6 +893,17 @@ impl Store {
         self.write_async(CHAIN_DATA, key, value).await
     }
 
+    /// Loads the chain configuration values from the database into the in-memory cache.
+    pub async fn load_chain_config(&mut self) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::ChainConfig);
+        let value = self
+            .read_async(CHAIN_DATA, key)
+            .await?
+            .ok_or_else(|| StoreError::Custom("Missing chain config".to_string()))?;
+        self.chain_config = serde_json::from_slice(&value)?;
+        Ok(())
+    }
+
     /// Update earliest block number
     pub async fn update_earliest_block_number(
         &self,
@@ -1419,6 +1430,31 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+            }
+            EngineType::InMemory => {
+                let backend = Arc::new(InMemoryBackend::open()?);
+                Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+            }
+        }
+    }
+
+    pub fn new_read_only(
+        path: impl AsRef<Path>,
+        engine_type: EngineType,
+    ) -> Result<Self, StoreError> {
+        // Ignore unused variable warning when compiling without DB features
+        let db_path = path.as_ref().to_path_buf();
+
+        if engine_type != EngineType::InMemory {
+            // Read-only open must never create or mutate metadata files.
+            validate_store_schema_version_read_only(&db_path)?;
+        }
+
+        match engine_type {
+            #[cfg(feature = "rocksdb")]
+            EngineType::RocksDB => {
+                let backend = Arc::new(RocksDBBackend::open_read_only(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
@@ -3028,9 +3064,22 @@ impl StoreMetadata {
 }
 
 fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
+    validate_store_schema_version_internal(path, true)
+}
+
+fn validate_store_schema_version_read_only(path: &Path) -> Result<(), StoreError> {
+    validate_store_schema_version_internal(path, false)
+}
+
+fn validate_store_schema_version_internal(path: &Path, allow_init: bool) -> Result<(), StoreError> {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
     // If metadata file does not exist, try to create it
     if !metadata_path.exists() {
+        if !allow_init {
+            return Err(StoreError::NotFoundDBVersion {
+                expected: STORE_SCHEMA_VERSION,
+            });
+        }
         // If datadir exists but is not empty, this is probably a DB for an
         // old ethrex version and we should return an error
         if path.exists() && !dir_is_empty(path)? {

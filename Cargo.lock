@@ -7226,6 +7226,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5b0c77c1b780822bc749a33e39aeb2c07584ab93332303babeabb645298a76e"
 
 [[package]]
+name = "node-replay"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-storage",
+ "ethrex-vm",
+ "eyre",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "uuid 1.20.0",
+]
+
+[[package]]
 name = "nohash-hasher"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
