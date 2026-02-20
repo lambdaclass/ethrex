@@ -15,6 +15,7 @@ use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
+use crate::precompiles::PrecompileCache;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
@@ -34,6 +35,8 @@ pub struct GeneralizedDatabase {
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
+    /// Shared precompile result cache for reusing warmer results in executor.
+    pub precompile_cache: Option<Arc<PrecompileCache>>,
 }
 
 impl GeneralizedDatabase {
@@ -46,6 +49,7 @@ impl GeneralizedDatabase {
             codes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
+            precompile_cache: None,
         }
     }
 
@@ -101,6 +105,7 @@ impl GeneralizedDatabase {
             codes,
             code_metadata: Default::default(),
             bal_recorder: None,
+            precompile_cache: None,
         }
     }
 

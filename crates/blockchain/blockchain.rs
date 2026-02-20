@@ -84,6 +84,7 @@ use ethrex_storage::{
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
 use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::PrecompileCache;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -399,15 +400,26 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
+        // Create a shared precompile result cache so the executor can reuse
+        // results computed by the warmer (precompiles are pure functions).
+        let precompile_cache = Arc::new(PrecompileCache::new());
+        vm.db.precompile_cache = Some(precompile_cache.clone());
+
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
+                let warmer_precompile_cache = precompile_cache.clone();
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
                         // Warming uses the same caching store, sharing cached state with execution
                         let start = Instant::now();
-                        let _ = LEVM::warm_block(block, caching_store, vm_type);
+                        let _ = LEVM::warm_block(
+                            block,
+                            caching_store,
+                            vm_type,
+                            Some(warmer_precompile_cache),
+                        );
                         start.elapsed()
                     })
                     .map_err(|e| {

@@ -30,8 +30,10 @@ use p256::{
     elliptic_curve::bigint::U256 as P256Uint,
 };
 use sha2::Digest;
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::ops::Mul;
+use std::sync::RwLock;
 
 use crate::constants::{P256_A, P256_B, P256_N};
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
@@ -287,12 +289,39 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
+pub struct PrecompileCache {
+    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+}
+
+impl PrecompileCache {
+    pub fn new() -> Self {
+        Self {
+            cache: RwLock::new(FxHashMap::default()),
+        }
+    }
+
+    pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
+        self.cache
+            .read()
+            .ok()?
+            .get(&(*address, calldata.clone()))
+            .cloned()
+    }
+
+    pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
+        if let Ok(mut cache) = self.cache.write() {
+            cache.insert((address, calldata), (output, gas_cost));
+        }
+    }
+}
+
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
 pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
     gas_remaining: &mut u64,
     fork: Fork,
+    cache: Option<&PrecompileCache>,
 ) -> Result<Bytes, VMError> {
     type PrecompileFn = fn(&Bytes, &mut u64, Fork) -> Result<Bytes, VMError>;
 
@@ -336,9 +365,23 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
+    // Skip cache for identity precompile (0x04) — copy is cheaper than lookup
+    let is_identity = address == IDENTITY.address;
+
+    // Check cache before executing
+    if !is_identity {
+        if let Some(cache) = cache {
+            if let Some((output, gas_cost)) = cache.get(&address, calldata) {
+                increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+                return Ok(output);
+            }
+        }
+    }
+
     #[cfg(feature = "perf_opcode_timings")]
     let precompile_time_start = std::time::Instant::now();
 
+    let gas_before = *gas_remaining;
     let result = precompile(calldata, gas_remaining, fork);
 
     #[cfg(feature = "perf_opcode_timings")]
@@ -346,6 +389,14 @@ pub fn execute_precompile(
         let time = precompile_time_start.elapsed();
         let mut timings = crate::timings::PRECOMPILES_TIMINGS.lock().expect("poison");
         timings.update(address, time);
+    }
+
+    // Cache successful results (skip identity)
+    if !is_identity {
+        if let (Some(cache), Ok(output)) = (cache, &result) {
+            let gas_cost = gas_before - *gas_remaining;
+            cache.insert(address, calldata.clone(), output.clone(), gas_cost);
+        }
     }
 
     result
