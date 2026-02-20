@@ -73,7 +73,10 @@ impl BlocksTable {
 
     pub async fn on_tick(&mut self, store: &Store) -> Result<(), MonitorError> {
         let mut new_blocks = Self::refresh_items(&mut self.last_l2_block_known, store).await?;
-        new_blocks.truncate(50);
+        let len = new_blocks.len();
+        if len > 50 {
+            new_blocks.drain(..len - 50);
+        }
 
         let n_new_blocks = new_blocks.len();
         self.items.truncate(50 - n_new_blocks);
