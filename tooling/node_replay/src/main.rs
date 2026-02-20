@@ -1,3 +1,7 @@
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use node_replay::{
     checkpoint, commands, planner, runner,
