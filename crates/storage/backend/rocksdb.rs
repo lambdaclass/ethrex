@@ -34,7 +34,6 @@ struct RocksDbPerfTuning {
     read_only_file_opening_threads: Option<i32>,
     enable_statistics: bool,
     stats_dump_period_sec: Option<u32>,
-    skip_verify_checksums: bool,
 }
 
 impl RocksDbPerfTuning {
@@ -87,7 +86,6 @@ impl RocksDbPerfTuning {
             read_only_file_opening_threads,
             enable_statistics: parse_bool_env("ETHREX_PERF_ROCKSDB_ENABLE_STATS", false),
             stats_dump_period_sec,
-            skip_verify_checksums: parse_bool_env("ETHREX_SKIP_VERIFY_CHECKSUMS", false),
         }
     }
 
@@ -104,7 +102,6 @@ impl RocksDbPerfTuning {
             || self.read_only_file_opening_threads.is_some()
             || self.enable_statistics
             || self.stats_dump_period_sec.is_some()
-            || self.skip_verify_checksums
     }
 }
 
@@ -128,12 +125,6 @@ fn parse_optional_bool_env(name: &str) -> Option<bool> {
         },
         Err(_) => None,
     }
-}
-
-fn skip_verify_checksums() -> bool {
-    use std::sync::OnceLock;
-    static SKIP: OnceLock<bool> = OnceLock::new();
-    *SKIP.get_or_init(|| parse_bool_env("ETHREX_SKIP_VERIFY_CHECKSUMS", false))
 }
 
 fn apply_perf_block_options(
@@ -535,17 +526,9 @@ impl StorageReadView for RocksDBReadTx {
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
-        if skip_verify_checksums() {
-            let mut read_opts = rocksdb::ReadOptions::default();
-            read_opts.set_verify_checksums(false);
-            self.db
-                .get_cf_opt(&cf, key, &read_opts)
-                .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
-        } else {
-            self.db
-                .get_cf(&cf, key)
-                .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
-        }
+        self.db
+            .get_cf(&cf, key)
+            .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
     fn prefix_iterator(
@@ -633,17 +616,9 @@ pub struct RocksDBLocked {
 
 impl StorageLockedView for RocksDBLocked {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        if skip_verify_checksums() {
-            let mut read_opts = rocksdb::ReadOptions::default();
-            read_opts.set_verify_checksums(false);
-            self.lock
-                .get_cf_opt(&self.cf, key, read_opts)
-                .map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")))
-        } else {
-            self.lock
-                .get_cf(&self.cf, key)
-                .map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")))
-        }
+        self.lock
+            .get_cf(&self.cf, key)
+            .map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")))
     }
 }
 
