@@ -61,6 +61,19 @@ pub fn compute_root_sequential(
     upper: &mut SparseSubtrie,
     lower: &mut [LowerSubtrie],
 ) -> Result<H256, TrieError> {
+    // Fast path for flat mode: everything is in the upper subtrie.
+    // Skip lower iteration, cross-boundary propagation, and finalize overhead.
+    if lower.is_empty() {
+        if !upper.dirty_nodes.is_empty() {
+            hash_subtrie(upper)?;
+        }
+        let empty: &[u8] = &[];
+        return match upper.nodes.get(empty) {
+            Some(SparseNode::Empty) | None => Ok(*EMPTY_TRIE_HASH),
+            Some(node) => Ok(cached_hash(node).finalize()),
+        };
+    }
+
     // Hash all lower subtries sequentially.
     for lower_subtrie in lower.iter_mut() {
         let subtrie = match lower_subtrie {
@@ -117,36 +130,41 @@ fn finalize_root(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie]) -> Resul
 /// subtrie (past the depth-2 boundary), read the child's cached hash and
 /// insert a `SparseNode::Hash` entry in the upper subtrie.
 fn propagate_cross_boundary_hashes(upper: &mut SparseSubtrie, lower: &[LowerSubtrie]) {
-    let upper_paths: Vec<PathVec> = upper.nodes.keys().cloned().collect();
-    let mut to_propagate = Vec::new();
+    // Collect (path, key) pairs first to avoid borrowing `upper.nodes` during mutation.
+    // Only extensions in the upper subtrie can span the boundary (depth < 2 → depth >= 2).
+    // Upper subtrie is small (at most ~17 nodes), so this is cheap.
+    let extensions: Vec<(PathVec, PathVec)> = upper
+        .nodes
+        .iter()
+        .filter_map(|(path, node)| {
+            if let SparseNode::Extension { key, .. } = node {
+                Some((path.clone(), key.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    for path_data in &upper_paths {
-        let node = upper.nodes.get(path_data.as_slice());
-        if let Some(SparseNode::Extension { key, .. }) = node {
-            let child_path: PathVec = path_data
-                .iter()
-                .chain(key.as_ref().iter())
-                .copied()
-                .collect();
-            // If the child is at depth >= 2 and not already in the upper subtrie,
-            // we need to propagate its hash from the lower subtrie.
-            if child_path.len() >= 2 && !upper.nodes.contains_key(child_path.as_slice()) {
-                let idx = child_path[0] as usize * 16 + child_path[1] as usize;
-                let subtrie = match &lower[idx] {
-                    LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => Some(s),
-                    LowerSubtrie::Blind(None) => None,
-                };
-                if let Some(subtrie) = subtrie
-                    && let Some(child_node) = subtrie.nodes.get(child_path.as_slice())
-                {
-                    to_propagate.push((child_path, cached_hash(child_node)));
-                }
+    for (path_data, key) in &extensions {
+        let child_path: PathVec = path_data.iter().chain(key.iter()).copied().collect();
+        // If the child is at depth >= 2 and not already in the upper subtrie,
+        // we need to propagate its hash from the lower subtrie.
+        if child_path.len() >= 2 && !upper.nodes.contains_key(child_path.as_slice()) {
+            let idx = child_path[0] as usize * 16 + child_path[1] as usize;
+            if idx >= lower.len() {
+                continue;
+            }
+            let subtrie = match &lower[idx] {
+                LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => Some(s),
+                LowerSubtrie::Blind(None) => None,
+            };
+            if let Some(subtrie) = subtrie
+                && let Some(child_node) = subtrie.nodes.get(child_path.as_slice())
+            {
+                let hash = cached_hash(child_node);
+                upper.nodes.insert(child_path, SparseNode::Hash(hash));
             }
         }
-    }
-
-    for (path, hash) in to_propagate {
-        upper.nodes.insert(path, SparseNode::Hash(hash));
     }
 }
 

@@ -11,8 +11,10 @@ use super::{LowerSubtrie, PathVec, SparseNode, SparseSubtrie, SparseTrieProvider
 
 /// Determine which subtrie a path belongs to.
 /// Returns None for upper subtrie, Some(idx) for lower subtrie.
-fn route_path(path: &[u8]) -> Option<usize> {
-    if path.len() < 2 {
+/// When `lower_len` is 0 (flat mode), always routes to upper.
+#[inline]
+fn route_path(path: &[u8], lower_len: usize) -> Option<usize> {
+    if lower_len == 0 || path.len() < 2 {
         None
     } else {
         Some(path[0] as usize * 16 + path[1] as usize)
@@ -60,7 +62,8 @@ pub fn reveal_node_into(
             let full_path = path.concat(&leaf.partial);
             let key = PathVec::from_slice(leaf.partial.as_ref());
             // Route both node and value to the same subtrie (based on node path)
-            let target = match route_path(&path_data) {
+            let lower_len = lower.len();
+            let target = match route_path(&path_data, lower_len) {
                 Some(idx) => get_or_create_lower(lower, idx),
                 None => upper,
             };
@@ -80,7 +83,8 @@ pub fn reveal_node_into(
             let child_hash = ext.child.compute_hash();
             let key = PathVec::from_slice(ext.prefix.as_ref());
 
-            let target = match route_path(&path_data) {
+            let lower_len = lower.len();
+            let target = match route_path(&path_data, lower_len) {
                 Some(idx) => get_or_create_lower(lower, idx),
                 None => upper,
             };
@@ -93,7 +97,7 @@ pub fn reveal_node_into(
             );
 
             let child_path_data = PathVec::from_slice(child_path.as_ref());
-            let child_target = match route_path(&child_path_data) {
+            let child_target = match route_path(&child_path_data, lower_len) {
                 Some(idx) => get_or_create_lower(lower, idx),
                 None => upper,
             };
@@ -104,6 +108,7 @@ pub fn reveal_node_into(
         }
         Node::Branch(branch) => {
             let mut state_mask = 0u16;
+            let lower_len = lower.len();
 
             for (i, child_ref) in branch.choices.iter().enumerate() {
                 if !child_ref.is_valid() {
@@ -114,7 +119,7 @@ pub fn reveal_node_into(
                 let mut child_path_data = path_data.clone();
                 child_path_data.push(i as u8);
 
-                let child_target = match route_path(&child_path_data) {
+                let child_target = match route_path(&child_path_data, lower_len) {
                     Some(idx) => get_or_create_lower(lower, idx),
                     None => upper,
                 };
@@ -128,7 +133,7 @@ pub fn reveal_node_into(
             if !branch.value.is_empty() {
                 let mut value_path = path_data.clone();
                 value_path.push(16);
-                let target = match route_path(&path_data) {
+                let target = match route_path(&path_data, lower_len) {
                     Some(idx) => get_or_create_lower(lower, idx),
                     None => upper,
                 };
@@ -136,7 +141,7 @@ pub fn reveal_node_into(
             }
 
             // Insert the branch node
-            let target = match route_path(&path_data) {
+            let target = match route_path(&path_data, lower_len) {
                 Some(idx) => get_or_create_lower(lower, idx),
                 None => upper,
             };
@@ -194,7 +199,7 @@ fn get_node<'a>(
     lower: &'a [LowerSubtrie],
     path_data: &[u8],
 ) -> Option<&'a SparseNode> {
-    match route_path(path_data) {
+    match route_path(path_data, lower.len()) {
         None => upper.nodes.get(path_data),
         Some(idx) => match &lower[idx] {
             LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => s.nodes.get(path_data),
@@ -208,7 +213,7 @@ fn get_node_mut<'a>(
     lower: &'a mut [LowerSubtrie],
     path_data: &[u8],
 ) -> Option<&'a mut SparseNode> {
-    match route_path(path_data) {
+    match route_path(path_data, lower.len()) {
         None => upper.nodes.get_mut(path_data),
         Some(idx) => match &mut lower[idx] {
             LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => s.nodes.get_mut(path_data),
@@ -223,7 +228,7 @@ fn insert_node(
     path_data: PathVec,
     node: SparseNode,
 ) {
-    match route_path(&path_data) {
+    match route_path(&path_data, lower.len()) {
         None => {
             upper.dirty_nodes.insert(path_data.clone());
             upper.nodes.insert(path_data, node);
@@ -241,7 +246,7 @@ fn remove_node(
     lower: &mut [LowerSubtrie],
     path_data: &[u8],
 ) -> Option<SparseNode> {
-    match route_path(path_data) {
+    match route_path(path_data, lower.len()) {
         None => upper.nodes.remove(path_data),
         Some(idx) => match &mut lower[idx] {
             LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => s.nodes.remove(path_data),
@@ -260,7 +265,7 @@ fn insert_value(
     value_key: PathVec,
     value: Vec<u8>,
 ) {
-    match route_path(node_path) {
+    match route_path(node_path, lower.len()) {
         None => {
             upper.dirty_values.insert(value_key.clone());
             upper.values.insert(value_key, value);
@@ -282,7 +287,7 @@ fn remove_value(
     node_path: &[u8],
     value_key: &[u8],
 ) -> Option<Vec<u8>> {
-    match route_path(node_path) {
+    match route_path(node_path, lower.len()) {
         None => upper.values.remove(value_key),
         Some(idx) => match &mut lower[idx] {
             LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => s.values.remove(value_key),
@@ -300,7 +305,7 @@ fn get_value<'a>(
     node_path: &[u8],
     value_key: &[u8],
 ) -> Option<&'a Vec<u8>> {
-    match route_path(node_path) {
+    match route_path(node_path, lower.len()) {
         None => upper.values.get(value_key),
         Some(idx) => match &lower[idx] {
             LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => s.values.get(value_key),
@@ -311,7 +316,7 @@ fn get_value<'a>(
 
 /// Mark a node path as dirty in the correct subtrie (for collect_updates).
 fn mark_node_dirty(upper: &mut SparseSubtrie, lower: &mut [LowerSubtrie], path_data: &[u8]) {
-    match route_path(path_data) {
+    match route_path(path_data, lower.len()) {
         None => {
             upper.dirty_nodes.insert(PathVec::from_slice(path_data));
         }
@@ -1123,12 +1128,41 @@ pub fn prefetch_paths(
     // Phase 1: Walk upper subtrie for each path (sequential).
     // Determine where each path enters a lower subtrie.
     // Upper subtrie has nodes at depth < 2, so this is at most ~17 DB reads.
+    // In flat mode (no lower subtries), do a simple sequential walk.
+    if lower.is_empty() {
+        for path in paths {
+            let mut current = PathVec::new();
+            loop {
+                ensure_revealed(upper, lower, &current, provider)?;
+                match upper.nodes.get(current.as_slice()) {
+                    Some(SparseNode::Branch { state_mask, .. }) => {
+                        let state_mask = *state_mask;
+                        if current.len() >= path.len() {
+                            break;
+                        }
+                        let nibble = path[current.len()];
+                        if nibble >= 16 || state_mask & (1 << nibble) == 0 {
+                            break;
+                        }
+                        current.push(nibble);
+                    }
+                    Some(SparseNode::Extension { key, .. }) => {
+                        let key_clone = key.clone();
+                        current.extend_from_slice(&key_clone);
+                    }
+                    _ => break,
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let mut lower_entries: Vec<Vec<(usize, PathVec)>> = vec![Vec::new(); 256];
 
     for (path_idx, path) in paths.iter().enumerate() {
         let mut current = PathVec::new();
         loop {
-            if let Some(idx) = route_path(&current) {
+            if let Some(idx) = route_path(&current, lower.len()) {
                 // Path has entered a lower subtrie
                 lower_entries[idx].push((path_idx, current));
                 break;

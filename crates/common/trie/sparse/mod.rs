@@ -207,7 +207,8 @@ pub struct SparseTrie {
 }
 
 impl SparseTrie {
-    /// Create a new empty SparseTrie.
+    /// Create a new empty SparseTrie with 256 lower subtries for parallel hashing.
+    /// Use for the state trie where parallel `root()` is needed.
     pub fn new() -> Self {
         let mut lower = Vec::with_capacity(256);
         for _ in 0..256 {
@@ -216,6 +217,18 @@ impl SparseTrie {
         Self {
             upper: SparseSubtrie::new_empty(),
             lower,
+            prefix_set: PrefixSet::new(),
+            removed_leaves: FxHashSet::default(),
+        }
+    }
+
+    /// Create a flat SparseTrie with no lower subtries.
+    /// All nodes live in the upper subtrie — no two-tier routing overhead.
+    /// Use for storage tries where `root_sequential()` is sufficient.
+    pub fn new_flat() -> Self {
+        Self {
+            upper: SparseSubtrie::new_empty(),
+            lower: Vec::new(),
             prefix_set: PrefixSet::new(),
             removed_leaves: FxHashSet::default(),
         }
