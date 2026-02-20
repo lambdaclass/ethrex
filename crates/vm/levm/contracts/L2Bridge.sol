@@ -7,15 +7,12 @@ import "./L1Anchor.sol";
 ///
 /// Deployed at 0x000000000000000000000000000000000000fffd (L2 predeploy).
 /// Preminted with a large ETH balance in L2 genesis to cover all future L1
-/// messages (similar to Taiko/Linea). The NativeRollup contract on L1
-/// accumulates ETH over time as users call sendL1Message().
+/// messages.
 ///
 /// L1 Messages: the relayer calls processL1Message() for each pending L1
 /// message, providing a Merkle proof against the L1 messages root anchored
-/// by the EXECUTE precompile in the L1Anchor predeploy. This replaces the
-/// previous rolling hash approach — the EXECUTE precompile no longer scans
-/// L1MessageProcessed events for verification. The state root check at the
-/// end of EXECUTE implicitly guarantees correct message processing.
+/// by the EXECUTE precompile in the L1Anchor predeploy. The state root check
+/// at the end of EXECUTE implicitly guarantees correct message processing.
 ///
 /// Withdrawals: users call withdraw() to lock ETH and emit WithdrawalInitiated.
 /// The EXECUTE precompile scans these events and builds a Merkle root for

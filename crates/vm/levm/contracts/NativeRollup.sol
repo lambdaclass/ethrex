@@ -3,14 +3,17 @@ pragma solidity ^0.8.27;
 
 /// @title NativeRollup — PoC L2 state manager using the EXECUTE precompile (EIP-8079).
 ///
-/// Maintains the current L2 state root and block number. The `advance` method
-/// builds ABI-encoded calldata for the EXECUTE precompile at 0x0101, which
+/// Manages the L2 state on L1: state root, block number, gas parameters,
+/// pending L1 messages, and withdrawal roots. The `advance` method builds
+/// ABI-encoded calldata for the EXECUTE precompile at 0x0101, which
 /// re-executes the L2 block and verifies the state transition. On success,
-/// the precompile returns the new state root, block number, and withdrawal
-/// Merkle root, and the contract updates its state.
+/// the precompile returns the new state root, block number, withdrawal
+/// Merkle root, gas used, burned fees, and base fee — and the contract
+/// updates its state accordingly.
 ///
 /// The EXECUTE precompile uses the `apply_body` variant: individual block fields
-/// are provided instead of a full RLP-encoded block.
+/// are ABI-encoded as 14 slots (12 static + 2 dynamic byte arrays for the
+/// RLP-encoded transaction list and JSON execution witness).
 ///
 /// Parent gas parameters (parentBaseFee, parentGasUsed) and blockGasLimit are
 /// tracked on-chain from previous executions instead of being provided by the
@@ -122,6 +125,13 @@ contract NativeRollup {
     }
 
     /// @notice Advance the L2 by one block.
+    /// @dev The Merkle root over consumed L1 messages is computed here BEFORE the
+    ///      block is executed by the EXECUTE precompile. This means the block builder
+    ///      MUST include the corresponding processL1Message() transactions in the L2
+    ///      block — if they are missing or incorrect, the state root will not match
+    ///      because the anchored Merkle root won't correspond to the actual messages
+    ///      processed. This effectively enforces L1 message inclusion at the protocol
+    ///      level via the state root check.
     /// @param _l1MessagesCount Number of pending L1 messages to consume from the queue.
     /// @param _blockParams Block parameters struct (postStateRoot, postReceiptsRoot, coinbase, prevRandao, timestamp).
     /// @param _transactions RLP-encoded transaction list.

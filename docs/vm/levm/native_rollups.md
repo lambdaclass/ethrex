@@ -58,7 +58,9 @@ The L1→L2 message flow uses a relayer, a prefunded L2 bridge contract, and Mer
 3. The Merkle root is passed to the EXECUTE precompile as the `l1Anchor` parameter (static `bytes32`)
 4. The EXECUTE precompile writes the `l1Anchor` to the **L1Anchor predeploy** (`0x00...fffe`) storage slot 0 before executing regular transactions (system transaction)
 5. On L2, a relayer sends real transactions calling `L2Bridge.processL1Message(from, to, value, gasLimit, data, nonce, merkleProof)`, which verifies the Merkle inclusion proof against the anchored root in L1Anchor, then executes `to.call{value: value, gas: gasLimit}(data)` (transferring ETH and/or executing calldata) and emits `L1MessageProcessed` events
-6. The EXECUTE precompile no longer scans for `L1MessageProcessed` events — the **state root check** at the end of execution implicitly guarantees correct message processing (if claims aren't included or are wrong, the post-state root won't match)
+6. The **state root check** at the end of execution implicitly guarantees correct message processing (if claims aren't included or are wrong, the post-state root won't match)
+
+**Block builder constraint:** The Merkle root over consumed L1 messages is computed in `advance()` on L1 *before* the EXECUTE precompile executes the L2 block. This means the L2 block builder **must** include the corresponding `processL1Message()` transactions in the block — if they are missing or incorrect, the anchored Merkle root won't match the actual messages processed on L2, and the post-state root verification will fail. This effectively enforces L1 message inclusion at the protocol level.
 
 This ensures the L2 block included the correct L1 message transactions without requiring custom transaction types or direct state manipulation. The relayer pays gas for L1 message transactions, solving the "first deposit problem". L1 messages support arbitrary calldata, enabling not just ETH transfers but also arbitrary contract calls on L2.
 
