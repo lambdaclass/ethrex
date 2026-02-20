@@ -138,6 +138,7 @@ impl RLPEncode for NodeHash {
         RLPEncode::encode(&Into::<Vec<u8>>::into(self), buf)
     }
 
+    #[inline]
     fn length(&self) -> usize {
         match self {
             NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
