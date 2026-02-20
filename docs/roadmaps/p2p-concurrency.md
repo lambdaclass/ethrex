@@ -27,7 +27,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
-| P0 | Merge rate limit WHOAREYOU packets (discv5) | [#5909](https://github.com/lambdaclass/ethrex/pull/5909) | Ready (2 approvals) |
+| P0 | ~~Merge rate limit WHOAREYOU packets (discv5)~~ | [#5909](https://github.com/lambdaclass/ethrex/pull/5909) | **Merged** (Feb 9) |
 | P0 | Bound whoareyou_rate_limit map with LRU cache | [#6125](https://github.com/lambdaclass/ethrex/issues/6125) | Open issue |
 | P0 | Merge dual discovery protocol support (discv4+discv5) | [#5962](https://github.com/lambdaclass/ethrex/pull/5962) | Approved (2 approvals) |
 | P0 | Remove experimental-discv5 feature flag | [#6015](https://github.com/lambdaclass/ethrex/pull/6015), [#5971](https://github.com/lambdaclass/ethrex/issues/5971) | Open |
@@ -42,13 +42,14 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
-| P0 | Verify ID-signature on handshake receipt | [#5832](https://github.com/lambdaclass/ethrex/issues/5832) | Open issue |
-| P0 | Store validated ENR from handshake | [#6109](https://github.com/lambdaclass/ethrex/pull/6109), [#6124](https://github.com/lambdaclass/ethrex/pull/6124) | Competing PRs |
+| P0 | ~~Verify ID-signature on handshake receipt~~ | [#5832](https://github.com/lambdaclass/ethrex/issues/5832), [#6055](https://github.com/lambdaclass/ethrex/pull/6055) | **Merged** (Jan 30) |
+| P0 | Store validated ENR from handshake | [#6109](https://github.com/lambdaclass/ethrex/pull/6109) | Open (#6124 closed) |
 | — | ~~DiscV5 codec encoder~~ | — | **NOT A BUG** - Encoding handled via `Packet::encode()` directly, codec only for receiving |
-| P1 | Request updated ENR when PONG enr_seq differs | [#5910](https://github.com/lambdaclass/ethrex/pull/5910), [#5850](https://github.com/lambdaclass/ethrex/issues/5850) | Open |
+| P1 | ~~Request updated ENR when PONG enr_seq differs~~ | [#5910](https://github.com/lambdaclass/ethrex/pull/5910), [#5850](https://github.com/lambdaclass/ethrex/issues/5850) | **Merged** (Feb 11) |
+| P1 | ~~Update existing contact ENR on NODES response~~ | [#6172](https://github.com/lambdaclass/ethrex/pull/6172) | **Merged** (Feb 19) |
 | P1 | Detect external IP via PONG recipient_addr voting | [#5914](https://github.com/lambdaclass/ethrex/pull/5914), [#5851](https://github.com/lambdaclass/ethrex/issues/5851) | Open |
 
-**Branches:** `discv5-server-enr-update-on-pong`, `discv5-server-external-ip-detection`, `discv5-verify-enr-signature`
+**Branches:** `discv5-server-external-ip-detection`
 
 ### Phase 2.5: DiscV4 Maintenance (DEPRIORITIZED)
 
@@ -118,7 +119,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
-| P0 | Merge snap sync code reorganization | [#5975](https://github.com/lambdaclass/ethrex/pull/5975) | Approved |
+| P0 | ~~Merge snap sync code reorganization~~ | [#5975](https://github.com/lambdaclass/ethrex/pull/5975) | **Merged** (Feb 6) |
 | P0 | Replace sync disk I/O with async operations | [#6113](https://github.com/lambdaclass/ethrex/pull/6113) | Approved |
 | P1 | Snapsync rewrite with spawned | [#4240](https://github.com/lambdaclass/ethrex/issues/4240) | Open (Milestone: Syncing) |
 | P1 | Extract snapshot dumping helpers | [#6099](https://github.com/lambdaclass/ethrex/pull/6099) | Open |
@@ -140,7 +141,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
-| P0 | Merge parallel storage trie merkelization | [#6079](https://github.com/lambdaclass/ethrex/pull/6079) | Approved |
+| P0 | ~~Merge parallel storage trie merkelization~~ | [#6079](https://github.com/lambdaclass/ethrex/pull/6079) | **Merged** (Feb 5) |
 | P1 | Parallel account range requests with adaptive chunking | [#6101](https://github.com/lambdaclass/ethrex/pull/6101) | Draft (4-phase impl) |
 | P1 | Parallelize header download with state download | [#6059](https://github.com/lambdaclass/ethrex/pull/6059) | Open |
 | P1 | Parallelize merkelization of storage slots | [#5482](https://github.com/lambdaclass/ethrex/issues/5482) | Open issue |
@@ -191,17 +192,17 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 ## Execution Order Recommendation
 
 ### Immediate (Merge Ready)
-1. [#5909](https://github.com/lambdaclass/ethrex/pull/5909) - WHOAREYOU rate limiting
+1. ~~[#5909](https://github.com/lambdaclass/ethrex/pull/5909) - WHOAREYOU rate limiting~~ **Merged**
 2. [#5962](https://github.com/lambdaclass/ethrex/pull/5962) - Dual discovery protocol
-3. [#5975](https://github.com/lambdaclass/ethrex/pull/5975) - Snap sync reorganization
+3. ~~[#5975](https://github.com/lambdaclass/ethrex/pull/5975) - Snap sync reorganization~~ **Merged**
 4. [#6113](https://github.com/lambdaclass/ethrex/pull/6113) - Async disk I/O
-5. [#6079](https://github.com/lambdaclass/ethrex/pull/6079) - Parallel storage merkelization
+5. ~~[#6079](https://github.com/lambdaclass/ethrex/pull/6079) - Parallel storage merkelization~~ **Merged**
 
 ### Short-term (Next 2-4 weeks)
-1. Complete Phase 1 of P2P (Discovery consolidation)
-2. Complete Phase 1-2 of Concurrency (Snap sync + parallelization)
+1. Complete Phase 1 of P2P (dual discovery [#5962](https://github.com/lambdaclass/ethrex/pull/5962), remove feature flag [#6015](https://github.com/lambdaclass/ethrex/pull/6015))
+2. Complete remaining Concurrency Phase 1 (async disk I/O [#6113](https://github.com/lambdaclass/ethrex/pull/6113))
 3. Address LRU cache for rate limiting [#6125](https://github.com/lambdaclass/ethrex/issues/6125)
-4. Complete discv5 security (Phase 2 P2P)
+4. Complete remaining discv5 security (ENR from handshake [#6109](https://github.com/lambdaclass/ethrex/pull/6109), external IP [#5914](https://github.com/lambdaclass/ethrex/pull/5914))
 
 ### Medium-term (1-2 months)
 1. Kademlia table reimplementation [#4245](https://github.com/lambdaclass/ethrex/issues/4245)
@@ -234,18 +235,18 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 ## Issue/PR Summary
 
-| Category | Open Issues | Open PRs | Draft PRs |
-|----------|-------------|----------|-----------|
-| Discovery Protocol | 8 | 6 | 1 |
-| Discovery Security | 5 | 4 | 0 |
-| Peer Management | 5 | 2 | 1 |
-| RLPx/Protocol | 4 | 2 | 0 |
-| Network Config | 3 | 0 | 0 |
-| Snap Sync | 2 | 5 | 1 |
-| Parallel Operations | 2 | 5 | 1 |
-| GenServer Migration | 5 | 1 | 0 |
-| Blocking/Performance | 3 | 1 | 1 |
-| **Total** | **37** | **26** | **5** |
+| Category | Open Issues | Open PRs | Draft PRs | Merged |
+|----------|-------------|----------|-----------|--------|
+| Discovery Protocol | 8 | 5 | 1 | 1 (#5909) |
+| Discovery Security | 4 | 2 | 0 | 3 (#6055, #5910, #6172) |
+| Peer Management | 5 | 2 | 1 | 0 |
+| RLPx/Protocol | 4 | 2 | 0 | 0 |
+| Network Config | 3 | 0 | 0 | 0 |
+| Snap Sync | 2 | 4 | 1 | 1 (#5975) |
+| Parallel Operations | 2 | 5 | 1 | 1 (#6079) |
+| GenServer Migration | 5 | 1 | 0 | 0 |
+| Blocking/Performance | 3 | 1 | 1 | 0 |
+| **Total** | **36** | **22** | **5** | **6** |
 
 ---
 
@@ -336,7 +337,7 @@ New messages needed:
 
 | Protocol | Compliance | Critical Gaps | Priority |
 |----------|------------|---------------|----------|
-| **DiscV5** | 95% | Session TODOs (ENR updates, Neighbors validation) | **HIGH** - Deadline passed, hardening ongoing |
+| **DiscV5** | 97% | ENR from handshake ([#6109](https://github.com/lambdaclass/ethrex/pull/6109)), Neighbors validation, external IP detection | **HIGH** - Deadline passed, hardening ongoing |
 | **DiscV4** | 95% | ENRResponse validation | **LOW** - Sunset at Glamsterdam |
 | **RLPx** | 98% | Size limit verification | MEDIUM |
 | **eth/68** | 100% | None | — |
@@ -347,7 +348,7 @@ New messages needed:
 
 **Overall Assessment:** ethrex is substantially compliant with current Ethereum P2P specifications. The main gaps are:
 1. **eth/70 support** - Needed for history expiry (upcoming requirement)
-2. **DiscV5 session TODOs** - ENR updates on PONG, Neighbors request validation
+2. **DiscV5 remaining TODOs** - ENR from handshake, Neighbors request validation, external IP detection
 3. **DNS-based discovery** - Operational resilience (nice-to-have)
 
 **DiscV4 gaps are deprioritized** due to Glamsterdam hard fork sunset.
