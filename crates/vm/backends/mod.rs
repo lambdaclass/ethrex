@@ -96,8 +96,16 @@ impl Evm {
         block: &Block,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
+        bal: Option<&BlockAccessList>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
-        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
+        LEVM::execute_block_pipeline(
+            block,
+            &mut self.db,
+            self.vm_type,
+            merkleizer,
+            queue_length,
+            bal,
+        )
     }
 
     /// Wraps [LEVM::execute_tx].
