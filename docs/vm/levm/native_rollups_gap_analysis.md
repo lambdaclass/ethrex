@@ -98,7 +98,7 @@ contract L2Bridge {
 - **Simplify** ABI to: `abi.encode(bytes32 preStateRoot, bytes32 l1MessagesRollingHash, bytes blockRlp, bytes witnessJson)`
 - **Verify** L1 messages by scanning `L1MessageProcessed` events from L2Bridge and computing rolling hash
 - Keep: state root verification, receipts root verification, withdrawal event scanning
-- Return: `abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed, burnedFees)` — 160 bytes
+- Return: `abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed, burnedFees, baseFeePerGas)` — 192 bytes
 
 **Sequencer (relayer):**
 - Monitors L1 for pending L1 messages (like L1Watcher in existing stack)
@@ -158,15 +158,15 @@ The L2Bridge has a finite preminted ETH balance. Every L2 transaction burns base
 
 ### After Implementation
 
-The EXECUTE precompile now computes `burnedFees = base_fee_per_gas * block_gas_used` after block execution and returns it as a 5th uint256 slot in the return value (160 bytes total). The NativeRollup contract on L1 decodes this value and sends it to `msg.sender` (the relayer) when `advance()` is called, effectively crediting the relayer on L1 for burned L2 fees.
+The EXECUTE precompile now computes `burnedFees = base_fee_per_gas * block_gas_used` after block execution and returns it as a 5th uint256 slot in the return value. The NativeRollup contract on L1 decodes this value and sends it to `msg.sender` (the relayer) when `advance()` is called, effectively crediting the relayer on L1 for burned L2 fees. (Note: the return value was subsequently expanded to 192 bytes with Gap 8 to also include `baseFeePerGas`.)
 
 A separate L2 process (out of scope for this PoC) would be responsible for crediting the relayer on L2. A production solution would redirect burned fees to the bridge contract on L2 (similar to the OP Stack's `BaseFeeVault`), keeping total L2 supply constant.
 
 ### Files Changed
 
-- Modified: `crates/vm/levm/src/execute_precompile.rs` — compute `burnedFees`, expand return from 128 to 160 bytes
+- Modified: `crates/vm/levm/src/execute_precompile.rs` — compute `burnedFees`, expand return from 128 to 160 bytes (later expanded to 192 with Gap 8)
 - Modified: `crates/vm/levm/contracts/NativeRollup.sol` — decode `burnedFees`, send to relayer, add to `StateAdvanced` event
-- Modified: `test/tests/levm/native_rollups.rs` — verify 160-byte return, check burnedFees value, verify relayer receives ETH
+- Modified: `test/tests/levm/native_rollups.rs` — verify return bytes, check burnedFees value, verify relayer receives ETH
 - Modified: `docs/vm/levm/native_rollups.md` — update return value docs, spec comparison table, limitations
 
 ---
@@ -199,6 +199,38 @@ NativeRollup.sol uses a `BlockParams` struct to group block parameters and build
 - Modified: `test/tests/levm/native_rollups.rs` — updated `build_precompile_calldata` (14-slot), `build_l2_state_transition_with_sender`, `encode_advance_call` (BlockParams struct), removed withdrawal rejection test
 - Modified: `test/tests/l2/native_rollups.rs` — updated `build_l2_state_transition`, `build_l2_withdrawal_block`, advance call encoding
 - Modified: `docs/vm/levm/native_rollups.md` — updated architecture, calldata format, encoding details, spec comparison
+
+---
+
+## Gap 8: Parent Gas Parameters Tracked On-Chain — IMPLEMENTED
+
+**Status:** Implemented
+**Spec:** The L2Beat native rollups book stores `gasUsed` and `baseFeePerGas` per block in the L1 rollup contract, treating `blockGasLimit` as a contract constant. The relayer should not need to provide these values.
+
+### Problem
+
+Previously, the relayer provided all block parameters including `blockNumber`, `blockGasLimit`, `parentBaseFee`, `parentGasLimit`, and `parentGasUsed` via the `BlockParams` struct. This required trusting the relayer for values that should be derivable from previous block executions.
+
+### After Implementation
+
+The NativeRollup contract now tracks parent gas parameters on-chain:
+- `blockGasLimit` (slot 2) — constant, set in constructor
+- `lastBaseFeePerGas` (slot 3) — updated after each `advance()` from the EXECUTE precompile return
+- `lastGasUsed` (slot 4) — updated after each `advance()` from the EXECUTE precompile return
+
+The `BlockParams` struct shrinks from 10 to 5 fields: `postStateRoot`, `postReceiptsRoot`, `coinbase`, `prevRandao`, `timestamp`. The contract reads `blockNumber + 1`, `blockGasLimit`, `lastBaseFeePerGas`, and `lastGasUsed` from storage and populates the corresponding EXECUTE precompile input slots automatically.
+
+The EXECUTE precompile return value expands from 160 to 192 bytes (5 → 6 slots) to include `baseFeePerGas` as the 6th slot, enabling the L1 contract to store it for the next block.
+
+Constructor: `constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee)` with `lastGasUsed = _blockGasLimit / 2` (keeps base fee stable for the first block).
+
+### Files Changed
+
+- Modified: `crates/vm/levm/src/execute_precompile.rs` — expanded return from 160 to 192 bytes, added `baseFeePerGas` as 6th return slot
+- Modified: `crates/vm/levm/contracts/NativeRollup.sol` — new storage layout (slots 2-4), updated constructor, shrunk `BlockParams` to 5 fields, `advance()` reads gas params from storage and stores them from return
+- Modified: `test/tests/levm/native_rollups.rs` — updated bytecode, `BlockParams`, selector, assertions
+- Modified: `test/tests/l2/native_rollups.rs` — updated constructor args, advance calldata, storage slot assertions
+- Modified: `docs/vm/levm/native_rollups.md` — return value, storage layout, BlockParams, spec comparison
 
 ---
 
@@ -238,6 +270,7 @@ NativeRollup.sol uses a `BlockParams` struct to group block parameters and build
 | 1 | Gaps 1-4 (unified) | High | High — foundational redesign | **Done** |
 | 2 | Gap 5: Burned fees | Low | Medium | **Done** |
 | 3 | Gap 6: Individual fields | Medium-High | Medium | **Done** |
-| 4 | Gap 7: Finality delay | Low | Low | Pending |
+| 4 | Gap 8: Parent gas on-chain | Low-Medium | Medium | **Done** |
+| 5 | Gap 7: Finality delay | Low | Low | Pending |
 
-Gaps 1-6 are implemented. Gap 7 is independent and can be done next.
+Gaps 1-6 and 8 are implemented. Gap 7 is independent and can be done next.

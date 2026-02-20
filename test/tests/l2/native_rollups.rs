@@ -983,8 +983,12 @@ async fn test_native_rollup_on_l1() {
     let deploy_hex = std::fs::read_to_string(contracts_path.join("solc_out/NativeRollup.bin"))
         .expect("Failed to read compiled contract");
     let deploy_bytecode = hex::decode(deploy_hex.trim()).expect("invalid hex in .bin file");
-    let constructor_arg = pre_state_root.as_bytes().to_vec();
-    let init_code: Bytes = [deploy_bytecode, constructor_arg].concat().into();
+    // Constructor args: (bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee)
+    let mut constructor_args = Vec::with_capacity(96);
+    constructor_args.extend_from_slice(pre_state_root.as_bytes()); // bytes32
+    constructor_args.extend_from_slice(&U256::from(30_000_000u64).to_big_endian()); // uint256
+    constructor_args.extend_from_slice(&U256::from(1_000_000_000u64).to_big_endian()); // uint256 (1 gwei)
+    let init_code: Bytes = [deploy_bytecode, constructor_args].concat().into();
 
     let (deploy_tx_hash, contract_address) =
         create_deploy(&eth_client, &signer, init_code, Overrides::default())
@@ -1057,21 +1061,17 @@ async fn test_native_rollup_on_l1() {
     println!("  sendL1Message() tx: {l1_msg_tx_hash:?}");
 
     // 7. Call advance(1, blockParams, transactionsRlp, witnessJson) — 1 L1 message consumed
+    // BlockParams now has 5 fields; blockNumber, blockGasLimit, and parent gas params are tracked on-chain
     let advance_calldata = encode_calldata(
-        "advance(uint256,(bytes32,bytes32,uint256,uint256,address,bytes32,uint256,uint256,uint256,uint256),bytes,bytes)",
+        "advance(uint256,(bytes32,bytes32,address,bytes32,uint256),bytes,bytes)",
         &[
             Value::Uint(U256::from(1)), // 1 L1 message
             Value::Tuple(vec![
                 Value::FixedBytes(Bytes::from(input.post_state_root.as_bytes().to_vec())),
                 Value::FixedBytes(Bytes::from(input.post_receipts_root.as_bytes().to_vec())),
-                Value::Uint(U256::from(input.block_number)),
-                Value::Uint(U256::from(input.block_gas_limit)),
                 Value::Address(input.coinbase),
                 Value::FixedBytes(Bytes::from(input.prev_randao.as_bytes().to_vec())),
                 Value::Uint(U256::from(input.timestamp)),
-                Value::Uint(U256::from(input.parent_base_fee)),
-                Value::Uint(U256::from(input.parent_gas_limit)),
-                Value::Uint(U256::from(input.parent_gas_used)),
             ]),
             Value::Bytes(Bytes::from(transactions_rlp)),
             Value::Bytes(Bytes::from(witness_json)),
@@ -1136,7 +1136,7 @@ async fn test_native_rollup_on_l1() {
     let stored_l1_msg_index = eth_client
         .get_storage_at(
             contract_address,
-            U256::from(3),
+            U256::from(6),
             BlockIdentifier::Tag(BlockTag::Latest),
         )
         .await
@@ -1152,7 +1152,7 @@ async fn test_native_rollup_on_l1() {
     //   keccak256(abi.encode(uint256(1), uint256(4)))
     let mut slot_preimage = [0u8; 64];
     slot_preimage[31] = 1; // key = 1
-    slot_preimage[63] = 4; // mapping base slot = 4
+    slot_preimage[63] = 7; // mapping base slot = 7
     let withdrawal_roots_slot = U256::from_big_endian(&keccak_hash(&slot_preimage));
 
     let stored_withdrawal_root = eth_client
@@ -1183,20 +1183,15 @@ async fn test_native_rollup_on_l1() {
     let block2_coinbase = Address::from_low_u64_be(0xC01);
     let block2_timestamp = block1.header.timestamp + 12;
     let advance2_calldata = encode_calldata(
-        "advance(uint256,(bytes32,bytes32,uint256,uint256,address,bytes32,uint256,uint256,uint256,uint256),bytes,bytes)",
+        "advance(uint256,(bytes32,bytes32,address,bytes32,uint256),bytes,bytes)",
         &[
             Value::Uint(U256::from(0)), // no L1 messages consumed
             Value::Tuple(vec![
                 Value::FixedBytes(Bytes::from(block2_post_state_root.as_bytes().to_vec())),
                 Value::FixedBytes(Bytes::from(block2_receipts_root.as_bytes().to_vec())),
-                Value::Uint(U256::from(2u64)),
-                Value::Uint(U256::from(30_000_000u64)),
                 Value::Address(block2_coinbase),
                 Value::FixedBytes(Bytes::from(H256::zero().as_bytes().to_vec())),
                 Value::Uint(U256::from(block2_timestamp)),
-                Value::Uint(U256::from(block1.header.base_fee_per_gas.unwrap_or(1_000_000_000))),
-                Value::Uint(U256::from(block1.header.gas_limit)),
-                Value::Uint(U256::from(block1.header.gas_used)),
             ]),
             Value::Bytes(Bytes::from(block2_txs_rlp)),
             Value::Bytes(Bytes::from(witness2_json)),
@@ -1265,7 +1260,7 @@ async fn test_native_rollup_on_l1() {
     // 12. Verify withdrawalRoots[2] is non-zero (withdrawal was included)
     let mut slot_preimage_b2 = [0u8; 64];
     slot_preimage_b2[31] = 2; // key = 2 (block number)
-    slot_preimage_b2[63] = 4; // mapping base slot = 4
+    slot_preimage_b2[63] = 7; // mapping base slot = 7
     let withdrawal_roots_slot_b2 = U256::from_big_endian(&keccak_hash(&slot_preimage_b2));
 
     let stored_withdrawal_root_b2 = eth_client

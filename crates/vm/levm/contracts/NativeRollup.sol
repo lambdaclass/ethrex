@@ -12,6 +12,11 @@ pragma solidity ^0.8.27;
 /// The EXECUTE precompile uses the `apply_body` variant: individual block fields
 /// are provided instead of a full RLP-encoded block.
 ///
+/// Parent gas parameters (parentBaseFee, parentGasUsed) and blockGasLimit are
+/// tracked on-chain from previous executions instead of being provided by the
+/// relayer. The contract stores `blockGasLimit` (constant), `lastBaseFeePerGas`,
+/// and `lastGasUsed`, and feeds them to the EXECUTE precompile automatically.
+///
 /// L1 messages are recorded via `sendL1Message(to, gasLimit, data)` or by
 /// sending ETH directly to the contract. Each message is hashed as
 /// keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))
@@ -27,28 +32,29 @@ pragma solidity ^0.8.27;
 /// Storage layout:
 ///   Slot 0: stateRoot (bytes32)
 ///   Slot 1: blockNumber (uint256)
-///   Slot 2: pendingL1Messages (bytes32[])
-///   Slot 3: l1MessageIndex (uint256)
-///   Slot 4: withdrawalRoots (mapping)
-///   Slot 5: claimedWithdrawals (mapping)
-///   Slot 6: _locked (bool)
+///   Slot 2: blockGasLimit (uint256)
+///   Slot 3: lastBaseFeePerGas (uint256)
+///   Slot 4: lastGasUsed (uint256)
+///   Slot 5: pendingL1Messages (bytes32[])
+///   Slot 6: l1MessageIndex (uint256)
+///   Slot 7: withdrawalRoots (mapping)
+///   Slot 8: claimedWithdrawals (mapping)
+///   Slot 9: _locked (bool)
 
 struct BlockParams {
     bytes32 postStateRoot;
     bytes32 postReceiptsRoot;
-    uint256 blockNumber;
-    uint256 blockGasLimit;
     address coinbase;
     bytes32 prevRandao;
     uint256 timestamp;
-    uint256 parentBaseFee;
-    uint256 parentGasLimit;
-    uint256 parentGasUsed;
 }
 
 contract NativeRollup {
     bytes32 public stateRoot;
     uint256 public blockNumber;
+    uint256 public blockGasLimit;
+    uint256 public lastBaseFeePerGas;
+    uint256 public lastGasUsed;
 
     address constant EXECUTE_PRECOMPILE = address(0x0101);
 
@@ -76,8 +82,11 @@ contract NativeRollup {
         _locked = false;
     }
 
-    constructor(bytes32 _initialStateRoot) {
+    constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee) {
         stateRoot = _initialStateRoot;
+        blockGasLimit = _blockGasLimit;
+        lastBaseFeePerGas = _initialBaseFee;
+        lastGasUsed = _blockGasLimit / 2;
     }
 
     /// @notice Send an L1 message to be included in a future L2 block.
@@ -113,7 +122,7 @@ contract NativeRollup {
 
     /// @notice Advance the L2 by one block.
     /// @param _l1MessagesCount Number of pending L1 messages to consume from the queue.
-    /// @param _blockParams Block parameters struct (postStateRoot, postReceiptsRoot, blockNumber, blockGasLimit, coinbase, prevRandao, timestamp, parentBaseFee, parentGasLimit, parentGasUsed).
+    /// @param _blockParams Block parameters struct (postStateRoot, postReceiptsRoot, coinbase, prevRandao, timestamp).
     /// @param _transactions RLP-encoded transaction list.
     /// @param _witness JSON-serialized ExecutionWitness.
     function advance(
@@ -137,6 +146,12 @@ contract NativeRollup {
 
         l1MessageIndex = startIdx + _l1MessagesCount;
 
+        // Read parent gas parameters from storage
+        uint256 nextBlockNumber = blockNumber + 1;
+        uint256 _blockGasLimit = blockGasLimit;
+        uint256 _lastBaseFeePerGas = lastBaseFeePerGas;
+        uint256 _lastGasUsed = lastGasUsed;
+
         // Build EXECUTE precompile calldata with 14 ABI slots:
         //   slots 0-11: static fields
         //   slots 12-13: dynamic offset pointers (transactions, witness)
@@ -144,27 +159,29 @@ contract NativeRollup {
             stateRoot,                        // preStateRoot from contract storage
             _blockParams.postStateRoot,
             _blockParams.postReceiptsRoot,
-            _blockParams.blockNumber,
-            _blockParams.blockGasLimit,
+            nextBlockNumber,                  // blockNumber from storage + 1
+            _blockGasLimit,                   // blockGasLimit from storage
             _blockParams.coinbase,
             _blockParams.prevRandao,
             _blockParams.timestamp,
-            _blockParams.parentBaseFee,
-            _blockParams.parentGasLimit,
-            _blockParams.parentGasUsed,
+            _lastBaseFeePerGas,               // parentBaseFee from storage
+            _blockGasLimit,                   // parentGasLimit = blockGasLimit (constant)
+            _lastGasUsed,                     // parentGasUsed from storage
             l1MessagesRollingHash,
             _transactions,
             _witness
         );
 
         (bool success, bytes memory result) = EXECUTE_PRECOMPILE.call(input);
-        require(success && result.length == 160, "EXECUTE precompile verification failed");
+        require(success && result.length == 192, "EXECUTE precompile verification failed");
 
-        // Decode new state root, block number, withdrawal root, gas used, and burned fees from precompile return
-        (bytes32 newStateRoot, uint256 newBlockNumber, bytes32 withdrawalRoot, , uint256 burnedFees) = abi.decode(result, (bytes32, uint256, bytes32, uint256, uint256));
+        // Decode new state root, block number, withdrawal root, gas used, burned fees, and base fee from precompile return
+        (bytes32 newStateRoot, uint256 newBlockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees, uint256 baseFeePerGas) = abi.decode(result, (bytes32, uint256, bytes32, uint256, uint256, uint256));
 
         stateRoot = newStateRoot;
         blockNumber = newBlockNumber;
+        lastGasUsed = gasUsed;
+        lastBaseFeePerGas = baseFeePerGas;
         withdrawalRoots[newBlockNumber] = withdrawalRoot;
 
         // Credit burned fees to the relayer (msg.sender) so they can be reimbursed on L1.

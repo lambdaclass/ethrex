@@ -120,7 +120,7 @@ pub struct ExecutePrecompileInput {
 /// stored L1 message hashes. The precompile verifies it against L1MessageProcessed
 /// events emitted by the L2Bridge predeploy during block execution.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees)` -- 160 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees, uint256 baseFeePerGas)` -- 192 bytes.
 pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
@@ -287,11 +287,12 @@ fn custom_err(msg: String) -> VMError {
 /// Implements the `apply_body` variant: receives individual block fields,
 /// builds a synthetic block header internally, re-executes, and verifies.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees)` -- 160 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees, uint256 baseFeePerGas)` -- 192 bytes.
 /// The post-state root is verified against the actual computed state root after
 /// execution. The withdrawal root is computed from WithdrawalInitiated events
 /// emitted during block execution. The burned fees are `base_fee_per_gas *
-/// block_gas_used` (EIP-1559 base fees are constant per block).
+/// block_gas_used` (EIP-1559 base fees are constant per block). The base fee
+/// per gas is returned so the L1 contract can track it on-chain for the next block.
 pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let ExecutePrecompileInput {
         pre_state_root,
@@ -427,8 +428,8 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         .checked_mul(U256::from(block_gas_used))
         .ok_or(VMError::Internal(InternalError::Overflow))?;
 
-    // 10. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed, burnedFees) -- 160 bytes
-    let mut result = Vec::with_capacity(160);
+    // 10. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed, burnedFees, baseFeePerGas) -- 192 bytes
+    let mut result = Vec::with_capacity(192);
     result.extend_from_slice(expected_post_state_root.as_bytes());
     // block_number as uint256: 24 zero bytes + 8-byte big-endian
     result.extend_from_slice(&[0u8; 24]);
@@ -440,6 +441,9 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     result.extend_from_slice(&block_gas_used.to_be_bytes());
     // burnedFees as uint256: 32 bytes big-endian
     result.extend_from_slice(&burned_fees.to_big_endian());
+    // baseFeePerGas as uint256: 24 zero bytes + 8-byte big-endian
+    result.extend_from_slice(&[0u8; 24]);
+    result.extend_from_slice(&base_fee_per_gas.to_be_bytes());
     Ok(Bytes::from(result))
 }
 
