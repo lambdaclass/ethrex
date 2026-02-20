@@ -31,7 +31,7 @@ use spawned_concurrency::{
     },
 };
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -56,6 +56,9 @@ const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 /// Per spec, good timeout is 500ms for single requests, 1s for handshakes.
 /// Using 2s to be conservative.
 const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Minimum interval between WHOAREYOU packets to the same IP address.
+/// Prevents amplification attacks where attackers spoof source IPs.
+const WHOAREYOU_RATE_LIMIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -111,6 +114,8 @@ pub struct DiscoveryServer {
     pending_by_nonce: FxHashMap<[u8; 12], (Node, Message, Instant)>,
     /// Pending WhoAreYou challenges awaiting Handshake response, keyed by src_id.
     pending_challenges: FxHashMap<H256, (Vec<u8>, Instant)>,
+    /// Tracks last WHOAREYOU send time per source IP to prevent amplification attacks.
+    whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
 }
 
 impl DiscoveryServer {
@@ -144,6 +149,7 @@ impl DiscoveryServer {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -419,7 +425,7 @@ impl DiscoveryServer {
             }
         }
         Message::FindNode(FindNodeMessage {
-            req_id: Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec()),
+            req_id: generate_req_id(),
             distances,
         })
     }
@@ -477,7 +483,25 @@ impl DiscoveryServer {
             .record_pong_received(&sender_id, pong_message.req_id)
             .await?;
 
-        // TODO: If sender's enr_seq > our cached version, request updated ENR
+        // If sender's enr_seq is higher than our cached version, request updated ENR.
+        if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
+            // If we have no cached record, default to 0 so any PONG with enr_seq > 0
+            // triggers a FINDNODE to fetch the ENR we're missing.
+            let cached_seq = contact.record.as_ref().map_or(0, |r| r.seq);
+            if pong_message.enr_seq > cached_seq {
+                trace!(
+                    from = %sender_id,
+                    cached_seq,
+                    pong_seq = pong_message.enr_seq,
+                    "ENR seq mismatch, requesting updated ENR (FINDNODE distance 0)"
+                );
+                let find_node = Message::FindNode(FindNodeMessage {
+                    req_id: generate_req_id(),
+                    distances: vec![0],
+                });
+                self.send_ordinary(find_node, &contact.node).await?;
+            }
+        }
 
         Ok(())
     }
@@ -535,8 +559,7 @@ impl DiscoveryServer {
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
-        let mut rng = OsRng;
-        let req_id = Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec());
+        let req_id = generate_req_id();
 
         let ping = Message::Ping(PingMessage {
             req_id: req_id.clone(),
@@ -623,6 +646,23 @@ impl DiscoveryServer {
         src_id: H256,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
+        // Rate limit: prevent amplification attacks by limiting WHOAREYOU per IP
+        let ip = addr.ip();
+        let now = Instant::now();
+
+        if let Some(last_sent) = self.whoareyou_rate_limit.get(&ip)
+            && now.duration_since(*last_sent) < WHOAREYOU_RATE_LIMIT
+        {
+            trace!(
+                to_ip = %ip,
+                "Rate limiting WHOAREYOU packet (amplification attack prevention)"
+            );
+            return Ok(());
+        }
+
+        // Update rate limit tracker
+        self.whoareyou_rate_limit.insert(ip, now);
+
         let mut rng = OsRng;
 
         // Get the ENR sequence number we have for this node (or 0 if unknown)
@@ -682,9 +722,9 @@ impl DiscoveryServer {
         nonce
     }
 
-    /// Remove stale entries from the pending_by_nonce cache.
+    /// Remove stale entries from caches.
     /// Called periodically to prevent unbounded growth.
-    fn cleanup_pending_cache(&mut self) {
+    fn cleanup_stale_entries(&mut self) {
         let now = Instant::now();
 
         // Clean pending outgoing messages
@@ -703,11 +743,17 @@ impl DiscoveryServer {
             });
         let removed_challenges = before_challenges - self.pending_challenges.len();
 
-        let total_removed = removed_messages + removed_challenges;
+        // Clean stale WHOAREYOU rate limit entries
+        let before_rate_limits = self.whoareyou_rate_limit.len();
+        self.whoareyou_rate_limit
+            .retain(|_ip, timestamp| now.duration_since(*timestamp) < WHOAREYOU_RATE_LIMIT);
+        let removed_rate_limits = before_rate_limits - self.whoareyou_rate_limit.len();
+
+        let total_removed = removed_messages + removed_challenges + removed_rate_limits;
         if total_removed > 0 {
             trace!(
-                "Cleaned up {} stale entries from pending cache ({} messages, {} challenges)",
-                total_removed, removed_messages, removed_challenges
+                "Cleaned up {} stale entries ({} messages, {} challenges, {} rate limits)",
+                total_removed, removed_messages, removed_challenges, removed_rate_limits
             );
         }
     }
@@ -823,7 +869,7 @@ impl GenServer for DiscoveryServer {
                     .prune()
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
-                self.cleanup_pending_cache();
+                self.cleanup_stale_entries();
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }
@@ -857,17 +903,24 @@ pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f6
     )
 }
 
+fn generate_req_id() -> Bytes {
+    let mut rng = OsRng;
+    Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        discv5::server::DiscoveryServer,
+        discv5::{messages::PongMessage, server::DiscoveryServer, session::Session},
         peer_table::PeerTable,
         types::{Node, NodeRecord},
     };
+    use bytes::Bytes;
+    use ethrex_common::H256;
     use ethrex_storage::{EngineType, Store};
     use rand::{SeedableRng, rngs::StdRng};
     use secp256k1::SecretKey;
-    use std::sync::Arc;
+    use std::{net::SocketAddr, sync::Arc};
     use tokio::net::UdpSocket;
 
     #[tokio::test]
@@ -891,6 +944,7 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
         };
 
         let n1 = server.next_nonce(&mut rng);
@@ -899,5 +953,172 @@ mod tests {
         assert_eq!(&n1[..4], &[0, 0, 0, 0]);
         assert_eq!(&n2[..4], &[0, 0, 0, 1]);
         assert_ne!(&n1[4..], &n2[4..]);
+    }
+
+    #[tokio::test]
+    async fn test_whoareyou_rate_limiting() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        // Use port 0 to let the OS assign an available port
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+        };
+
+        let nonce = [0u8; 12];
+        let addr: SocketAddr = "192.168.1.1:30303".parse().unwrap();
+        let src_id1 = H256::from_low_u64_be(1);
+        let src_id2 = H256::from_low_u64_be(2);
+        let src_id3 = H256::from_low_u64_be(3);
+
+        // Initially, rate limit map should be empty
+        assert!(server.whoareyou_rate_limit.is_empty());
+
+        // First call should NOT be rate limited
+        let _ = server.send_who_are_you(nonce, src_id1, addr).await;
+
+        // Should have recorded the IP in rate limit map
+        assert!(server.whoareyou_rate_limit.contains_key(&addr.ip()));
+        // Should have added a pending challenge (proves packet was processed)
+        assert!(server.pending_challenges.contains_key(&src_id1));
+
+        // Second call with SAME IP should be rate limited
+        let _ = server.send_who_are_you(nonce, src_id2, addr).await;
+
+        // Should NOT have added a pending challenge for src_id2 (rate limited)
+        assert!(!server.pending_challenges.contains_key(&src_id2));
+
+        // Call with DIFFERENT IP should NOT be rate limited
+        let addr2: SocketAddr = "192.168.1.2:30303".parse().unwrap();
+        let _ = server.send_who_are_you(nonce, src_id3, addr2).await;
+
+        // Should have added a pending challenge for the different IP
+        assert!(server.pending_challenges.contains_key(&src_id3));
+        // Both IPs should now be in the rate limit map
+        assert_eq!(server.whoareyou_rate_limit.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_enr_update_request_on_pong() {
+        // Create local node
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        // Create remote node - use a template node for IP/ports, but the record will use remote_signer's key
+        let remote_signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let remote_node_template = Node::from_enode_url(
+            "enode://a448f24c6d18e575453db127a3d8eeeea3e3426f0db43bd52067d85cc5a1e87ad09f44b2bbaa66bb3a8c47cff8082ca4cde4b03f5ba52c1e92b3d2b9125d6da5@127.0.0.1:30304",
+        ).expect("Bad enode url");
+
+        // Create NodeRecord for the remote node with seq = 5
+        // Note: from_node uses remote_signer's public key, so we derive node_id from the record
+        let remote_record =
+            NodeRecord::from_node(&remote_node_template, 5, &remote_signer).unwrap();
+        let remote_node = Node::from_enr(&remote_record).expect("Should create node from record");
+        let remote_node_id = remote_node.node_id();
+
+        let mut peer_table = PeerTable::spawn(
+            10,
+            Store::new("", EngineType::InMemory).expect("Failed to create store"),
+        );
+
+        // Add the remote node as a contact with its ENR record
+        peer_table
+            .new_contact_records(vec![remote_record], local_node.node_id())
+            .await
+            .unwrap();
+
+        // Set up a session for the remote node (required for send_ordinary)
+        let session = Session {
+            outbound_key: [0u8; 16],
+            inbound_key: [0u8; 16],
+        };
+        peer_table
+            .set_session_info(remote_node_id, session)
+            .await
+            .unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table,
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+        };
+
+        // Verify the contact was added
+        let contact = server.peer_table.get_contact(remote_node_id).await.unwrap();
+        assert!(
+            contact.is_some(),
+            "Contact should have been added to peer_table"
+        );
+        let contact = contact.unwrap();
+        assert_eq!(
+            contact.record.as_ref().map(|r| r.seq),
+            Some(5),
+            "Contact should have ENR with seq=5"
+        );
+
+        // Test 1: PONG with same enr_seq should NOT trigger FINDNODE
+        let pong_same_seq = PongMessage {
+            req_id: Bytes::from(vec![1, 2, 3]),
+            enr_seq: 5, // Same as cached
+            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
+        };
+        let initial_pending_count = server.pending_by_nonce.len();
+        server
+            .handle_pong(pong_same_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for matching enr_seq");
+        // No new message should be pending (no FINDNODE sent)
+        assert_eq!(server.pending_by_nonce.len(), initial_pending_count);
+
+        // Test 2: PONG with higher enr_seq should trigger FINDNODE
+        let pong_higher_seq = PongMessage {
+            req_id: Bytes::from(vec![4, 5, 6]),
+            enr_seq: 10, // Higher than cached (5)
+            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
+        };
+        server
+            .handle_pong(pong_higher_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for higher enr_seq");
+        // A new message should be pending (FINDNODE sent)
+        assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
+
+        // Test 3: PONG with lower enr_seq should NOT trigger FINDNODE
+        let pong_lower_seq = PongMessage {
+            req_id: Bytes::from(vec![7, 8, 9]),
+            enr_seq: 3, // Lower than cached (5)
+            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
+        };
+        server
+            .handle_pong(pong_lower_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for lower enr_seq");
+        // No new message should be pending
+        assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
     }
 }

@@ -1,15 +1,19 @@
 use crate::authentication::authenticate;
+use crate::debug::block_access_list::BlockAccessListRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
-use crate::engine::payload::{GetPayloadV5Request, NewPayloadV5Request};
+use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
-    fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
+    fork_choice::{
+        ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3, ForkChoiceUpdatedV4,
+    },
     payload::{
-        GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
+        GetPayloadBodiesByHashV1Request, GetPayloadBodiesByHashV2Request,
+        GetPayloadBodiesByRangeV1Request, GetPayloadBodiesByRangeV2Request, GetPayloadV1Request,
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
@@ -352,7 +356,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::MissingParam(_) => "MissingParam",
         RpcErr::TooLargeRequest => "TooLargeRequest",
         RpcErr::BadHexFormat(_) => "BadHexFormat",
-        RpcErr::UnsuportedFork(_) => "UnsuportedFork",
+        RpcErr::UnsupportedFork(_) => "UnsupportedFork",
         RpcErr::Internal(_) => "Internal",
         RpcErr::Vm(_) => "Vm",
         RpcErr::Revert { .. } => "Revert",
@@ -770,6 +774,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
+        "debug_getBlockAccessList" => BlockAccessListRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
@@ -797,6 +802,7 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
         "engine_newPayloadV5" => NewPayloadV5Request::call(req, context).await,
         "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
@@ -805,6 +811,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
+        "engine_getPayloadV6" => GetPayloadV6Request::call(req, context).await,
         "engine_getPayloadV5" => GetPayloadV5Request::call(req, context).await,
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
@@ -815,6 +822,12 @@ pub async fn map_engine_requests(
         }
         "engine_getPayloadBodiesByRangeV1" => {
             GetPayloadBodiesByRangeV1Request::call(req, context).await
+        }
+        "engine_getPayloadBodiesByHashV2" => {
+            GetPayloadBodiesByHashV2Request::call(req, context).await
+        }
+        "engine_getPayloadBodiesByRangeV2" => {
+            GetPayloadBodiesByRangeV2Request::call(req, context).await
         }
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,

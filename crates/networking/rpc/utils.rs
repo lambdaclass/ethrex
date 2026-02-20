@@ -39,7 +39,7 @@ pub enum RpcErr {
     #[error("Bad hex format: {0}")]
     BadHexFormat(u64),
     #[error("Unsupported fork: {0}")]
-    UnsuportedFork(String),
+    UnsupportedFork(String),
     #[error("Internal Error: {0}")]
     Internal(String),
     #[error("Vm execution error: {0}")]
@@ -86,7 +86,7 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: "Too large request".to_string(),
             },
-            RpcErr::UnsuportedFork(context) => RpcErrorMetadata {
+            RpcErr::UnsupportedFork(context) => RpcErrorMetadata {
                 code: -38005,
                 data: None,
                 message: format!("Unsupported fork: {context}"),
@@ -150,7 +150,7 @@ impl From<RpcErr> for RpcErrorMetadata {
             RpcErr::InvalidPayloadAttributes(data) => RpcErrorMetadata {
                 code: -38003,
                 data: Some(data),
-                message: "Invalid forkchoice state".to_string(),
+                message: "Invalid payload attributes".to_string(),
             },
             RpcErr::UnknownPayload(context) => RpcErrorMetadata {
                 code: -38001,

@@ -69,8 +69,15 @@ jobs:
           fi
           echo "build_profile=$profile" >> "$GITHUB_OUTPUT"
 
+  engine-restart:
+    name: Restart Kurtosis Engine
+    runs-on: ethrex-sync
+    steps:
+      - name: Restart engine to match CLI version
+        run: kurtosis engine restart
+
   sync-lighthouse:
-    needs: prepare
+    needs: [prepare, engine-restart]
     name: Sync ${{ matrix.network }} - Lighthouse
     runs-on: ethrex-sync
     strategy:
@@ -85,6 +92,12 @@ jobs:
         id: start
         run: |
           echo "timestamp=$EPOCHSECONDS" >> "$GITHUB_OUTPUT"
+
+      - name: Cleanup stale Docker and Kurtosis resources
+        run: |
+          kurtosis engine stop || true
+          docker network prune -f
+          docker image prune -f
 
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
@@ -111,7 +124,7 @@ jobs:
           bash .github/scripts/notify_snapsync_run.sh
 
   sync-prysm:
-    needs: prepare
+    needs: [prepare, engine-restart]
     name: Sync ${{ matrix.network }} - Prysm
     runs-on: ethrex-sync
     strategy:
@@ -126,6 +139,12 @@ jobs:
         id: start
         run: |
           echo "timestamp=$EPOCHSECONDS" >> "$GITHUB_OUTPUT"
+
+      - name: Cleanup stale Docker and Kurtosis resources
+        run: |
+          kurtosis engine stop || true
+          docker network prune -f
+          docker image prune -f
 
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
