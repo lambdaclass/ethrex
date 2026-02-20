@@ -41,8 +41,6 @@ pub struct Environment {
     pub block_gas_limit: u64,
     pub is_privileged: bool,
     pub fee_token: Option<Address>,
-    /// When true, skip sender balance validation (used during prewarming).
-    pub skip_balance_check: bool,
 }
 
 /// This struct holds special configuration variables specific to the
