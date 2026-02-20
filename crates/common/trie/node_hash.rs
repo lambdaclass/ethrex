@@ -40,6 +40,7 @@ impl AsRef<[u8]> for NodeHash {
 
 impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
+    #[inline]
     pub fn from_encoded(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
             let hash = keccak_hash(encoded);

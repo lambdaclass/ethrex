@@ -89,6 +89,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -696,38 +697,49 @@ impl Blockchain {
             }
         }
 
-        // Phase 2: Compute storage roots and update state trie
+        // Phase 2: Compute storage roots in parallel, then update state trie
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
         // Track which cleared_storage accounts have been processed
         let mut processed_cleared: rustc_hash::FxHashSet<H256> = Default::default();
 
-        // Process accounts with storage changes
-        for (hashed_address, sparse) in &mut storage_sparse_tries {
-            let storage_root = sparse.root()?;
-            let updates = sparse.collect_updates();
-            storage_updates.push((*hashed_address, updates));
+        // Phase 2a: Compute all storage roots and collect updates in parallel.
+        // Each SparseTrie is independent so they can be processed concurrently.
+        let mut storage_vec: Vec<(H256, _)> = storage_sparse_tries.drain().collect();
+        let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>)>, TrieError> = storage_vec
+            .par_iter_mut()
+            .map(|(addr, sparse)| {
+                let root = sparse.root()?;
+                let updates = sparse.collect_updates();
+                Ok((*addr, root, updates))
+            })
+            .collect();
+        let storage_results = storage_results?;
+
+        // Phase 2b: Update state trie sequentially with computed storage roots
+        for (hashed_address, storage_root, updates) in storage_results {
+            storage_updates.push((hashed_address, updates));
 
             // Build the account state with the new storage root
-            if let Entry::Vacant(e) = account_state_cache.entry(*hashed_address) {
+            if let Entry::Vacant(e) = account_state_cache.entry(hashed_address) {
                 let state = match state_db_trie.get(hashed_address.as_bytes())? {
                     Some(rlp) => Some(AccountState::decode(&rlp)?),
                     None => None,
                 };
                 e.insert(state);
             }
-            let mut account_state = account_state_cache[hashed_address].unwrap_or_default();
+            let mut account_state = account_state_cache[&hashed_address].unwrap_or_default();
             account_state.storage_root = storage_root;
 
             // Apply info changes if any
-            if let Some(Some(info)) = account_infos.remove(hashed_address) {
+            if let Some(Some(info)) = account_infos.remove(&hashed_address) {
                 account_state.nonce = info.nonce;
                 account_state.balance = info.balance;
                 account_state.code_hash = info.code_hash;
             }
 
-            if cleared_storage.contains(hashed_address) {
-                processed_cleared.insert(*hashed_address);
+            if cleared_storage.contains(&hashed_address) {
+                processed_cleared.insert(hashed_address);
             }
 
             let path = Nibbles::from_bytes(hashed_address.as_bytes());
