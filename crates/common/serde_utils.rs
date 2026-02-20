@@ -316,6 +316,43 @@ pub mod u128 {
             serializer.serialize_str(&format!("{value:#x}"))
         }
     }
+
+    pub mod hex_str_opt {
+        use serde::Serialize;
+
+        use super::*;
+
+        pub fn serialize<S>(value: &Option<u128>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            Option::<String>::serialize(&value.map(|v| format!("{v:#x}")), serializer)
+        }
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<u128>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value: Option<serde_json::Value> = Option::deserialize(d)?;
+            match value {
+                Some(serde_json::Value::Number(n)) => {
+                    if let Some(n) = n.as_u64() {
+                        Ok(Some(n as u128))
+                    } else if let Some(f) = n.as_f64() {
+                        Ok(Some(f as u128))
+                    } else {
+                        Err(D::Error::custom("Failed to deserialize u128 number"))
+                    }
+                }
+                Some(serde_json::Value::String(s)) if !s.is_empty() => {
+                    u128::from_str_radix(s.trim_start_matches("0x"), 16)
+                        .map_err(|_| D::Error::custom("Failed to deserialize u128 value"))
+                        .map(Some)
+                }
+                _ => Ok(None),
+            }
+        }
+    }
 }
 
 pub mod vec_u8 {
