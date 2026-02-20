@@ -153,6 +153,7 @@ jobs:
           dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main
           variant: l1
+          cache_write: ${{ github.event.pull_request.head.repo.fork != true }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -186,6 +187,7 @@ jobs:
           artifact_path: ethrex_image_l2.tar
           build_args: BUILD_FLAGS=--features l2,l2-sql
           variant: l2
+          cache_write: ${{ github.event.pull_request.head.repo.fork != true }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
