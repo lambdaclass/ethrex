@@ -53,7 +53,8 @@ jobs:
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --no-progress --exclude 'localhost' docs/
+          # Medium returns 403 to automated link checkers
+          args: --no-progress --exclude 'localhost' --exclude 'medium.com' docs/
           fail: true
 
   deploy:
