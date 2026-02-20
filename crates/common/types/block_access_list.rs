@@ -332,7 +332,7 @@ impl AccountChanges {
         self.code_changes.push(change);
     }
 
-    /// Returns an iterator over all unique storage slots that need prefetching
+    /// Returns an iterator over all storage slots that need prefetching
     /// (both reads and writes need their pre-state loaded).
     pub fn all_storage_slots(&self) -> impl Iterator<Item = U256> + '_ {
         self.storage_reads
