@@ -380,6 +380,14 @@ impl LEVM {
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
                 for tx in txs {
+                    // Fast-path: plain ether transfers only need to warm sender + receiver
+                    if tx.data().is_empty() {
+                        if let TxKind::Call(to) = tx.to() {
+                            let _ = group_db.get_account(sender);
+                            let _ = group_db.get_account(to);
+                            continue;
+                        }
+                    }
                     let _ = Self::execute_tx_in_block(
                         tx,
                         sender,
