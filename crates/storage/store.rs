@@ -1824,6 +1824,73 @@ impl Store {
         Ok((storage_tries, account_updates_list))
     }
 
+    /// Like `apply_account_updates_from_trie_with_witness`, but optimized for the witness-only path.
+    /// Uses `hash_no_commit()` instead of `collect_changes_since_last_hash()` to avoid
+    /// materializing the changed-nodes list (which the caller discards anyway).
+    pub fn apply_account_updates_for_witness(
+        &self,
+        mut state_trie: Trie,
+        account_updates: &[AccountUpdate],
+        mut storage_tries: StorageTries,
+    ) -> Result<StorageTries, StoreError> {
+        let state_root = state_trie.hash_no_commit();
+
+        for update in account_updates.iter() {
+            let hashed_address = hash_address(&update.address);
+
+            if update.removed {
+                state_trie.remove(&hashed_address)?;
+                continue;
+            }
+
+            let mut account_state = match state_trie.get(&hashed_address)? {
+                Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                None => AccountState::default(),
+            };
+
+            if update.removed_storage {
+                account_state.storage_root = *EMPTY_TRIE_HASH;
+            }
+
+            if let Some(info) = &update.info {
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+            }
+
+            if !update.added_storage.is_empty() {
+                let (_witness, storage_trie) = match storage_tries.entry(update.address) {
+                    Entry::Occupied(value) => value.into_mut(),
+                    Entry::Vacant(vacant) => {
+                        let trie = self.open_storage_trie(
+                            H256::from_slice(&hashed_address),
+                            state_root,
+                            account_state.storage_root,
+                        )?;
+                        vacant.insert(TrieLogger::open_trie(trie))
+                    }
+                };
+
+                for (storage_key, storage_value) in &update.added_storage {
+                    let hashed_key = hash_key(storage_key);
+                    if storage_value.is_zero() {
+                        storage_trie.remove(&hashed_key)?;
+                    } else {
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    }
+                }
+
+                // Only compute hash, don't materialize changed nodes
+                account_state.storage_root = storage_trie.hash_no_commit();
+            }
+
+            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+        }
+
+        // Skip state trie hash — caller doesn't need the AccountUpdatesList
+        Ok(storage_tries)
+    }
+
     /// Adds all genesis accounts and returns the genesis block's state_root
     pub async fn setup_genesis_state_trie(
         &self,

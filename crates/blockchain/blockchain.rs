@@ -1274,9 +1274,26 @@ impl Blockchain {
         parent_header: BlockHeader,
         logger: &DatabaseLogger,
     ) -> Result<ExecutionWitness, ChainError> {
+        Self::generate_witness_impl(
+            &self.storage,
+            account_updates,
+            block,
+            parent_header,
+            logger,
+        )
+    }
+
+    /// Static implementation of witness generation that takes `Store` directly.
+    /// This allows running witness gen on a background thread without needing `&self`.
+    fn generate_witness_impl(
+        storage: &Store,
+        account_updates: Vec<AccountUpdate>,
+        block: &Block,
+        parent_header: BlockHeader,
+        logger: &DatabaseLogger,
+    ) -> Result<ExecutionWitness, ChainError> {
         // Get state at previous block
-        let trie = self
-            .storage
+        let trie = storage
             .state_trie(parent_header.hash())
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
@@ -1285,7 +1302,6 @@ impl Blockchain {
         let (trie_witness, trie) = TrieLogger::open_trie(trie);
 
         let mut touched_account_storage_slots = BTreeMap::new();
-        // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
 
         // Store the root node in case the block is empty and the witness does not record any nodes
@@ -1341,7 +1357,7 @@ impl Blockchain {
             // Get storage trie at before updates
             if !acc_keys.is_empty()
                 && let Ok(Some(storage_trie)) =
-                    self.storage.storage_trie(parent_header.hash(), *account)
+                    storage.storage_trie(parent_header.hash(), *account)
             {
                 let (storage_trie_witness, storage_trie) = TrieLogger::open_trie(storage_trie);
                 // Access all the keys
@@ -1365,8 +1381,7 @@ impl Blockchain {
             })?
             .iter()
         {
-            let code = self
-                .storage
+            let code = storage
                 .get_account_code(*code_hash)
                 .map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to get account code".to_string())
@@ -1377,13 +1392,12 @@ impl Blockchain {
             codes.push(code.bytecode.to_vec());
         }
 
-        // Apply account updates to the trie recording all the necessary nodes to do so
-        let (storage_tries_after_update, _account_updates_list) =
-            self.storage.apply_account_updates_from_trie_with_witness(
-                trie,
-                &account_updates,
-                used_storage_tries,
-            )?;
+        // Apply account updates using witness-optimized path (skips collect_changes_since_last_hash)
+        let storage_tries_after_update = storage.apply_account_updates_for_witness(
+            trie,
+            &account_updates,
+            used_storage_tries,
+        )?;
 
         for (address, (witness, _storage_trie)) in storage_tries_after_update {
             let mut witness = witness.lock().map_err(|_| {
@@ -1412,7 +1426,7 @@ impl Blockchain {
             used_trie_nodes.push((*root).clone());
         }
 
-        // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
+        // Collect necessary block headers (from first BLOCKHASH reference up to parent)
         let mut block_headers_bytes = Vec::new();
 
         let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
@@ -1426,14 +1440,11 @@ impl Blockchain {
 
         let mut current_header = block.header.clone();
 
-        // Headers from latest - 1 until we reach first block header we need.
-        // We do it this way because we want to fetch headers by hash, not by number
         while current_header.hash() != first_needed_block_hash {
             let parent_hash = current_header.parent_hash;
             let current_number = current_header.number - 1;
 
-            current_header = self
-                .storage
+            current_header = storage
                 .get_block_header_by_hash(parent_hash)?
                 .ok_or_else(|| {
                     ChainError::WitnessGeneration(format!(
@@ -1502,7 +1513,7 @@ impl Blockchain {
             codes,
             block_headers_bytes,
             first_block_number: parent_header.number,
-            chain_config: self.storage.get_chain_config(),
+            chain_config: storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
             keys,
@@ -1625,18 +1636,42 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
+        // Spawn witness generation on a background thread so store_block proceeds immediately
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
         {
             let block_hash = block.hash();
-            let witness = self.generate_witness_from_account_updates(
-                account_updates,
-                &block,
-                parent_header,
-                &logger,
-            )?;
-            self.storage
-                .store_witness(block_hash, block_number, witness)?;
+            let block_clone = block.clone();
+            let parent_header_clone = parent_header.clone();
+            let storage = self.storage.clone();
+            std::thread::Builder::new()
+                .name("witness_generator".to_string())
+                .spawn(move || {
+                    let witness_start = Instant::now();
+                    match Self::generate_witness_impl(
+                        &storage,
+                        account_updates,
+                        &block_clone,
+                        parent_header_clone,
+                        &logger,
+                    ) {
+                        Ok(witness) => {
+                            let gen_ms = witness_start.elapsed().as_millis();
+                            let store_start = Instant::now();
+                            if let Err(e) =
+                                storage.store_witness(block_hash, block_number, witness)
+                            {
+                                warn!("Background witness store failed: {e}");
+                            }
+                            info!(
+                                "  [witness-bg] block {block_number}: gen={gen_ms} ms, store={} ms",
+                                store_start.elapsed().as_millis()
+                            );
+                        }
+                        Err(e) => warn!("Background witness generation failed for block {block_number}: {e}"),
+                    }
+                })
+                .ok();
         };
 
         let result = self.store_block(block, account_updates_list, res);
