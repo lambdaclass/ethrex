@@ -47,11 +47,12 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, Mutex,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
 };
+use arc_swap::ArcSwap;
 use tracing::{debug, error, info};
 
 /// Maximum number of execution witnesses to keep in the database
@@ -157,7 +158,7 @@ pub struct Store {
     /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
     /// Cache for trie nodes from recent blocks.
-    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<ArcSwap<TrieLayerCache>>,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     /// Channel for sending trie updates to the background worker.
@@ -171,7 +172,7 @@ pub struct Store {
     /// - Sync operations (must be idempotent anyway)
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
-    last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
+    last_computed_flatkeyvalue: Arc<ArcSwap<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
@@ -1454,10 +1455,10 @@ impl Store {
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_cache: Arc::new(ArcSwap::from_pointee(TrieLayerCache::new(commit_threshold))),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
-            last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
+            last_computed_flatkeyvalue: Arc::new(ArcSwap::from_pointee(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
@@ -2088,11 +2089,7 @@ impl Store {
 
         // Pre-acquire shared resources once for both trie opens
         let read_view = self.backend.begin_read()?;
-        let cache = self
-            .trie_cache
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
+        let cache = self.trie_cache.load_full();
         let last_written = self.last_written()?;
         let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
 
@@ -2447,10 +2444,7 @@ impl Store {
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache.load_full(),
             Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
@@ -2479,10 +2473,7 @@ impl Store {
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache.load_full(),
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
@@ -2502,10 +2493,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache.load_full(),
             Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
@@ -2588,10 +2576,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache.load_full(),
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
@@ -2708,11 +2693,7 @@ impl Store {
     }
 
     fn last_written(&self) -> Result<Vec<u8>, StoreError> {
-        let last_computed_flatkeyvalue = self
-            .last_computed_flatkeyvalue
-            .read()
-            .map_err(|_| StoreError::LockError)?;
-        Ok(last_computed_flatkeyvalue.clone())
+        Ok((**self.last_computed_flatkeyvalue.load()).clone())
     }
 
     fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
@@ -2736,7 +2717,7 @@ struct TrieUpdate {
 fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
-    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    trie_cache: &Arc<ArcSwap<TrieLayerCache>>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2758,14 +2739,11 @@ fn apply_trie_updates(
         .chain(account_updates)
         .collect();
     // Read-Copy-Update the trie cache with a new layer.
-    let trie = trie_cache
-        .read()
-        .map_err(|_| StoreError::LockError)?
-        .clone();
+    let trie = trie_cache.load_full();
     let mut trie_mut = (*trie).clone();
     trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
     let trie = Arc::new(trie_mut);
-    *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
+    trie_cache.store(trie.clone());
     // Update finished, signal block processing.
     result_sender
         .send(Ok(()))
@@ -2830,7 +2808,7 @@ fn apply_trie_updates(
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
     // Phase 3: update diff layers with the removal of bottom layer.
-    *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+    trie_cache.store(Arc::new(trie_mut));
     Ok(())
 }
 
@@ -2838,7 +2816,7 @@ fn apply_trie_updates(
 // with the other end of `control_rx`
 fn flatkeyvalue_generator(
     backend: &Arc<dyn StorageBackend>,
-    last_computed_fkv: &RwLock<Vec<u8>>,
+    last_computed_fkv: &ArcSwap<Vec<u8>>,
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     info!("Generation of FlatKeyValue started.");
@@ -2907,9 +2885,7 @@ fn flatkeyvalue_generator(
             if ctr > 10_000 {
                 write_txn.commit()?;
                 write_txn = backend.begin_write()?;
-                *last_computed_fkv
-                    .write()
-                    .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
+                last_computed_fkv.store(Arc::new(path.as_ref().to_vec()));
                 ctr = 0;
             }
 
@@ -2938,9 +2914,7 @@ fn flatkeyvalue_generator(
                 if ctr > 10_000 {
                     write_txn.commit()?;
                     write_txn = backend.begin_write()?;
-                    *last_computed_fkv
-                        .write()
-                        .map_err(|_| StoreError::LockError)? = key.into_vec();
+                    last_computed_fkv.store(Arc::new(key.into_vec()));
                     ctr = 0;
                 }
                 fkv_check_for_stop_msg(control_rx)?;
@@ -2967,9 +2941,7 @@ fn flatkeyvalue_generator(
             Ok(()) => {
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
                 write_txn.commit()?;
-                *last_computed_fkv
-                    .write()
-                    .map_err(|_| StoreError::LockError)? = vec![0xff; 131];
+                last_computed_fkv.store(Arc::new(vec![0xff; 131]));
                 info!("FlatKeyValue generation finished.");
                 return Ok(());
             }
