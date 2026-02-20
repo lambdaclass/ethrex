@@ -125,8 +125,7 @@ contract NativeRollup {
     }
 
     /// @notice Advance the L2 by one block.
-    /// @dev The relayer chooses how many L1 messages to consume via `_l1MessagesCount`
-    ///      (can be 0). The Merkle root over those messages is computed here and anchored
+    /// @dev The Merkle root over consumed L1 messages is computed here and anchored
     ///      in the L1Anchor predeploy BEFORE the block transactions execute. This means
     ///      the block builder must know the Merkle root at block construction time and
     ///      include the matching processL1Message() transactions in the block — if they
