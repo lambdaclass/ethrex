@@ -137,29 +137,30 @@ fn build_parallel_groups(
         }
     }
 
-    // Build a map of address → written storage slots (from Phase 1 write sets).
-    // Used in Phase 2 to detect RAW dependencies for directly-accessed contracts:
-    // a tx that calls contract A might internally read any storage slot of A, so we
-    // conservatively add all of A's written slots to that tx's read set.
-    let mut addr_written_slots: FxHashMap<Address, Vec<H256>> = FxHashMap::default();
-    for ws in &writes {
-        for r in ws {
-            if let Resource::Storage(addr, slot) = r {
-                addr_written_slots.entry(*addr).or_default().push(*slot);
-            }
-        }
-    }
+    // Build the union of all written storage slots across all txs.
+    // Used in Phase 2: any CALL tx may transitively read ANY written storage slot via
+    // sub-calls, so we conservatively add the full block-level write set to every call
+    // tx's read set.  This avoids multi-hop RAW misses (tx_j calls B → B calls A →
+    // A reads slot written by tx_i) that we cannot detect statically without a call graph.
+    let all_written_storage: Vec<Resource> = {
+        let mut seen: FxHashSet<Resource> = FxHashSet::default();
+        writes
+            .iter()
+            .flat_map(|ws| ws.iter())
+            .filter(|r| matches!(r, Resource::Storage(_, _)))
+            .filter(|r| seen.insert((*r).clone()))
+            .cloned()
+            .collect()
+    };
 
     // Phase 2: per-tx read sets approximated from static tx metadata.
     // Conservative approximation: may include non-actual reads (extra serialization),
     // but must not miss actual reads that follow a write (would cause wrong state).
     //
     // - Sender always reads its own balance (fee check) and nonce (validation).
-    // - Call target: code is loaded and balance may be checked.
-    //   Also add all written storage slots of the call target (conservative: a called
-    //   contract may internally read any of its storage slots, not just declared ones).
+    // - Call tx: code is loaded and balance may be checked.
+    //   All block-level written storage is added because any sub-call may read any slot.
     // - EIP-2930 access list: declared pre-warm slots and addresses.
-    //   Also add all written storage slots of each access-list address (same reason).
     let mut tx_reads: Vec<FxHashSet<Resource>> = (0..n).map(|_| FxHashSet::default()).collect();
     for (i, (tx, sender)) in txs_with_sender.iter().enumerate() {
         tx_reads[i].insert(Resource::Balance(*sender));
@@ -168,11 +169,10 @@ fn build_parallel_groups(
             if to != coinbase {
                 tx_reads[i].insert(Resource::Balance(to));
                 tx_reads[i].insert(Resource::Code(to));
-                // Conservative: the called contract may read any of its written slots.
-                if let Some(slots) = addr_written_slots.get(&to) {
-                    for slot in slots {
-                        tx_reads[i].insert(Resource::Storage(to, *slot));
-                    }
+                // Conservative multi-hop RAW: this call may reach any written storage via
+                // sub-calls.  We cannot determine the full call graph statically.
+                for r in &all_written_storage {
+                    tx_reads[i].insert(r.clone());
                 }
             }
         }
@@ -184,12 +184,6 @@ fn build_parallel_groups(
             tx_reads[i].insert(Resource::Code(*addr));
             for slot in declared_slots {
                 tx_reads[i].insert(Resource::Storage(*addr, *slot));
-            }
-            // Conservative: any access-list address may have its written storage read.
-            if let Some(slots) = addr_written_slots.get(addr) {
-                for slot in slots {
-                    tx_reads[i].insert(Resource::Storage(*addr, *slot));
-                }
             }
         }
         // EIP-7702: the delegate target's code is loaded at call time via the delegation
