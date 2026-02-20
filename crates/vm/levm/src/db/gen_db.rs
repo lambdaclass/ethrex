@@ -19,7 +19,7 @@ use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
 pub use ethrex_common::types::AccountUpdate;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
@@ -34,6 +34,9 @@ pub struct GeneralizedDatabase {
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
+    /// Tracks addresses accessed from initial_accounts_state or store (first access per address).
+    /// `Some` when enabled (parallel group execution); `None` otherwise (no overhead).
+    pub reads: Option<FxHashSet<Address>>,
 }
 
 impl GeneralizedDatabase {
@@ -46,6 +49,7 @@ impl GeneralizedDatabase {
             codes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
+            reads: None,
         }
     }
 
@@ -101,6 +105,7 @@ impl GeneralizedDatabase {
             codes,
             code_metadata: Default::default(),
             bal_recorder: None,
+            reads: None,
         }
     }
 
@@ -112,7 +117,13 @@ impl GeneralizedDatabase {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
                 if let Some(account) = self.initial_accounts_state.get(&address) {
+                    if let Some(reads) = &mut self.reads {
+                        reads.insert(address);
+                    }
                     return Ok(entry.insert(account.clone()));
+                }
+                if let Some(reads) = &mut self.reads {
+                    reads.insert(address);
                 }
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
