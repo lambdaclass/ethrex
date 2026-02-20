@@ -115,16 +115,14 @@ impl L1ToL2MessagesTable {
             store,
         )
         .await?;
-        let len = new_l1_to_l2_messages.len();
-        if len > 50 {
-            new_l1_to_l2_messages.drain(..len - 50);
-        }
+        new_l1_to_l2_messages.drain(..new_l1_to_l2_messages.len().saturating_sub(50));
 
-        let n_new_latest_batches = new_l1_to_l2_messages.len();
-        self.items.truncate(50 - n_new_latest_batches);
+        let n_new = new_l1_to_l2_messages.len();
+        let items_to_keep = 50usize.saturating_sub(n_new);
+        self.items.drain(..self.items.len().saturating_sub(items_to_keep));
         self.refresh_items(eth_client, store).await?;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
-        self.items.rotate_right(n_new_latest_batches);
+        self.items.rotate_right(n_new);
         Ok(())
     }
 
