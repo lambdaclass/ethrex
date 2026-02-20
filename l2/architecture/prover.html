@@ -247,13 +247,48 @@
     participant zkVM
     participant Prover
     participant ProofCoordinator
-    Prover-&gt;&gt;+ProofCoordinator: ProofData::Request
-    ProofCoordinator--&gt;&gt;-Prover: ProofData::Response(inputs)
+    Prover-&gt;&gt;+ProofCoordinator: BatchRequest(commit_hash, prover_type)
+    ProofCoordinator--&gt;&gt;-Prover: BatchResponse(batch_number, inputs, format)
     Prover-&gt;&gt;+zkVM: Prove(inputs)
     zkVM--&gt;&gt;-Prover: generates zk proof
-    Prover-&gt;&gt;+ProofCoordinator: ProofData::Submit(batch number, proof)
-    ProofCoordinator--&gt;&gt;-Prover: ProofData::SubmitAck(batch number)
+    Prover-&gt;&gt;+ProofCoordinator: ProofSubmit(batch_number, proof)
+    ProofCoordinator--&gt;&gt;-Prover: ProofSubmitACK(batch_number)
 </pre>
+<h2 id="batch-assignment-protocol"><a class="header" href="#batch-assignment-protocol">Batch assignment protocol</a></h2>
+<p>When a prover sends a <code>BatchRequest</code>, the coordinator decides what to respond based on the following checks, evaluated in order:</p>
+<ol>
+<li>
+<p><strong>Prover type check</strong>: is the prover's type (SP1, RISC0, Exec, TDX) in the set of proof types required by this deployment? If not, the coordinator responds with <code>ProverTypeNotNeeded</code>. This is a permanent rejection — the prover binary is incompatible with this coordinator's configuration.</p>
+</li>
+<li>
+<p><strong>Resolve next batch</strong>: the coordinator computes the next batch to prove as <code>1 + latest_sent_batch_proof</code> (the batch immediately after the last one whose proof was submitted to L1).</p>
+</li>
+<li>
+<p><strong>Proof already exists</strong>: does a proof from this prover type already exist for the batch? If so, the coordinator responds with an empty <code>BatchResponse</code> — there's nothing for this prover to do right now.</p>
+</li>
+<li>
+<p><strong>Batch existence</strong>: does the batch exist in the database?</p>
+<ul>
+<li>If the batch <strong>does not exist</strong> and the prover's code version matches the coordinator's, the prover is simply ahead of the proposer. The coordinator responds with an empty <code>BatchResponse</code>.</li>
+<li>If the batch <strong>does not exist</strong> and the versions <strong>differ</strong>, the prover is stale: future batches will be created with the coordinator's version. The coordinator responds with <code>VersionMismatch</code>.</li>
+</ul>
+</li>
+<li>
+<p><strong>Version match</strong>: the batch exists, so its public input must also exist (they are stored atomically). The coordinator looks up the input for the prover's code version. If not found, the batch was created with a different version — the coordinator responds with <code>VersionMismatch</code>.</p>
+</li>
+<li>
+<p><strong>Happy path</strong>: the batch exists, has no proof for this type yet, and has input matching the prover's version. The coordinator responds with a full <code>BatchResponse</code> containing the batch number, input data, and proof format.</p>
+</li>
+</ol>
+<h3 id="prover-side-handling"><a class="header" href="#prover-side-handling">Prover-side handling</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Coordinator response</th><th>Prover action</th></tr></thead><tbody>
+<tr><td><code>BatchResponse</code> (with data)</td><td>Prove the batch, submit the proof</td></tr>
+<tr><td><code>BatchResponse</code> (empty)</td><td>Sleep, retry later</td></tr>
+<tr><td><code>VersionMismatch</code></td><td>Log version mismatch warning, sleep, retry later</td></tr>
+<tr><td><code>ProverTypeNotNeeded</code></td><td>Log error, skip this coordinator, continue with others</td></tr>
+</tbody></table>
+</div>
+<h2 id="references"><a class="header" href="#references">References</a></h2>
 <p>For running the prover, see <a href="../../l2/deployment/overview.html">Deploy an L2</a>.
 For developer-focused setup and run instructions, see <a href="../../developers/l2/prover.html">Running the Prover</a>.
 For comprehensive details on the internals of the prover, see <a href="../../prover/prover.html">ethrex-prover</a>.</p>
