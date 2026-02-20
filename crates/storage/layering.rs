@@ -98,14 +98,22 @@ impl TrieLayerCache {
     }
 
     // TODO: use finalized hash to know when to commit
-    pub fn get_commitable(&self, mut state_root: H256) -> Option<H256> {
+    pub fn get_commitable(&self, state_root: H256) -> Option<H256> {
+        self.get_commitable_with_threshold(state_root, self.commit_threshold)
+    }
+
+    pub fn get_commitable_with_threshold(
+        &self,
+        mut state_root: H256,
+        threshold: usize,
+    ) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
-            state_root = layer.parent;
             counter += 1;
-            if counter > self.commit_threshold {
+            if counter >= threshold {
                 return Some(state_root);
             }
+            state_root = layer.parent;
         }
         None
     }
