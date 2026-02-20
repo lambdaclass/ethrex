@@ -41,7 +41,9 @@ use ethrex_levm::{
     db::guest_program_state_db::GuestProgramStateDb,
     environment::{EVMConfig, Environment},
     errors::TxResult,
-    execute_precompile::{ExecutePrecompileInput, L2_BRIDGE},
+    execute_precompile::{
+        ExecutePrecompileInput, L1_ANCHOR, L2_BRIDGE, compute_merkle_proof, compute_merkle_root,
+    },
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -117,6 +119,14 @@ fn bridge_runtime_bytecode() -> Vec<u8> {
     hex::decode(hex_str.trim()).expect("invalid hex in bridge .bin-runtime")
 }
 
+/// Read the L1Anchor compiled runtime bytecode from solc output.
+fn anchor_runtime_bytecode() -> Vec<u8> {
+    let path = workspace_root().join("crates/vm/levm/contracts/solc_out/L1Anchor.bin-runtime");
+    let hex_str = std::fs::read_to_string(&path)
+        .expect("L1Anchor.bin-runtime not found — compile with solc first");
+    hex::decode(hex_str.trim()).expect("invalid hex in anchor .bin-runtime")
+}
+
 /// Build a standard ChainConfig with all forks enabled at genesis.
 fn test_chain_config() -> ChainConfig {
     ChainConfig {
@@ -138,7 +148,7 @@ fn test_chain_config() -> ChainConfig {
     }
 }
 
-/// Helper: encode L2Bridge.processL1Message(address,address,uint256,uint256,bytes,uint256) calldata.
+/// Helper: encode L2Bridge.processL1Message(address,address,uint256,uint256,bytes,uint256,bytes32[]) calldata.
 fn encode_process_l1_message_call(
     from: Address,
     to: Address,
@@ -146,53 +156,70 @@ fn encode_process_l1_message_call(
     gas_limit: u64,
     msg_data: &[u8],
     nonce: u64,
+    merkle_proof: &[H256],
 ) -> Vec<u8> {
     let selector =
-        &keccak_hash(b"processL1Message(address,address,uint256,uint256,bytes,uint256)")[..4];
+        &keccak_hash(b"processL1Message(address,address,uint256,uint256,bytes,uint256,bytes32[])")
+            [..4];
 
-    // ABI encoding with dynamic `bytes` at param index 4:
-    // [selector][from][to][value][gasLimit][offset_to_data][nonce][data_length][data_bytes...]
-    let mut calldata = Vec::with_capacity(4 + 7 * 32 + msg_data.len());
+    // ABI encoding: 7 params, where params 4 (bytes data) and 6 (bytes32[] merkleProof) are dynamic.
+    // Head: 7 * 32 = 224 bytes
+    let mut calldata = Vec::new();
     calldata.extend_from_slice(selector);
 
-    // Param 0: from (address)
+    // from (address)
     let mut from_bytes = [0u8; 32];
     from_bytes[12..].copy_from_slice(from.as_bytes());
     calldata.extend_from_slice(&from_bytes);
 
-    // Param 1: to (address)
+    // to (address)
     let mut to_bytes = [0u8; 32];
     to_bytes[12..].copy_from_slice(to.as_bytes());
     calldata.extend_from_slice(&to_bytes);
 
-    // Param 2: value (uint256)
+    // value (uint256)
     calldata.extend_from_slice(&value.to_big_endian());
 
-    // Param 3: gasLimit (uint256)
+    // gasLimit (uint256)
     let mut gas_bytes = [0u8; 32];
     gas_bytes[24..].copy_from_slice(&gas_limit.to_be_bytes());
     calldata.extend_from_slice(&gas_bytes);
 
-    // Param 4: offset to data (dynamic) — 6 static slots * 32 = 192
+    // Compute offsets for dynamic params
+    let head_size: usize = 7 * 32; // 224 bytes
+    let data_padded = msg_data.len() + ((32 - (msg_data.len() % 32)) % 32);
+    let data_offset = head_size;
+    let proof_offset = data_offset + 32 + data_padded;
+
+    // offset to data (dynamic param 4)
     let mut offset_bytes = [0u8; 32];
-    offset_bytes[31] = 192;
+    offset_bytes[24..].copy_from_slice(&(data_offset as u64).to_be_bytes());
     calldata.extend_from_slice(&offset_bytes);
 
-    // Param 5: nonce (uint256)
+    // nonce (uint256)
     let mut nonce_bytes = [0u8; 32];
     nonce_bytes[24..].copy_from_slice(&nonce.to_be_bytes());
     calldata.extend_from_slice(&nonce_bytes);
 
-    // Dynamic data: length + padded bytes
-    let mut len_bytes = [0u8; 32];
-    let data_len = msg_data.len() as u64;
-    len_bytes[24..].copy_from_slice(&data_len.to_be_bytes());
-    calldata.extend_from_slice(&len_bytes);
+    // offset to merkleProof (dynamic param 6)
+    let mut proof_offset_bytes = [0u8; 32];
+    proof_offset_bytes[24..].copy_from_slice(&(proof_offset as u64).to_be_bytes());
+    calldata.extend_from_slice(&proof_offset_bytes);
 
-    if !msg_data.is_empty() {
-        calldata.extend_from_slice(msg_data);
-        let padding = (32 - (msg_data.len() % 32)) % 32;
-        calldata.extend(std::iter::repeat(0u8).take(padding));
+    // Tail: data length + data + padding
+    let mut data_len_bytes = [0u8; 32];
+    data_len_bytes[24..].copy_from_slice(&(msg_data.len() as u64).to_be_bytes());
+    calldata.extend_from_slice(&data_len_bytes);
+    calldata.extend_from_slice(msg_data);
+    let padding = (32 - (msg_data.len() % 32)) % 32;
+    calldata.resize(calldata.len() + padding, 0);
+
+    // Tail: merkleProof length + elements
+    let mut proof_len_bytes = [0u8; 32];
+    proof_len_bytes[24..].copy_from_slice(&(merkle_proof.len() as u64).to_be_bytes());
+    calldata.extend_from_slice(&proof_len_bytes);
+    for hash in merkle_proof {
+        calldata.extend_from_slice(hash.as_bytes());
     }
 
     calldata
@@ -206,7 +233,7 @@ fn encode_process_l1_message_call(
 ///   - TX1: alice sends 1 ETH to bob
 ///
 /// Returns (input, transactions_rlp, witness_json, pre_state_root, post_state_root,
-///          l1_messages_rolling_hash, gas_used_tx0, block).
+///          l1_anchor, gas_used_tx0, block).
 #[allow(clippy::type_complexity)]
 fn build_l2_state_transition(
     l1_sender: Address,
@@ -252,6 +279,30 @@ fn build_l2_state_transition(
     let l1_msg_value = U256::from(5) * U256::from(10).pow(U256::from(18)); // 5 ETH
     let l1_msg_gas_limit: u64 = 100_000; // subcall gas limit on L2
 
+    // ===== Compute L1 message hash and Merkle root (l1_anchor) =====
+    let empty_data_hash = H256::from(keccak_hash(&[]));
+    let mut msg_preimage = Vec::with_capacity(168);
+    msg_preimage.extend_from_slice(l1_sender.as_bytes());
+    msg_preimage.extend_from_slice(charlie.as_bytes());
+    msg_preimage.extend_from_slice(&l1_msg_value.to_big_endian());
+    msg_preimage.extend_from_slice(&U256::from(l1_msg_gas_limit).to_big_endian());
+    msg_preimage.extend_from_slice(empty_data_hash.as_bytes());
+    msg_preimage.extend_from_slice(&U256::zero().to_big_endian());
+    let l1_msg_hash = H256::from(keccak_hash(&msg_preimage));
+    let l1_anchor = compute_merkle_root(&[l1_msg_hash]);
+    let merkle_proof = compute_merkle_proof(&[l1_msg_hash], 0);
+
+    // ===== L1Anchor setup =====
+    let anchor_runtime = anchor_runtime_bytecode();
+    let anchor_code_hash = H256(keccak_hash(&anchor_runtime));
+    let mut anchor_storage_trie = Trie::new_temp();
+    let anchor_slot0_key = keccak_hash(&[0u8; 32]).to_vec();
+    let anchor_value = U256::from_big_endian(l1_anchor.as_bytes());
+    anchor_storage_trie
+        .insert(anchor_slot0_key, anchor_value.encode_to_vec())
+        .expect("storage insert");
+    let anchor_storage_root = anchor_storage_trie.hash_no_commit();
+
     // ===== Genesis state trie =====
     let mut state_trie = Trie::new_temp();
     insert_account(
@@ -285,6 +336,16 @@ fn build_l2_state_transition(
             storage_root: bridge_storage_root,
         },
     );
+    insert_account(
+        &mut state_trie,
+        L1_ANCHOR,
+        &AccountState {
+            nonce: 1,
+            code_hash: anchor_code_hash,
+            storage_root: anchor_storage_root,
+            ..Default::default()
+        },
+    );
     let pre_state_root = state_trie.hash_no_commit();
 
     // gas_used = gas_limit / ELASTICITY_MULTIPLIER keeps base fee stable
@@ -299,9 +360,16 @@ fn build_l2_state_transition(
     };
 
     // ===== Build transactions =====
-    // TX0: relayer → L2Bridge.processL1Message(l1_sender, charlie, 5 ETH, 100k, "", 0)
-    let l1_msg_calldata =
-        encode_process_l1_message_call(l1_sender, charlie, l1_msg_value, l1_msg_gas_limit, &[], 0);
+    // TX0: relayer → L2Bridge.processL1Message(l1_sender, charlie, 5 ETH, 100k, "", 0, proof)
+    let l1_msg_calldata = encode_process_l1_message_call(
+        l1_sender,
+        charlie,
+        l1_msg_value,
+        l1_msg_gas_limit,
+        &[],
+        0,
+        &merkle_proof,
+    );
     let mut tx0 = EIP1559Transaction {
         chain_id,
         nonce: 0,
@@ -355,9 +423,13 @@ fn build_l2_state_transition(
         L2_BRIDGE,
         get_trie_root_node(&bridge_storage_trie).expect("bridge storage root node"),
     );
+    storage_trie_roots.insert(
+        L1_ANCHOR,
+        get_trie_root_node(&anchor_storage_trie).expect("anchor storage root node"),
+    );
 
     let temp_witness = ExecutionWitness {
-        codes: vec![bridge_runtime.clone()],
+        codes: vec![bridge_runtime.clone(), anchor_runtime.clone()],
         block_headers_bytes: vec![parent_header.encode_to_vec(), temp_header.encode_to_vec()],
         first_block_number: 1,
         chain_config: chain_config.clone(),
@@ -513,7 +585,7 @@ fn build_l2_state_transition(
 
     // ===== Build final witness (with correct block header) =====
     let witness = ExecutionWitness {
-        codes: vec![bridge_runtime.clone()],
+        codes: vec![bridge_runtime.clone(), anchor_runtime],
         block_headers_bytes: vec![parent_header.encode_to_vec(), final_header.encode_to_vec()],
         first_block_number: 1,
         chain_config,
@@ -522,23 +594,7 @@ fn build_l2_state_transition(
         keys: vec![],
     };
 
-    // ===== Compute L1 messages rolling hash =====
-    // msg_hash = keccak256(abi.encodePacked(from[20], to[20], value[32], gasLimit[32], dataHash[32], nonce[32]))
-    let empty_data_hash = H256::from(keccak_hash(&[])); // keccak256("")
-    let mut msg_preimage = Vec::with_capacity(168);
-    msg_preimage.extend_from_slice(l1_sender.as_bytes()); // from: 20 bytes
-    msg_preimage.extend_from_slice(charlie.as_bytes()); // to: 20 bytes
-    msg_preimage.extend_from_slice(&l1_msg_value.to_big_endian()); // value: 32 bytes
-    msg_preimage.extend_from_slice(&U256::from(l1_msg_gas_limit).to_big_endian()); // gasLimit: 32 bytes
-    msg_preimage.extend_from_slice(empty_data_hash.as_bytes()); // dataHash: 32 bytes
-    msg_preimage.extend_from_slice(&U256::zero().to_big_endian()); // nonce: 32 bytes
-    let l1_msg_hash = H256::from(keccak_hash(&msg_preimage));
-
-    // rolling = keccak256(abi.encodePacked(H256::zero(), msg_hash))
-    let mut rolling_preimage = [0u8; 64];
-    rolling_preimage[..32].copy_from_slice(H256::zero().as_bytes());
-    rolling_preimage[32..].copy_from_slice(l1_msg_hash.as_bytes());
-    let l1_messages_rolling_hash = H256::from(keccak_hash(rolling_preimage));
+    // l1_anchor was computed earlier (before genesis setup) as compute_merkle_root(&[l1_msg_hash])
 
     let transactions_rlp = transactions.encode_to_vec();
     let witness_json = serde_json::to_vec(&witness).expect("witness JSON serialization failed");
@@ -555,7 +611,7 @@ fn build_l2_state_transition(
         parent_base_fee: base_fee,
         parent_gas_limit: 30_000_000,
         parent_gas_used: 15_000_000,
-        l1_messages_rolling_hash,
+        l1_anchor,
         transactions: block.body.transactions.clone(),
         execution_witness: witness,
     };
@@ -566,7 +622,7 @@ fn build_l2_state_transition(
         witness_json,
         pre_state_root,
         post_state_root,
-        l1_messages_rolling_hash,
+        l1_anchor,
         gas_used0,
         block,
     )
@@ -583,6 +639,7 @@ fn build_l2_withdrawal_block(
     block1_post_state_root: H256,
     withdrawal_receiver: Address,
     gas_used_tx0: u64,
+    block1_l1_anchor: H256,
 ) -> (Vec<u8>, Vec<u8>, H256, H256, u64) {
     let alice_key = SigningKey::from_bytes(&[1u8; 32].into()).expect("valid key");
     let alice = address_from_key(&alice_key);
@@ -604,6 +661,8 @@ fn build_l2_withdrawal_block(
 
     let bridge_runtime = bridge_runtime_bytecode();
     let bridge_code_hash = H256(keccak_hash(&bridge_runtime));
+    let anchor_runtime = anchor_runtime_bytecode();
+    let anchor_code_hash = H256(keccak_hash(&anchor_runtime));
 
     // Reconstruct block 1 post-state balances (must match build_l2_state_transition)
     let alice_initial = U256::from(10) * U256::from(10).pow(U256::from(18));
@@ -684,8 +743,6 @@ fn build_l2_withdrawal_block(
             ..Default::default()
         },
     );
-    // Burn address (matches block 1 post-state)
-    insert_account(&mut pre_trie, Address::zero(), &AccountState::default());
     insert_account(
         &mut pre_trie,
         L2_BRIDGE,
@@ -696,6 +753,26 @@ fn build_l2_withdrawal_block(
             storage_root: bridge_storage_root,
         },
     );
+
+    // L1Anchor post-state from block 1: slot 0 = block1_l1_anchor
+    let mut anchor_storage_trie = Trie::new_temp();
+    let anchor_slot0_key = keccak_hash(&[0u8; 32]).to_vec();
+    let anchor_value = U256::from_big_endian(block1_l1_anchor.as_bytes());
+    anchor_storage_trie
+        .insert(anchor_slot0_key, anchor_value.encode_to_vec())
+        .expect("storage insert");
+    let anchor_storage_root = anchor_storage_trie.hash_no_commit();
+    insert_account(
+        &mut pre_trie,
+        L1_ANCHOR,
+        &AccountState {
+            nonce: 1,
+            code_hash: anchor_code_hash,
+            storage_root: anchor_storage_root,
+            ..Default::default()
+        },
+    );
+
     let pre_state_root = pre_trie.hash_no_commit();
     assert_eq!(
         pre_state_root, block1_post_state_root,
@@ -746,7 +823,7 @@ fn build_l2_withdrawal_block(
     };
 
     let temp_witness = ExecutionWitness {
-        codes: vec![bridge_runtime.clone()],
+        codes: vec![bridge_runtime.clone(), anchor_runtime.clone()],
         block_headers_bytes: vec![block1.header.encode_to_vec(), temp_header.encode_to_vec()],
         first_block_number: block2_number,
         chain_config: chain_config.clone(),
@@ -756,6 +833,10 @@ fn build_l2_withdrawal_block(
             m.insert(
                 L2_BRIDGE,
                 get_trie_root_node(&bridge_storage_trie).expect("bridge storage root node"),
+            );
+            m.insert(
+                L1_ANCHOR,
+                get_trie_root_node(&anchor_storage_trie).expect("anchor storage root node"),
             );
             m
         },
@@ -767,6 +848,26 @@ fn build_l2_withdrawal_block(
         .expect("Failed to build GuestProgramState");
 
     let db_inner = Arc::new(GuestProgramStateDb::new(guest_state));
+
+    // Simulate EXECUTE system write: L1Anchor slot 0 = block 2 l1_anchor (zero for no messages).
+    // This mirrors what the EXECUTE precompile does before executing transactions.
+    {
+        use ethrex_common::types::AccountUpdate;
+        let mut storage = rustc_hash::FxHashMap::default();
+        storage.insert(H256::zero(), U256::zero());
+        let anchor_update = AccountUpdate {
+            address: L1_ANCHOR,
+            added_storage: storage,
+            ..Default::default()
+        };
+        db_inner
+            .state
+            .lock()
+            .expect("lock")
+            .apply_account_updates(&[anchor_update])
+            .expect("system write");
+    }
+
     let db_dyn: Arc<dyn ethrex_levm::db::Database> = db_inner.clone();
     let mut gen_db = GeneralizedDatabase::new(db_dyn);
 
@@ -862,7 +963,7 @@ fn build_l2_withdrawal_block(
 
     // Build final witness with correct block 2 header
     let witness2 = ExecutionWitness {
-        codes: vec![bridge_runtime],
+        codes: vec![bridge_runtime, anchor_runtime],
         block_headers_bytes: vec![block1.header.encode_to_vec(), block2_header.encode_to_vec()],
         first_block_number: block2_number,
         chain_config,
@@ -872,6 +973,10 @@ fn build_l2_withdrawal_block(
             m.insert(
                 L2_BRIDGE,
                 get_trie_root_node(&bridge_storage_trie).expect("bridge storage root node"),
+            );
+            m.insert(
+                L1_ANCHOR,
+                get_trie_root_node(&anchor_storage_trie).expect("anchor storage root node"),
             );
             m
         },
@@ -930,6 +1035,16 @@ async fn test_native_rollup_on_l1() {
     .expect("Failed to compile L2Bridge.sol");
     compile_contract(
         &contracts_path,
+        &contracts_path.join("L1Anchor.sol"),
+        true, // runtime bytecode needed for L2 genesis state
+        false,
+        None,
+        &[],
+        None,
+    )
+    .expect("Failed to compile L1Anchor.sol");
+    compile_contract(
+        &contracts_path,
         &contracts_path.join("NativeRollup.sol"),
         false,
         false,
@@ -953,7 +1068,7 @@ async fn test_native_rollup_on_l1() {
         witness_json,
         pre_state_root,
         post_state_root,
-        _l1_messages_rolling_hash,
+        l1_anchor,
         gas_used_tx0,
         block1,
     ) = build_l2_state_transition(l1_sender);
@@ -975,6 +1090,7 @@ async fn test_native_rollup_on_l1() {
         post_state_root,
         l1_withdrawal_receiver,
         gas_used_tx0,
+        l1_anchor,
     );
     let alice_l2 = address_from_key(&SigningKey::from_bytes(&[1u8; 32].into()).unwrap());
     let withdrawal_amount = U256::from(10).pow(U256::from(18)); // 1 ETH

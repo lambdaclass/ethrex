@@ -21,9 +21,10 @@ pragma solidity ^0.8.27;
 /// sending ETH directly to the contract. Each message is hashed as
 /// keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))
 /// and stored in the `pendingL1Messages` array. When `advance()` is called, it
-/// computes a rolling hash over the consumed message hashes and passes it to
-/// the EXECUTE precompile, which verifies it against L1MessageProcessed events
-/// from the L2Bridge predeploy.
+/// computes a Merkle root over the consumed message hashes and passes it as
+/// l1Anchor to the EXECUTE precompile, which writes it to the L1Anchor predeploy
+/// on L2 before executing transactions. L2 contracts verify individual messages
+/// via Merkle proofs against the anchored root.
 ///
 /// Withdrawals are initiated on L2 via the L2Bridge contract. The EXECUTE
 /// precompile extracts withdrawal events and computes a Merkle root. Users can
@@ -134,15 +135,10 @@ contract NativeRollup {
         uint256 startIdx = l1MessageIndex;
         require(startIdx + _l1MessagesCount <= pendingL1Messages.length, "Not enough L1 messages");
 
-        // Compute rolling hash over the consumed L1 message batch.
+        // Compute Merkle root over the consumed L1 message batch.
         // Each pendingL1Messages[i] is keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce)).
-        // The rolling hash is: rolling_i = keccak256(abi.encodePacked(rolling_{i-1}, message_hash_i))
-        bytes32 l1MessagesRollingHash = bytes32(0);
-        for (uint256 i = 0; i < _l1MessagesCount; i++) {
-            l1MessagesRollingHash = keccak256(
-                abi.encodePacked(l1MessagesRollingHash, pendingL1Messages[startIdx + i])
-            );
-        }
+        // The Merkle root uses commutative hashing (same as withdrawal proofs).
+        bytes32 l1Anchor = _computeMerkleRoot(startIdx, _l1MessagesCount);
 
         l1MessageIndex = startIdx + _l1MessagesCount;
 
@@ -167,7 +163,7 @@ contract NativeRollup {
             _lastBaseFeePerGas,               // parentBaseFee from storage
             _blockGasLimit,                   // parentGasLimit = blockGasLimit (constant)
             _lastGasUsed,                     // parentGasUsed from storage
-            l1MessagesRollingHash,
+            l1Anchor,
             _transactions,
             _witness
         );
@@ -258,5 +254,38 @@ contract NativeRollup {
         } else {
             return keccak256(abi.encodePacked(b, a));
         }
+    }
+
+    /// @dev Compute a Merkle root over `count` consecutive entries in pendingL1Messages
+    ///      starting at `startIdx`. Uses commutative Keccak256 hashing (same as
+    ///      _verifyMerkleProof / _hashPair). Returns bytes32(0) if count is 0.
+    function _computeMerkleRoot(uint256 startIdx, uint256 count) internal view returns (bytes32) {
+        if (count == 0) {
+            return bytes32(0);
+        }
+        if (count == 1) {
+            return pendingL1Messages[startIdx];
+        }
+
+        // Copy leaves into memory
+        bytes32[] memory level = new bytes32[](count);
+        for (uint256 i = 0; i < count; i++) {
+            level[i] = pendingL1Messages[startIdx + i];
+        }
+
+        // Iteratively build tree levels until one root remains
+        while (level.length > 1) {
+            uint256 nextLen = (level.length + 1) / 2;
+            bytes32[] memory next = new bytes32[](nextLen);
+            for (uint256 i = 0; i < level.length / 2; i++) {
+                next[i] = _hashPair(level[2 * i], level[2 * i + 1]);
+            }
+            if (level.length % 2 == 1) {
+                next[nextLen - 1] = level[level.length - 1];
+            }
+            level = next;
+        }
+
+        return level[0];
     }
 }

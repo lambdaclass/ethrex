@@ -2,17 +2,21 @@
 //!
 //! Verifies L2 state transitions by re-executing them inside the L1 EVM.
 //! The precompile receives individual block fields, transactions (RLP), an
-//! execution witness (JSON), and an L1 messages rolling hash, re-executes
-//! the transactions, and verifies the resulting state root, receipts root,
-//! and L1 message inclusion.
+//! execution witness (JSON), and an L1 anchor (Merkle root of consumed L1
+//! messages), re-executes the transactions, and verifies the resulting state
+//! root, receipts root, and withdrawal Merkle root.
 //!
 //! This implements the `apply_body` variant from the native rollups spec:
 //! individual execution parameters are provided instead of a full block.
 //!
-//! After execution, it scans L1MessageProcessed events from the L2Bridge predeploy
-//! to reconstruct the L1 messages rolling hash and verify it matches the one provided
-//! by the L1 NativeRollup contract. It also extracts WithdrawalInitiated events
-//! and computes a Merkle root for withdrawal claiming on L1.
+//! Before executing regular transactions, the precompile writes the L1 anchor
+//! to the L1Anchor predeploy's storage slot 0 (system transaction). L2
+//! contracts (e.g., L2Bridge) verify individual L1 messages via Merkle proofs
+//! against this anchored root. The state root check at the end implicitly
+//! guarantees correct message processing.
+//!
+//! After execution, it extracts WithdrawalInitiated events and computes a
+//! Merkle root for withdrawal claiming on L1.
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -47,17 +51,18 @@ pub const L2_BRIDGE: Address = H160([
     0x00, 0x00, 0xff, 0xfd,
 ]);
 
+/// Address of the L1Anchor predeploy (one above L2Bridge).
+/// The EXECUTE precompile writes the L1 messages Merkle root here before
+/// executing regular transactions.
+pub const L1_ANCHOR: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfe,
+]);
+
 /// Event signature: WithdrawalInitiated(address indexed from, address indexed receiver, uint256 amount, uint256 indexed messageId)
 static WITHDRAWAL_INITIATED_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
     H256::from(keccak_hash(
         b"WithdrawalInitiated(address,address,uint256,uint256)",
-    ))
-});
-
-/// Event signature: L1MessageProcessed(address indexed from, address indexed to, uint256 value, uint256 gasLimit, bytes32 dataHash, uint256 indexed nonce)
-static L1_MESSAGE_PROCESSED_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
-    H256::from(keccak_hash(
-        b"L1MessageProcessed(address,address,uint256,uint256,bytes32,uint256)",
     ))
 });
 
@@ -87,7 +92,7 @@ pub struct ExecutePrecompileInput {
     pub parent_base_fee: u64,
     pub parent_gas_limit: u64,
     pub parent_gas_used: u64,
-    pub l1_messages_rolling_hash: H256,
+    pub l1_anchor: H256,
     pub transactions: Vec<Transaction>,
     pub execution_witness: ExecutionWitness,
 }
@@ -108,7 +113,7 @@ pub struct ExecutePrecompileInput {
 ///     uint256 parentBaseFee,          // slot 8
 ///     uint256 parentGasLimit,         // slot 9
 ///     uint256 parentGasUsed,          // slot 10
-///     bytes32 l1MessagesRollingHash,  // slot 11
+///     bytes32 l1Anchor,               // slot 11
 ///     bytes   transactions,           // slot 12 (dynamic offset pointer)
 ///     bytes   witnessJson             // slot 13 (dynamic offset pointer)
 /// )
@@ -116,9 +121,10 @@ pub struct ExecutePrecompileInput {
 ///
 /// Transactions are RLP-encoded as a list. ExecutionWitness uses JSON because
 /// it doesn't have RLP support (it uses serde/rkyv instead).
-/// The l1MessagesRollingHash is computed by NativeRollup.advance() on L1 from
-/// stored L1 message hashes. The precompile verifies it against L1MessageProcessed
-/// events emitted by the L2Bridge predeploy during block execution.
+/// The l1Anchor is a Merkle root computed by NativeRollup.advance() on L1 from
+/// stored L1 message hashes. The precompile writes it to the L1Anchor predeploy
+/// on L2 before executing transactions, allowing L2 contracts to verify individual
+/// messages via Merkle proofs.
 ///
 /// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees, uint256 baseFeePerGas)` -- 192 bytes.
 pub fn execute_precompile(
@@ -236,8 +242,8 @@ fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError
     // Slot 10: parentGasUsed (uint256 -> u64)
     let parent_gas_used = read_u64_slot(calldata, &mut offset)?;
 
-    // Slot 11: l1MessagesRollingHash (bytes32)
-    let l1_messages_rolling_hash = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+    // Slot 11: l1Anchor (bytes32) — Merkle root of consumed L1 messages
+    let l1_anchor = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
     // Slot 12: offset to transactions (dynamic)
     let txs_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
@@ -272,7 +278,7 @@ fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError
         parent_base_fee,
         parent_gas_limit,
         parent_gas_used,
-        l1_messages_rolling_hash,
+        l1_anchor,
         transactions,
         execution_witness,
     })
@@ -306,7 +312,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         parent_base_fee,
         parent_gas_limit,
         parent_gas_used,
-        l1_messages_rolling_hash,
+        l1_anchor,
         transactions,
         execution_witness,
     } = input;
@@ -374,9 +380,34 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         },
     };
 
-    // 5. Execute the block and collect logs
+    // 5. Write l1_anchor to L1Anchor predeploy storage (system transaction)
+    //    This anchors the L1 messages Merkle root on L2 before executing regular
+    //    transactions, allowing L2 contracts to verify messages via Merkle proofs.
     let db = Arc::new(GuestProgramStateDb::new(guest_state));
+    {
+        use ethrex_common::types::AccountUpdate;
+        use rustc_hash::FxHashMap;
 
+        let mut storage = FxHashMap::default();
+        storage.insert(
+            H256::zero(), // slot 0
+            U256::from_big_endian(l1_anchor.as_bytes()),
+        );
+
+        let anchor_update = AccountUpdate {
+            address: L1_ANCHOR,
+            added_storage: storage,
+            ..Default::default()
+        };
+
+        db.state
+            .lock()
+            .map_err(|e| custom_err(format!("Lock poisoned: {e}")))?
+            .apply_account_updates(&[anchor_update])
+            .map_err(|e| custom_err(format!("Failed to write L1Anchor storage: {e}")))?;
+    }
+
+    // 6. Execute the block and collect logs
     let (all_logs, block_gas_used) = {
         let db_dyn: Arc<dyn crate::db::Database> = db.clone();
         let mut gen_db = GeneralizedDatabase::new(db_dyn);
@@ -397,7 +428,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         (logs, gas_used)
     };
 
-    // 6. Verify final state root
+    // 7. Verify final state root
     let final_root = db
         .state
         .lock()
@@ -408,14 +439,6 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     if final_root != expected_post_state_root {
         return Err(custom_err(format!(
             "Final state root mismatch: expected {expected_post_state_root:?}, got {final_root:?}"
-        )));
-    }
-
-    // 7. Verify L1 messages rolling hash against L1MessageProcessed events
-    let computed_rolling_hash = compute_l1_messages_rolling_hash(&all_logs);
-    if computed_rolling_hash != l1_messages_rolling_hash {
-        return Err(custom_err(format!(
-            "L1 messages rolling hash mismatch: expected {l1_messages_rolling_hash:?}, got {computed_rolling_hash:?}"
         )));
     }
 
@@ -578,80 +601,6 @@ fn calculate_gas_price(tx: &Transaction, base_fee_per_gas: u64) -> Result<U256, 
         max_fee_per_gas,
     )
     .into())
-}
-
-// ===== L1 messages rolling hash verification =====
-
-/// Reconstruct the L1 messages rolling hash from L1MessageProcessed events emitted
-/// during block execution by the L2Bridge predeploy at [`L2_BRIDGE`].
-///
-/// Per-message hash (matches NativeRollup._recordL1Message() on L1):
-///   `keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))`
-///   = keccak256(from[20 bytes] ++ to[20 bytes] ++ value[32 bytes BE] ++ gasLimit[32 bytes BE] ++ dataHash[32 bytes] ++ nonce[32 bytes BE])
-///   = 168 bytes preimage
-///
-/// Rolling hash (matches NativeRollup.advance() on L1):
-///   `rolling_i = keccak256(abi.encodePacked(rolling_{i-1}, message_hash_i))`
-///   = keccak256(rolling[32 bytes] ++ message_hash[32 bytes])
-///
-/// Returns `H256::zero()` when no L1MessageProcessed events are found.
-fn compute_l1_messages_rolling_hash(logs: &[Log]) -> H256 {
-    let mut rolling = H256::zero();
-
-    for log in logs {
-        if log.address != L2_BRIDGE
-            || log.topics.first() != Some(&*L1_MESSAGE_PROCESSED_SELECTOR)
-            || log.topics.len() != 4
-        {
-            continue;
-        }
-
-        // topics[0] = event selector
-        // topics[1] = from (address, indexed -- left-padded to 32 bytes)
-        // topics[2] = to (address, indexed -- left-padded to 32 bytes)
-        // topics[3] = nonce (uint256, indexed)
-        // data[0..32] = value (uint256, non-indexed)
-        // data[32..64] = gasLimit (uint256, non-indexed)
-        // data[64..96] = dataHash (bytes32, non-indexed)
-        let Some(from_bytes) = log.topics.get(1).and_then(|t| t.as_bytes().get(12..32)) else {
-            continue;
-        };
-        let Some(to_bytes) = log.topics.get(2).and_then(|t| t.as_bytes().get(12..32)) else {
-            continue;
-        };
-        let Some(nonce_topic) = log.topics.get(3) else {
-            continue;
-        };
-        let nonce_bytes = nonce_topic.as_bytes();
-
-        let Some(value_bytes) = log.data.get(..32) else {
-            continue;
-        };
-        let Some(gas_limit_bytes) = log.data.get(32..64) else {
-            continue;
-        };
-        let Some(data_hash_bytes) = log.data.get(64..96) else {
-            continue;
-        };
-
-        // Per-message hash: keccak256(from[20] ++ to[20] ++ value[32] ++ gasLimit[32] ++ dataHash[32] ++ nonce[32]) = 168 bytes
-        let mut message_preimage = Vec::with_capacity(168);
-        message_preimage.extend_from_slice(from_bytes); // 20 bytes
-        message_preimage.extend_from_slice(to_bytes); // 20 bytes
-        message_preimage.extend_from_slice(value_bytes); // 32 bytes
-        message_preimage.extend_from_slice(gas_limit_bytes); // 32 bytes
-        message_preimage.extend_from_slice(data_hash_bytes); // 32 bytes
-        message_preimage.extend_from_slice(nonce_bytes); // 32 bytes
-        let message_hash = H256::from(keccak_hash(&message_preimage));
-
-        // Rolling hash: keccak256(rolling[32] ++ message_hash[32]) = 64 bytes
-        let mut rolling_preimage = [0u8; 64];
-        rolling_preimage[..32].copy_from_slice(rolling.as_bytes());
-        rolling_preimage[32..].copy_from_slice(message_hash.as_bytes());
-        rolling = H256::from(keccak_hash(rolling_preimage));
-    }
-
-    rolling
 }
 
 // ===== Withdrawal extraction and Merkle tree =====
