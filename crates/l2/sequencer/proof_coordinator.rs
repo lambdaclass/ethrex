@@ -43,8 +43,6 @@ pub struct ProofCoordinator {
     rollup_store: StoreRollup,
     rpc_url: String,
     tdx_private_key: Option<SecretKey>,
-    // Used again in PR #6157; kept here to simplify merge conflicts.
-    #[allow(dead_code)]
     needed_proof_types: Vec<ProverType>,
     aligned: bool,
     git_commit_hash: String,
@@ -216,38 +214,39 @@ impl ProofCoordinator {
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received from {prover_type} prover");
 
-        if commit_hash != self.git_commit_hash {
-            debug!(
-                "Mismatch on prover version. Expected: {}, got: {}. Looking for batches left to prove",
-                self.git_commit_hash, commit_hash
-            );
+        // Step 1: Check if this prover's type is one of the needed proof types.
+        // If not, tell the prover immediately — there's no point assigning
+        // any batch to it (e.g. an SP1 prover connecting when only exec
+        // proofs are needed). This is a permanent rejection.
+        if !self.needed_proof_types.contains(&prover_type) {
+            info!("{prover_type} proof is not needed, rejecting prover");
+            let response = ProofData::ProverTypeNotNeeded { prover_type };
+            send_response(stream, &response).await?;
+            return Ok(());
         }
 
+        // Step 2: Find the next unassigned batch for this prover.
         let Some((batch_to_prove, input)) =
             self.next_batch_to_assign(&commit_hash, prover_type).await?
         else {
             // Distinguish "wrong version" from "no work available" so the
             // prover client knows whether its binary is outdated.
             if commit_hash != self.git_commit_hash {
-                let response = ProofData::no_batch_for_version(commit_hash);
-                send_response(stream, &response).await?;
-                info!("NoBatchForVersion sent");
+                send_response(stream, &ProofData::version_mismatch()).await?;
+                info!("VersionMismatch sent");
             } else {
-                let response = ProofData::empty_batch_response();
-                send_response(stream, &response).await?;
+                send_response(stream, &ProofData::empty_batch_response()).await?;
                 info!("Empty BatchResponse sent (no work available)");
             }
             return Ok(());
         };
 
-        debug!("Sending BatchResponse for block_number: {batch_to_prove}");
         let format = if self.aligned {
             ProofFormat::Compressed
         } else {
             ProofFormat::Groth16
         };
         let response = ProofData::batch_response(batch_to_prove, input, format);
-
         send_response(stream, &response).await?;
         info!("BatchResponse sent for batch number: {batch_to_prove}");
 

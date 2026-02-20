@@ -85,7 +85,7 @@ pub trait ProverBackend {
     /// The serialized input type specific to this backend.
     type SerializedInput;
 
-    /// Returns the prover type this backend produces.
+    /// Returns the ProverType for this backend.
     fn prover_type(&self) -> ProverType;
 
     /// Serialize the program input into the backend-specific format.

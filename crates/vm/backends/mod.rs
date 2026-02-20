@@ -4,6 +4,7 @@ use levm::LEVM;
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
@@ -73,7 +74,14 @@ impl Evm {
         }
     }
 
-    pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
+    /// Execute a block and return the execution result.
+    ///
+    /// Also records and returns the Block Access List (EIP-7928) for Amsterdam+ forks.
+    /// The BAL will be `None` for pre-Amsterdam forks.
+    pub fn execute_block(
+        &mut self,
+        block: &Block,
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block(block, &mut self.db, self.vm_type)
     }
 
@@ -88,33 +96,41 @@ impl Evm {
         block: &Block,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
-    ) -> Result<BlockExecutionResult, EvmError> {
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
     }
 
     /// Wraps [LEVM::execute_tx].
-    /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
+    /// Updates `remaining_gas` (pre-refund) for block gas accounting and
+    /// `cumulative_gas_spent` (post-refund) for receipt cumulative tracking.
+    /// Returns (Receipt, gas_spent) where gas_spent is post-refund for block value calculation.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_tx(
         &mut self,
         tx: &Transaction,
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
+        cumulative_gas_spent: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
         let execution_report =
             LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
 
+        // Use gas_used (pre-refund for EIP-7778/Amsterdam+) for block gas accounting
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
+
+        // Track cumulative post-refund gas for receipt
+        *cumulative_gas_spent += execution_report.gas_spent;
 
         let receipt = Receipt::new(
             tx.tx_type(),
             execution_report.is_success(),
-            block_header.gas_limit - *remaining_gas,
+            *cumulative_gas_spent,
             execution_report.logs.clone(),
         );
 
-        Ok((receipt, execution_report.gas_used))
+        // Return gas_spent (post-refund) for block value calculation
+        Ok((receipt, execution_report.gas_spent))
     }
 
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
@@ -156,6 +172,22 @@ impl Evm {
         header: &BlockHeader,
     ) -> Result<Vec<Requests>, EvmError> {
         levm::extract_all_requests_levm(receipts, &mut self.db, header, self.vm_type)
+    }
+
+    /// Takes the Block Access List (BAL) from the database if recording was enabled.
+    /// Returns `None` if BAL recording was not enabled.
+    pub fn take_bal(&mut self) -> Option<BlockAccessList> {
+        self.db.take_bal()
+    }
+
+    /// Enables BAL (Block Access List) recording for EIP-7928.
+    pub fn enable_bal_recording(&mut self) {
+        self.db.enable_bal_recording();
+    }
+
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
+    pub fn set_bal_index(&mut self, index: u16) {
+        self.db.set_bal_index(index);
     }
 
     pub fn simulate_tx_from_generic(

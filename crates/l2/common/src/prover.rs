@@ -179,17 +179,24 @@ pub enum ProofData {
     /// The Client initiates the connection with a BatchRequest.
     /// Asking for the ProverInputData the prover_server considers/needs.
     /// The commit hash is used to ensure the client and server are compatible.
-    /// The prover type indicates what kind of proof this prover produces.
+    /// The prover_type tells the coordinator which backend the client runs,
+    /// so it can skip batches that already have a proof for that type.
     BatchRequest {
         commit_hash: String,
         prover_type: ProverType,
     },
 
     /// 4.
-    /// The Server responds with a NoBatchForVersion if the code version is not the same as the one
-    /// generated in the batch.
-    /// The Client can only prove batches of its own version.
-    NoBatchForVersion { commit_hash: String },
+    /// The Server responds with VersionMismatch when the prover's code version
+    /// does not match the version needed to prove the next batch. This can happen
+    /// when the batch was stored with a different version, or when the prover is
+    /// stale and future batches will use a newer version.
+    VersionMismatch,
+
+    /// 4b.
+    /// The Server responds with ProverTypeNotNeeded when the connecting prover's
+    /// backend type is not in the set of required proof types for this deployment.
+    ProverTypeNotNeeded { prover_type: ProverType },
 
     /// 5.
     /// The Server responds with a BatchResponse containing the ProverInputData.
@@ -235,9 +242,9 @@ impl ProofData {
         }
     }
 
-    /// Builder function for creating a NoBatchForVersion
-    pub fn no_batch_for_version(commit_hash: String) -> Self {
-        ProofData::NoBatchForVersion { commit_hash }
+    /// Builder function for creating a VersionMismatch
+    pub fn version_mismatch() -> Self {
+        ProofData::VersionMismatch
     }
 
     /// Builder function for creating a BatchResponse

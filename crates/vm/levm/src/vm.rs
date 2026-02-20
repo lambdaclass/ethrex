@@ -22,7 +22,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -71,7 +71,7 @@ pub struct Substate {
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
     accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
-    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -85,7 +85,7 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         accessed_addresses: FxHashSet<Address>,
-        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
@@ -249,6 +249,25 @@ impl Substate {
                 .unwrap_or_default()
     }
 
+    /// Returns all accessed storage slots for a given address.
+    /// Used by SELFDESTRUCT to record storage reads in BAL per EIP-7928:
+    /// "SELFDESTRUCT: Include modified/read storage keys as storage_read"
+    pub fn get_accessed_storage_slots(&self, address: &Address) -> BTreeSet<H256> {
+        let mut slots = BTreeSet::new();
+
+        // Collect from current substate
+        if let Some(slot_set) = self.accessed_storage_slots.get(address) {
+            slots.extend(slot_set.iter().copied());
+        }
+
+        // Collect from parent substates recursively
+        if let Some(parent) = self.parent.as_ref() {
+            slots.extend(parent.get_accessed_storage_slots(address));
+        }
+
+        slots
+    }
+
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
         let is_present = self
@@ -382,7 +401,7 @@ pub struct VM<'a> {
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation).
-    pub storage_original_values: BTreeMap<(Address, H256), U256>,
+    pub storage_original_values: FxHashMap<(Address, H256), U256>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Debug mode for development diagnostics.
@@ -417,7 +436,7 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            storage_original_values: BTreeMap::new(),
+            storage_original_values: FxHashMap::default(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
@@ -481,6 +500,13 @@ impl<'a> VM<'a> {
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
+
+        // EIP-7928: Take a BAL checkpoint AFTER clearing the backup. This captures the state
+        // after prepare_execution (nonce increment, etc.) but before actual execution.
+        // When the top-level call fails, we restore to this checkpoint so that inner call
+        // state changes (like value transfers) are reverted from the BAL.
+        self.current_call_frame.call_frame_backup.bal_checkpoint =
+            self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
         if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
@@ -713,7 +739,8 @@ impl Substate {
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = FxHashSet::default();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
+            FxHashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);

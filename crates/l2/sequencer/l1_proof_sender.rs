@@ -37,12 +37,9 @@ use super::{
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    sequencer::{
-        errors::ProofSenderError,
-        sequencer_state::{SequencerState, SequencerStatus},
-        utils::batch_checkpoint_name,
-    },
+    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
 };
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
 #[cfg(feature = "sp1")]
 use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
@@ -664,7 +661,7 @@ impl L1ProofSender {
                 .map(|proof_type| format!("{:?}", proof_type))
                 .collect(),
             proof_send_interval_ms: self.proof_send_interval_ms,
-            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
             l1_chain_id: self.l1_chain_id,
             network: format!("{:?}", self.network),
         })))
@@ -684,7 +681,7 @@ impl GenServer for L1ProofSender {
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         // Right now we only have the Send message, so we ignore the message
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
             let _ = self
                 .verify_and_send_proofs()
                 .await
