@@ -119,7 +119,8 @@ impl L1ToL2MessagesTable {
 
         let n_new = new_l1_to_l2_messages.len();
         let items_to_keep = 50usize.saturating_sub(n_new);
-        self.items.drain(..self.items.len().saturating_sub(items_to_keep));
+        self.items
+            .drain(..self.items.len().saturating_sub(items_to_keep));
         self.refresh_items(eth_client, store).await?;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new);

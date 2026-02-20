@@ -77,7 +77,8 @@ impl BlocksTable {
 
         let n_new_blocks = new_blocks.len();
         let items_to_keep = 50usize.saturating_sub(n_new_blocks);
-        self.items.drain(..self.items.len().saturating_sub(items_to_keep));
+        self.items
+            .drain(..self.items.len().saturating_sub(items_to_keep));
         self.items.extend_from_slice(&new_blocks);
         self.items.rotate_right(n_new_blocks);
 
