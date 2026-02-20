@@ -697,6 +697,8 @@ impl Blockchain {
             }
         }
 
+        let phase2_start = Instant::now();
+
         // Phase 2: Compute storage roots in parallel, then update state trie
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
@@ -715,8 +717,11 @@ impl Blockchain {
             })
             .collect();
         let storage_results = storage_results?;
+        let phase2a_elapsed = phase2_start.elapsed();
 
-        // Phase 2b: Update state trie sequentially with computed storage roots
+        // Phase 2b: Collect state trie updates (defer application for sorted order)
+        let mut state_trie_updates: Vec<(H256, Option<Vec<u8>>)> = Vec::new();
+
         for (hashed_address, storage_root, updates) in storage_results {
             storage_updates.push((hashed_address, updates));
 
@@ -742,11 +747,10 @@ impl Blockchain {
                 processed_cleared.insert(hashed_address);
             }
 
-            let path = Nibbles::from_bytes(hashed_address.as_bytes());
             if account_state != AccountState::default() {
-                sparse_state.update_leaf(path, account_state.encode_to_vec(), &state_provider)?;
+                state_trie_updates.push((hashed_address, Some(account_state.encode_to_vec())));
             } else {
-                sparse_state.remove_leaf(path, &state_provider)?;
+                state_trie_updates.push((hashed_address, None));
             }
         }
 
@@ -772,15 +776,10 @@ impl Blockchain {
                 account_state.balance = info.balance;
                 account_state.code_hash = info.code_hash;
 
-                let path = Nibbles::from_bytes(hashed_address.as_bytes());
                 if account_state != AccountState::default() {
-                    sparse_state.update_leaf(
-                        path,
-                        account_state.encode_to_vec(),
-                        &state_provider,
-                    )?;
+                    state_trie_updates.push((hashed_address, Some(account_state.encode_to_vec())));
                 } else {
-                    sparse_state.remove_leaf(path, &state_provider)?;
+                    state_trie_updates.push((hashed_address, None));
                 }
             }
         }
@@ -803,22 +802,48 @@ impl Blockchain {
             };
             if account_state.storage_root != *EMPTY_TRIE_HASH {
                 account_state.storage_root = *EMPTY_TRIE_HASH;
-                let path = Nibbles::from_bytes(hashed_address.as_bytes());
                 if account_state != AccountState::default() {
-                    sparse_state.update_leaf(
-                        path,
-                        account_state.encode_to_vec(),
-                        &state_provider,
-                    )?;
+                    state_trie_updates.push((*hashed_address, Some(account_state.encode_to_vec())));
                 } else {
-                    sparse_state.remove_leaf(path, &state_provider)?;
+                    state_trie_updates.push((*hashed_address, None));
                 }
             }
         }
 
+        // Sort state trie updates by hashed_address for trie locality.
+        // Consecutive updates share trie prefix nodes, reducing DB reads.
+        let num_state_updates = state_trie_updates.len();
+        state_trie_updates.sort_unstable_by_key(|(addr, _)| *addr);
+
+        let apply_start = Instant::now();
+
+        // Apply all state trie updates in sorted order
+        for (hashed_address, update) in state_trie_updates {
+            let path = Nibbles::from_bytes(hashed_address.as_bytes());
+            match update {
+                Some(encoded) => {
+                    sparse_state.update_leaf(path, encoded, &state_provider)?;
+                }
+                None => {
+                    sparse_state.remove_leaf(path, &state_provider)?;
+                }
+            }
+        }
+        let apply_elapsed = apply_start.elapsed();
+
         // Phase 3: Compute state root
+        let phase3_start = Instant::now();
         let state_trie_hash = sparse_state.root()?;
         let state_updates = sparse_state.collect_updates();
+        let phase3_elapsed = phase3_start.elapsed();
+
+        info!(
+            "  |- merkle phases: storage_roots={}ms state_updates={}ms ({} accounts) state_root={}ms",
+            phase2a_elapsed.as_millis(),
+            apply_elapsed.as_millis(),
+            num_state_updates,
+            phase3_elapsed.as_millis()
+        );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
