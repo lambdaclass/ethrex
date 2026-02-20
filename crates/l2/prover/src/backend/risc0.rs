@@ -89,6 +89,10 @@ impl ProverBackend for Risc0Backend {
     type ProofOutput = Receipt;
     type SerializedInput = ExecutorEnv<'static>;
 
+    fn prover_type(&self) -> ProverType {
+        ProverType::RISC0
+    }
+
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
         let bytes = rkyv::to_bytes::<RkyvError>(input).map_err(BackendError::serialization)?;
         ExecutorEnv::builder()
