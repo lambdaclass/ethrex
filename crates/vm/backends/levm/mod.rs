@@ -13,7 +13,7 @@ use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
-    Address, BigEndianHash, U256,
+    Address, BigEndianHash, H256, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
         GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, TxType, Withdrawal,
@@ -45,11 +45,46 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
+/// Resource granularity for conflict detection.
+/// Each variant represents a distinct piece of state that a tx can read or write.
+#[derive(Hash, Eq, PartialEq, Clone)]
+enum Resource {
+    Balance(Address),
+    Nonce(Address),
+    Code(Address),
+    Storage(Address, H256),
+}
+
+/// Iterative path-halving Union-Find find with path compression.
+fn uf_find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]]; // path halving
+        x = parent[x];
+    }
+    x
+}
+
+/// Union-Find union: merge the sets containing a and b.
+fn uf_union(parent: &mut Vec<usize>, a: usize, b: usize) {
+    let ra = uf_find(parent, a);
+    let rb = uf_find(parent, b);
+    if ra != rb {
+        parent[ra] = rb;
+    }
+}
+
 /// Builds groups of transaction indices that can execute in parallel.
-/// Uses the BAL write-set information to detect conflicts.
-/// Transactions from the same sender are chained into the same group to preserve nonce order.
-/// Coinbase is excluded from conflict detection (every tx writes it; treating it as a conflict
-/// would force all txs sequential).
+///
+/// Uses resource-level (slot-level) conflict detection with Union-Find for correct
+/// transitive grouping. Handles three kinds of hazards:
+///
+/// - **Same sender**: consecutive same-sender txs must execute in nonce order (unioned).
+/// - **Write-write (W-W)**: two txs writing the same resource must be serialized (unioned).
+/// - **Read-after-write (RAW)**: tx_j reads a resource that an earlier tx_i wrote → tx_j
+///   must see tx_i's write, so they must be in the same sequential group (unioned).
+///
+/// Read sets are approximated from static tx metadata (sender, to-address, EIP-2930 access list).
+/// Coinbase is excluded from all conflict detection (every tx writes it).
 fn build_parallel_groups(
     bal: &BlockAccessList,
     txs_with_sender: &[(&Transaction, Address)],
@@ -60,8 +95,9 @@ fn build_parallel_groups(
         return Vec::new();
     }
 
-    // Build write sets per tx (BAL uses 1-indexed, we convert to 0-indexed)
-    let mut writes: Vec<FxHashSet<Address>> = (0..n).map(|_| FxHashSet::default()).collect();
+    // Phase 1: per-tx write sets from BAL at resource granularity.
+    // BAL uses 1-indexed block_access_index; we map to 0-indexed tx position.
+    let mut writes: Vec<FxHashSet<Resource>> = (0..n).map(|_| FxHashSet::default()).collect();
     for account in bal.accounts() {
         if account.address == coinbase {
             continue;
@@ -70,83 +106,120 @@ fn build_parallel_groups(
         for change in &account.balance_changes {
             let idx = change.block_access_index as usize;
             if idx >= 1 && idx <= n {
-                writes[idx - 1].insert(addr);
+                writes[idx - 1].insert(Resource::Balance(addr));
             }
         }
         for change in &account.nonce_changes {
             let idx = change.block_access_index as usize;
             if idx >= 1 && idx <= n {
-                writes[idx - 1].insert(addr);
+                writes[idx - 1].insert(Resource::Nonce(addr));
             }
         }
         for change in &account.code_changes {
             let idx = change.block_access_index as usize;
             if idx >= 1 && idx <= n {
-                writes[idx - 1].insert(addr);
+                writes[idx - 1].insert(Resource::Code(addr));
             }
         }
         for slot_change in &account.storage_changes {
+            let slot = H256::from_uint(&slot_change.slot);
             for sc in &slot_change.slot_changes {
                 let idx = sc.block_access_index as usize;
                 if idx >= 1 && idx <= n {
-                    writes[idx - 1].insert(addr);
+                    writes[idx - 1].insert(Resource::Storage(addr, slot));
                 }
             }
         }
     }
 
-    // Build sender chains: same-sender txs must execute sequentially in the same group
-    let mut chain: Vec<Option<usize>> = vec![None; n];
+    // Phase 2: per-tx read sets approximated from static tx metadata.
+    // Conservative approximation: may include non-actual reads (extra serialization),
+    // but must not miss actual reads that follow a write (would cause wrong state).
+    //
+    // - Sender always reads its own balance (fee check) and nonce (validation).
+    // - Call target: code is loaded and balance may be checked.
+    // - EIP-2930 access list: declared pre-warm slots and addresses.
+    let mut tx_reads: Vec<FxHashSet<Resource>> = (0..n).map(|_| FxHashSet::default()).collect();
+    for (i, (tx, sender)) in txs_with_sender.iter().enumerate() {
+        tx_reads[i].insert(Resource::Balance(*sender));
+        tx_reads[i].insert(Resource::Nonce(*sender));
+        if let TxKind::Call(to) = tx.to() {
+            if to != coinbase {
+                tx_reads[i].insert(Resource::Balance(to));
+                tx_reads[i].insert(Resource::Code(to));
+            }
+        }
+        for (addr, slots) in tx.access_list() {
+            if *addr == coinbase {
+                continue;
+            }
+            tx_reads[i].insert(Resource::Balance(*addr));
+            tx_reads[i].insert(Resource::Code(*addr));
+            for slot in slots {
+                tx_reads[i].insert(Resource::Storage(*addr, *slot));
+            }
+        }
+    }
+
+    // Phase 3: build resource_writers map (resource → sorted list of tx indices writing it).
+    // Writers are added in index order (0..n), so the list is already sorted.
+    let mut resource_writers: FxHashMap<Resource, Vec<usize>> = FxHashMap::default();
+    for (i, ws) in writes.iter().enumerate() {
+        for r in ws {
+            resource_writers.entry(r.clone()).or_default().push(i);
+        }
+    }
+
+    // Phase 4: Union-Find — union conflicting tx pairs.
+    let mut parent: Vec<usize> = (0..n).collect();
+
+    // Same-sender: chain consecutive txs from the same sender.
     let mut sender_last: FxHashMap<Address, usize> = FxHashMap::default();
     for (i, (_, sender)) in txs_with_sender.iter().enumerate() {
         if let Some(&prev) = sender_last.get(sender) {
-            chain[i] = Some(prev);
+            uf_union(&mut parent, prev, i);
         }
         sender_last.insert(*sender, i);
     }
 
-    // Greedy group assignment
-    let mut tx_group: Vec<usize> = vec![0; n];
-    let mut group_write_sets: Vec<FxHashSet<Address>> = Vec::new();
-
-    for i in 0..n {
-        let group_idx = if let Some(prev) = chain[i] {
-            // Same sender: must go in same group as previous tx from this sender
-            tx_group[prev]
-        } else {
-            // Find first group that conflicts with this tx's write set.
-            // Conflicting txs must execute sequentially → same group.
-            // If no group conflicts, this tx is independent → new parallel group.
-            match group_write_sets
-                .iter()
-                .position(|gws| !gws.is_disjoint(&writes[i]))
-            {
-                Some(idx) => idx,
-                None => {
-                    group_write_sets.push(FxHashSet::default());
-                    group_write_sets.len() - 1
-                }
-            }
-        };
-        tx_group[i] = group_idx;
-        // Extend the group's write set with this tx's writes
-        // (ensures future txs that conflict won't join this group)
-        if group_idx < group_write_sets.len() {
-            group_write_sets[group_idx].extend(writes[i].iter().copied());
-        } else {
-            let mut new_set = FxHashSet::default();
-            new_set.extend(writes[i].iter().copied());
-            group_write_sets.push(new_set);
+    // W-W conflicts: chain-union all writers of the same resource.
+    // After this pass, all txs writing the same resource are in one equivalence class.
+    for writers in resource_writers.values() {
+        for w in writers.windows(2) {
+            uf_union(&mut parent, w[0], w[1]);
         }
     }
 
-    // Reconstruct groups in original tx order
-    let num_groups = group_write_sets.len();
-    let mut groups: Vec<Vec<usize>> = vec![Vec::new(); num_groups];
-    for i in 0..n {
-        groups[tx_group[i]].push(i);
+    // RAW conflicts: for each tx j that reads resource R, if any writer i < j exists,
+    // union j with that writer. (W-W already merged all writers, so unioning with the
+    // earliest writer is sufficient.)
+    //
+    // WAR (j reads R, i > j writes R) is NOT a hazard: j reads the pre-block value
+    // which is correct because i executes after j in block order.
+    for (i, rs) in tx_reads.iter().enumerate() {
+        for r in rs {
+            if let Some(writers) = resource_writers.get(r) {
+                // writers is sorted; first() is the earliest writer.
+                if let Some(&first_writer) = writers.first() {
+                    if first_writer < i {
+                        uf_union(&mut parent, i, first_writer);
+                    }
+                }
+            }
+        }
     }
-    groups.retain(|g| !g.is_empty());
+
+    // Phase 5: extract groups sorted by minimum tx index.
+    let mut groups_map: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    for i in 0..n {
+        let root = uf_find(&mut parent, i);
+        groups_map.entry(root).or_default().push(i);
+    }
+
+    let mut groups: Vec<Vec<usize>> = groups_map.into_values().collect();
+    // Each group's indices are already in increasing order (inserted 0..n).
+    // Sort groups by their first (minimum) index for deterministic ordering.
+    groups.sort_unstable_by_key(|g| g[0]);
     groups
 }
 
@@ -460,39 +533,6 @@ impl LEVM {
         ))
     }
 
-    /// Run all txs sequentially on `db` (must be in post-system-call state).
-    /// Returns receipts, block gas used, and the merged AccountUpdates for all txs.
-    /// Used as a fallback from the parallel path when RAW conflicts are detected.
-    fn execute_txs_sequential(
-        block: &Block,
-        txs_with_sender: &[(&Transaction, Address)],
-        db: &mut GeneralizedDatabase,
-        vm_type: VMType,
-    ) -> Result<(Vec<Receipt>, u64, Vec<AccountUpdate>), EvmError> {
-        let header = &block.header;
-        let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
-        let mut all_updates = Vec::new();
-        let mut receipts = Vec::new();
-        let mut cumulative_gas = 0u64;
-        let mut block_gas = 0u64;
-        for (tx, sender) in txs_with_sender {
-            let report =
-                LEVM::execute_tx_in_block(tx, *sender, header, db, vm_type, &mut stack_pool)?;
-            let updates = LEVM::get_state_transitions_tx(db)?;
-            all_updates.extend(updates);
-            cumulative_gas += report.gas_spent;
-            block_gas += report.gas_used;
-            let receipt = Receipt::new(
-                tx.tx_type(),
-                matches!(report.result, TxResult::Success),
-                cumulative_gas,
-                report.logs,
-            );
-            receipts.push(receipt);
-        }
-        Ok((receipts, block_gas, all_updates))
-    }
-
     /// Execute block transactions in parallel using BAL conflict graph.
     /// Only called for Amsterdam+ blocks when the header BAL is available.
     ///
@@ -530,13 +570,13 @@ impl LEVM {
         let store = db.store.clone();
         let header = &block.header;
 
-        // GroupResult: per-tx results + final coinbase balance + read set for RAW detection.
         type GroupResult = (
             Vec<(usize, TxType, ExecutionReport, Vec<AccountUpdate>)>,
-            U256,              // final coinbase balance in this group
-            FxHashSet<Address>, // addresses read from initial/store (RAW conflict detection)
+            U256, // final coinbase balance in this group
         );
-        // Execute each group in parallel; within each group txs are sequential
+        // Execute each group in parallel; within each group txs are sequential.
+        // Conflicts (W-W and RAW) are already resolved upfront by build_parallel_groups,
+        // so no post-hoc fallback is needed.
         let all_results: Result<Vec<GroupResult>, EvmError> = groups
             .into_par_iter()
             .map(|group| -> Result<_, EvmError> {
@@ -545,8 +585,6 @@ impl LEVM {
                 group_db
                     .initial_accounts_state
                     .extend(system_seed.iter().map(|(a, ac)| (*a, ac.clone())));
-                // Enable read tracking for RAW conflict detection
-                group_db.reads = Some(FxHashSet::default());
                 let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
                 let mut per_tx = Vec::new();
                 for &tx_idx in &group {
@@ -572,53 +610,18 @@ impl LEVM {
                     .get(&coinbase)
                     .map(|a| a.info.balance)
                     .unwrap_or(coinbase_initial_balance);
-                let reads = group_db.reads.take().unwrap_or_default();
-                Ok((per_tx, final_coinbase, reads))
+                Ok((per_tx, final_coinbase))
             })
             .collect();
 
         let all_results = all_results?;
 
-        // RAW conflict detection: check if any group reads an address that another group writes.
-        // If so, the parallel results would be incorrect — fall back to sequential execution.
-        if all_results.len() > 1 {
-            let write_sets: Vec<FxHashSet<Address>> = all_results
-                .iter()
-                .map(|(group_txs, _, _)| {
-                    group_txs
-                        .iter()
-                        .flat_map(|(_, _, _, updates)| updates.iter().map(|u| u.address))
-                        .filter(|&a| a != coinbase)
-                        .collect()
-                })
-                .collect();
-
-            let has_raw_conflict = all_results.iter().enumerate().any(|(i, (_, _, reads))| {
-                write_sets
-                    .iter()
-                    .enumerate()
-                    .any(|(j, writes)| i != j && !reads.is_disjoint(writes))
-            });
-
-            if has_raw_conflict {
-                // Discard parallel results; re-run all txs sequentially on the main db
-                // (which is already in post-system-call state, current_accounts_state empty)
-                let (receipts, block_gas, seq_updates) =
-                    Self::execute_txs_sequential(block, txs_with_sender, db, vm_type)?;
-                merkleizer
-                    .send(seq_updates)
-                    .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
-                queue_length.fetch_add(1, Ordering::Relaxed);
-                return Ok((receipts, block_gas));
-            }
-        }
-
-        // No RAW conflicts — merge all AccountUpdates; accumulate per-group coinbase deltas
+        // Merge all AccountUpdates; accumulate per-group coinbase deltas
         let mut indexed_reports: Vec<(usize, TxType, ExecutionReport)> = Vec::new();
         let mut merged: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
         let mut coinbase_delta = U256::zero();
 
-        for (group_txs, final_coinbase, _reads) in all_results {
+        for (group_txs, final_coinbase) in all_results {
             // One delta per group, computed from the final coinbase balance in that group
             coinbase_delta += final_coinbase.saturating_sub(coinbase_initial_balance);
             for (tx_idx, tx_type, report, updates) in group_txs {
