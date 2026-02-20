@@ -5,9 +5,10 @@ use crate::lock;
 use crate::types::{EventName, ReplayEvent, ReplayMode, RunManifest, RunState, RunSummary};
 use crate::workspace::Workspace;
 use chrono::Utc;
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{AddBlockPipelineMetrics, Blockchain};
 use ethrex_common::types::BlockHash;
 use ethrex_storage::{EngineType, Store};
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{
@@ -253,6 +254,33 @@ fn check_cancel_flag(
     Ok(true)
 }
 
+fn attach_pipeline_metrics(
+    mut event: ReplayEvent,
+    metrics: &AddBlockPipelineMetrics,
+) -> ReplayEvent {
+    let metrics_value = json!({
+        "block_number": metrics.block_number,
+        "gas_used": metrics.gas_used,
+        "gas_limit": metrics.gas_limit,
+        "transactions_count": metrics.transactions_count,
+        "merkle_queue_length": metrics.merkle_queue_length,
+        "total_ms": metrics.total_ms,
+        "throughput_ggas_per_s": metrics.throughput_ggas_per_s,
+        "validate_ms": metrics.validate_ms,
+        "exec_ms": metrics.exec_ms,
+        "merkle_concurrent_ms": metrics.merkle_concurrent_ms,
+        "merkle_drain_ms": metrics.merkle_drain_ms,
+        "merkle_total_ms": metrics.merkle_total_ms,
+        "merkle_overlap_pct": metrics.merkle_overlap_pct,
+        "store_ms": metrics.store_ms,
+        "warmer_ms": metrics.warmer_ms,
+        "warmer_early_ms": metrics.warmer_early_ms,
+        "bottleneck_phase": metrics.bottleneck_phase,
+    });
+    event.payload.insert("metrics".to_string(), metrics_value);
+    event
+}
+
 /// Inner execution logic, called only while the lock is held.
 /// The caller (`execute_run`) is responsible for lock release.
 ///
@@ -400,28 +428,31 @@ async fn execute_run_inner(
             })?;
 
         // Execute block against the per-run DB state.
-        if let Err(e) = blockchain.add_block_pipeline(block) {
-            heartbeat.check()?;
-            // Check cancellation before writing Failed.
-            if check_cancel_flag(workspace, run_id, status)? {
-                return Err(ReplayError::RunCanceled(run_id.clone()));
+        let pipeline_metrics = match blockchain.add_block_pipeline_with_metrics(block) {
+            Ok(metrics) => metrics,
+            Err(e) => {
+                heartbeat.check()?;
+                // Check cancellation before writing Failed.
+                if check_cancel_flag(workspace, run_id, status)? {
+                    return Err(ReplayError::RunCanceled(run_id.clone()));
+                }
+                status.state = RunState::Failed;
+                status.error_code = Some("execution/block_failed".to_string());
+                status.error_message = Some(format!("block {block_number}: {e}"));
+                status.updated_at = Utc::now();
+                workspace.write_run_status(status)?;
+                workspace.append_event(&ReplayEvent::new(
+                    run_id.clone(),
+                    EventName::RunFailed,
+                    Some(block_number),
+                    Some(hash_hex.clone()),
+                ))?;
+                return Err(ReplayError::BlockFailed {
+                    block_number,
+                    reason: e.to_string(),
+                });
             }
-            status.state = RunState::Failed;
-            status.error_code = Some("execution/block_failed".to_string());
-            status.error_message = Some(format!("block {block_number}: {e}"));
-            status.updated_at = Utc::now();
-            workspace.write_run_status(status)?;
-            workspace.append_event(&ReplayEvent::new(
-                run_id.clone(),
-                EventName::RunFailed,
-                Some(block_number),
-                Some(hash_hex.clone()),
-            ))?;
-            return Err(ReplayError::BlockFailed {
-                block_number,
-                reason: e.to_string(),
-            });
-        }
+        };
 
         heartbeat.check()?;
         // Check cancellation before writing progress.
@@ -429,12 +460,13 @@ async fn execute_run_inner(
             return Err(ReplayError::RunCanceled(run_id.clone()));
         }
 
-        workspace.append_event(&ReplayEvent::new(
+        let event = ReplayEvent::new(
             run_id.clone(),
             EventName::BlockExecuted,
             Some(block_number),
             Some(hash_hex.clone()),
-        ))?;
+        );
+        workspace.append_event(&attach_pipeline_metrics(event, &pipeline_metrics))?;
 
         executed_blocks += 1;
         status.last_completed_block = Some(block_number);

@@ -284,6 +284,44 @@ $BIN --workspace "$WS" status --run "$RUN_ID"
 
 For actively running executors, `cancel` drops `cancel.flag`; executor detects it and finalizes cancellation.
 
+## Per-block metrics
+
+Each `block_executed` event in `runs/<run_id>/events.ndjson` includes
+`payload.metrics` captured directly from `add_block_pipeline` timing data.
+
+Example fields:
+
+- `total_ms`
+- `validate_ms`
+- `exec_ms`
+- `merkle_concurrent_ms`
+- `merkle_drain_ms`
+- `merkle_total_ms`
+- `store_ms`
+- `warmer_ms`
+- `warmer_early_ms`
+- `merkle_overlap_pct`
+- `merkle_queue_length`
+- `throughput_ggas_per_s`
+- `bottleneck_phase`
+
+Query example:
+
+```bash
+jq -s '
+  [ .[] | select(.event=="block_executed") | {
+      block_number,
+      block_hash,
+      total_ms: .payload.metrics.total_ms,
+      validate_ms: .payload.metrics.validate_ms,
+      exec_ms: .payload.metrics.exec_ms,
+      merkle_drain_ms: .payload.metrics.merkle_drain_ms,
+      store_ms: .payload.metrics.store_ms,
+      bottleneck_phase: .payload.metrics.bottleneck_phase
+    } ]
+' "$WS/runs/$RUN_ID/events.ndjson"
+```
+
 ## Agent-facing contracts
 
 ### Response envelope
