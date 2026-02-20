@@ -180,12 +180,14 @@ DecodeError {
 
 ### 1.5 Fix RPC Error Mapping Bug
 
-**Problem:** `InvalidPayloadAttributes` returns wrong message "Invalid forkchoice state" (copy-paste error).
+**Status: RESOLVED** — Fixed by [#6129](https://github.com/lambdaclass/ethrex/pull/6129) (merged Feb 5, 2026).
 
-**File:** `crates/networking/rpc/utils.rs:150-154`
+~~**Problem:** `InvalidPayloadAttributes` returns wrong message "Invalid forkchoice state" (copy-paste error).~~
 
-**Effort:** 30 minutes
-**Breaking:** No
+~~**File:** `crates/networking/rpc/utils.rs:150-154`~~
+
+~~**Effort:** 30 minutes~~
+~~**Breaking:** No~~
 
 ---
 
@@ -241,12 +243,12 @@ error!(account = %address, block = %block_num, "Account storage not found");
 
 **Current** (`cmd/ethrex/ethrex.rs:142`):
 ```
-INFO ethrex version: ethrex/0.1.0
+INFO ethrex version: ethrex/v9.0.0-main-3713957c1226a4e80736a4a03eebeb70a9918113/x86_64-unknown-linux-gnu/rustc-v1.90.0
 ```
 
 **Proposed Enhancement:** Add configuration details as additional INFO-level log lines following the existing style:
 ```
-INFO ethrex version: ethrex/0.1.0
+INFO ethrex version: ethrex/v9.0.0-main-3713957c1226a4e80736a4a03eebeb70a9918113/x86_64-unknown-linux-gnu/rustc-v1.90.0
 INFO Network:    Mainnet (chain ID 1)
 INFO Datadir:    ~/.ethrex
 INFO Sync Mode:  Snap
@@ -1024,7 +1026,7 @@ services.ethrex = {
 |------|--------|-----------|
 | **1.1 Remove Production Panics** | 3-4 days | Primary goal - eliminate crashes |
 | **1.4 Improve Error Types** | 2-3 days | Batch with 1.1 to consolidate breaking changes |
-| **1.5 Fix RPC Error Mapping Bug** | 30 min | Quick win while in error code |
+| ~~**1.5 Fix RPC Error Mapping Bug**~~ | ~~30 min~~ | ~~Already resolved by #6129~~ |
 
 **Track B - Sync Visibility:**
 | Item | Effort | Why First |
