@@ -50,6 +50,38 @@ pub fn compute_root(
         hash_subtrie(subtrie)
     })?;
 
+    finalize_root(upper, lower)
+}
+
+/// Sequential variant of compute_root.
+/// Use when this trie is already being processed inside a parallel context
+/// (e.g., storage tries computed via outer rayon parallelism) to avoid
+/// nested rayon overhead.
+pub fn compute_root_sequential(
+    upper: &mut SparseSubtrie,
+    lower: &mut [LowerSubtrie],
+) -> Result<H256, TrieError> {
+    // Hash all lower subtries sequentially.
+    for lower_subtrie in lower.iter_mut() {
+        let subtrie = match lower_subtrie {
+            LowerSubtrie::Revealed(s) => s,
+            LowerSubtrie::Blind(Some(s)) => s,
+            LowerSubtrie::Blind(None) => continue,
+        };
+        if subtrie.dirty_nodes.is_empty() {
+            continue;
+        }
+        hash_subtrie(subtrie)?;
+    }
+
+    finalize_root(upper, lower)
+}
+
+/// Common finalization: propagate hashes and compute upper root.
+fn finalize_root(
+    upper: &mut SparseSubtrie,
+    lower: &mut [LowerSubtrie],
+) -> Result<H256, TrieError> {
     // Propagate lower subtrie root hashes to the upper subtrie.
     // Read cached hashes directly instead of recomputing them.
     for (i, lower_subtrie) in lower.iter().enumerate() {

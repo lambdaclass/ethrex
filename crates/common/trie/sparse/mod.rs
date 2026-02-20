@@ -285,6 +285,15 @@ impl SparseTrie {
         result
     }
 
+    /// Compute the root hash without internal rayon parallelism.
+    /// Use when this trie is already inside a parallel context (e.g., storage
+    /// tries being hashed concurrently) to avoid nested rayon overhead.
+    pub fn root_sequential(&mut self) -> Result<H256, TrieError> {
+        let result = hash::compute_root_sequential(&mut self.upper, &mut self.lower);
+        self.prefix_set.clear();
+        result
+    }
+
     /// Collect modified nodes as (path, RLP-encoded node) pairs
     /// for persistence to the database.
     ///
