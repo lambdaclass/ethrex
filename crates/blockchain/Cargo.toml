@@ -21,6 +21,7 @@ thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
 hex.workspace = true
+rayon.workspace = true
 rustc-hash.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "sync", "macros"] }
 tokio-util.workspace = true

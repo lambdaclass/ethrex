@@ -3904,6 +3904,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "rayon",
  "rustc-hash 2.1.1",
  "serde_json",
  "thiserror 2.0.18",

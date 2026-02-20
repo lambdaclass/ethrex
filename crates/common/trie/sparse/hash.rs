@@ -13,6 +13,7 @@ use super::{LowerSubtrie, PathVec, SparseNode, SparseSubtrie, SubtrieBuffers};
 
 /// Read the cached hash from a node that has already been hashed.
 /// Used after `hash_subtrie` to avoid recomputing hashes.
+#[inline]
 fn cached_hash(node: &SparseNode) -> NodeHash {
     match node {
         SparseNode::Leaf { hash: Some(h), .. }
@@ -125,8 +126,9 @@ fn propagate_cross_boundary_hashes(upper: &mut SparseSubtrie, lower: &[LowerSubt
 fn hash_subtrie(subtrie: &mut SparseSubtrie) -> Result<(), TrieError> {
     // Use the dirty_nodes set directly — O(dirty) instead of O(total_nodes)
     let mut dirty_paths: Vec<PathVec> = subtrie.dirty_nodes.iter().cloned().collect();
-    // Sort deepest first for bottom-up processing
-    dirty_paths.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    // Sort deepest first for bottom-up processing.
+    // Unstable sort avoids temporary allocation and is faster for this use case.
+    dirty_paths.sort_unstable_by_key(|p| std::cmp::Reverse(p.len()));
 
     let mut buffers = std::mem::take(&mut subtrie.buffers);
     let mut rlp_cache = std::mem::take(&mut subtrie.rlp_cache);
@@ -146,8 +148,13 @@ fn hash_subtrie(subtrie: &mut SparseSubtrie) -> Result<(), TrieError> {
             }
 
             let hash = node_hash(node, &subtrie.values, &subtrie.nodes, path, &mut buffers);
-            // Cache the RLP encoding (buffers.rlp_buf has this node's RLP)
-            rlp_cache.insert(path.clone(), buffers.rlp_buf.clone());
+            // Cache the RLP encoding: swap buffers with the cache entry to reuse
+            // the old allocation instead of cloning.
+            let rlp = std::mem::take(&mut buffers.rlp_buf);
+            if let Some(mut old) = rlp_cache.insert(path.clone(), rlp) {
+                old.clear();
+                buffers.rlp_buf = old;
+            }
             // Store the computed hash
             if let Some(
                 SparseNode::Leaf { hash: h, .. }
@@ -166,6 +173,7 @@ fn hash_subtrie(subtrie: &mut SparseSubtrie) -> Result<(), TrieError> {
 }
 
 /// Compute the NodeHash for a single SparseNode.
+#[inline]
 fn node_hash(
     node: &SparseNode,
     values: &FxHashMap<PathVec, Vec<u8>>,
@@ -193,18 +201,18 @@ fn node_hash(
             buffers.child_path_buf.clear();
             buffers.child_path_buf.extend_from_slice(path);
             buffers.child_path_buf.extend_from_slice(key);
-            let empty_value: Vec<u8> = Vec::new();
             let value = values
                 .get(buffers.child_path_buf.as_slice())
-                .unwrap_or(&empty_value);
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
 
             // Manual RLP: [compact_key, value]
             buffers.rlp_buf.clear();
             let key_len = <[u8] as RLPEncode>::length(&buffers.compact_buf);
-            let val_len = <[u8] as RLPEncode>::length(value.as_slice());
+            let val_len = <[u8] as RLPEncode>::length(value);
             encode_length(key_len + val_len, &mut buffers.rlp_buf);
             <[u8] as RLPEncode>::encode(&buffers.compact_buf, &mut buffers.rlp_buf);
-            <[u8] as RLPEncode>::encode(value.as_slice(), &mut buffers.rlp_buf);
+            <[u8] as RLPEncode>::encode(value, &mut buffers.rlp_buf);
 
             NodeHash::from_encoded(&buffers.rlp_buf)
         }
@@ -259,11 +267,14 @@ fn node_hash(
             // Encode: RLP([child0, child1, ..., child15, value])
             // Read cached child hashes (bottom-up order guarantees children are hashed)
             let mut child_hashes: [NodeHash; 16] = [NodeHash::default(); 16];
+            // Build path prefix once and swap the last nibble for each child
+            buffers.child_path_buf.clear();
+            buffers.child_path_buf.extend_from_slice(path);
+            buffers.child_path_buf.push(0); // placeholder nibble
+            let last_idx = buffers.child_path_buf.len() - 1;
             for i in 0..16u8 {
                 if state_mask & (1 << i) != 0 {
-                    buffers.child_path_buf.clear();
-                    buffers.child_path_buf.extend_from_slice(path);
-                    buffers.child_path_buf.push(i);
+                    buffers.child_path_buf[last_idx] = i;
                     child_hashes[i as usize] = match nodes.get(buffers.child_path_buf.as_slice()) {
                         Some(child_node) => match child_node {
                             SparseNode::Leaf { hash: Some(h), .. }
@@ -285,14 +296,12 @@ fn node_hash(
             // Now encode the branch node
             buffers.rlp_buf.clear();
 
-            // Check for branch value using the reusable buffer
-            buffers.child_path_buf.clear();
-            buffers.child_path_buf.extend_from_slice(path);
-            buffers.child_path_buf.push(16);
-            let empty_value = Vec::new();
+            // Check for branch value: reuse child_path_buf by swapping last nibble to 16
+            buffers.child_path_buf[last_idx] = 16;
             let branch_value = values
                 .get(buffers.child_path_buf.as_slice())
-                .unwrap_or(&empty_value);
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
 
             // Calculate payload length
             let value_len = <[u8] as RLPEncode>::length(branch_value);
