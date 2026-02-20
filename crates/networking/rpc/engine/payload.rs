@@ -567,7 +567,7 @@ impl RpcHandler for GetPayloadV6Request {
             )));
         }
 
-        // V6 supports BAL (Amsterdam/Gloas fork, EIP-7928)
+        // V6 supports BAL (Amsterdam EL fork / Glamsterdam, EIP-7928)
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(
                 payload_bundle.block,
