@@ -159,6 +159,18 @@ fn build_parallel_groups(
                 tx_reads[i].insert(Resource::Storage(*addr, *slot));
             }
         }
+        // EIP-7702: the delegate target's code is loaded at call time via the delegation
+        // pointer, so every authorization entry implies a read of Code(delegate_target).
+        // The authority address itself is only known at runtime (ecrecover), so it cannot
+        // be added here; W-W detection via the BAL handles the case where two txs both
+        // write Code(authority).
+        if let Some(auth_list) = tx.authorization_list() {
+            for auth in auth_list {
+                if auth.address != coinbase {
+                    tx_reads[i].insert(Resource::Code(auth.address));
+                }
+            }
+        }
     }
 
     // Phase 3: build resource_writers map (resource → sorted list of tx indices writing it).
@@ -616,14 +628,21 @@ impl LEVM {
 
         let all_results = all_results?;
 
-        // Merge all AccountUpdates; accumulate per-group coinbase deltas
+        // Merge all AccountUpdates; accumulate per-group coinbase deltas.
+        // Track credits and debits separately to handle the rare case where the coinbase
+        // address is a tx sender (spending more ETH than received in fees → negative delta).
         let mut indexed_reports: Vec<(usize, TxType, ExecutionReport)> = Vec::new();
         let mut merged: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
-        let mut coinbase_delta = U256::zero();
+        let mut coinbase_credit = U256::zero();
+        let mut coinbase_debit = U256::zero();
 
         for (group_txs, final_coinbase) in all_results {
             // One delta per group, computed from the final coinbase balance in that group
-            coinbase_delta += final_coinbase.saturating_sub(coinbase_initial_balance);
+            if final_coinbase >= coinbase_initial_balance {
+                coinbase_credit += final_coinbase - coinbase_initial_balance;
+            } else {
+                coinbase_debit += coinbase_initial_balance - final_coinbase;
+            }
             for (tx_idx, tx_type, report, updates) in group_txs {
                 indexed_reports.push((tx_idx, tx_type, report));
                 for update in updates {
@@ -639,12 +658,18 @@ impl LEVM {
             }
         }
 
-        // Apply total coinbase delta to main db and extract its AccountUpdate
-        if !coinbase_delta.is_zero() {
+        // Apply net coinbase change to main db and extract its AccountUpdate
+        if coinbase_credit != coinbase_debit {
             let coinbase_account = db
                 .get_account_mut(coinbase)
                 .map_err(|e| EvmError::Custom(format!("failed to load coinbase for delta: {e}")))?;
-            coinbase_account.info.balance += coinbase_delta;
+            if coinbase_credit >= coinbase_debit {
+                coinbase_account.info.balance =
+                    coinbase_initial_balance + (coinbase_credit - coinbase_debit);
+            } else {
+                coinbase_account.info.balance =
+                    coinbase_initial_balance.saturating_sub(coinbase_debit - coinbase_credit);
+            }
         }
         // Extract coinbase update (and any other updates on main db)
         let main_updates = LEVM::get_state_transitions_tx(db)?;
