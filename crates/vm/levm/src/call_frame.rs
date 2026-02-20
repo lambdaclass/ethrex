@@ -469,12 +469,7 @@ impl<'a> VM<'a> {
     }
 
     #[inline(always)]
-    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame.pc = self
-            .current_call_frame
-            .pc
-            .checked_add(count)
-            .ok_or(InternalError::Overflow)?;
-        Ok(())
+    pub fn advance_pc(&mut self, count: usize) {
+        self.current_call_frame.pc += count;
     }
 }
