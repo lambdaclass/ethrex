@@ -181,7 +181,7 @@ RPC options:
       --authrpc.jwtsecret <JWTSECRET_PATH>
           Receives the jwt secret used for authenticated rpc requests.
 
-          [env: ETHREX_AUTHRPC_JWTSECRET=]
+          [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
 
 Block building options:
@@ -380,7 +380,7 @@ RPC options:
       --authrpc.jwtsecret <JWTSECRET_PATH>
           Receives the jwt secret used for authenticated rpc requests.
 
-          [env: ETHREX_AUTHRPC_JWTSECRET=]
+          [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
 
 Block building options:
@@ -634,7 +634,7 @@ L2 options:
       --sponsorable-addresses <SPONSORABLE_ADDRESSES_PATH>
           Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs
 
-          [env: ETHREX_SPONSORABLE_ADDRESSES=]
+          [env: ETHREX_SPONSORABLE_ADDRESSES_PATH=]
 
       --sponsor-private-key <SPONSOR_PRIVATE_KEY>
           The private key of ethrex L2 transactions sponsor.

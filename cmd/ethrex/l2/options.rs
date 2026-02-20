@@ -37,7 +37,7 @@ pub struct Options {
         value_name = "SPONSORABLE_ADDRESSES_PATH",
         help = "Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs",
         help_heading = "L2 options",
-        env = "ETHREX_SPONSORABLE_ADDRESSES"
+        env = "ETHREX_SPONSORABLE_ADDRESSES_PATH"
     )]
     pub sponsorable_addresses_file_path: Option<String>,
     //TODO: make optional when the the sponsored feature is complete

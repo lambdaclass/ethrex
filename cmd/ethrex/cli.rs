@@ -222,7 +222,7 @@ pub struct Options {
         value_name = "JWTSECRET_PATH",
         help = "Receives the jwt secret used for authenticated rpc requests.",
         help_heading = "RPC options",
-        env = "ETHREX_AUTHRPC_JWTSECRET"
+        env = "ETHREX_AUTHRPC_JWTSECRET_PATH"
     )]
     pub authrpc_jwtsecret: String,
     #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options", env = "ETHREX_P2P_DISABLED")]
