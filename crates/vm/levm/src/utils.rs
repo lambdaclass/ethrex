@@ -473,24 +473,13 @@ impl<'a> VM<'a> {
     }
 
     // ==================== Gas related functions =======================
-
-    /// Returns the calldata cost, computing and caching it on first call.
-    pub fn calldata_cost(&mut self) -> Result<u64, VMError> {
-        if let Some(cost) = self.cached_calldata_cost {
-            return Ok(cost);
-        }
-        let cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
-        self.cached_calldata_cost = Some(cost);
-        Ok(cost)
-    }
-
-    pub fn get_intrinsic_gas(&mut self) -> Result<u64, VMError> {
+    pub fn get_intrinsic_gas(&self) -> Result<u64, VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
         let mut intrinsic_gas: u64 = 0;
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = self.calldata_cost()?;
+        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
 
         intrinsic_gas = intrinsic_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
@@ -558,18 +547,19 @@ impl<'a> VM<'a> {
     }
 
     /// Calculates the minimum gas to be consumed in the transaction.
-    pub fn get_min_gas_used(&mut self) -> Result<u64, VMError> {
+    pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
+        // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
+        let calldata = if self.is_create()? {
+            &self.current_call_frame.bytecode.bytecode
+        } else {
+            &self.current_call_frame.calldata
+        };
+
         // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
         // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
         // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
         // see it in https://eips.ethereum.org/EIPS/eip-7623
-        let calldata_cost = if self.is_create()? {
-            // CREATE: calldata is the bytecode, not cached
-            gas_cost::tx_calldata(&self.current_call_frame.bytecode.bytecode)?
-        } else {
-            self.calldata_cost()?
-        };
-        let tokens_in_calldata: u64 = calldata_cost / STANDARD_TOKEN_COST;
+        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)? / STANDARD_TOKEN_COST;
 
         // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
         let mut min_gas_used: u64 = tokens_in_calldata
