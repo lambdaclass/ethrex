@@ -497,7 +497,13 @@ impl LEVM {
         let store = db.store.clone();
         let header = &block.header;
 
-        type GroupResult = Vec<(usize, TxType, ExecutionReport, Vec<AccountUpdate>)>;
+        // GroupResult: per-tx results + final coinbase balance after all txs in the group.
+        // The final coinbase balance is read from initial_accounts_state after the last
+        // get_state_transitions_tx, giving the true accumulated fee for the whole group.
+        type GroupResult = (
+            Vec<(usize, TxType, ExecutionReport, Vec<AccountUpdate>)>,
+            U256, // final coinbase balance in this group
+        );
         // Execute each group in parallel; within each group txs are sequential
         let all_results: Result<Vec<GroupResult>, EvmError> = groups
             .into_par_iter()
@@ -523,32 +529,41 @@ impl LEVM {
                     let updates = LEVM::get_state_transitions_tx(&mut group_db)?;
                     per_tx.push((tx_idx, tx.tx_type(), report, updates));
                 }
-                Ok(per_tx)
+                // Read final coinbase balance once per group (after all txs have been drained).
+                // This avoids double-counting: each get_state_transitions_tx promotes the
+                // coinbase to initial_accounts_state, so per-tx updates show an accumulated
+                // absolute balance, not an incremental delta.
+                let final_coinbase = group_db
+                    .initial_accounts_state
+                    .get(&coinbase)
+                    .map(|a| a.info.balance)
+                    .unwrap_or(coinbase_initial_balance);
+                Ok((per_tx, final_coinbase))
             })
             .collect();
 
         let all_results = all_results?;
 
-        // Flatten and merge all AccountUpdates; collect coinbase deltas separately
+        // Merge all AccountUpdates; accumulate per-group coinbase deltas (one per group)
         let mut indexed_reports: Vec<(usize, TxType, ExecutionReport)> = Vec::new();
         let mut merged: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
         let mut coinbase_delta = U256::zero();
 
-        for (tx_idx, tx_type, report, updates) in all_results.into_iter().flatten() {
-            indexed_reports.push((tx_idx, tx_type, report));
-            for update in updates {
-                if update.address == coinbase {
-                    // Accumulate coinbase gas deltas rather than merging directly
-                    if let Some(info) = &update.info {
-                        coinbase_delta +=
-                            info.balance.saturating_sub(coinbase_initial_balance);
+        for (group_txs, final_coinbase) in all_results {
+            // One delta per group, computed from the final coinbase balance in that group
+            coinbase_delta += final_coinbase.saturating_sub(coinbase_initial_balance);
+            for (tx_idx, tx_type, report, updates) in group_txs {
+                indexed_reports.push((tx_idx, tx_type, report));
+                for update in updates {
+                    if update.address == coinbase {
+                        // Skip per-tx coinbase updates; handled via per-group delta above
+                        continue;
                     }
-                    continue;
+                    merged
+                        .entry(update.address)
+                        .and_modify(|e| e.merge(update.clone()))
+                        .or_insert(update);
                 }
-                merged
-                    .entry(update.address)
-                    .and_modify(|e| e.merge(update.clone()))
-                    .or_insert(update);
             }
         }
 
