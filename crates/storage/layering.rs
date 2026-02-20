@@ -84,15 +84,6 @@ impl TrieLayerCache {
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
-            if current_state_root == state_root {
-                // TODO: check if this is possible in practice
-                // This can't happen in L1, due to system contracts irreversibly modifying state
-                // at each block.
-                // On L2, if no transactions are included in a block, the state root remains the same,
-                // but we handle that case in put_batch. It may happen, however, if someone modifies
-                // state with a privileged tx and later reverts it (since it doesn't update nonce).
-                panic!("State cycle found");
-            }
         }
         None
     }
