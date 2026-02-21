@@ -222,11 +222,21 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
+        // Check self first — short-circuits for re-accessed (warm) slots
+        if self
+            .accessed_storage_slots
+            .get(&address)
+            .map(|set| set.contains(&key))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present
             || !self
@@ -270,11 +280,16 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
+        // Check self first — short-circuits for re-accessed (warm) addresses
+        if self.accessed_addresses.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present || !self.accessed_addresses.insert(address)
     }
