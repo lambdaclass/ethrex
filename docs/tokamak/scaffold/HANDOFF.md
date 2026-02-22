@@ -8,145 +8,116 @@
 | Phase 0-1: ethrex 코드베이스 분석 | **완료** |
 | Phase 0-2: 대안 평가 (Reth 등) | **완료** |
 | Phase 0-3: DECISION.md 작성 | **완료** |
+| Phase 0-3a: Volkov R6 리뷰 + 수정 | **완료** |
 
-## Phase 0-1 분석 결과 요약
+## 이번 세션에서 수행한 작업
 
-ethrex 코드베이스 (133K줄 Rust) 분석 완료:
-- **LEVM**: 자체 EVM 구현. `vm.rs:528-663`에 메인 실행 루프 (match opcode 패턴)
-- **Hook 시스템**: `VMType::L1 | L2(FeeConfig)` enum + `Hook` trait (`hook.rs`)로 L1/L2 분기
-- **L2Hook**: `l2_hook.rs`에 완전한 L2 구현 (845줄). fee token, privileged tx, operator fee 등
-- **Tracing**: `LevmCallTracer` (`tracing.rs`) — Geth callTracer 호환. Time-Travel 확장 대상
-- **Benchmarking**: `perf_opcode_timings` feature + `OpcodeTimings` struct (`timings.rs`)
-- **Opcode Table**: `build_opcode_table()` (`opcodes.rs:385`) — fork별 분기. JIT 대체 대상
-- **ZK**: SP1, RISC0, ZisK, OpenVM 4개 프루버 네이티브 지원
+### 1. DECISION.md 초안 작성 (커밋 `ca65752`)
 
-## Phase 0-2 결정 매트릭스 요약
+14개 문서를 `docs/tokamak/` 하위에 작성하고 커밋/푸시:
+- `DECISION.md` — ethrex fork 결정 문서 (초안)
+- `vision.md`, `context/`, `features/`, `scaffold/` 등
 
-| 기준 (가중치) | ethrex | Reth | 처음부터 | revm |
-|--------------|--------|------|---------|------|
-| 메인넷 동기화 (25%) | 5 | 4 | 1 | 1 |
-| EVM 수정 가능성 (25%) | 5 | 2 | 4 | 3 |
-| ZK 호환성 (20%) | 5 | 1 | 2 | 1 |
-| 코드베이스 관리성 (15%) | 4 | 2 | 5 | 3 |
-| L2 아키텍처 정합성 (15%) | 5 | 3 | 3 | 1 |
-| **가중 합계** | **4.85** | **2.45** | **2.65** | **1.60** |
+### 2. Volkov R6 리뷰 수행 → 6.5/10 (REVISE)
 
-**결정: ethrex fork** — 자세한 내용은 `docs/tokamak/DECISION.md` 참조
+Volkov가 지적한 3가지 필수 수정사항:
+1. **결정 매트릭스 편향** — 허수아비 옵션, Reth 과소평가
+2. **EXIT 기준 부재** — "재평가"는 행동이 아님
+3. **Tier S PoC 미실행** — 계획이 아니라 결과 필요
 
-## Phase 0-3 산출물
+### 3. 필수 수정사항 3건 반영 (커밋 `adbfeca`)
 
-- `docs/tokamak/DECISION.md` — 결정 문서 (DRAFT, 팀 리뷰 대기)
+**Fix 1: 매트릭스 보정**
+- "처음부터 구축"/"revm 단독"을 부록으로 이동
+- ethrex vs Reth 이원 비교로 재구성
+- Reth ZK: 1→2 (Zeth 존재 반영, 단 별도 프로젝트/RISC Zero 단일 프루버)
+- Reth 관리성: 2→3 (모듈러 아키텍처/Paradigm 투자 인정)
+- ethrex 동기화: 5→4 (<1% 점유율, 실전 검증 적음)
+- ExEx가 post-execution hook이며 EVM 수정 메커니즘이 아님을 명시
+- 최종: ethrex 4.60 vs Reth 2.80
 
-## 완료된 작업
+**Fix 2: EXIT 기준 4요소 완성**
+| 수치 | 기한 | 미달 시 행동 | 의사결정자 |
+|------|------|-------------|-----------|
+| 메인넷 싱크 | 4개월 | 버그 리포트 + 재시도 → 실패 시 Reth 전환 평가 | Tech leads |
+| Hive 95%+ | 6개월 | upstream 기여 시도. 80% 미만이면 중단 검토 | Tech leads + Kevin |
+| 30일 업타임 | 6개월 | 아키텍처 재검토 | Full team |
+| Rust 2명 확보 | 3개월 | Phase 축소 (JIT 제외) | Kevin |
 
-### Cargo workspace monorepo 생성 (`/Users/jason/workspace/tokamak-client/`)
+**Fix 3: Tier S PoC 실행**
+- `cargo build --features perf_opcode_timings` 빌드 성공 (3m 44s)
+- 코드 경로 분석 완료 (vm.rs → Instant::now() → elapsed() → timings.update())
+- PoC 결론: feature flag 동작 확인, CI 연결 경로 문서화
 
-7개 크레이트 스캐폴딩 완료:
+### 4. 코드 리뷰 통과 (9.0/10)
+- REJECT 1건: Reth 가중 합계 산술 오류 (2.85→2.80) → 수정 완료
 
-```
-crates/
-├── tokamak-common/      — 공유 타입 (BlockRef, ExecutionStep, TokamakConfig 등)
-├── tokamak-evm/         — EVM 실행 엔진 (TokamakExecutor, TokamakInspector)
-├── tokamak-jit/         — JIT 컴파일러 인터페이스 (JitCompiler, JitCache, ExecutionProfiler)
-├── tokamak-benchmark/   — 벤치마크 프레임워크 (Runner, Comparator, DifferentialTester, Reporter)
-├── tokamak-debugger/    — Time-Travel 디버거 (ReplayEngine, SnapshotChain, BreakpointManager)
-├── tokamak-rpc/         — JSON-RPC (debug_timeTravel 타입 정의)
-└── tokamak-node/        — 메인 바이너리 (CLI: --jit, --debug, --benchmark)
-```
-
-### 빌드 & 테스트 상태
-
-- `cargo build --workspace` — **성공** (0 warnings)
-- `cargo test --workspace` — **25 tests 전부 통과**
-- `cargo clippy --workspace -- -D warnings` — **통과** (0 warnings)
-
-### CI/CD 파이프라인
-
-- `.github/workflows/ci.yml` — check, test, clippy, fmt, audit
-- `.github/workflows/benchmark.yml` — PR quick-bench, main full-bench (Phase 2에서 활성화)
-- `rust-toolchain.toml` — stable (현재 1.93.1)
-
-### 핵심 의존성
-
-- `alloy-primitives 0.8` (serde feature) — B256, U256, Address
-- `revm 19` — EVM 인터프리터 (Phase 1 기본 실행)
-- `thiserror 2` — 에러 타입
-- `tracing` — 로깅
-- `clap 4` — CLI
-- Cranelift — 주석 처리됨 (Phase 4에서 활성화)
-
-## 변경된 파일 목록
+## Volkov R6 점수 추이
 
 ```
-Cargo.toml                          — workspace 루트
-rust-toolchain.toml
-.gitignore
-CLAUDE.md
-.github/workflows/ci.yml
-.github/workflows/benchmark.yml
-crates/tokamak-common/Cargo.toml
-crates/tokamak-common/src/lib.rs
-crates/tokamak-common/src/types.rs
-crates/tokamak-evm/Cargo.toml
-crates/tokamak-evm/src/lib.rs
-crates/tokamak-evm/src/executor.rs
-crates/tokamak-evm/src/inspector.rs
-crates/tokamak-jit/Cargo.toml
-crates/tokamak-jit/src/lib.rs
-crates/tokamak-jit/src/compiler.rs
-crates/tokamak-jit/src/cache.rs
-crates/tokamak-jit/src/profiler.rs
-crates/tokamak-benchmark/Cargo.toml
-crates/tokamak-benchmark/src/lib.rs
-crates/tokamak-benchmark/src/runner.rs
-crates/tokamak-benchmark/src/comparator.rs
-crates/tokamak-benchmark/src/differential.rs
-crates/tokamak-benchmark/src/reporter.rs
-crates/tokamak-benchmark/src/scenarios.rs
-crates/tokamak-debugger/Cargo.toml
-crates/tokamak-debugger/src/lib.rs
-crates/tokamak-debugger/src/replay.rs
-crates/tokamak-debugger/src/snapshot.rs
-crates/tokamak-debugger/src/breakpoint.rs
-crates/tokamak-rpc/Cargo.toml
-crates/tokamak-rpc/src/lib.rs
-crates/tokamak-rpc/src/types.rs
-crates/tokamak-rpc/src/methods.rs
-crates/tokamak-node/Cargo.toml
-crates/tokamak-node/src/main.rs
-docs/tokamak/DECISION.md            — NEW (Phase 0-3)
+R1: 3.0 → R2: 3.0 → R3: 5.25 → R4: 4.5 → R5: 4.0 → R6: 6.5 (REVISE)
 ```
 
-## 다음 단계 — Phase 1.1
+PROCEED(7.5)까지 1.0 남음. 미충족: #3 인력 배분 (부분).
+
+## Phase 0-2 결정 매트릭스 (보정 후)
+
+| 기준 (가중치) | ethrex | Reth |
+|--------------|--------|------|
+| 메인넷 동기화 (25%) | 4 | 4 |
+| EVM 수정 가능성 (25%) | 5 | 2 |
+| ZK 호환성 (20%) | 5 | 2 |
+| 코드베이스 관리성 (15%) | 4 | 3 |
+| L2 아키텍처 정합성 (15%) | 5 | 3 |
+| **가중 합계** | **4.60** | **2.80** |
+
+**결정: ethrex fork** — `docs/tokamak/DECISION.md` 참조
+
+## Git 상태
+
+- 브랜치: `feat/tokamak-proven-execution`
+- 리모트: `origin` (tokamak-network/ethrex) — 푸시 완료
+- 마지막 커밋: `adbfeca` — Volkov R6 피드백 반영
+
+```
+adbfeca docs: revise DECISION.md per Volkov R6 review feedback
+ca65752 docs: add Tokamak EL client decision and planning documents
+```
+
+## 다음 단계
 
 ### 즉시 필요
 
 1. **DECISION.md 팀 리뷰** — DRAFT 상태. 팀 확인 후 확정
-2. **git init + 초기 커밋** — 사용자가 git init을 중단함. 수동으로 실행 필요
-3. **GitHub 원격 레포 생성** — `tokamak-network/tokamak-client` 등
+2. **인력 배분 확정** — Senior Rust 2명 + JIT 경험자 1명 (Volkov 유일한 부분 충족 항목)
+3. **LambdaClass 커뮤니케이션** — Fork 전 협력적 fork 의향 확인 (Volkov 권장사항)
 
 ### Phase 1.1: Fork & 환경 구축 (Week 1-2)
 
-4. ethrex fork → `tokamak-client` 레포
-5. 메인넷/Holesky 빌드 검증
-6. CI 파이프라인 설정
-7. Hive 테스트 프레임워크 통합 시작
+4. ethrex fork 기반으로 빌드 검증 (메인넷/Holesky)
+5. CI 파이프라인 설정
+6. Hive 테스트 프레임워크 통합 시작
 
-### Volkov PROCEED 조건 미충족 항목
+### Volkov 권장사항 (점수 상승에 기여)
 
-- EXIT 기준 미정의 (6개월 내 Hive 95% 미달 시 재평가 제안)
-- Tier S 기능 2주 PoC 미실행 (Phase 1.1 착수 후 `perf_opcode_timings` 기반 벤치마크 PoC 추천)
-- 구체 인력 배정 미확정 (팀 결정 필요)
+- 인력 계획 현실화: Phase별 인력 집중 계획 수립
+- JIT 기술적 장벽 심화 분석: revmc 선행 사례, validation mode 성능 오버헤드
+- LambdaClass 관계 전략
 
 ## 핵심 컨텍스트
 
 - 개발 계획 전문: `docs/tokamak/` 내 문서들
   - `vision.md` — 전체 비전 ("Performance you can see, verify, and debug")
-  - `DECISION.md` — ethrex fork 결정 문서 (NEW)
+  - `DECISION.md` — ethrex fork 결정 문서 (Volkov R6 피드백 반영, DRAFT)
   - `context/competitive-landscape.md` — 경쟁 분석
   - `context/volkov-reviews.md` — R1-R5 리뷰 이력
   - `features/01~03-*.md` — Tier S 기능 상세
 - 포지셔닝: "Performance you can see, verify, and debug"
 - Tier S 기능 3개: JIT EVM + Continuous Benchmarking + Time-Travel Debugger
 - Base client: **ethrex fork 확정** (DECISION.md)
-- 현재 크레이트들은 인터페이스 + stub 수준. Phase별로 구현 채워넣는 구조
+
+## Reth 조사 결과 (이번 세션)
+
+- **Zeth** (risc0/zeth, 439 stars): RISC Zero가 관리하는 별도 프로젝트. Reth의 stateless execution을 zkVM 내에서 사용. RISC Zero 프루버만 지원. Reth에 내장된 것 아님
+- **ExEx** (Execution Extensions): 블록 실행 후 상태 변경을 수신하는 post-execution hook. EVM 실행 자체를 수정하는 메커니즘이 아님. 롤업/브릿지/인덱서용
+- **결론**: Reth ZK 1→2 상향 조정은 공정하나, ethrex의 네이티브 4-프루버 통합과는 깊이가 다름
