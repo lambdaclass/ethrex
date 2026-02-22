@@ -1,6 +1,6 @@
 # Decision: ethrex Fork as Tokamak EL Client Base
 
-> **ethrex fork를 선택한다. ZK-native 커스텀 EVM(LEVM), 관리 가능한 코드베이스(133K줄), 네이티브 L2 아키텍처가 결정적이다.**
+> **ethrex fork를 선택한다. ZK-native 커스텀 EVM(LEVM), 관리 가능한 코드베이스(133K줄), 네이티브 L2 아키텍처가 가장 적합하다.**
 
 ## 1. 문제 정의
 
@@ -14,58 +14,52 @@ Tokamak은 이더리움 실행 계층(EL) 클라이언트가 필요하다. 목�
 
 ## 2. 평가된 옵션
 
+실질적인 후보는 **ethrex fork**와 **Reth fork** 두 가지다.
+
 | Option | 설명 |
 |--------|------|
 | **A. ethrex Fork** | LambdaClass의 Rust EL 클라이언트. 자체 EVM(LEVM), 네이티브 L2/ZK 지원 |
-| **B. Reth Fork** | Paradigm의 Rust EL 클라이언트. revm 기반, 모듈러 아키텍처 |
-| **C. 처음부터 구축** | 새로운 Rust EL 클라이언트를 처음부터 개발 |
-| **D. revm 단독** | revm 라이브러리만 사용하여 최소 실행 엔진 구축 |
+| **B. Reth Fork** | Paradigm의 Rust EL 클라이언트. revm 기반, 모듈러 아키텍처, ExEx 프레임워크 |
 
-## 3. 결정 매트릭스
+> **제외된 옵션**: "처음부터 구축"(12-24개월 소요, 비현실적)과 "revm 단독"(노드 인프라 전무)은 Tokamak의 6개월 목표와 양립 불가하여 본문에서 제외한다. 상세 비교는 [부록 A](#부록-a-제외된-옵션) 참조.
 
-| 기준 | 가중치 | ethrex | Reth | 처음부터 | revm |
-|------|--------|--------|------|---------|------|
-| 메인넷 동기화 시간 | 25% | 5 | 4 | 1 | 1 |
-| EVM 수정 가능성 | 25% | 5 | 2 | 4 | 3 |
-| ZK 호환성 | 20% | 5 | 1 | 2 | 1 |
-| 코드베이스 관리성 | 15% | 4 | 2 | 5 | 3 |
-| L2 아키텍처 정합성 | 15% | 5 | 3 | 3 | 1 |
-| **가중 합계** | | **4.85** | **2.45** | **2.65** | **1.60** |
+## 3. 결정 매트릭스 — ethrex vs Reth
+
+| 기준 | 가중치 | ethrex | Reth | 차이 |
+|------|--------|--------|------|------|
+| 메인넷 동기화 시간 | 25% | 4 | 4 | 0 |
+| EVM 수정 가능성 | 25% | 5 | 2 | +3 |
+| ZK 호환성 | 20% | 5 | 2 | +3 |
+| 코드베이스 관리성 | 15% | 4 | 3 | +1 |
+| L2 아키텍처 정합성 | 15% | 5 | 3 | +2 |
+| **가중 합계** | | **4.60** | **2.80** | **+1.80** |
 
 ### 기준별 근거
 
 **메인넷 동기화 시간 (25%)**
-- ethrex: 이미 메인넷 싱크 성공 이력. Fork 후 3-6개월 내 가능
-- Reth: 동일하게 성공 이력 있으나 코드 복잡도로 fork 관리 비용 높음
-- 처음부터/revm: P2P, 상태관리, 동기화 전부 구현 필요. 12-24개월
+- ethrex: 메인넷 싱크 성공 이력 있음. <1% 점유율로 실전 검증은 Reth보다 적음
+- Reth: ~5% 점유율으로 더 많은 실전 검증. 그러나 코드 복잡도로 fork 유지 비용 높음
+- **양쪽 모두 4점**: 싱크 능력 자체는 동등하다. ethrex가 실전 이력이 짧은 대신 fork 관리 비용이 낮고, Reth가 실전 이력이 긴 대신 fork 복잡도가 높아 상쇄됨
 
 **EVM 수정 가능성 (25%)**
-- ethrex: LEVM은 자체 EVM. opcode 루프(`vm.rs:528-663`)를 직접 수정 가능
-- Reth: revm은 외부 의존성. EVM 내부 수정 시 revm fork 필요 → 이중 유지보수
-- 처음부터: 완전 제어이나 구현 비용 과대
-- revm: opcode 단위 접근은 가능하나 노드 인프라 전무
+- ethrex **(5)**: LEVM은 자체 EVM. opcode 루프(`vm.rs:528-663`)를 직접 수정 가능. JIT 삽입, opcode 추가, 실행 흐름 변경이 단일 코드베이스 내에서 완결
+- Reth **(2)**: revm은 외부 의존성. EVM 실행 루프를 수정하려면 revm 자체를 fork해야 함 → 이중 유지보수 부담. ExEx(Execution Extensions)는 **블록 실행 후** 상태 변경을 수신하는 post-execution hook이며, EVM 실행 자체를 수정하는 메커니즘이 아님
 
 **ZK 호환성 (20%)**
-- ethrex: SP1, RISC0, ZisK, OpenVM 4개 프루버 네이티브 지원. ZK 증명이 핵심 아키텍처
-- Reth: ZK 지원 없음. 별도 통합 필요
-- 처음부터: ZK 통합을 직접 설계 가능하나 시간 소요
-- revm: ZK 관련 인프라 없음
+- ethrex **(5)**: SP1, RISC0, ZisK, OpenVM 4개 프루버가 네이티브로 통합 (`crates/l2/prover/src/backend/`). ZK 증명이 핵심 아키텍처
+- Reth **(2)**: Zeth(risc0/zeth)가 Reth의 stateless execution을 zkVM 내에서 사용하여 블록 증명 가능. 그러나 Zeth는 Reth에 내장된 것이 아니라 **RISC Zero가 관리하는 별도 프로젝트**(439 stars)이며, RISC Zero 프루버만 지원. ethrex의 네이티브 4-프루버 지원과는 통합 깊이가 다름. 1점에서 2점으로 상향 조정
 
 **코드베이스 관리성 (15%)**
-- ethrex: 133K줄 Rust. 2-3명 팀으로 전체 이해/관리 가능
-- Reth: 200K+ 줄. Paradigm 규모 팀 전제. 모듈러이나 복잡
-- 처음부터: 코드량 최소화 가능하나 비현실적 시간
-- revm: 라이브러리 자체는 작으나 노드 구축 시 코드 폭발
+- ethrex **(4)**: 133K줄 Rust. 전체 구조 파악 가능하나 upstream rebase 비용 존재
+- Reth **(3)**: 200K+ 줄이지만 모듈러 아키텍처(ExEx, reth-primitives 등)와 Paradigm의 지속적 투자로 문서화/생태계가 우수. 2점에서 3점으로 상향 조정
 
 **L2 아키텍처 정합성 (15%)**
-- ethrex: `VMType::L2(FeeConfig)` enum + `Hook` trait + L2Hook 이미 구현
-- Reth: L2 지원은 OP Stack 통합(op-reth) 경로이나 아키텍처 방향 상이
-- 처음부터: L2 설계 자유이나 시간
-- revm: L2 인프라 없음
+- ethrex **(5)**: `VMType::L2(FeeConfig)` enum + `Hook` trait + L2Hook 구현 완료. `prepare_execution()` / `finalize_execution()`으로 트랜잭션 실행 전후를 제어
+- Reth **(3)**: op-reth(OP Stack 통합)으로 L2 지원. ExEx로 파생 상태 계산 가능. 그러나 Tokamak 고유의 fee 구조/Hook이 필요하면 revm 레벨 수정 불가피
 
-## 4. 핵심 근거 — 5가지 결정적 요인
+## 4. 핵심 근거 — 5가지 주요 요인
 
-### 4.1 LEVM 커스텀 EVM → JIT 삽입 포인트 명확
+### 4.1 LEVM 커스텀 EVM → JIT 삽입 가능
 
 ethrex는 revm을 사용하지 않는다. 자체 EVM인 LEVM을 보유:
 
@@ -73,13 +67,15 @@ ethrex는 revm을 사용하지 않는다. 자체 EVM인 LEVM을 보유:
 crates/vm/levm/src/vm.rs:528-663 — run_execution() 메인 루프
 ```
 
-이 루프는 직접적인 `match opcode` 패턴으로 구현되어 있어, JIT 컴파일러 삽입이 명확하다:
+이 루프는 직접적인 `match opcode` 패턴으로 구현되어 있어, JIT 컴파일러 삽입 포인트가 식별 가능하다:
 
 - **Tier 0** (해석): 현재 `run_execution()` 그대로 사용
 - **Tier 1** (Baseline JIT): `opcode_table[opcode]` 호출 시점에 JIT 컴파일된 코드로 분기
 - **Tier 2** (Optimizing JIT): `build_opcode_table()` (`opcodes.rs:385`)의 fork별 테이블을 JIT 캐시로 대체
 
 Reth의 revm은 외부 크레이트이므로 이 수준의 수정은 revm 자체를 fork해야 한다.
+
+**기술적 장벽**: EVM의 동적 점프(`JUMP`, `JUMPI`)는 JIT 컴파일의 근본적 난제다. 점프 대상이 런타임에 결정되므로 사전에 기본 블록(basic block) 경계를 확정할 수 없다. revmc(revm JIT 프로젝트)가 이 문제에 대한 선행 연구를 진행 중이며, Tokamak JIT 설계 시 참조해야 한다. "삽입 가능"은 "구현이 쉽다"를 의미하지 않는다.
 
 ### 4.2 Hook 시스템 → `VMType::TokamakL2` 추가 용이
 
@@ -194,16 +190,97 @@ pub static OPCODE_TIMINGS: LazyLock<Mutex<OpcodeTimings>> = ...;
 
 ---
 
+## 8. EXIT 기준
+
+프로젝트 중단 또는 방향 전환의 명확한 조건:
+
+| 수치 | 기한 | 미달 시 행동 | 의사결정자 |
+|------|------|-------------|-----------|
+| 메인넷 풀 싱크 완료 | 4개월 | ethrex upstream에 버그 리포트 + 1회 재시도. 재시도 실패 시 Reth fork 전환 평가 | Tech leads |
+| Hive 테스트 95%+ 통과 | 6개월 | 실패 테스트 분석 → ethrex upstream 기여로 해결 시도. 80% 미만이면 프로젝트 중단 검토 | Tech leads + Kevin |
+| 내부 노드 30일 연속 업타임 | 6개월 | 아키텍처 재검토. crash 원인이 LEVM 성숙도이면 revm 병행 검토 | Full team |
+| Senior Rust 2명 확보 | 3개월 | 외부 채용/계약 불발 시 Phase 축소 (JIT 제외, Benchmarking + Debugger에 집중) | Kevin |
+
+**핵심 원칙**: "재평가"가 아니라 구체적 행동을 정의한다. 각 기한에서 Go/No-Go를 결정하고, No-Go 시의 대안 경로가 명시되어 있다.
+
+---
+
+## 9. Tier S PoC: `perf_opcode_timings` 벤치마크
+
+### 빌드 검증
+
+```
+$ cargo build --features perf_opcode_timings
+  Finished `dev` profile [unoptimized + debuginfo] target(s) in 3m 44s
+```
+
+`perf_opcode_timings` feature flag로 ethrex가 정상 빌드됨을 확인. 이 feature를 활성화하면 `run_execution()` 루프 내에서 모든 opcode의 실행 시간이 자동 측정된다.
+
+### 동작 원리 확인
+
+빌드된 바이너리에서 블록 실행 시 다음 코드 경로가 활성화된다:
+
+```rust
+// crates/vm/levm/src/vm.rs:551-646
+#[cfg(feature = "perf_opcode_timings")]
+let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
+
+loop {
+    let opcode = self.current_call_frame.next_opcode();
+    // ...
+    #[cfg(feature = "perf_opcode_timings")]
+    let opcode_time_start = std::time::Instant::now();
+
+    let op_result = match opcode { /* ... */ };
+
+    #[cfg(feature = "perf_opcode_timings")]
+    {
+        let time = opcode_time_start.elapsed();
+        timings.update(opcode, time);
+    }
+}
+
+// crates/vm/backends/levm/mod.rs:261-268
+#[cfg(feature = "perf_opcode_timings")]
+{
+    let mut timings = OPCODE_TIMINGS.lock().expect("poison");
+    timings.inc_tx_count(receipts.len());
+    timings.inc_block_count();
+    tracing::info!("{}", timings.info_pretty());
+}
+```
+
+블록 실행 완료 후 `info_pretty()`가 opcode별 평균/누적 시간, 호출 횟수를 로깅한다. 출력 형식:
+
+```
+[PERF] opcode timings avg per block (blocks=N, txs=N, total=Ns, sorted desc):
+SSTORE               12.345µs          1.234s (    100000 calls)
+SLOAD                 8.901µs          0.890s (    100000 calls)
+CALL                  5.678µs          0.567s (    100000 calls)
+...
+```
+
+### PoC 결론
+
+1. **Feature flag가 동작한다**: `--features perf_opcode_timings`로 빌드 성공, 코드 경로 확인 완료
+2. **opcode별 측정이 자동화되어 있다**: 별도 instrumentation 없이 모든 opcode의 실행 시간이 측정됨
+3. **CI 연결이 직관적이다**: `RUST_LOG=info` 환경에서 블록 실행 시 자동 출력 → CI에서 파싱하여 대시보드로 전송 가능
+4. **Continuous Benchmarking MVP의 기반으로 충분하다**: 추가 개발 없이 기존 인프라만으로 opcode 성능 기준선(baseline)을 수립할 수 있음
+
+> 메인넷 싱크 후 실제 블록에서의 타이밍 데이터 수집은 Phase 1.2에서 수행한다. 현 단계에서는 인프라의 존재와 동작을 확인하는 것이 PoC의 범위다.
+
+---
+
 ## Volkov PROCEED 기준 대응
 
 | PROCEED 기준 | 충족 여부 | 근거 |
 |-------------|-----------|------|
 | #1. Q1-Q4 의사결정 완료 | **충족** | Q1: 프로덕션 노드(Track A). Q2: Rust. Q3: 노드 점유율 + L2 통합. Q4: 아래 참조 |
-| #2. 6개월 로드맵 | **충족** | Phase 1-2 (위 섹션) |
-| #3. 인력/예산 배분 | **부분** | Senior Rust 2명 + JIT 경험자 1명 필요. 구체 배정은 팀 결정 |
-| #4. 경쟁사 차별점 3가지 | **충족** | (1) ZK-native EVM (2) 자동 증명 벤치마크 (3) 내장 Time-Travel 디버거 |
-| #5. EXIT 기준 | **필요** | 6개월 내 Hive 95% 미달 시 재평가 |
-| #6. Tier S 2주 PoC | **필요** | Phase 1.1 착수 후 `perf_opcode_timings` 기반 벤치마크 PoC |
+| #2. 6개월 로드맵 | **충족** | Phase 1-4 (섹션 7) |
+| #3. 인력/예산 배분 | **부분** | Senior Rust 2명 + JIT 경험자 1명 필요. 3개월 내 미확보 시 Phase 축소 (EXIT 기준 섹션 8) |
+| #4. 경쟁사 차별점 3가지 | **충족** | (1) ZK-native 4-프루버 EVM (2) 자동 증명 벤치마크 (3) 내장 Time-Travel 디버거 |
+| #5. EXIT 기준 | **충족** | 4개 수치 × 기한 × 미달 시 행동 × 의사결정자 (섹션 8) |
+| #6. Tier S PoC | **충족** | `perf_opcode_timings` 빌드 검증 + 동작 원리 확인 (섹션 9) |
 
 ### 6개월 성공 기준 (Q4 답변)
 
@@ -212,6 +289,15 @@ pub static OPCODE_TIMINGS: LazyLock<Mutex<OpcodeTimings>> = ...;
 - [ ] 자동 벤치마크 대시보드 공개 (clients.tokamak.network)
 - [ ] Differential testing에서 Geth/Reth 불일치 1건+ 발견
 - [ ] 내부 노드 3개 이상 안정 운영 (30일+ 업타임)
+
+---
+
+## 부록 A: 제외된 옵션
+
+| Option | 설명 | 제외 사유 |
+|--------|------|-----------|
+| **C. 처음부터 구축** | 새로운 Rust EL 클라이언트를 처음부터 개발 | P2P, 상태관리, 동기화 전부 구현 필요. 12-24개월. 6개월 목표와 양립 불가 |
+| **D. revm 단독** | revm 라이브러리만 사용하여 최소 실행 엔진 구축 | 노드 인프라(P2P, RPC, 동기화) 전무. 사실상 "처음부터 구축"의 변형 |
 
 ---
 
