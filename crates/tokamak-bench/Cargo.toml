@@ -5,8 +5,23 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-ethrex-levm.workspace = true
+ethrex-levm = { workspace = true, features = ["perf_opcode_timings"] }
 ethrex-vm.workspace = true
+ethrex-common = { workspace = true, default-features = false }
+ethrex-crypto.workspace = true
+ethrex-storage.workspace = true
+ethrex-blockchain.workspace = true
+
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+clap = { workspace = true, features = ["derive"] }
+hex.workspace = true
+bytes.workspace = true
+rustc-hash.workspace = true
+
+[[bin]]
+name = "tokamak-bench"
+path = "src/bin/runner.rs"
 
 [lints]
 workspace = true

@@ -63,6 +63,21 @@ impl OpcodeTimings {
     pub fn inc_block_count(&mut self) {
         self.blocks += 1;
     }
+
+    pub fn reset(&mut self) {
+        self.totals.clear();
+        self.counts.clear();
+        self.blocks = 0;
+        self.txs = 0;
+    }
+
+    pub fn raw_totals(&self) -> &HashMap<Opcode, Duration> {
+        &self.totals
+    }
+
+    pub fn raw_counts(&self) -> &HashMap<Opcode, u64> {
+        &self.counts
+    }
 }
 
 pub static OPCODE_TIMINGS: LazyLock<Mutex<OpcodeTimings>> =
@@ -110,6 +125,19 @@ impl PrecompilesTimings {
             "[PERF] precompile timings (total={:?}, sorted desc):\n{}",
             total_accumulated, pretty_avg
         )
+    }
+
+    pub fn reset(&mut self) {
+        self.totals.clear();
+        self.counts.clear();
+    }
+
+    pub fn raw_totals(&self) -> &HashMap<Address, Duration> {
+        &self.totals
+    }
+
+    pub fn raw_counts(&self) -> &HashMap<Address, u64> {
+        &self.counts
     }
 }
 
