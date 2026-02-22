@@ -108,17 +108,34 @@ loop {
 
 **Location**: `src/opcodes.rs`, function `build_opcode_table()` (approx line 385)
 
-Uses **fork-gated incremental layering**:
+Uses **fork-gated incremental layering** with `const fn` chaining:
 
 ```
 Pre-Shanghai (base)    → All opcodes up to London/Paris
 Shanghai additions     → PUSH0
 Cancun additions       → TSTORE, TLOAD, MCOPY, BLOBHASH, BLOBBASEFEE
-Prague additions       → EIP-7702 (SET_CODE), EIP-2537 (BLS precompiles), etc.
-Amsterdam/Osaka        → Future opcodes
+Osaka additions        → CLZ
+Amsterdam additions    → DUPN, SWAPN, EXCHANGE (EIP-8024)
 ```
 
-Each fork layer conditionally adds opcodes on top of the previous layer, using `if fork >= Fork::Shanghai { ... }` patterns. Invalid/undefined opcodes map to an `op_invalid` handler that returns an error.
+**Dispatch**: `build_opcode_table(fork)` uses an if-chain to select the right table:
+```rust
+if fork >= Fork::Amsterdam { Self::build_opcode_table_amsterdam() }
+else if fork >= Fork::Osaka { Self::build_opcode_table_osaka() }
+else if fork >= Fork::Cancun { Self::build_opcode_table_pre_osaka() }
+// ...
+```
+
+**Chaining**: Each builder is a `const fn` that calls the previous fork's builder as its base and adds new entries:
+```rust
+const fn build_opcode_table_pre_cancun() -> [OpCodeFn<'a>; 256] {
+    let mut opcode_table = Self::build_opcode_table_pre_shanghai();
+    opcode_table[Opcode::PUSH0 as usize] = OpCodeFn(VM::op_push0);
+    opcode_table
+}
+```
+
+This pattern compiles each fork's table at compile time. Invalid/undefined opcodes map to `on_invalid_opcode` handler that returns an error.
 
 ## Hook System
 
@@ -206,25 +223,32 @@ Operations:
 ```rust
 pub struct CallFrame {
     pub gas_limit: u64,
-    pub gas_remaining: i64,          // Signed for underflow detection
-    pub to: Address,
-    pub code_address: Address,
-    pub caller: Address,
+    pub gas_remaining: i64,          // Signed (i64) for perf; safe per EIP-7825
+    pub pc: usize,                   // Program counter
+    pub msg_sender: Address,         // Sender of the message (NOT "caller")
+    pub to: Address,                 // Recipient address
+    pub code_address: Address,       // Address of executing code
+    pub bytecode: Code,              // Bytecode to execute (Code type, NOT Bytes)
+    pub msg_value: U256,             // Value sent with the message
     pub stack: Stack,                // Fixed 1024-element stack
-    pub memory: Memory,             // Dynamically expanding byte array
-    pub pc: usize,                  // Program counter
+    pub memory: Memory,              // Dynamically expanding byte array
     pub calldata: Bytes,
-    pub bytecode: Bytes,
-    pub is_create: bool,
-    pub return_data: Bytes,
-    pub depth: usize,               // Call depth (max 1024)
-    // ... additional fields
+    pub output: Bytes,               // Return data of CURRENT context
+    pub sub_return_data: Bytes,      // Return data of SUB-context (child call)
+    pub is_static: bool,             // Static call flag (no state changes)
+    pub depth: usize,                // Call depth (max 1024)
+    pub is_create: bool,             // CREATE/CREATE2 context flag
+    pub call_frame_backup: CallFrameBackup,  // Pre-write state for revert
+    pub ret_offset: usize,           // Return data offset
+    pub ret_size: usize,             // Return data size
 }
 ```
 
 - **Stack**: Fixed `[U256; 1024]` array (STACK_LIMIT constant)
 - **Memory**: Dynamically expanding, 32-byte word aligned
 - **PC**: Simple `usize` index into bytecode
+- **Code vs Bytes**: `bytecode` is `Code` type (includes hash metadata), not raw `Bytes`
+- **Output split**: `output` = current frame's return, `sub_return_data` = child call's return (RETURNDATACOPY source)
 
 ### Environment (`src/environment.rs:17-44`)
 
@@ -237,10 +261,11 @@ pub struct Environment {
     pub coinbase: Address,           // Block beneficiary
     pub timestamp: U256,
     pub prev_randao: Option<H256>,
+    // (difficulty, slot_number omitted)
     pub chain_id: U256,
     pub base_fee_per_gas: U256,
     pub gas_price: U256,             // Effective gas price
-    // ... blob-related fields, fee token
+    // ... difficulty, slot_number, blob fields, tx params, fee token
 }
 ```
 
@@ -268,9 +293,14 @@ pub struct EVMConfig {
 **Location**: `src/timings.rs`
 
 When `perf_opcode_timings` feature is enabled:
-- `OPCODE_TIMINGS`: Global `Mutex<OpcodeTimings>`
+- `OPCODE_TIMINGS`: Global `LazyLock<Mutex<OpcodeTimings>>`
 - Each opcode execution records `Instant::now()` → `elapsed()`
-- `OpcodeTimings` aggregates: count, total time, min, max per opcode
+- `OpcodeTimings` stores 4 fields:
+  - `totals: HashMap<Opcode, Duration>` — accumulated wall time per opcode
+  - `counts: HashMap<Opcode, u64>` — invocation count per opcode
+  - `blocks: usize` — number of blocks processed
+  - `txs: usize` — number of transactions processed
+- `info()` computes average duration at display time (total / count), no min/max tracked
 - Used in the main loop via `#[cfg(feature = "perf_opcode_timings")]` blocks
 
 ## Lint Configuration

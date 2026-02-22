@@ -4,9 +4,9 @@
 
 ## Project Scale
 
-- **Workspace members**: 25 crates + 2 non-member path dependencies (`ethrex-metrics`, `ethrex-monitor`)
+- **Workspace members**: 28 crates (25 original + 3 Tokamak skeleton) + 2 non-member path dependencies (`ethrex-metrics`, `ethrex-monitor`)
 - **Default member**: `cmd/ethrex` only (other crates compile on demand)
-- **Codebase**: ~133K lines Rust (excluding `target/`)
+- **Codebase**: ~103K lines Rust (excluding `target/`)
 - **Edition**: Rust 2024, resolver v2
 - **License**: MIT OR Apache-2.0 (workspace-wide)
 
@@ -138,6 +138,7 @@ main() [ethrex.rs:142]
 | `cpu_profiling` | pprof-based CPU profiling |
 | `sync-test` | Forward to ethrex-p2p for sync testing |
 | `experimental-discv5` | Discovery V5 protocol (experimental) |
+| `tokamak` | Forward to ethrex-vm for Tokamak extensions (placeholder — will split in Phase 1.2) |
 
 ### EVM-level (`ethrex-levm`)
 
@@ -149,6 +150,7 @@ main() [ethrex.rs:142]
 | `debug` | Debug mode |
 | `sp1` / `risc0` / `zisk` / `openvm` | ZK VM backend compilation |
 | `perf_opcode_timings` | Per-opcode timing instrumentation |
+| `tokamak` | Tokamak extensions placeholder (will split into `tokamak-jit`, `tokamak-debugger`, `tokamak-l2`) |
 
 ## CI Workflows
 

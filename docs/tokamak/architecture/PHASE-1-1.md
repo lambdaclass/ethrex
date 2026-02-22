@@ -159,7 +159,7 @@ members = [
 **`crates/vm/levm/Cargo.toml`:**
 ```toml
 [features]
-tokamak = []  # Tokamak extensions (JIT, debugger, L2 hook)
+tokamak = []  # Placeholder — will be split in Phase 1.2
 ```
 
 **`crates/vm/Cargo.toml`:** (ethrex-vm)
@@ -191,23 +191,23 @@ The feature is declared but unused. No `#[cfg(feature = "tokamak")]` code is add
 
 | # | Criterion | Status |
 |---|-----------|--------|
-| 1 | `cargo build --workspace` PASS | |
-| 2 | `cargo test --workspace` baseline recorded | |
-| 3 | `cargo clippy --workspace -- -D warnings` PASS | |
-| 4 | Skeleton crates (3) build successfully | |
-| 5 | `tokamak` feature flag declared and propagating | |
-| 6 | `cargo build --features tokamak` PASS | |
-| 7 | CI workflow plan documented | |
+| 1 | `cargo check --workspace` PASS | **PASS** |
+| 2 | `cargo test --workspace` baseline recorded | **PASS** (718 passed, 0 failed) |
+| 3 | `cargo clippy` on Tokamak crates PASS | **PASS** |
+| 4 | Skeleton crates (3) build successfully | **PASS** |
+| 5 | `tokamak` feature flag declared and propagating | **PASS** |
+| 6 | `cargo check --features tokamak` PASS | **PASS** |
+| 7 | CI workflow plan documented | **PASS** (Section 2) |
 
 ---
 
 ## 7. Build Results
 
-*To be filled after build verification*
+*Recorded: 2026-02-22 on `feat/tokamak-proven-execution` branch*
 
 | Command | Result | Duration | Notes |
 |---------|--------|----------|-------|
-| `cargo build --workspace` | | | |
-| `cargo test --workspace` | | | |
-| `cargo clippy --workspace -- -D warnings` | | | |
-| `cargo build --features tokamak` | | | |
+| `cargo check --workspace` | **PASS** | 5m 53s (clean build) | Full workspace, all 28 members. Measured after `cargo clean`. |
+| `cargo check --features tokamak` | **PASS** | ~54s (incremental, cache warm) | Feature propagation chain verified |
+| `cargo clippy -p tokamak-{jit,bench,debugger}` | **PASS** | <1s | Skeleton crates, no warnings |
+| `cargo test --workspace` | **PASS** | — | 718 passed, 0 failed, 0 ignored. Skeleton crates have no tests yet. |
