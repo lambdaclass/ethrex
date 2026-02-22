@@ -32,6 +32,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy
 
       - name: Check umbrella feature
         run: cargo check --features tokamak
@@ -59,6 +61,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt
 
       - name: Check formatting
         run: cargo fmt --all -- --check
