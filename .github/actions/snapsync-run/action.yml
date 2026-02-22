@@ -10,7 +10,7 @@ inputs:
   ethrex_image:
     description: Ethrex Docker image repository.
     required: false
-    default: ghcr.io/lambdaclass/ethrex
+    default: ghcr.io/tokamak-network/ethrex
   ethrex_tag:
     description: Ethrex Docker image tag.
     required: false

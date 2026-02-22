@@ -66,7 +66,10 @@ risc0 = ["dep:substrate-bn", "c-kzg"]
 zisk = ["dep:substrate-bn", "dep:ziskos"]
 openvm = ["ethrex-common/openvm"]
 perf_opcode_timings = []
-tokamak = []
+tokamak-jit = []       # JIT compilation tier
+tokamak-debugger = []  # Time-travel debugger
+tokamak-l2 = []        # Tokamak L2 hooks
+tokamak = ["tokamak-jit", "tokamak-debugger", "tokamak-l2"]  # Umbrella
 
 [lints.rust]
 unsafe_code = "warn"

@@ -128,6 +128,9 @@ gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
 
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
+tokamak-jit = ["ethrex-vm/tokamak-jit"]
+tokamak-debugger = ["ethrex-vm/tokamak-debugger"]
+tokamak-l2 = ["ethrex-vm/tokamak-l2"]
 tokamak = ["ethrex-vm/tokamak"]
 cpu_profiling = ["dep:pprof"]
 

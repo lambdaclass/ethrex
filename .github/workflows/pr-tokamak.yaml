@@ -1,0 +1,64 @@
+name: Tokamak
+
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/vm/tokamak-jit/**"
+      - "crates/tokamak-bench/**"
+      - "crates/tokamak-debugger/**"
+      - "crates/vm/levm/src/**"
+      - "docs/tokamak/**"
+      - ".github/workflows/pr-tokamak.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Check umbrella feature
+        run: cargo check --features tokamak
+
+      - name: Check tokamak-jit feature
+        run: cargo check --features tokamak-jit
+
+      - name: Check tokamak-debugger feature
+        run: cargo check --features tokamak-debugger
+
+      - name: Check tokamak-l2 feature
+        run: cargo check --features tokamak-l2
+
+      - name: Run Tokamak crate tests
+        run: cargo test -p tokamak-jit -p tokamak-bench -p tokamak-debugger
+
+      - name: Clippy with Tokamak features
+        run: cargo clippy --features tokamak -- -D warnings
+
+  format-check:
+    name: Format Check
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
