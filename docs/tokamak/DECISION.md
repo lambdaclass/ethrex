@@ -108,7 +108,7 @@ Tokamak L2를 추가하려면:
 
 ethrex는 SP1, RISC0, ZisK, OpenVM 4개의 ZK 프루버를 네이티브로 지원한다. Tokamak의 ZK MIPS 회로 팀 경험과 직접 연결되며, proven execution 아키텍처의 기반이 된다.
 
-### 4.4 133K줄 = 2-3명 팀으로 관리 가능
+### 4.4 133K줄 = AI Agent 기반 개발에 최적
 
 ```
 ethrex: ~133,000줄 Rust (target 제외)
@@ -116,7 +116,9 @@ Reth:   ~200,000줄+ Rust
 Geth:   ~500,000줄 Go
 ```
 
-ethrex의 코드베이스는 Reth의 2/3, Geth의 1/4 수준이다. Senior Rust 엔지니어 2-3명이면 전체 코드베이스를 이해하고 유지보수할 수 있다. 이는 Tokamak 팀 규모(Rust 전담 2-3명 예상)에 적합하다.
+ethrex의 코드베이스는 Reth의 2/3, Geth의 1/4 수준이다. AI Agent(Claude Code 등)가 전체 코드베이스를 컨텍스트 내에서 파악하고 수정할 수 있는 규모이며, 200K줄 이상인 Reth는 Agent의 컨텍스트 윈도우 한계에 더 빨리 도달한다.
+
+**개발 모델**: AI Agent가 코드 작성·리뷰·테스트를 수행하고, Jason이 의사결정·방향 설정·최종 승인을 담당한다. 개발 완료 후 팀(Kevin, Harvey, Jake, Sahil 등)과 결과물 기반 토론을 진행한다.
 
 ### 4.5 `perf_opcode_timings` 기존 인프라 활용
 
@@ -153,8 +155,8 @@ pub static OPCODE_TIMINGS: LazyLock<Mutex<OpcodeTimings>> = ...;
 | **Upstream 분기** — ethrex가 호환 불가능한 방향으로 진화 | High | High | 정기적 rebase + upstream 기여로 관계 유지. 핵심 수정은 별도 레이어에 격리 |
 | **JIT 합의 위반** — JIT 컴파일된 코드가 인터프리터와 다른 결과 생성 | Critical | Medium | 모든 JIT 결과를 인터프리터와 비교하는 validation mode. 불일치 시 인터프리터 결과 사용 |
 | **LEVM 성숙도** — ethrex의 EVM이 Geth/revm보다 테스트 이력 짧음 | Medium | Medium | Ethereum Hive 테스트 통과율 모니터링. 초기에는 Hive 95%+ 달성이 선행 조건 |
-| **인력 부족** — Senior Rust 엔지니어 + JIT/컴파일러 경험자 확보 어려움 | High | Medium | ethrex/Reth 오픈소스 커뮤니티에서 기여자 영입. ZK 회로 팀의 Rust 경험 활용 |
-| **LambdaClass 관계** — Fork 시 협력 관계 유지 필요 | Medium | Low | 적극적 upstream 기여. Tokamak 전용 기능은 별도 크레이트로 분리 |
+| **Agent 한계** — AI Agent가 복잡한 아키텍처 결정이나 저수준 최적화에서 한계 노출 | Medium | Medium | 단계별 검증(Hive 테스트, differential testing)으로 Agent 출력물 품질 보장. 난이도 높은 결정은 팀 토론으로 보완 |
+| **Bus factor** — 의사결정자(Jason)가 1명. 부재 시 프로젝트 정지 | High | Low | Jason 2주 이상 부재 시 현재 Phase 동결. Kevin이 임시 의사결정권을 갖고 긴급 이슈(upstream breaking change, 보안 취약점)에 한해 대응. Phase 전환 결정은 Jason 복귀까지 보류 |
 
 ## 7. 다음 단계 — Phase별 로드맵
 
@@ -199,7 +201,6 @@ pub static OPCODE_TIMINGS: LazyLock<Mutex<OpcodeTimings>> = ...;
 | 메인넷 풀 싱크 완료 | 4개월 | ethrex upstream에 버그 리포트 + 1회 재시도. 재시도 실패 시 Reth fork 전환 평가 | Tech leads |
 | Hive 테스트 95%+ 통과 | 6개월 | 실패 테스트 분석 → ethrex upstream 기여로 해결 시도. 80% 미만이면 프로젝트 중단 검토 | Tech leads + Kevin |
 | 내부 노드 30일 연속 업타임 | 6개월 | 아키텍처 재검토. crash 원인이 LEVM 성숙도이면 revm 병행 검토 | Full team |
-| Senior Rust 2명 확보 | 3개월 | 외부 채용/계약 불발 시 Phase 축소 (JIT 제외, Benchmarking + Debugger에 집중) | Kevin |
 
 **핵심 원칙**: "재평가"가 아니라 구체적 행동을 정의한다. 각 기한에서 Go/No-Go를 결정하고, No-Go 시의 대안 경로가 명시되어 있다.
 
@@ -277,7 +278,7 @@ CALL                  5.678µs          0.567s (    100000 calls)
 |-------------|-----------|------|
 | #1. Q1-Q4 의사결정 완료 | **충족** | Q1: 프로덕션 노드(Track A). Q2: Rust. Q3: 노드 점유율 + L2 통합. Q4: 아래 참조 |
 | #2. 6개월 로드맵 | **충족** | Phase 1-4 (섹션 7) |
-| #3. 인력/예산 배분 | **부분** | Senior Rust 2명 + JIT 경험자 1명 필요. 3개월 내 미확보 시 Phase 축소 (EXIT 기준 섹션 8) |
+| #3. 인력/예산 배분 | **충족** | AI Agent 기반 개발. Jason이 의사결정, Agent가 구현·리뷰·테스트 수행. 팀과 결과물 기반 토론 |
 | #4. 경쟁사 차별점 3가지 | **충족** | (1) ZK-native 4-프루버 EVM (2) 자동 증명 벤치마크 (3) 내장 Time-Travel 디버거 |
 | #5. EXIT 기준 | **충족** | 4개 수치 × 기한 × 미달 시 행동 × 의사결정자 (섹션 8) |
 | #6. Tier S PoC | **충족** | `perf_opcode_timings` 빌드 검증 + 동작 원리 확인 (섹션 9) |
@@ -303,4 +304,4 @@ CALL                  5.678µs          0.567s (    100000 calls)
 
 *Decision date: 2026-02-22*
 *Author: Jason (with analysis from Phase 0-1/0-2 agents)*
-*Status: **DRAFT** — 팀 리뷰 후 확정*
+*Status: **FINAL** — 2026-02-22 확정*
