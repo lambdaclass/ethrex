@@ -155,10 +155,12 @@ jobs:
       - name: Generate first-run report
         if: steps.download-main.outcome != 'success'
         run: |
-          echo "## Tokamak Benchmark Results: **Baseline**" > report.md
-          echo "" >> report.md
-          echo "No baseline benchmark found on the base branch." >> report.md
-          echo "This PR establishes the initial benchmark baseline." >> report.md
+          {
+            echo "## Tokamak Benchmark Results: **Baseline**"
+            echo ""
+            echo "No baseline benchmark found on the base branch."
+            echo "This PR establishes the initial benchmark baseline."
+          } > report.md
 
       - name: Find comment
         continue-on-error: true
