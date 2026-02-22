@@ -7,117 +7,96 @@
 | Phase 0-4: 개발 환경 구축 (monorepo) | **완료** |
 | Phase 0-1: ethrex 코드베이스 분석 | **완료** |
 | Phase 0-2: 대안 평가 (Reth 등) | **완료** |
-| Phase 0-3: DECISION.md 작성 | **완료** |
+| Phase 0-3: DECISION.md 작성 | **완료 (FINAL)** |
 | Phase 0-3a: Volkov R6 리뷰 + 수정 | **완료** |
+| Phase 0-3b: DECISION.md 확정 (이전 세션에서 Volkov PROCEED) | **완료** |
+| Phase 1.1-1: 아키텍처 분석 문서 | **완료** |
+| Phase 1.1-2: Skeleton crate + feature flag | **완료** |
+| Phase 1.1-3: 빌드 검증 + CI 계획 | **진행중** |
 
 ## 이번 세션에서 수행한 작업
 
-### 1. DECISION.md 초안 작성 (커밋 `ca65752`)
+### 1. 아키텍처 분석 문서 4건 작성
 
-14개 문서를 `docs/tokamak/` 하위에 작성하고 커밋/푸시:
-- `DECISION.md` — ethrex fork 결정 문서 (초안)
-- `vision.md`, `context/`, `features/`, `scaffold/` 등
+`docs/tokamak/architecture/` 하위에 작성:
 
-### 2. Volkov R6 리뷰 수행 → 6.5/10 (REVISE)
+- **OVERVIEW.md** — 전체 아키텍처, 25+2 crate 의존성 그래프 (13-layer), 노드 시작 흐름, 빌드 프로파일, feature flag 전체 목록, CI 워크플로우 29개 분류
+- **LEVM.md** — VM 구조체 13개 필드, 트랜잭션 실행 흐름 (prepare→run→finalize), 메인 루프 듀얼 디스패치 구조 (vm.rs:528-663), Hook 시스템, Substate 체크포인팅, Lint 설정
+- **MODIFICATION-POINTS.md** — Tokamak 수정 지점 5개 + Hybrid 격리 전략 (feature flag ~30줄 + 신규 crate 3개), upstream 충돌 위험도 평가
+- **PHASE-1-1.md** — Phase 1.1 상세 실행 계획, CI 파이프라인 설계, 성공 기준 7개
 
-Volkov가 지적한 3가지 필수 수정사항:
-1. **결정 매트릭스 편향** — 허수아비 옵션, Reth 과소평가
-2. **EXIT 기준 부재** — "재평가"는 행동이 아님
-3. **Tier S PoC 미실행** — 계획이 아니라 결과 필요
+### 2. Skeleton crate 3개 생성
 
-### 3. 필수 수정사항 3건 반영 (커밋 `adbfeca`)
+| Crate | Path | Purpose |
+|-------|------|---------|
+| `tokamak-jit` | `crates/vm/tokamak-jit/` | JIT 컴파일러 (Phase 3) |
+| `tokamak-bench` | `crates/tokamak-bench/` | 벤치마크 러너 (Phase 1.3) |
+| `tokamak-debugger` | `crates/tokamak-debugger/` | Time-Travel Debugger (Phase 2) |
 
-**Fix 1: 매트릭스 보정**
-- "처음부터 구축"/"revm 단독"을 부록으로 이동
-- ethrex vs Reth 이원 비교로 재구성
-- Reth ZK: 1→2 (Zeth 존재 반영, 단 별도 프로젝트/RISC Zero 단일 프루버)
-- Reth 관리성: 2→3 (모듈러 아키텍처/Paradigm 투자 인정)
-- ethrex 동기화: 5→4 (<1% 점유율, 실전 검증 적음)
-- ExEx가 post-execution hook이며 EVM 수정 메커니즘이 아님을 명시
-- 최종: ethrex 4.60 vs Reth 2.80
+모두 빌드 성공 확인 (`cargo check` PASS).
 
-**Fix 2: EXIT 기준 4요소 완성**
-| 수치 | 기한 | 미달 시 행동 | 의사결정자 |
-|------|------|-------------|-----------|
-| 메인넷 싱크 | 4개월 | 버그 리포트 + 재시도 → 실패 시 Reth 전환 평가 | Tech leads |
-| Hive 95%+ | 6개월 | upstream 기여 시도. 80% 미만이면 중단 검토 | Tech leads + Kevin |
-| 30일 업타임 | 6개월 | 아키텍처 재검토 | Full team |
-| Rust 2명 확보 | 3개월 | Phase 축소 (JIT 제외) | Kevin |
+### 3. `tokamak` Feature Flag 선언
 
-**Fix 3: Tier S PoC 실행**
-- `cargo build --features perf_opcode_timings` 빌드 성공 (3m 44s)
-- 코드 경로 분석 완료 (vm.rs → Instant::now() → elapsed() → timings.update())
-- PoC 결론: feature flag 동작 확인, CI 연결 경로 문서화
-
-### 4. 코드 리뷰 통과 (9.0/10)
-- REJECT 1건: Reth 가중 합계 산술 오류 (2.85→2.80) → 수정 완료
-
-## Volkov R6 점수 추이
-
+Feature propagation chain 구축:
 ```
-R1: 3.0 → R2: 3.0 → R3: 5.25 → R4: 4.5 → R5: 4.0 → R6: 6.5 (REVISE)
+cmd/ethrex → ethrex-vm → ethrex-levm
+  tokamak     tokamak     tokamak
 ```
 
-PROCEED(7.5)까지 1.0 남음. 미충족: #3 인력 배분 (부분).
+`cargo check -p ethrex-levm --features tokamak` PASS.
 
-## Phase 0-2 결정 매트릭스 (보정 후)
+### 4. Workspace 등록
 
-| 기준 (가중치) | ethrex | Reth |
-|--------------|--------|------|
-| 메인넷 동기화 (25%) | 4 | 4 |
-| EVM 수정 가능성 (25%) | 5 | 2 |
-| ZK 호환성 (20%) | 5 | 2 |
-| 코드베이스 관리성 (15%) | 4 | 3 |
-| L2 아키텍처 정합성 (15%) | 5 | 3 |
-| **가중 합계** | **4.60** | **2.80** |
-
-**결정: ethrex fork** — `docs/tokamak/DECISION.md` 참조
+Root `Cargo.toml` members에 3개 skeleton crate 추가.
 
 ## Git 상태
 
 - 브랜치: `feat/tokamak-proven-execution`
-- 리모트: `origin` (tokamak-network/ethrex) — 푸시 완료
-- 마지막 커밋: `adbfeca` — Volkov R6 피드백 반영
+- 리모트: `origin` (tokamak-network/ethrex)
+- 마지막 커밋: `36f9bf7a8` (이전 세션)
 
-```
-adbfeca docs: revise DECISION.md per Volkov R6 review feedback
-ca65752 docs: add Tokamak EL client decision and planning documents
-```
+## 변경된 파일 목록
+
+### 신규 생성
+- `docs/tokamak/architecture/OVERVIEW.md`
+- `docs/tokamak/architecture/LEVM.md`
+- `docs/tokamak/architecture/MODIFICATION-POINTS.md`
+- `docs/tokamak/architecture/PHASE-1-1.md`
+- `crates/vm/tokamak-jit/Cargo.toml`
+- `crates/vm/tokamak-jit/src/lib.rs`
+- `crates/tokamak-bench/Cargo.toml`
+- `crates/tokamak-bench/src/lib.rs`
+- `crates/tokamak-debugger/Cargo.toml`
+- `crates/tokamak-debugger/src/lib.rs`
+
+### 수정
+- `Cargo.toml` (workspace members 추가)
+- `crates/vm/levm/Cargo.toml` (tokamak feature)
+- `crates/vm/Cargo.toml` (tokamak feature propagation)
+- `cmd/ethrex/Cargo.toml` (tokamak feature propagation)
 
 ## 다음 단계
 
-### 즉시 필요
+### Phase 1.1 완료를 위해 남은 작업
 
-1. **DECISION.md 팀 리뷰** — DRAFT 상태. 팀 확인 후 확정
-2. **인력 배분 확정** — Senior Rust 2명 + JIT 경험자 1명 (Volkov 유일한 부분 충족 항목)
-3. **LambdaClass 커뮤니케이션** — Fork 전 협력적 fork 의향 확인 (Volkov 권장사항)
+1. **빌드 검증 결과 기록** — `cargo build/test/clippy --workspace` 결과를 PHASE-1-1.md에 기록
+2. **CI 워크플로우 생성** — `pr-tokamak.yaml` 작성 및 테스트
+3. **커밋 + 푸시**
 
-### Phase 1.1: Fork & 환경 구축 (Week 1-2)
+### Phase 1.2: Sync & Hive (Week 3-4)
 
-4. ethrex fork 기반으로 빌드 검증 (메인넷/Holesky)
-5. CI 파이프라인 설정
-6. Hive 테스트 프레임워크 통합 시작
+4. 메인넷/Holesky 동기화 테스트
+5. Hive 테스트 프레임워크 통합
 
-### Volkov 권장사항 (점수 상승에 기여)
+### Phase 1.3: Benchmarking Foundation (Week 5-6)
 
-- 인력 계획 현실화: Phase별 인력 집중 계획 수립
-- JIT 기술적 장벽 심화 분석: revmc 선행 사례, validation mode 성능 오버헤드
-- LambdaClass 관계 전략
+6. `tokamak-bench` 구현 시작
+7. `perf_opcode_timings` CI 연동
 
 ## 핵심 컨텍스트
 
-- 개발 계획 전문: `docs/tokamak/` 내 문서들
-  - `vision.md` — 전체 비전 ("Performance you can see, verify, and debug")
-  - `DECISION.md` — ethrex fork 결정 문서 (Volkov R6 피드백 반영, DRAFT)
-  - `context/competitive-landscape.md` — 경쟁 분석
-  - `context/volkov-reviews.md` — R1-R5 리뷰 이력
-  - `features/01~03-*.md` — Tier S 기능 상세
-- 포지셔닝: "Performance you can see, verify, and debug"
-- Tier S 기능 3개: JIT EVM + Continuous Benchmarking + Time-Travel Debugger
-- Base client: **ethrex fork 확정** (DECISION.md)
-
-## Reth 조사 결과 (이번 세션)
-
-- **Zeth** (risc0/zeth, 439 stars): RISC Zero가 관리하는 별도 프로젝트. Reth의 stateless execution을 zkVM 내에서 사용. RISC Zero 프루버만 지원. Reth에 내장된 것 아님
-- **ExEx** (Execution Extensions): 블록 실행 후 상태 변경을 수신하는 post-execution hook. EVM 실행 자체를 수정하는 메커니즘이 아님. 롤업/브릿지/인덱서용
-- **결론**: Reth ZK 1→2 상향 조정은 공정하나, ethrex의 네이티브 4-프루버 통합과는 깊이가 다름
+- DECISION.md: **FINAL 확정** (2026-02-22)
+- Volkov 점수: PROCEED 달성 (이전 세션, R6 이후 추가 리뷰에서 7.5 도달)
+- 아키텍처 분석: `docs/tokamak/architecture/` 참조
+- 격리 전략: Hybrid (feature flag + 신규 crate)
+- Tier S 기능: JIT EVM + Continuous Benchmarking + Time-Travel Debugger

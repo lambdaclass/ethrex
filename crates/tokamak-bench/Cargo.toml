@@ -1,0 +1,12 @@
+[package]
+name = "tokamak-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex-levm.workspace = true
+ethrex-vm.workspace = true
+
+[lints]
+workspace = true
