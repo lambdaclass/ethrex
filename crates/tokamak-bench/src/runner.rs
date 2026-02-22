@@ -35,18 +35,54 @@ pub struct Scenario {
 
 pub fn default_scenarios() -> Vec<Scenario> {
     vec![
-        Scenario { name: "Fibonacci", iterations: 57 },
-        Scenario { name: "FibonacciRecursive", iterations: 15 },
-        Scenario { name: "Factorial", iterations: 57 },
-        Scenario { name: "FactorialRecursive", iterations: 57 },
-        Scenario { name: "Push", iterations: 0 },
-        Scenario { name: "MstoreBench", iterations: 0 },
-        Scenario { name: "SstoreBench_no_opt", iterations: 0 },
-        Scenario { name: "ManyHashes", iterations: 57 },
-        Scenario { name: "BubbleSort", iterations: 100 },
-        Scenario { name: "ERC20Approval", iterations: 500 },
-        Scenario { name: "ERC20Transfer", iterations: 500 },
-        Scenario { name: "ERC20Mint", iterations: 500 },
+        Scenario {
+            name: "Fibonacci",
+            iterations: 57,
+        },
+        Scenario {
+            name: "FibonacciRecursive",
+            iterations: 15,
+        },
+        Scenario {
+            name: "Factorial",
+            iterations: 57,
+        },
+        Scenario {
+            name: "FactorialRecursive",
+            iterations: 57,
+        },
+        Scenario {
+            name: "Push",
+            iterations: 0,
+        },
+        Scenario {
+            name: "MstoreBench",
+            iterations: 0,
+        },
+        Scenario {
+            name: "SstoreBench_no_opt",
+            iterations: 0,
+        },
+        Scenario {
+            name: "ManyHashes",
+            iterations: 57,
+        },
+        Scenario {
+            name: "BubbleSort",
+            iterations: 100,
+        },
+        Scenario {
+            name: "ERC20Approval",
+            iterations: 500,
+        },
+        Scenario {
+            name: "ERC20Transfer",
+            iterations: 500,
+        },
+        Scenario {
+            name: "ERC20Mint",
+            iterations: 500,
+        },
     ]
 }
 
@@ -81,9 +117,8 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
         state_root: *EMPTY_TRIE_HASH,
         ..Default::default()
     };
-    let vm_db: DynVmDatabase = Box::new(
-        StoreVmDatabase::new(store, header).expect("Failed to create StoreVmDatabase"),
-    );
+    let vm_db: DynVmDatabase =
+        Box::new(StoreVmDatabase::new(store, header).expect("Failed to create StoreVmDatabase"));
 
     let mut cache = FxHashMap::default();
     cache.insert(
@@ -123,8 +158,7 @@ fn init_vm(db: &mut GeneralizedDatabase, calldata: Bytes) -> VM<'_> {
         ..Default::default()
     });
 
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1)
-        .expect("Failed to create VM")
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1).expect("Failed to create VM")
 }
 
 /// Run a single benchmark scenario and collect opcode timing data.
@@ -146,7 +180,11 @@ pub fn run_scenario(name: &str, bytecode_hex: &str, runs: u64, iterations: u64) 
         let mut db = init_db(bytecode.clone());
         let mut vm = init_vm(&mut db, calldata.clone());
         let report = black_box(vm.stateless_execute().expect("VM execution failed"));
-        assert!(report.is_success(), "VM execution reverted: {:?}", report.result);
+        assert!(
+            report.is_success(),
+            "VM execution reverted: {:?}",
+            report.result
+        );
     }
     let total_duration = start.elapsed();
 

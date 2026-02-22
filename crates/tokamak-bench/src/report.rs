@@ -19,7 +19,10 @@ pub fn regression_from_json(json: &str) -> RegressionReport {
 pub fn to_markdown(report: &RegressionReport) -> String {
     let mut md = String::new();
 
-    md.push_str(&format!("## Tokamak Benchmark Results: **{}**\n\n", report.status));
+    md.push_str(&format!(
+        "## Tokamak Benchmark Results: **{}**\n\n",
+        report.status
+    ));
 
     if report.regressions.is_empty() && report.improvements.is_empty() {
         md.push_str("No significant changes detected.\n");

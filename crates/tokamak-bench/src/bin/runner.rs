@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use tokamak_bench::{
     regression::compare,
     report::{from_json, regression_to_json, to_json, to_markdown},
-    runner::{default_scenarios, run_suite, Scenario},
+    runner::{Scenario, default_scenarios, run_suite},
     types::Thresholds,
 };
 
@@ -89,13 +89,10 @@ fn main() {
                         .split(',')
                         .filter_map(|name| {
                             let name = name.trim();
-                            defaults
-                                .iter()
-                                .find(|s| s.name == name)
-                                .map(|s| Scenario {
-                                    name: s.name,
-                                    iterations: s.iterations,
-                                })
+                            defaults.iter().find(|s| s.name == name).map(|s| Scenario {
+                                name: s.name,
+                                iterations: s.iterations,
+                            })
                         })
                         .collect()
                 }
@@ -157,8 +154,7 @@ fn main() {
 
         Command::Report { input, output } => {
             let json = fs::read_to_string(&input).expect("Failed to read input file");
-            let report =
-                tokamak_bench::report::regression_from_json(&json);
+            let report = tokamak_bench::report::regression_from_json(&json);
             let md = to_markdown(&report);
 
             match output {
