@@ -414,8 +414,7 @@ impl Blockchain {
                     .spawn_scoped(s, move || {
                         // Warming uses the same caching store, sharing cached state with execution
                         let start = Instant::now();
-                        let _ =
-                            LEVM::warm_block(block, caching_store, vm_type, Some(warmer_cache));
+                        let _ = LEVM::warm_block(block, caching_store, vm_type, Some(warmer_cache));
                         start.elapsed()
                     })
                     .map_err(|e| {
