@@ -376,14 +376,10 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
-    // Skip cache for identity precompile (0x04) -- copy is cheaper than lookup.
-    let cache = if address == IDENTITY.address {
-        None
-    } else {
-        cache
-    };
-
-    if let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata)) {
+    // Check cache (skip identity -- copy is cheaper than lookup)
+    if address != IDENTITY.address
+        && let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata))
+    {
         increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
         return Ok(output);
     }
@@ -401,7 +397,11 @@ pub fn execute_precompile(
         timings.update(address, time);
     }
 
-    if let (Some(cache), Ok(output)) = (cache, &result) {
+    // Cache result on success (skip identity)
+    if address != IDENTITY.address
+        && let Some(cache) = cache
+        && let Ok(output) = &result
+    {
         let gas_cost = gas_before.saturating_sub(*gas_remaining);
         cache.insert(address, calldata.clone(), output.clone(), gas_cost);
     }

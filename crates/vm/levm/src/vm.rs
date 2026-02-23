@@ -541,7 +541,7 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
-                self.db.precompile_cache.as_deref(),
+                self.db.store.precompile_cache(),
             );
 
             call_frame.gas_remaining = gas_remaining as i64;
