@@ -29,8 +29,8 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use sha2::Digest;
 use rustc_hash::FxHashMap;
+use sha2::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 use std::sync::RwLock;
@@ -293,11 +293,17 @@ pub struct PrecompileCache {
     cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
 }
 
-impl PrecompileCache {
-    pub fn new() -> Self {
+impl Default for PrecompileCache {
+    fn default() -> Self {
         Self {
             cache: RwLock::new(FxHashMap::default()),
         }
+    }
+}
+
+impl PrecompileCache {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
@@ -365,17 +371,16 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
-    // Skip cache for identity precompile (0x04) — copy is cheaper than lookup
-    let is_identity = address == IDENTITY.address;
+    // Skip cache for identity precompile (0x04) -- copy is cheaper than lookup.
+    let cache = if address == IDENTITY.address {
+        None
+    } else {
+        cache
+    };
 
-    // Check cache before executing
-    if !is_identity {
-        if let Some(cache) = cache {
-            if let Some((output, gas_cost)) = cache.get(&address, calldata) {
-                increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
-                return Ok(output);
-            }
-        }
+    if let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata)) {
+        increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+        return Ok(output);
     }
 
     #[cfg(feature = "perf_opcode_timings")]
@@ -391,12 +396,9 @@ pub fn execute_precompile(
         timings.update(address, time);
     }
 
-    // Cache successful results (skip identity)
-    if !is_identity {
-        if let (Some(cache), Ok(output)) = (cache, &result) {
-            let gas_cost = gas_before - *gas_remaining;
-            cache.insert(address, calldata.clone(), output.clone(), gas_cost);
-        }
+    if let (Some(cache), Ok(output)) = (cache, &result) {
+        let gas_cost = gas_before.saturating_sub(*gas_remaining);
+        cache.insert(address, calldata.clone(), output.clone(), gas_cost);
     }
 
     result
