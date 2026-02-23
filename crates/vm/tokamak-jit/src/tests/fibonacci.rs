@@ -375,9 +375,14 @@ mod tests {
                 ..Default::default()
             });
 
-            let mut vm =
-                VM::new(env.clone(), &mut interp_db, &tx, LevmCallTracer::disabled(), VMType::L1)
-                    .unwrap_or_else(|e| panic!("Interpreter VM::new failed for fib({n}): {e:?}"));
+            let mut vm = VM::new(
+                env.clone(),
+                &mut interp_db,
+                &tx,
+                LevmCallTracer::disabled(),
+                VMType::L1,
+            )
+            .unwrap_or_else(|e| panic!("Interpreter VM::new failed for fib({n}): {e:?}"));
 
             let interp_report = vm
                 .stateless_execute()
@@ -414,19 +419,19 @@ mod tests {
             // Build a minimal CallFrame matching what the VM would create
             #[expect(clippy::as_conversions)]
             let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
-                sender_addr,     // msg_sender
-                contract_addr,   // to
-                contract_addr,   // code_address
+                sender_addr,   // msg_sender
+                contract_addr, // to
+                contract_addr, // code_address
                 fib_code.clone(),
-                U256::zero(),    // msg_value
+                U256::zero(), // msg_value
                 calldata,
-                false,           // is_static
+                false,                 // is_static
                 (i64::MAX - 1) as u64, // gas_limit
-                0,               // depth
-                false,           // should_transfer_value
-                false,           // is_create
-                0,               // ret_offset
-                0,               // ret_size
+                0,                     // depth
+                false,                 // should_transfer_value
+                false,                 // is_create
+                0,                     // ret_offset
+                0,                     // ret_size
                 ethrex_levm::call_frame::Stack::default(),
                 ethrex_levm::memory::Memory::default(),
             );
