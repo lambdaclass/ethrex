@@ -1961,14 +1961,16 @@ impl Blockchain {
                     | ChainError::InvalidBlock(InvalidBlockError::StateRootMismatch),
                 ) if bal.is_some() => {
                     // Parallel execution produced wrong results (missed RAW dependency).
-                    // Retry with sequential execution using a fresh VM.
+                    // Retry with sequential execution, reusing the CachingDatabase from
+                    // the failed VM so we keep the warm read cache (reads from the
+                    // immutable parent state are still valid — only the computed writes
+                    // were wrong). The fresh VM has a clean write slate.
                     let wasted_ms = parallel_start.elapsed().as_millis();
                     warn!(
                         "Parallel execution mismatch for block {}, falling back to sequential (wasted {} ms)",
                         block.header.number, wasted_ms
                     );
-                    let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-                    let mut fresh_vm = self.new_evm(vm_db)?;
+                    let mut fresh_vm = vm.fresh_with_same_store();
                     self.execute_block_pipeline(&block, &parent_header, &mut fresh_vm, None)?
                 }
                 Err(e) => return Err(e),
