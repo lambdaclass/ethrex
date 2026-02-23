@@ -629,6 +629,22 @@ impl LEVM {
 
         let groups = build_parallel_groups(bal, txs_with_sender, coinbase);
 
+        let num_groups = groups.len();
+        let max_group = groups.iter().map(|g| g.len()).max().unwrap_or(0);
+        let n_txs = txs_with_sender.len();
+        ::tracing::info!(
+            "[PARALLEL] block {} | {} txs → {} groups (max group: {} txs, parallelism: {:.1}x)",
+            block.header.number,
+            n_txs,
+            num_groups,
+            max_group,
+            if max_group > 0 {
+                n_txs as f64 / max_group as f64
+            } else {
+                1.0
+            },
+        );
+
         let store = db.store.clone();
         let header = &block.header;
 
@@ -1665,12 +1681,7 @@ mod parallel_group_tests {
         // All three conflict transitively → one sequential group.
         let addr_x = addr(1);
         let addr_y = addr(2);
-        let bal = bal_writes(&[
-            (1, addr_x),
-            (2, addr_x),
-            (2, addr_y),
-            (3, addr_y),
-        ]);
+        let bal = bal_writes(&[(1, addr_x), (2, addr_x), (2, addr_y), (3, addr_y)]);
         let tx = dummy_tx();
         let txs = vec![
             (&tx, addr(10)), // A  (tx_idx 0)
