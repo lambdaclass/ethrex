@@ -695,6 +695,20 @@ impl<'a> VM<'a> {
             }
         }
 
+        self.interpreter_loop(0)
+    }
+
+    /// Shared interpreter loop used by both `run_execution` (stop_depth=0) and
+    /// `run_subcall` (stop_depth=call_frames.len()). Executes opcodes until the
+    /// call stack depth returns to `stop_depth`, at which point the final result
+    /// is returned.
+    ///
+    /// When `stop_depth == 0`, this behaves like the original `run_execution` loop:
+    /// it terminates when the initial call frame completes (call_frames is empty).
+    ///
+    /// When `stop_depth > 0`, this is a bounded run for a JIT sub-call: it
+    /// terminates when the child frame (and any nested calls) have completed.
+    fn interpreter_loop(&mut self, stop_depth: usize) -> Result<ContextResult, VMError> {
         #[cfg(feature = "perf_opcode_timings")]
         #[allow(clippy::expect_used)]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
@@ -799,9 +813,16 @@ impl<'a> VM<'a> {
                 Err(error) => self.handle_opcode_error(error)?,
             };
 
-            // Return the ExecutionReport if the executed callframe was the first one.
-            if self.is_initial_call_frame() {
+            // Check if we've reached the stop depth (initial frame or JIT sub-call boundary)
+            if self.call_frames.len() <= stop_depth {
                 self.handle_state_backup(&result)?;
+                // For JIT sub-calls (stop_depth > 0), pop the completed child frame
+                if stop_depth > 0 {
+                    let child = self.pop_call_frame()?;
+                    let mut child_stack = child.stack;
+                    child_stack.clear();
+                    self.stack_pool.push(child_stack);
+                }
                 return Ok(result);
             }
 
@@ -914,6 +935,7 @@ impl<'a> VM<'a> {
                 if new_depth > 1024 {
                     return Ok(SubCallResult {
                         success: false,
+                        gas_limit,
                         gas_used: 0,
                         output: Bytes::new(),
                         created_address: None,
@@ -937,18 +959,33 @@ impl<'a> VM<'a> {
 
                     return Ok(SubCallResult {
                         success: ctx_result.is_success(),
+                        gas_limit,
                         gas_used,
                         output: ctx_result.output,
                         created_address: None,
                     });
                 }
 
+                let should_transfer =
+                    matches!(scheme, JitCallScheme::Call | JitCallScheme::CallCode);
+
+                // Balance check: verify sender has enough value before attempting transfer
+                if should_transfer && !value.is_zero() {
+                    let sender_balance = self.db.get_account(caller)?.info.balance;
+                    if sender_balance < value {
+                        return Ok(SubCallResult {
+                            success: false,
+                            gas_limit,
+                            gas_used: 0,
+                            output: Bytes::new(),
+                            created_address: None,
+                        });
+                    }
+                }
+
                 // Load target bytecode
                 let code_hash = self.db.get_account(code_address)?.info.code_hash;
                 let bytecode = self.db.get_code(code_hash)?.clone();
-
-                let should_transfer =
-                    matches!(scheme, JitCallScheme::Call | JitCallScheme::CallCode);
 
                 let mut stack = self.stack_pool.pop().unwrap_or_default();
                 stack.clear();
@@ -975,21 +1012,8 @@ impl<'a> VM<'a> {
                 self.add_callframe(new_call_frame);
 
                 // Transfer value from caller to callee
-                if should_transfer
-                    && !value.is_zero()
-                    && self.transfer(caller, target, value).is_err()
-                {
-                    // Transfer failed — pop frame and return failure
-                    let child = self.pop_call_frame()?;
-                    let mut child_stack = child.stack;
-                    child_stack.clear();
-                    self.stack_pool.push(child_stack);
-                    return Ok(SubCallResult {
-                        success: false,
-                        gas_used: gas_limit,
-                        output: Bytes::new(),
-                        created_address: None,
-                    });
+                if should_transfer && !value.is_zero() {
+                    self.transfer(caller, target, value)?;
                 }
 
                 self.substate.push_backup();
@@ -999,6 +1023,7 @@ impl<'a> VM<'a> {
 
                 Ok(SubCallResult {
                     success: result.is_success(),
+                    gas_limit,
                     gas_used: result.gas_used,
                     output: result.output,
                     created_address: None,
@@ -1020,19 +1045,48 @@ impl<'a> VM<'a> {
                 if new_depth > 1024 {
                     return Ok(SubCallResult {
                         success: false,
+                        gas_limit,
                         gas_used: 0,
                         output: Bytes::new(),
                         created_address: None,
                     });
                 }
 
-                // Compute deploy address
+                // EIP-3860: Initcode size limit (49152 bytes) — Shanghai+
+                if self.env.config.fork >= Fork::Shanghai && init_code.len() > 49152 {
+                    return Ok(SubCallResult {
+                        success: false,
+                        gas_limit,
+                        gas_used: gas_limit,
+                        output: Bytes::new(),
+                        created_address: None,
+                    });
+                }
+
+                // Balance check before transfer
+                if !value.is_zero() {
+                    let sender_balance = self.db.get_account(caller)?.info.balance;
+                    if sender_balance < value {
+                        return Ok(SubCallResult {
+                            success: false,
+                            gas_limit,
+                            gas_used: 0,
+                            output: Bytes::new(),
+                            created_address: None,
+                        });
+                    }
+                }
+
+                // Get current nonce and compute deploy address BEFORE incrementing
                 let caller_nonce = self.db.get_account(caller)?.info.nonce;
                 let deploy_address = if let Some(salt_val) = salt {
                     crate::utils::calculate_create2_address(caller, &init_code, salt_val)?
                 } else {
                     ethrex_common::evm::calculate_create_address(caller, caller_nonce)
                 };
+
+                // Increment caller nonce (CREATE consumes a nonce)
+                self.increment_account_nonce(caller)?;
 
                 let bytecode = ethrex_common::types::Code::from_bytecode(init_code);
 
@@ -1061,35 +1115,49 @@ impl<'a> VM<'a> {
                 self.add_callframe(new_call_frame);
 
                 // Transfer value
-                if !value.is_zero() && self.transfer(caller, deploy_address, value).is_err() {
-                    let child = self.pop_call_frame()?;
-                    let mut child_stack = child.stack;
-                    child_stack.clear();
-                    self.stack_pool.push(child_stack);
-                    return Ok(SubCallResult {
-                        success: false,
-                        gas_used: gas_limit,
-                        output: Bytes::new(),
-                        created_address: None,
-                    });
+                if !value.is_zero() {
+                    self.transfer(caller, deploy_address, value)?;
                 }
 
                 self.substate.push_backup();
 
                 let result = self.run_subcall()?;
 
-                let created_addr = if result.is_success() {
-                    Some(deploy_address)
-                } else {
-                    None
-                };
+                if result.is_success() {
+                    // EIP-170: Code size limit (24576 bytes) — Spurious Dragon+
+                    if self.env.config.fork >= Fork::SpuriousDragon
+                        && result.output.len() > 24576
+                    {
+                        return Ok(SubCallResult {
+                            success: false,
+                            gas_limit,
+                            gas_used: gas_limit,
+                            output: Bytes::new(),
+                            created_address: None,
+                        });
+                    }
 
-                Ok(SubCallResult {
-                    success: result.is_success(),
-                    gas_used: result.gas_used,
-                    output: result.output,
-                    created_address: created_addr,
-                })
+                    // Store the deployed code
+                    let code =
+                        ethrex_common::types::Code::from_bytecode(result.output.clone());
+                    self.update_account_bytecode(deploy_address, code)?;
+
+                    Ok(SubCallResult {
+                        success: true,
+                        gas_limit,
+                        gas_used: result.gas_used,
+                        output: result.output,
+                        created_address: Some(deploy_address),
+                    })
+                } else {
+                    Ok(SubCallResult {
+                        success: false,
+                        gas_limit,
+                        gas_used: result.gas_used,
+                        output: result.output,
+                        created_address: None,
+                    })
+                }
             }
         }
     }
@@ -1100,6 +1168,9 @@ impl<'a> VM<'a> {
     /// this method runs until the child frame (and any nested calls it makes)
     /// have completed. The JIT parent frame remains on the call_frames stack
     /// and is NOT executed by the interpreter.
+    ///
+    /// Uses the shared `interpreter_loop` to avoid duplicating the opcode
+    /// dispatch table.
     #[cfg(feature = "tokamak-jit")]
     fn run_subcall(&mut self) -> Result<ContextResult, VMError> {
         // The parent_depth is the number of frames on the stack when the child
@@ -1137,113 +1208,9 @@ impl<'a> VM<'a> {
             return result;
         }
 
-        // Run interpreter loop with depth-bounded termination
-        loop {
-            let opcode = self.current_call_frame.next_opcode();
-            self.advance_pc(1)?;
-
-            #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = match opcode {
-                0x5d if self.env.config.fork >= Fork::Cancun => self.op_tstore(),
-                0x60 => self.op_push::<1>(),
-                0x61 => self.op_push::<2>(),
-                0x62 => self.op_push::<3>(),
-                0x63 => self.op_push::<4>(),
-                0x64 => self.op_push::<5>(),
-                0x65 => self.op_push::<6>(),
-                0x66 => self.op_push::<7>(),
-                0x67 => self.op_push::<8>(),
-                0x68 => self.op_push::<9>(),
-                0x69 => self.op_push::<10>(),
-                0x6a => self.op_push::<11>(),
-                0x6b => self.op_push::<12>(),
-                0x6c => self.op_push::<13>(),
-                0x6d => self.op_push::<14>(),
-                0x6e => self.op_push::<15>(),
-                0x6f => self.op_push::<16>(),
-                0x70 => self.op_push::<17>(),
-                0x71 => self.op_push::<18>(),
-                0x72 => self.op_push::<19>(),
-                0x73 => self.op_push::<20>(),
-                0x74 => self.op_push::<21>(),
-                0x75 => self.op_push::<22>(),
-                0x76 => self.op_push::<23>(),
-                0x77 => self.op_push::<24>(),
-                0x78 => self.op_push::<25>(),
-                0x79 => self.op_push::<26>(),
-                0x7a => self.op_push::<27>(),
-                0x7b => self.op_push::<28>(),
-                0x7c => self.op_push::<29>(),
-                0x7d => self.op_push::<30>(),
-                0x7e => self.op_push::<31>(),
-                0x7f => self.op_push::<32>(),
-                0x80 => self.op_dup::<0>(),
-                0x81 => self.op_dup::<1>(),
-                0x82 => self.op_dup::<2>(),
-                0x83 => self.op_dup::<3>(),
-                0x84 => self.op_dup::<4>(),
-                0x85 => self.op_dup::<5>(),
-                0x86 => self.op_dup::<6>(),
-                0x87 => self.op_dup::<7>(),
-                0x88 => self.op_dup::<8>(),
-                0x89 => self.op_dup::<9>(),
-                0x8a => self.op_dup::<10>(),
-                0x8b => self.op_dup::<11>(),
-                0x8c => self.op_dup::<12>(),
-                0x8d => self.op_dup::<13>(),
-                0x8e => self.op_dup::<14>(),
-                0x8f => self.op_dup::<15>(),
-                0x90 => self.op_swap::<1>(),
-                0x91 => self.op_swap::<2>(),
-                0x92 => self.op_swap::<3>(),
-                0x93 => self.op_swap::<4>(),
-                0x94 => self.op_swap::<5>(),
-                0x95 => self.op_swap::<6>(),
-                0x96 => self.op_swap::<7>(),
-                0x97 => self.op_swap::<8>(),
-                0x98 => self.op_swap::<9>(),
-                0x99 => self.op_swap::<10>(),
-                0x9a => self.op_swap::<11>(),
-                0x9b => self.op_swap::<12>(),
-                0x9c => self.op_swap::<13>(),
-                0x9d => self.op_swap::<14>(),
-                0x9e => self.op_swap::<15>(),
-                0x9f => self.op_swap::<16>(),
-                0x01 => self.op_add(),
-                0x39 => self.op_codecopy(),
-                0x51 => self.op_mload(),
-                0x56 => self.op_jump(),
-                0x57 => self.op_jumpi(),
-                0x5b => self.op_jumpdest(),
-                _ => self.opcode_table[opcode as usize].call(self),
-            };
-
-            let result = match op_result {
-                Ok(OpcodeResult::Continue) => continue,
-                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
-                Err(error) => self.handle_opcode_error(error)?,
-            };
-
-            // Check if we've returned to the JIT parent's depth
-            if self.call_frames.len() < parent_depth {
-                // We somehow went below parent_depth — shouldn't happen
-                self.handle_state_backup(&result)?;
-                return Ok(result);
-            }
-
-            if self.call_frames.len() == parent_depth {
-                // The child has completed, pop it and return
-                self.handle_state_backup(&result)?;
-                let child = self.pop_call_frame()?;
-                let mut child_stack = child.stack;
-                child_stack.clear();
-                self.stack_pool.push(child_stack);
-                return Ok(result);
-            }
-
-            // Still in nested calls within the child — handle normally
-            self.handle_return(&result)?;
-        }
+        // Run the shared interpreter loop, bounded to stop when depth
+        // returns to parent_depth (child frame completed).
+        self.interpreter_loop(parent_depth)
     }
 }
 

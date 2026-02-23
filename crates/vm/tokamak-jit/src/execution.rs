@@ -53,10 +53,17 @@ struct JitResumeStateInner {
     interpreter: Interpreter,
     compiled_fn: EvmCompilerFn,
     gas_limit: u64,
+    /// CALL return data memory offset (from FrameInput::Call).
+    /// Used to write output to the correct memory region on resume.
+    return_memory_offset: usize,
+    /// CALL return data size (from FrameInput::Call).
+    return_memory_size: usize,
 }
 
-// SAFETY: Interpreter contains SharedMemory (Arc-backed) and other Send-safe types.
-// EvmCompilerFn is a function pointer (inherently Send).
+// SAFETY: `Interpreter` contains `SharedMemory` (Arc-backed) and other owned, non-`Rc` types.
+// `EvmCompilerFn` wraps a raw function pointer (`RawEvmCompilerFn`) which is inherently `Send`
+// (function pointers are just code addresses). The compiler can't verify Send because the
+// function pointer type is opaque — hence the manual impl.
 #[expect(unsafe_code)]
 unsafe impl Send for JitResumeStateInner {}
 
@@ -158,9 +165,16 @@ pub fn execute_jit_resume(
     let mut interpreter = inner.interpreter;
     let f = inner.compiled_fn;
     let gas_limit = inner.gas_limit;
+    let return_memory_offset = inner.return_memory_offset;
+    let return_memory_size = inner.return_memory_size;
 
-    // Apply sub-call result to interpreter stack
-    apply_subcall_result(&mut interpreter, &sub_result);
+    // Apply sub-call result to interpreter: gas credit, stack push, memory write, return_data
+    apply_subcall_result(
+        &mut interpreter,
+        &sub_result,
+        return_memory_offset,
+        return_memory_size,
+    );
 
     // Build new Host for this invocation (scoped borrows)
     let mut host = LevmHost::new(
@@ -220,6 +234,15 @@ fn handle_interpreter_action(
             }
         }
         InterpreterAction::NewFrame(frame_input) => {
+            // Extract return memory info before translating (needed for resume)
+            let (return_memory_offset, return_memory_size) = match &frame_input {
+                FrameInput::Call(call_inputs) => (
+                    call_inputs.return_memory_offset.start,
+                    call_inputs.return_memory_offset.len(),
+                ),
+                _ => (0, 0), // CREATE doesn't write to parent memory
+            };
+
             // Translate revm FrameInput to LEVM JitSubCall
             let sub_call = translate_frame_input(frame_input)?;
 
@@ -228,6 +251,8 @@ fn handle_interpreter_action(
                 interpreter,
                 compiled_fn,
                 gas_limit,
+                return_memory_offset,
+                return_memory_size,
             }));
 
             Ok(JitOutcome::Suspended {
@@ -305,10 +330,27 @@ fn translate_frame_input(frame_input: FrameInput) -> Result<JitSubCall, JitError
 
 /// Apply a sub-call result to the revm interpreter before resume.
 ///
-/// Pushes the success/failure value onto the revm stack and sets return_data.
-/// For CREATE success, pushes the created address instead of 1.
-fn apply_subcall_result(interpreter: &mut Interpreter, sub_result: &SubCallResult) {
-    // Push return value onto the revm stack
+/// 1. Credits unused child gas back to the parent interpreter.
+/// 2. Pushes success/failure (or created address) onto the revm stack.
+/// 3. Writes output to the parent's memory at `return_memory_offset` (CALL only).
+/// 4. Sets `return_data` for RETURNDATASIZE/RETURNDATACOPY opcodes.
+fn apply_subcall_result(
+    interpreter: &mut Interpreter,
+    sub_result: &SubCallResult,
+    return_memory_offset: usize,
+    return_memory_size: usize,
+) {
+    use revm_interpreter::interpreter_types::MemoryTr;
+
+    // 1. Credit unused gas back to the parent interpreter.
+    //
+    // revmc deducted `gas_limit` from the parent before suspending (in __revmc_builtin_call).
+    // The child was given `gas_limit` gas and consumed `gas_used`. The unused portion
+    // must be returned to the parent.
+    let gas_returned = sub_result.gas_limit.saturating_sub(sub_result.gas_used);
+    interpreter.gas.erase_cost(gas_returned);
+
+    // 2. Push return value onto the revm stack.
     let return_value = if sub_result.success {
         match sub_result.created_address {
             // CREATE success: push the created address as U256
@@ -324,12 +366,22 @@ fn apply_subcall_result(interpreter: &mut Interpreter, sub_result: &SubCallResul
         RevmU256::ZERO
     };
 
-    // Push onto revm stack using the StackTr trait.
     // revmc's compiled code accounts for CALL/CREATE stack effects, so there
     // is guaranteed space for this push.
     let _ok = interpreter.stack.push(return_value);
 
-    // Set return_data for RETURNDATASIZE/RETURNDATACOPY opcodes
+    // 3. Write output to parent memory at return_memory_offset (CALL only).
+    //
+    // The EVM CALL opcode writes min(output_len, ret_size) bytes of the sub-call's
+    // output to the parent's memory at [ret_offset..ret_offset+ret_size].
+    if return_memory_size > 0 && !sub_result.output.is_empty() {
+        let copy_len = return_memory_size.min(sub_result.output.len());
+        interpreter
+            .memory
+            .set(return_memory_offset, &sub_result.output[..copy_len]);
+    }
+
+    // 4. Set return_data for RETURNDATASIZE/RETURNDATACOPY opcodes.
     interpreter
         .return_data
         .set_buffer(sub_result.output.clone());

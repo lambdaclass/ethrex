@@ -55,6 +55,9 @@ impl std::fmt::Debug for JitResumeState {
 pub struct SubCallResult {
     /// Whether the sub-call succeeded.
     pub success: bool,
+    /// Gas limit that was allocated to the sub-call (from the FrameInput).
+    /// Used to compute unused gas to credit back to the JIT parent.
+    pub gas_limit: u64,
     /// Gas consumed by the sub-call.
     pub gas_used: u64,
     /// Output data from the sub-call.
