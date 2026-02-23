@@ -5,7 +5,7 @@
 //! with infrequent writes (compilation events).
 
 use ethrex_common::H256;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 
 /// Metadata and function pointer for a JIT-compiled bytecode.
@@ -69,46 +69,84 @@ impl std::fmt::Debug for CompiledCode {
     }
 }
 
-/// Thread-safe cache of JIT-compiled bytecodes.
+/// Inner state for the code cache (behind RwLock).
+#[derive(Debug)]
+struct CodeCacheInner {
+    entries: HashMap<H256, Arc<CompiledCode>>,
+    insertion_order: VecDeque<H256>,
+    max_entries: usize,
+}
+
+/// Thread-safe cache of JIT-compiled bytecodes with LRU eviction.
+///
+/// When the cache reaches `max_entries`, the oldest entry (by insertion time)
+/// is evicted. Note: LLVM JIT memory is NOT freed on eviction (revmc limitation).
+/// The eviction only prevents HashMap metadata growth.
 #[derive(Debug, Clone)]
 pub struct CodeCache {
-    entries: Arc<RwLock<HashMap<H256, Arc<CompiledCode>>>>,
+    inner: Arc<RwLock<CodeCacheInner>>,
 }
 
 impl CodeCache {
-    /// Create a new empty code cache.
-    pub fn new() -> Self {
+    /// Create a new empty code cache with the given capacity.
+    pub fn with_max_entries(max_entries: usize) -> Self {
         Self {
-            entries: Arc::new(RwLock::new(HashMap::new())),
+            inner: Arc::new(RwLock::new(CodeCacheInner {
+                entries: HashMap::new(),
+                insertion_order: VecDeque::new(),
+                max_entries,
+            })),
         }
+    }
+
+    /// Create a new empty code cache with default capacity (1024).
+    pub fn new() -> Self {
+        Self::with_max_entries(1024)
     }
 
     /// Look up compiled code by bytecode hash.
     pub fn get(&self, hash: &H256) -> Option<Arc<CompiledCode>> {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
-        let entries = self.entries.read().unwrap();
-        entries.get(hash).cloned()
+        let inner = self.inner.read().unwrap();
+        inner.entries.get(hash).cloned()
     }
 
-    /// Insert compiled code into the cache.
+    /// Insert compiled code into the cache, evicting the oldest entry if at capacity.
     pub fn insert(&self, hash: H256, code: CompiledCode) {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
-        let mut entries = self.entries.write().unwrap();
-        entries.insert(hash, Arc::new(code));
+        let mut inner = self.inner.write().unwrap();
+
+        // If already present, just update the value (no eviction needed)
+        if let std::collections::hash_map::Entry::Occupied(mut e) = inner.entries.entry(hash) {
+            e.insert(Arc::new(code));
+            return;
+        }
+
+        // Evict oldest if at capacity
+        if inner.max_entries > 0
+            && inner.entries.len() >= inner.max_entries
+            && let Some(oldest) = inner.insertion_order.pop_front()
+        {
+            inner.entries.remove(&oldest);
+        }
+
+        inner.entries.insert(hash, Arc::new(code));
+        inner.insertion_order.push_back(hash);
     }
 
     /// Remove compiled code from the cache (e.g., on validation mismatch).
     pub fn invalidate(&self, hash: &H256) {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
-        let mut entries = self.entries.write().unwrap();
-        entries.remove(hash);
+        let mut inner = self.inner.write().unwrap();
+        inner.entries.remove(hash);
+        inner.insertion_order.retain(|h| h != hash);
     }
 
     /// Number of entries in the cache.
     pub fn len(&self) -> usize {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
-        let entries = self.entries.read().unwrap();
-        entries.len()
+        let inner = self.inner.read().unwrap();
+        inner.entries.len()
     }
 
     /// Whether the cache is empty.
@@ -157,5 +195,61 @@ mod tests {
         cache.invalidate(&hash);
         assert!(cache.get(&hash).is_none());
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn test_cache_eviction() {
+        let cache = CodeCache::with_max_entries(3);
+
+        let h1 = H256::from_low_u64_be(1);
+        let h2 = H256::from_low_u64_be(2);
+        let h3 = H256::from_low_u64_be(3);
+        let h4 = H256::from_low_u64_be(4);
+
+        // Insert 3 entries (at capacity)
+        #[expect(unsafe_code)]
+        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1) };
+        cache.insert(h1, code1);
+        #[expect(unsafe_code)]
+        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2) };
+        cache.insert(h2, code2);
+        #[expect(unsafe_code)]
+        let code3 = unsafe { CompiledCode::new(std::ptr::null(), 30, 3) };
+        cache.insert(h3, code3);
+        assert_eq!(cache.len(), 3);
+
+        // Insert 4th entry → oldest (h1) should be evicted
+        #[expect(unsafe_code)]
+        let code4 = unsafe { CompiledCode::new(std::ptr::null(), 40, 4) };
+        cache.insert(h4, code4);
+        assert_eq!(cache.len(), 3);
+        assert!(cache.get(&h1).is_none(), "oldest entry should be evicted");
+        assert!(cache.get(&h2).is_some());
+        assert!(cache.get(&h3).is_some());
+        assert!(cache.get(&h4).is_some());
+    }
+
+    #[test]
+    fn test_cache_update_existing_no_eviction() {
+        let cache = CodeCache::with_max_entries(2);
+
+        let h1 = H256::from_low_u64_be(1);
+        let h2 = H256::from_low_u64_be(2);
+
+        #[expect(unsafe_code)]
+        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1) };
+        cache.insert(h1, code1);
+        #[expect(unsafe_code)]
+        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2) };
+        cache.insert(h2, code2);
+        assert_eq!(cache.len(), 2);
+
+        // Re-insert h1 with different metadata — should NOT evict
+        #[expect(unsafe_code)]
+        let code1_updated = unsafe { CompiledCode::new(std::ptr::null(), 100, 10) };
+        cache.insert(h1, code1_updated);
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(&h1).is_some());
+        assert!(cache.get(&h2).is_some());
     }
 }

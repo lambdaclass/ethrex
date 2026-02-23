@@ -60,6 +60,15 @@ impl RevmcBackend {
         let analyzed =
             analyze_bytecode(code.bytecode.clone(), code.hash, code.jump_targets.clone());
 
+        // Skip bytecodes with external calls (CALL/CREATE not supported in JIT Phase 4)
+        if analyzed.has_external_calls {
+            tracing::info!(
+                hash = %code.hash,
+                "JIT skipped bytecode with external calls"
+            );
+            return Ok(());
+        }
+
         // Compile via revmc/LLVM
         let compiled = TokamakCompiler::compile(&analyzed)?;
 
@@ -107,8 +116,21 @@ impl JitBackend for RevmcBackend {
         db: &mut GeneralizedDatabase,
         substate: &mut Substate,
         env: &Environment,
+        storage_original_values: &mut ethrex_levm::jit::dispatch::StorageOriginalValues,
     ) -> Result<JitOutcome, String> {
-        crate::execution::execute_jit(compiled, call_frame, db, substate, env)
+        crate::execution::execute_jit(
+            compiled,
+            call_frame,
+            db,
+            substate,
+            env,
+            storage_original_values,
+        )
+        .map_err(|e| format!("{e}"))
+    }
+
+    fn compile(&self, code: &ethrex_common::types::Code, cache: &CodeCache) -> Result<(), String> {
+        self.compile_and_cache(code, cache)
             .map_err(|e| format!("{e}"))
     }
 }

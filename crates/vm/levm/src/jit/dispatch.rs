@@ -6,15 +6,19 @@
 
 use std::sync::{Arc, RwLock};
 
-use ethrex_common::H256;
+use ethrex_common::{H256, U256};
+use rustc_hash::FxHashMap;
 
 use super::cache::{CodeCache, CompiledCode};
 use super::counter::ExecutionCounter;
-use super::types::{JitConfig, JitOutcome};
+use super::types::{JitConfig, JitMetrics, JitOutcome};
 use crate::call_frame::CallFrame;
 use crate::db::gen_db::GeneralizedDatabase;
 use crate::environment::Environment;
 use crate::vm::Substate;
+
+/// Type alias for the storage original values map used in SSTORE gas calculation.
+pub type StorageOriginalValues = FxHashMap<(ethrex_common::Address, H256), U256>;
 
 /// Trait for JIT execution backends.
 ///
@@ -30,7 +34,15 @@ pub trait JitBackend: Send + Sync {
         db: &mut GeneralizedDatabase,
         substate: &mut Substate,
         env: &Environment,
+        storage_original_values: &mut StorageOriginalValues,
     ) -> Result<JitOutcome, String>;
+
+    /// Compile bytecode and insert the result into the cache.
+    ///
+    /// Called when the execution counter reaches the compilation threshold.
+    /// Returns `Ok(())` on success or an error message on failure.
+    fn compile(&self, code: &ethrex_common::types::Code, cache: &CodeCache)
+        -> Result<(), String>;
 }
 
 /// Global JIT state shared across all VM instances.
@@ -46,26 +58,33 @@ pub struct JitState {
     pub config: JitConfig,
     /// Registered JIT execution backend (set by `tokamak-jit` at startup).
     backend: RwLock<Option<Arc<dyn JitBackend>>>,
+    /// Atomic metrics for monitoring JIT activity.
+    pub metrics: JitMetrics,
 }
 
 impl JitState {
     /// Create a new JIT state with default configuration.
     pub fn new() -> Self {
+        let config = JitConfig::default();
+        let cache = CodeCache::with_max_entries(config.max_cache_entries);
         Self {
-            cache: CodeCache::new(),
+            cache,
             counter: ExecutionCounter::new(),
-            config: JitConfig::default(),
+            config,
             backend: RwLock::new(None),
+            metrics: JitMetrics::new(),
         }
     }
 
     /// Create a new JIT state with a specific configuration.
     pub fn with_config(config: JitConfig) -> Self {
+        let cache = CodeCache::with_max_entries(config.max_cache_entries);
         Self {
-            cache: CodeCache::new(),
+            cache,
             counter: ExecutionCounter::new(),
             config,
             backend: RwLock::new(None),
+            metrics: JitMetrics::new(),
         }
     }
 
@@ -90,11 +109,26 @@ impl JitState {
         db: &mut GeneralizedDatabase,
         substate: &mut Substate,
         env: &Environment,
+        storage_original_values: &mut StorageOriginalValues,
     ) -> Option<Result<JitOutcome, String>> {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let guard = self.backend.read().unwrap();
         let backend = guard.as_ref()?;
-        Some(backend.execute(compiled, call_frame, db, substate, env))
+        Some(backend.execute(
+            compiled,
+            call_frame,
+            db,
+            substate,
+            env,
+            storage_original_values,
+        ))
+    }
+
+    /// Get a reference to the registered backend (if any).
+    pub fn backend(&self) -> Option<Arc<dyn JitBackend>> {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let guard = self.backend.read().unwrap();
+        guard.clone()
     }
 }
 

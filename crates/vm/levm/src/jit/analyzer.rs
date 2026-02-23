@@ -18,6 +18,14 @@ const REVERT: u8 = 0xfd;
 const INVALID: u8 = 0xfe;
 const SELFDESTRUCT: u8 = 0xff;
 
+/// Opcodes that perform external calls or contract creation.
+const CALL: u8 = 0xf1;
+const CALLCODE: u8 = 0xf2;
+const DELEGATECALL: u8 = 0xf4;
+const STATICCALL: u8 = 0xfa;
+const CREATE: u8 = 0xf0;
+const CREATE2: u8 = 0xf5;
+
 /// Returns the number of immediate bytes following a PUSH opcode.
 /// PUSH1..PUSH32 are opcodes 0x60..0x7f, pushing 1..32 bytes.
 fn push_size(opcode: u8) -> usize {
@@ -38,6 +46,7 @@ pub fn analyze_bytecode(bytecode: Bytes, hash: H256, jump_targets: Vec<u32>) -> 
     let mut basic_blocks = Vec::new();
     let mut block_start: usize = 0;
     let mut opcode_count: usize = 0;
+    let mut has_external_calls = false;
     let mut i: usize = 0;
     let len = bytecode.len();
 
@@ -45,6 +54,14 @@ pub fn analyze_bytecode(bytecode: Bytes, hash: H256, jump_targets: Vec<u32>) -> 
         #[expect(clippy::indexing_slicing, reason = "i < len checked in loop condition")]
         let opcode = bytecode[i];
         opcode_count = opcode_count.saturating_add(1);
+
+        // Detect external call/create opcodes
+        if matches!(
+            opcode,
+            CALL | CALLCODE | DELEGATECALL | STATICCALL | CREATE | CREATE2
+        ) {
+            has_external_calls = true;
+        }
 
         let is_block_terminator = matches!(
             opcode,
@@ -75,6 +92,7 @@ pub fn analyze_bytecode(bytecode: Bytes, hash: H256, jump_targets: Vec<u32>) -> 
         jump_targets,
         basic_blocks,
         opcode_count,
+        has_external_calls,
     }
 }
 
@@ -122,5 +140,61 @@ mod tests {
 
         assert!(result.basic_blocks.is_empty());
         assert_eq!(result.opcode_count, 0);
+        assert!(!result.has_external_calls);
+    }
+
+    #[test]
+    fn test_external_call_detection() {
+        // PUSH1 0x00 CALL STOP — contains CALL
+        let bytecode = Bytes::from(vec![0x60, 0x00, 0xf1, 0x00]);
+        let result = analyze_bytecode(bytecode, H256::zero(), vec![]);
+        assert!(
+            result.has_external_calls,
+            "should detect CALL opcode"
+        );
+    }
+
+    #[test]
+    fn test_create_detection() {
+        // PUSH1 0x00 CREATE STOP — contains CREATE
+        let bytecode = Bytes::from(vec![0x60, 0x00, 0xf0, 0x00]);
+        let result = analyze_bytecode(bytecode, H256::zero(), vec![]);
+        assert!(
+            result.has_external_calls,
+            "should detect CREATE opcode"
+        );
+    }
+
+    #[test]
+    fn test_no_external_calls() {
+        // PUSH1 0x01 PUSH1 0x02 ADD STOP — pure computation
+        let bytecode = Bytes::from(vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00]);
+        let result = analyze_bytecode(bytecode, H256::zero(), vec![]);
+        assert!(
+            !result.has_external_calls,
+            "pure computation should have no external calls"
+        );
+    }
+
+    #[test]
+    fn test_staticcall_detection() {
+        // PUSH1 0x00 STATICCALL STOP
+        let bytecode = Bytes::from(vec![0x60, 0x00, 0xfa, 0x00]);
+        let result = analyze_bytecode(bytecode, H256::zero(), vec![]);
+        assert!(
+            result.has_external_calls,
+            "should detect STATICCALL opcode"
+        );
+    }
+
+    #[test]
+    fn test_delegatecall_detection() {
+        // PUSH1 0x00 DELEGATECALL STOP
+        let bytecode = Bytes::from(vec![0x60, 0x00, 0xf4, 0x00]);
+        let result = analyze_bytecode(bytecode, H256::zero(), vec![]);
+        assert!(
+            result.has_external_calls,
+            "should detect DELEGATECALL opcode"
+        );
     }
 }

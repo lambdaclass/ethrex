@@ -558,28 +558,68 @@ impl<'a> VM<'a> {
             return result;
         }
 
-        // JIT dispatch: increment execution counter and, if compiled code is found
-        // and a backend is registered, execute via JIT instead of the interpreter.
+        // JIT dispatch: increment counter, auto-compile at threshold, and execute
+        // via JIT if compiled code is available and a backend is registered.
+        // Skipped when tracing is active (tracing needs opcode-level visibility).
         #[cfg(feature = "tokamak-jit")]
         {
-            let bytecode_hash = self.current_call_frame.bytecode.hash;
-            JIT_STATE.counter.increment(&bytecode_hash);
+            use std::sync::atomic::Ordering;
 
-            if let Some(compiled) =
-                crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash)
-                && let Some(result) = JIT_STATE.execute_jit(
-                    &compiled,
-                    &mut self.current_call_frame,
-                    self.db,
-                    &mut self.substate,
-                    &self.env,
-                )
-            {
-                match result {
-                    Ok(outcome) => return apply_jit_outcome(outcome, &self.current_call_frame),
-                    Err(_msg) => {
-                        // JIT execution failed; fall through to interpreter loop.
-                        // TODO(Phase 4): Add tracing/logging for JIT fallback events.
+            if !self.tracer.active {
+                let bytecode_hash = self.current_call_frame.bytecode.hash;
+                let count = JIT_STATE.counter.increment(&bytecode_hash);
+
+                // Auto-compile on threshold
+                if count == JIT_STATE.config.compilation_threshold
+                    && let Some(backend) = JIT_STATE.backend()
+                {
+                    match backend.compile(
+                        &self.current_call_frame.bytecode,
+                        &JIT_STATE.cache,
+                    ) {
+                        Ok(()) => {
+                            JIT_STATE
+                                .metrics
+                                .compilations
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            eprintln!("[JIT] compilation failed for {bytecode_hash}: {e}");
+                            JIT_STATE
+                                .metrics
+                                .jit_fallbacks
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+
+                // Dispatch if compiled
+                if let Some(compiled) =
+                    crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash)
+                    && let Some(result) = JIT_STATE.execute_jit(
+                        &compiled,
+                        &mut self.current_call_frame,
+                        self.db,
+                        &mut self.substate,
+                        &self.env,
+                        &mut self.storage_original_values,
+                    )
+                {
+                    match result {
+                        Ok(outcome) => {
+                            JIT_STATE
+                                .metrics
+                                .jit_executions
+                                .fetch_add(1, Ordering::Relaxed);
+                            return apply_jit_outcome(outcome, &self.current_call_frame);
+                        }
+                        Err(msg) => {
+                            JIT_STATE
+                                .metrics
+                                .jit_fallbacks
+                                .fetch_add(1, Ordering::Relaxed);
+                            eprintln!("[JIT] fallback for {bytecode_hash}: {msg}");
+                        }
                     }
                 }
             }

@@ -40,6 +40,9 @@ pub struct LevmHost<'a> {
     pub env: &'a Environment,
     pub address: ethrex_common::Address,
     gas_params: GasParams,
+    /// Original storage values before the transaction (for SSTORE gas calculation).
+    pub storage_original_values:
+        &'a mut ethrex_levm::jit::dispatch::StorageOriginalValues,
 }
 
 impl<'a> LevmHost<'a> {
@@ -48,6 +51,7 @@ impl<'a> LevmHost<'a> {
         substate: &'a mut Substate,
         env: &'a Environment,
         address: ethrex_common::Address,
+        storage_original_values: &'a mut ethrex_levm::jit::dispatch::StorageOriginalValues,
     ) -> Self {
         let gas_params = GasParams::new_spec(SpecId::CANCUN);
         Self {
@@ -56,6 +60,7 @@ impl<'a> LevmHost<'a> {
             env,
             address,
             gas_params,
+            storage_original_values,
         }
     }
 }
@@ -218,21 +223,28 @@ impl Host for LevmHost<'_> {
         let levm_key = ethrex_common::H256::from(levm_key_u256.to_big_endian());
         let levm_value = revm_u256_to_levm(&value);
 
-        // Get current value before write
-        let current = self
+        // Get current (present) value before write
+        let present = self
             .db
             .get_storage_value(levm_addr, levm_key)
             .map_err(|_| LoadError::DBError)?;
 
+        // Get or cache the pre-tx original value for SSTORE gas calculation
+        let cache_key = (levm_addr, levm_key);
+        let original = *self
+            .storage_original_values
+            .entry(cache_key)
+            .or_insert(present);
+
         // Write new value
         self.db
-            .update_account_storage(levm_addr, levm_key, levm_key_u256, levm_value, current)
+            .update_account_storage(levm_addr, levm_key, levm_key_u256, levm_value, present)
             .map_err(|_| LoadError::DBError)?;
 
         Ok(StateLoad::new(
             SStoreResult {
-                original_value: levm_u256_to_revm(&current),
-                present_value: levm_u256_to_revm(&current),
+                original_value: levm_u256_to_revm(&original),
+                present_value: levm_u256_to_revm(&present),
                 new_value: value,
             },
             false,

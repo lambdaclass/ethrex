@@ -46,6 +46,7 @@ pub fn execute_jit(
     db: &mut GeneralizedDatabase,
     substate: &mut Substate,
     env: &Environment,
+    storage_original_values: &mut ethrex_levm::jit::dispatch::StorageOriginalValues,
 ) -> Result<JitOutcome, JitError> {
     let ptr = compiled.as_ptr();
     if ptr.is_null() {
@@ -76,13 +77,13 @@ pub fn execute_jit(
         SharedMemory::new(),
         ext_bytecode,
         input,
-        false, // is_static — hardcoded for Phase 3 PoC
+        call_frame.is_static, // is_static — propagated from LEVM call frame
         SpecId::CANCUN,
         gas_limit,
     );
 
     // 2. Build Host wrapping LEVM state
-    let mut host = LevmHost::new(db, substate, env, call_frame.code_address);
+    let mut host = LevmHost::new(db, substate, env, call_frame.code_address, storage_original_values);
 
     // 3. Cast CompiledCode pointer back to EvmCompilerFn
     //
@@ -105,6 +106,15 @@ pub fn execute_jit(
             // Sync gas state back to LEVM call frame
             call_frame.gas_remaining = revm_gas_to_levm(&result.gas);
 
+            // Sync gas refunds from revm interpreter to LEVM substate
+            let refunded = result.gas.refunded();
+            if refunded > 0 {
+                #[expect(clippy::as_conversions, reason = "i64→u64 for gas refund")]
+                let refunded_u64 = refunded as u64;
+                host.substate.refunded_gas =
+                    host.substate.refunded_gas.saturating_add(refunded_u64);
+            }
+
             let gas_used = gas_limit.saturating_sub(result.gas.remaining());
 
             use revm_interpreter::InstructionResult;
@@ -120,12 +130,13 @@ pub fn execute_jit(
                 r => Ok(JitOutcome::Error(format!("JIT returned: {r:?}"))),
             }
         }
-        InterpreterAction::NewFrame(frame_input) => {
-            // CALL/CREATE from JIT code — not supported in Phase 3.
-            // Fall back to interpreter for these cases.
-            Ok(JitOutcome::Error(format!(
-                "CALL/CREATE not supported in JIT Phase 3: {frame_input:?}"
-            )))
+        InterpreterAction::NewFrame(_frame_input) => {
+            // CALL/CREATE from JIT code — not supported yet.
+            // The bytecode analyzer should have flagged this during compilation,
+            // but if it reaches here, fall back to interpreter gracefully.
+            Ok(JitOutcome::Error(
+                "JIT encountered CALL/CREATE frame; falling back to interpreter".to_string(),
+            ))
         }
     }
 }

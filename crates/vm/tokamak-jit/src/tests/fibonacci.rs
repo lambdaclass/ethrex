@@ -437,10 +437,17 @@ mod tests {
             );
 
             let mut substate = ethrex_levm::vm::Substate::default();
+            let mut storage_original_values = FxHashMap::default();
 
-            let jit_outcome =
-                execute_jit(&compiled, &mut call_frame, &mut jit_db, &mut substate, &env)
-                    .unwrap_or_else(|e| panic!("JIT fib({n}) execution failed: {e:?}"));
+            let jit_outcome = execute_jit(
+                &compiled,
+                &mut call_frame,
+                &mut jit_db,
+                &mut substate,
+                &env,
+                &mut storage_original_values,
+            )
+            .unwrap_or_else(|e| panic!("JIT fib({n}) execution failed: {e:?}"));
 
             // Compare results
             match jit_outcome {
