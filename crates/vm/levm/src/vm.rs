@@ -173,11 +173,15 @@ impl Substate {
 
     /// Mark an address as selfdestructed and return whether is was already marked.
     pub fn add_selfdestruct(&mut self, address: Address) -> bool {
+        if self.selfdestruct_set.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_selfdestruct(&address))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present || !self.selfdestruct_set.insert(address)
     }
@@ -306,11 +310,15 @@ impl Substate {
 
     /// Mark an address as a new account and return whether is was already marked.
     pub fn add_created_account(&mut self, address: Address) -> bool {
+        if self.created_accounts.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_account_created(&address))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present || !self.created_accounts.insert(address)
     }
