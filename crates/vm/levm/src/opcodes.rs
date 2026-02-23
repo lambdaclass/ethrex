@@ -396,13 +396,14 @@ impl OpcodeTable {
     ///
     /// # Safety
     ///
-    /// This transmute is sound because `OpCodeFn` only stores function pointers,
-    /// which have identical ABI representation regardless of the lifetime parameter.
-    /// The lifetime `'a` on `OpCodeFn<'a>` is a type-level constraint that doesn't
-    /// affect the runtime representation.
+    /// This transmute is sound because `OpCodeFn` stores only a bare function
+    /// pointer (`fn(&mut VM<'a>) -> ...`) and no owned or borrowed data.
+    /// Function pointers have identical ABI representation regardless of the
+    /// lifetime parameter — Rust erases lifetimes at codegen. Adding state or
+    /// captures to `OpCodeFn` would break this invariant.
     #[inline(always)]
     pub(crate) fn get<'a>(&self) -> [OpCodeFn<'a>; 256] {
-        // SAFETY: see above
+        // SAFETY: OpCodeFn is a bare fn pointer; layout is lifetime-independent.
         unsafe { std::mem::transmute(self.0) }
     }
 }

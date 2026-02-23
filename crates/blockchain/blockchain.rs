@@ -400,6 +400,10 @@ impl Blockchain {
         // Reuse or create the cross-block cache. The cache persists across blocks:
         // unmodified account/storage/code entries remain valid, avoiding redundant
         // trie lookups for hot state like WETH, USDC, etc.
+        //
+        // Lock ordering: block_cache (outer) -> CachingDatabase.inner (inner).
+        // This is safe because execute_block_pipeline runs sequentially and no other
+        // code path holds CachingDatabase.inner while acquiring block_cache.
         let original_store = vm.db.store.clone();
         let block_cache = {
             let mut cache_guard = self.block_cache.write().unwrap_or_else(|e| e.into_inner());
@@ -2291,6 +2295,19 @@ impl Blockchain {
     /// The node should accept incoming p2p transactions if this method returns true
     pub fn is_synced(&self) -> bool {
         self.is_synced.load(Ordering::Relaxed)
+    }
+
+    /// Clear the cross-block state cache.
+    /// Called on fork choice updates to prevent serving stale state after reorgs.
+    pub fn clear_block_cache(&self) {
+        if let Some(cache) = self
+            .block_cache
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            cache.clear();
+        }
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {

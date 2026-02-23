@@ -75,28 +75,36 @@ impl CachingDatabase {
         if modified_accounts.is_empty() {
             return;
         }
-        if let Ok(mut accounts) = self.write_accounts() {
-            for addr in modified_accounts {
-                accounts.remove(addr);
-            }
+        let mut accounts = self
+            .accounts
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        for addr in modified_accounts {
+            accounts.remove(addr);
         }
-        if let Ok(mut storage) = self.write_storage() {
-            storage.retain(|&(addr, _), _| !modified_accounts.contains(&addr));
-        }
+        drop(accounts);
+        let mut storage = self
+            .storage
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        storage.retain(|&(addr, _), _| !modified_accounts.contains(&addr));
     }
 
     /// Clear all cached data. Used when cache correctness cannot be guaranteed,
     /// such as during chain reorganizations.
     pub fn clear(&self) {
-        if let Ok(mut accounts) = self.write_accounts() {
-            accounts.clear();
-        }
-        if let Ok(mut storage) = self.write_storage() {
-            storage.clear();
-        }
-        if let Ok(mut code) = self.write_code() {
-            code.clear();
-        }
+        self.accounts
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.storage
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.code
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     fn read_inner(&self) -> Result<RwLockReadGuard<'_, Arc<dyn Database>>, DatabaseError> {
