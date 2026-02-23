@@ -38,3 +38,26 @@ pub fn read_env_file_by_config() {
         };
     }
 }
+
+use ethrex_common::types::ChainConfig;
+
+/// ChainConfig with all forks activated at genesis, for integration tests.
+pub fn test_chain_config() -> ChainConfig {
+    ChainConfig {
+        chain_id: 1,
+        homestead_block: Some(0),
+        eip150_block: Some(0),
+        eip155_block: Some(0),
+        eip158_block: Some(0),
+        byzantium_block: Some(0),
+        constantinople_block: Some(0),
+        petersburg_block: Some(0),
+        istanbul_block: Some(0),
+        berlin_block: Some(0),
+        london_block: Some(0),
+        terminal_total_difficulty: Some(0),
+        terminal_total_difficulty_passed: true,
+        shanghai_time: Some(0),
+        ..Default::default()
+    }
+}

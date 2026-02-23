@@ -21,6 +21,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
+    merkle_tree::{compute_merkle_proof, compute_merkle_root},
     types::{
         AccountState, Block, BlockBody, BlockHeader, ChainConfig, EIP1559Transaction,
         ELASTICITY_MULTIPLIER, Receipt, Transaction, TxKind, TxType,
@@ -41,9 +42,7 @@ use ethrex_levm::{
     db::guest_program_state_db::GuestProgramStateDb,
     environment::{EVMConfig, Environment},
     errors::TxResult,
-    execute_precompile::{
-        ExecutePrecompileInput, L1_ANCHOR, L2_BRIDGE, compute_merkle_proof, compute_merkle_root,
-    },
+    execute_precompile::{ExecutePrecompileInput, L1_ANCHOR, L2_BRIDGE},
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -56,7 +55,7 @@ use k256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
 use reqwest::Url;
 use secp256k1::SecretKey;
 
-use super::utils::workspace_root;
+use super::utils::{test_chain_config, workspace_root};
 
 const L1_RPC_URL: &str = "http://localhost:8545";
 /// Private key from crates/l2/Makefile (pre-funded in L1 genesis).
@@ -98,6 +97,46 @@ fn sign_eip1559_tx(tx: &mut EIP1559Transaction, key: &SigningKey) {
     tx.signature_y_parity = recid.to_byte() != 0;
 }
 
+fn build_test_environment(
+    origin: Address,
+    gas_limit: u64,
+    tx_nonce: u64,
+    config: EVMConfig,
+    block_number: u64,
+    coinbase: Address,
+    timestamp: u64,
+    prev_randao: H256,
+    chain_id: u64,
+    base_fee: u64,
+    gas_price: U256,
+) -> Environment {
+    Environment {
+        origin,
+        gas_limit,
+        config,
+        block_number: U256::from(block_number),
+        coinbase,
+        timestamp: U256::from(timestamp),
+        prev_randao: Some(prev_randao),
+        slot_number: U256::zero(),
+        chain_id: U256::from(chain_id),
+        base_fee_per_gas: U256::from(base_fee),
+        base_blob_fee_per_gas: U256::zero(),
+        gas_price,
+        block_excess_blob_gas: None,
+        block_blob_gas_used: None,
+        tx_blob_hashes: vec![],
+        tx_max_priority_fee_per_gas: Some(U256::from(1_000_000_000u64)),
+        tx_max_fee_per_gas: Some(U256::from(2_000_000_000u64)),
+        tx_max_fee_per_blob_gas: None,
+        tx_nonce,
+        block_gas_limit: 30_000_000,
+        difficulty: U256::zero(),
+        is_privileged: false,
+        fee_token: None,
+    }
+}
+
 fn insert_account(trie: &mut Trie, address: Address, state: &AccountState) {
     let hashed_addr = keccak_hash(address.to_fixed_bytes()).to_vec();
     trie.insert(hashed_addr, state.encode_to_vec())
@@ -125,104 +164,6 @@ fn anchor_runtime_bytecode() -> Vec<u8> {
     let hex_str = std::fs::read_to_string(&path)
         .expect("L1Anchor.bin-runtime not found — compile with solc first");
     hex::decode(hex_str.trim()).expect("invalid hex in anchor .bin-runtime")
-}
-
-/// Build a standard ChainConfig with all forks enabled at genesis.
-fn test_chain_config() -> ChainConfig {
-    ChainConfig {
-        chain_id: 1,
-        homestead_block: Some(0),
-        eip150_block: Some(0),
-        eip155_block: Some(0),
-        eip158_block: Some(0),
-        byzantium_block: Some(0),
-        constantinople_block: Some(0),
-        petersburg_block: Some(0),
-        istanbul_block: Some(0),
-        berlin_block: Some(0),
-        london_block: Some(0),
-        terminal_total_difficulty: Some(0),
-        terminal_total_difficulty_passed: true,
-        shanghai_time: Some(0),
-        ..Default::default()
-    }
-}
-
-/// Helper: encode L2Bridge.processL1Message(address,address,uint256,uint256,bytes,uint256,bytes32[]) calldata.
-fn encode_process_l1_message_call(
-    from: Address,
-    to: Address,
-    value: U256,
-    gas_limit: u64,
-    msg_data: &[u8],
-    nonce: u64,
-    merkle_proof: &[H256],
-) -> Vec<u8> {
-    let selector =
-        &keccak_hash(b"processL1Message(address,address,uint256,uint256,bytes,uint256,bytes32[])")
-            [..4];
-
-    // ABI encoding: 7 params, where params 4 (bytes data) and 6 (bytes32[] merkleProof) are dynamic.
-    // Head: 7 * 32 = 224 bytes
-    let mut calldata = Vec::new();
-    calldata.extend_from_slice(selector);
-
-    // from (address)
-    let mut from_bytes = [0u8; 32];
-    from_bytes[12..].copy_from_slice(from.as_bytes());
-    calldata.extend_from_slice(&from_bytes);
-
-    // to (address)
-    let mut to_bytes = [0u8; 32];
-    to_bytes[12..].copy_from_slice(to.as_bytes());
-    calldata.extend_from_slice(&to_bytes);
-
-    // value (uint256)
-    calldata.extend_from_slice(&value.to_big_endian());
-
-    // gasLimit (uint256)
-    let mut gas_bytes = [0u8; 32];
-    gas_bytes[24..].copy_from_slice(&gas_limit.to_be_bytes());
-    calldata.extend_from_slice(&gas_bytes);
-
-    // Compute offsets for dynamic params
-    let head_size: usize = 7 * 32; // 224 bytes
-    let data_padded = msg_data.len() + ((32 - (msg_data.len() % 32)) % 32);
-    let data_offset = head_size;
-    let proof_offset = data_offset + 32 + data_padded;
-
-    // offset to data (dynamic param 4)
-    let mut offset_bytes = [0u8; 32];
-    offset_bytes[24..].copy_from_slice(&(data_offset as u64).to_be_bytes());
-    calldata.extend_from_slice(&offset_bytes);
-
-    // nonce (uint256)
-    let mut nonce_bytes = [0u8; 32];
-    nonce_bytes[24..].copy_from_slice(&nonce.to_be_bytes());
-    calldata.extend_from_slice(&nonce_bytes);
-
-    // offset to merkleProof (dynamic param 6)
-    let mut proof_offset_bytes = [0u8; 32];
-    proof_offset_bytes[24..].copy_from_slice(&(proof_offset as u64).to_be_bytes());
-    calldata.extend_from_slice(&proof_offset_bytes);
-
-    // Tail: data length + data + padding
-    let mut data_len_bytes = [0u8; 32];
-    data_len_bytes[24..].copy_from_slice(&(msg_data.len() as u64).to_be_bytes());
-    calldata.extend_from_slice(&data_len_bytes);
-    calldata.extend_from_slice(msg_data);
-    let padding = (32 - (msg_data.len() % 32)) % 32;
-    calldata.resize(calldata.len() + padding, 0);
-
-    // Tail: merkleProof length + elements
-    let mut proof_len_bytes = [0u8; 32];
-    proof_len_bytes[24..].copy_from_slice(&(merkle_proof.len() as u64).to_be_bytes());
-    calldata.extend_from_slice(&proof_len_bytes);
-    for hash in merkle_proof {
-        calldata.extend_from_slice(hash.as_bytes());
-    }
-
-    calldata
 }
 
 /// Build the L2 state transition (relayer→L2Bridge processL1Message + Alice→Bob transfer).
@@ -361,15 +302,24 @@ fn build_l2_state_transition(
 
     // ===== Build transactions =====
     // TX0: relayer → L2Bridge.processL1Message(l1_sender, charlie, 5 ETH, 100k, "", 0, proof)
-    let l1_msg_calldata = encode_process_l1_message_call(
-        l1_sender,
-        charlie,
-        l1_msg_value,
-        l1_msg_gas_limit,
-        &[],
-        0,
-        &merkle_proof,
-    );
+    let l1_msg_calldata = encode_calldata(
+        "processL1Message(address,address,uint256,uint256,bytes,uint256,bytes32[])",
+        &[
+            Value::Address(l1_sender),
+            Value::Address(charlie),
+            Value::Uint(l1_msg_value),
+            Value::Uint(U256::from(l1_msg_gas_limit)),
+            Value::Bytes(Bytes::new()),
+            Value::Uint(U256::zero()),
+            Value::Array(
+                merkle_proof
+                    .iter()
+                    .map(|h| Value::FixedBytes(Bytes::from(h.as_bytes().to_vec())))
+                    .collect(),
+            ),
+        ],
+    )
+    .expect("encode processL1Message calldata failed");
     let mut tx0 = EIP1559Transaction {
         chain_id,
         nonce: 0,
@@ -451,31 +401,19 @@ fn build_l2_state_transition(
         U256::from(std::cmp::min(1_000_000_000u64 + base_fee, 2_000_000_000u64));
 
     // Execute TX0: processL1Message
-    let env0 = Environment {
-        origin: relayer,
-        gas_limit: 200_000,
+    let env0 = build_test_environment(
+        relayer,
+        200_000,
+        0,
         config,
-        block_number: U256::from(1),
+        1,
         coinbase,
-        timestamp: U256::from(1_000_012u64),
-        prev_randao: Some(temp_header.prev_randao),
-        slot_number: U256::zero(),
-        chain_id: U256::from(chain_id),
-        base_fee_per_gas: U256::from(base_fee),
-        base_blob_fee_per_gas: U256::zero(),
-        gas_price: effective_gas_price,
-        block_excess_blob_gas: None,
-        block_blob_gas_used: None,
-        tx_blob_hashes: vec![],
-        tx_max_priority_fee_per_gas: Some(U256::from(1_000_000_000u64)),
-        tx_max_fee_per_gas: Some(U256::from(2_000_000_000u64)),
-        tx_max_fee_per_blob_gas: None,
-        tx_nonce: 0,
-        block_gas_limit: 30_000_000,
-        difficulty: U256::zero(),
-        is_privileged: false,
-        fee_token: None,
-    };
+        1_000_012,
+        temp_header.prev_randao,
+        chain_id,
+        base_fee,
+        effective_gas_price,
+    );
 
     let mut vm0 = VM::new(
         env0,
@@ -494,31 +432,19 @@ fn build_l2_state_transition(
     let gas_used0 = report0.gas_used;
 
     // Execute TX1: transfer
-    let env1 = Environment {
-        origin: alice,
-        gas_limit: 21_000,
+    let env1 = build_test_environment(
+        alice,
+        21_000,
+        0,
         config,
-        block_number: U256::from(1),
+        1,
         coinbase,
-        timestamp: U256::from(1_000_012u64),
-        prev_randao: Some(temp_header.prev_randao),
-        slot_number: U256::zero(),
-        chain_id: U256::from(chain_id),
-        base_fee_per_gas: U256::from(base_fee),
-        base_blob_fee_per_gas: U256::zero(),
-        gas_price: effective_gas_price,
-        block_excess_blob_gas: None,
-        block_blob_gas_used: None,
-        tx_blob_hashes: vec![],
-        tx_max_priority_fee_per_gas: Some(U256::from(1_000_000_000u64)),
-        tx_max_fee_per_gas: Some(U256::from(2_000_000_000u64)),
-        tx_max_fee_per_blob_gas: None,
-        tx_nonce: 0,
-        block_gas_limit: 30_000_000,
-        difficulty: U256::zero(),
-        is_privileged: false,
-        fee_token: None,
-    };
+        1_000_012,
+        temp_header.prev_randao,
+        chain_id,
+        base_fee,
+        effective_gas_price,
+    );
 
     let mut vm1 = VM::new(
         env1,
@@ -883,31 +809,19 @@ fn build_l2_withdrawal_block(
     let config = EVMConfig::new_from_chain_config(&chain_config, &temp_header);
     let gas_price = U256::from(std::cmp::min(1_000_000_000u64 + base_fee, 2_000_000_000u64));
 
-    let env = Environment {
-        origin: alice,
+    let env = build_test_environment(
+        alice,
         gas_limit,
+        1,
         config,
-        block_number: block2_number.into(),
+        block2_number,
         coinbase,
-        timestamp: block2_timestamp.into(),
-        prev_randao: Some(temp_header.prev_randao),
-        slot_number: U256::zero(),
-        chain_id: U256::from(1),
-        base_fee_per_gas: U256::from(base_fee),
-        base_blob_fee_per_gas: U256::zero(),
+        block2_timestamp,
+        temp_header.prev_randao,
+        1,
+        base_fee,
         gas_price,
-        block_excess_blob_gas: None,
-        block_blob_gas_used: None,
-        tx_blob_hashes: vec![],
-        tx_max_priority_fee_per_gas: Some(U256::from(1_000_000_000u64)),
-        tx_max_fee_per_gas: Some(U256::from(2_000_000_000u64)),
-        tx_max_fee_per_blob_gas: None,
-        tx_nonce: 1,
-        block_gas_limit: 30_000_000,
-        difficulty: U256::zero(),
-        is_privileged: false,
-        fee_token: None,
-    };
+    );
 
     let mut vm = VM::new(
         env,
