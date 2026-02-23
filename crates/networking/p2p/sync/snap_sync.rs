@@ -696,6 +696,7 @@ pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_state_root");
+    let start = std::time::Instant::now();
     let validated = tokio::task::spawn_blocking(move || {
         store
             .open_locked_state_trie(state_root)
@@ -705,8 +706,12 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     .await
     .expect("We should be able to create threads");
 
+    let elapsed = start.elapsed();
+    let secs = elapsed.as_secs();
+    let elapsed_str = format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60);
     if validated.is_ok() {
         info!("Succesfully validated tree, {state_root} found");
+        info!("✓ STATE ROOT VALIDATION complete: state root verified in {elapsed_str}");
     } else {
         error!("We have failed the validation of the state tree");
         std::process::exit(1);
@@ -716,6 +721,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
 
 pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
+    let start = std::time::Instant::now();
     let is_valid = tokio::task::spawn_blocking(move || {
         store
             .iter_accounts(state_root)
@@ -735,15 +741,20 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     })
     .await
     .expect("We should be able to create threads");
+    let elapsed = start.elapsed();
+    let secs = elapsed.as_secs();
+    let elapsed_str = format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60);
     info!("Finished validate_storage_root");
     if is_valid.is_err() {
         std::process::exit(1);
     }
+    info!("✓ STORAGE ROOT VALIDATION complete: all storage roots verified in {elapsed_str}");
     is_valid.is_ok()
 }
 
 pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
+    let start = std::time::Instant::now();
     let mut is_valid = true;
     for (account_hash, account_state) in store
         .iter_accounts(state_root)
@@ -764,6 +775,10 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     if !is_valid {
         std::process::exit(1);
     }
+    let elapsed = start.elapsed();
+    let secs = elapsed.as_secs();
+    let elapsed_str = format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60);
+    info!("✓ BYTECODE VALIDATION complete: all bytecodes verified in {elapsed_str}");
     is_valid
 }
 
