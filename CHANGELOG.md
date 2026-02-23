@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-23
+
+- Skip unnecessary account backup on cold SLOAD in LEVM [#6246](https://github.com/lambdaclass/ethrex/pull/6246)
+
 ### 2026-02-13
 
 - Optimize storage layer for block execution by reducing lock contention and allocations [#6207](https://github.com/lambdaclass/ethrex/pull/6207)

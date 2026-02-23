@@ -678,8 +678,14 @@ impl<'a> VM<'a> {
 
         let value = self.db.get_value_from_database(address, key)?;
 
-        // Update the account with the fetched value
-        let account = self.get_account_mut(address)?;
+        // Cache the fetched value directly without triggering mark_modified/backup.
+        // SLOAD is read-only — no account info changes, no revert protection needed.
+        // The account is guaranteed to be in current_accounts_state (checked on line 661).
+        let account = self
+            .db
+            .current_accounts_state
+            .get_mut(&address)
+            .ok_or(InternalError::AccountNotFound)?;
         account.storage.insert(key, value);
 
         Ok(value)
