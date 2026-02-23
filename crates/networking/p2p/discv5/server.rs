@@ -844,30 +844,39 @@ impl DiscoveryServer {
     }
 
     /// Returns true if the IP is private/local (not useful for external connectivity).
+    /// For IPv6, mirrors the checks from `Ipv6Addr::is_global` (nightly-only).
     fn is_private_ip(ip: IpAddr) -> bool {
         match ip {
             IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
-            IpAddr::V6(v6) => v6.is_loopback(),
+            IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    // unique local (fc00::/7)
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+                    // link-local (fe80::/10)
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
         }
     }
 
     /// Updates local node IP and re-signs the ENR with incremented seq.
     fn update_local_ip(&mut self, new_ip: IpAddr) {
-        // Update runtime node
-        self.local_node.ip = new_ip;
-
         // Update ENR - increment seq and re-create with new IP
         let new_seq = self.local_node_record.seq + 1;
-        if let Ok(mut new_record) = NodeRecord::from_node(&self.local_node, new_seq, &self.signer) {
-            // Preserve fork_id if present
-            if let Some(fork_id) = self.local_node_record.decode_pairs().eth {
-                let _ = new_record.set_fork_id(fork_id, &self.signer);
+        let Ok(mut new_record) = NodeRecord::from_node(&self.local_node, new_seq, &self.signer)
+        else {
+            error!(%new_ip, "Failed to create new ENR for IP update");
+            return;
+        };
+        // Preserve fork_id if present
+        if let Some(fork_id) = self.local_node_record.decode_pairs().eth {
+            if new_record.set_fork_id(fork_id, &self.signer).is_err() {
+                error!(%new_ip, "Failed to set fork_id in new ENR, aborting IP update");
+                return;
             }
-            self.local_node_record = new_record;
-
-            // Clear IP votes after successful update
-            self.ip_votes.clear();
         }
+        self.local_node.ip = new_ip;
+        self.local_node_record = new_record;
     }
 
     async fn handle_message(
@@ -1535,6 +1544,21 @@ mod tests {
         // Link-local should be ignored
         let link_local: IpAddr = "169.254.1.1".parse().unwrap();
         server.record_ip_vote(link_local, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // IPv6 loopback should be ignored
+        let ipv6_loopback: IpAddr = "::1".parse().unwrap();
+        server.record_ip_vote(ipv6_loopback, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // IPv6 link-local (fe80::/10) should be ignored
+        let ipv6_link_local: IpAddr = "fe80::1".parse().unwrap();
+        server.record_ip_vote(ipv6_link_local, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // IPv6 unique local (fc00::/7) should be ignored
+        let ipv6_unique_local: IpAddr = "fd12::1".parse().unwrap();
+        server.record_ip_vote(ipv6_unique_local, voter1);
         assert!(server.ip_votes.is_empty());
 
         // Public IP should be recorded
