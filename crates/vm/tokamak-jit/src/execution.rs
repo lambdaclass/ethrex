@@ -15,7 +15,7 @@
 use bytes::Bytes;
 use revm_bytecode::{Bytecode, Eof};
 use revm_interpreter::{
-    interpreter::ExtBytecode, CallInput, InputsImpl, Interpreter, InterpreterAction, SharedMemory,
+    CallInput, InputsImpl, Interpreter, InterpreterAction, SharedMemory, interpreter::ExtBytecode,
 };
 use revm_primitives::SpecId;
 use revmc_context::EvmCompilerFn;
@@ -109,8 +109,7 @@ pub fn execute_jit(
 
             use revm_interpreter::InstructionResult;
             match result.result {
-                InstructionResult::Stop
-                | InstructionResult::Return => Ok(JitOutcome::Success {
+                InstructionResult::Stop | InstructionResult::Return => Ok(JitOutcome::Success {
                     gas_used,
                     output: result.output,
                 }),

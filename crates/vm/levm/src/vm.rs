@@ -576,9 +576,7 @@ impl<'a> VM<'a> {
                 )
             {
                 match result {
-                    Ok(outcome) => {
-                        return apply_jit_outcome(outcome, &self.current_call_frame)
-                    }
+                    Ok(outcome) => return apply_jit_outcome(outcome, &self.current_call_frame),
                     Err(_msg) => {
                         // JIT execution failed; fall through to interpreter loop.
                         // TODO(Phase 4): Add tracing/logging for JIT fallback events.

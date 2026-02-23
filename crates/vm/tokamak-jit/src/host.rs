@@ -149,7 +149,10 @@ impl Host for LevmHost<'_> {
         _skip_cold_load: bool,
     ) -> Result<AccountInfoLoad<'_>, LoadError> {
         let levm_addr = revm_address_to_levm(&address);
-        let account = self.db.get_account(levm_addr).map_err(|_| LoadError::DBError)?;
+        let account = self
+            .db
+            .get_account(levm_addr)
+            .map_err(|_| LoadError::DBError)?;
 
         let balance = levm_u256_to_revm(&account.info.balance);
         let code_hash = levm_h256_to_revm(&account.info.code_hash);
@@ -159,9 +162,7 @@ impl Host for LevmHost<'_> {
                 .db
                 .get_code(account.info.code_hash)
                 .map_err(|_| LoadError::DBError)?;
-            Some(revm_bytecode::Bytecode::new_raw(
-                code_ref.bytecode.clone(),
-            ))
+            Some(revm_bytecode::Bytecode::new_raw(code_ref.bytecode.clone()))
         } else {
             None
         };
