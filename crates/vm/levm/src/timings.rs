@@ -1,3 +1,9 @@
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::type_complexity
+)]
+
 use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},

@@ -30,6 +30,16 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(feature = "tokamak-jit")]
+lazy_static::lazy_static! {
+    /// Global JIT compilation state (execution counter + code cache).
+    ///
+    /// Shared across all VM instances. The `tokamak-jit` crate populates the
+    /// code cache; LEVM only reads it and increments execution counters.
+    pub static ref JIT_STATE: crate::jit::dispatch::JitState =
+        crate::jit::dispatch::JitState::new();
+}
+
 /// Storage mapping from slot key to value.
 pub type Storage = HashMap<U256, H256>;
 
@@ -548,7 +558,24 @@ impl<'a> VM<'a> {
             return result;
         }
 
+        // JIT dispatch: check if this bytecode has been compiled and increment execution counter.
+        // In Phase 2 PoC, we only track counts and check the cache — compilation is triggered
+        // explicitly via the tokamak-jit crate API, not automatically from the loop.
+        #[cfg(feature = "tokamak-jit")]
+        {
+            let bytecode_hash = self.current_call_frame.bytecode.hash;
+            // Increment execution counter for tiering decisions
+            JIT_STATE.counter.increment(&bytecode_hash);
+            // TODO(Phase 3): If compiled code is found, execute it and return the result
+            // instead of falling through to the interpreter loop.
+            // if let Some(_compiled) = crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash) {
+            //     let outcome = execute_jit(...);
+            //     return apply_jit_result(outcome);
+            // }
+        }
+
         #[cfg(feature = "perf_opcode_timings")]
+        #[allow(clippy::expect_used)]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
         loop {

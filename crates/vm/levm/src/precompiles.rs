@@ -344,6 +344,7 @@ pub fn execute_precompile(
     #[cfg(feature = "perf_opcode_timings")]
     {
         let time = precompile_time_start.elapsed();
+        #[allow(clippy::expect_used)]
         let mut timings = crate::timings::PRECOMPILES_TIMINGS.lock().expect("poison");
         timings.update(address, time);
     }
