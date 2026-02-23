@@ -689,41 +689,86 @@ impl Blockchain {
         }
         let state_reads_elapsed = phase2_start.elapsed();
 
-        // Phase 2b: Apply storage updates + compute roots in parallel.
+        // Pre-compute sorted state trie prefetch paths (all accounts).
+        // Sorted by hashed_address for trie locality during reveal.
+        let mut state_prefetch_paths: Vec<Nibbles> = all_state_accounts
+            .iter()
+            .map(|addr| Nibbles::from_bytes(addr.as_bytes()))
+            .collect();
+        state_prefetch_paths.sort_unstable();
+
+        // Phase 2b: Overlap storage processing with state trie prefetch.
+        // Storage and state trie are completely independent data structures,
+        // so we run them concurrently: storage on a background thread (rayon),
+        // state trie prefetch on the main thread.
         let storage_start = Instant::now();
         let deferred_vec: Vec<(H256, Vec<(H256, U256)>)> = deferred_storage.drain().collect();
-        let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> = deferred_vec
-            .par_iter()
-            .map(|(hashed_address, slot_updates)| {
-                let storage_root = if cleared_storage.contains(hashed_address) {
-                    *EMPTY_TRIE_HASH
-                } else {
-                    account_state_cache[hashed_address]
-                        .as_ref()
-                        .map(|s| s.storage_root)
-                        .unwrap_or(*EMPTY_TRIE_HASH)
-                };
 
-                let storage_trie = trie_factory.open(*hashed_address, storage_root)?;
+        let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> =
+            std::thread::scope(|s| {
+                // Background: parallel storage processing via rayon
+                let storage_handle =
+                    s.spawn(|| -> Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> {
+                        deferred_vec
+                            .into_par_iter()
+                            .map(|(hashed_address, slot_updates)| {
+                                let storage_root = if cleared_storage.contains(&hashed_address) {
+                                    *EMPTY_TRIE_HASH
+                                } else {
+                                    account_state_cache[&hashed_address]
+                                        .as_ref()
+                                        .map(|s| s.storage_root)
+                                        .unwrap_or(*EMPTY_TRIE_HASH)
+                                };
 
-                let mut sparse = SparseTrie::new_flat();
-                let provider = TrieDBProvider(storage_trie.db());
-                sparse.reveal_root(storage_root, &provider)?;
+                                // Deduplicate: when multiple txs update the same slot,
+                                // keep only the last value. Then sort for trie locality.
+                                let mut deduped: FxHashMap<H256, U256> = FxHashMap::default();
+                                for (key, value) in slot_updates {
+                                    deduped.insert(key, value);
+                                }
+                                let mut sorted: Vec<(H256, U256)> = deduped.into_iter().collect();
+                                sorted.sort_unstable_by_key(|(key, _)| *key);
 
-                for (hashed_key, value) in slot_updates {
-                    let nibbles = Nibbles::from_bytes(hashed_key.as_bytes());
-                    if value.is_zero() {
-                        sparse.remove_leaf(nibbles, &provider)?;
-                    } else {
-                        sparse.update_leaf(nibbles, value.encode_to_vec(), &provider)?;
-                    }
-                }
+                                let storage_trie =
+                                    trie_factory.open(hashed_address, storage_root)?;
 
-                let root = sparse.root_sequential()?;
-                let updates = sparse.collect_updates();
-                Ok((*hashed_address, root, updates))
-            })
-            .collect();
+                                let mut sparse = SparseTrie::new_flat();
+                                let provider = TrieDBProvider(storage_trie.db());
+                                sparse.reveal_root(storage_root, &provider)?;
+
+                                for (hashed_key, value) in &sorted {
+                                    let nibbles = Nibbles::from_bytes(hashed_key.as_bytes());
+                                    if value.is_zero() {
+                                        sparse.remove_leaf(nibbles, &provider)?;
+                                    } else {
+                                        sparse.update_leaf(
+                                            nibbles,
+                                            value.encode_to_vec(),
+                                            &provider,
+                                        )?;
+                                    }
+                                }
+
+                                let root = sparse.root_sequential()?;
+                                let updates = sparse.collect_updates();
+                                Ok((hashed_address, root, updates))
+                            })
+                            .collect()
+                    });
+
+                // Foreground: prefetch state trie nodes while storage runs.
+                // This walks the state trie revealing nodes for all accounts,
+                // so subsequent update_leaf calls are mostly in-memory.
+                sparse_state
+                    .prefetch_paths(&state_prefetch_paths, &state_provider)
+                    .map_err(|e| StoreError::Custom(format!("state prefetch: {e}")))?;
+
+                // Wait for storage to complete
+                storage_handle
+                    .join()
+                    .map_err(|_| StoreError::Custom("storage thread panicked".into()))?
+            });
         let storage_results = storage_results?;
         let storage_elapsed = storage_start.elapsed();
 
@@ -736,7 +781,6 @@ impl Blockchain {
             let mut account_state = account_state_cache[&hashed_address].unwrap_or_default();
             account_state.storage_root = storage_root;
 
-            // Apply info changes if any
             if let Some(Some(info)) = account_infos.remove(&hashed_address) {
                 account_state.nonce = info.nonce;
                 account_state.balance = info.balance;
@@ -800,14 +844,9 @@ impl Blockchain {
 
         let apply_start = Instant::now();
 
-        // Pre-reveal trie nodes in parallel for all paths we're about to update.
-        let prefetch_paths: Vec<Nibbles> = state_trie_updates
-            .iter()
-            .map(|(addr, _)| Nibbles::from_bytes(addr.as_bytes()))
-            .collect();
-        sparse_state.prefetch_paths(&prefetch_paths, &state_provider)?;
-
-        // Apply all state trie updates in sorted order (now mostly in-memory)
+        // Apply all state trie updates in sorted order.
+        // State trie nodes were pre-revealed during the prefetch phase
+        // (overlapped with storage), so this is mostly in-memory.
         for (hashed_address, update) in state_trie_updates {
             let path = Nibbles::from_bytes(hashed_address.as_bytes());
             match update {
@@ -828,7 +867,7 @@ impl Blockchain {
         let root_elapsed = root_start.elapsed();
 
         info!(
-            "  |- merkle phases: reads={}ms storage={}ms state={}ms root={}ms ({} accts)",
+            "  |- merkle phases: reads={}ms storage+prefetch={}ms apply={}ms root={}ms ({} accts)",
             state_reads_elapsed.as_millis(),
             storage_elapsed.as_millis(),
             apply_elapsed.as_millis(),
