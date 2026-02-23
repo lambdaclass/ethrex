@@ -11,7 +11,7 @@ use ethrex_levm::{
     EVMConfig, Environment,
     account::LevmAccount,
     db::gen_db::GeneralizedDatabase,
-    opcodes::Opcode,
+    opcodes::{Opcode, OpcodeTable},
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -151,12 +151,14 @@ fn main() {
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
 
     // Initialize VM
+    let opcode_table = OpcodeTable::new(env.config.fork);
     let mut vm = VM::new(
         env,
         &mut db,
         &Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())),
         LevmCallTracer::disabled(),
         VMType::L1,
+        &opcode_table,
     )
     .expect("Failed to initialize VM");
 

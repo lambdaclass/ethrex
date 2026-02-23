@@ -10,7 +10,7 @@ use crate::{
         hook::{Hook, get_hooks},
     },
     memory::Memory,
-    opcodes::OpCodeFn,
+    opcodes::{OpCodeFn, OpcodeTable},
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
@@ -421,14 +421,13 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
+        opcode_table: &OpcodeTable,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
         let mut substate = Substate::initialize(&env, tx)?;
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
-
-        let fork = env.config.fork;
 
         let mut vm = Self {
             call_frames: Vec::new(),
@@ -459,7 +458,7 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: opcode_table.get(),
         };
 
         let call_type = if is_create {

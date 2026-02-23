@@ -35,6 +35,7 @@ use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
     errors::{ExecutionReport, TxResult, VMError},
+    opcodes::OpcodeTable,
     vm::VM,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -92,6 +93,9 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type)?;
 
+        let fork = chain_config.fork(block.header.timestamp);
+        let opcode_table = OpcodeTable::new(fork);
+
         let mut receipts = Vec::new();
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
@@ -119,7 +123,8 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report =
+                Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, &opcode_table)?;
 
             // EIP-7778: Separate gas tracking
             // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
@@ -194,6 +199,9 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type)?;
 
+        let fork = chain_config.fork(block.header.timestamp);
+        let opcode_table = OpcodeTable::new(fork);
+
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
@@ -234,6 +242,7 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                &opcode_table,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -326,6 +335,10 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
+        let chain_config = db.store.get_chain_config()?;
+        let fork = chain_config.fork(block.header.timestamp);
+        let opcode_table = OpcodeTable::new(fork);
+
         let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })?;
@@ -353,6 +366,7 @@ impl LEVM {
                         &mut group_db,
                         vm_type,
                         stack_pool,
+                        &opcode_table,
                     );
                 }
             },
@@ -445,14 +459,15 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        opcode_table: &OpcodeTable,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, opcode_table)?;
 
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool
+    // Like execute_tx but allows reusing the stack pool and opcode table
     fn execute_tx_in_block(
         // The transaction to execute.
         tx: &Transaction,
@@ -463,9 +478,10 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        opcode_table: &OpcodeTable,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, opcode_table)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         let result = vm.execute().map_err(VMError::into);
@@ -758,7 +774,8 @@ pub fn generic_system_contract_levm(
         recorder.enter_system_call();
     }
 
-    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)
+    let opcode_table = OpcodeTable::new(config.fork);
+    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, &opcode_table)
         .and_then(|mut vm| vm.execute())
         .map_err(EvmError::from);
 
@@ -998,7 +1015,8 @@ fn vm_from_generic<'a>(
     };
 
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+    let opcode_table = OpcodeTable::new(env.config.fork);
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, &opcode_table)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
