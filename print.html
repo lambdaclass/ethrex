@@ -3358,7 +3358,7 @@ pub trait RLPDecode: Sized {
 <li>A recursive lookup loop to request new peers and keep our table filled.</li>
 </ul>
 <p>Before starting these tasks, we run a <a href="l1/fundamentals/networking.html#startup">startup</a> process to connect to an array of initial nodes.</p>
-<p>Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a <a href="https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/kademlia.rs#L25-L28">Kademlia table</a>, though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more <a href="https://en.wikipedia.org/wiki/Kademlia">here</a>. This table holds:</p>
+<p>Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a <a href="https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/discv4/peer_table.rs">Kademlia table</a>, though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more <a href="https://en.wikipedia.org/wiki/Kademlia">here</a>. This table holds:</p>
 <ul>
 <li>Our <code>node_id</code>: The node's unique identifier computed by obtaining the keccak hash of the 64 bytes starting from index 1 of the encoded pub key.</li>
 <li>A vector of 256 <code>bucket</code>s which holds:
@@ -11926,7 +11926,7 @@ TODO: add updated graph with L1 block time distribution
   <span class="mdbook-alerts-icon"></span>
   tip
 </p>
-<p>To enrich the understanding of this part, we suggest reading <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md">ethrex L2 High-Level docs</a> as this only details the diff with what we already have.</p>
+<p>To enrich the understanding of this part, we suggest reading <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md">ethrex L2 High-Level docs</a> as this only details the diff with what we already have.</p>
 </div>
 <ul>
 <li>Only lead Sequencer can post batches.</li>
@@ -11939,7 +11939,7 @@ TODO: add updated graph with L1 block time distribution
   <span class="mdbook-alerts-icon"></span>
   tip
 </p>
-<p>To enrich the understanding of this part, we suggest reading <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md">ethrex L2 High-Level docs</a> as this only details the diff with what we already have.</p>
+<p>To enrich the understanding of this part, we suggest reading <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md">ethrex L2 High-Level docs</a> as this only details the diff with what we already have.</p>
 </div>
 <ul>
 <li>Anyone can verify batches.</li>
@@ -12020,7 +12020,7 @@ TODO: add updated graph with L1 block time distribution
 <h3 id="based-rollups--extra-steps"><a class="header" href="#based-rollups--extra-steps">Based rollups + extra steps</a></h3>
 <ul>
 <li><a href="https://hackmd.io/@Perseverance/Syk2oQU36">Based Ticketing Rollup by George Spasov</a></li>
-<li><a href="https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/contestable-rollup">Based Contestable Rollup by Taiko (Taiko Alethia)</a></li>
+<li><a href="https://taiko.mirror.xyz/Z4I5ZhreGkyfdaL5I9P0Rj0DNX4zaWFmcws-0CVMJ2A">Based Contestable Rollup by Taiko (Taiko Alethia)</a></li>
 <li><a href="https://docs.taiko.xyz/taiko-gwyneth-protocol/what-is-taiko-gwyneth/">Native Based Rollup by Taiko (Taiko Gwyneth)</a></li>
 </ul>
 <h3 id="misc"><a class="header" href="#misc">Misc</a></h3>
@@ -15776,7 +15776,7 @@ Please report any issues you encounter while running the integration tests to he
 <li><code>cd crates/l2</code></li>
 <li><code>make rm-db-l2 &amp;&amp; make down</code>
 <ul>
-<li>It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by <a href="https://docs.rs/dirs/latest/dirs/fn.datadir.html">datadir</a>.</li>
+<li>It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by <a href="https://docs.rs/dirs/latest/dirs/fn.data_dir.html">datadir</a>.</li>
 </ul>
 </li>
 <li><code>make init</code>

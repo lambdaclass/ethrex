@@ -253,7 +253,7 @@
 <li>A recursive lookup loop to request new peers and keep our table filled.</li>
 </ul>
 <p>Before starting these tasks, we run a <a href="#startup">startup</a> process to connect to an array of initial nodes.</p>
-<p>Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a <a href="https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/kademlia.rs#L25-L28">Kademlia table</a>, though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more <a href="https://en.wikipedia.org/wiki/Kademlia">here</a>. This table holds:</p>
+<p>Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a <a href="https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/discv4/peer_table.rs">Kademlia table</a>, though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more <a href="https://en.wikipedia.org/wiki/Kademlia">here</a>. This table holds:</p>
 <ul>
 <li>Our <code>node_id</code>: The node's unique identifier computed by obtaining the keccak hash of the 64 bytes starting from index 1 of the encoded pub key.</li>
 <li>A vector of 256 <code>bucket</code>s which holds:
