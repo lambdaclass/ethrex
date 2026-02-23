@@ -13,6 +13,7 @@ use ethrex_common::{
     utils::u256_from_big_endian,
 };
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
+use indexmap::IndexMap;
 use k256::elliptic_curve::Field;
 use lambdaworks_math::{
     elliptic_curve::short_weierstrass::curves::bls12_381::{
@@ -29,9 +30,9 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use rustc_hash::FxHashMap;
 use sha2::Digest;
 use std::borrow::Cow;
+use std::mem::size_of;
 use std::ops::Mul;
 use std::sync::RwLock;
 
@@ -289,16 +290,43 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
+const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
+const PRECOMPILE_CACHE_ENTRY_METADATA_BYTES: usize =
+    size_of::<Address>() + (2 * size_of::<Bytes>()) + size_of::<u64>();
+
+type PrecompileCacheKey = (Address, Bytes);
+type PrecompileCacheValue = (Bytes, u64);
+
+struct PrecompileCacheState {
+    cache: IndexMap<PrecompileCacheKey, PrecompileCacheValue>,
+    current_size_bytes: usize,
+    max_size_bytes: usize,
+}
+
+impl PrecompileCacheState {
+    fn new(max_size_bytes: usize) -> Self {
+        Self {
+            cache: IndexMap::new(),
+            current_size_bytes: 0,
+            max_size_bytes,
+        }
+    }
+
+    fn entry_size(calldata_len: usize, output_len: usize) -> usize {
+        PRECOMPILE_CACHE_ENTRY_METADATA_BYTES
+            .saturating_add(calldata_len)
+            .saturating_add(output_len)
+    }
+}
+
 /// Per-block cache for precompile results shared between warmer and executor.
 pub struct PrecompileCache {
-    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+    cache: RwLock<PrecompileCacheState>,
 }
 
 impl Default for PrecompileCache {
     fn default() -> Self {
-        Self {
-            cache: RwLock::new(FxHashMap::default()),
-        }
+        Self::with_max_bytes(PRECOMPILE_CACHE_MAX_BYTES)
     }
 }
 
@@ -307,22 +335,62 @@ impl PrecompileCache {
         Self::default()
     }
 
+    fn with_max_bytes(max_size_bytes: usize) -> Self {
+        Self {
+            cache: RwLock::new(PrecompileCacheState::new(max_size_bytes)),
+        }
+    }
+
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
         // Graceful degradation: if the lock is poisoned (a thread panicked while
-        // holding it), skip the cache rather than propagating the panic. The cache
-        // is a pure optimization — missing it only costs a recomputation.
-        self.cache
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&(*address, calldata.clone()))
-            .cloned()
+        // holding it), recover the inner state and keep operating. The cache is
+        // a pure optimization, so this can never affect correctness.
+        let mut cache = self
+            .cache
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let key = (*address, calldata.clone());
+        let (output, gas_cost) = cache.cache.shift_remove(&key)?;
+        let result = (output.clone(), gas_cost);
+        cache.cache.insert(key, (output, gas_cost));
+        Some(result)
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        self.cache
+        let mut cache = self
+            .cache
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((address, calldata), (output, gas_cost));
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if cache.max_size_bytes == 0 {
+            return;
+        }
+
+        let entry_size = PrecompileCacheState::entry_size(calldata.len(), output.len());
+        if entry_size > cache.max_size_bytes {
+            return;
+        }
+
+        let key = (address, calldata);
+
+        if let Some((existing_output, _)) = cache.cache.shift_remove(&key) {
+            let existing_entry_size =
+                PrecompileCacheState::entry_size(key.1.len(), existing_output.len());
+            cache.current_size_bytes = cache.current_size_bytes.saturating_sub(existing_entry_size);
+        }
+
+        cache.cache.insert(key, (output, gas_cost));
+        cache.current_size_bytes = cache.current_size_bytes.saturating_add(entry_size);
+
+        while cache.current_size_bytes > cache.max_size_bytes {
+            let Some((lru_key, (lru_output, _))) = cache.cache.shift_remove_index(0) else {
+                cache.current_size_bytes = 0;
+                break;
+            };
+            let lru_entry_size =
+                PrecompileCacheState::entry_size(lru_key.1.len(), lru_output.len());
+            cache.current_size_bytes = cache.current_size_bytes.saturating_sub(lru_entry_size);
+        }
     }
 }
 
@@ -2127,4 +2195,73 @@ fn parse_scalar(scalar_bytes: &[u8]) -> Result<Scalar, VMError> {
         ]),
     ];
     Ok(Scalar::from_raw(scalar_le))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Address, Bytes, PrecompileCache, PrecompileCacheState};
+
+    fn sample_calldata(seed: u8) -> Bytes {
+        Bytes::from(vec![seed; 16])
+    }
+
+    fn sample_output(seed: u8) -> Bytes {
+        Bytes::from(vec![seed; 16])
+    }
+
+    #[test]
+    fn precompile_cache_evicts_lru_entry_when_max_size_is_reached() {
+        let capacity = PrecompileCacheState::entry_size(16, 16).saturating_mul(2);
+        let cache = PrecompileCache::with_max_bytes(capacity);
+
+        let address_a = Address::from_low_u64_be(1);
+        let address_b = Address::from_low_u64_be(2);
+        let address_c = Address::from_low_u64_be(3);
+
+        let calldata_a = sample_calldata(1);
+        let calldata_b = sample_calldata(2);
+        let calldata_c = sample_calldata(3);
+
+        cache.insert(address_a, calldata_a.clone(), sample_output(1), 1);
+        cache.insert(address_b, calldata_b.clone(), sample_output(2), 2);
+
+        // Touch A so B becomes LRU.
+        assert!(cache.get(&address_a, &calldata_a).is_some());
+
+        // Third insert should evict B.
+        cache.insert(address_c, calldata_c.clone(), sample_output(3), 3);
+
+        assert!(cache.get(&address_a, &calldata_a).is_some());
+        assert!(cache.get(&address_b, &calldata_b).is_none());
+        assert!(cache.get(&address_c, &calldata_c).is_some());
+    }
+
+    #[test]
+    fn precompile_cache_skips_entries_larger_than_capacity() {
+        let capacity = PrecompileCacheState::entry_size(16, 16).saturating_mul(2);
+        let cache = PrecompileCache::with_max_bytes(capacity);
+
+        let small_address = Address::from_low_u64_be(1);
+        let small_calldata = sample_calldata(7);
+        cache.insert(small_address, small_calldata.clone(), sample_output(7), 7);
+
+        let huge_address = Address::from_low_u64_be(2);
+        let huge_calldata = Bytes::from(vec![9; capacity]);
+        let huge_output = sample_output(9);
+        cache.insert(huge_address, huge_calldata.clone(), huge_output, 9);
+
+        assert!(cache.get(&small_address, &small_calldata).is_some());
+        assert!(cache.get(&huge_address, &huge_calldata).is_none());
+    }
+
+    #[test]
+    fn precompile_cache_can_be_disabled_with_zero_capacity() {
+        let cache = PrecompileCache::with_max_bytes(0);
+        let address = Address::from_low_u64_be(1);
+        let calldata = sample_calldata(5);
+
+        cache.insert(address, calldata.clone(), sample_output(5), 5);
+
+        assert!(cache.get(&address, &calldata).is_none());
+    }
 }
