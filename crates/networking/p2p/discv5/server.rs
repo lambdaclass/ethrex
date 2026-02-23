@@ -874,8 +874,7 @@ impl DiscoveryServer {
         let mut updated_node = self.local_node.clone();
         updated_node.ip = new_ip;
         let new_seq = self.local_node_record.seq + 1;
-        let Ok(mut new_record) = NodeRecord::from_node(&updated_node, new_seq, &self.signer)
-        else {
+        let Ok(mut new_record) = NodeRecord::from_node(&updated_node, new_seq, &self.signer) else {
             error!(%new_ip, "Failed to create new ENR for IP update");
             return;
         };
