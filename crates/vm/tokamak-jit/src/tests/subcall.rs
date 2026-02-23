@@ -863,13 +863,21 @@ mod tests {
                 .expect("JIT resume should succeed");
 
                 match resumed_outcome {
-                    ethrex_levm::jit::types::JitOutcome::Success { output, .. } => {
+                    ethrex_levm::jit::types::JitOutcome::Success { output, gas_used } => {
                         assert_eq!(output.len(), 32, "should return 32 bytes");
                         let jit_val = U256::from_big_endian(&output);
                         assert_eq!(
                             jit_val,
                             U256::from(42u64),
                             "JIT resumed caller should return 42"
+                        );
+                        // Note: gas_used comparison is not exact here because the
+                        // sub-call result is manually simulated (gas_used: 100)
+                        // rather than from the actual callee execution. We verify
+                        // the JIT reports a non-zero gas_used as a sanity check.
+                        assert!(
+                            gas_used > 0,
+                            "JIT resumed caller should report non-zero gas_used, got {gas_used}"
                         );
                     }
                     other => panic!("expected JIT Success after resume, got: {other:?}"),

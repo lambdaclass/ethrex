@@ -465,7 +465,7 @@ mod tests {
 
             // Compare results
             match jit_outcome {
-                ethrex_levm::jit::types::JitOutcome::Success { output, .. } => {
+                ethrex_levm::jit::types::JitOutcome::Success { output, gas_used } => {
                     assert!(
                         interp_report.is_success(),
                         "fib({n}): JIT succeeded but interpreter didn't: {:?}",
@@ -474,6 +474,10 @@ mod tests {
                     assert_eq!(
                         output, interp_report.output,
                         "fib({n}): JIT and interpreter output mismatch"
+                    );
+                    assert_eq!(
+                        gas_used, interp_report.gas_used,
+                        "fib({n}): JIT and interpreter gas_used mismatch"
                     );
                     let result_val = U256::from_big_endian(&output);
                     assert_eq!(

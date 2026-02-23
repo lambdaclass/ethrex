@@ -152,6 +152,7 @@ mod tests {
     /// EIP-2929 cold/warm tracking (Fix 4) and storage correctness.
     #[cfg(feature = "revmc-backend")]
     #[test]
+    #[serial_test::serial]
     fn test_counter_jit_vs_interpreter() {
         use std::sync::Arc;
 
@@ -165,12 +166,15 @@ mod tests {
             db::gen_db::GeneralizedDatabase,
             jit::cache::CodeCache,
             tracing::LevmCallTracer,
-            vm::{VM, VMType},
+            vm::{JIT_STATE, VM, VMType},
         };
         use rustc_hash::FxHashMap;
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
+
+        // Reset JIT state for test isolation
+        JIT_STATE.reset_for_testing();
 
         let contract_addr = Address::from_low_u64_be(0x42);
         let sender_addr = Address::from_low_u64_be(0x100);
