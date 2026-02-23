@@ -769,7 +769,10 @@ impl<'a> VM<'a> {
 
         // Calculate create address
         let new_address = match salt {
-            Some(salt) => calculate_create2_address(deployer, &code, salt)?,
+            Some(salt) => {
+                let init_code_hash = self.get_init_code_hash(&code);
+                calculate_create2_address(deployer, init_code_hash, salt)?
+            }
             None => calculate_create_address(deployer, deployer_nonce),
         };
 

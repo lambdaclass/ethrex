@@ -46,24 +46,21 @@ pub fn address_to_word(address: Address) -> U256 {
 /// address = keccak256(0xff || sender_address || salt || keccak256(initialization_code))[12:]
 pub fn calculate_create2_address(
     sender_address: Address,
-    initialization_code: &Bytes,
+    init_code_hash: H256,
     salt: U256,
 ) -> Result<Address, InternalError> {
-    let init_code_hash = keccak(initialization_code);
+    // Build the 85-byte input on the stack: [0xff (1)] [sender (20)] [salt (32)] [hash (32)]
+    let mut buf = [0u8; 85];
+    buf[0] = 0xff;
+    buf[1..21].copy_from_slice(sender_address.as_bytes());
+    buf[21..53].copy_from_slice(&salt.to_big_endian());
+    buf[53..85].copy_from_slice(init_code_hash.as_bytes());
 
     let generated_address = Address::from_slice(
-        keccak(
-            [
-                &[0xff],
-                sender_address.as_bytes(),
-                &salt.to_big_endian(),
-                init_code_hash.as_bytes(),
-            ]
-            .concat(),
-        )
-        .as_bytes()
-        .get(12..)
-        .ok_or(InternalError::Slicing)?,
+        keccak(buf)
+            .as_bytes()
+            .get(12..)
+            .ok_or(InternalError::Slicing)?,
     );
     Ok(generated_address)
 }

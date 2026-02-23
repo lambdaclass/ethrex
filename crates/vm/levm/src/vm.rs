@@ -21,14 +21,10 @@ use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
+    utils::keccak,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::{
-    cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap},
-    mem,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, mem, rc::Rc};
 
 /// Storage mapping from slot key to value.
 pub type Storage = HashMap<U256, H256>;
@@ -194,7 +190,7 @@ impl Substate {
 
     /// Build an access list from all accessed storage slots.
     pub fn make_access_list(&self) -> Vec<AccessListEntry> {
-        let mut entries = BTreeMap::<Address, BTreeSet<H256>>::new();
+        let mut entries = FxHashMap::<Address, FxHashSet<H256>>::default();
 
         let mut current = self;
         loop {
@@ -211,13 +207,19 @@ impl Substate {
             };
         }
 
-        entries
+        let mut result: Vec<AccessListEntry> = entries
             .into_iter()
-            .map(|(address, storage_keys)| AccessListEntry {
-                address,
-                storage_keys: storage_keys.into_iter().collect(),
+            .map(|(address, storage_keys)| {
+                let mut keys: Vec<H256> = storage_keys.into_iter().collect();
+                keys.sort();
+                AccessListEntry {
+                    address,
+                    storage_keys: keys,
+                }
             })
-            .collect()
+            .collect();
+        result.sort_by_key(|e| e.address);
+        result
     }
 
     /// Mark an address as accessed and return whether is was already marked.
@@ -252,8 +254,8 @@ impl Substate {
     /// Returns all accessed storage slots for a given address.
     /// Used by SELFDESTRUCT to record storage reads in BAL per EIP-7928:
     /// "SELFDESTRUCT: Include modified/read storage keys as storage_read"
-    pub fn get_accessed_storage_slots(&self, address: &Address) -> BTreeSet<H256> {
-        let mut slots = BTreeSet::new();
+    pub fn get_accessed_storage_slots(&self, address: &Address) -> FxHashSet<H256> {
+        let mut slots = FxHashSet::default();
 
         // Collect from current substate
         if let Some(slot_set) = self.accessed_storage_slots.get(address) {
@@ -412,6 +414,9 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Opcode dispatch table, built dynamically per fork.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    /// Cache for CREATE2 init_code_hash to avoid redundant keccak256.
+    /// Stores the last (init_code, hash) pair. Cleared per-tx (VM lifetime).
+    create2_hash_cache: Option<(Bytes, H256)>,
 }
 
 impl<'a> VM<'a> {
@@ -460,6 +465,7 @@ impl<'a> VM<'a> {
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+            create2_hash_cache: None,
         };
 
         let call_type = if is_create {
@@ -487,6 +493,20 @@ impl<'a> VM<'a> {
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
         self.hooks.push(Rc::new(RefCell::new(hook)));
+    }
+
+    /// Returns the keccak256 hash of `init_code`, using a single-entry cache
+    /// to avoid redundant hashing when the same bytecode is deployed repeatedly
+    /// (common in XENTorrent/CoinTool patterns with 128+ identical CREATE2 calls per tx).
+    pub(crate) fn get_init_code_hash(&mut self, init_code: &Bytes) -> H256 {
+        if let Some((cached_code, cached_hash)) = &self.create2_hash_cache {
+            if cached_code == init_code {
+                return *cached_hash;
+            }
+        }
+        let hash = keccak(init_code);
+        self.create2_hash_cache = Some((init_code.clone(), hash));
+        hash
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
