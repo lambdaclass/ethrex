@@ -4,7 +4,7 @@
 
 ### 2026-02-23
 
-- Skip unnecessary account backup on cold SLOAD in LEVM [#XXXX](https://github.com/lambdaclass/ethrex/pull/XXXX)
+- Skip unnecessary account backup on cold SLOAD in LEVM [#6246](https://github.com/lambdaclass/ethrex/pull/6246)
 
 ### 2026-02-13
 
