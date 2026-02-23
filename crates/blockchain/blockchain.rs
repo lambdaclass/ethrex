@@ -89,7 +89,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc::Sender;
@@ -189,6 +189,11 @@ pub struct Blockchain {
     /// Maps payload IDs to either completed payloads or in-progress build tasks.
     /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Cross-block state cache. Persists account, storage, and code lookups
+    /// across consecutive blocks. The inner store is swapped each block while
+    /// cached entries for unmodified accounts remain valid.
+    /// Initialized on first block execution.
+    block_cache: RwLock<Option<Arc<CachingDatabase>>>,
 }
 
 /// Configuration options for the blockchain.
@@ -286,6 +291,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
+            block_cache: RwLock::new(None),
         }
     }
 
@@ -296,6 +302,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
+            block_cache: RwLock::new(None),
         }
     }
 
@@ -390,11 +397,24 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
-        // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
+        // Reuse or create the cross-block cache. The cache persists across blocks:
+        // unmodified account/storage/code entries remain valid, avoiding redundant
+        // trie lookups for hot state like WETH, USDC, etc.
         let original_store = vm.db.store.clone();
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
-            Arc::new(CachingDatabase::new(original_store));
+        let block_cache = {
+            let mut cache_guard = self.block_cache.write().unwrap_or_else(|e| e.into_inner());
+            if let Some(cache) = cache_guard.as_ref() {
+                // Reuse existing cache, update inner to point at this block's state root
+                cache.update_inner(original_store);
+                cache.clone()
+            } else {
+                // First block: create the cache
+                let cache = Arc::new(CachingDatabase::new(original_store));
+                *cache_guard = Some(cache.clone());
+                cache
+            }
+        };
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = block_cache.clone();
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -448,8 +468,8 @@ impl Blockchain {
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, StoreError> {
-                        let (account_updates_list, accumulated_updates) = self
-                            .handle_merkleization(
+                        let (account_updates_list, accumulated_updates, modified_addresses) =
+                            self.handle_merkleization(
                                 s,
                                 rx,
                                 parent_header_ref,
@@ -460,6 +480,7 @@ impl Blockchain {
                         Ok((
                             account_updates_list,
                             accumulated_updates,
+                            modified_addresses,
                             merkle_end_instant,
                         ))
                     })
@@ -483,7 +504,12 @@ impl Blockchain {
                     warmer_duration,
                 ))
             })?;
-        let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
+        let (account_updates_list, accumulated_updates, modified_addresses, merkle_end_instant) =
+            merkleization_result?;
+
+        // Invalidate cached entries for accounts modified during this block.
+        // Unmodified entries remain valid for subsequent blocks.
+        block_cache.invalidate_modified(&modified_addresses);
         let (execution_result, exec_end_instant) = execution_result?;
 
         let exec_merkle_end_instant = Instant::now();
@@ -518,7 +544,7 @@ impl Blockchain {
         parent_header: &'b BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError>
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>, FxHashSet<Address>), StoreError>
     where
         'a: 's,
         'b: 's,
@@ -549,6 +575,9 @@ impl Blockchain {
                 None
             };
 
+        // Track modified addresses for cross-block cache invalidation
+        let mut modified_addresses: FxHashSet<Address> = FxHashSet::default();
+
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
@@ -567,6 +596,9 @@ impl Blockchain {
             }
 
             for update in updates {
+                // Collect for cross-block cache invalidation
+                modified_addresses.insert(update.address);
+
                 let hashed_address = *hashed_address_cache
                     .entry(update.address)
                     .or_insert_with(|| keccak(update.address));
@@ -700,6 +732,7 @@ impl Blockchain {
                 code_updates,
             },
             accumulated_updates,
+            modified_addresses,
         ))
     }
 
