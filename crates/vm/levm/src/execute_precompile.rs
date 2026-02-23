@@ -67,6 +67,7 @@ pub const L1_ANCHOR: Address = H160([
 /// Transactions are decoded from RLP and the witness provides stateless
 /// execution data (state tries, storage tries, code, block headers).
 pub struct ExecutePrecompileInput {
+    pub chain_id: u64,
     pub pre_state_root: H256,
     pub post_state_root: H256,
     pub post_receipts_root: H256,
@@ -85,23 +86,24 @@ pub struct ExecutePrecompileInput {
 
 /// Entrypoint matching the precompile function signature.
 ///
-/// Parses ABI-encoded calldata with 14 slots (12 static + 2 dynamic):
+/// Parses ABI-encoded calldata with 15 slots (13 static + 2 dynamic):
 /// ```text
 /// abi.encode(
-///     bytes32 preStateRoot,           // slot 0
-///     bytes32 postStateRoot,          // slot 1
-///     bytes32 postReceiptsRoot,       // slot 2
-///     uint256 blockNumber,            // slot 3
-///     uint256 blockGasLimit,          // slot 4
-///     address coinbase,               // slot 5 (ABI-padded to 32 bytes)
-///     bytes32 prevRandao,             // slot 6
-///     uint256 timestamp,              // slot 7
-///     uint256 parentBaseFee,          // slot 8
-///     uint256 parentGasLimit,         // slot 9
-///     uint256 parentGasUsed,          // slot 10
-///     bytes32 l1Anchor,               // slot 11
-///     bytes   transactions,           // slot 12 (dynamic offset pointer)
-///     bytes   witnessJson             // slot 13 (dynamic offset pointer)
+///     uint256 chainId,                // slot 0
+///     bytes32 preStateRoot,           // slot 1
+///     bytes32 postStateRoot,          // slot 2
+///     bytes32 postReceiptsRoot,       // slot 3
+///     uint256 blockNumber,            // slot 4
+///     uint256 blockGasLimit,          // slot 5
+///     address coinbase,               // slot 6 (ABI-padded to 32 bytes)
+///     bytes32 prevRandao,             // slot 7
+///     uint256 timestamp,              // slot 8
+///     uint256 parentBaseFee,          // slot 9
+///     uint256 parentGasLimit,         // slot 10
+///     uint256 parentGasUsed,          // slot 11
+///     bytes32 l1Anchor,               // slot 12
+///     bytes   transactions,           // slot 13 (dynamic offset pointer)
+///     bytes   witnessJson             // slot 14 (dynamic offset pointer)
 /// )
 /// ```
 ///
@@ -183,29 +185,32 @@ fn read_u64_slot(calldata: &[u8], offset: &mut usize) -> Result<u64, VMError> {
 
 /// Parse ABI-encoded calldata into an [`ExecutePrecompileInput`].
 ///
-/// The head is 14 x 32 = 448 bytes:
-///   - slots 0-11: static fields (bytes32, uint256, address)
-///   - slot 12: offset to transactions RLP bytes (dynamic)
-///   - slot 13: offset to witness JSON bytes (dynamic)
+/// The head is 15 x 32 = 480 bytes:
+///   - slots 0-12: static fields (uint256, bytes32, address)
+///   - slot 13: offset to transactions RLP bytes (dynamic)
+///   - slot 14: offset to witness JSON bytes (dynamic)
 fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError> {
     let mut offset: usize = 0;
 
-    // Slot 0: preStateRoot (bytes32)
+    // Slot 0: chainId (uint256 -> u64)
+    let chain_id = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 1: preStateRoot (bytes32)
     let pre_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
-    // Slot 1: postStateRoot (bytes32)
+    // Slot 2: postStateRoot (bytes32)
     let post_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
-    // Slot 2: postReceiptsRoot (bytes32)
+    // Slot 3: postReceiptsRoot (bytes32)
     let post_receipts_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
-    // Slot 3: blockNumber (uint256 -> u64)
+    // Slot 4: blockNumber (uint256 -> u64)
     let block_number = read_u64_slot(calldata, &mut offset)?;
 
-    // Slot 4: blockGasLimit (uint256 -> u64)
+    // Slot 5: blockGasLimit (uint256 -> u64)
     let block_gas_limit = read_u64_slot(calldata, &mut offset)?;
 
-    // Slot 5: coinbase (address, left-padded to 32 bytes)
+    // Slot 6: coinbase (address, left-padded to 32 bytes)
     let coinbase_bytes = read_calldata(calldata, &mut offset, 32)?;
     let coinbase = Address::from_slice(
         coinbase_bytes
@@ -213,31 +218,31 @@ fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError
             .ok_or(InternalError::Custom("coinbase slot too short".to_string()))?,
     );
 
-    // Slot 6: prevRandao (bytes32)
+    // Slot 7: prevRandao (bytes32)
     let prev_randao = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
-    // Slot 7: timestamp (uint256 -> u64)
+    // Slot 8: timestamp (uint256 -> u64)
     let timestamp = read_u64_slot(calldata, &mut offset)?;
 
-    // Slot 8: parentBaseFee (uint256 -> u64)
+    // Slot 9: parentBaseFee (uint256 -> u64)
     let parent_base_fee = read_u64_slot(calldata, &mut offset)?;
 
-    // Slot 9: parentGasLimit (uint256 -> u64)
+    // Slot 10: parentGasLimit (uint256 -> u64)
     let parent_gas_limit = read_u64_slot(calldata, &mut offset)?;
 
-    // Slot 10: parentGasUsed (uint256 -> u64)
+    // Slot 11: parentGasUsed (uint256 -> u64)
     let parent_gas_used = read_u64_slot(calldata, &mut offset)?;
 
-    // Slot 11: l1Anchor (bytes32) — Merkle root of consumed L1 messages
+    // Slot 12: l1Anchor (bytes32) — Merkle root of consumed L1 messages
     let l1_anchor = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
 
-    // Slot 12: offset to transactions (dynamic)
+    // Slot 13: offset to transactions (dynamic)
     let txs_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
     let txs_offset: usize = U256::from_big_endian(txs_offset_bytes)
         .try_into()
         .map_err(|_| custom_err("Transactions offset too large".to_string()))?;
 
-    // Slot 13: offset to witnessJson (dynamic)
+    // Slot 14: offset to witnessJson (dynamic)
     let witness_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
     let witness_offset: usize = U256::from_big_endian(witness_offset_bytes)
         .try_into()
@@ -253,6 +258,7 @@ fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError
         .map_err(|e| custom_err(format!("Failed to deserialize ExecutionWitness JSON: {e}")))?;
 
     Ok(ExecutePrecompileInput {
+        chain_id,
         pre_state_root,
         post_state_root,
         post_receipts_root,
@@ -288,6 +294,7 @@ fn custom_err(msg: String) -> VMError {
 /// on-chain for the next block.
 pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let ExecutePrecompileInput {
+        chain_id,
         pre_state_root,
         post_state_root: expected_post_state_root,
         post_receipts_root,
@@ -308,6 +315,14 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let guest_state: GuestProgramState = execution_witness
         .try_into()
         .map_err(|e| custom_err(format!("Failed to build GuestProgramState: {e}")))?;
+
+    // Validate chain_id matches witness chain config
+    if chain_id != guest_state.chain_config.chain_id {
+        return Err(custom_err(format!(
+            "Chain ID mismatch: input={}, witness={}",
+            chain_id, guest_state.chain_config.chain_id
+        )));
+    }
 
     // Initialize block header hashes from witness headers (empty blocks slice
     // since we no longer have a full block — the witness already contains the

@@ -12,7 +12,7 @@ The book's `apply_body` processing includes a step we don't have: **process unch
 
 | Input | Book | Us | Notes |
 |-------|------|-----|-------|
-| `chain_id` | Explicit parameter | From witness chain config | Minor gap |
+| `chain_id` | Explicit parameter | Explicit input (slot 0) | Aligned |
 | `number` | Yes | Yes (`blockNumber`) | |
 | `pre_state` / `post_state` | Yes | Yes | |
 | `post_receipts` | Yes | Yes | |
@@ -91,7 +91,7 @@ We compute `burnedFees = base_fee_per_gas * block_gas_used`. This is equivalent 
 | Preminted gas tokens | Recommended | Implemented | **Aligned** |
 | No custom tx types | Design principle | Achieved (relayer txs) | **Aligned** |
 | First deposit problem | Unresolved in book | Solved (relayer pays gas) | **Ahead** |
-| `chain_id` as input | Explicit parameter | From witness chain config | **Minor gap** |
+| `chain_id` as input | Explicit parameter | Explicit input (slot 0) | **Aligned** |
 | `parent_beacon_block_root` | TBD, configurable | Not included | **Minor gap** |
 | System transaction | Step in `apply_body` | L1Anchor predeploy write | **Aligned** |
 | L1 anchoring (`L1_ANCHOR`) | System contract + system tx | L1Anchor predeploy + system write | **Aligned** |
@@ -102,20 +102,13 @@ We compute `burnedFees = base_fee_per_gas * block_gas_used`. This is equivalent 
 | Serialization | Blob references (TBD) | RLP calldata + JSON witness | **Different** |
 | EXECUTE output format | TBD | 160 bytes (5 fields) | **We defined** |
 | L2-side burned fee handling | Not specified | Not implemented | **Gap** |
-| Finality delay | Implied for production | Not implemented | **Gap** |
+| Finality delay | Implied for production | Configurable (1s in tests) | **Aligned** |
 | DA cost pricing | WIP | Not implemented | **Both WIP** |
 | Custom gas tokens | Supported (ERC20, NFTs) | ETH only | **Partial** |
 
 ---
 
 ## Remaining Gaps
-
-### Addressable (PoC scope)
-
-| Gap | Description | Effort |
-|-----|-------------|--------|
-| Finality delay | Add `FINALITY_DELAY` to `claimWithdrawal()` | Low |
-| `chain_id` input | Pass as explicit EXECUTE parameter | Low |
 
 ### Future Work (beyond PoC)
 

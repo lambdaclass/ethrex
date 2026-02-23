@@ -526,6 +526,7 @@ fn build_l2_state_transition(
     let witness_json = serde_json::to_vec(&witness).expect("witness JSON serialization failed");
 
     let input = ExecutePrecompileInput {
+        chain_id: 1,
         pre_state_root,
         post_state_root,
         post_receipts_root: receipts_root,
@@ -1066,11 +1067,13 @@ async fn test_native_rollup_on_l1() {
     let deploy_hex = std::fs::read_to_string(contracts_path.join("solc_out/NativeRollup.bin"))
         .expect("Failed to read compiled contract");
     let deploy_bytecode = hex::decode(deploy_hex.trim()).expect("invalid hex in .bin file");
-    // Constructor args: (bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee)
-    let mut constructor_args = Vec::with_capacity(96);
+    // Constructor args: (bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee, uint64 _chainId, uint256 _finalityDelay)
+    let mut constructor_args = Vec::with_capacity(160);
     constructor_args.extend_from_slice(pre_state_root.as_bytes()); // bytes32
-    constructor_args.extend_from_slice(&U256::from(30_000_000u64).to_big_endian()); // uint256
-    constructor_args.extend_from_slice(&U256::from(1_000_000_000u64).to_big_endian()); // uint256 (1 gwei)
+    constructor_args.extend_from_slice(&U256::from(30_000_000u64).to_big_endian()); // uint256 blockGasLimit
+    constructor_args.extend_from_slice(&U256::from(1_000_000_000u64).to_big_endian()); // uint256 initialBaseFee (1 gwei)
+    constructor_args.extend_from_slice(&U256::from(1u64).to_big_endian()); // uint256 chainId (padded to 32 bytes)
+    constructor_args.extend_from_slice(&U256::from(1u64).to_big_endian()); // uint256 finalityDelay (1 second)
     let init_code: Bytes = [deploy_bytecode, constructor_args].concat().into();
 
     let (deploy_tx_hash, contract_address) =

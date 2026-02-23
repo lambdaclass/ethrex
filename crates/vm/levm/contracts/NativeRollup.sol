@@ -27,7 +27,8 @@ import "./MPTProof.sol";
 ///   Slot 6: l1MessageIndex (uint256)
 ///   Slot 7: stateRootHistory (mapping(uint256 => bytes32))
 ///   Slot 8: claimedWithdrawals (mapping(bytes32 => bool))
-///   Slot 9: _locked (bool)
+///   Slot 9: stateRootTimestamps (mapping(uint256 => uint256))
+///   Slot 10: _locked (bool)
 
 struct BlockParams {
     bytes32 postStateRoot;
@@ -56,12 +57,16 @@ contract NativeRollup {
     /// Matches CommonBridge's deposit gas limit (21000 * 5).
     uint256 constant DEFAULT_GAS_LIMIT = 21_000 * 5;
 
+    uint64 public immutable CHAIN_ID;
+    uint256 public immutable FINALITY_DELAY;
+
     bytes32[] public pendingL1Messages;
     uint256 public l1MessageIndex;
 
     // State root history for withdrawal proving
     mapping(uint256 => bytes32) public stateRootHistory;
     mapping(bytes32 => bool) public claimedWithdrawals;
+    mapping(uint256 => uint256) public stateRootTimestamps;
 
     // Reentrancy guard
     bool private _locked;
@@ -77,11 +82,13 @@ contract NativeRollup {
         _locked = false;
     }
 
-    constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee) {
+    constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee, uint64 _chainId, uint256 _finalityDelay) {
         stateRoot = _initialStateRoot;
         blockGasLimit = _blockGasLimit;
         lastBaseFeePerGas = _initialBaseFee;
         lastGasUsed = _blockGasLimit / 2;
+        CHAIN_ID = _chainId;
+        FINALITY_DELAY = _finalityDelay;
     }
 
     // ===== L1 Messaging =====
@@ -138,6 +145,7 @@ contract NativeRollup {
         uint256 _lastGasUsed = lastGasUsed;
 
         bytes memory input = abi.encode(
+            uint256(CHAIN_ID),
             stateRoot,
             _blockParams.postStateRoot,
             _blockParams.postReceiptsRoot,
@@ -165,6 +173,7 @@ contract NativeRollup {
         lastGasUsed = gasUsed;
         lastBaseFeePerGas = baseFeePerGas;
         stateRootHistory[newBlockNumber] = newStateRoot;
+        stateRootTimestamps[newBlockNumber] = block.timestamp;
 
         if (burnedFees > 0) {
             (bool sent, ) = msg.sender.call{value: burnedFees}("");
@@ -187,6 +196,12 @@ contract NativeRollup {
     ) external nonReentrant {
         bytes32 root = stateRootHistory[_atBlockNumber];
         require(root != bytes32(0), "Unknown block");
+
+        uint256 blockTimestamp = stateRootTimestamps[_atBlockNumber];
+        require(
+            block.timestamp >= blockTimestamp + FINALITY_DELAY,
+            "Finality delay not elapsed"
+        );
 
         bytes32 withdrawalHash = keccak256(abi.encodePacked(_from, _receiver, _amount, _messageId));
         require(!claimedWithdrawals[withdrawalHash], "Already claimed");
