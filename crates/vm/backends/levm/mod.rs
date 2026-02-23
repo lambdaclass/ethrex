@@ -337,15 +337,31 @@ impl LEVM {
             sender_groups.entry(*sender).or_default().push(tx);
         }
 
-        // Parallel across sender groups, sequential within each group
-        sender_groups.into_par_iter().for_each_with(
-            Vec::with_capacity(STACK_LIMIT),
-            |stack_pool, (sender, txs)| {
-                // Each sender group gets its own db instance for state propagation
-                let mut group_db = GeneralizedDatabase::new(store.clone());
+        // Skip rayon dispatch overhead when few sender groups exist
+        const MIN_SENDER_GROUPS_FOR_PARALLEL: usize = 4;
 
-                // Execute transactions sequentially within sender group
-                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
+        if sender_groups.len() >= MIN_SENDER_GROUPS_FOR_PARALLEL {
+            // Parallel across sender groups, sequential within each group
+            sender_groups.into_par_iter().for_each_with(
+                Vec::with_capacity(STACK_LIMIT),
+                |stack_pool, (sender, txs)| {
+                    let mut group_db = GeneralizedDatabase::new(store.clone());
+                    for tx in txs {
+                        let _ = Self::execute_tx_in_block(
+                            tx,
+                            sender,
+                            &block.header,
+                            &mut group_db,
+                            vm_type,
+                            stack_pool,
+                        );
+                    }
+                },
+            );
+        } else {
+            let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
+            for (sender, txs) in sender_groups {
+                let mut group_db = GeneralizedDatabase::new(store.clone());
                 for tx in txs {
                     let _ = Self::execute_tx_in_block(
                         tx,
@@ -353,11 +369,11 @@ impl LEVM {
                         &block.header,
                         &mut group_db,
                         vm_type,
-                        stack_pool,
+                        &mut stack_pool,
                     );
                 }
-            },
-        );
+            }
+        }
 
         for withdrawal in block
             .body
