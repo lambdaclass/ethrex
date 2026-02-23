@@ -119,7 +119,7 @@ async fn run(
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block_pipeline(block);
+        let chain_result = blockchain.add_block_pipeline(block, None);
 
         match chain_result {
             Err(error) => {
