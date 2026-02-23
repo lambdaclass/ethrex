@@ -82,6 +82,8 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
         let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
 
         // Enable BAL recording for Amsterdam+ forks
@@ -120,7 +122,15 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                evm_config,
+                chain_id,
+            )?;
 
             // EIP-7778: Separate gas tracking
             // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
@@ -184,6 +194,8 @@ impl LEVM {
         queue_length: &AtomicUsize,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
         let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
 
         // Enable BAL recording for Amsterdam+ forks
@@ -235,6 +247,8 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                evm_config,
+                chain_id,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -327,6 +341,10 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
+        let chain_config = store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
+
         let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })?;
@@ -354,6 +372,8 @@ impl LEVM {
                         &mut group_db,
                         vm_type,
                         stack_pool,
+                        evm_config,
+                        chain_id,
                     );
                 }
             },
@@ -445,10 +465,10 @@ impl LEVM {
         tx: &Transaction,
         tx_sender: Address,
         block_header: &BlockHeader,
-        db: &GeneralizedDatabase,
         vm_type: VMType,
+        config: EVMConfig,
+        chain_id: u64,
     ) -> Result<Environment, EvmError> {
-        let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = calculate_gas_price_for_tx(
             tx,
             block_header.base_fee_per_gas.unwrap_or_default(),
@@ -456,7 +476,6 @@ impl LEVM {
         )?;
 
         let block_excess_blob_gas = block_header.excess_blob_gas.map(U256::from);
-        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
@@ -469,7 +488,7 @@ impl LEVM {
                 .slot_number
                 .map(U256::from)
                 .unwrap_or(U256::zero()),
-            chain_id: chain_config.chain_id.into(),
+            chain_id: chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
             gas_price,
@@ -498,14 +517,17 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        config: EVMConfig,
+        chain_id: u64,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, vm_type, config, chain_id)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
     }
 
     // Like execute_tx but allows reusing the stack pool
+    #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
         tx: &Transaction,
@@ -516,8 +538,10 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        config: EVMConfig,
+        chain_id: u64,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, vm_type, config, chain_id)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);

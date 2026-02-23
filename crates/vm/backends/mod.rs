@@ -113,8 +113,18 @@ impl Evm {
         cumulative_gas_spent: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
-        let execution_report =
-            LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
+        let chain_config = self.db.store.get_chain_config()?;
+        let config = ethrex_levm::EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let chain_id = chain_config.chain_id;
+        let execution_report = LEVM::execute_tx(
+            tx,
+            sender,
+            block_header,
+            &mut self.db,
+            self.vm_type,
+            config,
+            chain_id,
+        )?;
 
         // Use gas_used (pre-refund for EIP-7778/Amsterdam+) for block gas accounting
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);

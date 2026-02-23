@@ -1,5 +1,6 @@
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
+use ethrex_levm::EVMConfig;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
@@ -14,6 +15,10 @@ impl LEVM {
         stop_index: Option<usize>,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
+        let chain_config = db.store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
+
         Self::prepare_block(block, db, vm_type)?;
 
         // Executes transactions and stops when the index matches the stop index.
@@ -28,7 +33,7 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type)?;
+            Self::execute_tx(tx, sender, &block.header, db, vm_type, evm_config, chain_id)?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -50,14 +55,19 @@ impl LEVM {
         with_log: bool,
         vm_type: VMType,
     ) -> Result<CallTrace, EvmError> {
+        let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let chain_id = chain_config.chain_id;
+
         let env = Self::setup_env(
             tx,
             tx.sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?,
             block_header,
-            db,
             vm_type,
+            config,
+            chain_id,
         )?;
         let mut vm = VM::new(
             env,
