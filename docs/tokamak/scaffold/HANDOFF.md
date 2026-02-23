@@ -45,6 +45,45 @@
 | Phase 5A: Multi-fork 지원 | **완료** |
 | Phase 5B: 백그라운드 비동기 컴파일 | **완료** |
 | Phase 5C: Validation mode 연결 | **완료** |
+| Phase 6A: CALL/CREATE resume | **완료** |
+| Phase 6B: LLVM memory management | **완료** |
+| Phase 6-R12: handle_jit_subcall semantic fixes | **완료** |
+| Phase 6-R13: Volkov R13 필수 수정 | **완료** — M1-M3 + R1-R3 적용 |
+| Phase 6-R14: Volkov R14 필수 수정 | **완료** — M1-M3 + R1-R2 적용 |
+
+## Phase 6-R14 수정 완료
+
+Volkov R14 리뷰 4.0/10.0 НЕЛЬЗЯ에서 지적된 M1-M3 필수 수정과 R1-R2 권장 수정 모두 적용 완료.
+
+### R14 적용 수정
+
+| ID | 수정 내용 | 상태 |
+|----|-----------|------|
+| **M1** | `JitState::reset_for_testing()` 추가 — CodeCache::clear(), ExecutionCounter::clear(), JitMetrics::reset() + 모든 #[serial] JIT 테스트에 적용 | **완료** |
+| **M2** | CREATE JIT 테스트에 differential 비교 추가 — interpreter baseline과 output 비교 + `jit_executions > 0` metrics 검증으로 JIT 경로 실행 증명 | **완료** |
+| **M3** | `(ref: generic_call line 1065)` → `(ref: generic_call)` 라인 번호 참조 제거 | **완료** |
+| **R1** | Precompile value transfer 테스트 강화 — interpreter baseline + differential 비교 + JIT metrics 검증 | **완료** |
+| **R2** | `test_create_collision_jit_factory` 추가 — collision 주소 pre-seed, JIT vs interpreter address(0) 비교 | **완료** |
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `levm/src/jit/cache.rs` | `CodeCache::clear()` 추가 |
+| `levm/src/jit/counter.rs` | `ExecutionCounter::clear()` 추가 |
+| `levm/src/jit/types.rs` | `JitMetrics::reset()` 추가 |
+| `levm/src/jit/dispatch.rs` | `JitState::reset_for_testing()` 추가 |
+| `tokamak-jit/src/tests/subcall.rs` | 6개 #[serial] 테스트에 reset 추가, differential 비교, collision 테스트 신규 |
+| `tokamak-jit/src/tests/fibonacci.rs` | JIT execution 테스트에 reset 추가 |
+
+### 검증 결과
+
+- `cargo test -p ethrex-levm --features tokamak-jit -- jit::` — 20 tests pass
+- `cargo test -p tokamak-jit` — 17 tests pass (interpreter-only, revmc 없이)
+- `cargo clippy -p ethrex-levm --features tokamak-jit -- -D warnings` — clean
+- `cargo clippy -p tokamak-jit -- -D warnings` — clean
+
+---
 
 ## Phase 5 완료 요약
 
@@ -310,13 +349,88 @@ Cranelift은 i256 미지원으로 불가. **revmc (Paradigm, LLVM backend)** 채
 | `f6d6ac3b6` | feat: Phase 1.3 — benchmarking foundation with opcode timing CI |
 | `3ed011be8` | feat: Phase 1.2 — feature flag split, CI workflow, fork adjustments |
 
+## Volkov R13 — handle_jit_subcall Semantic Gap Fixes
+
+### 작업 상태: 코드 완료, Volkov 리뷰 НЕЛЬЗЯ (3.0/10.0) — 필수 수정 필요
+
+### 작업 내용 (커밋 전)
+
+`handle_jit_subcall`의 CALL/CREATE 경로에서 `generic_call`/`generic_create` 대비 누락된 시맨틱 갭 수정.
+
+#### 완료된 변경
+
+| 파일 | 변경 |
+|------|------|
+| `levm/src/vm.rs:816-832` | `interpreter_loop` stop_depth > 0 시 `merge_call_frame_backup_with_parent` 추가 |
+| `levm/src/vm.rs` CALL 경로 | precompile BAL 기록, value transfer + EIP-7708 로그, non-precompile BAL checkpoint |
+| `levm/src/vm.rs` CREATE 경로 | max nonce 체크, `add_accessed_address`, BAL 기록, collision 체크, deploy nonce 0→1, `add_created_account`, EIP-7708 로그, 중복 EIP-170/code storage 제거 |
+| `tokamak-jit/Cargo.toml` | `serial_test` dev-dep 추가 |
+| `tokamak-jit/src/tests/fibonacci.rs` | JIT_STATE 사용 테스트에 `#[serial]` 추가 |
+| `tokamak-jit/src/tests/subcall.rs` | CREATE/CREATE2/collision 테스트 3개 추가, `#[serial]` 추가 |
+| `tokamak-jit/src/tests/storage.rs` | 기존 redundant_clone 수정 |
+| `Cargo.toml` | workspace에 `serial_test = "3.2.0"` 추가 |
+
+#### 검증 결과
+
+- `cargo check --features tokamak-jit` — pass
+- `cargo test -p tokamak-jit` — 17 tests pass
+- `cargo test -p ethrex-levm --features tokamak-jit -- jit::` — 20 tests pass
+- `cargo clippy --features tokamak-jit -- -D warnings` — clean
+- `cargo clippy -p tokamak-jit --tests -- -D warnings` — clean
+- `cargo clippy --workspace --features l2 -- -D warnings` — clean
+
+### Volkov R13 리뷰 결과: 3.0/10.0 НЕЛЬЗЯ
+
+#### 감점 내역
+
+| 항목 | 감점 | 사유 |
+|------|------|------|
+| **EIP-7702 delegation 미처리** | -2.0 | `generic_call`은 `!is_delegation_7702` 가드로 precompile 진입 차단. JIT CALL 경로에 이 가드 누락. consensus deviation 위험 |
+| **CALL transfer 가드 불일치** | -0.5 | `generic_call`은 `if should_transfer_value`, JIT는 `if should_transfer && !value.is_zero()`. transfer() 내부에 zero 가드 있어 기능적으로 동일하지만 코드 불일치 |
+| **CREATE collision gas 시맨틱** | -1.0 | JIT가 `gas_used: gas_limit` 반환하는 방식과 `generic_create`의 `early_revert_message_call`이 부모 프레임 gas를 직접 변경하는 방식의 차이. 검증 필요 |
+| **CREATE 테스트가 JIT 경로 미실행** | -1.0 | 3개 CREATE 테스트가 일반 인터프리터 경로(generic_create)만 통과. `handle_jit_subcall` CREATE arm 코드를 전혀 테스트하지 않음 |
+| **Precompile value transfer 테스트 부재** | -1.0 | 새로 추가된 precompile value transfer + EIP-7708 로그 코드에 대한 테스트 없음 |
+| **코멘트 참조 불일치** | -0.5 | 일부는 `(ref: generic_create line 798)` 형식, 일부는 `per EIP-7928`만. 일관성 부재 |
+| **init_code 불필요 해시 계산** | -1.0 | `Code::from_bytecode(init_code)` 사용 — keccak256 계산. `generic_create`는 `from_bytecode_unchecked(code, H256::zero())` 사용. JIT hot path에서 불필요한 해시 오버헤드 |
+
+#### 필수 수정 (M — must fix)
+
+| ID | 수정 사항 |
+|----|-----------|
+| **M1** | CREATE 테스트가 실제로 `handle_jit_subcall` CREATE arm을 테스트하도록 변경. `JitSubCall::Create`를 직접 구성해서 VM의 `handle_jit_subcall` 호출, 또는 revmc-backend 게이트 JIT 테스트 |
+| **M2** | EIP-7702 delegation 갭 문서화 또는 수정. 최소한 TODO 코멘트 추가: `// TODO: JIT does not yet handle EIP-7702 delegation — revmc does not signal this` |
+| **M3** | `Code::from_bytecode_unchecked(init_code, H256::zero())` 사용으로 변경 (`generic_create` 패턴 일치) |
+
+#### 권장 수정 (R — recommended)
+
+| ID | 수정 사항 |
+|----|-----------|
+| **R1** | Precompile value transfer 테스트 추가 (ecrecover에 value > 0으로 CALL) |
+| **R2** | Non-precompile transfer 가드를 `if should_transfer`로 변경 (`generic_call` 일치) |
+| **R3** | 코멘트 참조 형식 통일 (모두 소스 함수+라인 참조 또는 모두 EIP 참조) |
+
+### 적용된 수정 사항
+
+| ID | 수정 내용 | 상태 |
+|----|-----------|------|
+| **M1** | `test_create_jit_factory`, `test_create2_jit_factory` 추가 — revmc-backend 게이트 JIT 테스트가 handle_jit_subcall CREATE arm 실행 | **완료** |
+| **M2** | EIP-7702 delegation TODO 코멘트 추가 — `generic_call`의 `!is_delegation_7702` 가드 부재 문서화 | **완료** |
+| **M3** | `Code::from_bytecode_unchecked(init_code, H256::zero())` 사용으로 변경 | **완료** |
+| **R1** | `test_precompile_value_transfer_jit` 추가 — identity precompile에 value=1wei CALL | **완료** |
+| **R2** | Non-precompile transfer 가드를 `if should_transfer`로 변경 (`generic_call` 일치) | **완료** |
+| **R3** | 코멘트 참조 형식 통일 — 라인 번호 제거, `(ref: function_name)` + `per EIP-XXXX` 일관 형식 | **완료** |
+
+### 다음 작업
+
+1. Volkov 재심 요청
+
+---
+
 ## 다음 단계
 
-### Phase 6: Deep JIT
+### Phase 7: Full Validation
 
-1. **CALL/CREATE resume** — JIT pause → interpreter nested call → resume JIT
-2. **LLVM memory management** — free JIT code memory on cache eviction
-3. **Full dual-execution validation** — state snapshotting + interpreter replay
+1. **Full dual-execution validation** — state snapshotting + interpreter replay
 
 ## 핵심 컨텍스트
 

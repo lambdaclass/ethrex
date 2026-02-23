@@ -101,7 +101,7 @@ mod tests {
         let mut cache = FxHashMap::default();
         cache.insert(
             contract_addr,
-            Account::new(U256::MAX, counter_code.clone(), 0, storage),
+            Account::new(U256::MAX, counter_code, 0, storage),
         );
         cache.insert(
             sender_addr,

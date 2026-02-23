@@ -119,6 +119,32 @@ impl JitState {
         }
     }
 
+    /// Reset all mutable state for test isolation.
+    ///
+    /// Must be called at the start of every `#[serial]` JIT test to prevent
+    /// state accumulated by prior tests (cache entries, execution counts,
+    /// metrics, validation counts) from leaking into subsequent tests.
+    ///
+    /// This does NOT reset `config` (immutable) or destroy the LLVM context
+    /// held by the backend — it only clears the runtime accumulators.
+    pub fn reset_for_testing(&self) {
+        self.cache.clear();
+        self.counter.clear();
+        self.metrics.reset();
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        {
+            *self.backend.write().unwrap() = None;
+        }
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        {
+            *self.compiler_thread.write().unwrap() = None;
+        }
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        {
+            self.validation_counts.write().unwrap().clear();
+        }
+    }
+
     /// Register a JIT execution backend.
     ///
     /// Call this once at application startup (from `tokamak-jit`) to enable

@@ -178,6 +178,17 @@ impl CodeCache {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Remove all entries from the cache.
+    ///
+    /// Used by `JitState::reset_for_testing()` to prevent state leakage
+    /// between `#[serial]` tests.
+    pub fn clear(&self) {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let mut inner = self.inner.write().unwrap();
+        inner.entries.clear();
+        inner.insertion_order.clear();
+    }
 }
 
 impl Default for CodeCache {

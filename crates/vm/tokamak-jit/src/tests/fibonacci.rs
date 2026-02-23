@@ -179,6 +179,7 @@ mod tests {
     /// the cache, and the VM's JIT dispatch picks it up instead of interpreting.
     #[cfg(feature = "revmc-backend")]
     #[test]
+    #[serial_test::serial]
     fn test_fibonacci_jit_execution() {
         use std::sync::Arc;
 
@@ -202,6 +203,9 @@ mod tests {
 
         let bytecode = Bytes::from(make_fibonacci_bytecode());
         let fib_code = Code::from_bytecode(bytecode);
+
+        // Reset JIT state for test isolation
+        JIT_STATE.reset_for_testing();
 
         // 1. Compile Fibonacci bytecode via RevmcBackend
         let backend = RevmcBackend::default();
@@ -298,6 +302,7 @@ mod tests {
     /// output bytes and success status.
     #[cfg(feature = "revmc-backend")]
     #[test]
+    #[serial_test::serial]
     fn test_fibonacci_jit_vs_interpreter_validation() {
         use std::sync::Arc;
 

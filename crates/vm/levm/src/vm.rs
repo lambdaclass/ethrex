@@ -817,8 +817,14 @@ impl<'a> VM<'a> {
             if self.call_frames.len() <= stop_depth {
                 self.handle_state_backup(&result)?;
                 // For JIT sub-calls (stop_depth > 0), pop the completed child frame
+                // and merge its backup into the parent so reverts work correctly.
                 if stop_depth > 0 {
                     let child = self.pop_call_frame()?;
+                    if result.is_success() {
+                        self.merge_call_frame_backup_with_parent(
+                            &child.call_frame_backup,
+                        )?;
+                    }
                     let mut child_stack = child.stack;
                     child_stack.clear();
                     self.stack_pool.push(child_stack);
@@ -942,30 +948,7 @@ impl<'a> VM<'a> {
                     });
                 }
 
-                // Check if target is a precompile
-                if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type) {
-                    let mut gas_remaining = gas_limit;
-                    let ctx_result = Self::execute_precompile(
-                        code_address,
-                        &calldata,
-                        gas_limit,
-                        &mut gas_remaining,
-                        self.env.config.fork,
-                    )?;
-
-                    let gas_used = gas_limit
-                        .checked_sub(gas_remaining)
-                        .ok_or(InternalError::Underflow)?;
-
-                    return Ok(SubCallResult {
-                        success: ctx_result.is_success(),
-                        gas_limit,
-                        gas_used,
-                        output: ctx_result.output,
-                        created_address: None,
-                    });
-                }
-
+                // Compute should_transfer before precompile check (needed for both paths)
                 let should_transfer =
                     matches!(scheme, JitCallScheme::Call | JitCallScheme::CallCode);
 
@@ -983,6 +966,58 @@ impl<'a> VM<'a> {
                     }
                 }
 
+                // Check if target is a precompile
+                // TODO: JIT does not yet handle EIP-7702 delegation — revmc does not signal this.
+                // generic_call guards precompile entry with `&& !is_delegation_7702` to prevent
+                // delegated accounts from being treated as precompiles. When revmc adds 7702
+                // delegation support, this check must be updated to match.
+                if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type) {
+                    // Record precompile address touch for BAL per EIP-7928
+                    if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                        recorder.record_touched_address(code_address);
+                    }
+
+                    let mut gas_remaining = gas_limit;
+                    let ctx_result = Self::execute_precompile(
+                        code_address,
+                        &calldata,
+                        gas_limit,
+                        &mut gas_remaining,
+                        self.env.config.fork,
+                    )?;
+
+                    let gas_used = gas_limit
+                        .checked_sub(gas_remaining)
+                        .ok_or(InternalError::Underflow)?;
+
+                    // Transfer value and emit EIP-7708 log on success
+                    if ctx_result.is_success() && should_transfer && !value.is_zero() {
+                        self.transfer(caller, target, value)?;
+
+                        // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+                        // Self-transfers (caller == target) do NOT emit a log
+                        if self.env.config.fork >= Fork::Amsterdam && caller != target {
+                            let log = crate::utils::create_eth_transfer_log(
+                                caller, target, value,
+                            );
+                            self.substate.add_log(log);
+                        }
+                    }
+
+                    return Ok(SubCallResult {
+                        success: ctx_result.is_success(),
+                        gas_limit,
+                        gas_used,
+                        output: ctx_result.output,
+                        created_address: None,
+                    });
+                }
+
+                // Create BAL checkpoint before entering nested call for potential revert
+                // per EIP-7928 (ref: generic_call)
+                let bal_checkpoint =
+                    self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
                 // Load target bytecode
                 let code_hash = self.db.get_account(code_address)?.info.code_hash;
                 let bytecode = self.db.get_code(code_hash)?.clone();
@@ -991,7 +1026,7 @@ impl<'a> VM<'a> {
                 stack.clear();
                 let next_memory = self.current_call_frame.memory.next_memory();
 
-                let new_call_frame = CallFrame::new(
+                let mut new_call_frame = CallFrame::new(
                     caller,
                     target,
                     code_address,
@@ -1008,15 +1043,30 @@ impl<'a> VM<'a> {
                     stack,
                     next_memory,
                 );
+                // Store BAL checkpoint in the call frame's backup for restoration on revert
+                new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
 
                 self.add_callframe(new_call_frame);
 
-                // Transfer value from caller to callee
-                if should_transfer && !value.is_zero() {
+                // Transfer value from caller to callee (ref: generic_call)
+                if should_transfer {
                     self.transfer(caller, target, value)?;
                 }
 
                 self.substate.push_backup();
+
+                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+                // Must be after push_backup() so the log reverts if the child context reverts
+                // Self-transfers (caller == target) do NOT emit a log
+                if should_transfer
+                    && self.env.config.fork >= Fork::Amsterdam
+                    && !value.is_zero()
+                    && caller != target
+                {
+                    let log =
+                        crate::utils::create_eth_transfer_log(caller, target, value);
+                    self.substate.add_log(log);
+                }
 
                 // Run the child frame to completion
                 let result = self.run_subcall()?;
@@ -1079,22 +1129,63 @@ impl<'a> VM<'a> {
 
                 // Get current nonce and compute deploy address BEFORE incrementing
                 let caller_nonce = self.db.get_account(caller)?.info.nonce;
+
+                // Max nonce check (ref: generic_create)
+                if caller_nonce == u64::MAX {
+                    return Ok(SubCallResult {
+                        success: false,
+                        gas_limit,
+                        gas_used: 0,
+                        output: Bytes::new(),
+                        created_address: None,
+                    });
+                }
+
                 let deploy_address = if let Some(salt_val) = salt {
                     crate::utils::calculate_create2_address(caller, &init_code, salt_val)?
                 } else {
                     ethrex_common::evm::calculate_create_address(caller, caller_nonce)
                 };
 
+                // Add new contract to accessed addresses (ref: generic_create)
+                self.substate.add_accessed_address(deploy_address);
+
+                // Record address touch for BAL per EIP-7928 (ref: generic_create)
+                if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                    recorder.record_touched_address(deploy_address);
+                }
+
                 // Increment caller nonce (CREATE consumes a nonce)
                 self.increment_account_nonce(caller)?;
 
-                let bytecode = ethrex_common::types::Code::from_bytecode(init_code);
+                // Collision check (ref: generic_create)
+                let new_account = self.get_account_mut(deploy_address)?;
+                if new_account.create_would_collide() {
+                    return Ok(SubCallResult {
+                        success: false,
+                        gas_limit,
+                        gas_used: gas_limit,
+                        output: Bytes::new(),
+                        created_address: None,
+                    });
+                }
+
+                // Create BAL checkpoint before entering create call for potential revert
+                // per EIP-7928 (ref: generic_create)
+                let bal_checkpoint =
+                    self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
+                // SAFETY: init code hash is never used (matches generic_create pattern)
+                let bytecode = ethrex_common::types::Code::from_bytecode_unchecked(
+                    init_code,
+                    H256::zero(),
+                );
 
                 let mut stack = self.stack_pool.pop().unwrap_or_default();
                 stack.clear();
                 let next_memory = self.current_call_frame.memory.next_memory();
 
-                let new_call_frame = CallFrame::new(
+                let mut new_call_frame = CallFrame::new(
                     caller,
                     deploy_address,
                     deploy_address,
@@ -1111,8 +1202,13 @@ impl<'a> VM<'a> {
                     stack,
                     next_memory,
                 );
+                // Store BAL checkpoint in the call frame's backup for restoration on revert
+                new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
 
                 self.add_callframe(new_call_frame);
+
+                // Deploy nonce init: 0 -> 1 (ref: generic_create)
+                self.increment_account_nonce(deploy_address)?;
 
                 // Transfer value
                 if !value.is_zero() {
@@ -1121,43 +1217,38 @@ impl<'a> VM<'a> {
 
                 self.substate.push_backup();
 
-                let result = self.run_subcall()?;
+                // Track created account (ref: generic_create)
+                self.substate.add_created_account(deploy_address);
 
-                if result.is_success() {
-                    // EIP-170: Code size limit (24576 bytes) — Spurious Dragon+
-                    if self.env.config.fork >= Fork::SpuriousDragon
-                        && result.output.len() > 24576
-                    {
-                        return Ok(SubCallResult {
-                            success: false,
-                            gas_limit,
-                            gas_used: gas_limit,
-                            output: Bytes::new(),
-                            created_address: None,
-                        });
-                    }
-
-                    // Store the deployed code
-                    let code =
-                        ethrex_common::types::Code::from_bytecode(result.output.clone());
-                    self.update_account_bytecode(deploy_address, code)?;
-
-                    Ok(SubCallResult {
-                        success: true,
-                        gas_limit,
-                        gas_used: result.gas_used,
-                        output: result.output,
-                        created_address: Some(deploy_address),
-                    })
-                } else {
-                    Ok(SubCallResult {
-                        success: false,
-                        gas_limit,
-                        gas_used: result.gas_used,
-                        output: result.output,
-                        created_address: None,
-                    })
+                // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
+                // Must be after push_backup() so the log reverts if the child context reverts
+                if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
+                    let log = crate::utils::create_eth_transfer_log(
+                        caller,
+                        deploy_address,
+                        value,
+                    );
+                    self.substate.add_log(log);
                 }
+
+                // Run the child frame to completion.
+                // validate_contract_creation (called by handle_opcode_result inside
+                // interpreter_loop) already checks code size, EOF prefix, charges code
+                // deposit cost, and stores the deployed code — no redundant checks needed.
+                let result = self.run_subcall()?;
+                let success = result.is_success();
+
+                Ok(SubCallResult {
+                    success,
+                    gas_limit,
+                    gas_used: result.gas_used,
+                    output: result.output,
+                    created_address: if success {
+                        Some(deploy_address)
+                    } else {
+                        None
+                    },
+                })
             }
         }
     }

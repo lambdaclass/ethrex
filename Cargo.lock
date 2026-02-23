@@ -13513,6 +13513,7 @@ dependencies = [
  "revmc-builtins",
  "revmc-context",
  "rustc-hash 2.1.1",
+ "serial_test",
  "thiserror 2.0.18",
  "tracing",
 ]

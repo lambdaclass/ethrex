@@ -30,6 +30,7 @@ ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-crypto.workspace = true
 rustc-hash.workspace = true
+serial_test.workspace = true
 
 [features]
 default = []

@@ -164,6 +164,17 @@ impl JitMetrics {
         }
     }
 
+    /// Reset all counters to zero.
+    ///
+    /// Used by `JitState::reset_for_testing()` to prevent state leakage
+    /// between `#[serial]` tests.
+    pub fn reset(&self) {
+        self.jit_executions.store(0, Ordering::Relaxed);
+        self.jit_fallbacks.store(0, Ordering::Relaxed);
+        self.compilations.store(0, Ordering::Relaxed);
+        self.compilation_skips.store(0, Ordering::Relaxed);
+    }
+
     /// Get a snapshot of all metrics.
     pub fn snapshot(&self) -> (u64, u64, u64, u64) {
         (

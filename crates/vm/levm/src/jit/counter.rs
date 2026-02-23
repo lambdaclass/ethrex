@@ -78,6 +78,16 @@ impl ExecutionCounter {
         1
     }
 
+    /// Remove all execution counts.
+    ///
+    /// Used by `JitState::reset_for_testing()` to prevent state leakage
+    /// between `#[serial]` tests.
+    pub fn clear(&self) {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let mut counts = self.counts.write().unwrap();
+        counts.clear();
+    }
+
     /// Get the current execution count for a bytecode hash.
     pub fn get(&self, hash: &H256) -> u64 {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
