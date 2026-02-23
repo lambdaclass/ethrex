@@ -53,6 +53,30 @@ jobs:
       - name: Clippy with Tokamak features
         run: cargo clippy --features tokamak -- -D warnings
 
+  # JIT backend build (requires LLVM). Separate job because LLVM install is heavy.
+  jit-backend:
+    name: JIT Backend (revmc + LLVM)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install LLVM 18
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main"
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 llvm-18-dev
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+
+      - name: Build tokamak-jit with revmc backend
+        run: cargo build -p tokamak-jit --features revmc-backend
+
+      - name: Test tokamak-jit with revmc backend
+        run: cargo test -p tokamak-jit --features revmc-backend
+
   format-check:
     name: Format Check
     runs-on: ubuntu-22.04

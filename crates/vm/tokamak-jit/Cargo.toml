@@ -5,7 +5,45 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-ethrex-levm.workspace = true
+ethrex-levm = { workspace = true, features = ["tokamak-jit"] }
+ethrex-common = { workspace = true, default-features = false }
+
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# revmc (Paradigm) — LLVM-based EVM JIT compiler.
+# Gated behind `revmc-backend` feature since it requires LLVM 21 installed on the system.
+revmc = { git = "https://github.com/paradigmxyz/revmc.git", rev = "4995ac64fb4e", features = ["llvm"], optional = true }
+revmc-builtins = { git = "https://github.com/paradigmxyz/revmc.git", rev = "4995ac64fb4e", optional = true }
+revmc-context = { git = "https://github.com/paradigmxyz/revmc.git", rev = "4995ac64fb4e", optional = true }
+revm-primitives = { version = "22.0", default-features = false, features = ["std"], optional = true }
+revm-interpreter = { version = "32.0", default-features = false, features = ["std"], optional = true }
+revm-bytecode = { version = "8.0", default-features = false, features = ["std", "parse"], optional = true }
+revm-context-interface = { version = "14.0", default-features = false, features = ["std"], optional = true }
+revm-state = { version = "9.0", default-features = false, features = ["std"], optional = true }
+
+[dev-dependencies]
+hex.workspace = true
+ethrex-vm.workspace = true
+ethrex-storage.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-crypto.workspace = true
+rustc-hash.workspace = true
+
+[features]
+default = []
+# Enable the revmc LLVM backend. Requires LLVM 21 installed on the system.
+revmc-backend = [
+    "dep:revmc",
+    "dep:revmc-builtins",
+    "dep:revmc-context",
+    "dep:revm-primitives",
+    "dep:revm-interpreter",
+    "dep:revm-bytecode",
+    "dep:revm-context-interface",
+    "dep:revm-state",
+]
 
 [lints]
 workspace = true
