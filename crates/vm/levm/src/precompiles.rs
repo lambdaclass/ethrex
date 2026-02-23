@@ -29,7 +29,7 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use rustc_hash::FxHashMap;
+use std::collections::HashMap;
 use sha2::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
@@ -289,14 +289,18 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
+/// Per-block cache for precompile results shared between warmer and executor.
+/// Uses `HashMap` (SipHash) instead of `FxHashMap` because keys include
+/// attacker-controlled calldata — a non-randomized hasher would be vulnerable
+/// to hash-collision DoS.
 pub struct PrecompileCache {
-    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+    cache: RwLock<HashMap<(Address, Bytes), (Bytes, u64)>>,
 }
 
 impl Default for PrecompileCache {
     fn default() -> Self {
         Self {
-            cache: RwLock::new(FxHashMap::default()),
+            cache: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -307,17 +311,21 @@ impl PrecompileCache {
     }
 
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
+        // Graceful degradation: if the lock is poisoned (a thread panicked while
+        // holding it), skip the cache rather than propagating the panic. The cache
+        // is a pure optimization — missing it only costs a recomputation.
         self.cache
             .read()
-            .ok()?
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&(*address, calldata.clone()))
             .cloned()
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        if let Ok(mut cache) = self.cache.write() {
-            cache.insert((address, calldata), (output, gas_cost));
-        }
+        self.cache
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((address, calldata), (output, gas_cost));
     }
 }
 
