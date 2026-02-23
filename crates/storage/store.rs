@@ -13,6 +13,7 @@ use crate::{
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
+    bloom::StorageBloom,
     error::StoreError,
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
@@ -182,6 +183,10 @@ pub struct Store {
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+
+    /// Bloom filter tracking which (address, slot) pairs exist in storage.
+    /// Used to skip trie traversals for SLOADs that hit non-existent slots.
+    storage_bloom: Arc<StorageBloom>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -1460,6 +1465,7 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            storage_bloom: Arc::new(StorageBloom::new()),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1707,6 +1713,7 @@ impl Store {
                         storage_trie.remove(&hashed_key)?;
                     } else {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        self.storage_bloom.insert(&update.address, storage_key);
                     }
                 }
                 let (storage_hash, storage_updates) =
@@ -1798,6 +1805,7 @@ impl Store {
                         storage_trie.remove(&hashed_key)?;
                     } else {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        self.storage_bloom.insert(&update.address, storage_key);
                     }
                 }
 
@@ -2084,6 +2092,11 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        // Fast path: bloom filter says this slot has never been written
+        if self.storage_bloom.definitely_absent(&address, &storage_key) {
+            return Ok(None);
+        }
+
         let account_hash = hash_address_fixed(&address);
 
         // Pre-acquire shared resources once for both trie opens
@@ -2122,10 +2135,17 @@ impl Store {
         )?;
 
         let hashed_key = hash_key_fixed(&storage_key);
-        storage_trie
+        let result = storage_trie
             .get(&hashed_key)?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose()
+            .transpose()?;
+
+        // Populate bloom with slots that exist so future lookups benefit
+        if result.is_some() {
+            self.storage_bloom.insert(&address, &storage_key);
+        }
+
+        Ok(result)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {

@@ -66,6 +66,7 @@
 
 pub mod api;
 pub mod backend;
+pub mod bloom;
 pub mod error;
 mod layering;
 pub mod rlp;
