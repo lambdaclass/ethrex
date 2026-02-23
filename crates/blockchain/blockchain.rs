@@ -676,6 +676,8 @@ impl Blockchain {
                     None
                 };
 
+            let mut batch_addresses: Vec<H256> = Vec::new();
+
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
                 *max_queue_length = current_length.max(*max_queue_length);
@@ -773,6 +775,23 @@ impl Blockchain {
                         };
                         account_state_cache.insert(hashed_address, state);
                     }
+
+                    batch_addresses.push(hashed_address);
+                }
+
+                // Incrementally prefetch state trie nodes for this batch's accounts.
+                // This overlaps with execution, so by drain time most nodes are revealed.
+                if !batch_addresses.is_empty() {
+                    batch_addresses.sort_unstable();
+                    batch_addresses.dedup();
+                    let paths: Vec<Nibbles> = batch_addresses
+                        .iter()
+                        .map(|addr| Nibbles::from_bytes(addr.as_bytes()))
+                        .collect();
+                    sparse_state
+                        .prefetch_paths(&paths, &state_provider)
+                        .map_err(|e| StoreError::Custom(format!("state prefetch: {e}")))?;
+                    batch_addresses.clear();
                 }
             }
 
@@ -780,47 +799,17 @@ impl Blockchain {
             // Close worker channels — workers will finalize and return results
             drop(worker_txs);
 
-            // Build prefetch paths
-            let all_state_accounts: Vec<H256> = {
-                let mut set: rustc_hash::FxHashSet<H256> = Default::default();
-                set.extend(storage_accounts.iter());
-                set.extend(account_infos.keys());
-                set.extend(cleared_storage.iter());
-                set.into_iter().collect()
-            };
-            let mut state_prefetch_paths: Vec<Nibbles> = all_state_accounts
-                .iter()
-                .map(|addr| Nibbles::from_bytes(addr.as_bytes()))
-                .collect();
-            state_prefetch_paths.sort_unstable();
-
-            // Run prefetch and worker join concurrently:
-            // - Joiner thread: waits for all workers to finish
-            // - Main thread: prefetches state trie nodes
+            // Collect worker results (workers finalize during the overlapping prefetch above)
             let num_storage_accounts = storage_accounts.len();
-            let drain_start = Instant::now();
-            let joiner = s.spawn(
-                move || -> Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> {
-                    let mut results = Vec::new();
-                    for handle in worker_handles {
-                        let r = handle
-                            .join()
-                            .map_err(|_| StoreError::Custom("worker panicked".into()))??;
-                        results.extend(r);
-                    }
-                    Ok(results)
-                },
-            );
-
-            sparse_state
-                .prefetch_paths(&state_prefetch_paths, &state_provider)
-                .map_err(|e| StoreError::Custom(format!("state prefetch: {e}")))?;
-            let prefetch_elapsed = drain_start.elapsed();
-
-            let storage_results = joiner
-                .join()
-                .map_err(|_| StoreError::Custom("joiner panicked".into()))??;
-            let join_elapsed = drain_start.elapsed();
+            let join_start = Instant::now();
+            let mut storage_results: Vec<(H256, H256, Vec<TrieNode>)> = Vec::new();
+            for handle in worker_handles {
+                let results = handle
+                    .join()
+                    .map_err(|_| StoreError::Custom("worker panicked".into()))??;
+                storage_results.extend(results);
+            }
+            let join_elapsed = join_start.elapsed();
 
             // Build state trie updates
             let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
@@ -914,8 +903,7 @@ impl Blockchain {
             let root_elapsed = root_start.elapsed();
 
             info!(
-                "  |- merkle drain: prefetch={}ms join={}ms apply={}ms root={}ms ({} accts, {} storage)",
-                prefetch_elapsed.as_millis(),
+                "  |- merkle drain: join={}ms apply={}ms root={}ms ({} accts, {} storage)",
                 join_elapsed.as_millis(),
                 apply_elapsed.as_millis(),
                 root_elapsed.as_millis(),
