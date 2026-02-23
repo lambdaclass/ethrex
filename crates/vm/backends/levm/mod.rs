@@ -56,7 +56,7 @@ enum Resource {
 }
 
 /// Iterative path-halving Union-Find find with path compression.
-fn uf_find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
     while parent[x] != x {
         parent[x] = parent[parent[x]]; // path halving
         x = parent[x];
@@ -65,7 +65,7 @@ fn uf_find(parent: &mut Vec<usize>, mut x: usize) -> usize {
 }
 
 /// Union-Find union: merge the sets containing a and b.
-fn uf_union(parent: &mut Vec<usize>, a: usize, b: usize) {
+fn uf_union(parent: &mut [usize], a: usize, b: usize) {
     let ra = uf_find(parent, a);
     let rb = uf_find(parent, b);
     if ra != rb {
@@ -90,11 +90,16 @@ fn uf_union(parent: &mut Vec<usize>, a: usize, b: usize) {
 /// statically from tx metadata — an inherently incomplete process, since a contract can read
 /// arbitrary state at runtime (BALANCE, EXTCODESIZE, SLOAD via sub-calls, etc.).
 ///
-/// We conservatively add all block-level written storage, code, and non-sender balance
-/// resources to every CALL tx's read set. This catches most conflicts but cannot be
-/// exhaustive: for example, a sender that is also a contract (EIP-7702) whose balance is
-/// read by another tx's sub-call would be missed (sender balances are excluded to avoid
-/// serializing every tx pair, since all txs write their sender's balance via gas fees).
+/// We use address-level narrowing: for each CALL tx, we derive a "known addresses" set
+/// from the BAL (any address where the tx has a write entry) plus static tx metadata
+/// (to, access_list, auth_list). Only written resources from these known addresses are
+/// added to the tx's read set. This avoids the giant conflict cluster that results from
+/// blanket inclusion of all written resources while still catching real dependencies.
+///
+/// This cannot be exhaustive: for example, a sender that is also a contract (EIP-7702)
+/// whose balance is read by another tx's sub-call would be missed (sender balances are
+/// excluded to avoid serializing every tx pair, since all txs write their sender's
+/// balance via gas fees).
 ///
 /// The caller (`add_block_pipeline`) has a sequential fallback for the rare cases this
 /// approximation misses: if parallel execution produces a gas/state/receipts mismatch,
@@ -173,28 +178,83 @@ fn build_parallel_groups(
             .collect()
     };
 
+    // Build per-tx "interacted addresses" from the BAL: for each account, collect which
+    // tx indices appear in any of its change lists. This tells us which addresses each tx
+    // is known to interact with (via writes recorded in the BAL).
+    let mut per_tx_addresses: Vec<FxHashSet<Address>> =
+        (0..n).map(|_| FxHashSet::default()).collect();
+    for account in bal.accounts() {
+        if account.address == coinbase {
+            continue;
+        }
+        let addr = account.address;
+        for change in &account.balance_changes {
+            let idx = change.block_access_index as usize;
+            if idx >= 1 && idx <= n {
+                per_tx_addresses[idx - 1].insert(addr);
+            }
+        }
+        for change in &account.nonce_changes {
+            let idx = change.block_access_index as usize;
+            if idx >= 1 && idx <= n {
+                per_tx_addresses[idx - 1].insert(addr);
+            }
+        }
+        for change in &account.code_changes {
+            let idx = change.block_access_index as usize;
+            if idx >= 1 && idx <= n {
+                per_tx_addresses[idx - 1].insert(addr);
+            }
+        }
+        for slot_change in &account.storage_changes {
+            for sc in &slot_change.slot_changes {
+                let idx = sc.block_access_index as usize;
+                if idx >= 1 && idx <= n {
+                    per_tx_addresses[idx - 1].insert(addr);
+                }
+            }
+        }
+    }
+
     // Phase 2: per-tx read sets approximated from static tx metadata.
     // Conservative approximation: may include non-actual reads (extra serialization),
     // but must not miss actual reads that follow a write (would cause wrong state).
     //
     // - Sender always reads its own balance (fee check) and nonce (validation).
     // - Call tx: code is loaded and balance may be checked.
-    //   All block-level written storage is added because any sub-call may read any slot.
+    //   Written resources are filtered to addresses the tx is known to interact with
+    //   (BAL-derived writes + static metadata: to, access_list, auth_list).
     // - EIP-2930 access list: declared pre-warm slots and addresses.
     let mut tx_reads: Vec<FxHashSet<Resource>> = (0..n).map(|_| FxHashSet::default()).collect();
     for (i, (tx, sender)) in txs_with_sender.iter().enumerate() {
         tx_reads[i].insert(Resource::Balance(*sender));
         tx_reads[i].insert(Resource::Nonce(*sender));
-        if let TxKind::Call(to) = tx.to() {
-            if to != coinbase {
-                tx_reads[i].insert(Resource::Balance(to));
-                tx_reads[i].insert(Resource::Code(to));
-                // Conservative multi-hop RAW: a contract call can transitively read any
-                // storage slot (via sub-calls), any balance (BALANCE opcode), or any code
-                // (EXTCODESIZE/DELEGATECALL). We cannot determine the call graph statically,
-                // so we conservatively include all written storage, code, and non-sender
-                // balance resources.
-                for r in &all_written_callable {
+        if let TxKind::Call(to) = tx.to()
+            && to != coinbase
+        {
+            tx_reads[i].insert(Resource::Balance(to));
+            tx_reads[i].insert(Resource::Code(to));
+            // Address-narrowed multi-hop RAW: instead of adding ALL written resources,
+            // only add resources from addresses this tx is known to interact with.
+            // known_addrs = BAL-derived addresses ∪ static addresses (to, access_list, auth_list).
+            let mut known_addrs = per_tx_addresses[i].clone();
+            known_addrs.insert(to);
+            for (al_addr, _) in tx.access_list() {
+                known_addrs.insert(*al_addr);
+            }
+            if let Some(auth_list) = tx.authorization_list() {
+                for auth in auth_list {
+                    known_addrs.insert(auth.address);
+                }
+            }
+            for r in &all_written_callable {
+                let resource_addr = match r {
+                    Resource::Balance(a)
+                    | Resource::Code(a)
+                    | Resource::Storage(a, _)
+                    | Resource::Nonce(a) => *a,
+                };
+                if known_addrs.contains(&resource_addr) {
                     tx_reads[i].insert(r.clone());
                 }
             }
@@ -262,10 +322,10 @@ fn build_parallel_groups(
         for r in rs {
             if let Some(writers) = resource_writers.get(r) {
                 // writers is sorted; first() is the earliest writer.
-                if let Some(&first_writer) = writers.first() {
-                    if first_writer < i {
-                        uf_union(&mut parent, i, first_writer);
-                    }
+                if let Some(&first_writer) = writers.first()
+                    && first_writer < i
+                {
+                    uf_union(&mut parent, i, first_writer);
                 }
             }
         }
@@ -439,7 +499,7 @@ impl LEVM {
 
             // Drain system call state changes and snapshot for group db seeding
             let sys_updates = LEVM::get_state_transitions_tx(db)?;
-            let system_seed = db.initial_accounts_state.clone();
+            let system_seed = Arc::new(db.initial_accounts_state.clone());
 
             let (receipts, block_gas_used) = Self::execute_block_parallel(
                 block,
@@ -612,7 +672,7 @@ impl LEVM {
         merkleizer: &Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         sys_updates: Vec<AccountUpdate>,
-        system_seed: CacheDB,
+        system_seed: Arc<CacheDB>,
     ) -> Result<(Vec<Receipt>, u64), EvmError> {
         // Send system call updates to merkleizer first
         merkleizer
@@ -658,11 +718,10 @@ impl LEVM {
         let all_results: Result<Vec<GroupResult>, EvmError> = groups
             .into_par_iter()
             .map(|group| -> Result<_, EvmError> {
-                let mut group_db = GeneralizedDatabase::new(store.clone());
-                // Seed with post-system-call state so group txs see updated system contract state
-                group_db
-                    .initial_accounts_state
-                    .extend(system_seed.iter().map(|(a, ac)| (*a, ac.clone())));
+                // Use shared_base instead of deep-cloning system_seed into each group.
+                // Accounts are lazily cloned into initial_accounts_state on first access.
+                let mut group_db =
+                    GeneralizedDatabase::new_with_shared_base(store.clone(), system_seed.clone());
                 let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
                 let mut per_tx = Vec::new();
                 for &tx_idx in &group {
@@ -716,10 +775,14 @@ impl LEVM {
                         // Skip per-tx coinbase updates; handled via per-group delta above
                         continue;
                     }
-                    merged
-                        .entry(update.address)
-                        .and_modify(|e| e.merge(update.clone()))
-                        .or_insert(update);
+                    match merged.entry(update.address) {
+                        std::collections::hash_map::Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update)
+                        }
+                        std::collections::hash_map::Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                    }
                 }
             }
         }
@@ -740,10 +803,12 @@ impl LEVM {
         // Extract coinbase update (and any other updates on main db)
         let main_updates = LEVM::get_state_transitions_tx(db)?;
         for update in main_updates {
-            merged
-                .entry(update.address)
-                .and_modify(|e| e.merge(update.clone()))
-                .or_insert(update);
+            match merged.entry(update.address) {
+                std::collections::hash_map::Entry::Occupied(mut e) => e.get_mut().merge(update),
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(update);
+                }
+            }
         }
 
         // Send merged tx + coinbase updates to merkleizer
@@ -1751,10 +1816,12 @@ mod parallel_group_tests {
     }
 
     #[test]
-    fn test_call_tx_grouped_with_unrelated_storage_writer() {
+    fn test_call_tx_not_grouped_with_unrelated_storage_writer() {
         // tx0 (CALL to addr_b) writes Storage(addr_a, slot1) — a different address.
-        // tx1 (CALL to addr_b) is a call tx: it reads all_written_storage including
-        // Storage(addr_a, slot1), so it must be serialized after tx0.
+        // tx1 (CALL to addr_b) has no BAL entries, so its known addresses are just {addr_b}.
+        // Since Storage(addr_a, slot1) has address addr_a which is NOT in tx1's known set,
+        // tx1 doesn't read it → no RAW → parallel groups.
+        // (The sequential fallback catches the rare case where narrowing misses a dependency.)
         let addr_a = addr(1);
         let addr_b = addr(2);
         let s1 = slot(1);
@@ -1762,15 +1829,17 @@ mod parallel_group_tests {
         let tx_b = call_tx(addr_b);
         let txs = vec![(&tx_b, addr(10)), (&tx_b, addr(11))];
         let groups = build_parallel_groups(&bal, &txs, addr(0xff));
-        // tx0 writes storage, tx1 is a CALL that reads all written storage → RAW → same group
-        assert_eq!(groups, vec![vec![0, 1]]);
+        // Address narrowing: tx1 only knows about addr_b, not addr_a → no RAW → parallel
+        assert_eq!(groups, vec![vec![0], vec![1]]);
     }
 
     #[test]
-    fn test_multihop_raw_all_call_txs_grouped_with_storage_writers() {
+    fn test_address_narrowing_separates_unrelated_call_txs() {
         // Three txs: tx0 writes Storage(A, s1), tx1 writes Storage(B, s2),
-        // tx2 (CALL to C) has no direct connection to A or B, but might call A or B
-        // transitively.  Conservative: tx2 reads all written storage → conflicts with both.
+        // tx2 (CALL to C) has no direct connection to A or B.
+        // With address narrowing: each tx only reads written resources from addresses
+        // it's known to interact with. tx0 knows {A}, tx1 knows {B}, tx2 knows {C}.
+        // No cross-address reads → all three can run in parallel.
         let addr_a = addr(1);
         let addr_b = addr(2);
         let addr_c = addr(3);
@@ -1782,8 +1851,8 @@ mod parallel_group_tests {
         let tx_c = call_tx(addr_c);
         let txs = vec![(&tx_a, addr(10)), (&tx_b, addr(11)), (&tx_c, addr(12))];
         let groups = build_parallel_groups(&bal, &txs, addr(0xff));
-        // All three are call txs touching written storage → one group
-        assert_eq!(groups, vec![vec![0, 1, 2]]);
+        // Address narrowing: each tx only knows its own addresses → all parallel
+        assert_eq!(groups, vec![vec![0], vec![1], vec![2]]);
     }
 
     #[test]
@@ -1805,11 +1874,11 @@ mod parallel_group_tests {
 
     #[test]
     fn test_call_tx_after_storage_writer_is_rawd_before_is_not() {
-        // tx0 writes Storage(A, s1).  tx1 (CALL, index 1 > 0) reads all written storage
-        // including Storage(A, s1) → RAW hazard → same group.
-        // A hypothetical tx-1 (index < 0 impossible) would be a WAR (safe), but we can
-        // test with ordering: tx0=CALL, tx1=storage writer.  Here tx0 READS and tx1 WRITES
-        // later → WAR (no serialization needed for tx0).
+        // tx0 (CALL to B) has no BAL writes → known_addrs = {B}.
+        // tx1 (CALL to A) writes Storage(A, s1) → known_addrs = {A}.
+        // tx0 doesn't know about A, so doesn't read Storage(A, s1).
+        // tx1 reads its own write but first_writer=1, i=1, 1<1 false → no RAW.
+        // Result: parallel.
         let addr_a = addr(1);
         let addr_b = addr(2);
         let s1 = slot(1);
@@ -1820,13 +1889,35 @@ mod parallel_group_tests {
         // tx0=CALL(B), tx1=CALL(A) writer
         let txs = vec![(&tx_call, addr(10)), (&tx_write, addr(11))];
         let groups = build_parallel_groups(&bal, &txs, addr(0xff));
-        // tx0 is before tx1 (WAR: tx0 reads slot that tx1 will write — tx0 correctly reads
-        // initial state, no serialization needed). tx1 writes, tx0 reads: first_writer=1,
-        // reader i=0, 1 < 0 is false → no RAW union.
-        // Additionally, both are CALL txs; tx0 reads all_written_storage including
-        // Storage(A,s1) written by tx1.  first_writer for Storage(A,s1) = index 1.
-        // Condition: first_writer (1) < i (0)? NO → no RAW union triggered.
-        // They CAN run in parallel (tx0 reads pre-write value of Storage(A,s1), which is correct).
         assert_eq!(groups, vec![vec![0], vec![1]]);
+    }
+
+    #[test]
+    fn test_address_narrowing_groups_when_known_address_overlaps() {
+        // tx0 writes Storage(A, s1) and Balance(B).
+        // tx1 (CALL to C) also writes Balance(B) → per_tx_addresses[1] includes B.
+        // tx1's known_addrs = {B, C}. Balance(B) is in all_written_callable (non-sender).
+        // tx1 reads Balance(B) written by tx0 → RAW → same group.
+        // This verifies that narrowing still catches real dependencies.
+        let addr_a = addr(1);
+        let addr_b = addr(2);
+        let addr_c = addr(3);
+        let s1 = slot(1);
+        // tx0 writes Storage(A, s1), tx0 and tx1 both write Balance(B)
+        let mut bal = bal_storage_writes(&[(1, addr_a, s1)]);
+        // Add balance writes for B from both tx0 and tx1
+        let bal_balance = bal_writes(&[(1, addr_b), (2, addr_b)]);
+        // Merge: combine both BALs
+        for account in bal_balance.accounts() {
+            bal.add_account_changes(account.clone());
+        }
+        let tx_a = call_tx(addr_a);
+        let tx_c = call_tx(addr_c);
+        let txs = vec![(&tx_a, addr(10)), (&tx_c, addr(11))];
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        // tx1 knows addr_b (from BAL write) and addr_c (from tx.to).
+        // Balance(B) is in all_written_callable and addr_b ∈ tx1.known_addrs → RAW.
+        // Also W-W on Balance(B). Both reasons cause union → same group.
+        assert_eq!(groups, vec![vec![0, 1]]);
     }
 }
