@@ -277,6 +277,21 @@ impl StorageTrieFactory {
         };
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
+
+    /// Open a read-only state trie handle for parallel account state lookups.
+    /// Each call creates an independent Trie instance safe for concurrent use.
+    pub fn open_state(&self) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper {
+            state_root: self.state_root,
+            inner: self.trie_cache.clone(),
+            db: Box::new(BackendTrieDB::new_for_accounts(
+                self.backend.clone(),
+                self.last_written.clone(),
+            )?),
+            prefix: None,
+        };
+        Ok(Trie::open(Box::new(trie_db), self.state_root))
+    }
 }
 
 impl Store {
