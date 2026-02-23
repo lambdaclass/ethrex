@@ -89,7 +89,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc::Sender;
@@ -557,7 +557,7 @@ impl Blockchain {
         }
 
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
-        let mut accounts_with_storage: FxHashSet<H256> = Default::default();
+        let mut account_expected_shards: FxHashMap<H256, u16> = Default::default();
         let mut storage_root_cache: FxHashMap<H256, H256> = Default::default();
         let state_trie_for_roots = self.storage.open_state_trie(parent_header.state_root)?;
         let mut code_updates: Vec<(H256, Code)> = vec![];
@@ -597,7 +597,7 @@ impl Blockchain {
                     .send(AccountRequest::LoadAccount(hashed_address))
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 if update.removed {
-                    accounts_with_storage.insert(hashed_address);
+                    account_expected_shards.insert(hashed_address, 0xFFFF);
                     storage_root_cache.insert(hashed_address, *EMPTY_TRIE_HASH);
                     // Match old behavior: remove account, skip added_storage processing.
                     // Send Delete to clear any existing storage in workers so the
@@ -615,7 +615,7 @@ impl Blockchain {
                 }
 
                 if update.removed_storage {
-                    accounts_with_storage.insert(hashed_address);
+                    account_expected_shards.insert(hashed_address, 0xFFFF);
                     storage_root_cache.insert(hashed_address, *EMPTY_TRIE_HASH);
                     for tx in &storage_workers_tx {
                         tx.send(StorageRequest::Delete(hashed_address))
@@ -623,7 +623,6 @@ impl Blockchain {
                     }
                 }
                 if !update.added_storage.is_empty() {
-                    accounts_with_storage.insert(hashed_address);
                     let storage_root =
                         *storage_root_cache.entry(hashed_address).or_insert_with(|| {
                             match state_trie_for_roots.get(hashed_address.as_bytes()) {
@@ -636,6 +635,9 @@ impl Blockchain {
                     for (key, value) in update.added_storage {
                         let hashed_key = keccak(key);
                         let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
+                        *account_expected_shards
+                            .entry(hashed_address)
+                            .or_insert(0u16) |= 1 << bucket;
                         storage_workers_tx[bucket as usize]
                             .send(StorageRequest::MerklizeStorage {
                                 prefix: hashed_address,
@@ -656,12 +658,15 @@ impl Blockchain {
             }
         }
 
+        // Dispatcher's state trie is no longer needed after dispatch
+        drop(state_trie_for_roots);
+
         // Send MerklizeAccount early for accounts without storage changes.
         // Account workers can process these in parallel with storage collection.
         let mut accounts_needing_storage: FxHashMap<H256, PreMerkelizedAccountState> =
             Default::default();
         for (hashed_account, state) in account_state {
-            if accounts_with_storage.contains(&hashed_account) {
+            if account_expected_shards.contains_key(&hashed_account) {
                 accounts_needing_storage.insert(hashed_account, state);
             } else {
                 let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
@@ -674,7 +679,8 @@ impl Blockchain {
             }
         }
 
-        // Collect storage roots from storage workers
+        // Collect storage roots from storage workers, pipelining completed
+        // accounts into account workers as soon as all their shards report.
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &storage_workers_tx {
             tx.send(StorageRequest::CollectStorages {
@@ -684,6 +690,7 @@ impl Blockchain {
         }
         drop(gatherer_tx);
 
+        let mut received_shards: FxHashMap<H256, u16> = Default::default();
         for CollectedStorageMsg {
             index,
             prefix,
@@ -702,6 +709,21 @@ impl Blockchain {
                 }
             }
             state.nodes.extend(nodes);
+
+            // Send MerklizeAccount as soon as all expected shards have reported
+            let received = received_shards.entry(prefix).or_insert(0u16);
+            *received |= 1 << index;
+            if *received == account_expected_shards.get(&prefix).copied().unwrap_or(0)
+                && let Some(state) = accounts_needing_storage.remove(&prefix)
+            {
+                let bucket = prefix.as_fixed_bytes()[0] >> 4;
+                account_workers_tx[bucket as usize]
+                    .send(AccountRequest::MerklizeAccount {
+                        hashed_account: prefix,
+                        state,
+                    })
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            }
         }
 
         // Storage workers are done — drop senders to free their threads and memory
@@ -709,7 +731,7 @@ impl Blockchain {
 
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
-        // Send remaining accounts (with assembled storage roots) to account workers
+        // Send any accounts whose storage wasn't fully resolved (safety net)
         for (hashed_account, state) in accounts_needing_storage {
             let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
             account_workers_tx[bucket as usize]
@@ -858,13 +880,13 @@ impl Blockchain {
                 } => {
                     let trie = match tree.entry(prefix) {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
-                        Entry::Vacant(vacant_entry) => vacant_entry.insert(
-                            self.storage.open_storage_trie(
+                        Entry::Vacant(vacant_entry) => {
+                            vacant_entry.insert(self.storage.open_storage_trie(
                                 prefix,
                                 parent_header.state_root,
                                 storage_root,
-                            )?,
-                        ),
+                            )?)
+                        }
                     };
                     if value.is_zero() {
                         trie.remove(key.as_bytes())?;
