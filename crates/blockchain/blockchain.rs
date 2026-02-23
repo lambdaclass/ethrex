@@ -780,8 +780,7 @@ impl Blockchain {
             // Close worker channels — workers will finalize and return results
             drop(worker_txs);
 
-            // Prefetch state trie paths while workers finalize
-            let prefetch_start = Instant::now();
+            // Build prefetch paths
             let all_state_accounts: Vec<H256> = {
                 let mut set: rustc_hash::FxHashSet<H256> = Default::default();
                 set.extend(storage_accounts.iter());
@@ -794,23 +793,34 @@ impl Blockchain {
                 .map(|addr| Nibbles::from_bytes(addr.as_bytes()))
                 .collect();
             state_prefetch_paths.sort_unstable();
+
+            // Run prefetch and worker join concurrently:
+            // - Joiner thread: waits for all workers to finish
+            // - Main thread: prefetches state trie nodes
+            let num_storage_accounts = storage_accounts.len();
+            let drain_start = Instant::now();
+            let joiner = s.spawn(
+                move || -> Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> {
+                    let mut results = Vec::new();
+                    for handle in worker_handles {
+                        let r = handle
+                            .join()
+                            .map_err(|_| StoreError::Custom("worker panicked".into()))??;
+                        results.extend(r);
+                    }
+                    Ok(results)
+                },
+            );
+
             sparse_state
                 .prefetch_paths(&state_prefetch_paths, &state_provider)
                 .map_err(|e| StoreError::Custom(format!("state prefetch: {e}")))?;
+            let prefetch_elapsed = drain_start.elapsed();
 
-            let prefetch_elapsed = prefetch_start.elapsed();
-
-            // Collect worker results
-            let join_start = Instant::now();
-            let num_storage_accounts = storage_accounts.len();
-            let mut storage_results: Vec<(H256, H256, Vec<TrieNode>)> = Vec::new();
-            for handle in worker_handles {
-                let results = handle
-                    .join()
-                    .map_err(|_| StoreError::Custom("worker panicked".into()))??;
-                storage_results.extend(results);
-            }
-            let join_elapsed = join_start.elapsed();
+            let storage_results = joiner
+                .join()
+                .map_err(|_| StoreError::Custom("joiner panicked".into()))??;
+            let join_elapsed = drain_start.elapsed();
 
             // Build state trie updates
             let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
