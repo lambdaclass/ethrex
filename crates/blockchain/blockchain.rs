@@ -704,14 +704,18 @@ impl Blockchain {
         let storage_start = Instant::now();
         let deferred_vec: Vec<(H256, Vec<(H256, U256)>)> = deferred_storage.drain().collect();
 
-        let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> =
+        let num_storage_accounts = deferred_vec.len();
+        let total_storage_slots: usize = deferred_vec.iter().map(|(_, v)| v.len()).sum();
+
+        let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>, u64, usize)>, StoreError> =
             std::thread::scope(|s| {
                 // Background: parallel storage processing via rayon
                 let storage_handle =
-                    s.spawn(|| -> Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> {
+                    s.spawn(|| -> Result<Vec<(H256, H256, Vec<TrieNode>, u64, usize)>, StoreError> {
                         deferred_vec
                             .into_par_iter()
                             .map(|(hashed_address, slot_updates)| {
+                                let acct_start = Instant::now();
                                 let storage_root = if cleared_storage.contains(&hashed_address) {
                                     *EMPTY_TRIE_HASH
                                 } else {
@@ -723,6 +727,7 @@ impl Blockchain {
 
                                 // Deduplicate: when multiple txs update the same slot,
                                 // keep only the last value. Then sort for trie locality.
+                                let num_slots = slot_updates.len();
                                 let mut deduped: FxHashMap<H256, U256> = FxHashMap::default();
                                 for (key, value) in slot_updates {
                                     deduped.insert(key, value);
@@ -752,17 +757,18 @@ impl Blockchain {
 
                                 let root = sparse.root_sequential()?;
                                 let updates = sparse.collect_updates();
-                                Ok((hashed_address, root, updates))
+                                let acct_elapsed = acct_start.elapsed().as_micros() as u64;
+                                Ok((hashed_address, root, updates, acct_elapsed, num_slots))
                             })
                             .collect()
                     });
 
                 // Foreground: prefetch state trie nodes while storage runs.
-                // This walks the state trie revealing nodes for all accounts,
-                // so subsequent update_leaf calls are mostly in-memory.
+                let prefetch_start = Instant::now();
                 sparse_state
                     .prefetch_paths(&state_prefetch_paths, &state_provider)
                     .map_err(|e| StoreError::Custom(format!("state prefetch: {e}")))?;
+                let _prefetch_elapsed = prefetch_start.elapsed();
 
                 // Wait for storage to complete
                 storage_handle
@@ -772,10 +778,17 @@ impl Blockchain {
         let storage_results = storage_results?;
         let storage_elapsed = storage_start.elapsed();
 
+        // Find the slowest account for diagnostics
+        let (slowest_us, slowest_slots) = storage_results
+            .iter()
+            .map(|(_, _, _, us, slots)| (*us, *slots))
+            .max_by_key(|(us, _)| *us)
+            .unwrap_or((0, 0));
+
         // Phase 2c: Build state trie updates (all account states already cached)
         let mut state_trie_updates: Vec<(H256, Option<Vec<u8>>)> = Vec::new();
 
-        for (hashed_address, storage_root, updates) in storage_results {
+        for (hashed_address, storage_root, updates, _, _) in storage_results {
             storage_updates.push((hashed_address, updates));
 
             let mut account_state = account_state_cache[&hashed_address].unwrap_or_default();
@@ -867,12 +880,16 @@ impl Blockchain {
         let root_elapsed = root_start.elapsed();
 
         info!(
-            "  |- merkle phases: reads={}ms storage+prefetch={}ms apply={}ms root={}ms ({} accts)",
+            "  |- merkle phases: reads={}ms storage={}ms apply={}ms root={}ms ({} accts, {} storage accts/{} slots, slowest={:.1}ms/{}slots)",
             state_reads_elapsed.as_millis(),
             storage_elapsed.as_millis(),
             apply_elapsed.as_millis(),
             root_elapsed.as_millis(),
             num_state_updates,
+            num_storage_accounts,
+            total_storage_slots,
+            slowest_us as f64 / 1000.0,
+            slowest_slots,
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
