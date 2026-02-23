@@ -292,7 +292,7 @@ impl TrieDB for CachingBackendTrieDB {
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let prefixed_key = self.inner.make_key(key);
+        let prefixed_key = self.inner.make_key(key.clone());
 
         // Check cache first
         if let Some(value) = self.cache.get(&prefixed_key) {
