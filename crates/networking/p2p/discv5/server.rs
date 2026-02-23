@@ -360,6 +360,13 @@ impl DiscoveryServer {
             return Ok(());
         }
 
+        // Add the peer to the peer table
+        if let Some(record) = &authdata.record {
+            self.peer_table
+                .new_contact_records(vec![record.clone()], self.local_node.node_id())
+                .await?;
+        }
+
         // Derive session keys (we are the recipient, node B)
         let session = derive_session_keys(
             &self.signer,
