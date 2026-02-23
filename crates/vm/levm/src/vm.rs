@@ -28,6 +28,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     mem,
     rc::Rc,
+    sync::Arc,
 };
 
 /// Storage mapping from slot key to value.
@@ -445,7 +446,7 @@ impl<'a> VM<'a> {
                 env.origin,
                 callee,
                 Address::default(), // Will be assigned at the end of prepare_execution
-                Code::default(),    // Will be assigned at the end of prepare_execution
+                Arc::new(Code::default()), // Will be assigned at the end of prepare_execution
                 tx.value(),
                 tx.data().clone(),
                 false,

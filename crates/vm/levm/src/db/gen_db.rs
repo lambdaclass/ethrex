@@ -29,7 +29,7 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
-    pub codes: FxHashMap<H256, Code>,
+    pub codes: FxHashMap<H256, Arc<Code>>,
     pub code_metadata: FxHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
@@ -84,12 +84,12 @@ impl GeneralizedDatabase {
         store: Arc<dyn Database>,
         current_accounts_state: FxHashMap<Address, Account>,
     ) -> Self {
-        let mut codes: FxHashMap<H256, Code> = Default::default();
+        let mut codes: FxHashMap<H256, Arc<Code>> = Default::default();
         let levm_accounts: FxHashMap<Address, LevmAccount> = current_accounts_state
             .into_iter()
             .map(|(address, account)| {
                 let (levm_account, code) = account_to_levm_account(account);
-                codes.insert(levm_account.info.code_hash, code);
+                codes.insert(levm_account.info.code_hash, Arc::new(code));
                 (address, levm_account)
             })
             .collect();
@@ -138,18 +138,18 @@ impl GeneralizedDatabase {
     /// Gets code immutably given the code hash.
     /// Use this only inside of the VM, when we don't surely know if the code is in the cache or not
     /// But e.g. in `get_state_transitions` just do `db.codes.get(code_hash)` because we know for sure code is there.
-    pub fn get_code(&mut self, code_hash: H256) -> Result<&Code, InternalError> {
+    pub fn get_code(&mut self, code_hash: H256) -> Result<&Arc<Code>, InternalError> {
         match self.codes.entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
                 let code = self.store.get_account_code(code_hash)?;
-                Ok(entry.insert(code))
+                Ok(entry.insert(Arc::new(code)))
             }
         }
     }
 
     /// Shortcut for getting the code when we only have the address of an account and we don't need anything else.
-    pub fn get_account_code(&mut self, address: Address) -> Result<&Code, InternalError> {
+    pub fn get_account_code(&mut self, address: Address) -> Result<&Arc<Code>, InternalError> {
         let code_hash = self.get_account(address)?.info.code_hash;
         self.get_code(code_hash)
     }
@@ -169,7 +169,7 @@ impl GeneralizedDatabase {
                     let code = match self.codes.entry(code_hash) {
                         Entry::Occupied(entry) => entry.into_mut(),
                         Entry::Vacant(entry) => {
-                            entry.insert(self.store.get_account_code(code_hash)?)
+                            entry.insert(Arc::new(self.store.get_account_code(code_hash)?))
                         }
                     };
 
@@ -329,7 +329,7 @@ impl GeneralizedDatabase {
                 address: *address,
                 removed,
                 info,
-                code: code.cloned(),
+                code: code.map(|c| Code::clone(c)),
                 added_storage,
                 removed_storage,
             };
@@ -376,7 +376,7 @@ impl GeneralizedDatabase {
                 Some(
                     self.codes
                         .get(&new_state_account.info.code_hash)
-                        .cloned()
+                        .map(|c| Code::clone(c))
                         .ok_or_else(|| {
                             VMError::Internal(InternalError::Custom(format!(
                                 "Failed to get code for account {address}"
@@ -573,7 +573,10 @@ impl<'a> VM<'a> {
         let acc = self.get_account_mut(address)?;
         let code_hash = new_bytecode.hash;
         acc.info.code_hash = new_bytecode.hash;
-        self.db.codes.entry(code_hash).or_insert(new_bytecode);
+        self.db
+            .codes
+            .entry(code_hash)
+            .or_insert_with(|| Arc::new(new_bytecode));
         Ok(())
     }
 

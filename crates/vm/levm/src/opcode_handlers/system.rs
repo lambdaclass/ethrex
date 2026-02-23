@@ -16,6 +16,7 @@ use ethrex_common::{
     tracing::CallType::{self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL},
     types::Code,
 };
+use std::sync::Arc;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -837,7 +838,7 @@ impl<'a> VM<'a> {
             new_address,
             new_address,
             // SAFETY: init code hash is never used
-            Code::from_bytecode_unchecked(code, H256::zero()),
+            Arc::new(Code::from_bytecode_unchecked(code, H256::zero())),
             value,
             Bytes::new(),
             false,
@@ -939,7 +940,7 @@ impl<'a> VM<'a> {
         calldata: Bytes,
         ret_offset: usize,
         ret_size: usize,
-        bytecode: Code,
+        bytecode: Arc<Code>,
         is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
