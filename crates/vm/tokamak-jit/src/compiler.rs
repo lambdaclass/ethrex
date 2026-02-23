@@ -3,11 +3,12 @@
 //! Wraps the revmc `EvmCompiler` + `EvmLlvmBackend` pipeline, providing
 //! a simplified API for compiling EVM bytecode to native code.
 
+use crate::adapter::fork_to_spec_id;
 use crate::error::JitError;
+use ethrex_common::types::Fork;
 use ethrex_levm::jit::cache::CompiledCode;
 use ethrex_levm::jit::types::AnalyzedBytecode;
 
-use revm_primitives::SpecId;
 use revmc::{EvmCompiler, EvmLlvmBackend, OptimizationLevel};
 use revmc_context::EvmCompilerFn;
 
@@ -24,14 +25,15 @@ pub struct TokamakCompiler {
 }
 
 impl TokamakCompiler {
-    /// Compile analyzed bytecode into native code.
+    /// Compile analyzed bytecode into native code for a specific fork.
     ///
     /// Uses a thread-local LLVM context via `revmc_llvm::with_llvm_context`.
     /// The compiled function pointer is valid for the lifetime of the program
     /// (LLVM JIT memory is not freed until process exit in this PoC).
-    pub fn compile(analyzed: &AnalyzedBytecode) -> Result<CompiledCode, JitError> {
+    pub fn compile(analyzed: &AnalyzedBytecode, fork: Fork) -> Result<CompiledCode, JitError> {
         let bytecode = analyzed.bytecode.as_ref();
         let hash_hex = format!("{:x}", analyzed.hash);
+        let spec_id = fork_to_spec_id(fork);
 
         revmc::llvm::with_llvm_context(|cx| {
             let backend = EvmLlvmBackend::new(cx, false, OptimizationLevel::Aggressive)
@@ -45,7 +47,7 @@ impl TokamakCompiler {
             #[expect(unsafe_code)]
             let f: EvmCompilerFn = unsafe {
                 compiler
-                    .jit(&hash_hex, bytecode, SpecId::CANCUN)
+                    .jit(&hash_hex, bytecode, spec_id)
                     .map_err(|e| JitError::CompilationFailed(format!("{e}")))?
             };
 

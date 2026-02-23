@@ -13,7 +13,7 @@ use ethrex_common::H256;
 pub struct JitConfig {
     /// Number of executions before a contract becomes a compilation candidate.
     pub compilation_threshold: u64,
-    /// When true, every JIT execution is validated against the interpreter.
+    /// When true, JIT executions are logged for offline validation.
     /// Should always be true during PoC; can be relaxed in production.
     pub validation_mode: bool,
     /// Maximum bytecode size eligible for JIT compilation (EIP-170: 24576).
@@ -21,6 +21,9 @@ pub struct JitConfig {
     /// Maximum number of compiled bytecodes to keep in the cache.
     /// Oldest entries are evicted when this limit is reached.
     pub max_cache_entries: usize,
+    /// Number of JIT executions to validate per (bytecode, fork) pair.
+    /// After this many validations succeed, the bytecode is considered trusted.
+    pub max_validation_runs: u64,
 }
 
 impl Default for JitConfig {
@@ -30,6 +33,7 @@ impl Default for JitConfig {
             validation_mode: true,
             max_bytecode_size: 24576,
             max_cache_entries: 1024,
+            max_validation_runs: 3,
         }
     }
 }

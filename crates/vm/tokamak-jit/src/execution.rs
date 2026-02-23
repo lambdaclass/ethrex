@@ -13,14 +13,13 @@
 //! the code cache.
 
 use bytes::Bytes;
-use revm_bytecode::{Bytecode, Eof};
+use revm_bytecode::Bytecode;
 use revm_interpreter::{
     CallInput, InputsImpl, Interpreter, InterpreterAction, SharedMemory, interpreter::ExtBytecode,
 };
-use revm_primitives::SpecId;
 use revmc_context::EvmCompilerFn;
 
-use crate::adapter::{levm_address_to_revm, revm_gas_to_levm};
+use crate::adapter::{fork_to_spec_id, levm_address_to_revm, revm_gas_to_levm};
 use crate::error::JitError;
 use crate::host::LevmHost;
 use ethrex_levm::call_frame::CallFrame;
@@ -55,6 +54,9 @@ pub fn execute_jit(
         ));
     }
 
+    // Determine the SpecId from the environment's fork
+    let spec_id = fork_to_spec_id(env.config.fork);
+
     // 1. Build revm Interpreter from LEVM CallFrame
     let bytecode_raw = Bytecode::new_raw(Bytes::copy_from_slice(&call_frame.bytecode.bytecode));
     let ext_bytecode = ExtBytecode::new(bytecode_raw);
@@ -78,7 +80,7 @@ pub fn execute_jit(
         ext_bytecode,
         input,
         call_frame.is_static, // is_static — propagated from LEVM call frame
-        SpecId::CANCUN,
+        spec_id,
         gas_limit,
     );
 

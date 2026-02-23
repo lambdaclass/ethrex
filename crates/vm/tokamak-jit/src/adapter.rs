@@ -12,8 +12,45 @@
 
 use crate::error::JitError;
 
+use ethrex_common::types::Fork;
 use revm_interpreter::{Gas, SharedMemory};
-use revm_primitives::U256 as RevmU256;
+use revm_primitives::{SpecId, U256 as RevmU256};
+
+/// Convert LEVM `Fork` to revm `SpecId`.
+///
+/// Maps the ethrex fork enum to the corresponding revm spec identifier.
+/// Forks beyond Osaka (BPO1-5, Amsterdam) map to `SpecId::OSAKA` until
+/// revm adds dedicated spec IDs for them.
+pub fn fork_to_spec_id(fork: Fork) -> SpecId {
+    match fork {
+        Fork::Frontier => SpecId::FRONTIER,
+        Fork::FrontierThawing => SpecId::FRONTIER_THAWING,
+        Fork::Homestead => SpecId::HOMESTEAD,
+        Fork::DaoFork => SpecId::DAO_FORK,
+        Fork::Tangerine => SpecId::TANGERINE,
+        Fork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        Fork::Byzantium => SpecId::BYZANTIUM,
+        Fork::Constantinople => SpecId::CONSTANTINOPLE,
+        Fork::Petersburg => SpecId::PETERSBURG,
+        Fork::Istanbul => SpecId::ISTANBUL,
+        Fork::MuirGlacier => SpecId::MUIR_GLACIER,
+        Fork::Berlin => SpecId::BERLIN,
+        Fork::London => SpecId::LONDON,
+        Fork::ArrowGlacier => SpecId::ARROW_GLACIER,
+        Fork::GrayGlacier => SpecId::GRAY_GLACIER,
+        Fork::Paris => SpecId::MERGE,
+        Fork::Shanghai => SpecId::SHANGHAI,
+        Fork::Cancun => SpecId::CANCUN,
+        Fork::Prague => SpecId::PRAGUE,
+        Fork::Osaka => SpecId::OSAKA,
+        Fork::BPO1 => SpecId::OSAKA,
+        Fork::BPO2 => SpecId::OSAKA,
+        Fork::BPO3 => SpecId::OSAKA,
+        Fork::BPO4 => SpecId::OSAKA,
+        Fork::BPO5 => SpecId::OSAKA,
+        Fork::Amsterdam => SpecId::OSAKA,
+    }
+}
 
 /// Convert LEVM `U256` to revm `U256`.
 ///
@@ -71,9 +108,11 @@ pub fn levm_gas_to_revm(gas_remaining: i64, gas_limit: u64) -> Gas {
 }
 
 /// Convert revm Gas back to LEVM gas_remaining (i64).
-#[expect(clippy::as_conversions, reason = "u64→i64 for remaining gas")]
+///
+/// Clamps to `i64::MAX` if the remaining gas exceeds `i64::MAX`,
+/// which is safe because LEVM never allocates more than `i64::MAX` gas.
 pub fn revm_gas_to_levm(gas: &Gas) -> i64 {
-    gas.remaining() as i64
+    i64::try_from(gas.remaining()).unwrap_or(i64::MAX)
 }
 
 /// Build a revm `SharedMemory` from LEVM memory contents.
@@ -152,5 +191,11 @@ mod tests {
     fn test_gas_negative_clamps_to_zero() {
         let gas = levm_gas_to_revm(-100, 1000);
         assert_eq!(gas.remaining(), 0);
+    }
+
+    #[test]
+    fn test_gas_overflow_clamps_to_i64_max() {
+        let gas = Gas::new(u64::MAX);
+        assert_eq!(revm_gas_to_levm(&gas), i64::MAX);
     }
 }

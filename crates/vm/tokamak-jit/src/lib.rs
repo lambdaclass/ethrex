@@ -47,7 +47,8 @@ pub use ethrex_levm::jit::{
     types::{AnalyzedBytecode, JitConfig, JitOutcome},
 };
 
-/// Register the revmc JIT backend with LEVM's global JIT state.
+/// Register the revmc JIT backend with LEVM's global JIT state and
+/// start the background compiler thread.
 ///
 /// Call this once at application startup to enable JIT execution.
 /// Without this registration, the JIT dispatch in `vm.rs` is a no-op
@@ -55,8 +56,33 @@ pub use ethrex_levm::jit::{
 #[cfg(feature = "revmc-backend")]
 pub fn register_jit_backend() {
     use std::sync::Arc;
+    use ethrex_levm::jit::compiler_thread::CompilerThread;
+
     let backend = Arc::new(backend::RevmcBackend::default());
+    let backend_for_thread = Arc::clone(&backend);
+    let cache = ethrex_levm::vm::JIT_STATE.cache.clone();
+
     ethrex_levm::vm::JIT_STATE.register_backend(backend);
+
+    // Start background compiler thread
+    let compiler_thread = CompilerThread::start(move |request| {
+        match backend_for_thread.compile(&request.code, request.fork, &cache) {
+            Ok(()) => {
+                use std::sync::atomic::Ordering;
+                ethrex_levm::vm::JIT_STATE
+                    .metrics
+                    .compilations
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[JIT] background compilation failed for {}: {e}",
+                    request.code.hash
+                );
+            }
+        }
+    });
+    ethrex_levm::vm::JIT_STATE.register_compiler_thread(compiler_thread);
 }
 
 #[cfg(test)]

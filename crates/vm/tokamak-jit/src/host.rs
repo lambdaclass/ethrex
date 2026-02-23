@@ -19,12 +19,12 @@ use revm_context_interface::{
     journaled_state::AccountInfoLoad,
 };
 use revm_interpreter::Host;
-use revm_primitives::{Address as RevmAddress, B256, Log as RevmLog, SpecId, U256 as RevmU256};
+use revm_primitives::{Address as RevmAddress, B256, Log as RevmLog, U256 as RevmU256};
 use revm_state::AccountInfo as RevmAccountInfo;
 
 use crate::adapter::{
-    levm_address_to_revm, levm_h256_to_revm, levm_u256_to_revm, revm_address_to_levm,
-    revm_u256_to_levm,
+    fork_to_spec_id, levm_address_to_revm, levm_h256_to_revm, levm_u256_to_revm,
+    revm_address_to_levm, revm_u256_to_levm,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::Environment;
@@ -53,7 +53,8 @@ impl<'a> LevmHost<'a> {
         address: ethrex_common::Address,
         storage_original_values: &'a mut ethrex_levm::jit::dispatch::StorageOriginalValues,
     ) -> Self {
-        let gas_params = GasParams::new_spec(SpecId::CANCUN);
+        let spec_id = fork_to_spec_id(env.config.fork);
+        let gas_params = GasParams::new_spec(spec_id);
         Self {
             db,
             substate,
@@ -208,7 +209,10 @@ impl Host for LevmHost<'_> {
             .get_storage_value(levm_addr, levm_key)
             .map_err(|_| LoadError::DBError)?;
 
-        Ok(StateLoad::new(levm_u256_to_revm(&value), false))
+        // EIP-2929: track cold/warm storage slot access
+        let is_cold = !self.substate.add_accessed_slot(levm_addr, levm_key);
+
+        Ok(StateLoad::new(levm_u256_to_revm(&value), is_cold))
     }
 
     fn sstore_skip_cold_load(
@@ -222,6 +226,9 @@ impl Host for LevmHost<'_> {
         let levm_key_u256 = revm_u256_to_levm(&key);
         let levm_key = ethrex_common::H256::from(levm_key_u256.to_big_endian());
         let levm_value = revm_u256_to_levm(&value);
+
+        // EIP-2929: track cold/warm storage slot access
+        let is_cold = !self.substate.add_accessed_slot(levm_addr, levm_key);
 
         // Get current (present) value before write
         let present = self
@@ -247,7 +254,7 @@ impl Host for LevmHost<'_> {
                 present_value: levm_u256_to_revm(&present),
                 new_value: value,
             },
-            false,
+            is_cold,
         ))
     }
 
@@ -287,19 +294,38 @@ impl Host for LevmHost<'_> {
     fn selfdestruct(
         &mut self,
         address: RevmAddress,
-        _target: RevmAddress,
+        target: RevmAddress,
         _skip_cold_load: bool,
     ) -> Result<StateLoad<SelfDestructResult>, LoadError> {
         let levm_addr = revm_address_to_levm(&address);
+        let levm_target = revm_address_to_levm(&target);
+
         let previously_destroyed = self.substate.add_selfdestruct(levm_addr);
+
+        // Check if the self-destructing account has a non-zero balance
+        let had_value = self
+            .db
+            .get_account(levm_addr)
+            .map(|a| !a.info.balance.is_zero())
+            .unwrap_or(false);
+
+        // Check if the target account exists (non-empty per EIP-161)
+        let target_exists = self
+            .db
+            .get_account(levm_target)
+            .map(|a| !a.info.is_empty())
+            .unwrap_or(false);
+
+        // EIP-2929: track cold/warm access for the target address
+        let is_cold = !self.substate.add_accessed_address(levm_target);
 
         Ok(StateLoad::new(
             SelfDestructResult {
-                had_value: false,
-                target_exists: true,
+                had_value,
+                target_exists,
                 previously_destroyed,
             },
-            false,
+            is_cold,
         ))
     }
 }

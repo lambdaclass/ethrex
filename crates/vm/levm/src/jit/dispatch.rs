@@ -6,10 +6,12 @@
 
 use std::sync::{Arc, RwLock};
 
+use ethrex_common::types::Fork;
 use ethrex_common::{H256, U256};
 use rustc_hash::FxHashMap;
 
-use super::cache::{CodeCache, CompiledCode};
+use super::cache::{CacheKey, CodeCache, CompiledCode};
+use super::compiler_thread::{CompilationRequest, CompilerThread};
 use super::counter::ExecutionCounter;
 use super::types::{JitConfig, JitMetrics, JitOutcome};
 use crate::call_frame::CallFrame;
@@ -41,8 +43,12 @@ pub trait JitBackend: Send + Sync {
     ///
     /// Called when the execution counter reaches the compilation threshold.
     /// Returns `Ok(())` on success or an error message on failure.
-    fn compile(&self, code: &ethrex_common::types::Code, cache: &CodeCache)
-        -> Result<(), String>;
+    fn compile(
+        &self,
+        code: &ethrex_common::types::Code,
+        fork: Fork,
+        cache: &CodeCache,
+    ) -> Result<(), String>;
 }
 
 /// Global JIT state shared across all VM instances.
@@ -60,6 +66,10 @@ pub struct JitState {
     backend: RwLock<Option<Arc<dyn JitBackend>>>,
     /// Atomic metrics for monitoring JIT activity.
     pub metrics: JitMetrics,
+    /// Background compilation thread (set by `tokamak-jit` at startup).
+    compiler_thread: RwLock<Option<CompilerThread>>,
+    /// Per-(hash, fork) validation run counter for output-only validation.
+    validation_counts: RwLock<FxHashMap<CacheKey, u64>>,
 }
 
 impl JitState {
@@ -73,6 +83,8 @@ impl JitState {
             config,
             backend: RwLock::new(None),
             metrics: JitMetrics::new(),
+            compiler_thread: RwLock::new(None),
+            validation_counts: RwLock::new(FxHashMap::default()),
         }
     }
 
@@ -85,6 +97,8 @@ impl JitState {
             config,
             backend: RwLock::new(None),
             metrics: JitMetrics::new(),
+            compiler_thread: RwLock::new(None),
+            validation_counts: RwLock::new(FxHashMap::default()),
         }
     }
 
@@ -96,6 +110,34 @@ impl JitState {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut guard = self.backend.write().unwrap();
         *guard = Some(backend);
+    }
+
+    /// Register the background compiler thread.
+    ///
+    /// Call this once at application startup (from `tokamak-jit`) to enable
+    /// background compilation. Without a registered thread, compilation
+    /// happens synchronously on the VM thread.
+    pub fn register_compiler_thread(&self, thread: CompilerThread) {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let mut guard = self.compiler_thread.write().unwrap();
+        *guard = Some(thread);
+    }
+
+    /// Send a compilation request to the background thread.
+    ///
+    /// Returns `true` if the request was queued, `false` if no thread is
+    /// registered or the channel is disconnected (falls through to sync compile).
+    pub fn request_compilation(
+        &self,
+        code: ethrex_common::types::Code,
+        fork: Fork,
+    ) -> bool {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let guard = self.compiler_thread.read().unwrap();
+        match guard.as_ref() {
+            Some(thread) => thread.send(CompilationRequest { code, fork }),
+            None => false,
+        }
     }
 
     /// Execute JIT-compiled code through the registered backend.
@@ -130,6 +172,25 @@ impl JitState {
         let guard = self.backend.read().unwrap();
         guard.clone()
     }
+
+    /// Check if this (hash, fork) pair should be validated.
+    ///
+    /// Returns `true` if the validation count for this key is below
+    /// `max_validation_runs`, meaning we should log the JIT outcome.
+    pub fn should_validate(&self, key: &CacheKey) -> bool {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let counts = self.validation_counts.read().unwrap();
+        let count = counts.get(key).copied().unwrap_or(0);
+        count < self.config.max_validation_runs
+    }
+
+    /// Record that a validation run occurred for this (hash, fork) pair.
+    pub fn record_validation(&self, key: &CacheKey) {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let mut counts = self.validation_counts.write().unwrap();
+        let count = counts.entry(*key).or_insert(0);
+        *count = count.saturating_add(1);
+    }
 }
 
 impl Default for JitState {
@@ -138,10 +199,14 @@ impl Default for JitState {
     }
 }
 
-/// Check the JIT cache for compiled code matching the given bytecode hash.
+/// Check the JIT cache for compiled code matching the given bytecode hash and fork.
 ///
-/// Returns `Some(compiled)` if the bytecode has been JIT-compiled,
+/// Returns `Some(compiled)` if the bytecode has been JIT-compiled for this fork,
 /// `None` otherwise (caller should fall through to interpreter).
-pub fn try_jit_dispatch(state: &JitState, bytecode_hash: &H256) -> Option<Arc<CompiledCode>> {
-    state.cache.get(bytecode_hash)
+pub fn try_jit_dispatch(
+    state: &JitState,
+    bytecode_hash: &H256,
+    fork: Fork,
+) -> Option<Arc<CompiledCode>> {
+    state.cache.get(&(*bytecode_hash, fork))
 }

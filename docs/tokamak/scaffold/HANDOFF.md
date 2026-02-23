@@ -36,6 +36,145 @@
 | Phase 3-5: vm.rs JIT dispatch wiring | **완료** |
 | Phase 3-6: Backend registration + E2E tests | **완료** |
 | Phase 3-7: PHASE-3.md + HANDOFF update | **완료** |
+| Phase 4A: is_static 전파 | **완료** |
+| Phase 4B: Gas refund 정합성 | **완료** |
+| Phase 4C: LRU 캐시 eviction | **완료** |
+| Phase 4D: 자동 컴파일 트리거 | **완료** |
+| Phase 4E: CALL/CREATE 감지 + 스킵 | **완료** |
+| Phase 4F: 트레이싱 바이패스 + 메트릭 | **완료** |
+| Phase 5A: Multi-fork 지원 | **완료** |
+| Phase 5B: 백그라운드 비동기 컴파일 | **완료** |
+| Phase 5C: Validation mode 연결 | **완료** |
+
+## Phase 5 완료 요약
+
+### 핵심 변경: Advanced JIT (Multi-fork, Background Compilation, Validation)
+
+Phase 4의 hardened JIT를 확장하여 3개 주요 기능 추가.
+
+### Sub-Phase 상세
+
+| Sub-Phase | 변경 내용 |
+|-----------|----------|
+| **5A** | 캐시 키를 `H256` → `(H256, Fork)` 변경. `JitBackend::compile()`, `try_jit_dispatch()` 시그니처에 `fork` 추가. `fork_to_spec_id()` adapter 추가 (adapter.rs). compiler/execution/host에서 하드코딩된 `SpecId::CANCUN` 제거, 환경 fork 사용 |
+| **5B** | `compiler_thread.rs` 신규 — `CompilerThread` (mpsc 채널 + 백그라운드 스레드). `JitState`에 `compiler_thread` 필드 추가. `request_compilation()` 메서드 (non-blocking). vm.rs에서 threshold 도달 시 백그라운드 컴파일 우선 시도, 실패 시 동기 fallback. `register_jit_backend()`에서 자동 스레드 시작 |
+| **5C** | `JitConfig.max_validation_runs` (기본 3) 추가. `JitState`에 `validation_counts` HashMap 추가. `should_validate()`/`record_validation()` 메서드. JIT 성공 후 `eprintln!("[JIT-VALIDATE]")` 로깅 (첫 N회). Full dual-execution은 Phase 6으로 연기 |
+
+### vm.rs 최종 디스패치 형태
+
+```
+if !tracer.active {
+    counter.increment()
+    if count == threshold && !request_compilation() {
+        → sync backend.compile() + metrics
+    }
+    if try_jit_dispatch(hash, fork) → execute_jit() {
+        → metrics
+        → if validation_mode && should_validate() → eprintln!("[JIT-VALIDATE]")
+        → apply_jit_outcome()
+    } else fallback → metrics + eprintln!
+}
+// interpreter loop follows
+```
+
+### 새 파일
+
+| 파일 | 용도 |
+|------|------|
+| `levm/src/jit/compiler_thread.rs` | 백그라운드 컴파일 스레드 (mpsc 채널) |
+
+### 변경 파일
+
+| 파일 | Sub-Phase |
+|------|-----------|
+| `levm/src/jit/cache.rs` | 5A — `CacheKey = (H256, Fork)` |
+| `levm/src/jit/dispatch.rs` | 5A, 5B, 5C — fork param, CompilerThread, validation_counts |
+| `levm/src/jit/types.rs` | 5C — `max_validation_runs` |
+| `levm/src/jit/mod.rs` | 5B — `pub mod compiler_thread` |
+| `levm/src/vm.rs` | 5A, 5B, 5C — fork 전달, background compile, validation logging |
+| `tokamak-jit/src/adapter.rs` | 5A — `fork_to_spec_id()` |
+| `tokamak-jit/src/compiler.rs` | 5A — `compile(analyzed, fork)` |
+| `tokamak-jit/src/backend.rs` | 5A — `compile_and_cache(code, fork, cache)` |
+| `tokamak-jit/src/execution.rs` | 5A — `fork_to_spec_id(env.config.fork)` |
+| `tokamak-jit/src/host.rs` | 5A — `fork_to_spec_id()` for `GasParams` |
+| `tokamak-jit/src/lib.rs` | 5B — `CompilerThread::start()` in `register_jit_backend()` |
+| `tokamak-jit/src/tests/fibonacci.rs` | 5A — fork param in compile_and_cache, cache key |
+
+### 검증 결과
+
+- `cargo test -p ethrex-levm --features tokamak-jit -- jit::` — 18 tests pass
+- `cargo test -p tokamak-jit` — 9 tests pass
+- `cargo clippy --features tokamak-jit -p ethrex-levm -- -D warnings` — clean
+- `cargo clippy -p tokamak-jit -- -D warnings` — clean
+- `cargo clippy --workspace --features l2 -- -D warnings` — clean
+
+### Phase 6으로 연기
+
+| 기능 | 이유 |
+|------|------|
+| **CALL/CREATE resume** | XL 복잡도. execution.rs 재작성 필요 |
+| **LLVM memory management** | cache eviction 시 free_fn_machine_code 호출 |
+| **Full dual-execution validation** | GeneralizedDatabase 상태 스냅샷 필요 |
+
+---
+
+## Phase 4 완료 요약
+
+### 핵심 변경: Production JIT Hardening
+
+Phase 3의 PoC JIT를 프로덕션 수준으로 경화. 7개 갭 해소.
+
+### Sub-Phase 상세
+
+| Sub-Phase | 변경 내용 |
+|-----------|----------|
+| **4A** | `execution.rs` — `is_static` 하드코딩 `false` → `call_frame.is_static` 전파 |
+| **4B** | `storage_original_values` JIT 체인 전달, `sstore_skip_cold_load()` original vs present 구분, gas refund 동기화 |
+| **4C** | `CodeCache`에 `VecDeque` 삽입 순서 추적 + `max_entries` 용량 제한, 오래된 엔트리 자동 eviction |
+| **4D** | `JitBackend::compile()` 트레이트 메서드 추가, `counter == threshold` 시 자동 컴파일, `backend()` accessor |
+| **4E** | `AnalyzedBytecode.has_external_calls` 추가, CALL/CALLCODE/DELEGATECALL/STATICCALL/CREATE/CREATE2 감지, 외부 호출 포함 바이트코드 컴파일 스킵 |
+| **4F** | `tracer.active` 시 JIT 스킵, `JitMetrics` (AtomicU64 ×4), `eprintln!` fallback 로깅 |
+
+### vm.rs 최종 디스패치 형태
+
+```
+if !tracer.active {
+    counter.increment()
+    if count == threshold → backend.compile() + metrics
+    if try_jit_dispatch() → execute_jit() → metrics + apply_jit_outcome()
+    else fallback → metrics + eprintln!
+}
+// interpreter loop follows
+```
+
+### 변경 파일 (총 +403 / -59 lines)
+
+| 파일 | Sub-Phase |
+|------|-----------|
+| `levm/src/jit/types.rs` | 4C, 4E, 4F |
+| `levm/src/jit/cache.rs` | 4C |
+| `levm/src/jit/dispatch.rs` | 4B, 4D, 4F |
+| `levm/src/jit/analyzer.rs` | 4E |
+| `levm/src/vm.rs` | 4B, 4D, 4F |
+| `tokamak-jit/src/execution.rs` | 4A, 4B |
+| `tokamak-jit/src/host.rs` | 4B |
+| `tokamak-jit/src/backend.rs` | 4B, 4D, 4E |
+| `tokamak-jit/src/tests/fibonacci.rs` | 4B |
+
+### 검증 결과
+
+- `cargo test -p ethrex-levm --features tokamak-jit -- jit::` — 15 tests pass
+- `cargo test -p tokamak-jit` — 7 tests pass
+- `cargo clippy --features tokamak-jit -- -D warnings` — clean
+- `cargo clippy --workspace --features l2 -- -D warnings` — clean
+
+### Phase 4 범위 제한 (Phase 5에서 처리)
+
+- Full CALL/CREATE resume (JIT pause → interpreter → resume JIT)
+- LLVM 메모리 해제 (cache eviction 시)
+- 비동기 백그라운드 컴파일 (thread pool)
+- Multi-fork 지원 (현재 CANCUN 고정)
+- Validation mode 자동 연결
 
 ## Phase 3 완료 요약
 
@@ -164,24 +303,20 @@ Cranelift은 i256 미지원으로 불가. **revmc (Paradigm, LLVM backend)** 채
 
 | 커밋 | 내용 |
 |------|------|
-| (pending) | feat: Phase 2 — JIT foundation with revmc integration |
+| `2c8137ba1` | feat(l1): implement Phase 4 production JIT hardening |
+| `5b147cafd` | style(l1): apply formatter to JIT execution wiring files |
+| `4a472bb7e` | feat(l1): wire JIT execution path through LEVM dispatch |
 | `c00435a33` | ci(l1): add rustfmt/clippy components to pr-tokamak workflow |
-| `cfb161652` | style(l1): fix cargo fmt formatting in tokamak-bench |
 | `f6d6ac3b6` | feat: Phase 1.3 — benchmarking foundation with opcode timing CI |
 | `3ed011be8` | feat: Phase 1.2 — feature flag split, CI workflow, fork adjustments |
-| `864ac9e2c` | docs: mark Phase 1.1 complete, update HANDOFF for next phases |
 
 ## 다음 단계
 
-### Phase 4: Production JIT
+### Phase 6: Deep JIT
 
-1. **Automatic compilation trigger** — counter threshold → compile in background
-2. **Nested CALL/CREATE** — suspend JIT, call interpreter, resume
-3. **LRU cache eviction** — bound cache size, evict cold entries
-4. **is_static propagation** — from CallFrame to JIT Interpreter
-5. **Gas refund reconciliation** — exact match JIT ↔ interpreter
-6. **Tracing integration** — JIT fallback event logging
-7. **Production error recovery** — graceful fallback with metrics
+1. **CALL/CREATE resume** — JIT pause → interpreter nested call → resume JIT
+2. **LLVM memory management** — free JIT code memory on cache eviction
+3. **Full dual-execution validation** — state snapshotting + interpreter replay
 
 ## 핵심 컨텍스트
 

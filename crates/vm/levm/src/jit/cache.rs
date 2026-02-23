@@ -1,12 +1,20 @@
 //! JIT code cache.
 //!
-//! Stores compiled function pointers keyed by bytecode hash.
+//! Stores compiled function pointers keyed by (bytecode hash, fork).
 //! The cache is thread-safe and designed for concurrent read access
 //! with infrequent writes (compilation events).
 
+use ethrex_common::types::Fork;
 use ethrex_common::H256;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
+
+/// Cache key combining bytecode hash and fork.
+///
+/// The same bytecode compiled at different forks produces different native code
+/// (opcodes, gas costs are baked in at compile time), so the cache must
+/// distinguish them.
+pub type CacheKey = (H256, Fork);
 
 /// Metadata and function pointer for a JIT-compiled bytecode.
 ///
@@ -72,15 +80,16 @@ impl std::fmt::Debug for CompiledCode {
 /// Inner state for the code cache (behind RwLock).
 #[derive(Debug)]
 struct CodeCacheInner {
-    entries: HashMap<H256, Arc<CompiledCode>>,
-    insertion_order: VecDeque<H256>,
+    entries: HashMap<CacheKey, Arc<CompiledCode>>,
+    insertion_order: VecDeque<CacheKey>,
     max_entries: usize,
 }
 
-/// Thread-safe cache of JIT-compiled bytecodes with LRU eviction.
+/// Thread-safe cache of JIT-compiled bytecodes with FIFO eviction.
 ///
 /// When the cache reaches `max_entries`, the oldest entry (by insertion time)
-/// is evicted. Note: LLVM JIT memory is NOT freed on eviction (revmc limitation).
+/// is evicted. `get()` does not update access order, so this is FIFO, not LRU.
+/// Note: LLVM JIT memory is NOT freed on eviction (revmc limitation).
 /// The eviction only prevents HashMap metadata growth.
 #[derive(Debug, Clone)]
 pub struct CodeCache {
@@ -104,20 +113,20 @@ impl CodeCache {
         Self::with_max_entries(1024)
     }
 
-    /// Look up compiled code by bytecode hash.
-    pub fn get(&self, hash: &H256) -> Option<Arc<CompiledCode>> {
+    /// Look up compiled code by (bytecode hash, fork).
+    pub fn get(&self, key: &CacheKey) -> Option<Arc<CompiledCode>> {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let inner = self.inner.read().unwrap();
-        inner.entries.get(hash).cloned()
+        inner.entries.get(key).cloned()
     }
 
     /// Insert compiled code into the cache, evicting the oldest entry if at capacity.
-    pub fn insert(&self, hash: H256, code: CompiledCode) {
+    pub fn insert(&self, key: CacheKey, code: CompiledCode) {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut inner = self.inner.write().unwrap();
 
         // If already present, just update the value (no eviction needed)
-        if let std::collections::hash_map::Entry::Occupied(mut e) = inner.entries.entry(hash) {
+        if let std::collections::hash_map::Entry::Occupied(mut e) = inner.entries.entry(key) {
             e.insert(Arc::new(code));
             return;
         }
@@ -130,16 +139,16 @@ impl CodeCache {
             inner.entries.remove(&oldest);
         }
 
-        inner.entries.insert(hash, Arc::new(code));
-        inner.insertion_order.push_back(hash);
+        inner.entries.insert(key, Arc::new(code));
+        inner.insertion_order.push_back(key);
     }
 
     /// Remove compiled code from the cache (e.g., on validation mismatch).
-    pub fn invalidate(&self, hash: &H256) {
+    pub fn invalidate(&self, key: &CacheKey) {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut inner = self.inner.write().unwrap();
-        inner.entries.remove(hash);
-        inner.insertion_order.retain(|h| h != hash);
+        inner.entries.remove(key);
+        inner.insertion_order.retain(|k| k != key);
     }
 
     /// Number of entries in the cache.
@@ -165,35 +174,39 @@ impl Default for CodeCache {
 mod tests {
     use super::*;
 
+    fn default_fork() -> Fork {
+        Fork::Cancun
+    }
+
     #[test]
     fn test_cache_insert_and_get() {
         let cache = CodeCache::new();
-        let hash = H256::zero();
+        let key = (H256::zero(), default_fork());
 
-        assert!(cache.get(&hash).is_none());
+        assert!(cache.get(&key).is_none());
         assert!(cache.is_empty());
 
         // SAFETY: null pointer is acceptable for testing metadata-only operations
         #[expect(unsafe_code)]
         let code = unsafe { CompiledCode::new(std::ptr::null(), 100, 5) };
-        cache.insert(hash, code);
+        cache.insert(key, code);
 
-        assert!(cache.get(&hash).is_some());
+        assert!(cache.get(&key).is_some());
         assert_eq!(cache.len(), 1);
     }
 
     #[test]
     fn test_cache_invalidate() {
         let cache = CodeCache::new();
-        let hash = H256::zero();
+        let key = (H256::zero(), default_fork());
 
         #[expect(unsafe_code)]
         let code = unsafe { CompiledCode::new(std::ptr::null(), 50, 3) };
-        cache.insert(hash, code);
+        cache.insert(key, code);
         assert_eq!(cache.len(), 1);
 
-        cache.invalidate(&hash);
-        assert!(cache.get(&hash).is_none());
+        cache.invalidate(&key);
+        assert!(cache.get(&key).is_none());
         assert!(cache.is_empty());
     }
 
@@ -201,55 +214,79 @@ mod tests {
     fn test_cache_eviction() {
         let cache = CodeCache::with_max_entries(3);
 
-        let h1 = H256::from_low_u64_be(1);
-        let h2 = H256::from_low_u64_be(2);
-        let h3 = H256::from_low_u64_be(3);
-        let h4 = H256::from_low_u64_be(4);
+        let k1 = (H256::from_low_u64_be(1), default_fork());
+        let k2 = (H256::from_low_u64_be(2), default_fork());
+        let k3 = (H256::from_low_u64_be(3), default_fork());
+        let k4 = (H256::from_low_u64_be(4), default_fork());
 
         // Insert 3 entries (at capacity)
         #[expect(unsafe_code)]
         let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1) };
-        cache.insert(h1, code1);
+        cache.insert(k1, code1);
         #[expect(unsafe_code)]
         let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2) };
-        cache.insert(h2, code2);
+        cache.insert(k2, code2);
         #[expect(unsafe_code)]
         let code3 = unsafe { CompiledCode::new(std::ptr::null(), 30, 3) };
-        cache.insert(h3, code3);
+        cache.insert(k3, code3);
         assert_eq!(cache.len(), 3);
 
-        // Insert 4th entry → oldest (h1) should be evicted
+        // Insert 4th entry → oldest (k1) should be evicted
         #[expect(unsafe_code)]
         let code4 = unsafe { CompiledCode::new(std::ptr::null(), 40, 4) };
-        cache.insert(h4, code4);
+        cache.insert(k4, code4);
         assert_eq!(cache.len(), 3);
-        assert!(cache.get(&h1).is_none(), "oldest entry should be evicted");
-        assert!(cache.get(&h2).is_some());
-        assert!(cache.get(&h3).is_some());
-        assert!(cache.get(&h4).is_some());
+        assert!(cache.get(&k1).is_none(), "oldest entry should be evicted");
+        assert!(cache.get(&k2).is_some());
+        assert!(cache.get(&k3).is_some());
+        assert!(cache.get(&k4).is_some());
     }
 
     #[test]
     fn test_cache_update_existing_no_eviction() {
         let cache = CodeCache::with_max_entries(2);
 
-        let h1 = H256::from_low_u64_be(1);
-        let h2 = H256::from_low_u64_be(2);
+        let k1 = (H256::from_low_u64_be(1), default_fork());
+        let k2 = (H256::from_low_u64_be(2), default_fork());
 
         #[expect(unsafe_code)]
         let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1) };
-        cache.insert(h1, code1);
+        cache.insert(k1, code1);
         #[expect(unsafe_code)]
         let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2) };
-        cache.insert(h2, code2);
+        cache.insert(k2, code2);
         assert_eq!(cache.len(), 2);
 
-        // Re-insert h1 with different metadata — should NOT evict
+        // Re-insert k1 with different metadata — should NOT evict
         #[expect(unsafe_code)]
         let code1_updated = unsafe { CompiledCode::new(std::ptr::null(), 100, 10) };
-        cache.insert(h1, code1_updated);
+        cache.insert(k1, code1_updated);
         assert_eq!(cache.len(), 2);
-        assert!(cache.get(&h1).is_some());
-        assert!(cache.get(&h2).is_some());
+        assert!(cache.get(&k1).is_some());
+        assert!(cache.get(&k2).is_some());
+    }
+
+    #[test]
+    fn test_cache_separate_fork_entries() {
+        let cache = CodeCache::new();
+        let hash = H256::from_low_u64_be(42);
+
+        let key_cancun = (hash, Fork::Cancun);
+        let key_prague = (hash, Fork::Prague);
+
+        #[expect(unsafe_code)]
+        let code_cancun = unsafe { CompiledCode::new(std::ptr::null(), 100, 5) };
+        cache.insert(key_cancun, code_cancun);
+
+        #[expect(unsafe_code)]
+        let code_prague = unsafe { CompiledCode::new(std::ptr::null(), 100, 6) };
+        cache.insert(key_prague, code_prague);
+
+        assert_eq!(cache.len(), 2);
+
+        let cancun_entry = cache.get(&key_cancun).expect("cancun entry should exist");
+        let prague_entry = cache.get(&key_prague).expect("prague entry should exist");
+        assert_eq!(cancun_entry.basic_block_count, 5);
+        assert_eq!(prague_entry.basic_block_count, 6);
     }
 }

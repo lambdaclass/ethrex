@@ -148,23 +148,27 @@ mod tests {
 
     #[test]
     fn test_cache_workflow() {
+        use ethrex_common::types::Fork;
+
         let cache = CodeCache::new();
         let counter = ExecutionCounter::new();
         let hash = H256::from_low_u64_be(42);
+        let fork = Fork::Cancun;
 
         for _ in 0..10 {
             counter.increment(&hash);
         }
         assert_eq!(counter.get(&hash), 10);
 
-        assert!(cache.get(&hash).is_none());
+        let key = (hash, fork);
+        assert!(cache.get(&key).is_none());
         assert!(cache.is_empty());
 
         #[expect(unsafe_code)]
         let compiled =
             unsafe { ethrex_levm::jit::cache::CompiledCode::new(std::ptr::null(), 100, 5) };
-        cache.insert(hash, compiled);
-        assert!(cache.get(&hash).is_some());
+        cache.insert(key, compiled);
+        assert!(cache.get(&key).is_some());
         assert_eq!(cache.len(), 1);
     }
 
@@ -201,11 +205,12 @@ mod tests {
 
         // 1. Compile Fibonacci bytecode via RevmcBackend
         let backend = RevmcBackend::default();
+        let fork = ethrex_common::types::Fork::Cancun;
         backend
-            .compile_and_cache(&fib_code, &JIT_STATE.cache)
+            .compile_and_cache(&fib_code, fork, &JIT_STATE.cache)
             .expect("JIT compilation should succeed");
         assert!(
-            JIT_STATE.cache.get(&fib_code.hash).is_some(),
+            JIT_STATE.cache.get(&(fib_code.hash, fork)).is_some(),
             "compiled code should be in cache"
         );
 
@@ -321,11 +326,12 @@ mod tests {
         // Compile the bytecode
         let backend = RevmcBackend::default();
         let code_cache = CodeCache::new();
+        let fork = ethrex_common::types::Fork::Cancun;
         backend
-            .compile_and_cache(&fib_code, &code_cache)
+            .compile_and_cache(&fib_code, fork, &code_cache)
             .expect("compilation should succeed");
         let compiled = code_cache
-            .get(&fib_code.hash)
+            .get(&(fib_code.hash, fork))
             .expect("compiled code should be in cache");
 
         for (n, expected_fib) in FIBONACCI_VALUES {

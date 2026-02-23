@@ -568,34 +568,44 @@ impl<'a> VM<'a> {
             if !self.tracer.active {
                 let bytecode_hash = self.current_call_frame.bytecode.hash;
                 let count = JIT_STATE.counter.increment(&bytecode_hash);
+                let fork = self.env.config.fork;
 
-                // Auto-compile on threshold
+                // Auto-compile on threshold — try background thread first, fall back to sync
                 if count == JIT_STATE.config.compilation_threshold
-                    && let Some(backend) = JIT_STATE.backend()
+                    && !JIT_STATE.request_compilation(
+                        self.current_call_frame.bytecode.clone(),
+                        fork,
+                    )
                 {
-                    match backend.compile(
-                        &self.current_call_frame.bytecode,
-                        &JIT_STATE.cache,
-                    ) {
-                        Ok(()) => {
-                            JIT_STATE
-                                .metrics
-                                .compilations
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-                        Err(e) => {
-                            eprintln!("[JIT] compilation failed for {bytecode_hash}: {e}");
-                            JIT_STATE
-                                .metrics
-                                .jit_fallbacks
-                                .fetch_add(1, Ordering::Relaxed);
+                    // No background thread — compile synchronously
+                    if let Some(backend) = JIT_STATE.backend() {
+                        match backend.compile(
+                            &self.current_call_frame.bytecode,
+                            fork,
+                            &JIT_STATE.cache,
+                        ) {
+                            Ok(()) => {
+                                JIT_STATE
+                                    .metrics
+                                    .compilations
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[JIT] compilation failed for {bytecode_hash}: {e}"
+                                );
+                                JIT_STATE
+                                    .metrics
+                                    .jit_fallbacks
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     }
                 }
 
                 // Dispatch if compiled
                 if let Some(compiled) =
-                    crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash)
+                    crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash, fork)
                     && let Some(result) = JIT_STATE.execute_jit(
                         &compiled,
                         &mut self.current_call_frame,
@@ -611,6 +621,40 @@ impl<'a> VM<'a> {
                                 .metrics
                                 .jit_executions
                                 .fetch_add(1, Ordering::Relaxed);
+
+                            // Validation mode: log JIT outcome for offline comparison
+                            if JIT_STATE.config.validation_mode {
+                                let cache_key = (bytecode_hash, fork);
+                                if JIT_STATE.should_validate(&cache_key) {
+                                    match &outcome {
+                                        crate::jit::types::JitOutcome::Success {
+                                            gas_used,
+                                            output,
+                                        } => {
+                                            eprintln!(
+                                                "[JIT-VALIDATE] hash={bytecode_hash} \
+                                                 fork={fork:?} gas_used={gas_used} \
+                                                 output_len={}",
+                                                output.len()
+                                            );
+                                        }
+                                        crate::jit::types::JitOutcome::Revert {
+                                            gas_used,
+                                            output,
+                                        } => {
+                                            eprintln!(
+                                                "[JIT-VALIDATE] hash={bytecode_hash} \
+                                                 fork={fork:?} REVERT gas_used={gas_used} \
+                                                 output_len={}",
+                                                output.len()
+                                            );
+                                        }
+                                        _ => {}
+                                    }
+                                    JIT_STATE.record_validation(&cache_key);
+                                }
+                            }
+
                             return apply_jit_outcome(outcome, &self.current_call_frame);
                         }
                         Err(msg) => {
