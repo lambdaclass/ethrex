@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-23
+
+- Add precompile result cache shared between warmer and executor threads [#6243](https://github.com/lambdaclass/ethrex/pull/6243)
+
 ### 2026-02-13
 
 - Optimize storage layer for block execution by reducing lock contention and allocations [#6207](https://github.com/lambdaclass/ethrex/pull/6207)

@@ -415,6 +415,8 @@ impl Blockchain {
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
+                        // Warming uses the same caching store, sharing cached state with execution.
+                        // Precompile cache lives inside CachingDatabase, shared automatically.
                         let start = Instant::now();
                         if let Some(bal) = bal {
                             // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
