@@ -571,13 +571,18 @@ impl Blockchain {
             }
 
             for update in updates {
-                let hashed_address = *hashed_address_cache
-                    .entry(update.address)
-                    .or_insert_with(|| keccak(update.address));
-                let account_bucket = hashed_address.as_fixed_bytes()[0] >> 4;
-                workers_tx[account_bucket as usize]
-                    .send(MerklizationRequest::LoadAccount(hashed_address))
-                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                let hashed_address = match hashed_address_cache.entry(update.address) {
+                    Entry::Occupied(e) => *e.get(),
+                    Entry::Vacant(e) => {
+                        let hash = keccak(update.address);
+                        e.insert(hash);
+                        let bucket = hash.as_fixed_bytes()[0] >> 4;
+                        workers_tx[bucket as usize]
+                            .send(MerklizationRequest::LoadAccount(hash))
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        hash
+                    }
+                };
                 if update.removed {
                     account_expected_shards.insert(hashed_address, 0xFFFF);
                     storage_root_cache.insert(hashed_address, *EMPTY_TRIE_HASH);
