@@ -334,7 +334,7 @@ A list of all the configurable parameters of the network.
 ### Batch commitment/proposal
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md) as this only details the diff with what we already have.
 
 - Only lead Sequencer can post batches.
 - Lead Sequencer batches are accepted during their sequencing period and rejected outside this period.
@@ -343,7 +343,7 @@ A list of all the configurable parameters of the network.
 ### Batch verification
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md) as this only details the diff with what we already have.
 
 - Anyone can verify batches.
 - Only one valid verification is required to advance the network.
@@ -428,7 +428,7 @@ The following links, repos, and projects have been important in the development 
 ### Based rollups + extra steps
 
 - [Based Ticketing Rollup by George Spasov](https://hackmd.io/@Perseverance/Syk2oQU36)
-- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/contestable-rollup)
+- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://taiko.mirror.xyz/Z4I5ZhreGkyfdaL5I9P0Rj0DNX4zaWFmcws-0CVMJ2A)
 - [Native Based Rollup by Taiko (Taiko Gwyneth)](https://docs.taiko.xyz/taiko-gwyneth-protocol/what-is-taiko-gwyneth/)
 
 ### Misc
