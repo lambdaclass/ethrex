@@ -1657,10 +1657,14 @@ impl Store {
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-
+        let mut keccak_cache = KeccakCache::with_capacity(
+            account_updates.len(),
+            account_updates.iter().map(|u| u.added_storage.len()).sum(),
+        );
         Ok(Some(self.apply_account_updates_from_trie_batch(
             &mut state_trie,
             account_updates,
+            &mut keccak_cache,
         )?))
     }
 
@@ -1668,12 +1672,20 @@ impl Store {
         &self,
         state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
+        keccak_cache: &mut KeccakCache,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
+        // Clone trie cache and last_written once — avoids re-acquiring locks per account
+        let trie_cache_snapshot = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
         for update in account_updates {
-            let hashed_address = hash_address_fixed(&update.address);
+            let hashed_address = keccak_cache.hash_address(&update.address);
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(hashed_address.as_bytes())?;
@@ -1699,14 +1711,25 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie =
-                    self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
+                let mut storage_trie = self.open_storage_trie_with_cache(
+                    hashed_address,
+                    state_root,
+                    account_state.storage_root,
+                    trie_cache_snapshot.clone(),
+                    last_written.clone(),
+                )?;
+                // Pre-hash and sort by key for better trie node locality
+                let mut sorted_storage: Vec<_> = update
+                    .added_storage
+                    .iter()
+                    .map(|(k, v)| (keccak_cache.hash_key(k), v))
+                    .collect();
+                sorted_storage.sort_unstable_by_key(|(k, _)| *k);
+                for (hashed_key, storage_value) in sorted_storage {
                     if storage_value.is_zero() {
                         storage_trie.remove(&hashed_key)?;
                     } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        storage_trie.insert(hashed_key.to_vec(), storage_value.encode_to_vec())?;
                     }
                 }
                 let (storage_hash, storage_updates) =
@@ -1742,20 +1765,31 @@ impl Store {
         let mut code_updates = Vec::new();
 
         let state_root = state_trie.hash_no_commit();
+        // Clone trie cache and last_written once — avoids re-acquiring locks per account
+        let trie_cache_snapshot = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+        let mut keccak_cache = KeccakCache::with_capacity(
+            account_updates.len(),
+            account_updates.iter().map(|u| u.added_storage.len()).sum(),
+        );
 
         for update in account_updates.iter() {
-            let hashed_address = hash_address(&update.address);
+            let hashed_address = keccak_cache.hash_address(&update.address);
 
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(&hashed_address)?;
+                state_trie.remove(hashed_address.as_bytes())?;
 
                 continue;
             }
 
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
+            let mut account_state = match state_trie.get(hashed_address.as_bytes())? {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
@@ -1782,22 +1816,29 @@ impl Store {
                 let (_witness, storage_trie) = match storage_tries.entry(update.address) {
                     Entry::Occupied(value) => value.into_mut(),
                     Entry::Vacant(vacant) => {
-                        let trie = self.open_storage_trie(
-                            H256::from_slice(&hashed_address),
+                        let trie = self.open_storage_trie_with_cache(
+                            hashed_address,
                             state_root,
                             account_state.storage_root,
+                            trie_cache_snapshot.clone(),
+                            last_written.clone(),
                         )?;
                         vacant.insert(TrieLogger::open_trie(trie))
                     }
                 };
 
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
-
+                // Pre-hash and sort by key for better trie node locality
+                let mut sorted_storage: Vec<_> = update
+                    .added_storage
+                    .iter()
+                    .map(|(k, v)| (keccak_cache.hash_key(k), v))
+                    .collect();
+                sorted_storage.sort_unstable_by_key(|(k, _)| *k);
+                for (hashed_key, storage_value) in sorted_storage {
                     if storage_value.is_zero() {
                         storage_trie.remove(&hashed_key)?;
                     } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        storage_trie.insert(hashed_key.to_vec(), storage_value.encode_to_vec())?;
                     }
                 }
 
@@ -1806,10 +1847,13 @@ impl Store {
 
                 account_state.storage_root = storage_hash;
 
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                ret_storage_updates.push((hashed_address, storage_updates));
             }
 
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            state_trie.insert(
+                hashed_address.as_bytes().to_vec(),
+                account_state.encode_to_vec(),
+            )?;
         }
 
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
@@ -2515,6 +2559,29 @@ impl Store {
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
+    /// Open a storage trie using a pre-cloned cache and last_written value.
+    /// Avoids re-acquiring the trie_cache RwLock and last_written lock on each call.
+    /// Use this when opening multiple storage tries in a loop (e.g., per-account in batch updates).
+    fn open_storage_trie_with_cache(
+        &self,
+        account_hash: H256,
+        state_root: H256,
+        storage_root: H256,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper::new(
+            state_root,
+            cache,
+            Box::new(BackendTrieDB::new_for_storages(
+                self.backend.clone(),
+                last_written,
+            )?),
+            Some(account_hash),
+        );
+        Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
     /// Open a state trie using pre-acquired shared resources.
     /// Avoids redundant RwLock acquisitions when multiple tries are opened
     /// in the same operation (e.g., state trie + storage trie in get_storage_at_root).
@@ -3050,6 +3117,40 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 
 pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
     keccak_hash(key.to_fixed_bytes())
+}
+
+/// Per-block cache for keccak256 hashes of trie keys.
+/// Avoids redundant keccak256 computations when the same address or storage key
+/// is hashed multiple times during block processing.
+pub struct KeccakCache {
+    addresses: rustc_hash::FxHashMap<Address, H256>,
+    keys: rustc_hash::FxHashMap<H256, [u8; 32]>,
+}
+
+impl KeccakCache {
+    pub fn with_capacity(addr_cap: usize, key_cap: usize) -> Self {
+        Self {
+            addresses: rustc_hash::FxHashMap::with_capacity_and_hasher(
+                addr_cap,
+                Default::default(),
+            ),
+            keys: rustc_hash::FxHashMap::with_capacity_and_hasher(key_cap, Default::default()),
+        }
+    }
+
+    pub fn hash_address(&mut self, address: &Address) -> H256 {
+        *self
+            .addresses
+            .entry(*address)
+            .or_insert_with(|| keccak(address.to_fixed_bytes()))
+    }
+
+    pub fn hash_key(&mut self, key: &H256) -> [u8; 32] {
+        *self
+            .keys
+            .entry(*key)
+            .or_insert_with(|| keccak_hash(key.to_fixed_bytes()))
+    }
 }
 
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
