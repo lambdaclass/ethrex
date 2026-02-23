@@ -1672,6 +1672,13 @@ impl Store {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
+        // Clone trie cache and last_written once — avoids re-acquiring locks per account
+        let trie_cache_snapshot = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
@@ -1699,8 +1706,13 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie =
-                    self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
+                let mut storage_trie = self.open_storage_trie_with_cache(
+                    hashed_address,
+                    state_root,
+                    account_state.storage_root,
+                    trie_cache_snapshot.clone(),
+                    last_written.clone(),
+                )?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -1742,6 +1754,13 @@ impl Store {
         let mut code_updates = Vec::new();
 
         let state_root = state_trie.hash_no_commit();
+        // Clone trie cache and last_written once — avoids re-acquiring locks per account
+        let trie_cache_snapshot = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -1782,10 +1801,12 @@ impl Store {
                 let (_witness, storage_trie) = match storage_tries.entry(update.address) {
                     Entry::Occupied(value) => value.into_mut(),
                     Entry::Vacant(vacant) => {
-                        let trie = self.open_storage_trie(
+                        let trie = self.open_storage_trie_with_cache(
                             H256::from_slice(&hashed_address),
                             state_root,
                             account_state.storage_root,
+                            trie_cache_snapshot.clone(),
+                            last_written.clone(),
                         )?;
                         vacant.insert(TrieLogger::open_trie(trie))
                     }
@@ -2509,6 +2530,29 @@ impl Store {
             Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
+            )?),
+            Some(account_hash),
+        );
+        Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
+    /// Open a storage trie using a pre-cloned cache and last_written value.
+    /// Avoids re-acquiring the trie_cache RwLock and last_written lock on each call.
+    /// Use this when opening multiple storage tries in a loop (e.g., per-account in batch updates).
+    fn open_storage_trie_with_cache(
+        &self,
+        account_hash: H256,
+        state_root: H256,
+        storage_root: H256,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper::new(
+            state_root,
+            cache,
+            Box::new(BackendTrieDB::new_for_storages(
+                self.backend.clone(),
+                last_written,
             )?),
             Some(account_hash),
         );

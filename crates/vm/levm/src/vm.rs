@@ -21,13 +21,10 @@ use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
+    utils::keccak,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 /// Storage mapping from slot key to value.
 pub type Storage = HashMap<U256, H256>;
@@ -388,6 +385,9 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Opcode dispatch table, built dynamically per fork.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    /// Cache for CREATE2 init_code_hash to avoid redundant keccak256.
+    /// Stores the last (init_code, hash) pair. Cleared per-tx (VM lifetime).
+    create2_hash_cache: Option<(Bytes, H256)>,
 }
 
 impl<'a> VM<'a> {
@@ -438,6 +438,7 @@ impl<'a> VM<'a> {
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+            create2_hash_cache: None,
         };
 
         let call_type = if is_create {
@@ -465,6 +466,20 @@ impl<'a> VM<'a> {
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
         self.hooks.push(Rc::new(RefCell::new(hook)));
+    }
+
+    /// Returns the keccak256 hash of `init_code`, using a single-entry cache
+    /// to avoid redundant hashing when the same bytecode is deployed repeatedly
+    /// (common in XENTorrent/CoinTool patterns with 128+ identical CREATE2 calls per tx).
+    pub(crate) fn get_init_code_hash(&mut self, init_code: &Bytes) -> H256 {
+        if let Some((cached_code, cached_hash)) = &self.create2_hash_cache {
+            if cached_code == init_code {
+                return *cached_hash;
+            }
+        }
+        let hash = keccak(init_code);
+        self.create2_hash_cache = Some((init_code.clone(), hash));
+        hash
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
