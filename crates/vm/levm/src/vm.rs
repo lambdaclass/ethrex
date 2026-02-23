@@ -558,20 +558,33 @@ impl<'a> VM<'a> {
             return result;
         }
 
-        // JIT dispatch: check if this bytecode has been compiled and increment execution counter.
-        // In Phase 2 PoC, we only track counts and check the cache — compilation is triggered
-        // explicitly via the tokamak-jit crate API, not automatically from the loop.
+        // JIT dispatch: increment execution counter and, if compiled code is found
+        // and a backend is registered, execute via JIT instead of the interpreter.
         #[cfg(feature = "tokamak-jit")]
         {
             let bytecode_hash = self.current_call_frame.bytecode.hash;
-            // Increment execution counter for tiering decisions
             JIT_STATE.counter.increment(&bytecode_hash);
-            // TODO(Phase 3): If compiled code is found, execute it and return the result
-            // instead of falling through to the interpreter loop.
-            // if let Some(_compiled) = crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash) {
-            //     let outcome = execute_jit(...);
-            //     return apply_jit_result(outcome);
-            // }
+
+            if let Some(compiled) =
+                crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash)
+                && let Some(result) = JIT_STATE.execute_jit(
+                    &compiled,
+                    &mut self.current_call_frame,
+                    self.db,
+                    &mut self.substate,
+                    &self.env,
+                )
+            {
+                match result {
+                    Ok(outcome) => {
+                        return apply_jit_outcome(outcome, &self.current_call_frame)
+                    }
+                    Err(_msg) => {
+                        // JIT execution failed; fall through to interpreter loop.
+                        // TODO(Phase 4): Add tracing/logging for JIT fallback events.
+                    }
+                }
+            }
         }
 
         #[cfg(feature = "perf_opcode_timings")]
@@ -758,6 +771,39 @@ impl<'a> VM<'a> {
         };
 
         Ok(report)
+    }
+}
+
+/// Map a JIT execution outcome to a `ContextResult`.
+///
+/// Called from `run_execution()` when JIT dispatch succeeds. Converts
+/// `JitOutcome::Success` / `Revert` into the LEVM result type that
+/// `finalize_execution` expects.
+#[cfg(feature = "tokamak-jit")]
+fn apply_jit_outcome(
+    outcome: crate::jit::types::JitOutcome,
+    _call_frame: &CallFrame,
+) -> Result<ContextResult, VMError> {
+    use crate::errors::TxResult;
+    match outcome {
+        crate::jit::types::JitOutcome::Success { gas_used, output } => Ok(ContextResult {
+            result: TxResult::Success,
+            gas_used,
+            gas_spent: gas_used,
+            output,
+        }),
+        crate::jit::types::JitOutcome::Revert { gas_used, output } => Ok(ContextResult {
+            result: TxResult::Revert(VMError::RevertOpcode),
+            gas_used,
+            gas_spent: gas_used,
+            output,
+        }),
+        crate::jit::types::JitOutcome::NotCompiled | crate::jit::types::JitOutcome::Error(_) => {
+            // These cases are handled by the caller before reaching this function.
+            Err(VMError::Internal(InternalError::Custom(
+                "unexpected JitOutcome in apply_jit_outcome".to_string(),
+            )))
+        }
     }
 }
 

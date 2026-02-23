@@ -27,13 +27,17 @@
 pub mod error;
 pub mod validation;
 
-// The adapter, compiler, and backend modules require revmc + revm types.
+// The adapter, compiler, backend, host, and execution modules require revmc + revm types.
 #[cfg(feature = "revmc-backend")]
 pub mod adapter;
 #[cfg(feature = "revmc-backend")]
 pub mod backend;
 #[cfg(feature = "revmc-backend")]
 pub mod compiler;
+#[cfg(feature = "revmc-backend")]
+pub mod execution;
+#[cfg(feature = "revmc-backend")]
+pub mod host;
 
 // Re-exports for convenience
 pub use error::JitError;
@@ -42,6 +46,18 @@ pub use ethrex_levm::jit::{
     counter::ExecutionCounter,
     types::{AnalyzedBytecode, JitConfig, JitOutcome},
 };
+
+/// Register the revmc JIT backend with LEVM's global JIT state.
+///
+/// Call this once at application startup to enable JIT execution.
+/// Without this registration, the JIT dispatch in `vm.rs` is a no-op
+/// (counter increments but compiled code is never executed).
+#[cfg(feature = "revmc-backend")]
+pub fn register_jit_backend() {
+    use std::sync::Arc;
+    let backend = Arc::new(backend::RevmcBackend::default());
+    ethrex_levm::vm::JIT_STATE.register_backend(backend);
+}
 
 #[cfg(test)]
 mod tests;

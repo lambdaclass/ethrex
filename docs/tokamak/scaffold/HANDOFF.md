@@ -29,6 +29,67 @@
 | Phase 2-3: tokamak-jit revmc adapter | **완료** |
 | Phase 2-4: Fibonacci PoC 테스트 | **완료** |
 | Phase 2-5: CI, benchmark, docs | **완료** |
+| Phase 3-1: JitBackend trait (dispatch.rs) | **완료** |
+| Phase 3-2: LevmHost (host.rs) | **완료** |
+| Phase 3-3: Execution bridge (execution.rs) | **완료** |
+| Phase 3-4: RevmcBackend JitBackend impl | **완료** |
+| Phase 3-5: vm.rs JIT dispatch wiring | **완료** |
+| Phase 3-6: Backend registration + E2E tests | **완료** |
+| Phase 3-7: PHASE-3.md + HANDOFF update | **완료** |
+
+## Phase 3 완료 요약
+
+### 핵심 변경: JIT Execution Wiring
+
+Phase 2에서 컴파일만 가능했던 JIT 코드를 실제 실행 가능하게 연결.
+
+### 의존성 역전 패턴 (Dependency Inversion)
+
+LEVM은 `tokamak-jit`에 의존할 수 없음 (순환 참조). 해결:
+- `JitBackend` trait을 LEVM `dispatch.rs`에 정의
+- `tokamak-jit::RevmcBackend`가 구현
+- 런타임에 `register_backend()`로 등록
+
+### 새 모듈
+
+| 모듈 | 위치 | 용도 |
+|------|------|------|
+| `JitBackend` trait | `levm/src/jit/dispatch.rs` | 실행 백엔드 인터페이스 |
+| `host.rs` | `tokamak-jit/src/` | revm Host ↔ LEVM 상태 브릿지 |
+| `execution.rs` | `tokamak-jit/src/` | JIT 실행 브릿지 (Interpreter + Host 구성) |
+
+### revm Host 매핑 (v14.0)
+
+19개 required methods 구현. 주요 매핑:
+- `basefee()` → `env.base_fee_per_gas`
+- `block_hash(n)` → `db.store.get_block_hash(n)`
+- `sload_skip_cold_load()` → `db.get_storage_value()`
+- `sstore_skip_cold_load()` → `db.update_account_storage()`
+- `load_account_info_skip_cold_load()` → `db.get_account()` + code lookup
+- `tload/tstore` → `substate.get_transient/set_transient`
+- `log()` → `substate.add_log()`
+
+### vm.rs 변경
+
+`run_execution()` 내 인터프리터 루프 전:
+```
+JIT_STATE.counter.increment()
+try_jit_dispatch() → execute_jit() → apply_jit_outcome()
+```
+JIT 실행 실패 시 인터프리터로 fallback.
+
+### E2E 테스트 (revmc-backend feature 뒤)
+
+- `test_fibonacci_jit_execution` — 전체 VM dispatch 경로 통과 JIT 실행
+- `test_fibonacci_jit_vs_interpreter_validation` — JIT vs 인터프리터 결과 비교
+
+### Phase 3 범위 제한 (Phase 4에서 처리)
+
+- CALL/CREATE 중첩 지원 — JIT에서 발생 시 에러 반환
+- 자동 컴파일 트리거 — 카운터 추적만, 자동 컴파일 미구현
+- LRU 캐시 eviction — 캐시 무제한 증가
+- is_static 전파 — PoC에서 false 고정
+- Gas refund 처리 — finalize_execution에 위임
 
 ## Phase 2 완료 요약
 
@@ -112,14 +173,15 @@ Cranelift은 i256 미지원으로 불가. **revmc (Paradigm, LLVM backend)** 채
 
 ## 다음 단계
 
-### Phase 3: JIT Execution Wiring
+### Phase 4: Production JIT
 
-1. **Host trait implementation** — LEVM Substate/DB ↔ revm Host adapter
-2. **Automatic compilation trigger** — counter threshold → compile in background
-3. **CALL/CREATE support** — suspend/resume for nested calls
-4. **State opcodes** — SLOAD/SSTORE/TLOAD/TSTORE through Host
-5. **LRU cache eviction** — bound cache size
-6. **Production error recovery** — JIT failure graceful fallback
+1. **Automatic compilation trigger** — counter threshold → compile in background
+2. **Nested CALL/CREATE** — suspend JIT, call interpreter, resume
+3. **LRU cache eviction** — bound cache size, evict cold entries
+4. **is_static propagation** — from CallFrame to JIT Interpreter
+5. **Gas refund reconciliation** — exact match JIT ↔ interpreter
+6. **Tracing integration** — JIT fallback event logging
+7. **Production error recovery** — graceful fallback with metrics
 
 ## 핵심 컨텍스트
 

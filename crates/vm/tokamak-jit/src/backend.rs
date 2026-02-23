@@ -5,11 +5,16 @@
 
 use bytes::Bytes;
 use ethrex_common::types::Code;
+use ethrex_levm::call_frame::CallFrame;
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
+use ethrex_levm::environment::Environment;
 use ethrex_levm::jit::{
     analyzer::analyze_bytecode,
-    cache::CodeCache,
+    cache::{CodeCache, CompiledCode},
+    dispatch::JitBackend,
     types::{AnalyzedBytecode, JitConfig, JitOutcome},
 };
+use ethrex_levm::vm::Substate;
 
 use crate::compiler::TokamakCompiler;
 use crate::error::JitError;
@@ -91,5 +96,19 @@ impl RevmcBackend {
 impl Default for RevmcBackend {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl JitBackend for RevmcBackend {
+    fn execute(
+        &self,
+        compiled: &CompiledCode,
+        call_frame: &mut CallFrame,
+        db: &mut GeneralizedDatabase,
+        substate: &mut Substate,
+        env: &Environment,
+    ) -> Result<JitOutcome, String> {
+        crate::execution::execute_jit(compiled, call_frame, db, substate, env)
+            .map_err(|e| format!("{e}"))
     }
 }
