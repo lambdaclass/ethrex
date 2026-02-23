@@ -25,10 +25,10 @@ use tracing::{Level, error, info, warn};
 
 use crate::{
     initializers::{
-        get_network, init_blockchain, init_store, init_tracing, load_store, regenerate_head_state,
+        get_network, init_blockchain, init_store, init_tracing, load_store,
     },
     utils::{
-        self, default_datadir, get_client_version, get_client_version_string,
+        self, default_datadir, get_client_version_string,
         get_minimal_client_version, init_datadir,
     },
 };
@@ -400,22 +400,25 @@ pub enum Subcommand {
         removedb: bool,
         #[arg(long, action = ArgAction::SetTrue)]
         l2: bool,
-    },
-    #[command(
-        name = "import-bench",
-        about = "Import blocks to the database for benchmarking"
-    )]
-    ImportBench {
         #[arg(
-            required = true,
-            value_name = "FILE_PATH/FOLDER",
-            help = "Path to a RLP chain file or a folder containing files with individual Blocks"
+            long = "blocks",
+            value_name = "COUNT",
+            help = "Maximum number of blocks to import"
         )]
-        path: String,
-        #[arg(long = "removedb", action = ArgAction::SetTrue)]
-        removedb: bool,
-        #[arg(long, action = ArgAction::SetTrue)]
-        l2: bool,
+        block_count: Option<usize>,
+        #[arg(
+            long = "batch-size",
+            value_name = "SIZE",
+            default_value = "1024",
+            help = "Batch size for batched execution (default: 1024)"
+        )]
+        batch_size: usize,
+        #[arg(
+            long = "perf-logs",
+            action = ArgAction::SetTrue,
+            help = "Enable per-block performance metrics logging"
+        )]
+        perf_logs: bool,
     },
     #[command(
         name = "export",
@@ -489,7 +492,14 @@ impl Subcommand {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
-            Subcommand::Import { path, removedb, l2 } => {
+            Subcommand::Import {
+                path,
+                removedb,
+                l2,
+                block_count,
+                batch_size,
+                perf_logs,
+            } => {
                 if removedb {
                     remove_db(&opts.datadir.clone(), opts.force);
                 }
@@ -508,33 +518,11 @@ impl Subcommand {
                     BlockchainOptions {
                         max_mempool_size: opts.mempool_max_size,
                         r#type: blockchain_type,
+                        perf_logs_enabled: perf_logs,
                         ..Default::default()
                     },
-                )
-                .await?;
-            }
-            Subcommand::ImportBench { path, removedb, l2 } => {
-                if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
-                }
-                info!("ethrex version: {}", get_client_version());
-
-                let network = get_network(opts);
-                let genesis = network.get_genesis()?;
-                let blockchain_type = if l2 {
-                    BlockchainType::L2(L2Config::default())
-                } else {
-                    BlockchainType::L1
-                };
-                import_blocks_bench(
-                    &path,
-                    &opts.datadir,
-                    genesis,
-                    BlockchainOptions {
-                        r#type: blockchain_type,
-                        perf_logs_enabled: true,
-                        ..Default::default()
-                    },
+                    block_count,
+                    batch_size,
                 )
                 .await?;
             }
@@ -626,10 +614,11 @@ pub async fn import_blocks(
     datadir: &Path,
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
+    block_count: Option<usize>,
+    batch_size: usize,
 ) -> Result<(), ChainError> {
-    const IMPORT_BATCH_SIZE: usize = 1024;
-    // This value is higher than the spec (128) as the latter block's state nodes will be kept in memory and not committed when using rocksdb
-    // This means we need to run some extra-blocks to ensure we commit their state and don't need to regenerate the full block range upon node restart
+    // The last MIN_FULL_BLOCKS blocks run per-block to ensure their state is committed
+    // and we don't need to regenerate the full block range upon restart.
     const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
@@ -662,24 +651,31 @@ pub async fn import_blocks(
     };
 
     let mut total_blocks_imported = 0;
+    let blocks_limit = block_count.unwrap_or(usize::MAX);
+
     for blocks in chains {
-        let mut block_batch = vec![];
         let size = blocks.len();
-        let mut numbers_and_hashes = blocks
-            .iter()
-            .map(|b| (b.header.number, b.hash()))
-            .collect::<Vec<_>>();
-        // Execute block by block
+        let effective_size = size.min(blocks_limit - total_blocks_imported);
+        let mut block_batch = vec![];
+        let mut numbers_and_hashes: Vec<(u64, ethrex_common::H256)> = Vec::new();
         let mut last_progress_log = Instant::now();
+
         for (index, block) in blocks.into_iter().enumerate() {
+            if total_blocks_imported + index >= blocks_limit {
+                info!("Reached block limit of {blocks_limit}, stopping");
+                break;
+            }
+
             let hash = block.hash();
             let number = block.header.number;
+            numbers_and_hashes.push((number, hash));
 
             // Log progress every 10 seconds
             if last_progress_log.elapsed() >= Duration::from_secs(10) {
                 let processed = index + 1;
-                let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
-                info!(processed, total = size, percent, "Import progress");
+                let percent =
+                    (((processed as f64 / effective_size as f64) * 100.0) * 10.0).round() / 10.0;
+                info!(processed, total = effective_size, percent, "Import progress");
                 last_progress_log = Instant::now();
             }
 
@@ -698,31 +694,33 @@ pub async fn import_blocks(
             validate_block_body(&block.header, &block.body)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
-            if index + MIN_FULL_BLOCKS < size {
+            if index + MIN_FULL_BLOCKS < effective_size {
                 block_batch.push(block);
-                if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
+                if block_batch.len() >= batch_size
+                    || index + MIN_FULL_BLOCKS + 1 == effective_size
+                {
                     blockchain
                         .add_blocks_in_batch(mem::take(&mut block_batch), CancellationToken::new())
                         .await
                         .map_err(|(err, _)| err)?;
                 }
             } else {
-                // We need to have the state of the latest 128 blocks
+                // Last MIN_FULL_BLOCKS blocks run per-block to ensure state is committed
                 blockchain
-                .add_block_pipeline(block)
-                .inspect_err(|err| match err {
-                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
-                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
-                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
-                })?;
+                    .add_block_pipeline(block)
+                    .inspect_err(|err| match err {
+                        ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                        _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                    })?;
             }
         }
 
         // Make head canonical and label all special blocks correctly.
-        if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
+        if let Some((head_number, head_hash)) = numbers_and_hashes.last().copied() {
+            let rest = numbers_and_hashes[..numbers_and_hashes.len() - 1].to_vec();
             store
                 .forkchoice_update(
-                    numbers_and_hashes,
+                    rest,
                     head_number,
                     head_hash,
                     Some(head_number),
@@ -731,122 +729,10 @@ pub async fn import_blocks(
                 .await?;
         }
 
-        total_blocks_imported += size;
-    }
-
-    let total_duration = start_time.elapsed();
-    info!(
-        blocks = total_blocks_imported,
-        seconds = total_duration.as_secs_f64(),
-        "Import completed"
-    );
-    Ok(())
-}
-
-pub async fn import_blocks_bench(
-    path: &str,
-    datadir: &Path,
-    genesis: Genesis,
-    blockchain_opts: BlockchainOptions,
-) -> Result<(), ChainError> {
-    let start_time = Instant::now();
-    init_datadir(datadir);
-    let store = init_store(datadir, genesis).await?;
-    let blockchain = init_blockchain(store.clone(), blockchain_opts);
-    regenerate_head_state(&store, &blockchain).await.unwrap();
-    let path_metadata = metadata(path).expect("Failed to read path");
-
-    // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
-    let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
-        info!(path = %path, "Importing blocks from directory");
-        let mut entries: Vec<_> = read_dir(path)
-            .expect("Failed to read blocks directory")
-            .map(|res| res.expect("Failed to open file in directory").path())
-            .collect();
-
-        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
-        entries.sort();
-
-        entries
-            .iter()
-            .map(|entry| {
-                let path_str = entry.to_str().expect("Couldn't convert path to string");
-                info!(path = %path_str, "Importing blocks from file");
-                utils::read_chain_file(path_str)
-            })
-            .collect()
-    } else {
-        info!(path = %path, "Importing blocks from file");
-        vec![utils::read_chain_file(path)]
-    };
-
-    let mut total_blocks_imported = 0;
-    for blocks in chains {
-        let size = blocks.len();
-        let mut numbers_and_hashes = blocks
-            .iter()
-            .map(|b| (b.header.number, b.hash()))
-            .collect::<Vec<_>>();
-        // Execute block by block
-        let mut last_progress_log = Instant::now();
-        for (index, block) in blocks.into_iter().enumerate() {
-            let hash = block.hash();
-            let number = block.header.number;
-
-            // Log progress every 10 seconds
-            if last_progress_log.elapsed() >= Duration::from_secs(10) {
-                let processed = index + 1;
-                let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
-                info!(processed, total = size, percent, "Import progress");
-                last_progress_log = Instant::now();
-            }
-
-            // Check if the block is already in the blockchain, if it is do nothing, if not add it
-            let block_number = store.get_block_number(hash).await.map_err(|_e| {
-                ChainError::Custom(String::from(
-                    "Couldn't check if block is already in the blockchain",
-                ))
-            })?;
-
-            if block_number.is_some() {
-                info!("Block {} is already in the blockchain", block.hash());
-                continue;
-            }
-
-            validate_block_body(&block.header, &block.body)
-                .map_err(InvalidBlockError::InvalidBody)?;
-
-            blockchain
-                .add_block_pipeline(block)
-                .inspect_err(|err| match err {
-                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
-                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
-                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
-                })?;
-
-            // TODO: replace this
-            // This sleep is because we have a background process writing to disk the last layer
-            // And until it's done we can't execute the new block
-            // Because this wants to compare against running a real node in terms of reported performance
-            // It takes less than 500ms, so this is good enough, but we should report the performance
-            // without taking into account that wait.
-            tokio::time::sleep(Duration::from_millis(500)).await;
+        total_blocks_imported += effective_size;
+        if total_blocks_imported >= blocks_limit {
+            break;
         }
-
-        // Make head canonical and label all special blocks correctly.
-        if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
-            store
-                .forkchoice_update(
-                    numbers_and_hashes,
-                    head_number,
-                    head_hash,
-                    Some(head_number),
-                    Some(head_number),
-                )
-                .await?;
-        }
-
-        total_blocks_imported += size;
     }
 
     let total_duration = start_time.elapsed();
