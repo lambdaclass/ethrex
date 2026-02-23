@@ -13,6 +13,7 @@ use crate::{
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
+    bloom::StorageBloom,
     error::StoreError,
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
@@ -1672,6 +1673,14 @@ impl Store {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
+        // Pre-acquire shared resources once for all storage trie opens
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
 
         // Pre-compute hashed addresses and sort for sequential trie access
         let mut sorted_updates: Vec<(H256, &AccountUpdate)> = account_updates
@@ -1706,8 +1715,14 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie =
-                    self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
+                let mut storage_trie = self.open_storage_trie_shared(
+                    hashed_address,
+                    state_root,
+                    account_state.storage_root,
+                    read_view.clone(),
+                    cache.clone(),
+                    last_written.clone(),
+                )?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -1749,6 +1764,15 @@ impl Store {
         let mut code_updates = Vec::new();
 
         let state_root = state_trie.hash_no_commit();
+
+        // Pre-acquire shared resources once for all storage trie opens
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
 
         // Pre-compute hashed addresses and sort for sequential trie access
         let mut sorted_updates: Vec<(Vec<u8>, &AccountUpdate)> = account_updates
@@ -1794,10 +1818,13 @@ impl Store {
                 let (_witness, storage_trie) = match storage_tries.entry(update.address) {
                     Entry::Occupied(value) => value.into_mut(),
                     Entry::Vacant(vacant) => {
-                        let trie = self.open_storage_trie(
+                        let trie = self.open_storage_trie_shared(
                             H256::from_slice(&hashed_address),
                             state_root,
                             account_state.storage_root,
+                            read_view.clone(),
+                            cache.clone(),
+                            last_written.clone(),
                         )?;
                         vacant.insert(TrieLogger::open_trie(trie))
                     }
