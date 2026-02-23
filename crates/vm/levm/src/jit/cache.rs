@@ -182,7 +182,8 @@ impl CodeCache {
     /// Remove all entries from the cache.
     ///
     /// Used by `JitState::reset_for_testing()` to prevent state leakage
-    /// between `#[serial]` tests.
+    /// between `#[serial]` tests. Not available in production builds.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn clear(&self) {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut inner = self.inner.write().unwrap();
@@ -292,6 +293,26 @@ mod tests {
         assert_eq!(cache.len(), 2);
         assert!(cache.get(&k1).is_some());
         assert!(cache.get(&k2).is_some());
+    }
+
+    #[test]
+    fn test_cache_clear() {
+        let cache = CodeCache::new();
+        let k1 = (H256::from_low_u64_be(1), Fork::Cancun);
+        let k2 = (H256::from_low_u64_be(2), Fork::Cancun);
+
+        #[expect(unsafe_code)]
+        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1, None) };
+        cache.insert(k1, code1);
+        #[expect(unsafe_code)]
+        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2, None) };
+        cache.insert(k2, code2);
+        assert_eq!(cache.len(), 2);
+
+        cache.clear();
+        assert!(cache.is_empty());
+        assert!(cache.get(&k1).is_none());
+        assert!(cache.get(&k2).is_none());
     }
 
     #[test]

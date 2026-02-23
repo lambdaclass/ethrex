@@ -315,12 +315,15 @@ mod tests {
             Environment,
             db::gen_db::GeneralizedDatabase,
             tracing::LevmCallTracer,
-            vm::{VM, VMType},
+            vm::{JIT_STATE, VM, VMType},
         };
         use rustc_hash::FxHashMap;
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
+
+        // Reset JIT state for test isolation
+        JIT_STATE.reset_for_testing();
 
         let contract_addr = Address::from_low_u64_be(0x42);
         let sender_addr = Address::from_low_u64_be(0x100);

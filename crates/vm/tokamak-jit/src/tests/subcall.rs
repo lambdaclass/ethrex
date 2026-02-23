@@ -666,12 +666,15 @@ mod tests {
             db::gen_db::GeneralizedDatabase,
             jit::cache::CodeCache,
             tracing::LevmCallTracer,
-            vm::{VM, VMType},
+            vm::{JIT_STATE, VM, VMType},
         };
         use rustc_hash::FxHashMap;
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
+
+        // Reset JIT state for test isolation
+        JIT_STATE.reset_for_testing();
 
         let callee_addr = Address::from_low_u64_be(0x42);
         let caller_addr = Address::from_low_u64_be(0x43);
@@ -1323,6 +1326,10 @@ mod tests {
             report.output, interp_report.output,
             "JIT and interpreter CREATE output mismatch"
         );
+        assert_eq!(
+            report.gas_used, interp_report.gas_used,
+            "JIT and interpreter CREATE gas_used mismatch"
+        );
     }
 
     /// JIT-compile a CREATE2 factory and run through the full VM dispatch path.
@@ -1461,6 +1468,10 @@ mod tests {
         assert_eq!(
             report.output, interp_report.output,
             "JIT and interpreter CREATE2 output mismatch"
+        );
+        assert_eq!(
+            report.gas_used, interp_report.gas_used,
+            "JIT and interpreter CREATE2 gas_used mismatch"
         );
     }
 
@@ -1649,6 +1660,10 @@ mod tests {
             report.output, interp_report.output,
             "JIT and interpreter precompile value-call output mismatch"
         );
+        assert_eq!(
+            report.gas_used, interp_report.gas_used,
+            "JIT and interpreter precompile value-call gas_used mismatch"
+        );
     }
 
     /// JIT CREATE with collision: pre-seed the target address so CREATE fails.
@@ -1795,6 +1810,10 @@ mod tests {
         assert_eq!(
             report.output, interp_report.output,
             "JIT and interpreter collision CREATE output mismatch"
+        );
+        assert_eq!(
+            report.gas_used, interp_report.gas_used,
+            "JIT and interpreter collision CREATE gas_used mismatch"
         );
     }
 }

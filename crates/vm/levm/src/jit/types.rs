@@ -167,7 +167,8 @@ impl JitMetrics {
     /// Reset all counters to zero.
     ///
     /// Used by `JitState::reset_for_testing()` to prevent state leakage
-    /// between `#[serial]` tests.
+    /// between `#[serial]` tests. Not available in production builds.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn reset(&self) {
         self.jit_executions.store(0, Ordering::Relaxed);
         self.jit_fallbacks.store(0, Ordering::Relaxed);
@@ -189,5 +190,25 @@ impl JitMetrics {
 impl Default for JitMetrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metrics_reset() {
+        let metrics = JitMetrics::new();
+        metrics.jit_executions.store(10, Ordering::Relaxed);
+        metrics.jit_fallbacks.store(5, Ordering::Relaxed);
+        metrics.compilations.store(3, Ordering::Relaxed);
+        metrics.compilation_skips.store(2, Ordering::Relaxed);
+
+        assert_eq!(metrics.snapshot(), (10, 5, 3, 2));
+
+        metrics.reset();
+
+        assert_eq!(metrics.snapshot(), (0, 0, 0, 0));
     }
 }

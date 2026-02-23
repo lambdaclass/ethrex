@@ -29,6 +29,7 @@ ethrex-vm.workspace = true
 ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-crypto.workspace = true
+ethrex-levm = { workspace = true, features = ["test-utils"] }
 rustc-hash.workspace = true
 serial_test.workspace = true
 

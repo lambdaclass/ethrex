@@ -81,7 +81,8 @@ impl ExecutionCounter {
     /// Remove all execution counts.
     ///
     /// Used by `JitState::reset_for_testing()` to prevent state leakage
-    /// between `#[serial]` tests.
+    /// between `#[serial]` tests. Not available in production builds.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn clear(&self) {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut counts = self.counts.write().unwrap();
@@ -118,6 +119,23 @@ mod tests {
         assert_eq!(counter.increment(&hash), 1);
         assert_eq!(counter.increment(&hash), 2);
         assert_eq!(counter.get(&hash), 2);
+    }
+
+    #[test]
+    fn test_clear() {
+        let counter = ExecutionCounter::new();
+        let h1 = H256::zero();
+        let h2 = H256::from_low_u64_be(1);
+
+        counter.increment(&h1);
+        counter.increment(&h1);
+        counter.increment(&h2);
+        assert_eq!(counter.get(&h1), 2);
+        assert_eq!(counter.get(&h2), 1);
+
+        counter.clear();
+        assert_eq!(counter.get(&h1), 0);
+        assert_eq!(counter.get(&h2), 0);
     }
 
     #[test]

@@ -127,6 +127,8 @@ impl JitState {
     ///
     /// This does NOT reset `config` (immutable) or destroy the LLVM context
     /// held by the backend — it only clears the runtime accumulators.
+    /// Not available in production builds.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn reset_for_testing(&self) {
         self.cache.clear();
         self.counter.clear();
