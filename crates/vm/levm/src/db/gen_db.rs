@@ -29,6 +29,10 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
+    /// Shared read-only base state (e.g. post-system-call snapshot for parallel groups).
+    /// Checked on load_account between initial_accounts_state and store lookups.
+    /// Accounts are cloned into initial_accounts_state on first access (lazy, per-account).
+    pub shared_base: Option<Arc<CacheDB>>,
     pub codes: FxHashMap<H256, Code>,
     pub code_metadata: FxHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
@@ -42,6 +46,22 @@ impl GeneralizedDatabase {
             store,
             current_accounts_state: Default::default(),
             initial_accounts_state: Default::default(),
+            shared_base: None,
+            tx_backup: None,
+            codes: Default::default(),
+            code_metadata: Default::default(),
+            bal_recorder: None,
+        }
+    }
+
+    /// Creates a new GeneralizedDatabase with a shared read-only base state.
+    /// Used for parallel execution groups that share post-system-call state.
+    pub fn new_with_shared_base(store: Arc<dyn Database>, shared_base: Arc<CacheDB>) -> Self {
+        Self {
+            store,
+            current_accounts_state: Default::default(),
+            initial_accounts_state: Default::default(),
+            shared_base: Some(shared_base),
             tx_backup: None,
             codes: Default::default(),
             code_metadata: Default::default(),
@@ -97,6 +117,7 @@ impl GeneralizedDatabase {
             store,
             current_accounts_state: levm_accounts.clone(),
             initial_accounts_state: levm_accounts,
+            shared_base: None,
             tx_backup: None,
             codes,
             code_metadata: Default::default(),
@@ -113,6 +134,17 @@ impl GeneralizedDatabase {
             Entry::Vacant(entry) => {
                 if let Some(account) = self.initial_accounts_state.get(&address) {
                     return Ok(entry.insert(account.clone()));
+                }
+                // Check shared_base (read-only post-system-call snapshot) before hitting store.
+                // Clone on first access so get_state_transitions_tx sees the account in
+                // initial_accounts_state (transparent to diff logic).
+                if let Some(ref base) = self.shared_base
+                    && let Some(account) = base.get(&address)
+                {
+                    let cloned = account.clone();
+                    self.initial_accounts_state
+                        .insert(address, cloned.clone());
+                    return Ok(entry.insert(cloned));
                 }
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
