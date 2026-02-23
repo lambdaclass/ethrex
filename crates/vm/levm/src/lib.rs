@@ -50,10 +50,13 @@
 //! ## Usage
 //!
 //! ```ignore
-//! use levm::{VM, Environment};
+//! use levm::{VM, Environment, OpcodeTable};
 //!
-//! // Create VM with database and environment
-//! let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+//! // Build opcode table once per block (reused across transactions)
+//! let opcode_table = OpcodeTable::new(fork);
+//!
+//! // Create VM with database, environment, and shared opcode table
+//! let mut vm = VM::new(env, db, &tx, tracer, vm_type, &opcode_table)?;
 //!
 //! // Execute the transaction
 //! let report = vm.execute()?;
