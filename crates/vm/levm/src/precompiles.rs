@@ -32,7 +32,6 @@ use p256::{
 };
 use sha2::Digest;
 use std::borrow::Cow;
-use std::mem::size_of;
 use std::ops::Mul;
 use std::sync::RwLock;
 
@@ -291,37 +290,29 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
 }
 
 const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
-const PRECOMPILE_CACHE_ENTRY_METADATA_BYTES: usize =
-    size_of::<Address>() + (2 * size_of::<Bytes>()) + size_of::<u64>();
 
-type PrecompileCacheKey = (Address, Bytes);
-type PrecompileCacheValue = (Bytes, u64);
-
-struct PrecompileCacheState {
-    cache: IndexMap<PrecompileCacheKey, PrecompileCacheValue>,
-    current_size_bytes: usize,
-    max_size_bytes: usize,
+struct PrecompileCacheInner {
+    entries: IndexMap<(Address, Bytes), (Bytes, u64)>,
+    used_bytes: usize,
 }
 
-impl PrecompileCacheState {
-    fn new(max_size_bytes: usize) -> Self {
+impl PrecompileCacheInner {
+    fn new() -> Self {
         Self {
-            cache: IndexMap::new(),
-            current_size_bytes: 0,
-            max_size_bytes,
+            entries: IndexMap::new(),
+            used_bytes: 0,
         }
     }
 
     fn entry_size(calldata_len: usize, output_len: usize) -> usize {
-        PRECOMPILE_CACHE_ENTRY_METADATA_BYTES
-            .saturating_add(calldata_len)
-            .saturating_add(output_len)
+        calldata_len.saturating_add(output_len)
     }
 }
 
 /// Per-block cache for precompile results shared between warmer and executor.
 pub struct PrecompileCache {
-    cache: RwLock<PrecompileCacheState>,
+    cache: RwLock<PrecompileCacheInner>,
+    max_size_bytes: usize,
 }
 
 impl Default for PrecompileCache {
@@ -337,7 +328,8 @@ impl PrecompileCache {
 
     pub fn with_max_bytes(max_size_bytes: usize) -> Self {
         Self {
-            cache: RwLock::new(PrecompileCacheState::new(max_size_bytes)),
+            cache: RwLock::new(PrecompileCacheInner::new()),
+            max_size_bytes,
         }
     }
 
@@ -350,46 +342,46 @@ impl PrecompileCache {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let key = (*address, calldata.clone());
-        let (output, gas_cost) = cache.cache.shift_remove(&key)?;
+        let (output, gas_cost) = cache.entries.shift_remove(&key)?;
         let result = (output.clone(), gas_cost);
-        cache.cache.insert(key, (output, gas_cost));
+        cache.entries.insert(key, (output, gas_cost));
         Some(result)
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
+        if self.max_size_bytes == 0 {
+            return;
+        }
+
+        let entry_size = PrecompileCacheInner::entry_size(calldata.len(), output.len());
+        if entry_size > self.max_size_bytes {
+            return;
+        }
+
         let mut cache = self
             .cache
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if cache.max_size_bytes == 0 {
-            return;
-        }
-
-        let entry_size = PrecompileCacheState::entry_size(calldata.len(), output.len());
-        if entry_size > cache.max_size_bytes {
-            return;
-        }
-
         let key = (address, calldata);
 
-        if let Some((existing_output, _)) = cache.cache.shift_remove(&key) {
+        if let Some((existing_output, _)) = cache.entries.shift_remove(&key) {
             let existing_entry_size =
-                PrecompileCacheState::entry_size(key.1.len(), existing_output.len());
-            cache.current_size_bytes = cache.current_size_bytes.saturating_sub(existing_entry_size);
+                PrecompileCacheInner::entry_size(key.1.len(), existing_output.len());
+            cache.used_bytes = cache.used_bytes.saturating_sub(existing_entry_size);
         }
 
-        cache.cache.insert(key, (output, gas_cost));
-        cache.current_size_bytes = cache.current_size_bytes.saturating_add(entry_size);
+        cache.entries.insert(key, (output, gas_cost));
+        cache.used_bytes = cache.used_bytes.saturating_add(entry_size);
 
-        while cache.current_size_bytes > cache.max_size_bytes {
-            let Some((lru_key, (lru_output, _))) = cache.cache.shift_remove_index(0) else {
-                cache.current_size_bytes = 0;
+        while cache.used_bytes > self.max_size_bytes {
+            let Some((lru_key, (lru_output, _))) = cache.entries.shift_remove_index(0) else {
+                cache.used_bytes = 0;
                 break;
             };
             let lru_entry_size =
-                PrecompileCacheState::entry_size(lru_key.1.len(), lru_output.len());
-            cache.current_size_bytes = cache.current_size_bytes.saturating_sub(lru_entry_size);
+                PrecompileCacheInner::entry_size(lru_key.1.len(), lru_output.len());
+            cache.used_bytes = cache.used_bytes.saturating_sub(lru_entry_size);
         }
     }
 }

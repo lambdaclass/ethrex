@@ -1,15 +1,9 @@
 use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_levm::precompiles::PrecompileCache;
-use std::mem::size_of;
-
-const ENTRY_METADATA_BYTES: usize =
-    size_of::<Address>() + (2 * size_of::<Bytes>()) + size_of::<u64>();
 
 fn entry_size(calldata_len: usize, output_len: usize) -> usize {
-    ENTRY_METADATA_BYTES
-        .saturating_add(calldata_len)
-        .saturating_add(output_len)
+    calldata_len.saturating_add(output_len)
 }
 
 fn sample_calldata(seed: u8) -> Bytes {
