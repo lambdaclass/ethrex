@@ -638,16 +638,6 @@ impl Blockchain {
                     for (key, value) in update.added_storage {
                         entry.push((keccak(key), value));
                     }
-                    // Pre-populate account state cache for storage root lookup
-                    if !cleared_storage.contains(&hashed_address) {
-                        if let Entry::Vacant(e) = account_state_cache.entry(hashed_address) {
-                            let state = match state_db_trie.get(hashed_address.as_bytes())? {
-                                Some(rlp) => Some(AccountState::decode(&rlp)?),
-                                None => None,
-                            };
-                            e.insert(state);
-                        }
-                    }
                 }
 
                 // Track account info changes
@@ -668,15 +658,39 @@ impl Blockchain {
         // Track which cleared_storage accounts have been processed
         let mut processed_cleared: rustc_hash::FxHashSet<H256> = Default::default();
 
-        // Phase 2a: Apply storage updates + compute roots in parallel.
-        // Each account's storage trie is independent: open DB, apply updates,
-        // compute root hash, collect trie node updates — all in parallel.
-        //
-        // StorageTrieFactory snapshots trie_cache + last_written once,
-        // eliminating per-account mutex locks under rayon parallelism.
-        let storage_factory = self
+        // Create factory once: snapshots trie_cache + last_written,
+        // eliminating per-call mutex locks under rayon parallelism.
+        let trie_factory = self
             .storage
             .storage_trie_factory(parent_header.state_root)?;
+
+        // Phase 2a: Read ALL account states in parallel.
+        // Replaces sequential state_db_trie.get() calls that were the main bottleneck.
+        let all_state_accounts: Vec<H256> = {
+            let mut set: rustc_hash::FxHashSet<H256> = Default::default();
+            set.extend(deferred_storage.keys());
+            set.extend(account_infos.keys());
+            set.extend(cleared_storage.iter());
+            set.into_iter().collect()
+        };
+        let state_reads: Result<Vec<(H256, Option<AccountState>)>, StoreError> = all_state_accounts
+            .par_iter()
+            .map(|addr| {
+                let trie = trie_factory.open_state()?;
+                let state = match trie.get(addr.as_bytes())? {
+                    Some(rlp) => Some(AccountState::decode(&rlp)?),
+                    None => None,
+                };
+                Ok((*addr, state))
+            })
+            .collect();
+        for (addr, state) in state_reads? {
+            account_state_cache.insert(addr, state);
+        }
+        let state_reads_elapsed = phase2_start.elapsed();
+
+        // Phase 2b: Apply storage updates + compute roots in parallel.
+        let storage_start = Instant::now();
         let deferred_vec: Vec<(H256, Vec<(H256, U256)>)> = deferred_storage.drain().collect();
         let storage_results: Result<Vec<(H256, H256, Vec<TrieNode>)>, StoreError> = deferred_vec
             .par_iter()
@@ -690,7 +704,7 @@ impl Blockchain {
                         .unwrap_or(*EMPTY_TRIE_HASH)
                 };
 
-                let storage_trie = storage_factory.open(*hashed_address, storage_root)?;
+                let storage_trie = trie_factory.open(*hashed_address, storage_root)?;
 
                 let mut sparse = SparseTrie::new_flat();
                 let provider = TrieDBProvider(storage_trie.db());
@@ -711,22 +725,14 @@ impl Blockchain {
             })
             .collect();
         let storage_results = storage_results?;
-        let phase2a_elapsed = phase2_start.elapsed();
+        let storage_elapsed = storage_start.elapsed();
 
-        // Phase 2b: Collect state trie updates (defer application for sorted order)
+        // Phase 2c: Build state trie updates (all account states already cached)
         let mut state_trie_updates: Vec<(H256, Option<Vec<u8>>)> = Vec::new();
 
         for (hashed_address, storage_root, updates) in storage_results {
             storage_updates.push((hashed_address, updates));
 
-            // Build the account state with the new storage root
-            if let Entry::Vacant(e) = account_state_cache.entry(hashed_address) {
-                let state = match state_db_trie.get(hashed_address.as_bytes())? {
-                    Some(rlp) => Some(AccountState::decode(&rlp)?),
-                    None => None,
-                };
-                e.insert(state);
-            }
             let mut account_state = account_state_cache[&hashed_address].unwrap_or_default();
             account_state.storage_root = storage_root;
 
@@ -751,16 +757,8 @@ impl Blockchain {
         // Process accounts with only info changes (no storage modifications)
         for (hashed_address, info_opt) in account_infos {
             if let Some(info) = info_opt {
-                if let Entry::Vacant(e) = account_state_cache.entry(hashed_address) {
-                    let state = match state_db_trie.get(hashed_address.as_bytes())? {
-                        Some(rlp) => Some(AccountState::decode(&rlp)?),
-                        None => None,
-                    };
-                    e.insert(state);
-                }
                 let mut account_state = account_state_cache[&hashed_address].unwrap_or_default();
 
-                // For removed accounts with cleared storage, set empty storage root
                 if cleared_storage.contains(&hashed_address) {
                     account_state.storage_root = *EMPTY_TRIE_HASH;
                     processed_cleared.insert(hashed_address);
@@ -779,17 +777,9 @@ impl Blockchain {
         }
 
         // Process accounts with cleared storage but no info or storage changes.
-        // These accounts need their storage_root set to EMPTY_TRIE_HASH.
         for hashed_address in &cleared_storage {
             if processed_cleared.contains(hashed_address) {
                 continue;
-            }
-            if let Entry::Vacant(e) = account_state_cache.entry(*hashed_address) {
-                let state = match state_db_trie.get(hashed_address.as_bytes())? {
-                    Some(rlp) => Some(AccountState::decode(&rlp)?),
-                    None => None,
-                };
-                e.insert(state);
             }
             let Some(mut account_state) = account_state_cache[hashed_address] else {
                 continue;
@@ -805,7 +795,6 @@ impl Blockchain {
         }
 
         // Sort state trie updates by hashed_address for trie locality.
-        // Consecutive updates share trie prefix nodes, reducing DB reads.
         let num_state_updates = state_trie_updates.len();
         state_trie_updates.sort_unstable_by_key(|(addr, _)| *addr);
 
@@ -833,13 +822,17 @@ impl Blockchain {
         let apply_elapsed = apply_start.elapsed();
 
         // Phase 3: Compute state root
+        let root_start = Instant::now();
         let state_trie_hash = sparse_state.root()?;
         let state_updates = sparse_state.collect_updates();
+        let root_elapsed = root_start.elapsed();
 
         info!(
-            "  |- merkle phases: storage={}ms state={}ms ({} accts)",
-            phase2a_elapsed.as_millis(),
+            "  |- merkle phases: reads={}ms storage={}ms state={}ms root={}ms ({} accts)",
+            state_reads_elapsed.as_millis(),
+            storage_elapsed.as_millis(),
             apply_elapsed.as_millis(),
+            root_elapsed.as_millis(),
             num_state_updates,
         );
 
