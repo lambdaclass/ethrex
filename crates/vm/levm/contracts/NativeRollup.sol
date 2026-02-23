@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+import "./MPTProof.sol";
+
 /// @title NativeRollup — PoC L2 state manager using the EXECUTE precompile (EIP-8079).
 ///
 /// Manages the L2 state on L1: state root, block number, gas parameters,
@@ -51,7 +53,8 @@ contract NativeRollup {
     uint256 constant L2_BRIDGE_SENT_MESSAGES_SLOT = 3;
 
     /// @notice Default gas limit for L1 messages sent via receive().
-    uint256 constant DEFAULT_GAS_LIMIT = 100_000;
+    /// Matches CommonBridge's deposit gas limit (21000 * 5).
+    uint256 constant DEFAULT_GAS_LIMIT = 21_000 * 5;
 
     bytes32[] public pendingL1Messages;
     uint256 public l1MessageIndex;
@@ -89,6 +92,7 @@ contract NativeRollup {
 
     receive() external payable {
         require(msg.value > 0, "Must send ETH");
+        _burnGas(DEFAULT_GAS_LIMIT);
         _recordL1Message(msg.sender, msg.sender, msg.value, DEFAULT_GAS_LIMIT, "");
     }
 
@@ -104,6 +108,13 @@ contract NativeRollup {
         bytes32 messageHash = keccak256(abi.encodePacked(_from, _to, _value, _gasLimit, dataHash, nonce));
         pendingL1Messages.push(messageHash);
         emit L1MessageRecorded(_from, _to, _value, _gasLimit, dataHash, nonce);
+    }
+
+    /// @dev Consume gas in a tight loop so the L1 caller pays for the gas that
+    ///      the relayer will spend on L2 when executing the corresponding message.
+    function _burnGas(uint256 amount) private view {
+        uint256 startingGas = gasleft();
+        while (startingGas - gasleft() < amount) {}
     }
 
     // ===== Block Advancement =====
@@ -188,213 +199,24 @@ contract NativeRollup {
         emit WithdrawalClaimed(_receiver, _amount, _atBlockNumber, _messageId);
     }
 
-    /// @dev Verify withdrawal inclusion: account proof → storageRoot, storage proof → sentMessages[hash] == 1.
+    /// @dev Verify withdrawal inclusion: account proof -> storageRoot, storage proof -> sentMessages[hash] == 1.
     function _verifyWithdrawalProof(
         bytes32 root,
         bytes32 withdrawalHash,
         bytes[] calldata _accountProof,
         bytes[] calldata _storageProof
     ) internal pure {
-        // 1. Account proof → extract L2Bridge storageRoot
-        bytes memory accountPath = _toNibbles(abi.encodePacked(keccak256(abi.encodePacked(L2_BRIDGE_ADDRESS))));
-        bytes memory accountRlp = _verifyMptProof(root, accountPath, _accountProof);
-        bytes32 storageRoot = _decodeAccountStorageRoot(accountRlp);
+        // 1. Account proof -> extract L2Bridge storageRoot
+        bytes memory accountPath = MPTProof.toNibbles(abi.encodePacked(keccak256(abi.encodePacked(L2_BRIDGE_ADDRESS))));
+        bytes memory accountRlp = MPTProof.verifyMptProof(root, accountPath, _accountProof);
+        bytes32 storageRoot = MPTProof.decodeAccountStorageRoot(accountRlp);
 
-        // 2. Storage proof → sentMessages[withdrawalHash] == true
+        // 2. Storage proof -> sentMessages[withdrawalHash] == true
         bytes32 slot = keccak256(abi.encode(withdrawalHash, uint256(L2_BRIDGE_SENT_MESSAGES_SLOT)));
-        bytes memory storagePath = _toNibbles(abi.encodePacked(keccak256(abi.encodePacked(slot))));
-        bytes memory storageRlp = _verifyMptProof(storageRoot, storagePath, _storageProof);
-        uint256 value = _decodeRlpUint(storageRlp);
+        bytes memory storagePath = MPTProof.toNibbles(abi.encodePacked(keccak256(abi.encodePacked(slot))));
+        bytes memory storageRlp = MPTProof.verifyMptProof(storageRoot, storagePath, _storageProof);
+        uint256 value = MPTProof.decodeRlpUint(storageRlp);
         require(value == 1, "Withdrawal not in L2 state");
-    }
-
-    // ===== MPT Proof Verification (inlined) =====
-
-    /// @dev Core MPT proof verification. Walks the trie from root to leaf.
-    function _verifyMptProof(
-        bytes32 root,
-        bytes memory path,
-        bytes[] calldata proof
-    ) internal pure returns (bytes memory) {
-        bytes32 expectedHash = root;
-        uint256 pathOffset = 0;
-
-        for (uint256 i = 0; i < proof.length; i++) {
-            bytes calldata node = proof[i];
-            require(keccak256(node) == expectedHash, "MPT: invalid node hash");
-
-            (uint256 listLen, uint256 listOffset) = _rlpListHeader(node);
-            uint256 listEnd = listOffset + listLen;
-            uint256 itemCount = _rlpListItemCount(node, listOffset, listEnd);
-
-            if (itemCount == 17) {
-                // Branch node
-                if (pathOffset == path.length) {
-                    (bytes memory val, ) = _rlpListItem(node, listOffset, listEnd, 16);
-                    return val;
-                }
-                uint8 nibble = uint8(path[pathOffset]);
-                pathOffset++;
-                (bytes memory child, ) = _rlpListItem(node, listOffset, listEnd, nibble);
-                require(child.length == 32, "MPT: branch child not hash");
-                expectedHash = bytes32(child);
-            } else if (itemCount == 2) {
-                // Extension or leaf node
-                (bytes memory encodedPath, ) = _rlpListItem(node, listOffset, listEnd, 0);
-                uint256 prefix = uint8(encodedPath[0]) >> 4;
-                bool isLeaf = (prefix == 2 || prefix == 3);
-                bool isOdd = (prefix == 1 || prefix == 3);
-                uint256 nibbleStart = isOdd ? 1 : 2;
-                uint256 nibbleCount = encodedPath.length * 2 - nibbleStart;
-
-                for (uint256 j = 0; j < nibbleCount; j++) {
-                    require(pathOffset < path.length, "MPT: path too short");
-                    uint256 byteIdx = (nibbleStart + j) / 2;
-                    uint8 expected;
-                    if ((nibbleStart + j) % 2 == 0) {
-                        expected = uint8(encodedPath[byteIdx]) >> 4;
-                    } else {
-                        expected = uint8(encodedPath[byteIdx]) & 0x0f;
-                    }
-                    require(uint8(path[pathOffset]) == expected, "MPT: path mismatch");
-                    pathOffset++;
-                }
-
-                (bytes memory next, ) = _rlpListItem(node, listOffset, listEnd, 1);
-                if (isLeaf) {
-                    require(pathOffset == path.length, "MPT: leaf path incomplete");
-                    return next;
-                }
-                require(next.length == 32, "MPT: ext next not hash");
-                expectedHash = bytes32(next);
-            } else {
-                revert("MPT: invalid node");
-            }
-        }
-        revert("MPT: proof incomplete");
-    }
-
-    function _toNibbles(bytes memory data) internal pure returns (bytes memory nibbles) {
-        nibbles = new bytes(data.length * 2);
-        for (uint256 i = 0; i < data.length; i++) {
-            nibbles[i * 2] = bytes1(uint8(data[i]) >> 4);
-            nibbles[i * 2 + 1] = bytes1(uint8(data[i]) & 0x0f);
-        }
-    }
-
-    function _rlpListHeader(bytes calldata data) internal pure returns (uint256 length, uint256 offset) {
-        uint8 p = uint8(data[0]);
-        if (p >= 0xc0 && p <= 0xf7) {
-            return (p - 0xc0, 1);
-        }
-        uint256 lenBytes = p - 0xf7;
-        length = 0;
-        for (uint256 i = 0; i < lenBytes; i++) {
-            length = (length << 8) | uint8(data[1 + i]);
-        }
-        offset = 1 + lenBytes;
-    }
-
-    function _rlpListItemCount(bytes calldata data, uint256 start, uint256 end) internal pure returns (uint256 count) {
-        uint256 pos = start;
-        while (pos < end) {
-            (, uint256 total) = _rlpItemLen(data, pos);
-            pos += total;
-            count++;
-        }
-    }
-
-    function _rlpListItem(bytes calldata data, uint256 start, uint256 end, uint256 idx) internal pure returns (bytes memory item, uint256 itemStart) {
-        uint256 pos = start;
-        uint256 count = 0;
-        while (pos < end) {
-            (uint256 cOff, uint256 total) = _rlpItemLen(data, pos);
-            if (count == idx) {
-                uint256 cLen = total - (cOff - pos);
-                item = data[cOff : cOff + cLen];
-                return (item, pos);
-            }
-            pos += total;
-            count++;
-        }
-        return (new bytes(0), end);
-    }
-
-    function _rlpItemLen(bytes calldata data, uint256 pos) internal pure returns (uint256 contentOffset, uint256 totalLength) {
-        uint8 p = uint8(data[pos]);
-        if (p < 0x80) {
-            return (pos, 1);
-        } else if (p <= 0xb7) {
-            return (pos + 1, 1 + (p - 0x80));
-        } else if (p <= 0xbf) {
-            uint256 lenBytes = p - 0xb7;
-            uint256 len = 0;
-            for (uint256 i = 0; i < lenBytes; i++) {
-                len = (len << 8) | uint8(data[pos + 1 + i]);
-            }
-            return (pos + 1 + lenBytes, 1 + lenBytes + len);
-        } else if (p <= 0xf7) {
-            return (pos + 1, 1 + (p - 0xc0));
-        } else {
-            uint256 lenBytes = p - 0xf7;
-            uint256 len = 0;
-            for (uint256 i = 0; i < lenBytes; i++) {
-                len = (len << 8) | uint8(data[pos + 1 + i]);
-            }
-            return (pos + 1 + lenBytes, 1 + lenBytes + len);
-        }
-    }
-
-    /// @dev Decode storageRoot (3rd field) from RLP-encoded account [nonce, balance, storageRoot, codeHash].
-    function _decodeAccountStorageRoot(bytes memory account) internal pure returns (bytes32 storageRoot) {
-        uint256 pos = 0;
-        // Skip list header
-        uint8 p = uint8(account[pos]);
-        if (p >= 0xf8) { pos += 1 + (uint256(p) - 0xf7); }
-        else if (p >= 0xc0) { pos += 1; }
-        else { revert("MPT: account not list"); }
-
-        // Skip nonce (item 0)
-        pos = _skipRlpItem(account, pos);
-        // Skip balance (item 1)
-        pos = _skipRlpItem(account, pos);
-        // Read storageRoot (item 2) — must be 32 bytes
-        (uint256 cStart, uint256 cLen) = _decodeRlpItemMem(account, pos);
-        require(cLen == 32, "MPT: storageRoot not 32 bytes");
-        assembly ("memory-safe") { storageRoot := mload(add(add(account, 32), cStart)) }
-    }
-
-    function _skipRlpItem(bytes memory data, uint256 pos) internal pure returns (uint256) {
-        uint8 p = uint8(data[pos]);
-        if (p < 0x80) return pos + 1;
-        if (p <= 0xb7) return pos + 1 + (uint256(p) - 0x80);
-        if (p <= 0xbf) {
-            uint256 lb = uint256(p) - 0xb7;
-            uint256 l = 0;
-            for (uint256 i = 0; i < lb; i++) l = (l << 8) | uint8(data[pos+1+i]);
-            return pos + 1 + lb + l;
-        }
-        if (p <= 0xf7) return pos + 1 + (uint256(p) - 0xc0);
-        uint256 lb2 = uint256(p) - 0xf7;
-        uint256 l2 = 0;
-        for (uint256 i = 0; i < lb2; i++) l2 = (l2 << 8) | uint8(data[pos+1+i]);
-        return pos + 1 + lb2 + l2;
-    }
-
-    function _decodeRlpItemMem(bytes memory data, uint256 pos) internal pure returns (uint256 cStart, uint256 cLen) {
-        uint8 p = uint8(data[pos]);
-        if (p < 0x80) return (pos, 1);
-        if (p <= 0xb7) return (pos + 1, uint256(p) - 0x80);
-        uint256 lb = uint256(p) - 0xb7;
-        cLen = 0;
-        for (uint256 i = 0; i < lb; i++) cLen = (cLen << 8) | uint8(data[pos+1+i]);
-        cStart = pos + 1 + lb;
-    }
-
-    function _decodeRlpUint(bytes memory data) internal pure returns (uint256 value) {
-        for (uint256 i = 0; i < data.length; i++) {
-            value = (value << 8) | uint8(data[i]);
-        }
     }
 
     // ===== Commutative Merkle Tree (for L1→L2 messaging) =====

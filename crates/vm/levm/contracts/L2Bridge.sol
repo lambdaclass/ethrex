@@ -16,8 +16,7 @@ import "./L1Anchor.sol";
 ///
 /// Withdrawals: users call withdraw() to lock ETH, write the withdrawal hash
 /// to `sentMessages` storage, and emit WithdrawalInitiated. The L1 contract
-/// verifies withdrawals via MPT storage proofs against the L2 state root —
-/// no custom Merkle tree in the EXECUTE precompile.
+/// verifies withdrawals via MPT storage proofs against the L2 state root.
 ///
 /// Storage layout:
 ///   Slot 0: relayer (address)
