@@ -117,7 +117,7 @@ impl From<Log> for RpcLogInfo {
     fn from(log: Log) -> Self {
         Self {
             address: log.address,
-            topics: log.topics,
+            topics: log.topics.into_vec(),
             data: log.data,
         }
     }
@@ -227,7 +227,7 @@ mod tests {
                 cumulative_gas_used: 147,
                 logs: vec![Log {
                     address: Address::zero(),
-                    topics: vec![],
+                    topics: vec![].into(),
                     data: Bytes::from_static(b"strawberry"),
                 }],
             },

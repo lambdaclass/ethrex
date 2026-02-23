@@ -8,6 +8,9 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
+#[cfg(test)]
+use smallvec::smallvec;
 
 use crate::types::TxType;
 pub type Index = u64;
@@ -304,7 +307,7 @@ impl From<&ReceiptWithBloom> for Receipt {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Log {
     pub address: Address,
-    pub topics: Vec<H256>,
+    pub topics: SmallVec<[H256; 4]>,
     pub data: Bytes,
 }
 
@@ -312,7 +315,7 @@ impl RLPEncode for Log {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
             .encode_field(&self.address)
-            .encode_field(&self.topics)
+            .encode_field(&self.topics.to_vec())
             .encode_field(&self.data)
             .finish();
     }
@@ -322,11 +325,11 @@ impl RLPDecode for Log {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (address, decoder) = decoder.decode_field("address")?;
-        let (topics, decoder) = decoder.decode_field("topics")?;
+        let (topics, decoder): (Vec<H256>, _) = decoder.decode_field("topics")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let log = Log {
             address,
-            topics,
+            topics: topics.into(),
             data,
         };
         Ok((log, decoder.finish()?))
@@ -349,7 +352,7 @@ mod test {
             cumulative_gas_used: 1200,
             logs: vec![Log {
                 address: Address::random(),
-                topics: vec![],
+                topics: smallvec![],
                 data: Bytes::from_static(b"foo"),
             }],
         };
@@ -365,7 +368,7 @@ mod test {
             cumulative_gas_used: 1500,
             logs: vec![Log {
                 address: Address::random(),
-                topics: vec![],
+                topics: smallvec![],
                 data: Bytes::from_static(b"bar"),
             }],
         };
@@ -382,7 +385,7 @@ mod test {
             bloom: Bloom::random(),
             logs: vec![Log {
                 address: Address::random(),
-                topics: vec![],
+                topics: smallvec![],
                 data: Bytes::from_static(b"foo"),
             }],
         };
@@ -402,7 +405,7 @@ mod test {
             bloom: Bloom::random(),
             logs: vec![Log {
                 address: Address::random(),
-                topics: vec![],
+                topics: smallvec![],
                 data: Bytes::from_static(b"bar"),
             }],
         };
@@ -421,7 +424,7 @@ mod test {
             cumulative_gas_used: 1500,
             logs: vec![Log {
                 address: Address::random(),
-                topics: vec![
+                topics: smallvec![
                     h256_from_hex(
                         "e70c0d1060ffbafc84e0e18d028245de3deeb0f41ecbade6562fa657d85ae945",
                     ),

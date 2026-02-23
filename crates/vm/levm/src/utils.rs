@@ -657,7 +657,8 @@ pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
             TRANSFER_EVENT_TOPIC,
             H256::from(from_topic),
             H256::from(to_topic),
-        ],
+        ]
+        .into(),
         data: Bytes::from(data.to_vec()),
     }
 }
@@ -673,7 +674,7 @@ pub fn create_selfdestruct_log(contract: Address, balance: U256) -> Log {
 
     Log {
         address: SYSTEM_ADDRESS,
-        topics: vec![SELFDESTRUCT_EVENT_TOPIC, H256::from(contract_topic)],
+        topics: vec![SELFDESTRUCT_EVENT_TOPIC, H256::from(contract_topic)].into(),
         data: Bytes::from(data.to_vec()),
     }
 }

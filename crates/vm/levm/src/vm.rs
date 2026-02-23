@@ -329,13 +329,14 @@ impl Substate {
     }
 
     /// Extract all logs in order.
-    pub fn extract_logs(&self) -> Vec<Log> {
-        fn inner(substrate: &Substate, target: &mut Vec<Log>) {
-            if let Some(parent) = substrate.parent.as_deref() {
+    /// Extract all logs in order, moving them out of the substate chain.
+    pub fn extract_logs(&mut self) -> Vec<Log> {
+        fn inner(substrate: &mut Substate, target: &mut Vec<Log>) {
+            if let Some(parent) = substrate.parent.as_mut() {
                 inner(parent, target);
             }
 
-            target.extend_from_slice(&substrate.logs);
+            target.append(&mut substrate.logs);
         }
 
         let mut logs = Vec::new();

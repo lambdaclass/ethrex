@@ -37,7 +37,7 @@ impl<'a> VM<'a> {
 
         let log = Log {
             address: current_call_frame.to,
-            topics: topics.to_vec(),
+            topics: topics.to_vec().into(),
             data: current_call_frame.memory.load_range(offset, size)?,
         };
 

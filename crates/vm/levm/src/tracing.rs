@@ -152,7 +152,7 @@ impl LevmCallTracer {
 
         let log = CallLog {
             address: log.address,
-            topics: log.topics.clone(),
+            topics: log.topics.to_vec(),
             data: log.data.clone(),
             position: match callframe.calls.len().try_into() {
                 Ok(pos) => pos,

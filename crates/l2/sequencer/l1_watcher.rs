@@ -501,7 +501,7 @@ pub async fn filter_verified_messages(
     for rpc_log in logs {
         let log = Log {
             address: rpc_log.log.address,
-            topics: rpc_log.log.topics.clone(),
+            topics: rpc_log.log.topics.clone().into(),
             data: rpc_log.log.data.clone(),
         };
 
