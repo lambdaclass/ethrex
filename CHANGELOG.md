@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-13
+
+- Optimize storage layer for block execution by reducing lock contention and allocations [#6207](https://github.com/lambdaclass/ethrex/pull/6207)
+
 ### 2026-02-10
 
 - Refactor storage download to use `StorageTrieTracker` [#6171](https://github.com/lambdaclass/ethrex/pull/6171)

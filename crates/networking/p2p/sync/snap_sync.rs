@@ -210,6 +210,8 @@ pub async fn sync_cycle_snap(
             // Too few blocks for a snap sync, switching to full sync
             info!("Sync head is found, switching to FullSync");
             snap_enabled.store(false, Ordering::Relaxed);
+            // Disable snap metrics so the progress display stops
+            METRICS.disable().await;
             return super::full::sync_cycle_full(
                 peers,
                 blockchain,

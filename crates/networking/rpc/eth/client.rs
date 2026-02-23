@@ -113,7 +113,7 @@ impl RpcHandler for Config {
         let current_fork = chain_config.get_fork(latest_block_timestamp);
 
         if current_fork < Fork::Paris {
-            return Err(RpcErr::UnsuportedFork(
+            return Err(RpcErr::UnsupportedFork(
                 "eth-config is not supported for forks prior to Paris".to_string(),
             ));
         }
