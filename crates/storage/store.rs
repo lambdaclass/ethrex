@@ -3166,3 +3166,42 @@ fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     let is_empty = std::fs::read_dir(path)?.next().is_none();
     Ok(is_empty)
 }
+
+/// Checks whether a valid database exists at the given path by looking for
+/// a metadata.json file with a matching schema version.
+pub fn has_valid_db(path: &Path) -> bool {
+    let metadata_path = path.join(STORE_METADATA_FILENAME);
+    if !metadata_path.is_file() {
+        return false;
+    }
+    let Ok(contents) = std::fs::read_to_string(&metadata_path) else {
+        return false;
+    };
+    let Ok(metadata) = serde_json::from_str::<StoreMetadata>(&contents) else {
+        return false;
+    };
+    metadata.schema_version == STORE_SCHEMA_VERSION
+}
+
+/// Reads the chain ID from an existing database without performing a full
+/// store initialization. Returns `None` if the database doesn't exist or
+/// the chain config can't be read.
+pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
+    if !has_valid_db(path) {
+        return None;
+    }
+    #[cfg(feature = "rocksdb")]
+    {
+        let backend = RocksDBBackend::open(path).ok()?;
+        let read = backend.begin_read().ok()?;
+        let key = chain_data_key(ChainDataIndex::ChainConfig);
+        let bytes = read.get(CHAIN_DATA, &key).ok()??;
+        let config: ethrex_common::types::ChainConfig = serde_json::from_slice(&bytes).ok()?;
+        Some(config.chain_id)
+    }
+    #[cfg(not(feature = "rocksdb"))]
+    {
+        let _ = path;
+        None
+    }
+}

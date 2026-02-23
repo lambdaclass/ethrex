@@ -29,7 +29,7 @@ use crate::{
     },
     utils::{
         self, default_datadir, get_client_version, get_client_version_string,
-        get_minimal_client_version, init_datadir,
+        get_minimal_client_version, init_datadir, is_memory_datadir,
     },
 };
 
@@ -38,6 +38,22 @@ pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
 #[cfg(feature = "l2")]
 pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 use ethrex_config::networks::Network;
+
+/// Computes the effective datadir by appending a network-specific suffix.
+/// In-memory datadirs are returned as-is. Dev mode uses a "dev" suffix.
+/// Public networks use their name as suffix (e.g. "mainnet", "sepolia").
+pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> PathBuf {
+    if is_memory_datadir(base) {
+        return base.to_path_buf();
+    }
+    if dev && cfg!(feature = "dev") {
+        base.join("dev")
+    } else if let Some(suffix) = network.datadir_suffix() {
+        base.join(suffix)
+    } else {
+        base.to_path_buf()
+    }
+}
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -55,7 +71,7 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),
@@ -66,10 +82,9 @@ pub struct Options {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
         default_value = default_datadir().into_os_string(),
-        help = "Receives the name of the directory where the Database is located.",
-        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
+        help = "Base directory for the database. A network-specific subdirectory (e.g. mainnet, sepolia) is appended automatically for public networks.",
+        long_help = "Base directory for the database. For public networks a subdirectory named after the network is appended (e.g. ~/.local/share/ethrex/mainnet). If the value is `memory`, the InMemory Engine is used instead.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
@@ -526,16 +541,34 @@ impl Subcommand {
             }
         };
 
+        let network = get_network(opts);
+        let effective_datadir = compute_effective_datadir(&opts.datadir, &network, opts.dev);
+
+        // For subcommands that use the store, offer migration from the old
+        // unsuffixed datadir layout if applicable.
+        match &self {
+            Subcommand::Import { .. }
+            | Subcommand::ImportBench { .. }
+            | Subcommand::Export { .. } => {
+                crate::initializers::check_and_offer_migration(
+                    &opts.datadir,
+                    &effective_datadir,
+                    &network,
+                );
+            }
+            _ => {}
+        }
+
         match self {
             Subcommand::RemoveDB { datadir, force } => {
+                let datadir = compute_effective_datadir(&datadir, &network, opts.dev);
                 remove_db(&datadir, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&effective_datadir, opts.force);
                 }
 
-                let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
                     BlockchainType::L2(L2Config::default())
@@ -544,7 +577,7 @@ impl Subcommand {
                 };
                 import_blocks(
                     &path,
-                    &opts.datadir,
+                    &effective_datadir,
                     genesis,
                     BlockchainOptions {
                         max_mempool_size: opts.mempool_max_size,
@@ -556,11 +589,10 @@ impl Subcommand {
             }
             Subcommand::ImportBench { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&effective_datadir, opts.force);
                 }
                 info!("ethrex version: {}", get_client_version());
 
-                let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
                     BlockchainType::L2(L2Config::default())
@@ -569,7 +601,7 @@ impl Subcommand {
                 };
                 import_blocks_bench(
                     &path,
-                    &opts.datadir,
+                    &effective_datadir,
                     genesis,
                     BlockchainOptions {
                         r#type: blockchain_type,
@@ -580,7 +612,7 @@ impl Subcommand {
                 .await?;
             }
             Subcommand::Export { path, first, last } => {
-                export_blocks(&path, &opts.datadir, first, last).await
+                export_blocks(&path, &effective_datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
