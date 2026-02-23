@@ -4,6 +4,7 @@
 
 ### 2026-02-23
 
+- Check self before parent in Substate warm/cold lookups [#6244](https://github.com/lambdaclass/ethrex/pull/6244)
 - Add precompile result cache shared between warmer and executor threads [#6243](https://github.com/lambdaclass/ethrex/pull/6243)
 
 ### 2026-02-13
