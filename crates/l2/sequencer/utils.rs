@@ -30,13 +30,6 @@ pub const INVALID_SP1_PROOF_SELECTOR: &str = "0x7ff849b5";
 pub const INVALID_TDX_PROOF_SELECTOR: &str = "0x62013a95";
 pub const ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR: &str = "0x44602025";
 
-/// Computes the 4-byte ABI error selector for a Solidity custom error signature,
-/// e.g. `"InvalidRisc0Proof()"` → `"0x14add973"`.
-fn error_selector(signature: &str) -> String {
-    let hash = keccak(signature.as_bytes());
-    format!("0x{}", hex::encode(&hash[..4]))
-}
-
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
 }
@@ -215,6 +208,13 @@ pub fn batch_checkpoint_name(batch_number: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Computes the 4-byte ABI error selector for a Solidity custom error signature,
+    /// e.g. `"InvalidRisc0Proof()"` → `"0x14add973"`.
+    fn error_selector(signature: &str) -> String {
+        let hash = keccak(signature.as_bytes());
+        format!("0x{}", hex::encode(&hash[..4]))
+    }
 
     #[test]
     fn error_selectors_match_solidity_signatures() {
