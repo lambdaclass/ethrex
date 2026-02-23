@@ -345,11 +345,22 @@ impl GeneralizedDatabase {
 
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in self.current_accounts_state.drain() {
-            if new_state_account.is_unmodified() {
-                // Skip processing account that we know wasn't mutably accessed during execution
+
+        // Collect addresses of modified accounts to avoid borrow conflicts.
+        let modified_addrs: Vec<Address> = self
+            .current_accounts_state
+            .iter()
+            .filter(|(_, acc)| !acc.is_unmodified())
+            .map(|(addr, _)| *addr)
+            .collect();
+
+        for address in modified_addrs {
+            // Remove the modified account temporarily to get ownership.
+            // We just collected this address from current_accounts_state above.
+            let Some(mut new_state_account) = self.current_accounts_state.remove(&address) else {
                 continue;
-            }
+            };
+
             // [LIE] In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
                 self.initial_accounts_state.get(&address).ok_or_else(|| {
@@ -422,12 +433,22 @@ impl GeneralizedDatabase {
             let was_empty = initial_state_account.is_empty();
             let removed = new_state_account.is_empty() && !was_empty;
 
+            // Reset status for the next transaction — this account is now "clean".
+            new_state_account.status = AccountStatus::Unmodified;
+
             if !removed && !acc_info_updated && !storage_updated && !removed_storage {
-                // Account hasn't been updated
+                // Account was marked modified but nothing actually changed.
+                // Put it back in the cache with reset status.
+                self.current_accounts_state
+                    .insert(address, new_state_account);
                 continue;
             }
 
+            // Update initial_accounts_state with the new baseline for subsequent txs.
             self.initial_accounts_state
+                .insert(address, new_state_account.clone());
+            // Put the account back in the cache with reset status.
+            self.current_accounts_state
                 .insert(address, new_state_account);
 
             let account_update = AccountUpdate {
