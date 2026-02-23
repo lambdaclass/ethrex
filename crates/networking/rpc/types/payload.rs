@@ -8,7 +8,8 @@ use ethrex_common::{
     serde_utils,
     types::{
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        block_access_list::BlockAccessList, compute_transactions_root, compute_withdrawals_root,
+        block_access_list::BlockAccessList, compute_transactions_root_from_encoded,
+        compute_withdrawals_root,
         requests::EncodedRequests,
     },
 };
@@ -113,12 +114,25 @@ impl ExecutionPayload {
         requests_hash: Option<H256>,
         block_access_list_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
-        let body = BlockBody {
-            transactions: self
-                .transactions
+        // Overlap tx root trie computation with tx decoding: the trie is built
+        // from the already-encoded bytes (avoiding a decode+re-encode round trip)
+        // while the main thread decodes transactions in parallel.
+        let encoded_txs = &self.transactions;
+        let (decoded_result, transactions_root) = std::thread::scope(|s| {
+            let root_handle = s.spawn(|| {
+                compute_transactions_root_from_encoded(
+                    &encoded_txs.iter().map(|tx| &tx.0).collect::<Vec<_>>(),
+                )
+            });
+            let decoded = encoded_txs
                 .iter()
                 .map(|encoded_tx| encoded_tx.decode())
-                .collect::<Result<Vec<_>, RLPDecodeError>>()?,
+                .collect::<Result<Vec<_>, RLPDecodeError>>();
+            (decoded, root_handle.join().expect("tx root thread panicked"))
+        });
+
+        let body = BlockBody {
+            transactions: decoded_result?,
             ommers: vec![],
             withdrawals: self.withdrawals,
         };
@@ -127,7 +141,7 @@ impl ExecutionPayload {
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.fee_recipient,
             state_root: self.state_root,
-            transactions_root: compute_transactions_root(&body.transactions),
+            transactions_root,
             receipts_root: self.receipts_root,
             logs_bloom: self.logs_bloom,
             difficulty: 0.into(),
