@@ -166,7 +166,7 @@ mod tests {
 
         #[expect(unsafe_code)]
         let compiled =
-            unsafe { ethrex_levm::jit::cache::CompiledCode::new(std::ptr::null(), 100, 5) };
+            unsafe { ethrex_levm::jit::cache::CompiledCode::new(std::ptr::null(), 100, 5, None) };
         cache.insert(key, compiled);
         assert!(cache.get(&key).is_some());
         assert_eq!(cache.len(), 1);

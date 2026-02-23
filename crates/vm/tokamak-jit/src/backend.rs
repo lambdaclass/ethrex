@@ -11,7 +11,7 @@ use ethrex_levm::jit::{
     analyzer::analyze_bytecode,
     cache::CodeCache,
     dispatch::JitBackend,
-    types::{AnalyzedBytecode, JitConfig, JitOutcome},
+    types::{AnalyzedBytecode, JitConfig, JitOutcome, JitResumeState, SubCallResult},
 };
 use ethrex_levm::vm::Substate;
 
@@ -64,13 +64,12 @@ impl RevmcBackend {
         let analyzed =
             analyze_bytecode(code.bytecode.clone(), code.hash, code.jump_targets.clone());
 
-        // Skip bytecodes with external calls (CALL/CREATE not supported in JIT Phase 4)
+        // Log if bytecode has external calls (used for metrics, no longer a gate)
         if analyzed.has_external_calls {
             tracing::info!(
                 hash = %code.hash,
-                "JIT skipped bytecode with external calls"
+                "JIT compiling bytecode with external calls (CALL/CREATE resume enabled)"
             );
-            return Ok(());
         }
 
         // Compile via revmc/LLVM for the target fork
@@ -125,6 +124,28 @@ impl JitBackend for RevmcBackend {
     ) -> Result<JitOutcome, String> {
         crate::execution::execute_jit(
             compiled,
+            call_frame,
+            db,
+            substate,
+            env,
+            storage_original_values,
+        )
+        .map_err(|e| format!("{e}"))
+    }
+
+    fn execute_resume(
+        &self,
+        resume_state: JitResumeState,
+        sub_result: SubCallResult,
+        call_frame: &mut CallFrame,
+        db: &mut GeneralizedDatabase,
+        substate: &mut Substate,
+        env: &Environment,
+        storage_original_values: &mut ethrex_levm::jit::dispatch::StorageOriginalValues,
+    ) -> Result<JitOutcome, String> {
+        crate::execution::execute_jit_resume(
+            resume_state,
+            sub_result,
             call_frame,
             db,
             substate,

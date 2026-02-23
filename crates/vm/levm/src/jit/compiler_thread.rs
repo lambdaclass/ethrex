@@ -19,6 +19,15 @@ pub struct CompilationRequest {
     pub fork: Fork,
 }
 
+/// Request types for the background compiler thread.
+#[derive(Clone)]
+pub enum CompilerRequest {
+    /// Compile bytecode into native code and insert into cache.
+    Compile(CompilationRequest),
+    /// Free a previously compiled function's machine code.
+    Free { func_id: u32 },
+}
+
 /// Handle to the background compiler thread.
 ///
 /// Holds the sender half of an mpsc channel. Compilation requests are sent
@@ -28,29 +37,29 @@ pub struct CompilationRequest {
 /// to return `Err`) and the thread is joined. If the background thread panicked,
 /// the panic is propagated.
 pub struct CompilerThread {
-    sender: Option<mpsc::Sender<CompilationRequest>>,
+    sender: Option<mpsc::Sender<CompilerRequest>>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
 impl CompilerThread {
     /// Start the background compiler thread.
     ///
-    /// The `compile_fn` closure is invoked for each request on the background
-    /// thread. It receives the `CompilationRequest` and should compile + insert
-    /// into the cache. Any errors are logged and silently dropped (graceful
+    /// The `handler_fn` closure is invoked for each request on the background
+    /// thread. It receives a `CompilerRequest` and should handle both `Compile`
+    /// and `Free` variants. Any errors are logged and silently dropped (graceful
     /// degradation — the VM falls through to the interpreter).
-    pub fn start<F>(compile_fn: F) -> Self
+    pub fn start<F>(handler_fn: F) -> Self
     where
-        F: Fn(CompilationRequest) + Send + 'static,
+        F: Fn(CompilerRequest) + Send + 'static,
     {
-        let (sender, receiver) = mpsc::channel::<CompilationRequest>();
+        let (sender, receiver) = mpsc::channel::<CompilerRequest>();
 
         #[expect(clippy::expect_used, reason = "thread spawn failure is unrecoverable")]
         let handle = thread::Builder::new()
             .name("jit-compiler".to_string())
             .spawn(move || {
                 while let Ok(request) = receiver.recv() {
-                    compile_fn(request);
+                    handler_fn(request);
                 }
                 // Channel closed — thread exits cleanly
             })
@@ -70,7 +79,17 @@ impl CompilerThread {
     pub fn send(&self, request: CompilationRequest) -> bool {
         self.sender
             .as_ref()
-            .map(|s| s.send(request).is_ok())
+            .map(|s| s.send(CompilerRequest::Compile(request)).is_ok())
+            .unwrap_or(false)
+    }
+
+    /// Send a free request for an evicted function's machine code.
+    ///
+    /// Returns `true` if the request was sent, `false` if disconnected.
+    pub fn send_free(&self, func_id: u32) -> bool {
+        self.sender
+            .as_ref()
+            .map(|s| s.send(CompilerRequest::Free { func_id }).is_ok())
             .unwrap_or(false)
     }
 }
@@ -106,16 +125,18 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use ethrex_common::types::Code;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
     fn test_compiler_thread_sends_requests() {
         let count = Arc::new(AtomicU64::new(0));
         let count_clone = Arc::clone(&count);
 
-        let thread = CompilerThread::start(move |_req| {
-            count_clone.fetch_add(1, Ordering::Relaxed);
+        let thread = CompilerThread::start(move |req| {
+            if matches!(req, CompilerRequest::Compile(_)) {
+                count_clone.fetch_add(1, Ordering::Relaxed);
+            }
         });
 
         let code = Code::from_bytecode(Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]));
@@ -140,8 +161,10 @@ mod tests {
         let count = Arc::new(AtomicU64::new(0));
         let count_clone = Arc::clone(&count);
 
-        let thread = CompilerThread::start(move |_req| {
-            count_clone.fetch_add(1, Ordering::Relaxed);
+        let thread = CompilerThread::start(move |req| {
+            if matches!(req, CompilerRequest::Compile(_)) {
+                count_clone.fetch_add(1, Ordering::Relaxed);
+            }
         });
 
         let code = Code::from_bytecode(Bytes::from_static(&[0x00]));
@@ -159,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_compiler_thread_send_after_drop_fails() {
-        let thread = CompilerThread::start(|_req| {});
+        let thread = CompilerThread::start(|_req: CompilerRequest| {});
         let code = Code::from_bytecode(Bytes::from_static(&[0x00]));
 
         // Manually drop sender by dropping the whole thread

@@ -55,8 +55,8 @@ pub use ethrex_levm::jit::{
 /// (counter increments but compiled code is never executed).
 #[cfg(feature = "revmc-backend")]
 pub fn register_jit_backend() {
+    use ethrex_levm::jit::compiler_thread::{CompilerRequest, CompilerThread};
     use std::sync::Arc;
-    use ethrex_levm::jit::compiler_thread::CompilerThread;
 
     let backend = Arc::new(backend::RevmcBackend::default());
     let backend_for_thread = Arc::clone(&backend);
@@ -64,21 +64,32 @@ pub fn register_jit_backend() {
 
     ethrex_levm::vm::JIT_STATE.register_backend(backend);
 
-    // Start background compiler thread
+    // Start background compiler thread that handles both Compile and Free requests
     let compiler_thread = CompilerThread::start(move |request| {
-        match backend_for_thread.compile(&request.code, request.fork, &cache) {
-            Ok(()) => {
-                use std::sync::atomic::Ordering;
-                ethrex_levm::vm::JIT_STATE
-                    .metrics
-                    .compilations
-                    .fetch_add(1, Ordering::Relaxed);
+        match request {
+            CompilerRequest::Compile(req) => {
+                match backend_for_thread.compile(&req.code, req.fork, &cache) {
+                    Ok(()) => {
+                        use std::sync::atomic::Ordering;
+                        ethrex_levm::vm::JIT_STATE
+                            .metrics
+                            .compilations
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[JIT] background compilation failed for {}: {e}",
+                            req.code.hash
+                        );
+                    }
+                }
             }
-            Err(e) => {
-                eprintln!(
-                    "[JIT] background compilation failed for {}: {e}",
-                    request.code.hash
-                );
+            CompilerRequest::Free { func_id } => {
+                // LLVM function memory management.
+                // Currently a no-op because we don't have a persistent LLVM context
+                // that can free individual functions. The func_id is tracked for
+                // metrics and future implementation.
+                eprintln!("[JIT] free request for func_id={func_id} (no-op in current PoC)");
             }
         }
     });

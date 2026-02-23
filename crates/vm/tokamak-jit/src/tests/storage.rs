@@ -95,8 +95,7 @@ mod tests {
             ..Default::default()
         };
         let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store, header)
-                .expect("StoreVmDatabase"),
+            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
         );
 
         let mut cache = FxHashMap::default();
@@ -202,8 +201,7 @@ mod tests {
             ..Default::default()
         };
         let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store, header)
-                .expect("StoreVmDatabase"),
+            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
         );
         let mut interp_cache = FxHashMap::default();
         interp_cache.insert(
@@ -265,8 +263,7 @@ mod tests {
             ..Default::default()
         };
         let vm_db2: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store2, header2)
-                .expect("StoreVmDatabase"),
+            ethrex_blockchain::vm::StoreVmDatabase::new(store2, header2).expect("StoreVmDatabase"),
         );
         let mut jit_account_cache = FxHashMap::default();
         jit_account_cache.insert(

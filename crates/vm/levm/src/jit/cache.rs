@@ -4,8 +4,8 @@
 //! The cache is thread-safe and designed for concurrent read access
 //! with infrequent writes (compilation events).
 
-use ethrex_common::types::Fork;
 use ethrex_common::H256;
+use ethrex_common::types::Fork;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 
@@ -34,6 +34,9 @@ pub struct CompiledCode {
     pub bytecode_size: usize,
     /// Number of basic blocks in the compiled code.
     pub basic_block_count: usize,
+    /// LLVM function ID for memory management on eviction.
+    /// None if the backend doesn't support function-level freeing.
+    pub func_id: Option<u32>,
 }
 
 impl CompiledCode {
@@ -45,11 +48,17 @@ impl CompiledCode {
     /// code that conforms to the expected calling convention. The pointer must remain
     /// valid for the lifetime of this `CompiledCode` value.
     #[allow(unsafe_code)]
-    pub unsafe fn new(ptr: *const (), bytecode_size: usize, basic_block_count: usize) -> Self {
+    pub unsafe fn new(
+        ptr: *const (),
+        bytecode_size: usize,
+        basic_block_count: usize,
+        func_id: Option<u32>,
+    ) -> Self {
         Self {
             ptr,
             bytecode_size,
             basic_block_count,
+            func_id,
         }
     }
 
@@ -73,6 +82,7 @@ impl std::fmt::Debug for CompiledCode {
             .field("ptr", &self.ptr)
             .field("bytecode_size", &self.bytecode_size)
             .field("basic_block_count", &self.basic_block_count)
+            .field("func_id", &self.func_id)
             .finish()
     }
 }
@@ -121,26 +131,32 @@ impl CodeCache {
     }
 
     /// Insert compiled code into the cache, evicting the oldest entry if at capacity.
-    pub fn insert(&self, key: CacheKey, code: CompiledCode) {
+    ///
+    /// Returns the evicted entry's `func_id` if an eviction occurred and the evicted
+    /// entry had a function ID, so the caller can free the LLVM memory.
+    pub fn insert(&self, key: CacheKey, code: CompiledCode) -> Option<u32> {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut inner = self.inner.write().unwrap();
 
         // If already present, just update the value (no eviction needed)
         if let std::collections::hash_map::Entry::Occupied(mut e) = inner.entries.entry(key) {
             e.insert(Arc::new(code));
-            return;
+            return None;
         }
 
         // Evict oldest if at capacity
+        let mut evicted_func_id = None;
         if inner.max_entries > 0
             && inner.entries.len() >= inner.max_entries
             && let Some(oldest) = inner.insertion_order.pop_front()
+            && let Some(evicted) = inner.entries.remove(&oldest)
         {
-            inner.entries.remove(&oldest);
+            evicted_func_id = evicted.func_id;
         }
 
         inner.entries.insert(key, Arc::new(code));
         inner.insertion_order.push_back(key);
+        evicted_func_id
     }
 
     /// Remove compiled code from the cache (e.g., on validation mismatch).
@@ -188,7 +204,7 @@ mod tests {
 
         // SAFETY: null pointer is acceptable for testing metadata-only operations
         #[expect(unsafe_code)]
-        let code = unsafe { CompiledCode::new(std::ptr::null(), 100, 5) };
+        let code = unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None) };
         cache.insert(key, code);
 
         assert!(cache.get(&key).is_some());
@@ -201,7 +217,7 @@ mod tests {
         let key = (H256::zero(), default_fork());
 
         #[expect(unsafe_code)]
-        let code = unsafe { CompiledCode::new(std::ptr::null(), 50, 3) };
+        let code = unsafe { CompiledCode::new(std::ptr::null(), 50, 3, None) };
         cache.insert(key, code);
         assert_eq!(cache.len(), 1);
 
@@ -221,20 +237,21 @@ mod tests {
 
         // Insert 3 entries (at capacity)
         #[expect(unsafe_code)]
-        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1) };
+        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1, None) };
         cache.insert(k1, code1);
         #[expect(unsafe_code)]
-        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2) };
+        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2, None) };
         cache.insert(k2, code2);
         #[expect(unsafe_code)]
-        let code3 = unsafe { CompiledCode::new(std::ptr::null(), 30, 3) };
+        let code3 = unsafe { CompiledCode::new(std::ptr::null(), 30, 3, None) };
         cache.insert(k3, code3);
         assert_eq!(cache.len(), 3);
 
         // Insert 4th entry → oldest (k1) should be evicted
         #[expect(unsafe_code)]
-        let code4 = unsafe { CompiledCode::new(std::ptr::null(), 40, 4) };
-        cache.insert(k4, code4);
+        let code4 = unsafe { CompiledCode::new(std::ptr::null(), 40, 4, None) };
+        let evicted = cache.insert(k4, code4);
+        assert!(evicted.is_none(), "evicted entry had no func_id");
         assert_eq!(cache.len(), 3);
         assert!(cache.get(&k1).is_none(), "oldest entry should be evicted");
         assert!(cache.get(&k2).is_some());
@@ -250,16 +267,16 @@ mod tests {
         let k2 = (H256::from_low_u64_be(2), default_fork());
 
         #[expect(unsafe_code)]
-        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1) };
+        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1, None) };
         cache.insert(k1, code1);
         #[expect(unsafe_code)]
-        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2) };
+        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2, None) };
         cache.insert(k2, code2);
         assert_eq!(cache.len(), 2);
 
         // Re-insert k1 with different metadata — should NOT evict
         #[expect(unsafe_code)]
-        let code1_updated = unsafe { CompiledCode::new(std::ptr::null(), 100, 10) };
+        let code1_updated = unsafe { CompiledCode::new(std::ptr::null(), 100, 10, None) };
         cache.insert(k1, code1_updated);
         assert_eq!(cache.len(), 2);
         assert!(cache.get(&k1).is_some());
@@ -275,11 +292,11 @@ mod tests {
         let key_prague = (hash, Fork::Prague);
 
         #[expect(unsafe_code)]
-        let code_cancun = unsafe { CompiledCode::new(std::ptr::null(), 100, 5) };
+        let code_cancun = unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None) };
         cache.insert(key_cancun, code_cancun);
 
         #[expect(unsafe_code)]
-        let code_prague = unsafe { CompiledCode::new(std::ptr::null(), 100, 6) };
+        let code_prague = unsafe { CompiledCode::new(std::ptr::null(), 100, 6, None) };
         cache.insert(key_prague, code_prague);
 
         assert_eq!(cache.len(), 2);

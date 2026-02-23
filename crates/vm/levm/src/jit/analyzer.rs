@@ -150,10 +150,7 @@ mod tests {
         // PUSH1 0x00 CALL STOP — contains CALL
         let bytecode = Bytes::from(vec![0x60, 0x00, 0xf1, 0x00]);
         let result = analyze_bytecode(bytecode, H256::zero(), vec![]);
-        assert!(
-            result.has_external_calls,
-            "should detect CALL opcode"
-        );
+        assert!(result.has_external_calls, "should detect CALL opcode");
     }
 
     #[test]
@@ -161,10 +158,7 @@ mod tests {
         // PUSH1 0x00 CREATE STOP — contains CREATE
         let bytecode = Bytes::from(vec![0x60, 0x00, 0xf0, 0x00]);
         let result = analyze_bytecode(bytecode, H256::zero(), vec![]);
-        assert!(
-            result.has_external_calls,
-            "should detect CREATE opcode"
-        );
+        assert!(result.has_external_calls, "should detect CREATE opcode");
     }
 
     #[test]
@@ -183,10 +177,7 @@ mod tests {
         // PUSH1 0x00 STATICCALL STOP
         let bytecode = Bytes::from(vec![0x60, 0x00, 0xfa, 0x00]);
         let result = analyze_bytecode(bytecode, H256::zero(), vec![]);
-        assert!(
-            result.has_external_calls,
-            "should detect STATICCALL opcode"
-        );
+        assert!(result.has_external_calls, "should detect STATICCALL opcode");
     }
 
     #[test]

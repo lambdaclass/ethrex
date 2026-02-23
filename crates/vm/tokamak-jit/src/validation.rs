@@ -84,6 +84,11 @@ pub fn validate_outcomes(
                 reason: format!("JIT error during validation: {msg}"),
             });
         }
+        JitOutcome::Suspended { .. } => {
+            return Err(JitError::ValidationMismatch {
+                reason: "JIT returned Suspended during validation".to_string(),
+            });
+        }
     }
 
     Ok(())

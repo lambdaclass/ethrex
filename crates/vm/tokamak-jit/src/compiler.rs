@@ -62,6 +62,7 @@ impl TokamakCompiler {
                     raw_fn as *const (),
                     analyzed.bytecode.len(),
                     analyzed.basic_blocks.len(),
+                    None, // func_id: not tracked yet (no persistent LLVM context)
                 )
             };
 

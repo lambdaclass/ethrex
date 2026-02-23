@@ -6,7 +6,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
-use ethrex_common::H256;
+use ethrex_common::{Address, H256, U256};
 
 /// Configuration for the JIT compilation tier.
 #[derive(Debug, Clone)]
@@ -38,6 +38,67 @@ impl Default for JitConfig {
     }
 }
 
+/// Opaque state for resuming JIT execution after a sub-call.
+///
+/// Constructed by `tokamak-jit` when JIT code hits CALL/CREATE, consumed
+/// by `execute_resume` when the sub-call completes.
+pub struct JitResumeState(pub Box<dyn std::any::Any + Send>);
+
+impl std::fmt::Debug for JitResumeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JitResumeState").finish_non_exhaustive()
+    }
+}
+
+/// Result of a sub-call executed by the LEVM interpreter on behalf of JIT.
+#[derive(Debug, Clone)]
+pub struct SubCallResult {
+    /// Whether the sub-call succeeded.
+    pub success: bool,
+    /// Gas consumed by the sub-call.
+    pub gas_used: u64,
+    /// Output data from the sub-call.
+    pub output: Bytes,
+    /// For CREATE: the created contract address (if success).
+    pub created_address: Option<Address>,
+}
+
+/// Sub-call request from JIT-compiled code, translated to LEVM types.
+#[derive(Debug)]
+pub enum JitSubCall {
+    /// CALL/CALLCODE/DELEGATECALL/STATICCALL from JIT code.
+    Call {
+        gas_limit: u64,
+        caller: Address,
+        target: Address,
+        code_address: Address,
+        value: U256,
+        calldata: Bytes,
+        is_static: bool,
+        scheme: JitCallScheme,
+        return_offset: usize,
+        return_size: usize,
+    },
+    /// CREATE/CREATE2 from JIT code.
+    Create {
+        gas_limit: u64,
+        caller: Address,
+        value: U256,
+        init_code: Bytes,
+        /// Some for CREATE2, None for CREATE.
+        salt: Option<U256>,
+    },
+}
+
+/// Call scheme variants for JIT sub-calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JitCallScheme {
+    Call,
+    CallCode,
+    DelegateCall,
+    StaticCall,
+}
+
 /// Outcome of a JIT-compiled execution.
 #[derive(Debug)]
 pub enum JitOutcome {
@@ -49,6 +110,11 @@ pub enum JitOutcome {
     NotCompiled,
     /// JIT execution error (fall through to interpreter).
     Error(String),
+    /// JIT code hit a CALL/CREATE and is suspended, waiting for the sub-call result.
+    Suspended {
+        resume_state: JitResumeState,
+        sub_call: JitSubCall,
+    },
 }
 
 /// Pre-analyzed bytecode metadata used for compilation decisions and basic block mapping.

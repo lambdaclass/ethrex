@@ -13,7 +13,7 @@ use rustc_hash::FxHashMap;
 use super::cache::{CacheKey, CodeCache, CompiledCode};
 use super::compiler_thread::{CompilationRequest, CompilerThread};
 use super::counter::ExecutionCounter;
-use super::types::{JitConfig, JitMetrics, JitOutcome};
+use super::types::{JitConfig, JitMetrics, JitOutcome, JitResumeState, SubCallResult};
 use crate::call_frame::CallFrame;
 use crate::db::gen_db::GeneralizedDatabase;
 use crate::environment::Environment;
@@ -32,6 +32,23 @@ pub trait JitBackend: Send + Sync {
     fn execute(
         &self,
         compiled: &CompiledCode,
+        call_frame: &mut CallFrame,
+        db: &mut GeneralizedDatabase,
+        substate: &mut Substate,
+        env: &Environment,
+        storage_original_values: &mut StorageOriginalValues,
+    ) -> Result<JitOutcome, String>;
+
+    /// Resume JIT execution after a sub-call completes.
+    ///
+    /// Called when the outer JIT code was suspended for a CALL/CREATE,
+    /// the sub-call has been executed by the LEVM interpreter, and we
+    /// need to feed the result back and continue JIT execution.
+    #[allow(clippy::too_many_arguments)]
+    fn execute_resume(
+        &self,
+        resume_state: JitResumeState,
+        sub_result: SubCallResult,
         call_frame: &mut CallFrame,
         db: &mut GeneralizedDatabase,
         substate: &mut Substate,
@@ -127,11 +144,7 @@ impl JitState {
     ///
     /// Returns `true` if the request was queued, `false` if no thread is
     /// registered or the channel is disconnected (falls through to sync compile).
-    pub fn request_compilation(
-        &self,
-        code: ethrex_common::types::Code,
-        fork: Fork,
-    ) -> bool {
+    pub fn request_compilation(&self, code: ethrex_common::types::Code, fork: Fork) -> bool {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let guard = self.compiler_thread.read().unwrap();
         match guard.as_ref() {
@@ -158,6 +171,35 @@ impl JitState {
         let backend = guard.as_ref()?;
         Some(backend.execute(
             compiled,
+            call_frame,
+            db,
+            substate,
+            env,
+            storage_original_values,
+        ))
+    }
+
+    /// Resume JIT execution after a sub-call through the registered backend.
+    ///
+    /// Returns `None` if no backend is registered, otherwise returns the
+    /// execution result (which may be another `Suspended`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_jit_resume(
+        &self,
+        resume_state: JitResumeState,
+        sub_result: SubCallResult,
+        call_frame: &mut CallFrame,
+        db: &mut GeneralizedDatabase,
+        substate: &mut Substate,
+        env: &Environment,
+        storage_original_values: &mut StorageOriginalValues,
+    ) -> Option<Result<JitOutcome, String>> {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let guard = self.backend.read().unwrap();
+        let backend = guard.as_ref()?;
+        Some(backend.execute_resume(
+            resume_state,
+            sub_result,
             call_frame,
             db,
             substate,

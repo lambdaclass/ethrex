@@ -41,8 +41,7 @@ pub struct LevmHost<'a> {
     pub address: ethrex_common::Address,
     gas_params: GasParams,
     /// Original storage values before the transaction (for SSTORE gas calculation).
-    pub storage_original_values:
-        &'a mut ethrex_levm::jit::dispatch::StorageOriginalValues,
+    pub storage_original_values: &'a mut ethrex_levm::jit::dispatch::StorageOriginalValues,
 }
 
 impl<'a> LevmHost<'a> {
