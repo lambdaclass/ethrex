@@ -287,9 +287,9 @@ mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
 ```solidity
 function verifyBatches(
     uint256 firstBatchNumber,
-    bytes[] memory risc0BlockProofs,
-    bytes[] memory sp1ProofsBytes,
-    bytes[] memory tdxSignatures
+    bytes[] calldata risc0BlockProofs,
+    bytes[] calldata sp1ProofsBytes,
+    bytes[] calldata tdxSignatures
 ) external onlyOwner whenNotPaused {
     require(!ALIGNED_MODE, "008");  // Use verifyBatchesAligned instead
 
