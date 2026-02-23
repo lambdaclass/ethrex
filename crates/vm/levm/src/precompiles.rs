@@ -29,7 +29,7 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use sha2::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
@@ -290,17 +290,14 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
 }
 
 /// Per-block cache for precompile results shared between warmer and executor.
-/// Uses `HashMap` (SipHash) instead of `FxHashMap` because keys include
-/// attacker-controlled calldata — a non-randomized hasher would be vulnerable
-/// to hash-collision DoS.
 pub struct PrecompileCache {
-    cache: RwLock<HashMap<(Address, Bytes), (Bytes, u64)>>,
+    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
 }
 
 impl Default for PrecompileCache {
     fn default() -> Self {
         Self {
-            cache: RwLock::new(HashMap::new()),
+            cache: RwLock::new(FxHashMap::default()),
         }
     }
 }
