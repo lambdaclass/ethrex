@@ -1672,8 +1672,15 @@ impl Store {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
-        for update in account_updates {
-            let hashed_address = hash_address_fixed(&update.address);
+
+        // Pre-compute hashed addresses and sort for sequential trie access
+        let mut sorted_updates: Vec<(H256, &AccountUpdate)> = account_updates
+            .into_iter()
+            .map(|update| (hash_address_fixed(&update.address), update))
+            .collect();
+        sorted_updates.sort_unstable_by_key(|(hash, _)| *hash);
+
+        for (hashed_address, update) in sorted_updates {
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(hashed_address.as_bytes())?;
@@ -1743,9 +1750,14 @@ impl Store {
 
         let state_root = state_trie.hash_no_commit();
 
-        for update in account_updates.iter() {
-            let hashed_address = hash_address(&update.address);
+        // Pre-compute hashed addresses and sort for sequential trie access
+        let mut sorted_updates: Vec<(Vec<u8>, &AccountUpdate)> = account_updates
+            .iter()
+            .map(|update| (hash_address(&update.address), update))
+            .collect();
+        sorted_updates.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
 
+        for (hashed_address, update) in sorted_updates {
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(&hashed_address)?;
