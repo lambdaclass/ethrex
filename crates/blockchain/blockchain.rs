@@ -89,7 +89,6 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -741,11 +740,12 @@ impl Blockchain {
                             root
                         };
 
-                        let slots: Vec<(H256, U256)> = update
+                        let mut slots: Vec<(H256, U256)> = update
                             .added_storage
                             .into_iter()
                             .map(|(k, v)| (keccak(k), v))
                             .collect();
+                        slots.sort_unstable_by_key(|(k, _)| *k);
                         worker_txs[worker_idx]
                             .send(StorageOp::Update {
                                 addr: hashed_address,
@@ -762,49 +762,23 @@ impl Blockchain {
                         }
                         account_infos.insert(hashed_address, Some(info));
                     }
+
+                    // Eagerly read account state (avoids deferred reads in drain)
+                    if !account_state_cache.contains_key(&hashed_address)
+                        && !cleared_storage.contains(&hashed_address)
+                    {
+                        let state = match state_db_trie.get(hashed_address.as_bytes())? {
+                            Some(rlp) => Some(AccountState::decode(&rlp)?),
+                            None => None,
+                        };
+                        account_state_cache.insert(hashed_address, state);
+                    }
                 }
             }
 
             // === DRAIN PHASE: execution is done ===
             // Close worker channels — workers will finalize and return results
             drop(worker_txs);
-
-            let state_reads_start = Instant::now();
-            // Read remaining account states in parallel (info-only accounts)
-            let remaining_accounts: Vec<H256> = {
-                let mut set: rustc_hash::FxHashSet<H256> = Default::default();
-                set.extend(
-                    account_infos
-                        .keys()
-                        .filter(|k| !account_state_cache.contains_key(k)),
-                );
-                set.extend(
-                    cleared_storage
-                        .iter()
-                        .filter(|k| !account_state_cache.contains_key(k)),
-                );
-                set.into_iter().collect()
-            };
-            if !remaining_accounts.is_empty() {
-                let state_reads: Result<Vec<(H256, Option<AccountState>)>, StoreError> =
-                    remaining_accounts
-                        .par_iter()
-                        .map(|addr| {
-                            let trie = trie_factory.open_state()?;
-                            let state = match trie.get(addr.as_bytes())? {
-                                Some(rlp) => Some(AccountState::decode(&rlp)?),
-                                None => None,
-                            };
-                            Ok((*addr, state))
-                        })
-                        .collect();
-                for (addr, state) in state_reads? {
-                    account_state_cache.insert(addr, state);
-                }
-            }
-
-            let num_remaining = remaining_accounts.len();
-            let state_reads_elapsed = state_reads_start.elapsed();
 
             // Prefetch state trie paths while workers finalize
             let prefetch_start = Instant::now();
@@ -930,9 +904,7 @@ impl Blockchain {
             let root_elapsed = root_start.elapsed();
 
             info!(
-                "  |- merkle drain: reads={}ms/{} prefetch={}ms join={}ms apply={}ms root={}ms ({} accts, {} storage)",
-                state_reads_elapsed.as_millis(),
-                num_remaining,
+                "  |- merkle drain: prefetch={}ms join={}ms apply={}ms root={}ms ({} accts, {} storage)",
                 prefetch_elapsed.as_millis(),
                 join_elapsed.as_millis(),
                 apply_elapsed.as_millis(),
