@@ -633,14 +633,23 @@ fn build_l2_state_transition(
 /// Executes Alice → L2Bridge.withdraw(receiver) with `withdrawal_amount` ETH.
 /// Uses LEVM to compute exact gas_used and post-state root for the block.
 ///
-/// Returns (transactions_rlp, witness_json, block2_post_state_root, receipts_root, base_fee).
+/// Returns (transactions_rlp, witness_json, block2_post_state_root, receipts_root, base_fee, account_proof, storage_proof).
+#[allow(clippy::type_complexity)]
 fn build_l2_withdrawal_block(
     block1: &Block,
     block1_post_state_root: H256,
     withdrawal_receiver: Address,
     gas_used_tx0: u64,
     block1_l1_anchor: H256,
-) -> (Vec<u8>, Vec<u8>, H256, H256, u64) {
+) -> (
+    Vec<u8>,
+    Vec<u8>,
+    H256,
+    H256,
+    u64,
+    Vec<Vec<u8>>,
+    Vec<Vec<u8>>,
+) {
     let alice_key = SigningKey::from_bytes(&[1u8; 32].into()).expect("valid key");
     let alice = address_from_key(&alice_key);
     let relayer_key = SigningKey::from_bytes(&[2u8; 32].into()).expect("valid key");
@@ -940,6 +949,46 @@ fn build_l2_withdrawal_block(
         .state_trie_root()
         .expect("Failed to compute post-state root");
 
+    // Generate MPT proofs for claimWithdrawal on L1
+    // 1. Compute withdrawal hash: keccak256(abi.encodePacked(alice, receiver, amount, messageId))
+    let mut withdrawal_preimage = Vec::with_capacity(104);
+    withdrawal_preimage.extend_from_slice(alice.as_bytes());
+    withdrawal_preimage.extend_from_slice(withdrawal_receiver.as_bytes());
+    withdrawal_preimage.extend_from_slice(&withdrawal_amount.to_big_endian());
+    withdrawal_preimage.extend_from_slice(&U256::zero().to_big_endian()); // messageId = 0
+    let withdrawal_hash = keccak_hash(&withdrawal_preimage);
+
+    // 2. Compute storage slot: keccak256(abi.encode(withdrawalHash, uint256(3)))
+    //    sentMessages mapping is at slot 3 in L2Bridge
+    let mut slot_preimage = [0u8; 64];
+    slot_preimage[..32].copy_from_slice(&withdrawal_hash);
+    slot_preimage[63] = 3; // sentMessages mapping base slot
+    let storage_slot = keccak_hash(slot_preimage);
+
+    // 3. Get account proof (state trie → L2Bridge account)
+    let account_trie_key = keccak_hash(L2_BRIDGE.to_fixed_bytes());
+    let state = db_inner.state.lock().expect("Lock poisoned");
+    let account_proof = state
+        .state_trie
+        .get_proof(&account_trie_key)
+        .expect("Failed to generate account proof");
+
+    // 4. Get storage proof (L2Bridge storage trie → sentMessages[withdrawalHash])
+    let storage_trie_key = keccak_hash(storage_slot);
+    let storage_proof = state
+        .storage_tries
+        .get(&L2_BRIDGE)
+        .expect("L2Bridge storage trie not found")
+        .get_proof(&storage_trie_key)
+        .expect("Failed to generate storage proof");
+    drop(state);
+
+    println!(
+        "  [block 2] MPT proofs: account_proof={} nodes, storage_proof={} nodes",
+        account_proof.len(),
+        storage_proof.len()
+    );
+
     // Build final block 2 with correct gas_used and state_root
     let transactions = vec![transaction.clone()];
     let transactions_root = ethrex_common::types::compute_transactions_root(&transactions);
@@ -992,6 +1041,8 @@ fn build_l2_withdrawal_block(
         post_state_root,
         receipts_root,
         base_fee,
+        account_proof,
+        storage_proof,
     )
 }
 
@@ -1050,7 +1101,7 @@ async fn test_native_rollup_on_l1() {
         false,
         None,
         &[],
-        None,
+        Some(200),
     )
     .expect("Failed to compile NativeRollup.sol");
 
@@ -1085,6 +1136,8 @@ async fn test_native_rollup_on_l1() {
         block2_post_state_root,
         block2_receipts_root,
         _block2_base_fee,
+        account_proof,
+        storage_proof,
     ) = build_l2_withdrawal_block(
         &block1,
         post_state_root,
@@ -1263,27 +1316,26 @@ async fn test_native_rollup_on_l1() {
         "l1MessageIndex mismatch"
     );
 
-    // 9. Verify withdrawalRoots[1] was stored (zero since no withdrawals in this block)
-    // Storage slot for mapping(uint256 => bytes32) at slot 4, key 1:
-    //   keccak256(abi.encode(uint256(1), uint256(4)))
+    // 9. Verify stateRootHistory[1] was stored (should equal post_state_root)
+    // Storage slot for mapping(uint256 => bytes32) at slot 7, key 1:
+    //   keccak256(abi.encode(uint256(1), uint256(7)))
     let mut slot_preimage = [0u8; 64];
     slot_preimage[31] = 1; // key = 1
     slot_preimage[63] = 7; // mapping base slot = 7
-    let withdrawal_roots_slot = U256::from_big_endian(&keccak_hash(&slot_preimage));
+    let state_root_history_slot = U256::from_big_endian(&keccak_hash(slot_preimage));
 
-    let stored_withdrawal_root = eth_client
+    let stored_state_root_history = eth_client
         .get_storage_at(
             contract_address,
-            withdrawal_roots_slot,
+            state_root_history_slot,
             BlockIdentifier::Tag(BlockTag::Latest),
         )
         .await
         .expect("get_storage_at failed");
-    // No withdrawal events in this L2 block, so root should be zero
     assert_eq!(
-        stored_withdrawal_root,
-        U256::zero(),
-        "withdrawalRoots[1] should be zero (no withdrawals)"
+        H256::from(stored_state_root_history.to_big_endian()),
+        post_state_root,
+        "stateRootHistory[1] should equal post_state_root"
     );
 
     println!("\n  Phase 1 passed: transfer + L1 message");
@@ -1373,26 +1425,26 @@ async fn test_native_rollup_on_l1() {
         "blockNumber should be 2 after advance(block2)"
     );
 
-    // 12. Verify withdrawalRoots[2] is non-zero (withdrawal was included)
+    // 12. Verify stateRootHistory[2] was stored (should equal block2_post_state_root)
     let mut slot_preimage_b2 = [0u8; 64];
     slot_preimage_b2[31] = 2; // key = 2 (block number)
     slot_preimage_b2[63] = 7; // mapping base slot = 7
-    let withdrawal_roots_slot_b2 = U256::from_big_endian(&keccak_hash(&slot_preimage_b2));
+    let state_root_history_slot_b2 = U256::from_big_endian(&keccak_hash(slot_preimage_b2));
 
-    let stored_withdrawal_root_b2 = eth_client
+    let stored_state_root_history_b2 = eth_client
         .get_storage_at(
             contract_address,
-            withdrawal_roots_slot_b2,
+            state_root_history_slot_b2,
             BlockIdentifier::Tag(BlockTag::Latest),
         )
         .await
         .expect("get_storage_at failed");
-    assert_ne!(
-        stored_withdrawal_root_b2,
-        U256::zero(),
-        "withdrawalRoots[2] should be non-zero (withdrawal included)"
+    assert_eq!(
+        H256::from(stored_state_root_history_b2.to_big_endian()),
+        block2_post_state_root,
+        "stateRootHistory[2] should equal block2_post_state_root"
     );
-    println!("  withdrawalRoots[2]: {stored_withdrawal_root_b2:?}");
+    println!("  stateRootHistory[2]: {stored_state_root_history_b2:?}");
 
     // 13. Check l1_withdrawal_receiver balance before claim
     let receiver_balance_before = eth_client
@@ -1404,17 +1456,28 @@ async fn test_native_rollup_on_l1() {
         .expect("get_balance failed");
     println!("  Receiver balance before claim: {receiver_balance_before}");
 
-    // 14. Call claimWithdrawal(from, receiver, amount, messageId, blockNumber, proof)
-    // Single withdrawal → Merkle root = leaf hash, proof is empty
+    // 14. Call claimWithdrawal(from, receiver, amount, messageId, blockNumber, accountProof, storageProof)
+    // Uses MPT proofs against the L2 state root stored in stateRootHistory[2]
     let claim_calldata = encode_calldata(
-        "claimWithdrawal(address,address,uint256,uint256,uint256,bytes32[])",
+        "claimWithdrawal(address,address,uint256,uint256,uint256,bytes[],bytes[])",
         &[
             Value::Address(alice_l2),               // _from (L2 sender)
             Value::Address(l1_withdrawal_receiver), // _receiver
             Value::Uint(withdrawal_amount),         // _amount (1 ETH)
             Value::Uint(U256::zero()),              // _messageId (first withdrawal)
-            Value::Uint(U256::from(2)),             // _blockNumber (L2 block 2)
-            Value::Array(vec![]),                   // _merkleProof (empty for single withdrawal)
+            Value::Uint(U256::from(2)),             // _atBlockNumber (L2 block 2)
+            Value::Array(
+                account_proof
+                    .iter()
+                    .map(|node| Value::Bytes(Bytes::from(node.clone())))
+                    .collect(),
+            ), // _accountProof
+            Value::Array(
+                storage_proof
+                    .iter()
+                    .map(|node| Value::Bytes(Bytes::from(node.clone())))
+                    .collect(),
+            ), // _storageProof
         ],
     )
     .expect("encode claimWithdrawal failed");

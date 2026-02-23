@@ -14,18 +14,21 @@ import "./L1Anchor.sol";
 /// by the EXECUTE precompile in the L1Anchor predeploy. The state root check
 /// at the end of EXECUTE implicitly guarantees correct message processing.
 ///
-/// Withdrawals: users call withdraw() to lock ETH and emit WithdrawalInitiated.
-/// The EXECUTE precompile scans these events and builds a Merkle root for
-/// withdrawal claiming on L1.
+/// Withdrawals: users call withdraw() to lock ETH, write the withdrawal hash
+/// to `sentMessages` storage, and emit WithdrawalInitiated. The L1 contract
+/// verifies withdrawals via MPT storage proofs against the L2 state root —
+/// no custom Merkle tree in the EXECUTE precompile.
 ///
 /// Storage layout:
 ///   Slot 0: relayer (address)
 ///   Slot 1: l1MessageNonce (uint256)
 ///   Slot 2: withdrawalNonce (uint256)
+///   Slot 3: sentMessages (mapping(bytes32 => bool))
 contract L2Bridge {
     address public relayer;
     uint256 public l1MessageNonce;
     uint256 public withdrawalNonce;
+    mapping(bytes32 => bool) public sentMessages;
 
     /// @dev L1Anchor predeploy address (one above L2Bridge).
     address constant L1_ANCHOR_ADDRESS = 0x000000000000000000000000000000000000FFFE;
@@ -95,6 +98,9 @@ contract L2Bridge {
 
         uint256 msgId = withdrawalNonce;
         withdrawalNonce = msgId + 1;
+
+        bytes32 withdrawalHash = keccak256(abi.encodePacked(msg.sender, _receiver, msg.value, msgId));
+        sentMessages[withdrawalHash] = true;
 
         emit WithdrawalInitiated(msg.sender, _receiver, msg.value, msgId);
     }

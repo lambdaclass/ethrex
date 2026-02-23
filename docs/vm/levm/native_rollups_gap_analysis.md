@@ -26,7 +26,7 @@ The book's `apply_body` processing includes a step we don't have: **process unch
 | `parent_beacon_block_root` | TBD, configurable | Not included | Minor gap |
 | System transaction | Step 4 of `apply_body` | L1Anchor predeploy write before tx execution | **Aligned** |
 
-**Output:** Book says TBD (possibly `block_gas_used`). We return 192 bytes: `(postStateRoot, blockNumber, withdrawalRoot, gasUsed, burnedFees, baseFeePerGas)`.
+**Output:** Book says TBD (possibly `block_gas_used`). We return 160 bytes: `(postStateRoot, blockNumber, gasUsed, burnedFees, baseFeePerGas)`.
 
 ---
 
@@ -54,7 +54,7 @@ Aligned with the book's recommended Linea/Taiko-style proof-based messaging.
 
 Book is uncertain — suggests state root or receipts root proofs once statelessness reduces proof costs. Spec is TBD.
 
-We use event scanning: EXECUTE extracts `WithdrawalInitiated` events from L2Bridge, builds a commutative Keccak256 Merkle tree (OpenZeppelin-compatible), and returns the root. Users claim on L1 with Merkle proofs. No finality delay.
+We use state root proofs, aligned with the book's recommendation. The L2Bridge writes `sentMessages[withdrawalHash] = true` to storage when users withdraw. The EXECUTE precompile returns the post-state root (which captures L2Bridge storage), and NativeRollup stores it in `stateRootHistory[blockNumber]`. Users claim on L1 with MPT account proof (state root → L2Bridge storageRoot) and storage proof (storageRoot → `sentMessages[hash] == true`). Similar to the OP Stack's `L2ToL1MessagePasser` pattern. The MPT verification is inlined in the NativeRollup contract. No finality delay.
 
 ---
 
@@ -96,11 +96,11 @@ We compute `burnedFees = base_fee_per_gas * block_gas_used`. This is equivalent 
 | System transaction | Step in `apply_body` | L1Anchor predeploy write | **Aligned** |
 | L1 anchoring (`L1_ANCHOR`) | System contract + system tx | L1Anchor predeploy + system write | **Aligned** |
 | L1→L2 messaging | Proof-based (no custom tx) | Merkle proofs against anchored root | **Aligned** |
-| L2→L1 messaging | State/receipts root proofs (TBD) | Event extraction + Merkle tree | **Divergent** |
+| L2→L1 messaging | State/receipts root proofs (TBD) | State root proofs (MPT account + storage) | **Aligned** |
 | Forced transactions | WIP (FOCIL, threshold) | Not implemented | **Gap** |
 | Gas metering | TBD | Flat 100k gas | **Both TBD** |
 | Serialization | Blob references (TBD) | RLP calldata + JSON witness | **Different** |
-| EXECUTE output format | TBD | 192 bytes (6 fields) | **We defined** |
+| EXECUTE output format | TBD | 160 bytes (5 fields) | **We defined** |
 | L2-side burned fee handling | Not specified | Not implemented | **Gap** |
 | Finality delay | Implied for production | Not implemented | **Gap** |
 | DA cost pricing | WIP | Not implemented | **Both WIP** |
@@ -122,7 +122,6 @@ We compute `burnedFees = base_fee_per_gas * block_gas_used`. This is equivalent 
 | Gap | Why it's future work |
 |-----|----------------------|
 | Generic L1 block hash anchoring | L1Anchor currently stores L1 messages Merkle root; generic L1 block hash would enable broader cross-chain proofs |
-| State root-based withdrawals | Spec still TBD; our Merkle tree works for PoC |
 | Forced transactions | Book's design is WIP/brainstorming |
 | Blob-referenced transactions | Requires blob DA infrastructure |
 | Gas metering | Spec is TBD |

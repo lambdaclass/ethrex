@@ -4,7 +4,7 @@
 //! The precompile receives individual block fields, transactions (RLP), an
 //! execution witness (JSON), and an L1 anchor (Merkle root of consumed L1
 //! messages), re-executes the transactions, and verifies the resulting state
-//! root, receipts root, and withdrawal Merkle root.
+//! root and receipts root.
 //!
 //! This implements the `apply_body` variant from the native rollups spec:
 //! individual execution parameters are provided instead of a full block.
@@ -15,8 +15,10 @@
 //! against this anchored root. The state root check at the end implicitly
 //! guarantees correct message processing.
 //!
-//! After execution, it extracts WithdrawalInitiated events and computes a
-//! Merkle root for withdrawal claiming on L1.
+//! Withdrawals are handled via state root proofs — the L2Bridge writes
+//! withdrawal hashes to its `sentMessages` mapping, and the L1 contract
+//! verifies them via MPT proofs against the post-state root. No event
+//! scanning or custom Merkle trees needed.
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -30,7 +32,7 @@ use ethrex_common::{
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::decode::RLPDecode;
 use std::cmp::min;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use crate::{
     db::{gen_db::GeneralizedDatabase, guest_program_state_db::GuestProgramStateDb},
@@ -44,8 +46,9 @@ use crate::{
 /// Fixed gas cost for the PoC. Real cost TBD in the EIP.
 const EXECUTE_GAS_COST: u64 = 100_000;
 
-/// Address of the L2 bridge predeploy (handles both L1 messages and withdrawals).
+/// Address of the L2 bridge predeploy (handles L1 messages and withdrawals).
 /// Must match the deployed address in the L2 genesis state.
+/// Exported for test use (L2 genesis setup).
 pub const L2_BRIDGE: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfd,
@@ -58,22 +61,6 @@ pub const L1_ANCHOR: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfe,
 ]);
-
-/// Event signature: WithdrawalInitiated(address indexed from, address indexed receiver, uint256 amount, uint256 indexed messageId)
-static WITHDRAWAL_INITIATED_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
-    H256::from(keccak_hash(
-        b"WithdrawalInitiated(address,address,uint256,uint256)",
-    ))
-});
-
-/// A withdrawal extracted from L2 block execution logs.
-#[derive(Clone, Debug)]
-pub struct Withdrawal {
-    pub from: Address,
-    pub receiver: Address,
-    pub amount: U256,
-    pub message_id: U256,
-}
 
 /// Input to the EXECUTE precompile (`apply_body` variant).
 ///
@@ -126,7 +113,7 @@ pub struct ExecutePrecompileInput {
 /// on L2 before executing transactions, allowing L2 contracts to verify individual
 /// messages via Merkle proofs.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees, uint256 baseFeePerGas)` -- 192 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, uint256 gasUsed, uint256 burnedFees, uint256 baseFeePerGas)` -- 160 bytes.
 pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
@@ -293,12 +280,13 @@ fn custom_err(msg: String) -> VMError {
 /// Implements the `apply_body` variant: receives individual block fields,
 /// builds a synthetic block header internally, re-executes, and verifies.
 ///
-/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, bytes32 withdrawalRoot, uint256 gasUsed, uint256 burnedFees, uint256 baseFeePerGas)` -- 192 bytes.
+/// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, uint256 gasUsed, uint256 burnedFees, uint256 baseFeePerGas)` -- 160 bytes.
 /// The post-state root is verified against the actual computed state root after
-/// execution. The withdrawal root is computed from WithdrawalInitiated events
-/// emitted during block execution. The burned fees are `base_fee_per_gas *
-/// block_gas_used` (EIP-1559 base fees are constant per block). The base fee
-/// per gas is returned so the L1 contract can track it on-chain for the next block.
+/// execution. The state root captures all L2 state including pending withdrawals
+/// (written to L2Bridge.sentMessages by withdraw()). The burned fees are
+/// `base_fee_per_gas * block_gas_used` (EIP-1559 base fees are constant per
+/// block). The base fee per gas is returned so the L1 contract can track it
+/// on-chain for the next block.
 pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
     let ExecutePrecompileInput {
         pre_state_root,
@@ -407,8 +395,8 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
             .map_err(|e| custom_err(format!("Failed to write L1Anchor storage: {e}")))?;
     }
 
-    // 6. Execute the block and collect logs
-    let (all_logs, block_gas_used) = {
+    // 6. Execute the block
+    let (_all_logs, block_gas_used) = {
         let db_dyn: Arc<dyn crate::db::Database> = db.clone();
         let mut gen_db = GeneralizedDatabase::new(db_dyn);
 
@@ -442,23 +430,17 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         )));
     }
 
-    // 8. Extract withdrawals from logs and compute Merkle root
-    let withdrawals = extract_withdrawals(&all_logs);
-    let withdrawal_root = compute_withdrawals_merkle_root(&withdrawals);
-
-    // 9. Compute burned fees: base_fee_per_gas * block_gas_used (EIP-1559)
+    // 8. Compute burned fees: base_fee_per_gas * block_gas_used (EIP-1559)
     let burned_fees = U256::from(base_fee_per_gas)
         .checked_mul(U256::from(block_gas_used))
         .ok_or(VMError::Internal(InternalError::Overflow))?;
 
-    // 10. Return abi.encode(postStateRoot, blockNumber, withdrawalRoot, gasUsed, burnedFees, baseFeePerGas) -- 192 bytes
-    let mut result = Vec::with_capacity(192);
+    // 9. Return abi.encode(postStateRoot, blockNumber, gasUsed, burnedFees, baseFeePerGas) -- 160 bytes
+    let mut result = Vec::with_capacity(160);
     result.extend_from_slice(expected_post_state_root.as_bytes());
     // block_number as uint256: 24 zero bytes + 8-byte big-endian
     result.extend_from_slice(&[0u8; 24]);
     result.extend_from_slice(&block_number.to_be_bytes());
-    // withdrawal Merkle root as bytes32
-    result.extend_from_slice(withdrawal_root.as_bytes());
     // gasUsed as uint256: 24 zero bytes + 8-byte big-endian
     result.extend_from_slice(&[0u8; 24]);
     result.extend_from_slice(&block_gas_used.to_be_bytes());
@@ -603,67 +585,7 @@ fn calculate_gas_price(tx: &Transaction, base_fee_per_gas: u64) -> Result<U256, 
     .into())
 }
 
-// ===== Withdrawal extraction and Merkle tree =====
-
-/// Extract withdrawals from block execution logs.
-///
-/// Scans for `WithdrawalInitiated(address indexed from, address indexed receiver, uint256 amount, uint256 indexed messageId)`
-/// events emitted by the L2 withdrawal bridge at [`L2_BRIDGE`].
-fn extract_withdrawals(logs: &[Log]) -> Vec<Withdrawal> {
-    logs.iter()
-        .filter(|log| {
-            log.address == L2_BRIDGE
-                && log.topics.first() == Some(&*WITHDRAWAL_INITIATED_SELECTOR)
-                && log.topics.len() == 4
-        })
-        .filter_map(|log| {
-            // topics[0] = event selector
-            // topics[1] = from (address, indexed -- left-padded to 32 bytes)
-            // topics[2] = receiver (address, indexed -- left-padded to 32 bytes)
-            // topics[3] = messageId (uint256, indexed)
-            // data = amount (uint256, non-indexed, 32 bytes)
-            let from = Address::from_slice(log.topics.get(1)?.as_bytes().get(12..32)?);
-            let receiver = Address::from_slice(log.topics.get(2)?.as_bytes().get(12..32)?);
-            let message_id = U256::from_big_endian(log.topics.get(3)?.as_bytes());
-            let amount = U256::from_big_endian(log.data.get(..32)?);
-
-            Some(Withdrawal {
-                from,
-                receiver,
-                amount,
-                message_id,
-            })
-        })
-        .collect()
-}
-
-/// Compute the withdrawal hash for Merkle tree inclusion.
-///
-/// Format: `keccak256(abi.encodePacked(from, receiver, amount, messageId))`
-///
-/// Must exactly match the Solidity computation in NativeRollup.claimWithdrawal():
-///   `keccak256(abi.encodePacked(_from, _receiver, _amount, _messageId))`
-///
-/// abi.encodePacked for address is 20 bytes, for uint256 is 32 bytes.
-pub fn compute_withdrawal_hash(withdrawal: &Withdrawal) -> H256 {
-    let mut data = Vec::with_capacity(104); // 20 + 20 + 32 + 32
-    data.extend_from_slice(withdrawal.from.as_bytes()); // 20 bytes
-    data.extend_from_slice(withdrawal.receiver.as_bytes()); // 20 bytes
-    data.extend_from_slice(&withdrawal.amount.to_big_endian()); // 32 bytes
-    data.extend_from_slice(&withdrawal.message_id.to_big_endian()); // 32 bytes
-
-    H256::from(keccak_hash(&data))
-}
-
-/// Compute the Merkle root of withdrawal hashes.
-fn compute_withdrawals_merkle_root(withdrawals: &[Withdrawal]) -> H256 {
-    if withdrawals.is_empty() {
-        return H256::zero();
-    }
-
-    let hashes: Vec<H256> = withdrawals.iter().map(compute_withdrawal_hash).collect();
-    compute_merkle_root(&hashes)
-}
+// ===== Merkle tree helpers (used by L1→L2 messaging) =====
 
 /// Compute a Merkle root using commutative Keccak256 hashing (OpenZeppelin-compatible).
 ///
