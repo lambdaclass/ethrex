@@ -832,7 +832,10 @@ impl<'a> VM<'a> {
 
         let next_memory = self.current_call_frame.memory.next_memory();
 
-        let mut new_call_frame = CallFrame::new(
+        let mut backup = self.backup_pool.pop().unwrap_or_default();
+        backup.bal_checkpoint = bal_checkpoint;
+
+        let new_call_frame = CallFrame::new(
             deployer,
             new_address,
             new_address,
@@ -849,9 +852,8 @@ impl<'a> VM<'a> {
             0,
             stack,
             next_memory,
+            backup,
         );
-        // Store BAL checkpoint in the call frame's backup for restoration on revert
-        new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
 
         self.add_callframe(new_call_frame);
 
@@ -1039,7 +1041,10 @@ impl<'a> VM<'a> {
 
             let next_memory = self.current_call_frame.memory.next_memory();
 
-            let mut new_call_frame = CallFrame::new(
+            let mut backup = self.backup_pool.pop().unwrap_or_default();
+            backup.bal_checkpoint = bal_checkpoint;
+
+            let new_call_frame = CallFrame::new(
                 msg_sender,
                 to,
                 code_address,
@@ -1055,9 +1060,8 @@ impl<'a> VM<'a> {
                 ret_size,
                 stack,
                 next_memory,
+                backup,
             );
-            // Store BAL checkpoint in the call frame's backup for restoration on revert
-            new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
 
             self.add_callframe(new_call_frame);
 
@@ -1116,7 +1120,7 @@ impl<'a> VM<'a> {
     #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     pub fn handle_return_call(
         &mut self,
-        executed_call_frame: CallFrame,
+        mut executed_call_frame: CallFrame,
         ctx_result: &ContextResult,
     ) -> Result<(), VMError> {
         let CallFrame {
@@ -1159,7 +1163,9 @@ impl<'a> VM<'a> {
         match &ctx_result.result {
             TxResult::Success => {
                 self.current_call_frame.stack.push(SUCCESS)?;
-                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(
+                    &mut executed_call_frame.call_frame_backup,
+                )?;
             }
             TxResult::Revert(_) => {
                 self.current_call_frame.stack.push(FAIL)?;
@@ -1171,6 +1177,10 @@ impl<'a> VM<'a> {
         let mut stack = executed_call_frame.stack;
         stack.clear();
         self.stack_pool.push(stack);
+
+        let mut backup = executed_call_frame.call_frame_backup;
+        backup.clear();
+        self.backup_pool.push(backup);
 
         Ok(())
     }
@@ -1184,8 +1194,9 @@ impl<'a> VM<'a> {
         let CallFrame {
             gas_limit,
             to,
-            call_frame_backup,
+            mut call_frame_backup,
             memory: old_callframe_memory,
+            stack,
             ..
         } = executed_call_frame;
 
@@ -1206,7 +1217,7 @@ impl<'a> VM<'a> {
         match ctx_result.result.clone() {
             TxResult::Success => {
                 parent_call_frame.stack.push(address_to_word(to))?;
-                self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(&mut call_frame_backup)?;
             }
             TxResult::Revert(err) => {
                 // If revert we have to copy the return_data
@@ -1220,9 +1231,12 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_context(ctx_result, false)?;
 
-        let mut stack = executed_call_frame.stack;
+        let mut stack = stack;
         stack.clear();
         self.stack_pool.push(stack);
+
+        call_frame_backup.clear();
+        self.backup_pool.push(call_frame_backup);
 
         Ok(())
     }

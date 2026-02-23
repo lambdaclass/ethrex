@@ -10,7 +10,7 @@ use bytes::Bytes;
 use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt, hint::assert_unchecked};
+use std::{collections::HashMap, fmt, hint::assert_unchecked, mem};
 
 /// [`u64`]s that make up a [`U256`]
 const U64_PER_U256: usize = U256::MAX.0.len();
@@ -334,6 +334,7 @@ impl CallFrame {
         ret_size: usize,
         stack: Stack,
         memory: Memory,
+        call_frame_backup: CallFrameBackup,
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
 
@@ -355,7 +356,7 @@ impl CallFrame {
             ret_size,
             stack,
             memory,
-            call_frame_backup: CallFrameBackup::default(),
+            call_frame_backup,
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
@@ -426,8 +427,9 @@ impl<'a> VM<'a> {
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
+    /// Uses mem::take to move the backup out instead of cloning it.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
-        let callframe_backup = self.current_call_frame.call_frame_backup.clone();
+        let callframe_backup = mem::take(&mut self.current_call_frame.call_frame_backup);
         restore_cache_state(self.db, callframe_backup)
     }
 
@@ -437,31 +439,26 @@ impl<'a> VM<'a> {
     //   - Do the same for every individual storage slot.
     pub fn merge_call_frame_backup_with_parent(
         &mut self,
-        child_call_frame_backup: &CallFrameBackup,
+        child: &mut CallFrameBackup,
     ) -> Result<(), VMError> {
-        let parent_backup_accounts = &mut self
-            .current_call_frame
-            .call_frame_backup
-            .original_accounts_info;
-        for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
-            if parent_backup_accounts.get(address).is_none() {
-                parent_backup_accounts.insert(*address, account.clone());
-            }
+        let parent = &mut self.current_call_frame.call_frame_backup;
+
+        // Drain child into parent: move accounts without cloning. HashMap::drain keeps capacity.
+        for (address, account) in child.original_accounts_info.drain() {
+            parent
+                .original_accounts_info
+                .entry(address)
+                .or_insert(account);
         }
 
-        let parent_backup_storage = &mut self
-            .current_call_frame
-            .call_frame_backup
-            .original_account_storage_slots;
-        for (address, storage) in child_call_frame_backup
-            .original_account_storage_slots
-            .iter()
-        {
-            let parent_storage = parent_backup_storage.entry(*address).or_default();
-            for (key, value) in storage {
-                if parent_storage.get(key).is_none() {
-                    parent_storage.insert(*key, *value);
-                }
+        // Drain child storage: move per-slot values without cloning.
+        for (address, mut child_storage) in child.original_account_storage_slots.drain() {
+            let parent_storage = parent
+                .original_account_storage_slots
+                .entry(address)
+                .or_default();
+            for (key, value) in child_storage.drain() {
+                parent_storage.entry(key).or_insert(value);
             }
         }
 
