@@ -325,7 +325,7 @@ contract OnChainProposer is
         if (ALIGNED_MODE) revert UseAlignedVerification();
 
         if (batchNumber != lastVerifiedBatch + 1)
-            revert BatchAlreadyVerified();
+            revert BatchNotSequential();
         if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
             revert BatchNotCommitted();
 
