@@ -25,7 +25,7 @@ use ethrex_common::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::HashMap,
     rc::Rc,
 };
 
@@ -88,7 +88,7 @@ pub struct Substate {
     accessed_slots_list: Vec<(Address, H256)>,
     accessed_slots_set: FxHashSet<(Address, H256)>,
     /// Parallel ordered map for make_access_list() and get_accessed_storage_slots().
-    accessed_slots_map: BTreeMap<Address, BTreeSet<H256>>,
+    accessed_slots_map: FxHashMap<Address, FxHashSet<H256>>,
 
     created_accounts_list: Vec<Address>,
     created_accounts_set: FxHashSet<Address>,
@@ -111,7 +111,7 @@ impl Substate {
         let accessed_addresses_list: Vec<Address> = accessed_addresses.iter().copied().collect();
         let mut accessed_slots_list: Vec<(Address, H256)> = Vec::new();
         let mut accessed_slots_set: FxHashSet<(Address, H256)> = FxHashSet::default();
-        let mut accessed_slots_map: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        let mut accessed_slots_map: FxHashMap<Address, FxHashSet<H256>> = FxHashMap::default();
 
         for (addr, slots) in &accessed_storage_slots {
             for &slot in slots {
@@ -225,13 +225,20 @@ impl Substate {
 
     /// Build an access list from all accessed storage slots.
     pub fn make_access_list(&self) -> Vec<AccessListEntry> {
-        self.accessed_slots_map
+        let mut result: Vec<AccessListEntry> = self
+            .accessed_slots_map
             .iter()
-            .map(|(address, storage_keys)| AccessListEntry {
-                address: *address,
-                storage_keys: storage_keys.iter().copied().collect(),
+            .map(|(address, storage_keys)| {
+                let mut keys: Vec<H256> = storage_keys.iter().copied().collect();
+                keys.sort();
+                AccessListEntry {
+                    address: *address,
+                    storage_keys: keys,
+                }
             })
-            .collect()
+            .collect();
+        result.sort_by_key(|e| e.address);
+        result
     }
 
     /// Mark an address+slot as accessed and return whether it was already marked.
@@ -255,7 +262,7 @@ impl Substate {
 
     /// Returns all accessed storage slots for a given address.
     /// Used by SELFDESTRUCT to record storage reads in BAL per EIP-7928.
-    pub fn get_accessed_storage_slots(&self, address: &Address) -> BTreeSet<H256> {
+    pub fn get_accessed_storage_slots(&self, address: &Address) -> FxHashSet<H256> {
         self.accessed_slots_map
             .get(address)
             .cloned()
