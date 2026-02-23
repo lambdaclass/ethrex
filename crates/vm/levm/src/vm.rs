@@ -28,8 +28,12 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     mem,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
+
+/// Shared sentinel for the empty Code placeholder used in initial call frames.
+/// Avoids a heap allocation per transaction for a value that's immediately replaced.
+static EMPTY_CODE: LazyLock<Arc<Code>> = LazyLock::new(|| Arc::new(Code::default()));
 
 /// Storage mapping from slot key to value.
 pub type Storage = HashMap<U256, H256>;
@@ -446,7 +450,7 @@ impl<'a> VM<'a> {
                 env.origin,
                 callee,
                 Address::default(), // Will be assigned at the end of prepare_execution
-                Arc::new(Code::default()), // Will be assigned at the end of prepare_execution
+                Arc::clone(&EMPTY_CODE), // Will be assigned at the end of prepare_execution
                 tx.value(),
                 tx.data().clone(),
                 false,
