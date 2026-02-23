@@ -1979,13 +1979,11 @@ impl Blockchain {
                             bal,
                         ) {
                             Ok(result) => result,
-                            Err(
-                                ChainError::InvalidBlock(
-                                    InvalidBlockError::GasUsedMismatch(..)
-                                    | InvalidBlockError::ReceiptsRootMismatch
-                                    | InvalidBlockError::StateRootMismatch,
-                                ),
-                            ) => {
+                            Err(ChainError::InvalidBlock(
+                                InvalidBlockError::GasUsedMismatch(..)
+                                | InvalidBlockError::ReceiptsRootMismatch
+                                | InvalidBlockError::StateRootMismatch,
+                            )) => {
                                 // Tier 2: sequential fallback
                                 warn!(
                                     "block {}: refined parallel also failed, sequential fallback",
@@ -2008,12 +2006,7 @@ impl Blockchain {
                             block.header.number, wasted_ms
                         );
                         let mut fresh_vm = vm.fresh_with_same_store();
-                        self.execute_block_pipeline(
-                            &block,
-                            &parent_header,
-                            &mut fresh_vm,
-                            None,
-                        )?
+                        self.execute_block_pipeline(&block, &parent_header, &mut fresh_vm, None)?
                     }
                 }
                 Err(e) => return Err(e),

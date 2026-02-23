@@ -732,39 +732,31 @@ impl LEVM {
 
         // Consume per-tx read hints if present (set by a previous failed attempt).
         let per_tx_hint = db.per_tx_read_addresses.take();
-        let groups = build_parallel_groups(
-            bal,
-            txs_with_sender,
-            coinbase,
-            per_tx_hint.as_deref(),
-        );
+        let t_groups = std::time::Instant::now();
+        let groups = build_parallel_groups(bal, txs_with_sender, coinbase, per_tx_hint.as_deref());
+        let groups_ms = t_groups.elapsed().as_secs_f64() * 1000.0;
 
         let num_groups = groups.len();
         let max_group = groups.iter().map(|g| g.len()).max().unwrap_or(0);
         let n_txs = txs_with_sender.len();
-        ::tracing::info!(
-            "[PARALLEL] block {} | {} txs → {} groups (max group: {} txs, parallelism: {:.1}x)",
-            block.header.number,
-            n_txs,
-            num_groups,
-            max_group,
-            if max_group > 0 {
-                n_txs as f64 / max_group as f64
-            } else {
-                1.0
-            },
-        );
 
         let store = db.store.clone();
         let header = &block.header;
 
         type GroupResult = (
-            Vec<(usize, TxType, ExecutionReport, Vec<AccountUpdate>, FxHashSet<Address>)>,
+            Vec<(
+                usize,
+                TxType,
+                ExecutionReport,
+                Vec<AccountUpdate>,
+                FxHashSet<Address>,
+            )>,
             U256, // final coinbase balance in this group
         );
         // Execute each group in parallel; within each group txs are sequential.
         // Conflicts (W-W and RAW) are already resolved upfront by build_parallel_groups,
         // so no post-hoc fallback is needed.
+        let t_exec = std::time::Instant::now();
         let all_results: Result<Vec<GroupResult>, EvmError> = groups
             .into_par_iter()
             .map(|group| -> Result<_, EvmError> {
@@ -807,9 +799,11 @@ impl LEVM {
             })
             .collect();
 
+        let exec_ms = t_exec.elapsed().as_secs_f64() * 1000.0;
         let all_results = all_results?;
 
         // Merge all AccountUpdates; accumulate per-group coinbase deltas.
+        let t_merge = std::time::Instant::now();
         // Track credits and debits separately to handle the rare case where the coinbase
         // address is a tx sender (spending more ETH than received in fees → negative delta).
         let mut indexed_reports: Vec<(usize, TxType, ExecutionReport)> = Vec::new();
@@ -872,14 +866,35 @@ impl LEVM {
             }
         }
 
+        let merge_ms = t_merge.elapsed().as_secs_f64() * 1000.0;
+
         // Send merged tx + coinbase updates to merkleizer
+        let t_send = std::time::Instant::now();
         merkleizer
             .send(merged.into_values().collect())
             .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
         queue_length.fetch_add(1, Ordering::Relaxed);
+        let send_ms = t_send.elapsed().as_secs_f64() * 1000.0;
 
         // Store per-tx read addresses on main db for potential refined retry.
         db.per_tx_read_addresses = Some(all_tx_reads);
+
+        ::tracing::info!(
+            "[PARALLEL] block {} | {} txs → {} groups (max: {}, {:.1}x) | groups: {:.1}ms, exec: {:.1}ms, merge: {:.1}ms, send: {:.1}ms",
+            block.header.number,
+            n_txs,
+            num_groups,
+            max_group,
+            if max_group > 0 {
+                n_txs as f64 / max_group as f64
+            } else {
+                1.0
+            },
+            groups_ms,
+            exec_ms,
+            merge_ms,
+            send_ms,
+        );
 
         // Sort by tx_idx and reconstruct receipts in block order
         indexed_reports.sort_unstable_by_key(|(idx, _, _)| *idx);
@@ -2014,8 +2029,7 @@ mod parallel_group_tests {
         actual_reads[0].insert(sender0);
         actual_reads[0].insert(addr_a);
         actual_reads[1].insert(sender1); // tx1 did NOT load addr_a
-        let groups_refined =
-            build_parallel_groups(&bal, &txs, addr(0xff), Some(&actual_reads));
+        let groups_refined = build_parallel_groups(&bal, &txs, addr(0xff), Some(&actual_reads));
         // tx1 doesn't read addr_a → no RAW → separate groups.
         assert_eq!(groups_refined, vec![vec![0], vec![1]]);
     }
@@ -2038,8 +2052,7 @@ mod parallel_group_tests {
         actual_reads[0].insert(addr_a);
         actual_reads[1].insert(sender1);
         actual_reads[1].insert(addr_a); // tx1 DID load addr_a
-        let groups =
-            build_parallel_groups(&bal, &txs, addr(0xff), Some(&actual_reads));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), Some(&actual_reads));
         // tx1 reads addr_a which tx0 wrote → RAW → same group.
         assert_eq!(groups, vec![vec![0, 1]]);
     }

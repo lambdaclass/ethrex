@@ -154,8 +154,7 @@ impl GeneralizedDatabase {
                     && let Some(account) = base.get(&address)
                 {
                     let cloned = account.clone();
-                    self.initial_accounts_state
-                        .insert(address, cloned.clone());
+                    self.initial_accounts_state.insert(address, cloned.clone());
                     return Ok(entry.insert(cloned));
                 }
                 let state = self.store.get_account_state(address)?;
