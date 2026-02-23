@@ -19,7 +19,7 @@ use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
 pub use ethrex_common::types::AccountUpdate;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
@@ -38,6 +38,10 @@ pub struct GeneralizedDatabase {
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
+    /// Per-tx read addresses for parallel execution retry.
+    /// - Output: populated by execute_block_parallel with accounts each tx loaded.
+    /// - Input: when set before execute_block_parallel, used for refined grouping.
+    pub per_tx_read_addresses: Option<Vec<FxHashSet<Address>>>,
 }
 
 impl GeneralizedDatabase {
@@ -51,6 +55,7 @@ impl GeneralizedDatabase {
             codes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
+            per_tx_read_addresses: None,
         }
     }
 
@@ -66,6 +71,7 @@ impl GeneralizedDatabase {
             codes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
+            per_tx_read_addresses: None,
         }
     }
 
@@ -99,6 +105,11 @@ impl GeneralizedDatabase {
         self.bal_recorder.as_mut()
     }
 
+    /// Takes the per-tx read addresses, leaving `None` in their place.
+    pub fn take_per_tx_reads(&mut self) -> Option<Vec<FxHashSet<Address>>> {
+        self.per_tx_read_addresses.take()
+    }
+
     /// Only used within Levm Runner, where the accounts already have all the storage pre-loaded, not used in real case scenarios.
     pub fn new_with_account_state(
         store: Arc<dyn Database>,
@@ -122,6 +133,7 @@ impl GeneralizedDatabase {
             codes,
             code_metadata: Default::default(),
             bal_recorder: None,
+            per_tx_read_addresses: None,
         }
     }
 

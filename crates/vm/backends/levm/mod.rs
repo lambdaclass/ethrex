@@ -110,6 +110,7 @@ fn build_parallel_groups(
     bal: &BlockAccessList,
     txs_with_sender: &[(&Transaction, Address)],
     coinbase: Address,
+    per_tx_read_addresses: Option<&[FxHashSet<Address>]>,
 ) -> Vec<Vec<usize>> {
     let n = txs_with_sender.len();
     if n == 0 {
@@ -216,37 +217,20 @@ fn build_parallel_groups(
         }
     }
 
-    // Phase 2: per-tx read sets approximated from static tx metadata.
-    // Conservative approximation: may include non-actual reads (extra serialization),
-    // but must not miss actual reads that follow a write (would cause wrong state).
-    //
-    // - Sender always reads its own balance (fee check) and nonce (validation).
-    // - Call tx: code is loaded and balance may be checked.
-    //   Written resources are filtered to addresses the tx is known to interact with
-    //   (BAL-derived writes + static metadata: to, access_list, auth_list).
-    // - EIP-2930 access list: declared pre-warm slots and addresses.
+    // Phase 2: per-tx read sets.
+    // Two modes:
+    // - Refined (per_tx_read_addresses is Some): use actual per-tx addresses from
+    //   a previous execution attempt. Precise — only includes addresses the tx loaded.
+    // - Heuristic (per_tx_read_addresses is None): approximate from static tx metadata.
+    //   Conservative: may include non-actual reads (extra serialization),
+    //   but must not miss actual reads that follow a write (would cause wrong state).
     let mut tx_reads: Vec<FxHashSet<Resource>> = (0..n).map(|_| FxHashSet::default()).collect();
-    for (i, (tx, sender)) in txs_with_sender.iter().enumerate() {
-        tx_reads[i].insert(Resource::Balance(*sender));
-        tx_reads[i].insert(Resource::Nonce(*sender));
-        if let TxKind::Call(to) = tx.to()
-            && to != coinbase
-        {
-            tx_reads[i].insert(Resource::Balance(to));
-            tx_reads[i].insert(Resource::Code(to));
-            // Address-narrowed multi-hop RAW: instead of adding ALL written resources,
-            // only add resources from addresses this tx is known to interact with.
-            // known_addrs = BAL-derived addresses ∪ static addresses (to, access_list, auth_list).
-            let mut known_addrs = per_tx_addresses[i].clone();
-            known_addrs.insert(to);
-            for (al_addr, _) in tx.access_list() {
-                known_addrs.insert(*al_addr);
-            }
-            if let Some(auth_list) = tx.authorization_list() {
-                for auth in auth_list {
-                    known_addrs.insert(auth.address);
-                }
-            }
+    if let Some(actual_reads) = per_tx_read_addresses {
+        // Refined mode: use actual per-tx addresses from previous execution attempt.
+        for (i, (tx, sender)) in txs_with_sender.iter().enumerate() {
+            tx_reads[i].insert(Resource::Balance(*sender));
+            tx_reads[i].insert(Resource::Nonce(*sender));
+            // Use actual loaded addresses to filter written resources.
             for r in &all_written_callable {
                 let resource_addr = match r {
                     Resource::Balance(a)
@@ -254,30 +238,89 @@ fn build_parallel_groups(
                     | Resource::Storage(a, _)
                     | Resource::Nonce(a) => *a,
                 };
-                if known_addrs.contains(&resource_addr) {
+                if actual_reads[i].contains(&resource_addr) {
                     tx_reads[i].insert(r.clone());
                 }
             }
-        }
-        for (addr, declared_slots) in tx.access_list() {
-            if *addr == coinbase {
-                continue;
+            // Also add standard access_list / auth_list reads.
+            for (addr, declared_slots) in tx.access_list() {
+                if *addr == coinbase {
+                    continue;
+                }
+                tx_reads[i].insert(Resource::Balance(*addr));
+                tx_reads[i].insert(Resource::Code(*addr));
+                for slot in declared_slots {
+                    tx_reads[i].insert(Resource::Storage(*addr, *slot));
+                }
             }
-            tx_reads[i].insert(Resource::Balance(*addr));
-            tx_reads[i].insert(Resource::Code(*addr));
-            for slot in declared_slots {
-                tx_reads[i].insert(Resource::Storage(*addr, *slot));
+            if let Some(auth_list) = tx.authorization_list() {
+                for auth in auth_list {
+                    if auth.address != coinbase {
+                        tx_reads[i].insert(Resource::Code(auth.address));
+                    }
+                }
             }
         }
-        // EIP-7702: the delegate target's code is loaded at call time via the delegation
-        // pointer, so every authorization entry implies a read of Code(delegate_target).
-        // The authority address itself is only known at runtime (ecrecover), so it cannot
-        // be added here; W-W detection via the BAL handles the case where two txs both
-        // write Code(authority).
-        if let Some(auth_list) = tx.authorization_list() {
-            for auth in auth_list {
-                if auth.address != coinbase {
-                    tx_reads[i].insert(Resource::Code(auth.address));
+    } else {
+        // Heuristic mode: approximate from static tx metadata.
+        // - Sender always reads its own balance (fee check) and nonce (validation).
+        // - Call tx: code is loaded and balance may be checked.
+        //   Written resources are filtered to addresses the tx is known to interact with
+        //   (BAL-derived writes + static metadata: to, access_list, auth_list).
+        // - EIP-2930 access list: declared pre-warm slots and addresses.
+        for (i, (tx, sender)) in txs_with_sender.iter().enumerate() {
+            tx_reads[i].insert(Resource::Balance(*sender));
+            tx_reads[i].insert(Resource::Nonce(*sender));
+            if let TxKind::Call(to) = tx.to()
+                && to != coinbase
+            {
+                tx_reads[i].insert(Resource::Balance(to));
+                tx_reads[i].insert(Resource::Code(to));
+                // Address-narrowed multi-hop RAW: instead of adding ALL written resources,
+                // only add resources from addresses this tx is known to interact with.
+                // known_addrs = BAL-derived addresses ∪ static addresses (to, access_list, auth_list).
+                let mut known_addrs = per_tx_addresses[i].clone();
+                known_addrs.insert(to);
+                for (al_addr, _) in tx.access_list() {
+                    known_addrs.insert(*al_addr);
+                }
+                if let Some(auth_list) = tx.authorization_list() {
+                    for auth in auth_list {
+                        known_addrs.insert(auth.address);
+                    }
+                }
+                for r in &all_written_callable {
+                    let resource_addr = match r {
+                        Resource::Balance(a)
+                        | Resource::Code(a)
+                        | Resource::Storage(a, _)
+                        | Resource::Nonce(a) => *a,
+                    };
+                    if known_addrs.contains(&resource_addr) {
+                        tx_reads[i].insert(r.clone());
+                    }
+                }
+            }
+            for (addr, declared_slots) in tx.access_list() {
+                if *addr == coinbase {
+                    continue;
+                }
+                tx_reads[i].insert(Resource::Balance(*addr));
+                tx_reads[i].insert(Resource::Code(*addr));
+                for slot in declared_slots {
+                    tx_reads[i].insert(Resource::Storage(*addr, *slot));
+                }
+            }
+            // EIP-7702: the delegate target's code is loaded at call time via the delegation
+            // pointer, so every authorization entry implies a read of Code(delegate_target).
+            // The authority address itself is only known at runtime (ecrecover), so it cannot
+            // be added here; W-W detection via the BAL handles the case where two txs both
+            // write Code(authority).
+            if let Some(auth_list) = tx.authorization_list() {
+                for auth in auth_list {
+                    if auth.address != coinbase {
+                        tx_reads[i].insert(Resource::Code(auth.address));
+                    }
                 }
             }
         }
@@ -687,7 +730,14 @@ impl LEVM {
             .info
             .balance;
 
-        let groups = build_parallel_groups(bal, txs_with_sender, coinbase);
+        // Consume per-tx read hints if present (set by a previous failed attempt).
+        let per_tx_hint = db.per_tx_read_addresses.take();
+        let groups = build_parallel_groups(
+            bal,
+            txs_with_sender,
+            coinbase,
+            per_tx_hint.as_deref(),
+        );
 
         let num_groups = groups.len();
         let max_group = groups.iter().map(|g| g.len()).max().unwrap_or(0);
@@ -709,7 +759,7 @@ impl LEVM {
         let header = &block.header;
 
         type GroupResult = (
-            Vec<(usize, TxType, ExecutionReport, Vec<AccountUpdate>)>,
+            Vec<(usize, TxType, ExecutionReport, Vec<AccountUpdate>, FxHashSet<Address>)>,
             U256, // final coinbase balance in this group
         );
         // Execute each group in parallel; within each group txs are sequential.
@@ -734,9 +784,15 @@ impl LEVM {
                         vm_type,
                         &mut stack_pool,
                     )?;
+                    // Capture per-tx read addresses before drain.
+                    // current_accounts_state was empty before this tx (drained by
+                    // previous get_state_transitions_tx), so its keys = exactly
+                    // what this tx loaded.
+                    let tx_reads: FxHashSet<Address> =
+                        group_db.current_accounts_state.keys().copied().collect();
                     // Drain current state into initial state so next tx in group sees updated state
                     let updates = LEVM::get_state_transitions_tx(&mut group_db)?;
-                    per_tx.push((tx_idx, tx.tx_type(), report, updates));
+                    per_tx.push((tx_idx, tx.tx_type(), report, updates, tx_reads));
                 }
                 // Read final coinbase balance once per group (after all txs have been drained).
                 // This avoids double-counting: each get_state_transitions_tx promotes the
@@ -761,6 +817,10 @@ impl LEVM {
         let mut coinbase_credit = U256::zero();
         let mut coinbase_debit = U256::zero();
 
+        // Assemble per-tx read addresses for potential refined retry.
+        let mut all_tx_reads: Vec<FxHashSet<Address>> =
+            vec![FxHashSet::default(); txs_with_sender.len()];
+
         for (group_txs, final_coinbase) in all_results {
             // One delta per group, computed from the final coinbase balance in that group
             if final_coinbase >= coinbase_initial_balance {
@@ -768,7 +828,8 @@ impl LEVM {
             } else {
                 coinbase_debit += coinbase_initial_balance - final_coinbase;
             }
-            for (tx_idx, tx_type, report, updates) in group_txs {
+            for (tx_idx, tx_type, report, updates, tx_reads) in group_txs {
+                all_tx_reads[tx_idx] = tx_reads;
                 indexed_reports.push((tx_idx, tx_type, report));
                 for update in updates {
                     if update.address == coinbase {
@@ -816,6 +877,9 @@ impl LEVM {
             .send(merged.into_values().collect())
             .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
         queue_length.fetch_add(1, Ordering::Relaxed);
+
+        // Store per-tx read addresses on main db for potential refined retry.
+        db.per_tx_read_addresses = Some(all_tx_reads);
 
         // Sort by tx_idx and reconstruct receipts in block order
         indexed_reports.sort_unstable_by_key(|(idx, _, _)| *idx);
@@ -1678,7 +1742,7 @@ mod parallel_group_tests {
     fn test_empty_block() {
         let bal = BlockAccessList::new();
         let txs: Vec<(&Transaction, Address)> = vec![];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert!(groups.is_empty());
     }
 
@@ -1686,7 +1750,7 @@ mod parallel_group_tests {
     fn test_single_tx() {
         let bal = BlockAccessList::new();
         let tx = dummy_tx();
-        let groups = build_parallel_groups(&bal, &[(&tx, addr(1))], addr(0xff));
+        let groups = build_parallel_groups(&bal, &[(&tx, addr(1))], addr(0xff), None);
         assert_eq!(groups, vec![vec![0usize]]);
     }
 
@@ -1697,7 +1761,7 @@ mod parallel_group_tests {
         let tx = dummy_tx();
         let sender = addr(1);
         let txs = vec![(&tx, sender), (&tx, sender), (&tx, sender)];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert_eq!(groups, vec![vec![0, 1, 2]]);
     }
 
@@ -1710,7 +1774,7 @@ mod parallel_group_tests {
         let bal = bal_writes(&[(1, addr_a), (2, addr_b)]);
         let tx = dummy_tx();
         let txs = vec![(&tx, addr(10)), (&tx, addr(11))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert_eq!(groups, vec![vec![0], vec![1]]);
     }
 
@@ -1721,7 +1785,7 @@ mod parallel_group_tests {
         let bal = bal_writes(&[(1, addr_a), (2, addr_a)]);
         let tx = dummy_tx();
         let txs = vec![(&tx, addr(10)), (&tx, addr(11))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert_eq!(groups, vec![vec![0, 1]]);
     }
 
@@ -1733,7 +1797,7 @@ mod parallel_group_tests {
         let bal = bal_writes(&[(1, coinbase), (2, coinbase)]);
         let tx = dummy_tx();
         let txs = vec![(&tx, addr(10)), (&tx, addr(11))];
-        let groups = build_parallel_groups(&bal, &txs, coinbase);
+        let groups = build_parallel_groups(&bal, &txs, coinbase, None);
         assert_eq!(groups, vec![vec![0], vec![1]]);
     }
 
@@ -1753,7 +1817,7 @@ mod parallel_group_tests {
             (&tx, addr(11)), // B  (tx_idx 1)
             (&tx, addr(12)), // C  (tx_idx 2)
         ];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert_eq!(groups, vec![vec![0, 1, 2]]);
     }
 
@@ -1763,7 +1827,7 @@ mod parallel_group_tests {
         let bal = bal_writes(&[(1, addr(1)), (2, addr(2)), (3, addr(3))]);
         let tx = dummy_tx();
         let txs = vec![(&tx, addr(10)), (&tx, addr(11)), (&tx, addr(12))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert_eq!(groups, vec![vec![0], vec![1], vec![2]]);
     }
 
@@ -1774,7 +1838,7 @@ mod parallel_group_tests {
         let bal = bal_writes(&[(1, addr_a), (2, addr_a), (3, addr_a)]);
         let tx = dummy_tx();
         let txs = vec![(&tx, addr(10)), (&tx, addr(11)), (&tx, addr(12))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert_eq!(groups, vec![vec![0, 1, 2]]);
     }
 
@@ -1795,7 +1859,7 @@ mod parallel_group_tests {
             (&tx, sender_a), // tx1 — chained with tx0
             (&tx, sender_b), // tx2 — different sender, conflicts on X → serialized with group 0
         ];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert_eq!(groups, vec![vec![0, 1, 2]]);
     }
 
@@ -1811,7 +1875,7 @@ mod parallel_group_tests {
         let bal = bal_storage_writes(&[(1, addr_a, s1), (2, addr_a, s1)]);
         let tx = call_tx(addr_a);
         let txs = vec![(&tx, addr(10)), (&tx, addr(11))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert_eq!(groups, vec![vec![0, 1]]);
     }
 
@@ -1828,7 +1892,7 @@ mod parallel_group_tests {
         let bal = bal_storage_writes(&[(1, addr_a, s1)]);
         let tx_b = call_tx(addr_b);
         let txs = vec![(&tx_b, addr(10)), (&tx_b, addr(11))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         // Address narrowing: tx1 only knows about addr_b, not addr_a → no RAW → parallel
         assert_eq!(groups, vec![vec![0], vec![1]]);
     }
@@ -1850,7 +1914,7 @@ mod parallel_group_tests {
         let tx_b = call_tx(addr_b);
         let tx_c = call_tx(addr_c);
         let txs = vec![(&tx_a, addr(10)), (&tx_b, addr(11)), (&tx_c, addr(12))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         // Address narrowing: each tx only knows its own addresses → all parallel
         assert_eq!(groups, vec![vec![0], vec![1], vec![2]]);
     }
@@ -1867,7 +1931,7 @@ mod parallel_group_tests {
         let bal = bal_storage_writes(&[(1, addr_a, s1), (2, addr_b, s2)]);
         let tx = dummy_tx(); // TxKind::Create — does NOT trigger the CALL branch
         let txs = vec![(&tx, addr(10)), (&tx, addr(11))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         // CREATE txs with disjoint write sets can still parallelize
         assert_eq!(groups, vec![vec![0], vec![1]]);
     }
@@ -1888,7 +1952,7 @@ mod parallel_group_tests {
         let tx_write = call_tx(addr_a);
         // tx0=CALL(B), tx1=CALL(A) writer
         let txs = vec![(&tx_call, addr(10)), (&tx_write, addr(11))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         assert_eq!(groups, vec![vec![0], vec![1]]);
     }
 
@@ -1914,10 +1978,69 @@ mod parallel_group_tests {
         let tx_a = call_tx(addr_a);
         let tx_c = call_tx(addr_c);
         let txs = vec![(&tx_a, addr(10)), (&tx_c, addr(11))];
-        let groups = build_parallel_groups(&bal, &txs, addr(0xff));
+        let groups = build_parallel_groups(&bal, &txs, addr(0xff), None);
         // tx1 knows addr_b (from BAL write) and addr_c (from tx.to).
         // Balance(B) is in all_written_callable and addr_b ∈ tx1.known_addrs → RAW.
         // Also W-W on Balance(B). Both reasons cause union → same group.
+        assert_eq!(groups, vec![vec![0, 1]]);
+    }
+
+    // ── Refined grouping (with actual per-tx reads) ──────────────────────
+
+    #[test]
+    fn test_refined_grouping_separates_false_positive() {
+        // Scenario: heuristic groups tx0 and tx1 together (tx1 CALLs an address
+        // that tx0 writes), but actual reads show tx1 never loaded that address.
+        //
+        // tx0 writes Storage(A, s1).
+        // tx1 (CALL to A) — heuristic mode: known_addrs includes A → RAW → same group.
+        // Refined mode: actual_reads[1] = {sender_1} (tx1 didn't actually load A).
+        // → no RAW → separate groups.
+        let addr_a = addr(1);
+        let s1 = slot(1);
+        let bal = bal_storage_writes(&[(1, addr_a, s1)]);
+        let tx0 = call_tx(addr_a);
+        let tx1 = call_tx(addr_a);
+        let sender0 = addr(10);
+        let sender1 = addr(11);
+        let txs = vec![(&tx0, sender0), (&tx1, sender1)];
+
+        // Heuristic mode: tx1 known_addrs includes A (from tx.to) → RAW on Storage(A, s1)
+        let groups_heuristic = build_parallel_groups(&bal, &txs, addr(0xff), None);
+        assert_eq!(groups_heuristic, vec![vec![0, 1]]);
+
+        // Refined mode: actual reads show tx1 only loaded sender1 (not addr_a).
+        let mut actual_reads = vec![FxHashSet::default(); 2];
+        actual_reads[0].insert(sender0);
+        actual_reads[0].insert(addr_a);
+        actual_reads[1].insert(sender1); // tx1 did NOT load addr_a
+        let groups_refined =
+            build_parallel_groups(&bal, &txs, addr(0xff), Some(&actual_reads));
+        // tx1 doesn't read addr_a → no RAW → separate groups.
+        assert_eq!(groups_refined, vec![vec![0], vec![1]]);
+    }
+
+    #[test]
+    fn test_refined_grouping_preserves_true_dependency() {
+        // tx0 writes Storage(A, s1).
+        // tx1 actually loaded addr_a (confirmed by actual reads) → RAW → same group.
+        let addr_a = addr(1);
+        let s1 = slot(1);
+        let bal = bal_storage_writes(&[(1, addr_a, s1)]);
+        let tx0 = call_tx(addr_a);
+        let tx1 = call_tx(addr_a);
+        let sender0 = addr(10);
+        let sender1 = addr(11);
+        let txs = vec![(&tx0, sender0), (&tx1, sender1)];
+
+        let mut actual_reads = vec![FxHashSet::default(); 2];
+        actual_reads[0].insert(sender0);
+        actual_reads[0].insert(addr_a);
+        actual_reads[1].insert(sender1);
+        actual_reads[1].insert(addr_a); // tx1 DID load addr_a
+        let groups =
+            build_parallel_groups(&bal, &txs, addr(0xff), Some(&actual_reads));
+        // tx1 reads addr_a which tx0 wrote → RAW → same group.
         assert_eq!(groups, vec![vec![0, 1]]);
     }
 }

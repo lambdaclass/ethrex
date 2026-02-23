@@ -1961,17 +1961,62 @@ impl Blockchain {
                     | ChainError::InvalidBlock(InvalidBlockError::StateRootMismatch),
                 ) if bal.is_some() => {
                     // Parallel execution produced wrong results (missed RAW dependency).
-                    // Retry with sequential execution, reusing the CachingDatabase from
-                    // the failed VM so we keep the warm read cache (reads from the
-                    // immutable parent state are still valid — only the computed writes
-                    // were wrong). The fresh VM has a clean write slate.
+                    // Two-tier retry: first try refined parallel (using actual per-tx
+                    // read addresses from the failed attempt), then sequential fallback.
                     let wasted_ms = parallel_start.elapsed().as_millis();
-                    warn!(
-                        "Parallel execution mismatch for block {}, falling back to sequential (wasted {} ms)",
-                        block.header.number, wasted_ms
-                    );
-                    let mut fresh_vm = vm.fresh_with_same_store();
-                    self.execute_block_pipeline(&block, &parent_header, &mut fresh_vm, None)?
+                    let per_tx_reads = vm.db.take_per_tx_reads();
+
+                    if let Some(reads) = per_tx_reads {
+                        // Tier 1: retry with refined parallel groups
+                        warn!(
+                            "block {}: parallel mismatch, retrying refined (wasted {} ms)",
+                            block.header.number, wasted_ms
+                        );
+                        let mut refined_vm = vm.fresh_with_same_store();
+                        refined_vm.db.per_tx_read_addresses = Some(reads);
+                        match self.execute_block_pipeline(
+                            &block,
+                            &parent_header,
+                            &mut refined_vm,
+                            bal,
+                        ) {
+                            Ok(result) => result,
+                            Err(
+                                ChainError::InvalidBlock(
+                                    InvalidBlockError::GasUsedMismatch(..)
+                                    | InvalidBlockError::ReceiptsRootMismatch
+                                    | InvalidBlockError::StateRootMismatch,
+                                ),
+                            ) => {
+                                // Tier 2: sequential fallback
+                                warn!(
+                                    "block {}: refined parallel also failed, sequential fallback",
+                                    block.header.number
+                                );
+                                let mut seq_vm = refined_vm.fresh_with_same_store();
+                                self.execute_block_pipeline(
+                                    &block,
+                                    &parent_header,
+                                    &mut seq_vm,
+                                    None,
+                                )?
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    } else {
+                        // No read data available; direct sequential fallback
+                        warn!(
+                            "Parallel execution mismatch for block {}, falling back to sequential (wasted {} ms)",
+                            block.header.number, wasted_ms
+                        );
+                        let mut fresh_vm = vm.fresh_with_same_store();
+                        self.execute_block_pipeline(
+                            &block,
+                            &parent_header,
+                            &mut fresh_vm,
+                            None,
+                        )?
+                    }
                 }
                 Err(e) => return Err(e),
             }
