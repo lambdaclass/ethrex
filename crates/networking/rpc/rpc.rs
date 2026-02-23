@@ -174,8 +174,6 @@ pub enum RpcRequestWrapper {
     Multiple(Vec<RpcRequest>),
 }
 
-/// Shared context passed to all RPC request handlers.
-///
 /// Channel message type for the block executor worker thread.
 type BlockWorkerMessage = (
     oneshot::Sender<Result<(), ChainError>>,
