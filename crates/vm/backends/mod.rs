@@ -14,6 +14,7 @@ use ethrex_common::{Address, types::fee_config::FeeConfig};
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
+use ethrex_levm::opcodes::OpcodeTable;
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -113,8 +114,11 @@ impl Evm {
         cumulative_gas_spent: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
+        let chain_config = self.db.store.get_chain_config()?;
+        let fork = chain_config.fork(block_header.timestamp);
+        let opcode_table = OpcodeTable::new(fork);
         let execution_report =
-            LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
+            LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type, &opcode_table)?;
 
         // Use gas_used (pre-refund for EIP-7778/Amsterdam+) for block gas accounting
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);

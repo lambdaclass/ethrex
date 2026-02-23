@@ -1,5 +1,6 @@
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
+use ethrex_levm::opcodes::OpcodeTable;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
@@ -16,6 +17,10 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
+        let chain_config = db.store.get_chain_config()?;
+        let fork = chain_config.fork(block.header.timestamp);
+        let opcode_table = OpcodeTable::new(fork);
+
         // Executes transactions and stops when the index matches the stop index.
         for (index, (tx, sender)) in block
             .body
@@ -28,7 +33,7 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type)?;
+            Self::execute_tx(tx, sender, &block.header, db, vm_type, &opcode_table)?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -59,12 +64,14 @@ impl LEVM {
             db,
             vm_type,
         )?;
+        let opcode_table = OpcodeTable::new(env.config.fork);
         let mut vm = VM::new(
             env,
             db,
             tx,
             LevmCallTracer::new(only_top_call, with_log),
             vm_type,
+            &opcode_table,
         )?;
 
         vm.execute()?;

@@ -10,6 +10,7 @@ use ethrex_levm::{
     Environment,
     db::gen_db::GeneralizedDatabase,
     errors::TxResult,
+    opcodes::OpcodeTable,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -100,5 +101,6 @@ fn init_vm(
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1)
+    let opcode_table = OpcodeTable::new(env.config.fork);
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1, &opcode_table)
 }

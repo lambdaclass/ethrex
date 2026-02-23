@@ -3,7 +3,7 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     errors::{ContextResult, ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{DefaultHook, default_hook, hook::Hook},
-    opcodes::Opcode,
+    opcodes::{Opcode, OpcodeTable},
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -688,12 +688,14 @@ fn simulate_common_bridge_call(
     env_clone.fee_token = None;
     env_clone.gas_limit = SIMULATION_GAS_LIMIT;
 
+    let opcode_table = OpcodeTable::new(env_clone.config.fork);
     let mut new_vm = VM::new(
         env_clone,
         &mut db_clone,
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
+        &opcode_table,
     )?;
     new_vm.hooks = vec![];
     default_hook::set_bytecode_and_code_address(&mut new_vm)?;

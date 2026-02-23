@@ -367,7 +367,7 @@ impl From<Opcode> for usize {
 
 /// Represents an opcode function handler.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct OpCodeFn<'a>(fn(&'_ mut VM<'a>) -> Result<OpcodeResult, VMError>);
+pub struct OpCodeFn<'a>(fn(&'_ mut VM<'a>) -> Result<OpcodeResult, VMError>);
 
 impl<'a> OpCodeFn<'a> {
     /// Call the opcode handler.
@@ -377,12 +377,42 @@ impl<'a> OpCodeFn<'a> {
     }
 }
 
+/// Pre-built opcode dispatch table reusable across multiple VM instances.
+///
+/// The table contains only function pointers and does not borrow any data,
+/// so it can be safely shared across VM instances within a block (where the
+/// fork doesn't change). This avoids rebuilding the 256-entry dispatch table
+/// for every transaction.
+#[derive(Clone, Copy)]
+pub struct OpcodeTable([OpCodeFn<'static>; 256]);
+
+impl OpcodeTable {
+    /// Build an opcode dispatch table for the given fork.
+    pub fn new(fork: Fork) -> Self {
+        Self(<VM<'static>>::build_opcode_table(fork))
+    }
+
+    /// Get the table with the correct lifetime for use with a specific VM instance.
+    ///
+    /// # Safety
+    ///
+    /// This transmute is sound because `OpCodeFn` only stores function pointers,
+    /// which have identical ABI representation regardless of the lifetime parameter.
+    /// The lifetime `'a` on `OpCodeFn<'a>` is a type-level constraint that doesn't
+    /// affect the runtime representation.
+    #[inline(always)]
+    pub(crate) fn get<'a>(&self) -> [OpCodeFn<'a>; 256] {
+        // SAFETY: see above
+        unsafe { std::mem::transmute(self.0) }
+    }
+}
+
 impl<'a> VM<'a> {
     /// Setups the opcode lookup function pointer table, configured according the given fork.
     ///
     /// This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn<'a>; 256] {
+    pub fn build_opcode_table(fork: Fork) -> [OpCodeFn<'a>; 256] {
         if fork >= Fork::Amsterdam {
             Self::build_opcode_table_amsterdam()
         } else if fork >= Fork::Osaka {
