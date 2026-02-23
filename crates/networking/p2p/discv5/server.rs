@@ -860,9 +860,11 @@ impl DiscoveryServer {
 
     /// Updates local node IP and re-signs the ENR with incremented seq.
     fn update_local_ip(&mut self, new_ip: IpAddr) {
-        // Update ENR - increment seq and re-create with new IP
+        // Build ENR from a node with the new IP
+        let mut updated_node = self.local_node.clone();
+        updated_node.ip = new_ip;
         let new_seq = self.local_node_record.seq + 1;
-        let Ok(mut new_record) = NodeRecord::from_node(&self.local_node, new_seq, &self.signer)
+        let Ok(mut new_record) = NodeRecord::from_node(&updated_node, new_seq, &self.signer)
         else {
             error!(%new_ip, "Failed to create new ENR for IP update");
             return;
@@ -1493,7 +1495,7 @@ mod tests {
         server.cleanup_stale_entries();
         assert_eq!(server.ip_votes.len(), 1);
 
-        // First round not completed, so cleanup doesn't trigger finalization based on timeout
+        // Cleanup didn't finalize because the 5-minute window hasn't elapsed
         assert!(!server.first_ip_vote_round_completed);
     }
 
