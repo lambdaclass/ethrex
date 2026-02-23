@@ -762,7 +762,6 @@ impl DiscoveryServer {
 
         // Check if IP voting round should end (in case no new votes triggered it)
         if let Some(start) = self.ip_vote_period_start
-            && self.first_ip_vote_round_completed
             && now.duration_since(start) >= IP_VOTE_WINDOW
         {
             self.finalize_ip_vote_round();
