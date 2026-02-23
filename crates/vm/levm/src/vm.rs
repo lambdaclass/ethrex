@@ -564,6 +564,7 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.db.store.precompile_cache(),
             );
 
             call_frame.gas_remaining = gas_remaining as i64;
@@ -692,11 +693,10 @@ impl<'a> VM<'a> {
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
+        cache: Option<&precompiles::PrecompileCache>,
     ) -> Result<ContextResult, VMError> {
-        let execute_precompile = precompiles::execute_precompile;
-
         Self::handle_precompile_result(
-            execute_precompile(code_address, calldata, gas_remaining, fork),
+            precompiles::execute_precompile(code_address, calldata, gas_remaining, fork, cache),
             gas_limit,
             *gas_remaining,
         )
