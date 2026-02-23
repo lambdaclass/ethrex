@@ -2398,10 +2398,11 @@ impl Blockchain {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
-        // Add transaction and blobs bundle to storage
+        // Add blobs bundle before the transaction so that when add_transaction
+        // notifies payload builders the blob data is already available.
+        self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         self.mempool
             .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
-        self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         Ok(hash)
     }
 
