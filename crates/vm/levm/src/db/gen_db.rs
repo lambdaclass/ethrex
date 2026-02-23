@@ -433,8 +433,15 @@ impl GeneralizedDatabase {
             let was_empty = initial_state_account.is_empty();
             let removed = new_state_account.is_empty() && !was_empty;
 
-            // Reset status for the next transaction — this account is now "clean".
-            new_state_account.status = AccountStatus::Unmodified;
+            // Reset status for the next transaction.
+            // Destroyed accounts keep Destroyed status so that get_storage_value
+            // knows not to trust DB storage (the merkleizer hasn't committed the
+            // storage clearing yet).
+            new_state_account.status = if was_destroyed {
+                AccountStatus::Destroyed
+            } else {
+                AccountStatus::Unmodified
+            };
 
             if !removed && !acc_info_updated && !storage_updated && !removed_storage {
                 // Account was marked modified but nothing actually changed.
@@ -683,8 +690,12 @@ impl<'a> VM<'a> {
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
             }
-            // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values
-            if account.status == AccountStatus::DestroyedModified {
+            // If the account was destroyed we cannot rely on the DB to obtain storage values
+            // (storage was cleared but the merkleizer may not have committed yet).
+            if matches!(
+                account.status,
+                AccountStatus::DestroyedModified | AccountStatus::Destroyed
+            ) {
                 return Ok(U256::zero());
             }
         } else {
