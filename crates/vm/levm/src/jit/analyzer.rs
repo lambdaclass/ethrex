@@ -55,10 +55,12 @@ pub fn analyze_bytecode(bytecode: Bytes, hash: H256, jump_targets: Vec<u32>) -> 
         let opcode = bytecode[i];
         opcode_count = opcode_count.saturating_add(1);
 
-        // Detect external call/create opcodes
+        // Detect opcodes that require state mutations the JIT Host cannot
+        // fully handle: external calls, contract creation, and selfdestruct
+        // (which requires balance transfer logic not yet implemented in Host).
         if matches!(
             opcode,
-            CALL | CALLCODE | DELEGATECALL | STATICCALL | CREATE | CREATE2
+            CALL | CALLCODE | DELEGATECALL | STATICCALL | CREATE | CREATE2 | SELFDESTRUCT
         ) {
             has_external_calls = true;
         }
@@ -195,6 +197,17 @@ mod tests {
         assert!(
             result.has_external_calls,
             "should detect DELEGATECALL opcode"
+        );
+    }
+
+    #[test]
+    fn test_selfdestruct_detection() {
+        // PUSH1 0x00 SELFDESTRUCT — contains SELFDESTRUCT (0xFF)
+        let bytecode = Bytes::from(vec![0x60, 0x00, 0xff]);
+        let result = analyze_bytecode(bytecode, H256::zero(), vec![]);
+        assert!(
+            result.has_external_calls,
+            "should detect SELFDESTRUCT opcode"
         );
     }
 }

@@ -570,7 +570,9 @@ impl<'a> VM<'a> {
                 let count = JIT_STATE.counter.increment(&bytecode_hash);
                 let fork = self.env.config.fork;
 
-                // Auto-compile on threshold — try background thread first, fall back to sync
+                // Auto-compile on threshold — try background thread first, fall back to sync.
+                // NOTE: counter is keyed by hash only (not fork). This fires once per bytecode.
+                // Safe because forks don't change mid-run (see counter.rs doc).
                 if count == JIT_STATE.config.compilation_threshold
                     && !JIT_STATE.request_compilation(
                         self.current_call_frame.bytecode.clone(),

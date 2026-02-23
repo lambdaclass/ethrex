@@ -3,6 +3,18 @@
 //! Tracks how many times each bytecode (by hash) has been executed.
 //! When the count exceeds the compilation threshold, the bytecode
 //! becomes a candidate for JIT compilation.
+//!
+//! # Fork assumption
+//!
+//! The counter is keyed by bytecode hash only (not `(hash, fork)`).
+//! This means the compilation threshold fires once per bytecode regardless
+//! of fork. This is correct under the assumption that **forks do not change
+//! during a node's runtime** — a node runs at a single fork for any given
+//! block height. If this assumption is violated (e.g., fork upgrade during
+//! live operation), bytecodes compiled for the old fork would not be
+//! recompiled for the new fork via the threshold mechanism. The cache
+//! lookup (`try_jit_dispatch`) would return `None` for the new fork key,
+//! causing a safe fallback to the interpreter.
 
 use ethrex_common::H256;
 use std::collections::HashMap;

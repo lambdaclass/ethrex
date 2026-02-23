@@ -108,11 +108,12 @@ pub fn execute_jit(
             // Sync gas state back to LEVM call frame
             call_frame.gas_remaining = revm_gas_to_levm(&result.gas);
 
-            // Sync gas refunds from revm interpreter to LEVM substate
+            // Sync gas refunds from revm interpreter to LEVM substate.
+            // Gas::refunded() returns i64 (can be negative per EIP-3529).
+            // Only add positive refunds; negative refunds are already reflected
+            // in the gas remaining.
             let refunded = result.gas.refunded();
-            if refunded > 0 {
-                #[expect(clippy::as_conversions, reason = "i64→u64 for gas refund")]
-                let refunded_u64 = refunded as u64;
+            if let Ok(refunded_u64) = u64::try_from(refunded) {
                 host.substate.refunded_gas =
                     host.substate.refunded_gas.saturating_add(refunded_u64);
             }
