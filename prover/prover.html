@@ -265,7 +265,10 @@
 <p>Messages are compressed into a hash or a Merkle tree root which then are stored in an L1 contract together with the rest of the L2 state data. The prover retrieves the transactions or events that the messages produced in the L2, reconstructs the message data and recomputes the hashes or Merkle tree roots, which are then committed as a public input of the zk proof. At verification we can compare these hashes with the ones stored in the L1. This is the same concept used for state data.</p>
 <p>For more details checkout <a href="../l2/fundamentals/deposits.html">deposits</a> and <a href="../l2/fundamentals/withdrawals.html">withdrawals</a></p>
 <h2 id="see-also"><a class="header" href="#see-also">See also</a></h2>
-<p><a href="./guest_program.html">Guest program</a> for the detailed steps of the program that the prover generates a proof of.</p>
+<ul>
+<li><a href="./guest_program.html">Guest program</a> for the detailed steps of the program that the prover generates a proof of.</li>
+<li><a href="../l2/fundamentals/distributed_proving.html">Distributed proving</a> for running multiple provers in parallel with multi-batch L1 verification.</li>
+</ul>
 
                     </main>
 

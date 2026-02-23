@@ -488,22 +488,17 @@ address public ALIGNEDPROOFAGGREGATOR;
 mapping(bytes32 commitHash =&gt; mapping(uint8 verifierId =&gt; bytes32 vk))
     public verificationKeys;
 </code></pre>
-<p><strong>Standard Verification</strong> (<code>verifyBatch</code>):</p>
-<pre><code class="language-solidity">function verifyBatch(
-    uint256 batchNumber,
-    bytes memory risc0BlockProof,
-    bytes memory sp1ProofBytes,
-    bytes memory tdxSignature
+<p><strong>Standard Verification</strong> (<code>verifyBatches</code>):</p>
+<pre><code class="language-solidity">function verifyBatches(
+    uint256 firstBatchNumber,
+    bytes[] calldata risc0BlockProofs,
+    bytes[] calldata sp1ProofsBytes,
+    bytes[] calldata tdxSignatures
 ) external onlyOwner whenNotPaused {
     require(!ALIGNED_MODE, "008");  // Use verifyBatchesAligned instead
 
-    // Verify proofs directly via verifier contracts
-    if (REQUIRE_SP1_PROOF) {
-        ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(sp1Vk, publicInputs, sp1ProofBytes);
-    }
-    if (REQUIRE_RISC0_PROOF) {
-        IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(risc0BlockProof, risc0Vk, sha256(publicInputs));
-    }
+    // Loops over _verifyBatchInternal() for each batch,
+    // verifying proofs directly via verifier contracts
 }
 </code></pre>
 <p><strong>Aligned Verification</strong> (<code>verifyBatchesAligned</code>):</p>
@@ -513,7 +508,7 @@ mapping(bytes32 commitHash =&gt; mapping(uint8 verifierId =&gt; bytes32 vk))
     bytes32[][] calldata sp1MerkleProofsList,
     bytes32[][] calldata risc0MerkleProofsList
 ) external onlyOwner whenNotPaused {
-    require(ALIGNED_MODE, "00h");  // Use verifyBatch instead
+    require(ALIGNED_MODE, "00h");  // Use verifyBatches instead
 
     for (uint256 i = 0; i &lt; batchesToVerify; i++) {
         bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
@@ -626,9 +621,9 @@ Variable-size fields:
 <div class="table-wrapper"><table><thead><tr><th>Aspect</th><th>Standard Mode</th><th>Aligned Mode</th></tr></thead><tbody>
 <tr><td><strong>Proof Format</strong></td><td>Groth16 (EVM-friendly)</td><td>Compressed STARK</td></tr>
 <tr><td><strong>Submission Target</strong></td><td>OnChainProposer contract</td><td>Aligned Batcher (WebSocket)</td></tr>
-<tr><td><strong>Verification Method</strong></td><td><code>verifyBatch()</code></td><td><code>verifyBatchesAligned()</code></td></tr>
+<tr><td><strong>Verification Method</strong></td><td><code>verifyBatches()</code></td><td><code>verifyBatchesAligned()</code></td></tr>
 <tr><td><strong>Verifier Contract</strong></td><td>SP1Verifier/RISC0Verifier</td><td>AlignedProofAggregatorService</td></tr>
-<tr><td><strong>Batch Verification</strong></td><td>One batch per tx</td><td>Multiple batches per tx</td></tr>
+<tr><td><strong>Batch Verification</strong></td><td>Multiple batches per tx</td><td>Multiple batches per tx (aggregated)</td></tr>
 <tr><td><strong>Gas Cost</strong></td><td>Higher (per-proof verification)</td><td>Lower (amortized via aggregation)</td></tr>
 <tr><td><strong>Additional Component</strong></td><td>None</td><td>L1ProofVerifier process</td></tr>
 <tr><td><strong>Proof Tracking</strong></td><td>Via rollup store</td><td>Via Aligned SDK</td></tr>
@@ -638,7 +633,7 @@ Variable-size fields:
 <p><strong>Standard Mode</strong>:</p>
 <ul>
 <li>Generates Groth16 proof (calldata format)</li>
-<li>Proof sent directly to <code>OnChainProposer.verifyBatch()</code></li>
+<li>Proof sent directly to <code>OnChainProposer.verifyBatches()</code></li>
 </ul>
 <p><strong>Aligned Mode</strong>:</p>
 <ul>
@@ -648,7 +643,7 @@ Variable-size fields:
 </ul>
 <h3 id="verification-flow-differences"><a class="header" href="#verification-flow-differences">Verification Flow Differences</a></h3>
 <p><strong>Standard Mode</strong>:</p>
-<pre><code>Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatch()
+<pre><code>Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatches()
                                                     │
                                                     ▼
                                           SP1Verifier/RISC0Verifier
@@ -723,7 +718,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../developers/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/fundamentals/distributed_proving.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -737,7 +732,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../developers/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/fundamentals/distributed_proving.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

@@ -443,7 +443,7 @@ ethrex l2 \
 <ol>
 <li>Restart the prover(s) - they will automatically generate Groth16 proofs (since <code>--aligned</code> is not set)</li>
 <li>ProofCoordinator will request proofs starting from <code>lastVerifiedBatch + 1</code></li>
-<li>L1ProofSender will submit directly to OnChainProposer.verifyBatch()</li>
+<li>L1ProofSender will submit directly to OnChainProposer.verifyBatches()</li>
 </ol>
 <hr />
 <h2 id="scenario-4-insufficient-quota-balance"><a class="header" href="#scenario-4-insufficient-quota-balance">Scenario 4: Insufficient Quota Balance</a></h2>
@@ -529,7 +529,7 @@ cargo run --release -- deposit \
 </ul>
 <h3 id="contract-error-codes"><a class="header" href="#contract-error-codes">Contract Error Codes</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Code</th><th>Meaning</th><th>Action</th></tr></thead><tbody>
-<tr><td><code>00h</code></td><td>Use verifyBatch instead</td><td>Contract not in Aligned mode</td></tr>
+<tr><td><code>00h</code></td><td>Use verifyBatches instead</td><td>Contract not in Aligned mode</td></tr>
 <tr><td><code>00m</code></td><td>Invalid Aligned proof</td><td>Proof will be deleted and regenerated</td></tr>
 <tr><td><code>00y</code></td><td>AlignedProofAggregator call failed</td><td>Check aggregator contract address</td></tr>
 <tr><td><code>00z</code></td><td>Aligned proof verification failed</td><td>Merkle proof invalid</td></tr>

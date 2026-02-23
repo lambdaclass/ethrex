@@ -530,7 +530,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <p><img src="../img/aligned_mode_proof_verifier.png" alt="Aligned Mode Proof Verifier" /></p>
 <h3 id="onchainproposer"><a class="header" href="#onchainproposer">OnChainProposer</a></h3>
 <ul>
-<li>Uses <code>verifyBatchesAligned()</code> instead of <code>verifyBatch()</code> (used in standard mode).</li>
+<li>Uses <code>verifyBatchesAligned()</code> instead of <code>verifyBatches()</code> (used in standard mode).</li>
 <li>Receives an array of proofs to verify.</li>
 <li>Delegates proof verification to the <code>AlignedProofAggregatorService</code> contract.</li>
 </ul>

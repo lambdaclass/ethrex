@@ -328,10 +328,10 @@ The <code>commitBatch</code> method has been revised to improve data availabilit
 <li><strong>Event Modification:</strong>
 The <code>BatchCommitted</code> event has been updated to include the batch number of the committed batch. This addition enhances traceability and allows external systems to monitor batch progression more effectively.</li>
 <li><strong>Batch Verification:</strong>
-The <code>verifyBatch</code> method has been made more flexible and decentralized:
+The <code>verifyBatches</code> method has been made more flexible and decentralized:
 <ul>
-<li>The <code>onlySequencer</code> modifier has been removed, allowing anyone—not just the lead Sequencer—to verify batches.</li>
-<li>The restriction preventing multiple verifications of the same batch has been lifted. While multiple verifications are now permitted, only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.</li>
+<li>The method has no access control modifier, allowing anyone—not just the lead Sequencer—to verify batches.</li>
+<li>It supports verifying one or more consecutive batches in a single transaction. Only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.</li>
 </ul>
 </li>
 </ul>

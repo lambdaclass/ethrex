@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Timelock - Ethrex</title>
+        <title>Distributed proving - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,62 +237,115 @@
 }
 
 </style>
-<h1 id="timelock-contract"><a class="header" href="#timelock-contract">Timelock Contract</a></h1>
-<p>The Timelock contract gates access to the OnChainProposer (OCP) contract. Changes to the OCP can only be made by first interacting with the Timelock, which manages permissions based on roles assigned to different users.</p>
-<h2 id="timelock-roles"><a class="header" href="#timelock-roles">Timelock Roles</a></h2>
-<ul>
-<li>Sequencers: Can commit and verify batches.</li>
-<li>Governance: Can schedule and execute operations, respecting a delay. In practice this could be the role of a DAO, though it depends on the implementation.</li>
-<li>Security Council: Can bypass the minimum delay for executing any operation that the Timelock can execute. It can also manage other roles in the Timelock.</li>
-</ul>
-<p><strong>Sequencers</strong> will send <code>commitBatch</code>, <code>verifyBatches</code>, and <code>verifyBatchesAligned</code> to the Timelock, and this will execute the operations in the <code>OnChainProposer</code>. Eventually there will be Timelock logic, and there will be a time window between commitment and proof verification for security reasons.</p>
-<p>The <strong>Governance</strong> is able to schedule important operations like contract upgrades respecting the minimum time window for the L2 participants to exit in case of undesired updates. Not only can they make changes in the logic of the OnChainProposer, but they can also update the Timelock itself.</p>
-<p>The <strong>Security Council</strong> is designed as a powerful entity that can execute anything within the Timelock or OnChainProposer without delay. We call it security council because its actions are limitless, as it can upgrade any of the contracts whenever it wants, so ideally it should be a multisig composed of many diverse members, and it should be able to take action only if 75% of members agree. Ideally, in a more mature rollup the Security Council would have fewer permissions and would only need to act upon bugs detected on-chain if such a mechanism exists.
-We call this mechanism of executing without delay the <code>emergencyExecute</code>.</p>
-<h2 id="basic-functionalities"><a class="header" href="#basic-functionalities">Basic Functionalities</a></h2>
-<p>These are the things that we can do with the Timelock:</p>
-<ul>
-<li>Schedule: <code>schedule(...)</code> and <code>scheduleBatch(...)</code></li>
-<li>Execute: <code>execute(...)</code> and <code>executeBatch(...)</code></li>
-<li>Cancel: <code>cancel(bytes32 id)</code></li>
-<li>Update Delay: <code>updateDelay(uint256 newDelay)</code></li>
-</ul>
-<p>When an operation is <strong>scheduled</strong>, the Governance role may <strong>cancel</strong> it or, after the established delay, <strong>execute</strong> it.
-The delay can be updated, always respecting the current delay to do so.</p>
-<p>It also has a few utility functions:</p>
-<ul>
-<li><code>getMinDelay()</code>: current minimum delay for new schedules.</li>
-<li><code>hashOperation(...)</code>, <code>hashOperationBatch(...)</code>: pure helpers to compute ids.</li>
-<li><code>getTimestamp(id)</code>, <code>getOperationState(id)</code>, <code>isOperation*</code>: query operation status.</li>
-</ul>
-<p>Remember that <code>Timelock</code> inherits from <code>TimelockControllerUpgradeable</code> (which itself extends <code>AccessControlUpgradeable</code>) and <code>UUPSUpgradeable</code>, so it will inherit their behavior as well.</p>
-<h2 id="important-remarks"><a class="header" href="#important-remarks">Important Remarks</a></h2>
-<h3 id="operation-id-collision"><a class="header" href="#operation-id-collision">Operation ID collision</a></h3>
-<p>Every scheduled operation is identified by a 32-byte <strong>operation id</strong>. This ID is determined by hashing fields like the target address, value transferred, data, predecessor, and salt.
-Two operations with the same fields will result in the same ID. That's why, if we want to schedule the same operation more than once, we should probably use a salt.
-Example: If for some reason we want to schedule the pause of the OnChainProposer and we use salt zero, the next time we schedule that same operation we'll have to change the salt (assuming no predecessor was specified) in order for the id to be different.</p>
-<h3 id="cancelling-a-scheduled-operation"><a class="header" href="#cancelling-a-scheduled-operation">Cancelling a scheduled operation</a></h3>
-<p><code>cancel(bytes32 id)</code> requires the operation id. You typically get it by:</p>
+<h1 id="distributed-proving"><a class="header" href="#distributed-proving">Distributed Proving</a></h1>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>Distributed proving enables running multiple prover instances in parallel, each working on different batches simultaneously. It has two key aspects:</p>
 <ol>
-<li>Reading it from the <code>CallScheduled(id, ...)</code> event emitted by <code>schedule</code>/<code>scheduleBatch</code>, or</li>
-<li>Computing it yourself (off-chain), or</li>
-<li>Calling <code>hashOperation(...)</code> / <code>hashOperationBatch(...)</code> on-chain to compute it.</li>
+<li><strong>Parallel batch assignment</strong>: the proof coordinator assigns different batches to different provers, so multiple provers work simultaneously.</li>
+<li><strong>Multi-batch verification</strong>: the proof sender collects consecutive proven batches and submits them in a single <code>verifyBatches()</code> L1 transaction, saving gas.</li>
 </ol>
-<p>Note that:</p>
+<h2 id="architecture"><a class="header" href="#architecture">Architecture</a></h2>
+<pre><code>┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Prover 1   │     │   Prover 2   │     │   Prover 3   │
+│    (sp1)     │     │    (sp1)     │     │   (risc0)    │
+└──────┬───────┘     └──────┬───────┘     └──────┬───────┘
+       │                    │                    │
+       │    TCP             │    TCP             │    TCP
+       │                    │                    │
+       └────────────┬───────┘────────────────────┘
+                    │
+          ┌─────────▼──────────┐
+          │  Proof Coordinator │  (part of L2 sequencer)
+          │  tcp://0.0.0.0:3900│
+          └─────────┬──────────┘
+                    │
+          ┌─────────▼──────────┐
+          │   Proof Sender     │  Batches proofs → single L1 tx
+          └─────────┬──────────┘
+                    │
+              ┌─────▼─────┐
+              │    L1      │
+              └────────────┘
+</code></pre>
+<p>Multiple provers connect to the same proof coordinator over TCP. The coordinator tracks assignments per <code>(batch_number, prover_type)</code>, so:</p>
 <ul>
-<li><code>hashOperation(...) = keccak256(abi.encode(target, value, data, predecessor, salt))</code></li>
-<li><code>hashOperationBatch(...) = keccak256(abi.encode(targets, values, payloads, predecessor, salt))</code></li>
+<li>Two <code>sp1</code> provers get assigned <strong>different</strong> batches.</li>
+<li>An <code>sp1</code> prover and a <code>risc0</code> prover can work on the <strong>same</strong> batch simultaneously (they produce different proof types).</li>
 </ul>
+<h2 id="batch-assignment"><a class="header" href="#batch-assignment">Batch assignment</a></h2>
+<p>When a prover sends a <code>BatchRequest</code>, it includes its <code>prover_type</code>. The coordinator:</p>
+<ol>
+<li>Scans batches starting from the oldest unverified one.</li>
+<li>Skips batches that already have a proof for this <code>prover_type</code>.</li>
+<li>Skips batches currently assigned to another prover of the same type (unless the assignment has timed out).</li>
+<li>Assigns the first available batch and records <code>(batch_number, prover_type) → Instant::now()</code>.</li>
+</ol>
+<p>The assignment map is in-memory only — it is lost on restart. On restart, the coordinator simply reassigns batches from scratch, which is safe because storing a duplicate proof is a no-op.</p>
+<h2 id="prover-timeout"><a class="header" href="#prover-timeout">Prover timeout</a></h2>
+<p>If a prover doesn't submit a proof within <code>prover-timeout</code> (default 10 minutes), its assignment expires and the batch becomes available for reassignment to another prover. This handles prover crashes, network issues, or slow provers without manual intervention.</p>
+<h2 id="multi-batch-verification"><a class="header" href="#multi-batch-verification">Multi-batch verification</a></h2>
+<p>The proof sender runs on a periodic tick (every <code>send-interval</code> ms). On each tick it:</p>
+<ol>
+<li>Queries the on-chain <code>lastVerifiedBatch</code> and <code>lastCommittedBatch</code>.</li>
+<li>Collects all <strong>consecutive</strong> proven batches starting from <code>lastVerifiedBatch + 1</code>, checking that every required proof type is present for each batch.</li>
+<li>Sends them in a single <code>verifyBatches()</code> call to L1.</li>
+</ol>
+<p>For example, if batches 5, 6, 7 are fully proven but batch 8 is missing a proof, only batches 5–7 are sent. Batch 8 waits for its proof.</p>
+<h3 id="fallback-to-single-batch-sending"><a class="header" href="#fallback-to-single-batch-sending">Fallback to single-batch sending</a></h3>
+<p>On <strong>any</strong> multi-batch error (gas limit exceeded, calldata too large, invalid proof, etc.), the proof sender falls back to sending each batch individually. Since on-chain verification is sequential (<code>batchNumber == lastVerifiedBatch + 1</code>), the fallback stops at the first failing batch — remaining batches are retried on the next tick.</p>
+<p>During single-batch fallback, if the error indicates an invalid proof (e.g. "Invalid SP1 proof"), that proof is deleted from the store so a prover can re-prove it.</p>
+<h2 id="configuration-reference"><a class="header" href="#configuration-reference">Configuration reference</a></h2>
+<h3 id="proof-coordinator-sequencer-side"><a class="header" href="#proof-coordinator-sequencer-side">Proof coordinator (sequencer side)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Env Variable</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>--proof-coordinator.addr</code></td><td><code>ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS</code></td><td><code>127.0.0.1</code></td><td>Listen address</td></tr>
+<tr><td><code>--proof-coordinator.port</code></td><td><code>ETHREX_PROOF_COORDINATOR_LISTEN_PORT</code></td><td><code>3900</code></td><td>Listen port</td></tr>
+<tr><td><code>--proof-coordinator.send-interval</code></td><td><code>ETHREX_PROOF_COORDINATOR_SEND_INTERVAL</code></td><td><code>5000</code></td><td>How often (ms) the proof sender collects and sends proofs to L1</td></tr>
+<tr><td><code>--proof-coordinator.prover-timeout</code></td><td><code>ETHREX_PROOF_COORDINATOR_PROVER_TIMEOUT</code></td><td><code>600000</code></td><td>Timeout (ms) before reassigning a batch to another prover (default: 10 min)</td></tr>
+</tbody></table>
+</div>
+<h3 id="prover-client"><a class="header" href="#prover-client">Prover client</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Env Variable</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>--proof-coordinators</code></td><td><code>PROVER_CLIENT_PROOF_COORDINATOR_URL</code></td><td><code>tcp://127.0.0.1:3900</code></td><td>Space-separated coordinator URLs</td></tr>
+<tr><td><code>--backend</code></td><td><code>PROVER_CLIENT_BACKEND</code></td><td><code>exec</code></td><td>Backend: <code>exec</code>, <code>sp1</code>, <code>risc0</code>, <code>zisk</code>, <code>openvm</code></td></tr>
+<tr><td><code>--proving-time</code></td><td><code>PROVER_CLIENT_PROVING_TIME</code></td><td><code>5000</code></td><td>Wait time (ms) between requesting new work</td></tr>
+</tbody></table>
+</div>
+<h2 id="testing-locally"><a class="header" href="#testing-locally">Testing locally</a></h2>
+<h3 id="1-start-l1"><a class="header" href="#1-start-l1">1. Start L1</a></h3>
+<pre><code class="language-bash">cd crates/l2
+make init-l1
+</code></pre>
+<h3 id="2-deploy-contracts"><a class="header" href="#2-deploy-contracts">2. Deploy contracts</a></h3>
+<pre><code class="language-bash">cd crates/l2
+make deploy-l1
+</code></pre>
+<h3 id="3-start-l2-with-a-long-proof-send-interval"><a class="header" href="#3-start-l2-with-a-long-proof-send-interval">3. Start L2 with a long proof send interval</a></h3>
+<p>Set a long send interval so that multiple batch proofs accumulate before the proof sender submits them to L1 in a single transaction. The default is 5 seconds (5000ms).</p>
+<pre><code class="language-bash">cd crates/l2
+ETHREX_PROOF_COORDINATOR_SEND_INTERVAL=120000 make init-l2
+</code></pre>
+<p>This sets the interval to 120 seconds, giving provers time to complete multiple batches before verification.</p>
+<h3 id="4-start-multiple-provers"><a class="header" href="#4-start-multiple-provers">4. Start multiple provers</a></h3>
+<p>Once some batches have been committed, start multiple prover instances in separate terminals. They all connect to the same coordinator at <code>tcp://127.0.0.1:3900</code>.</p>
+<pre><code class="language-bash"># Terminal A
+cd crates/l2
+make init-prover-exec
+
+# Terminal B
+cd crates/l2
+make init-prover-exec
+</code></pre>
+<p>Each prover will be assigned a different batch. When both finish, the proof sender will collect the consecutive proven batches and submit them in a single <code>verifyBatches</code> transaction on L1.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/fundamentals/exit_window.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/fundamentals/ethrex_l2_aligned_integration.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/fundamentals/fee_token.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../developers/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -302,11 +355,11 @@ Example: If for some reason we want to schedule the pause of the OnChainProposer
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/fundamentals/exit_window.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/fundamentals/ethrex_l2_aligned_integration.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/fundamentals/fee_token.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../developers/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

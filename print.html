@@ -5453,7 +5453,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <p><img src="l2/deployment/../img/aligned_mode_proof_verifier.png" alt="Aligned Mode Proof Verifier" /></p>
 <h3 id="onchainproposer"><a class="header" href="#onchainproposer">OnChainProposer</a></h3>
 <ul>
-<li>Uses <code>verifyBatchesAligned()</code> instead of <code>verifyBatch()</code> (used in standard mode).</li>
+<li>Uses <code>verifyBatchesAligned()</code> instead of <code>verifyBatches()</code> (used in standard mode).</li>
 <li>Receives an array of proofs to verify.</li>
 <li>Delegates proof verification to the <code>AlignedProofAggregatorService</code> contract.</li>
 </ul>
@@ -5741,7 +5741,7 @@ ethrex l2 \
 <ol>
 <li>Restart the prover(s) - they will automatically generate Groth16 proofs (since <code>--aligned</code> is not set)</li>
 <li>ProofCoordinator will request proofs starting from <code>lastVerifiedBatch + 1</code></li>
-<li>L1ProofSender will submit directly to OnChainProposer.verifyBatch()</li>
+<li>L1ProofSender will submit directly to OnChainProposer.verifyBatches()</li>
 </ol>
 <hr />
 <h2 id="scenario-4-insufficient-quota-balance"><a class="header" href="#scenario-4-insufficient-quota-balance">Scenario 4: Insufficient Quota Balance</a></h2>
@@ -5827,7 +5827,7 @@ cargo run --release -- deposit \
 </ul>
 <h3 id="contract-error-codes"><a class="header" href="#contract-error-codes">Contract Error Codes</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Code</th><th>Meaning</th><th>Action</th></tr></thead><tbody>
-<tr><td><code>00h</code></td><td>Use verifyBatch instead</td><td>Contract not in Aligned mode</td></tr>
+<tr><td><code>00h</code></td><td>Use verifyBatches instead</td><td>Contract not in Aligned mode</td></tr>
 <tr><td><code>00m</code></td><td>Invalid Aligned proof</td><td>Proof will be deleted and regenerated</td></tr>
 <tr><td><code>00y</code></td><td>AlignedProofAggregator call failed</td><td>Check aggregator contract address</td></tr>
 <tr><td><code>00z</code></td><td>Aligned proof verification failed</td><td>Merkle proof invalid</td></tr>
@@ -7499,7 +7499,7 @@ cd ethrex/metrics
 <li>
 <p><strong>Open proof submission</strong></p>
 <ul>
-<li>Remove sequencer-only restriction on <code>verifyBatch()</code></li>
+<li>Remove sequencer-only restriction on <code>verifyBatches()</code></li>
 <li>Anyone can submit valid proofs</li>
 </ul>
 </li>
@@ -9088,6 +9088,7 @@ Retry the deploy command adding <code>--priority-gas-price</code> and <code>--ga
 <li><a href="l2/fundamentals/./fee_token.html">Fee token</a></li>
 <li><a href="l2/fundamentals/./exit_window.html">Exit window</a> and <a href="l2/fundamentals/./timelock.html">Timelock</a> for upgrade safety mechanisms.</li>
 <li><a href="l2/fundamentals/./ethrex_l2_aligned_integration.html">Aligned Layer Integration</a> details how ethrex L2 integrates with Aligned Layer for proof aggregation and verification.</li>
+<li><a href="l2/fundamentals/./distributed_proving.html">Distributed proving</a> explains how the proof coordinator, proof sender, and provers interact to enable parallel proving and multi-batch L1 verification.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
@@ -11407,7 +11408,7 @@ To do this, they compute a merkle proof for the included batch and call the L1 <
 <li>
 <p><strong>Proof Verification</strong></p>
 <ul>
-<li><strong><code>verifyBatch()</code></strong>: Verifies a single batch using RISC0, SP1, or TDX proofs</li>
+<li><strong><code>verifyBatches()</code></strong>: Verifies one or more consecutive batches using RISC0, SP1, or TDX proofs</li>
 <li><strong><code>verifyBatchesAligned()</code></strong>: Verifies multiple batches in sequence using aligned proofs with Merkle verification</li>
 </ul>
 </li>
@@ -11669,10 +11670,10 @@ The <code>commitBatch</code> method has been revised to improve data availabilit
 <li><strong>Event Modification:</strong>
 The <code>BatchCommitted</code> event has been updated to include the batch number of the committed batch. This addition enhances traceability and allows external systems to monitor batch progression more effectively.</li>
 <li><strong>Batch Verification:</strong>
-The <code>verifyBatch</code> method has been made more flexible and decentralized:
+The <code>verifyBatches</code> method has been made more flexible and decentralized:
 <ul>
-<li>The <code>onlySequencer</code> modifier has been removed, allowing anyone—not just the lead Sequencer—to verify batches.</li>
-<li>The restriction preventing multiple verifications of the same batch has been lifted. While multiple verifications are now permitted, only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.</li>
+<li>The method has no access control modifier, allowing anyone—not just the lead Sequencer—to verify batches.</li>
+<li>It supports verifying one or more consecutive batches in a single transaction. Only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.</li>
 </ul>
 </li>
 </ul>
@@ -12421,7 +12422,7 @@ Each method accepts a single argument: the <strong><code>block_number</code></st
 <li>Governance: Can schedule and execute operations, respecting a delay. In practice this could be the role of a DAO, though it depends on the implementation.</li>
 <li>Security Council: Can bypass the minimum delay for executing any operation that the Timelock can execute. It can also manage other roles in the Timelock.</li>
 </ul>
-<p><strong>Sequencers</strong> will send <code>commitBatch</code>, <code>verifyBatch</code>, and <code>verifyBatchesAligned</code> to the Timelock, and this will execute the operations in the <code>OnChainProposer</code>. Eventually there will be Timelock logic, and there will be a time window between commitment and proof verification for security reasons.</p>
+<p><strong>Sequencers</strong> will send <code>commitBatch</code>, <code>verifyBatches</code>, and <code>verifyBatchesAligned</code> to the Timelock, and this will execute the operations in the <code>OnChainProposer</code>. Eventually there will be Timelock logic, and there will be a time window between commitment and proof verification for security reasons.</p>
 <p>The <strong>Governance</strong> is able to schedule important operations like contract upgrades respecting the minimum time window for the L2 participants to exit in case of undesired updates. Not only can they make changes in the logic of the OnChainProposer, but they can also update the Timelock itself.</p>
 <p>The <strong>Security Council</strong> is designed as a powerful entity that can execute anything within the Timelock or OnChainProposer without delay. We call it security council because its actions are limitless, as it can upgrade any of the contracts whenever it wants, so ideally it should be a multisig composed of many diverse members, and it should be able to take action only if 75% of members agree. Ideally, in a more mature rollup the Security Council would have fewer permissions and would only need to act upon bugs detected on-chain if such a mechanism exists.
 We call this mechanism of executing without delay the <code>emergencyExecute</code>.</p>
@@ -13066,22 +13067,17 @@ address public ALIGNEDPROOFAGGREGATOR;
 mapping(bytes32 commitHash =&gt; mapping(uint8 verifierId =&gt; bytes32 vk))
     public verificationKeys;
 </code></pre>
-<p><strong>Standard Verification</strong> (<code>verifyBatch</code>):</p>
-<pre><code class="language-solidity">function verifyBatch(
-    uint256 batchNumber,
-    bytes memory risc0BlockProof,
-    bytes memory sp1ProofBytes,
-    bytes memory tdxSignature
+<p><strong>Standard Verification</strong> (<code>verifyBatches</code>):</p>
+<pre><code class="language-solidity">function verifyBatches(
+    uint256 firstBatchNumber,
+    bytes[] calldata risc0BlockProofs,
+    bytes[] calldata sp1ProofsBytes,
+    bytes[] calldata tdxSignatures
 ) external onlyOwner whenNotPaused {
     require(!ALIGNED_MODE, "008");  // Use verifyBatchesAligned instead
 
-    // Verify proofs directly via verifier contracts
-    if (REQUIRE_SP1_PROOF) {
-        ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(sp1Vk, publicInputs, sp1ProofBytes);
-    }
-    if (REQUIRE_RISC0_PROOF) {
-        IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(risc0BlockProof, risc0Vk, sha256(publicInputs));
-    }
+    // Loops over _verifyBatchInternal() for each batch,
+    // verifying proofs directly via verifier contracts
 }
 </code></pre>
 <p><strong>Aligned Verification</strong> (<code>verifyBatchesAligned</code>):</p>
@@ -13091,7 +13087,7 @@ mapping(bytes32 commitHash =&gt; mapping(uint8 verifierId =&gt; bytes32 vk))
     bytes32[][] calldata sp1MerkleProofsList,
     bytes32[][] calldata risc0MerkleProofsList
 ) external onlyOwner whenNotPaused {
-    require(ALIGNED_MODE, "00h");  // Use verifyBatch instead
+    require(ALIGNED_MODE, "00h");  // Use verifyBatches instead
 
     for (uint256 i = 0; i &lt; batchesToVerify; i++) {
         bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
@@ -13204,9 +13200,9 @@ Variable-size fields:
 <div class="table-wrapper"><table><thead><tr><th>Aspect</th><th>Standard Mode</th><th>Aligned Mode</th></tr></thead><tbody>
 <tr><td><strong>Proof Format</strong></td><td>Groth16 (EVM-friendly)</td><td>Compressed STARK</td></tr>
 <tr><td><strong>Submission Target</strong></td><td>OnChainProposer contract</td><td>Aligned Batcher (WebSocket)</td></tr>
-<tr><td><strong>Verification Method</strong></td><td><code>verifyBatch()</code></td><td><code>verifyBatchesAligned()</code></td></tr>
+<tr><td><strong>Verification Method</strong></td><td><code>verifyBatches()</code></td><td><code>verifyBatchesAligned()</code></td></tr>
 <tr><td><strong>Verifier Contract</strong></td><td>SP1Verifier/RISC0Verifier</td><td>AlignedProofAggregatorService</td></tr>
-<tr><td><strong>Batch Verification</strong></td><td>One batch per tx</td><td>Multiple batches per tx</td></tr>
+<tr><td><strong>Batch Verification</strong></td><td>Multiple batches per tx</td><td>Multiple batches per tx (aggregated)</td></tr>
 <tr><td><strong>Gas Cost</strong></td><td>Higher (per-proof verification)</td><td>Lower (amortized via aggregation)</td></tr>
 <tr><td><strong>Additional Component</strong></td><td>None</td><td>L1ProofVerifier process</td></tr>
 <tr><td><strong>Proof Tracking</strong></td><td>Via rollup store</td><td>Via Aligned SDK</td></tr>
@@ -13216,7 +13212,7 @@ Variable-size fields:
 <p><strong>Standard Mode</strong>:</p>
 <ul>
 <li>Generates Groth16 proof (calldata format)</li>
-<li>Proof sent directly to <code>OnChainProposer.verifyBatch()</code></li>
+<li>Proof sent directly to <code>OnChainProposer.verifyBatches()</code></li>
 </ul>
 <p><strong>Aligned Mode</strong>:</p>
 <ul>
@@ -13226,7 +13222,7 @@ Variable-size fields:
 </ul>
 <h3 id="verification-flow-differences"><a class="header" href="#verification-flow-differences">Verification Flow Differences</a></h3>
 <p><strong>Standard Mode</strong>:</p>
-<pre><code>Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatch()
+<pre><code>Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatches()
                                                     │
                                                     ▼
                                           SP1Verifier/RISC0Verifier
@@ -13292,6 +13288,173 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <li><a href="l2/fundamentals/../deployment/overview.html">ethrex L2 Deployment Guide</a></li>
 <li><a href="l2/fundamentals/../architecture/prover.html">ethrex Prover Documentation</a></li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="distributed-proving"><a class="header" href="#distributed-proving">Distributed Proving</a></h1>
+<h2 id="overview-3"><a class="header" href="#overview-3">Overview</a></h2>
+<p>Distributed proving enables running multiple prover instances in parallel, each working on different batches simultaneously. It has two key aspects:</p>
+<ol>
+<li><strong>Parallel batch assignment</strong>: the proof coordinator assigns different batches to different provers, so multiple provers work simultaneously.</li>
+<li><strong>Multi-batch verification</strong>: the proof sender collects consecutive proven batches and submits them in a single <code>verifyBatches()</code> L1 transaction, saving gas.</li>
+</ol>
+<h2 id="architecture-2"><a class="header" href="#architecture-2">Architecture</a></h2>
+<pre><code>┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Prover 1   │     │   Prover 2   │     │   Prover 3   │
+│    (sp1)     │     │    (sp1)     │     │   (risc0)    │
+└──────┬───────┘     └──────┬───────┘     └──────┬───────┘
+       │                    │                    │
+       │    TCP             │    TCP             │    TCP
+       │                    │                    │
+       └────────────┬───────┘────────────────────┘
+                    │
+          ┌─────────▼──────────┐
+          │  Proof Coordinator │  (part of L2 sequencer)
+          │  tcp://0.0.0.0:3900│
+          └─────────┬──────────┘
+                    │
+          ┌─────────▼──────────┐
+          │   Proof Sender     │  Batches proofs → single L1 tx
+          └─────────┬──────────┘
+                    │
+              ┌─────▼─────┐
+              │    L1      │
+              └────────────┘
+</code></pre>
+<p>Multiple provers connect to the same proof coordinator over TCP. The coordinator tracks assignments per <code>(batch_number, prover_type)</code>, so:</p>
+<ul>
+<li>Two <code>sp1</code> provers get assigned <strong>different</strong> batches.</li>
+<li>An <code>sp1</code> prover and a <code>risc0</code> prover can work on the <strong>same</strong> batch simultaneously (they produce different proof types).</li>
+</ul>
+<h2 id="batch-assignment"><a class="header" href="#batch-assignment">Batch assignment</a></h2>
+<p>When a prover sends a <code>BatchRequest</code>, it includes its <code>prover_type</code>. The coordinator:</p>
+<ol>
+<li>Scans batches starting from the oldest unverified one.</li>
+<li>Skips batches that already have a proof for this <code>prover_type</code>.</li>
+<li>Skips batches currently assigned to another prover of the same type (unless the assignment has timed out).</li>
+<li>Assigns the first available batch and records <code>(batch_number, prover_type) → Instant::now()</code>.</li>
+</ol>
+<p>The assignment map is in-memory only — it is lost on restart. On restart, the coordinator simply reassigns batches from scratch, which is safe because storing a duplicate proof is a no-op.</p>
+<h2 id="prover-timeout"><a class="header" href="#prover-timeout">Prover timeout</a></h2>
+<p>If a prover doesn't submit a proof within <code>prover-timeout</code> (default 10 minutes), its assignment expires and the batch becomes available for reassignment to another prover. This handles prover crashes, network issues, or slow provers without manual intervention.</p>
+<h2 id="multi-batch-verification"><a class="header" href="#multi-batch-verification">Multi-batch verification</a></h2>
+<p>The proof sender runs on a periodic tick (every <code>send-interval</code> ms). On each tick it:</p>
+<ol>
+<li>Queries the on-chain <code>lastVerifiedBatch</code> and <code>lastCommittedBatch</code>.</li>
+<li>Collects all <strong>consecutive</strong> proven batches starting from <code>lastVerifiedBatch + 1</code>, checking that every required proof type is present for each batch.</li>
+<li>Sends them in a single <code>verifyBatches()</code> call to L1.</li>
+</ol>
+<p>For example, if batches 5, 6, 7 are fully proven but batch 8 is missing a proof, only batches 5–7 are sent. Batch 8 waits for its proof.</p>
+<h3 id="fallback-to-single-batch-sending"><a class="header" href="#fallback-to-single-batch-sending">Fallback to single-batch sending</a></h3>
+<p>On <strong>any</strong> multi-batch error (gas limit exceeded, calldata too large, invalid proof, etc.), the proof sender falls back to sending each batch individually. Since on-chain verification is sequential (<code>batchNumber == lastVerifiedBatch + 1</code>), the fallback stops at the first failing batch — remaining batches are retried on the next tick.</p>
+<p>During single-batch fallback, if the error indicates an invalid proof (e.g. "Invalid SP1 proof"), that proof is deleted from the store so a prover can re-prove it.</p>
+<h2 id="configuration-reference"><a class="header" href="#configuration-reference">Configuration reference</a></h2>
+<h3 id="proof-coordinator-sequencer-side"><a class="header" href="#proof-coordinator-sequencer-side">Proof coordinator (sequencer side)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Env Variable</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>--proof-coordinator.addr</code></td><td><code>ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS</code></td><td><code>127.0.0.1</code></td><td>Listen address</td></tr>
+<tr><td><code>--proof-coordinator.port</code></td><td><code>ETHREX_PROOF_COORDINATOR_LISTEN_PORT</code></td><td><code>3900</code></td><td>Listen port</td></tr>
+<tr><td><code>--proof-coordinator.send-interval</code></td><td><code>ETHREX_PROOF_COORDINATOR_SEND_INTERVAL</code></td><td><code>5000</code></td><td>How often (ms) the proof sender collects and sends proofs to L1</td></tr>
+<tr><td><code>--proof-coordinator.prover-timeout</code></td><td><code>ETHREX_PROOF_COORDINATOR_PROVER_TIMEOUT</code></td><td><code>600000</code></td><td>Timeout (ms) before reassigning a batch to another prover (default: 10 min)</td></tr>
+</tbody></table>
+</div>
+<h3 id="prover-client"><a class="header" href="#prover-client">Prover client</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Env Variable</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>--proof-coordinators</code></td><td><code>PROVER_CLIENT_PROOF_COORDINATOR_URL</code></td><td><code>tcp://127.0.0.1:3900</code></td><td>Space-separated coordinator URLs</td></tr>
+<tr><td><code>--backend</code></td><td><code>PROVER_CLIENT_BACKEND</code></td><td><code>exec</code></td><td>Backend: <code>exec</code>, <code>sp1</code>, <code>risc0</code>, <code>zisk</code>, <code>openvm</code></td></tr>
+<tr><td><code>--proving-time</code></td><td><code>PROVER_CLIENT_PROVING_TIME</code></td><td><code>5000</code></td><td>Wait time (ms) between requesting new work</td></tr>
+</tbody></table>
+</div>
+<h2 id="testing-locally"><a class="header" href="#testing-locally">Testing locally</a></h2>
+<h3 id="1-start-l1"><a class="header" href="#1-start-l1">1. Start L1</a></h3>
+<pre><code class="language-bash">cd crates/l2
+make init-l1
+</code></pre>
+<h3 id="2-deploy-contracts"><a class="header" href="#2-deploy-contracts">2. Deploy contracts</a></h3>
+<pre><code class="language-bash">cd crates/l2
+make deploy-l1
+</code></pre>
+<h3 id="3-start-l2-with-a-long-proof-send-interval"><a class="header" href="#3-start-l2-with-a-long-proof-send-interval">3. Start L2 with a long proof send interval</a></h3>
+<p>Set a long send interval so that multiple batch proofs accumulate before the proof sender submits them to L1 in a single transaction. The default is 5 seconds (5000ms).</p>
+<pre><code class="language-bash">cd crates/l2
+ETHREX_PROOF_COORDINATOR_SEND_INTERVAL=120000 make init-l2
+</code></pre>
+<p>This sets the interval to 120 seconds, giving provers time to complete multiple batches before verification.</p>
+<h3 id="4-start-multiple-provers"><a class="header" href="#4-start-multiple-provers">4. Start multiple provers</a></h3>
+<p>Once some batches have been committed, start multiple prover instances in separate terminals. They all connect to the same coordinator at <code>tcp://127.0.0.1:3900</code>.</p>
+<pre><code class="language-bash"># Terminal A
+cd crates/l2
+make init-prover-exec
+
+# Terminal B
+cd crates/l2
+make init-prover-exec
+</code></pre>
+<p>Each prover will be assigned a different batch. When both finish, the proof sender will collect the consecutive proven batches and submit them in a single <code>verifyBatches</code> transaction on L1.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -14758,7 +14921,7 @@ See <a href="https://eest.ethereum.org/v4.1.0/consuming_tests/blockchain_test">d
 </style>
 <h1 id="hive-tests"><a class="header" href="#hive-tests">Hive Tests</a></h1>
 <p>End-to-End tests with Hive. Hive is a system which sends RPC commands to Ethereum clients and validates their responses. You can read more about it <a href="https://github.com/ethereum/hive/blob/master/docs/overview.md">here</a>.</p>
-<h2 id="overview-3"><a class="header" href="#overview-3">Overview</a></h2>
+<h2 id="overview-4"><a class="header" href="#overview-4">Overview</a></h2>
 <p>This project uses three key repositories for Hive testing:</p>
 <ol>
 <li><strong><a href="https://github.com/ethereum/hive">ethereum/hive</a></strong> - The main Hive testing framework
@@ -16138,7 +16301,10 @@ Ok(commit_tx_hash)  ```
 <p>Messages are compressed into a hash or a Merkle tree root which then are stored in an L1 contract together with the rest of the L2 state data. The prover retrieves the transactions or events that the messages produced in the L2, reconstructs the message data and recomputes the hashes or Merkle tree roots, which are then committed as a public input of the zk proof. At verification we can compare these hashes with the ones stored in the L1. This is the same concept used for state data.</p>
 <p>For more details checkout <a href="prover/../l2/fundamentals/deposits.html">deposits</a> and <a href="prover/../l2/fundamentals/withdrawals.html">withdrawals</a></p>
 <h2 id="see-also"><a class="header" href="#see-also">See also</a></h2>
-<p><a href="prover/./guest_program.html">Guest program</a> for the detailed steps of the program that the prover generates a proof of.</p>
+<ul>
+<li><a href="prover/./guest_program.html">Guest program</a> for the detailed steps of the program that the prover generates a proof of.</li>
+<li><a href="prover/../l2/fundamentals/distributed_proving.html">Distributed proving</a> for running multiple provers in parallel with multi-batch L1 verification.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -18930,7 +19096,7 @@ Long-term research directions and second-order ideas are intentionally out of sc
 </tbody></table>
 </div>
 <h1 id="ethrex-trie-optimization-for-zkvm"><a class="header" href="#ethrex-trie-optimization-for-zkvm">ethrex-trie optimization for zkvm</a></h1>
-<h1 id="overview-4"><a class="header" href="#overview-4">Overview</a></h1>
+<h1 id="overview-5"><a class="header" href="#overview-5">Overview</a></h1>
 <p>Using the risc0-trie we get the next perf. gains in cycle count over our ethrex-trie:</p>
 <ul>
 <li><code>rebuild_storage_trie()</code> 218.999 -&gt; 64.435 (x3.4)</li>
