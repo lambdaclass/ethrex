@@ -78,9 +78,9 @@ The `OnChainProposer` contract, which handles batch proposals and management on 
 - **Event Modification:**
   The `BatchCommitted` event has been updated to include the batch number of the committed batch. This addition enhances traceability and allows external systems to monitor batch progression more effectively.
 - **Batch Verification:**
-  The `verifyBatch` method has been made more flexible and decentralized:
-  - The `onlySequencer` modifier has been removed, allowing anyone—not just the lead Sequencer—to verify batches.
-  - The restriction preventing multiple verifications of the same batch has been lifted. While multiple verifications are now permitted, only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.
+  The `verifyBatches` method has been made more flexible and decentralized:
+  - The method has no access control modifier, allowing anyone—not just the lead Sequencer—to verify batches.
+  - It supports verifying one or more consecutive batches in a single transaction. Only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.
 
 ### SequencerRegistry (New Contract)
 

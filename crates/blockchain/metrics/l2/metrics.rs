@@ -79,9 +79,9 @@ impl Metrics {
             batch_verification_gas: IntGaugeVec::new(
                 Opts::new(
                     "batch_verification_gas",
-                    "Batch verification gas cost in L1, labeled by batch number",
+                    "Batch verification gas cost in L1, labeled by batch number and tx hash",
                 ),
-                &["batch_number"],
+                &["batch_number", "tx_hash"],
             )
             .unwrap(),
             batch_commitment_gas: IntGaugeVec::new(
@@ -193,10 +193,11 @@ impl Metrics {
         &self,
         batch_number: u64,
         verification_gas: i64,
+        tx_hash: &str,
     ) -> Result<(), MetricsError> {
         let builder = self
             .batch_verification_gas
-            .get_metric_with_label_values(&[&batch_number.to_string()])
+            .get_metric_with_label_values(&[&batch_number.to_string(), tx_hash])
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         builder.set(verification_gas);
         Ok(())
