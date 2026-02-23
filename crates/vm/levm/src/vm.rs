@@ -25,7 +25,7 @@ use ethrex_common::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::HashMap,
     mem,
     rc::Rc,
 };
@@ -194,7 +194,7 @@ impl Substate {
 
     /// Build an access list from all accessed storage slots.
     pub fn make_access_list(&self) -> Vec<AccessListEntry> {
-        let mut entries = BTreeMap::<Address, BTreeSet<H256>>::new();
+        let mut entries = FxHashMap::<Address, FxHashSet<H256>>::default();
 
         let mut current = self;
         loop {
@@ -211,13 +211,19 @@ impl Substate {
             };
         }
 
-        entries
+        let mut result: Vec<AccessListEntry> = entries
             .into_iter()
-            .map(|(address, storage_keys)| AccessListEntry {
-                address,
-                storage_keys: storage_keys.into_iter().collect(),
+            .map(|(address, storage_keys)| {
+                let mut keys: Vec<H256> = storage_keys.into_iter().collect();
+                keys.sort();
+                AccessListEntry {
+                    address,
+                    storage_keys: keys,
+                }
             })
-            .collect()
+            .collect();
+        result.sort_by_key(|e| e.address);
+        result
     }
 
     /// Mark an address as accessed and return whether is was already marked.
@@ -252,8 +258,8 @@ impl Substate {
     /// Returns all accessed storage slots for a given address.
     /// Used by SELFDESTRUCT to record storage reads in BAL per EIP-7928:
     /// "SELFDESTRUCT: Include modified/read storage keys as storage_read"
-    pub fn get_accessed_storage_slots(&self, address: &Address) -> BTreeSet<H256> {
-        let mut slots = BTreeSet::new();
+    pub fn get_accessed_storage_slots(&self, address: &Address) -> FxHashSet<H256> {
+        let mut slots = FxHashSet::default();
 
         // Collect from current substate
         if let Some(slot_set) = self.accessed_storage_slots.get(address) {
