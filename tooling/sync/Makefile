@@ -165,7 +165,7 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--metrics.enabled \
+		--metrics \
 		--metrics-address 0.0.0.0 \
 		--metrics-port 5054 \
 		--datadir $(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_$(EVM) \
