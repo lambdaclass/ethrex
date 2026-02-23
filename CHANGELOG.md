@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-23
+
+- Check self before parent in Substate warm/cold lookups [#6244](https://github.com/lambdaclass/ethrex/pull/6244)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)
