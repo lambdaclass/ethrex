@@ -482,7 +482,6 @@ impl Blockchain {
                             )?
                         } else {
                             self.handle_merkleization(
-                                s,
                                 rx,
                                 parent_header_ref,
                                 queue_length_ref,
@@ -544,18 +543,15 @@ impl Blockchain {
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn handle_merkleization<'a, 's, 'b>(
-        &'a self,
-        scope: &'s std::thread::Scope<'s, '_>,
+    fn handle_merkleization(
+        &self,
         rx: Receiver<Vec<AccountUpdate>>,
-        parent_header: &'b BlockHeader,
+        parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError>
-    where
-        'a: 's,
-        'b: 's,
-    {
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+        let parent_state_root = parent_header.state_root;
+
         // Create account channels first (storage workers need senders)
         let mut account_workers_tx = Vec::with_capacity(16);
         let mut account_workers_rx = Vec::with_capacity(16);
@@ -568,13 +564,14 @@ impl Blockchain {
         // Spawn 16 storage workers with account senders for direct routing
         let mut storage_workers_tx = Vec::with_capacity(16);
         let mut storage_workers_handles = Vec::with_capacity(16);
-        for i in 0..16 {
+        for i in 0..16u8 {
             let (tx, rx) = channel();
             let account_senders = account_workers_tx.clone();
+            let storage_clone = self.storage.clone();
             let handle = std::thread::Builder::new()
                 .name(format!("block_executor_storage_shard_{i}"))
-                .spawn_scoped(scope, move || {
-                    self.handle_storage_subtrie(rx, parent_header, i, account_senders)
+                .spawn(move || {
+                    handle_storage_subtrie(storage_clone, rx, parent_state_root, i, account_senders)
                 })
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}")))?;
             storage_workers_handles.push(handle);
@@ -584,10 +581,17 @@ impl Blockchain {
         // Spawn 16 account workers with storage senders for routing
         for (i, rx) in account_workers_rx.into_iter().enumerate() {
             let storage_senders = storage_workers_tx.clone();
+            let storage_clone = self.storage.clone();
             std::thread::Builder::new()
                 .name(format!("block_executor_account_shard_{i}"))
-                .spawn_scoped(scope, move || {
-                    self.handle_account_subtrie(rx, parent_header, i as u8, storage_senders)
+                .spawn(move || {
+                    handle_account_subtrie(
+                        storage_clone,
+                        rx,
+                        parent_state_root,
+                        i as u8,
+                        storage_senders,
+                    )
                 })
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}")))?;
         }
@@ -1068,418 +1072,13 @@ impl Blockchain {
         ))
     }
 
-    fn load_trie(
-        &self,
-        parent_header: &BlockHeader,
-        prefix: Option<H256>,
-    ) -> Result<Trie, StoreError> {
-        Ok(match prefix {
-            Some(account_hash) => {
-                let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
-                let storage_root = match state_trie.get(account_hash.as_bytes())? {
-                    Some(rlp) => AccountState::decode(&rlp)?.storage_root,
-                    None => *EMPTY_TRIE_HASH,
-                };
-                self.storage.open_storage_trie(
-                    account_hash,
-                    parent_header.state_root,
-                    storage_root,
-                )?
-            }
-            None => self.storage.open_state_trie(parent_header.state_root)?,
-        })
-    }
-
-    /// Collapses a root branch node into an extension or leaf node if it has only one valid child.
-    /// Returns None if there are no valid children.
     fn collapse_root_node(
         &self,
         parent_header: &BlockHeader,
         prefix: Option<H256>,
-        mut root: BranchNode,
+        root: BranchNode,
     ) -> Result<Option<Node>, StoreError> {
-        // Ensures the children are included in the final commit
-        root.choices.iter_mut().for_each(NodeRef::clear_hash);
-        let children: Vec<(usize, &NodeRef)> = root
-            .choices
-            .iter()
-            .enumerate()
-            .filter(|(_, choice)| choice.is_valid())
-            .take(2)
-            .collect();
-        if children.len() > 1 {
-            return Ok(Some(Node::Branch(Box::from(root))));
-        }
-        let Some((choice, only_child)) = children.first() else {
-            return Ok(None);
-        };
-        let only_child = Arc::unwrap_or_clone(match only_child {
-            NodeRef::Node(node, _) => node.clone(),
-            noderef @ NodeRef::Hash(_) => {
-                let trie = self.load_trie(parent_header, prefix)?;
-                let Some(node) =
-                    noderef.get_node(trie.db(), Nibbles::from_hex(vec![*choice as u8]))?
-                else {
-                    return Ok(None);
-                };
-                node
-            }
-        });
-        Ok(Some(match only_child {
-            Node::Branch(_) => {
-                ExtensionNode::new(Nibbles::from_hex(vec![*choice as u8]), only_child.into()).into()
-            }
-            Node::Extension(mut extension_node) => {
-                extension_node.prefix.prepend(*choice as u8);
-                extension_node.into()
-            }
-            Node::Leaf(mut leaf) => {
-                leaf.partial.prepend(*choice as u8);
-                leaf.into()
-            }
-        }))
-    }
-
-    fn handle_storage_subtrie(
-        &self,
-        rx: Receiver<StorageRequest>,
-        parent_header: &BlockHeader,
-        index: u8,
-        account_workers_tx: Vec<Sender<AccountRequest>>,
-    ) -> Result<(), StoreError> {
-        let mut tree: FxHashMap<H256, Trie> = Default::default();
-        for msg in rx {
-            match msg {
-                StorageRequest::Delete(prefix) => {
-                    tree.insert(prefix, Trie::new_temp());
-                }
-                StorageRequest::MerklizeStorage {
-                    prefix,
-                    key,
-                    value,
-                    storage_root,
-                } => {
-                    let trie = match tree.entry(prefix) {
-                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
-                        Entry::Vacant(vacant_entry) => {
-                            vacant_entry.insert(self.storage.open_storage_trie(
-                                prefix,
-                                parent_header.state_root,
-                                storage_root,
-                            )?)
-                        }
-                    };
-                    if value.is_zero() {
-                        trie.remove(key.as_bytes())?;
-                    } else {
-                        trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
-                    }
-                }
-                StorageRequest::CollectStorages => {
-                    for (prefix, trie) in tree.drain() {
-                        let (root, nodes) = collect_trie(index, trie)?;
-                        let bucket = prefix.as_fixed_bytes()[0] >> 4;
-                        account_workers_tx[bucket as usize]
-                            .send(AccountRequest::StorageShard {
-                                prefix,
-                                index,
-                                subroot: root,
-                                nodes,
-                            })
-                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn handle_account_subtrie(
-        &self,
-        rx: Receiver<AccountRequest>,
-        parent_header: &BlockHeader,
-        index: u8,
-        storage_workers_tx: Vec<Sender<StorageRequest>>,
-    ) -> Result<(), StoreError> {
-        let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
-        let mut storage_nodes = vec![];
-        let mut accounts: FxHashMap<H256, AccountState> = Default::default();
-        let mut expected_shards: FxHashMap<H256, u16> = Default::default();
-        let mut storage_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
-        let mut received_shards: FxHashMap<H256, u16> = Default::default();
-        // Held until FinishRouting to keep storage worker channels open.
-        let mut storage_workers_tx = Some(storage_workers_tx);
-        let mut pending_storage_accounts: usize = 0;
-        let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
-        let mut t_process = Duration::ZERO;
-        let mut t_shard = Duration::ZERO;
-        let mut inline_count: usize = 0;
-        let mut sharded_count: usize = 0;
-        let mut inline_tries: FxHashMap<H256, Trie> = Default::default();
-
-        for msg in rx {
-            match msg {
-                AccountRequest::ProcessAccount {
-                    prefix,
-                    info,
-                    storage,
-                    removed,
-                    removed_storage,
-                } => {
-                    let t0 = Instant::now();
-                    let senders = storage_workers_tx
-                        .as_ref()
-                        .expect("ProcessAccount after FinishRouting");
-
-                    // Always load account to warm state trie during execution overlap
-                    match accounts.entry(prefix) {
-                        Entry::Occupied(_) => {}
-                        Entry::Vacant(vacant_entry) => {
-                            let account_state = match state_trie.get(prefix.as_bytes())? {
-                                Some(rlp) => {
-                                    let state = AccountState::decode(&rlp)?;
-                                    state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
-                                    state
-                                }
-                                None => AccountState::default(),
-                            };
-                            vacant_entry.insert(account_state);
-                        }
-                    }
-
-                    // Apply info immediately and insert into trie
-                    if let Some(info) = info {
-                        let acct = accounts.get_mut(&prefix).expect("just loaded");
-                        acct.nonce = info.nonce;
-                        acct.balance = info.balance;
-                        acct.code_hash = info.code_hash;
-                        let path = prefix.as_bytes();
-                        if *acct != AccountState::default() {
-                            state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
-                        } else {
-                            state_trie.remove(path)?;
-                        }
-                    }
-
-                    if removed || removed_storage {
-                        inline_tries.remove(&prefix);
-                        for tx in senders {
-                            tx.send(StorageRequest::Delete(prefix))
-                                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                        }
-                        accounts.get_mut(&prefix).expect("just loaded").storage_root =
-                            *EMPTY_TRIE_HASH;
-                        if expected_shards.insert(prefix, 0xFFFF).is_none() {
-                            pending_storage_accounts += 1;
-                        }
-                        if removed {
-                            continue;
-                        }
-                    }
-
-                    if !storage.is_empty() {
-                        let storage_root = accounts
-                            .get(&prefix)
-                            .map(|a| a.storage_root)
-                            .unwrap_or(*EMPTY_TRIE_HASH);
-
-                        let already_sharded = expected_shards.contains_key(&prefix);
-                        let use_inline = if inline_tries.contains_key(&prefix) {
-                            true
-                        } else if !already_sharded {
-                            (sharded_count + inline_count) % 3 == 2
-                        } else {
-                            false
-                        };
-
-                        if use_inline {
-                            let mut storage_trie = inline_tries.remove(&prefix).map_or_else(
-                                || {
-                                    self.storage.open_storage_trie(
-                                        prefix,
-                                        parent_header.state_root,
-                                        storage_root,
-                                    )
-                                },
-                                Ok,
-                            )?;
-                            for (key, value) in storage {
-                                let hashed_key = keccak(key);
-                                if value.is_zero() {
-                                    storage_trie.remove(hashed_key.as_bytes())?;
-                                } else {
-                                    storage_trie.insert(
-                                        hashed_key.as_bytes().to_vec(),
-                                        value.encode_to_vec(),
-                                    )?;
-                                }
-                            }
-                            inline_tries.insert(prefix, storage_trie);
-                            inline_count += 1;
-                        } else {
-                            let is_new = !already_sharded;
-                            for (key, value) in storage {
-                                let hashed_key = keccak(key);
-                                let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
-                                *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
-                                senders[bucket as usize]
-                                    .send(StorageRequest::MerklizeStorage {
-                                        prefix,
-                                        key: hashed_key,
-                                        value,
-                                        storage_root,
-                                    })
-                                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                            }
-                            if is_new {
-                                pending_storage_accounts += 1;
-                            }
-                            sharded_count += 1;
-                        }
-                    }
-                    t_process += t0.elapsed();
-                }
-                AccountRequest::FinishRouting { tx } => {
-                    tx.send(())
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    storage_workers_tx = None;
-                }
-                AccountRequest::StorageShard {
-                    prefix,
-                    index: shard_index,
-                    mut subroot,
-                    nodes,
-                } => {
-                    let t0 = Instant::now();
-                    let state = storage_state.entry(prefix).or_default();
-                    match &mut state.storage_root {
-                        Some(root) => {
-                            root.choices[shard_index as usize] =
-                                std::mem::take(&mut subroot.choices[shard_index as usize]);
-                        }
-                        rootptr => {
-                            *rootptr = Some(subroot);
-                        }
-                    }
-                    state.nodes.extend(nodes);
-
-                    let received = received_shards.entry(prefix).or_insert(0u16);
-                    *received |= 1 << shard_index;
-                    if *received == expected_shards.get(&prefix).copied().unwrap_or(0) {
-                        // All shards received — compute storage root and re-insert
-                        let mut state = storage_state.remove(&prefix).expect("shard without state");
-                        let mut new_storage_root = None;
-                        if let Some(root) = state.storage_root {
-                            if let Some(root) =
-                                self.collapse_root_node(parent_header, Some(prefix), *root)?
-                            {
-                                let mut root = NodeRef::from(root);
-                                let hash = root.commit(Nibbles::default(), &mut state.nodes);
-                                new_storage_root = Some(hash.finalize());
-                            } else {
-                                state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
-                                new_storage_root = Some(*EMPTY_TRIE_HASH);
-                            }
-                        }
-                        storage_nodes.push((prefix, state.nodes));
-
-                        // Info already applied in ProcessAccount — just update storage_root
-                        let old_state =
-                            accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
-                        if let Some(storage_root) = new_storage_root {
-                            old_state.storage_root = storage_root;
-                        }
-                        let path = prefix.as_bytes();
-                        if *old_state != AccountState::default() {
-                            state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
-                        } else {
-                            state_trie.remove(path)?;
-                        }
-
-                        pending_storage_accounts -= 1;
-                        if pending_storage_accounts == 0
-                            && let Some(tx) = pending_collect_tx.take()
-                        {
-                            t_shard += t0.elapsed();
-                            let t0 = Instant::now();
-                            for (prefix, mut trie) in inline_tries.drain() {
-                                let (new_root, nodes) = trie.collect_changes_since_last_hash();
-                                let acct =
-                                    accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
-                                acct.storage_root = new_root;
-                                let path = prefix.as_bytes();
-                                if *acct != AccountState::default() {
-                                    state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
-                                } else {
-                                    state_trie.remove(path)?;
-                                }
-                                storage_nodes.push((prefix, nodes));
-                            }
-                            let (subroot, state_nodes) =
-                                collect_trie(index, std::mem::take(&mut state_trie))?;
-                            tx.send(CollectedStateMsg {
-                                index,
-                                subroot,
-                                state_nodes,
-                                storage_nodes: std::mem::take(&mut storage_nodes),
-                            })
-                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                            info!(
-                                "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms inline={inline_count} sharded={sharded_count}",
-                                t_process.as_secs_f64() * 1000.0,
-                                t_shard.as_secs_f64() * 1000.0,
-                                t0.elapsed().as_secs_f64() * 1000.0,
-                            );
-                            break;
-                        }
-                    }
-                    t_shard += t0.elapsed();
-                }
-                AccountRequest::MerklizeAccounts { accounts: batch } => {
-                    // Info already applied in ProcessAccount — just record empty storage nodes
-                    for hashed_account in batch {
-                        storage_nodes.push((hashed_account, vec![]));
-                    }
-                }
-                AccountRequest::CollectState { tx } => {
-                    if pending_storage_accounts == 0 {
-                        // All storage accounts already resolved — respond immediately
-                        let t0 = Instant::now();
-                        for (prefix, mut trie) in inline_tries.drain() {
-                            let (new_root, nodes) = trie.collect_changes_since_last_hash();
-                            let acct = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
-                            acct.storage_root = new_root;
-                            let path = prefix.as_bytes();
-                            if *acct != AccountState::default() {
-                                state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
-                            } else {
-                                state_trie.remove(path)?;
-                            }
-                            storage_nodes.push((prefix, nodes));
-                        }
-                        let (subroot, state_nodes) =
-                            collect_trie(index, std::mem::take(&mut state_trie))?;
-                        tx.send(CollectedStateMsg {
-                            index,
-                            subroot,
-                            state_nodes,
-                            storage_nodes: std::mem::take(&mut storage_nodes),
-                        })
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                        info!(
-                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms inline={inline_count} sharded={sharded_count}",
-                            t_process.as_secs_f64() * 1000.0,
-                            t_shard.as_secs_f64() * 1000.0,
-                            t0.elapsed().as_secs_f64() * 1000.0,
-                        );
-                        break;
-                    }
-                    // Defer until all StorageShards arrive
-                    pending_collect_tx = Some(tx);
-                }
-            }
-        }
-        Ok(())
+        collapse_root_node(&self.storage, parent_header.state_root, prefix, root)
     }
 
     /// Executes a block from a given vm instance an does not clear its state
@@ -2900,6 +2499,401 @@ impl Blockchain {
             .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
         Ok(chain_config.fork(latest_block.timestamp))
     }
+}
+
+fn load_trie(
+    storage: &Store,
+    parent_state_root: H256,
+    prefix: Option<H256>,
+) -> Result<Trie, StoreError> {
+    Ok(match prefix {
+        Some(account_hash) => {
+            let state_trie = storage.open_state_trie(parent_state_root)?;
+            let storage_root = match state_trie.get(account_hash.as_bytes())? {
+                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                None => *EMPTY_TRIE_HASH,
+            };
+            storage.open_storage_trie(account_hash, parent_state_root, storage_root)?
+        }
+        None => storage.open_state_trie(parent_state_root)?,
+    })
+}
+
+fn collapse_root_node(
+    storage: &Store,
+    parent_state_root: H256,
+    prefix: Option<H256>,
+    mut root: BranchNode,
+) -> Result<Option<Node>, StoreError> {
+    // Ensures the children are included in the final commit
+    root.choices.iter_mut().for_each(NodeRef::clear_hash);
+    let children: Vec<(usize, &NodeRef)> = root
+        .choices
+        .iter()
+        .enumerate()
+        .filter(|(_, choice)| choice.is_valid())
+        .take(2)
+        .collect();
+    if children.len() > 1 {
+        return Ok(Some(Node::Branch(Box::from(root))));
+    }
+    let Some((choice, only_child)) = children.first() else {
+        return Ok(None);
+    };
+    let only_child = Arc::unwrap_or_clone(match only_child {
+        NodeRef::Node(node, _) => node.clone(),
+        noderef @ NodeRef::Hash(_) => {
+            let trie = load_trie(storage, parent_state_root, prefix)?;
+            let Some(node) = noderef.get_node(trie.db(), Nibbles::from_hex(vec![*choice as u8]))?
+            else {
+                return Ok(None);
+            };
+            node
+        }
+    });
+    Ok(Some(match only_child {
+        Node::Branch(_) => {
+            ExtensionNode::new(Nibbles::from_hex(vec![*choice as u8]), only_child.into()).into()
+        }
+        Node::Extension(mut extension_node) => {
+            extension_node.prefix.prepend(*choice as u8);
+            extension_node.into()
+        }
+        Node::Leaf(mut leaf) => {
+            leaf.partial.prepend(*choice as u8);
+            leaf.into()
+        }
+    }))
+}
+
+fn handle_storage_subtrie(
+    storage: Store,
+    rx: Receiver<StorageRequest>,
+    parent_state_root: H256,
+    index: u8,
+    account_workers_tx: Vec<Sender<AccountRequest>>,
+) -> Result<(), StoreError> {
+    let mut tree: FxHashMap<H256, Trie> = Default::default();
+    for msg in rx {
+        match msg {
+            StorageRequest::Delete(prefix) => {
+                tree.insert(prefix, Trie::new_temp());
+            }
+            StorageRequest::MerklizeStorage {
+                prefix,
+                key,
+                value,
+                storage_root,
+            } => {
+                let trie =
+                    match tree.entry(prefix) {
+                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+                        Entry::Vacant(vacant_entry) => vacant_entry.insert(
+                            storage.open_storage_trie(prefix, parent_state_root, storage_root)?,
+                        ),
+                    };
+                if value.is_zero() {
+                    trie.remove(key.as_bytes())?;
+                } else {
+                    trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+                }
+            }
+            StorageRequest::CollectStorages => {
+                for (prefix, trie) in tree.drain() {
+                    let (root, nodes) = collect_trie(index, trie)?;
+                    let bucket = prefix.as_fixed_bytes()[0] >> 4;
+                    account_workers_tx[bucket as usize]
+                        .send(AccountRequest::StorageShard {
+                            prefix,
+                            index,
+                            subroot: root,
+                            nodes,
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_account_subtrie(
+    storage: Store,
+    rx: Receiver<AccountRequest>,
+    parent_state_root: H256,
+    index: u8,
+    storage_workers_tx: Vec<Sender<StorageRequest>>,
+) -> Result<(), StoreError> {
+    let mut state_trie = storage.open_state_trie(parent_state_root)?;
+    let mut storage_nodes = vec![];
+    let mut accounts: FxHashMap<H256, AccountState> = Default::default();
+    let mut expected_shards: FxHashMap<H256, u16> = Default::default();
+    let mut storage_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
+    let mut received_shards: FxHashMap<H256, u16> = Default::default();
+    // Held until FinishRouting to keep storage worker channels open.
+    let mut storage_workers_tx = Some(storage_workers_tx);
+    let mut pending_storage_accounts: usize = 0;
+    let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
+    let mut t_process = Duration::ZERO;
+    let mut t_shard = Duration::ZERO;
+    let mut inline_count: usize = 0;
+    let mut sharded_count: usize = 0;
+    let mut inline_tries: FxHashMap<H256, Trie> = Default::default();
+
+    for msg in rx {
+        match msg {
+            AccountRequest::ProcessAccount {
+                prefix,
+                info,
+                storage: account_storage,
+                removed,
+                removed_storage,
+            } => {
+                let t0 = Instant::now();
+                let senders = storage_workers_tx
+                    .as_ref()
+                    .expect("ProcessAccount after FinishRouting");
+
+                // Always load account to warm state trie during execution overlap
+                match accounts.entry(prefix) {
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(vacant_entry) => {
+                        let account_state = match state_trie.get(prefix.as_bytes())? {
+                            Some(rlp) => {
+                                let state = AccountState::decode(&rlp)?;
+                                state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
+                                state
+                            }
+                            None => AccountState::default(),
+                        };
+                        vacant_entry.insert(account_state);
+                    }
+                }
+
+                // Apply info immediately and insert into trie
+                if let Some(info) = info {
+                    let acct = accounts.get_mut(&prefix).expect("just loaded");
+                    acct.nonce = info.nonce;
+                    acct.balance = info.balance;
+                    acct.code_hash = info.code_hash;
+                    let path = prefix.as_bytes();
+                    if *acct != AccountState::default() {
+                        state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
+                    } else {
+                        state_trie.remove(path)?;
+                    }
+                }
+
+                if removed || removed_storage {
+                    inline_tries.remove(&prefix);
+                    for tx in senders {
+                        tx.send(StorageRequest::Delete(prefix))
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    }
+                    accounts.get_mut(&prefix).expect("just loaded").storage_root = *EMPTY_TRIE_HASH;
+                    if expected_shards.insert(prefix, 0xFFFF).is_none() {
+                        pending_storage_accounts += 1;
+                    }
+                    if removed {
+                        continue;
+                    }
+                }
+
+                if !account_storage.is_empty() {
+                    let storage_root = accounts
+                        .get(&prefix)
+                        .map(|a| a.storage_root)
+                        .unwrap_or(*EMPTY_TRIE_HASH);
+
+                    let already_sharded = expected_shards.contains_key(&prefix);
+                    let use_inline = if inline_tries.contains_key(&prefix) {
+                        true
+                    } else if !already_sharded {
+                        (sharded_count + inline_count) % 3 == 2
+                    } else {
+                        false
+                    };
+
+                    if use_inline {
+                        let mut storage_trie = inline_tries.remove(&prefix).map_or_else(
+                            || storage.open_storage_trie(prefix, parent_state_root, storage_root),
+                            Ok,
+                        )?;
+                        for (key, value) in account_storage {
+                            let hashed_key = keccak(key);
+                            if value.is_zero() {
+                                storage_trie.remove(hashed_key.as_bytes())?;
+                            } else {
+                                storage_trie.insert(
+                                    hashed_key.as_bytes().to_vec(),
+                                    value.encode_to_vec(),
+                                )?;
+                            }
+                        }
+                        inline_tries.insert(prefix, storage_trie);
+                        inline_count += 1;
+                    } else {
+                        let is_new = !already_sharded;
+                        for (key, value) in account_storage {
+                            let hashed_key = keccak(key);
+                            let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
+                            *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
+                            senders[bucket as usize]
+                                .send(StorageRequest::MerklizeStorage {
+                                    prefix,
+                                    key: hashed_key,
+                                    value,
+                                    storage_root,
+                                })
+                                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        }
+                        if is_new {
+                            pending_storage_accounts += 1;
+                        }
+                        sharded_count += 1;
+                    }
+                }
+                t_process += t0.elapsed();
+            }
+            AccountRequest::FinishRouting { tx } => {
+                tx.send(())
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                storage_workers_tx = None;
+            }
+            AccountRequest::StorageShard {
+                prefix,
+                index: shard_index,
+                mut subroot,
+                nodes,
+            } => {
+                let t0 = Instant::now();
+                let state = storage_state.entry(prefix).or_default();
+                match &mut state.storage_root {
+                    Some(root) => {
+                        root.choices[shard_index as usize] =
+                            std::mem::take(&mut subroot.choices[shard_index as usize]);
+                    }
+                    rootptr => {
+                        *rootptr = Some(subroot);
+                    }
+                }
+                state.nodes.extend(nodes);
+
+                let received = received_shards.entry(prefix).or_insert(0u16);
+                *received |= 1 << shard_index;
+                if *received == expected_shards.get(&prefix).copied().unwrap_or(0) {
+                    // All shards received — compute storage root and re-insert
+                    let mut state = storage_state.remove(&prefix).expect("shard without state");
+                    let mut new_storage_root = None;
+                    if let Some(root) = state.storage_root {
+                        if let Some(root) =
+                            collapse_root_node(&storage, parent_state_root, Some(prefix), *root)?
+                        {
+                            let mut root = NodeRef::from(root);
+                            let hash = root.commit(Nibbles::default(), &mut state.nodes);
+                            new_storage_root = Some(hash.finalize());
+                        } else {
+                            state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
+                            new_storage_root = Some(*EMPTY_TRIE_HASH);
+                        }
+                    }
+                    storage_nodes.push((prefix, state.nodes));
+
+                    // Info already applied in ProcessAccount — just update storage_root
+                    let old_state = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
+                    if let Some(storage_root) = new_storage_root {
+                        old_state.storage_root = storage_root;
+                    }
+                    let path = prefix.as_bytes();
+                    if *old_state != AccountState::default() {
+                        state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
+                    } else {
+                        state_trie.remove(path)?;
+                    }
+
+                    pending_storage_accounts -= 1;
+                    if pending_storage_accounts == 0
+                        && let Some(tx) = pending_collect_tx.take()
+                    {
+                        t_shard += t0.elapsed();
+                        let t0 = Instant::now();
+                        for (prefix, mut trie) in inline_tries.drain() {
+                            let (new_root, nodes) = trie.collect_changes_since_last_hash();
+                            let acct = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
+                            acct.storage_root = new_root;
+                            let path = prefix.as_bytes();
+                            if *acct != AccountState::default() {
+                                state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
+                            } else {
+                                state_trie.remove(path)?;
+                            }
+                            storage_nodes.push((prefix, nodes));
+                        }
+                        let (subroot, state_nodes) =
+                            collect_trie(index, std::mem::take(&mut state_trie))?;
+                        tx.send(CollectedStateMsg {
+                            index,
+                            subroot,
+                            state_nodes,
+                            storage_nodes: std::mem::take(&mut storage_nodes),
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        info!(
+                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms inline={inline_count} sharded={sharded_count}",
+                            t_process.as_secs_f64() * 1000.0,
+                            t_shard.as_secs_f64() * 1000.0,
+                            t0.elapsed().as_secs_f64() * 1000.0,
+                        );
+                        break;
+                    }
+                }
+                t_shard += t0.elapsed();
+            }
+            AccountRequest::MerklizeAccounts { accounts: batch } => {
+                // Info already applied in ProcessAccount — just record empty storage nodes
+                for hashed_account in batch {
+                    storage_nodes.push((hashed_account, vec![]));
+                }
+            }
+            AccountRequest::CollectState { tx } => {
+                if pending_storage_accounts == 0 {
+                    // All storage accounts already resolved — respond immediately
+                    let t0 = Instant::now();
+                    for (prefix, mut trie) in inline_tries.drain() {
+                        let (new_root, nodes) = trie.collect_changes_since_last_hash();
+                        let acct = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
+                        acct.storage_root = new_root;
+                        let path = prefix.as_bytes();
+                        if *acct != AccountState::default() {
+                            state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
+                        } else {
+                            state_trie.remove(path)?;
+                        }
+                        storage_nodes.push((prefix, nodes));
+                    }
+                    let (subroot, state_nodes) =
+                        collect_trie(index, std::mem::take(&mut state_trie))?;
+                    tx.send(CollectedStateMsg {
+                        index,
+                        subroot,
+                        state_nodes,
+                        storage_nodes: std::mem::take(&mut storage_nodes),
+                    })
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    info!(
+                        "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms inline={inline_count} sharded={sharded_count}",
+                        t_process.as_secs_f64() * 1000.0,
+                        t_shard.as_secs_f64() * 1000.0,
+                        t0.elapsed().as_secs_f64() * 1000.0,
+                    );
+                    break;
+                }
+                // Defer until all StorageShards arrive
+                pending_collect_tx = Some(tx);
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
