@@ -2565,10 +2565,42 @@ fn handle_storage_subtrie(
     account_workers_tx: Vec<Sender<AccountRequest>>,
 ) -> Result<(), StoreError> {
     let mut tree: FxHashMap<H256, Trie> = Default::default();
-    for msg in rx {
+    let mut pre_collected: FxHashMap<H256, Vec<TrieNode>> = Default::default();
+    let mut n_pre_collected: usize = 0;
+    let mut dirty = false;
+
+    loop {
+        // When dirty, poll non-blocking so we can pre-collect during idle.
+        // When clean, just block — nothing to do until a message arrives.
+        let msg = if dirty {
+            match rx.try_recv() {
+                Ok(msg) => msg,
+                Err(_) => {
+                    for (prefix, trie) in tree.iter_mut() {
+                        let mut nodes = trie.commit_without_storing();
+                        nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+                        if !nodes.is_empty() {
+                            pre_collected.entry(*prefix).or_default().extend(nodes);
+                            n_pre_collected += 1;
+                        }
+                    }
+                    dirty = false;
+                    continue;
+                }
+            }
+        } else {
+            match rx.recv() {
+                Ok(msg) => msg,
+                Err(_) => break,
+            }
+        };
+
         match msg {
+            StorageRequest::CollectStorages => break,
             StorageRequest::Delete(prefix) => {
+                pre_collected.remove(&prefix);
                 tree.insert(prefix, Trie::new_temp());
+                dirty = true;
             }
             StorageRequest::MerklizeStorage {
                 prefix,
@@ -2576,42 +2608,50 @@ fn handle_storage_subtrie(
                 value,
                 storage_root,
             } => {
-                let trie =
-                    match tree.entry(prefix) {
-                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
-                        Entry::Vacant(vacant_entry) => vacant_entry.insert(
-                            storage.open_storage_trie(prefix, parent_state_root, storage_root)?,
-                        ),
-                    };
+                let trie = match tree.entry(prefix) {
+                    Entry::Occupied(e) => e.into_mut(),
+                    Entry::Vacant(e) => e.insert(storage.open_storage_trie(
+                        prefix,
+                        parent_state_root,
+                        storage_root,
+                    )?),
+                };
                 if value.is_zero() {
                     trie.remove(key.as_bytes())?;
                 } else {
                     trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
                 }
-            }
-            StorageRequest::CollectStorages => {
-                let t0 = Instant::now();
-                let n_accounts = tree.len();
-                for (prefix, trie) in tree.drain() {
-                    let (root, nodes) = collect_trie(index, trie)?;
-                    let bucket = prefix.as_fixed_bytes()[0] >> 4;
-                    account_workers_tx[bucket as usize]
-                        .send(AccountRequest::StorageShard {
-                            prefix,
-                            index,
-                            subroot: root,
-                            nodes,
-                        })
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                }
-                info!(
-                    "  storage[{index}]: collect={:.1}ms accounts={}",
-                    t0.elapsed().as_secs_f64() * 1000.0,
-                    n_accounts,
-                );
+                dirty = true;
             }
         }
     }
+
+    // Finalize: collect remaining tries, merge with pre-collected, send shards
+    let t0 = Instant::now();
+    let n_accounts = tree.len();
+    for (prefix, trie) in tree.drain() {
+        let (root, mut nodes) = collect_trie(index, trie)?;
+        // Pre-collected nodes first, delta nodes after (delta overwrites stale entries)
+        if let Some(mut pre_nodes) = pre_collected.remove(&prefix) {
+            pre_nodes.extend(nodes);
+            nodes = pre_nodes;
+        }
+        let bucket = prefix.as_fixed_bytes()[0] >> 4;
+        account_workers_tx[bucket as usize]
+            .send(AccountRequest::StorageShard {
+                prefix,
+                index,
+                subroot: root,
+                nodes,
+            })
+            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+    }
+    info!(
+        "  storage[{index}]: collect={:.1}ms accounts={} pre_collected={}",
+        t0.elapsed().as_secs_f64() * 1000.0,
+        n_accounts,
+        n_pre_collected,
+    );
     Ok(())
 }
 
