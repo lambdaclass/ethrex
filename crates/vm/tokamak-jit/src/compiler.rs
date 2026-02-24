@@ -63,6 +63,7 @@ impl TokamakCompiler {
                     analyzed.bytecode.len(),
                     analyzed.basic_blocks.len(),
                     None, // func_id: not tracked yet (no persistent LLVM context)
+                    analyzed.has_external_calls,
                 )
             };
 

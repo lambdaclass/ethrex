@@ -4,6 +4,7 @@
 //! same input state and compares their outcomes. Mismatches trigger cache
 //! invalidation and fallback to the interpreter result.
 
+use crate::db::gen_db::CacheDB;
 use crate::errors::{ContextResult, TxResult};
 
 /// Result of comparing JIT execution against interpreter execution.
@@ -17,9 +18,9 @@ pub enum DualExecutionResult {
 
 /// Compare a JIT execution outcome against an interpreter execution outcome.
 ///
-/// Checks status, gas_used, output bytes, and logs (via the substate).
-/// The `jit_logs` and `interp_logs` are passed separately since they come
-/// from different substate snapshots.
+/// Checks status, gas_used, output bytes, refunded gas, logs, and **DB state
+/// changes** (account balances, nonces, and storage for all modified accounts).
+#[allow(clippy::too_many_arguments)]
 pub fn validate_dual_execution(
     jit_result: &ContextResult,
     interp_result: &ContextResult,
@@ -27,6 +28,8 @@ pub fn validate_dual_execution(
     interp_refunded_gas: u64,
     jit_logs: &[ethrex_common::types::Log],
     interp_logs: &[ethrex_common::types::Log],
+    jit_accounts: &CacheDB,
+    interp_accounts: &CacheDB,
 ) -> DualExecutionResult {
     // 1. Compare status (success vs revert)
     let jit_success = matches!(jit_result.result, TxResult::Success);
@@ -89,15 +92,94 @@ pub fn validate_dual_execution(
         }
     }
 
+    // 6. Compare DB state changes (balance, nonce, storage for modified accounts)
+    if let Some(reason) = compare_account_states(jit_accounts, interp_accounts) {
+        return DualExecutionResult::Mismatch { reason };
+    }
+
     DualExecutionResult::Match
+}
+
+/// Compare modified account states between JIT and interpreter DB snapshots.
+///
+/// Returns `Some(reason)` on first mismatch, `None` if all modified accounts match.
+fn compare_account_states(jit_accounts: &CacheDB, interp_accounts: &CacheDB) -> Option<String> {
+    // Check every address present in either DB
+    // Collect all addresses that were modified in either
+    for (address, jit_account) in jit_accounts {
+        if jit_account.is_unmodified() {
+            continue;
+        }
+        let Some(interp_account) = interp_accounts.get(address) else {
+            return Some(format!(
+                "state mismatch: account {address:?} modified by JIT but absent in interpreter DB"
+            ));
+        };
+
+        // Compare balance
+        if jit_account.info.balance != interp_account.info.balance {
+            return Some(format!(
+                "state mismatch: account {address:?} balance JIT={} interpreter={}",
+                jit_account.info.balance, interp_account.info.balance,
+            ));
+        }
+
+        // Compare nonce
+        if jit_account.info.nonce != interp_account.info.nonce {
+            return Some(format!(
+                "state mismatch: account {address:?} nonce JIT={} interpreter={}",
+                jit_account.info.nonce, interp_account.info.nonce,
+            ));
+        }
+
+        // Compare storage slots
+        for (slot, jit_value) in &jit_account.storage {
+            let interp_value = interp_account
+                .storage
+                .get(slot)
+                .copied()
+                .unwrap_or_default();
+            if *jit_value != interp_value {
+                return Some(format!(
+                    "state mismatch: account {address:?} storage slot {slot:?} \
+                     JIT={jit_value} interpreter={interp_value}",
+                ));
+            }
+        }
+        // Check slots in interpreter but not in JIT
+        for (slot, interp_value) in &interp_account.storage {
+            if !jit_account.storage.contains_key(slot) && !interp_value.is_zero() {
+                return Some(format!(
+                    "state mismatch: account {address:?} storage slot {slot:?} \
+                     JIT=0 interpreter={interp_value}",
+                ));
+            }
+        }
+    }
+
+    // Check accounts modified by interpreter but absent in JIT DB
+    for (address, interp_account) in interp_accounts {
+        if interp_account.is_unmodified() {
+            continue;
+        }
+        if !jit_accounts.contains_key(address) {
+            return Some(format!(
+                "state mismatch: account {address:?} modified by interpreter but absent in JIT DB"
+            ));
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::{AccountStatus, LevmAccount};
     use bytes::Bytes;
-    use ethrex_common::types::Log;
-    use ethrex_common::{Address, H256};
+    use ethrex_common::types::{AccountInfo, Log};
+    use ethrex_common::{Address, H256, U256};
+    use rustc_hash::FxHashMap;
 
     fn success_result(gas_used: u64, output: &[u8]) -> ContextResult {
         ContextResult {
@@ -126,11 +208,31 @@ mod tests {
         }
     }
 
+    fn empty_accounts() -> CacheDB {
+        FxHashMap::default()
+    }
+
+    fn make_account(balance: u64, nonce: u64, storage: Vec<(H256, U256)>) -> LevmAccount {
+        LevmAccount {
+            info: AccountInfo {
+                code_hash: H256::zero(),
+                balance: U256::from(balance),
+                nonce,
+            },
+            storage: storage.into_iter().collect(),
+            has_storage: false,
+            status: AccountStatus::Modified,
+        }
+    }
+
+    // ---- Basic comparison tests (unchanged behavior) ----
+
     #[test]
     fn test_matching_success_outcomes() {
         let jit = success_result(21000, &[0x01, 0x02]);
         let interp = success_result(21000, &[0x01, 0x02]);
-        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[]);
+        let db = empty_accounts();
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &db, &db);
         assert!(matches!(result, DualExecutionResult::Match));
     }
 
@@ -138,7 +240,8 @@ mod tests {
     fn test_gas_mismatch() {
         let jit = success_result(21000, &[]);
         let interp = success_result(21500, &[]);
-        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[]);
+        let db = empty_accounts();
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &db, &db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("gas_used"));
@@ -149,7 +252,8 @@ mod tests {
     fn test_output_mismatch() {
         let jit = success_result(21000, &[0x01]);
         let interp = success_result(21000, &[0x02]);
-        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[]);
+        let db = empty_accounts();
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &db, &db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("output"));
@@ -160,7 +264,8 @@ mod tests {
     fn test_status_mismatch_success_vs_revert() {
         let jit = success_result(21000, &[]);
         let interp = revert_result(21000, &[]);
-        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[]);
+        let db = empty_accounts();
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &db, &db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("status"));
@@ -172,7 +277,8 @@ mod tests {
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
         let log = make_log(Address::zero(), vec![], vec![0x42]);
-        let result = validate_dual_execution(&jit, &interp, 0, 0, &[log], &[]);
+        let db = empty_accounts();
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[log], &[], &db, &db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("log count"));
@@ -183,7 +289,8 @@ mod tests {
     fn test_refunded_gas_mismatch() {
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
-        let result = validate_dual_execution(&jit, &interp, 100, 200, &[], &[]);
+        let db = empty_accounts();
+        let result = validate_dual_execution(&jit, &interp, 100, 200, &[], &[], &db, &db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("refunded_gas"));
@@ -196,7 +303,8 @@ mod tests {
         let interp = success_result(30000, &[0xAA]);
         let log1 = make_log(Address::zero(), vec![H256::zero()], vec![1, 2, 3]);
         let log2 = make_log(Address::zero(), vec![H256::zero()], vec![1, 2, 3]);
-        let result = validate_dual_execution(&jit, &interp, 50, 50, &[log1], &[log2]);
+        let db = empty_accounts();
+        let result = validate_dual_execution(&jit, &interp, 50, 50, &[log1], &[log2], &db, &db);
         assert!(matches!(result, DualExecutionResult::Match));
     }
 
@@ -206,11 +314,144 @@ mod tests {
         let interp = success_result(30000, &[]);
         let jit_log = make_log(Address::zero(), vec![], vec![1]);
         let interp_log = make_log(Address::zero(), vec![], vec![2]);
+        let db = empty_accounts();
         let result =
-            validate_dual_execution(&jit, &interp, 0, 0, &[jit_log], &[interp_log]);
+            validate_dual_execution(&jit, &interp, 0, 0, &[jit_log], &[interp_log], &db, &db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("log mismatch at index"));
+        }
+    }
+
+    // ---- DB state comparison tests (Fix 1) ----
+
+    #[test]
+    fn test_matching_db_state_with_storage() {
+        let addr = Address::from_low_u64_be(0x42);
+        let slot = H256::from_low_u64_be(1);
+        let value = U256::from(999);
+
+        let mut jit_db: CacheDB = FxHashMap::default();
+        jit_db.insert(addr, make_account(100, 1, vec![(slot, value)]));
+
+        let mut interp_db: CacheDB = FxHashMap::default();
+        interp_db.insert(addr, make_account(100, 1, vec![(slot, value)]));
+
+        let jit = success_result(21000, &[]);
+        let interp = success_result(21000, &[]);
+        let result =
+            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        assert!(matches!(result, DualExecutionResult::Match));
+    }
+
+    #[test]
+    fn test_balance_mismatch() {
+        let addr = Address::from_low_u64_be(0x42);
+
+        let mut jit_db: CacheDB = FxHashMap::default();
+        jit_db.insert(addr, make_account(100, 1, vec![]));
+
+        let mut interp_db: CacheDB = FxHashMap::default();
+        interp_db.insert(addr, make_account(200, 1, vec![]));
+
+        let jit = success_result(21000, &[]);
+        let interp = success_result(21000, &[]);
+        let result =
+            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
+        if let DualExecutionResult::Mismatch { reason } = result {
+            assert!(reason.contains("balance"));
+        }
+    }
+
+    #[test]
+    fn test_nonce_mismatch() {
+        let addr = Address::from_low_u64_be(0x42);
+
+        let mut jit_db: CacheDB = FxHashMap::default();
+        jit_db.insert(addr, make_account(100, 1, vec![]));
+
+        let mut interp_db: CacheDB = FxHashMap::default();
+        interp_db.insert(addr, make_account(100, 2, vec![]));
+
+        let jit = success_result(21000, &[]);
+        let interp = success_result(21000, &[]);
+        let result =
+            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
+        if let DualExecutionResult::Mismatch { reason } = result {
+            assert!(reason.contains("nonce"));
+        }
+    }
+
+    #[test]
+    fn test_storage_slot_mismatch() {
+        let addr = Address::from_low_u64_be(0x42);
+        let slot = H256::from_low_u64_be(1);
+
+        let mut jit_db: CacheDB = FxHashMap::default();
+        jit_db.insert(addr, make_account(100, 1, vec![(slot, U256::from(10))]));
+
+        let mut interp_db: CacheDB = FxHashMap::default();
+        interp_db.insert(addr, make_account(100, 1, vec![(slot, U256::from(20))]));
+
+        let jit = success_result(21000, &[]);
+        let interp = success_result(21000, &[]);
+        let result =
+            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
+        if let DualExecutionResult::Mismatch { reason } = result {
+            assert!(reason.contains("storage slot"));
+        }
+    }
+
+    #[test]
+    fn test_unmodified_accounts_ignored() {
+        let addr = Address::from_low_u64_be(0x42);
+
+        let mut jit_db: CacheDB = FxHashMap::default();
+        let mut jit_acct = make_account(100, 1, vec![]);
+        jit_acct.status = AccountStatus::Unmodified;
+        jit_db.insert(addr, jit_acct);
+
+        let mut interp_db: CacheDB = FxHashMap::default();
+        let mut interp_acct = make_account(200, 2, vec![]);
+        interp_acct.status = AccountStatus::Unmodified;
+        interp_db.insert(addr, interp_acct);
+
+        // Different values but both unmodified — should be Match
+        let jit = success_result(21000, &[]);
+        let interp = success_result(21000, &[]);
+        let result =
+            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        assert!(matches!(result, DualExecutionResult::Match));
+    }
+
+    #[test]
+    fn test_extra_storage_slot_in_interpreter() {
+        let addr = Address::from_low_u64_be(0x42);
+        let slot1 = H256::from_low_u64_be(1);
+        let slot2 = H256::from_low_u64_be(2);
+
+        let mut jit_db: CacheDB = FxHashMap::default();
+        jit_db.insert(
+            addr,
+            make_account(100, 1, vec![(slot1, U256::from(10))]),
+        );
+
+        let mut interp_db: CacheDB = FxHashMap::default();
+        interp_db.insert(
+            addr,
+            make_account(100, 1, vec![(slot1, U256::from(10)), (slot2, U256::from(5))]),
+        );
+
+        let jit = success_result(21000, &[]);
+        let interp = success_result(21000, &[]);
+        let result =
+            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
+        if let DualExecutionResult::Mismatch { reason } = result {
+            assert!(reason.contains("storage slot"));
         }
     }
 }

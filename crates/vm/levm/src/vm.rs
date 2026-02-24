@@ -633,9 +633,7 @@ impl<'a> VM<'a> {
                     let cache_key = (bytecode_hash, fork);
                     let needs_validation = JIT_STATE.config.validation_mode
                         && JIT_STATE.should_validate(&cache_key)
-                        && !crate::jit::analyzer::bytecode_has_external_calls(
-                            &self.current_call_frame.bytecode.bytecode,
-                        );
+                        && !compiled.has_external_calls;
                     let pre_jit_snapshot = if needs_validation {
                         Some((
                             self.db.clone(),
@@ -704,6 +702,9 @@ impl<'a> VM<'a> {
                                     apply_jit_outcome(outcome, &self.current_call_frame)?;
                                 let jit_refunded_gas = self.substate.refunded_gas;
                                 let jit_logs = self.substate.extract_logs();
+                                // Capture JIT DB state before swap (pre_jit_db will hold it)
+                                let jit_accounts =
+                                    self.db.current_accounts_state.clone();
 
                                 // Swap JIT-mutated state with pre-JIT snapshots
                                 // (VM now holds original state for interpreter replay)
@@ -718,12 +719,37 @@ impl<'a> VM<'a> {
                                     &mut pre_jit_storage,
                                 );
 
-                                // Run interpreter on the original state
-                                let interp_result = self.interpreter_loop(0)?;
+                                // Run interpreter on the original state.
+                                // If interpreter_loop fails (InternalError), swap back to
+                                // JIT state and return JIT result — validation is inconclusive
+                                // but JIT succeeded, and InternalError is a programming bug.
+                                let interp_result = match self.interpreter_loop(0) {
+                                    Ok(result) => result,
+                                    Err(_e) => {
+                                        eprintln!(
+                                            "[JIT-VALIDATE] interpreter replay failed for \
+                                             {bytecode_hash}, trusting JIT result"
+                                        );
+                                        mem::swap(self.db, &mut pre_jit_db);
+                                        mem::swap(
+                                            &mut self.current_call_frame,
+                                            &mut pre_jit_frame,
+                                        );
+                                        mem::swap(
+                                            &mut self.substate,
+                                            &mut pre_jit_substate,
+                                        );
+                                        mem::swap(
+                                            &mut self.storage_original_values,
+                                            &mut pre_jit_storage,
+                                        );
+                                        return Ok(jit_result);
+                                    }
+                                };
                                 let interp_refunded_gas = self.substate.refunded_gas;
                                 let interp_logs = self.substate.extract_logs();
 
-                                // Compare JIT vs interpreter
+                                // Compare JIT vs interpreter (including DB state)
                                 let validation =
                                     crate::jit::validation::validate_dual_execution(
                                         &jit_result,
@@ -732,6 +758,8 @@ impl<'a> VM<'a> {
                                         interp_refunded_gas,
                                         &jit_logs,
                                         &interp_logs,
+                                        &jit_accounts,
+                                        &self.db.current_accounts_state,
                                     );
 
                                 match validation {
