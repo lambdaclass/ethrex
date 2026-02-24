@@ -35,20 +35,47 @@ pub fn compute_root(
     upper: &mut SparseSubtrie,
     lower: &mut [LowerSubtrie],
 ) -> Result<H256, TrieError> {
-    // Hash all lower subtries in parallel via rayon.
-    // Each lower subtrie is independent, so they can be hashed concurrently.
-    lower.par_iter_mut().try_for_each(|lower_subtrie| {
-        let subtrie = match lower_subtrie {
-            LowerSubtrie::Revealed(s) => s,
-            LowerSubtrie::Blind(Some(s)) => s,
-            LowerSubtrie::Blind(None) => return Ok(()),
-        };
-        // Skip subtries with no dirty nodes — all hashes are still valid
-        if subtrie.dirty_nodes.is_empty() {
-            return Ok(());
+    // Count dirty subtries to decide parallel vs sequential.
+    // Rayon spawn overhead (~5-10 μs each) dominates when few subtries need work.
+    const MIN_PARALLEL_SUBTRIES: usize = 4;
+
+    let dirty_count = lower
+        .iter()
+        .filter(|l| match l {
+            LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) => {
+                !s.dirty_nodes.is_empty()
+            }
+            _ => false,
+        })
+        .count();
+
+    if dirty_count >= MIN_PARALLEL_SUBTRIES {
+        // Hash dirty lower subtries in parallel via rayon.
+        lower.par_iter_mut().try_for_each(|lower_subtrie| {
+            let subtrie = match lower_subtrie {
+                LowerSubtrie::Revealed(s) => s,
+                LowerSubtrie::Blind(Some(s)) => s,
+                LowerSubtrie::Blind(None) => return Ok(()),
+            };
+            if subtrie.dirty_nodes.is_empty() {
+                return Ok(());
+            }
+            hash_subtrie(subtrie)
+        })?;
+    } else {
+        // Few dirty subtries — hash sequentially to avoid rayon overhead.
+        for lower_subtrie in lower.iter_mut() {
+            let subtrie = match lower_subtrie {
+                LowerSubtrie::Revealed(s) => s,
+                LowerSubtrie::Blind(Some(s)) => s,
+                LowerSubtrie::Blind(None) => continue,
+            };
+            if subtrie.dirty_nodes.is_empty() {
+                continue;
+            }
+            hash_subtrie(subtrie)?;
         }
-        hash_subtrie(subtrie)
-    })?;
+    }
 
     finalize_root(upper, lower)
 }
