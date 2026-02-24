@@ -119,24 +119,16 @@ interface IOnChainProposer {
         bytes[] calldata _rlpEncodedBlocks
     ) external;
 
-    /// @notice Method used to verify a batch of L2 blocks.
-    /// @dev This method is used by the operator when a batch is ready to be
-    /// verified (this is after proved).
-    /// @param batchNumber is the number of the batch to be verified.
-    /// ----------------------------------------------------------------------
-    /// @param risc0BlockProof is the proof of the batch to be verified.
-    /// ----------------------------------------------------------------------
-    /// @param sp1ProofBytes Groth16 proof
-    /// ----------------------------------------------------------------------
-    /// @param tdxSignature TDX signature
-    function verifyBatch(
-        uint256 batchNumber,
-        //risc0
-        bytes memory risc0BlockProof,
-        //sp1
-        bytes memory sp1ProofBytes,
-        //tdx
-        bytes memory tdxSignature
+    /// @notice Method used to verify one or more consecutive L2 batches in a single transaction.
+    /// @param firstBatchNumber The batch number of the first batch to verify. Must be `lastVerifiedBatch + 1`.
+    /// @param risc0BlockProofs An array of RISC0 proofs, one per batch.
+    /// @param sp1ProofsBytes An array of SP1 proofs, one per batch.
+    /// @param tdxSignatures An array of TDX signatures, one per batch.
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
     ) external;
 
     // TODO: imageid, programvkey and riscvvkey should be constants

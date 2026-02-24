@@ -1,4 +1,6 @@
 #[cfg(feature = "l2")]
+mod error_selectors;
+#[cfg(feature = "l2")]
 mod integration_tests;
 mod sdk;
 #[cfg(feature = "l2")]

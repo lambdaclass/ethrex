@@ -286,23 +286,15 @@ contract OnChainProposer is
         );
     }
 
-    /// @inheritdoc IOnChainProposer
-    /// @notice The first `require` checks that the batch number is the subsequent block.
-    /// @notice The second `require` checks if the batch has been committed.
-    /// @notice The order of these `require` statements is important.
-    /// Ordering Reason: After the verification process, we delete the `batchCommitments` for `batchNumber - 1`. This means that when checking the batch,
-    /// we might get an error indicating that the batch hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
-    function verifyBatch(
+    /// @notice Internal batch verification logic used by verifyBatches.
+    function _verifyBatchInternal(
         uint256 batchNumber,
-        //risc0
-        bytes memory risc0BlockProof,
-        //sp1
-        bytes memory sp1ProofBytes,
-        //tdx
-        bytes memory tdxSignature
-    ) external {
-        if (ALIGNED_MODE) revert UseAlignedVerification();
-
+        bytes calldata risc0BlockProof,
+        bytes calldata sp1ProofBytes,
+        bytes calldata tdxSignature
+    ) internal {
+        if (batchNumber != lastVerifiedBatch + 1)
+            revert BatchNotSequential();
         if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
             revert BatchNotCommitted();
 
@@ -327,6 +319,7 @@ contract OnChainProposer is
         }
 
         // Reconstruct public inputs from commitments
+        // MUST be BEFORE updating lastVerifiedBatch
         bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
 
         if (REQUIRE_RISC0_PROOF) {
@@ -370,12 +363,42 @@ contract OnChainProposer is
             }
         }
 
+        // MUST be AFTER _getPublicInputsFromCommitment
         lastVerifiedBatch = batchNumber;
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
 
         emit BatchVerified(lastVerifiedBatch);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    /// @notice Callable by anyone (no access control) so that any party can
+    ///         advance verification once proofs are available.
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
+    ) external {
+        require(
+            !ALIGNED_MODE,
+            "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead."
+        );
+        uint256 batchCount = risc0BlockProofs.length;
+        require(batchCount > 0, "OnChainProposer: empty batch array");
+        require(
+            sp1ProofsBytes.length == batchCount && tdxSignatures.length == batchCount,
+            "OnChainProposer: array length mismatch"
+        );
+        for (uint256 i = 0; i < batchCount; i++) {
+            _verifyBatchInternal(
+                firstBatchNumber + i,
+                risc0BlockProofs[i],
+                sp1ProofsBytes[i],
+                tdxSignatures[i]
+            );
+        }
     }
 
     /// @inheritdoc IOnChainProposer
