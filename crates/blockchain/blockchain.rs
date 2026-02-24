@@ -669,18 +669,11 @@ impl Blockchain {
         }
         drop(storage_workers_tx);
 
-        // Join storage workers — ensures all StorageShard messages are queued
-        // in account workers before CollectState arrives.
-        for handle in storage_workers_handles {
-            handle
-                .join()
-                .map_err(|_| StoreError::Custom("storage worker panicked".to_string()))??;
-        }
-        let t_storage_joined = Instant::now();
-
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
-        // Collect state from account workers
+        // Send CollectState immediately — account workers defer until all shards arrive.
+        // No need to join storage workers first: account workers track expected_shards
+        // and will wait for all StorageShards before producing their result.
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &account_workers_tx {
             tx.send(AccountRequest::CollectState {
@@ -689,6 +682,7 @@ impl Blockchain {
             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
         drop(gatherer_tx);
+        drop(account_workers_tx);
 
         let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
@@ -703,7 +697,13 @@ impl Blockchain {
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
-        let t_state_collected = Instant::now();
+        // Join storage workers for error propagation (should already be done).
+        for handle in storage_workers_handles {
+            handle
+                .join()
+                .map_err(|_| StoreError::Custom("storage worker panicked".to_string()))??;
+        }
+        let t_gathered = Instant::now();
 
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
@@ -716,11 +716,10 @@ impl Blockchain {
             };
         let t_root = Instant::now();
         info!(
-            "  drain breakdown: barrier={:.1}ms storage_join={:.1}ms collect_state={:.1}ms root={:.1}ms",
+            "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms",
             t_barrier.duration_since(t_drain_start).as_secs_f64() * 1000.0,
-            t_storage_joined.duration_since(t_barrier).as_secs_f64() * 1000.0,
-            t_state_collected.duration_since(t_storage_joined).as_secs_f64() * 1000.0,
-            t_root.duration_since(t_state_collected).as_secs_f64() * 1000.0,
+            t_gathered.duration_since(t_barrier).as_secs_f64() * 1000.0,
+            t_root.duration_since(t_gathered).as_secs_f64() * 1000.0,
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
@@ -877,9 +876,11 @@ impl Blockchain {
         let mut received_shards: FxHashMap<H256, u16> = Default::default();
         // Held until FinishRouting to keep storage worker channels open.
         let mut storage_workers_tx = Some(storage_workers_tx);
+        let mut pending_storage_accounts: usize = 0;
+        let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
         let mut t_process = Duration::ZERO;
         let mut t_shard = Duration::ZERO;
-        let mut t_collect;
+
         for msg in rx {
             match msg {
                 AccountRequest::ProcessAccount {
@@ -929,11 +930,11 @@ impl Blockchain {
                             tx.send(StorageRequest::Delete(prefix))
                                 .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                         }
-                        accounts
-                            .get_mut(&prefix)
-                            .expect("just loaded")
-                            .storage_root = *EMPTY_TRIE_HASH;
-                        expected_shards.insert(prefix, 0xFFFF);
+                        accounts.get_mut(&prefix).expect("just loaded").storage_root =
+                            *EMPTY_TRIE_HASH;
+                        if expected_shards.insert(prefix, 0xFFFF).is_none() {
+                            pending_storage_accounts += 1;
+                        }
                         if removed {
                             continue;
                         }
@@ -944,6 +945,7 @@ impl Blockchain {
                             .get(&prefix)
                             .map(|a| a.storage_root)
                             .unwrap_or(*EMPTY_TRIE_HASH);
+                        let is_new = !expected_shards.contains_key(&prefix);
                         for (key, value) in storage {
                             let hashed_key = keccak(key);
                             let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
@@ -956,6 +958,9 @@ impl Blockchain {
                                     storage_root,
                                 })
                                 .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        }
+                        if is_new {
+                            pending_storage_accounts += 1;
                         }
                     }
                     t_process += t0.elapsed();
@@ -1016,6 +1021,30 @@ impl Blockchain {
                         } else {
                             state_trie.remove(path)?;
                         }
+
+                        pending_storage_accounts -= 1;
+                        if pending_storage_accounts == 0
+                            && let Some(tx) = pending_collect_tx.take()
+                        {
+                            t_shard += t0.elapsed();
+                            let t0 = Instant::now();
+                            let (subroot, state_nodes) =
+                                collect_trie(index, std::mem::take(&mut state_trie))?;
+                            tx.send(CollectedStateMsg {
+                                index,
+                                subroot,
+                                state_nodes,
+                                storage_nodes: std::mem::take(&mut storage_nodes),
+                            })
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                            info!(
+                                "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
+                                t_process.as_secs_f64() * 1000.0,
+                                t_shard.as_secs_f64() * 1000.0,
+                                t0.elapsed().as_secs_f64() * 1000.0,
+                            );
+                            break;
+                        }
                     }
                     t_shard += t0.elapsed();
                 }
@@ -1026,23 +1055,28 @@ impl Blockchain {
                     }
                 }
                 AccountRequest::CollectState { tx } => {
-                    let t0 = Instant::now();
-                    let (subroot, state_nodes) =
-                        collect_trie(index, std::mem::take(&mut state_trie))?;
-                    tx.send(CollectedStateMsg {
-                        index,
-                        subroot,
-                        state_nodes,
-                        storage_nodes: std::mem::take(&mut storage_nodes),
-                    })
-                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    t_collect = t0.elapsed();
-                    info!(
-                        "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
-                        t_process.as_secs_f64() * 1000.0,
-                        t_shard.as_secs_f64() * 1000.0,
-                        t_collect.as_secs_f64() * 1000.0,
-                    );
+                    if pending_storage_accounts == 0 {
+                        // All storage accounts already resolved — respond immediately
+                        let t0 = Instant::now();
+                        let (subroot, state_nodes) =
+                            collect_trie(index, std::mem::take(&mut state_trie))?;
+                        tx.send(CollectedStateMsg {
+                            index,
+                            subroot,
+                            state_nodes,
+                            storage_nodes: std::mem::take(&mut storage_nodes),
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        info!(
+                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
+                            t_process.as_secs_f64() * 1000.0,
+                            t_shard.as_secs_f64() * 1000.0,
+                            t0.elapsed().as_secs_f64() * 1000.0,
+                        );
+                        break;
+                    }
+                    // Defer until all StorageShards arrive
+                    pending_collect_tx = Some(tx);
                 }
             }
         }
