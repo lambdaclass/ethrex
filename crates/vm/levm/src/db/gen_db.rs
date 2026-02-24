@@ -38,6 +38,10 @@ pub struct GeneralizedDatabase {
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
+    /// When true, skip cloning accounts into `initial_accounts_state` on load.
+    /// Used for parallel per-tx DBs where `get_state_transitions_tx` is never called
+    /// (state transitions come from BAL instead).
+    skip_initial_tracking: bool,
 }
 
 impl GeneralizedDatabase {
@@ -51,11 +55,14 @@ impl GeneralizedDatabase {
             codes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
+            skip_initial_tracking: false,
         }
     }
 
     /// Creates a new GeneralizedDatabase with a shared read-only base state.
     /// Used for parallel execution groups that share post-system-call state.
+    /// Skips initial_accounts_state tracking since parallel per-tx DBs never
+    /// call get_state_transitions_tx (state comes from BAL instead).
     pub fn new_with_shared_base(store: Arc<dyn Database>, shared_base: Arc<CacheDB>) -> Self {
         Self {
             store,
@@ -66,6 +73,7 @@ impl GeneralizedDatabase {
             codes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
+            skip_initial_tracking: true,
         }
     }
 
@@ -122,6 +130,7 @@ impl GeneralizedDatabase {
             codes,
             code_metadata: Default::default(),
             bal_recorder: None,
+            skip_initial_tracking: false,
         }
     }
 
@@ -136,18 +145,21 @@ impl GeneralizedDatabase {
                     return Ok(entry.insert(account.clone()));
                 }
                 // Check shared_base (read-only post-system-call snapshot) before hitting store.
-                // Clone on first access so get_state_transitions_tx sees the account in
-                // initial_accounts_state (transparent to diff logic).
                 if let Some(ref base) = self.shared_base
                     && let Some(account) = base.get(&address)
                 {
-                    let cloned = account.clone();
-                    self.initial_accounts_state.insert(address, cloned.clone());
-                    return Ok(entry.insert(cloned));
+                    if !self.skip_initial_tracking {
+                        self.initial_accounts_state
+                            .insert(address, account.clone());
+                    }
+                    return Ok(entry.insert(account.clone()));
                 }
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
-                self.initial_accounts_state.insert(address, account.clone());
+                if !self.skip_initial_tracking {
+                    self.initial_accounts_state
+                        .insert(address, account.clone());
+                }
                 Ok(entry.insert(account))
             }
         }
@@ -237,6 +249,9 @@ impl GeneralizedDatabase {
         key: H256,
     ) -> Result<U256, InternalError> {
         let value = self.store.get_storage_value(address, key)?;
+        if self.skip_initial_tracking {
+            return Ok(value);
+        }
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
             Some(account) => {

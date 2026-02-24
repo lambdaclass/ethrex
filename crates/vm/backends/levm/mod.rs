@@ -366,6 +366,22 @@ impl LEVM {
 
         let mut updates = Vec::new();
 
+        // Batch prefetch all accounts with writes so per-account lookups are cache hits
+        let write_addrs: Vec<Address> = bal
+            .accounts()
+            .iter()
+            .filter(|ac| {
+                !ac.balance_changes.is_empty()
+                    || !ac.nonce_changes.is_empty()
+                    || !ac.code_changes.is_empty()
+                    || !ac.storage_changes.is_empty()
+            })
+            .map(|ac| ac.address)
+            .collect();
+        store
+            .prefetch_accounts(&write_addrs)
+            .map_err(|e| EvmError::Custom(format!("bal_to_account_updates prefetch: {e}")))?;
+
         for acct_changes in bal.accounts() {
             let addr = acct_changes.address;
 
@@ -378,7 +394,7 @@ impl LEVM {
                 continue;
             }
 
-            // Load pre-state for unchanged fields
+            // Load pre-state for unchanged fields (cache hit after prefetch)
             let prestate = store
                 .get_account_state(addr)
                 .map_err(|e| EvmError::Custom(format!("bal_to_account_updates: {e}")))?;
@@ -412,7 +428,10 @@ impl LEVM {
             };
 
             // Storage: per slot, last entry (highest index)
-            let mut added_storage = FxHashMap::default();
+            let mut added_storage = FxHashMap::with_capacity_and_hasher(
+                acct_changes.storage_changes.len(),
+                Default::default(),
+            );
             for slot_change in &acct_changes.storage_changes {
                 if let Some(last) = slot_change.slot_changes.last() {
                     let key = ethrex_common::utils::u256_to_h256(slot_change.slot);
@@ -471,43 +490,35 @@ impl LEVM {
             let nonce_pos = acct_changes
                 .nonce_changes
                 .partition_point(|c| c.block_access_index <= max_idx);
-            let slot_positions: Vec<usize> = acct_changes
-                .storage_changes
-                .iter()
-                .map(|sc| {
-                    sc.slot_changes
-                        .partition_point(|c| c.block_access_index <= max_idx)
-                })
-                .collect();
+            let any_storage = acct_changes.storage_changes.iter().any(|sc| {
+                sc.slot_changes
+                    .first()
+                    .is_some_and(|c| c.block_access_index <= max_idx)
+            });
 
-            if balance_pos == 0 && nonce_pos == 0 && slot_positions.iter().all(|&p| p == 0) {
+            if balance_pos == 0 && nonce_pos == 0 && !any_storage {
                 continue;
             }
 
-            // Load account into cache
+            // Load account into cache, then apply all changes with a single mut ref
             db.get_account(addr)
                 .map_err(|e| EvmError::Custom(format!("seed_db_from_bal load: {e}")))?;
+            let acc = db
+                .get_account_mut(addr)
+                .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
 
             if balance_pos > 0 {
-                let acc = db
-                    .get_account_mut(addr)
-                    .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
                 acc.info.balance = acct_changes.balance_changes[balance_pos - 1].post_balance;
             }
-
             if nonce_pos > 0 {
-                let acc = db
-                    .get_account_mut(addr)
-                    .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
                 acc.info.nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
             }
-
-            for (sc, &pos) in acct_changes.storage_changes.iter().zip(&slot_positions) {
+            for sc in &acct_changes.storage_changes {
+                let pos = sc
+                    .slot_changes
+                    .partition_point(|c| c.block_access_index <= max_idx);
                 if pos > 0 {
                     let key = ethrex_common::utils::u256_to_h256(sc.slot);
-                    let acc = db
-                        .get_account_mut(addr)
-                        .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
                     acc.storage.insert(key, sc.slot_changes[pos - 1].post_value);
                 }
             }
@@ -546,14 +557,13 @@ impl LEVM {
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded)
         let t_exec = std::time::Instant::now();
-        let tx_indices: Vec<usize> = (0..n_txs).collect();
-        let results: Result<Vec<(usize, TxType, ExecutionReport)>, EvmError> = tx_indices
+        let results: Result<Vec<(usize, TxType, ExecutionReport)>, EvmError> = (0..n_txs)
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
                 let (tx, sender) = &txs_with_sender[tx_idx];
                 let mut tx_db =
                     GeneralizedDatabase::new_with_shared_base(store.clone(), system_seed.clone());
-                let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
+                let mut stack_pool = Vec::with_capacity(8);
 
                 // Pre-seed with BAL-derived intermediate state.
                 // BAL index: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
@@ -713,13 +723,20 @@ impl LEVM {
             .prefetch_storage(&slots)
             .map_err(|e| EvmError::Custom(format!("prefetch_storage: {e}")))?;
 
-        // Code prefetch: get_account_state is a cache hit from Phase 1
-        accounts.par_iter().for_each(|ac| {
-            if let Ok(acct) = store.get_account_state(ac.address)
-                && acct.code_hash != *EMPTY_KECCACK_HASH
-            {
-                let _ = store.get_account_code(acct.code_hash);
-            }
+        // Phase 3: Code prefetch — collect code hashes from Phase 1 account states
+        // (already cached), then batch-fetch codes in parallel.
+        let code_hashes: Vec<ethrex_common::H256> = accounts
+            .iter()
+            .filter_map(|ac| {
+                store
+                    .get_account_state(ac.address)
+                    .ok()
+                    .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
+                    .map(|s| s.code_hash)
+            })
+            .collect();
+        code_hashes.par_iter().for_each(|&h| {
+            let _ = store.get_account_code(h);
         });
 
         Ok(())
