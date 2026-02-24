@@ -433,6 +433,8 @@ pub struct VM<'a> {
     pub stack_pool: Vec<Stack>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
+    /// Cached calldata cost to avoid recomputing per-byte iteration multiple times per tx.
+    pub cached_calldata_cost: Option<u64>,
     /// Opcode dispatch table, built dynamically per fork.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
 }
@@ -464,6 +466,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
+            cached_calldata_cost: None,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
