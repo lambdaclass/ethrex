@@ -121,16 +121,20 @@ impl Network {
     }
 
     /// Returns the network-specific subdirectory name for the datadir.
-    /// Public networks get a named suffix; non-public networks return None.
-    pub fn datadir_suffix(&self) -> Option<&str> {
+    /// Public networks get a named suffix; custom genesis files and L2 chains
+    /// use their chain ID as suffix.
+    pub fn datadir_suffix(&self) -> Option<String> {
         match self {
-            Network::PublicNetwork(PublicNetwork::Mainnet) => Some("mainnet"),
-            Network::PublicNetwork(PublicNetwork::Hoodi) => Some("hoodi"),
-            Network::PublicNetwork(PublicNetwork::Sepolia) => Some("sepolia"),
+            Network::PublicNetwork(PublicNetwork::Mainnet) => Some("mainnet".to_owned()),
+            Network::PublicNetwork(PublicNetwork::Hoodi) => Some("hoodi".to_owned()),
+            Network::PublicNetwork(PublicNetwork::Sepolia) => Some("sepolia".to_owned()),
             Network::LocalDevnet => None,
             Network::LocalDevnetL2 => None,
-            Network::L2Chain(_) => None,
-            Network::GenesisPath(_) => None,
+            Network::L2Chain(chain_id) => Some(format!("chain-{chain_id}")),
+            Network::GenesisPath(_) => {
+                let chain_id = self.get_genesis().ok()?.config.chain_id;
+                Some(format!("chain-{chain_id}"))
+            }
         }
     }
 
@@ -211,14 +215,14 @@ mod tests {
 
     #[test]
     fn test_datadir_suffix_public_networks() {
-        assert_eq!(Network::mainnet().datadir_suffix(), Some("mainnet"));
+        assert_eq!(Network::mainnet().datadir_suffix(), Some("mainnet".into()));
         assert_eq!(
             Network::PublicNetwork(PublicNetwork::Hoodi).datadir_suffix(),
-            Some("hoodi")
+            Some("hoodi".into())
         );
         assert_eq!(
             Network::PublicNetwork(PublicNetwork::Sepolia).datadir_suffix(),
-            Some("sepolia")
+            Some("sepolia".into())
         );
     }
 
@@ -226,9 +230,13 @@ mod tests {
     fn test_datadir_suffix_non_public_networks() {
         assert_eq!(Network::LocalDevnet.datadir_suffix(), None);
         assert_eq!(Network::LocalDevnetL2.datadir_suffix(), None);
-        assert_eq!(Network::L2Chain(42).datadir_suffix(), None);
         assert_eq!(
-            Network::GenesisPath(PathBuf::from("/tmp/genesis.json")).datadir_suffix(),
+            Network::L2Chain(42).datadir_suffix(),
+            Some("chain-42".into())
+        );
+        // Invalid genesis path returns None (can't parse chain ID).
+        assert_eq!(
+            Network::GenesisPath(PathBuf::from("/tmp/nonexistent.json")).datadir_suffix(),
             None
         );
     }
@@ -247,7 +255,7 @@ mod tests {
                 .datadir_suffix()
                 .expect("public networks must have a suffix");
             assert!(
-                all.contains(&suffix),
+                all.contains(&suffix.as_str()),
                 "all_datadir_suffixes() missing suffix {suffix:?} for {net:?}"
             );
         }
