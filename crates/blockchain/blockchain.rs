@@ -117,7 +117,10 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 /// Sub-phase timing breakdown for merkleization.
 #[derive(Debug, Default)]
 struct MerkleTimings {
-    drain_updates: Duration,
+    /// Time spent receiving and merging AccountUpdates from exec thread.
+    drain_recv: Duration,
+    /// Time spent hashing addresses and extracting code updates.
+    drain_hash: Duration,
     storage_roots: Duration,
     state_trie: Duration,
     finalize_root: Duration,
@@ -454,11 +457,10 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, bal, mut exec_timings) =
+                        let (execution_result, bal, mut exec_timings, post_exec_end) =
                             vm.execute_block_pipeline(block, tx, queue_length_ref, anchor)?;
 
                         // Validate execution went alright
-                        let validation_start = Instant::now();
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
                         validate_receipts_root(&block.header, &execution_result.receipts)?;
                         validate_requests_hash(
@@ -474,9 +476,10 @@ impl Blockchain {
                                 block.body.transactions.len(),
                             )?;
                         }
-                        exec_timings.block_validation = validation_start.elapsed();
 
                         let exec_end_instant = Instant::now();
+                        // Gapless: block_validation = post_exec_end (t4 inside LEVM) → exec_end_instant
+                        exec_timings.block_validation = exec_end_instant.duration_since(post_exec_end);
                         Ok((execution_result, exec_end_instant, exec_timings))
                     })
                     .map_err(|e| {
@@ -751,7 +754,8 @@ impl Blockchain {
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
         let merkle_timings = MerkleTimings {
-            drain_updates: t1.duration_since(t0),
+            drain_recv: t1.duration_since(t0),
+            drain_hash: Duration::ZERO, // interleaved with recv in non-BAL path
             storage_roots: t2.duration_since(t1),
             state_trie: t3.duration_since(t2),
             finalize_root: t4.duration_since(t3),
@@ -809,8 +813,10 @@ impl Blockchain {
                 }
             }
         }
+        let drain_recv_dur = t_drain.elapsed();
 
         // Extract witness accumulator before consuming updates
+        let t_hash = Instant::now();
         let accumulated_updates = if self.options.precompute_witnesses {
             Some(all_updates.values().cloned().collect::<Vec<_>>())
         } else {
@@ -829,7 +835,7 @@ impl Blockchain {
             }
             accounts.push((hashed, update));
         }
-        let drain_updates_dur = t_drain.elapsed();
+        let drain_hash_dur = t_hash.elapsed();
 
         // === Stage B: Parallel per-account storage root computation ===
         let t_storage = Instant::now();
@@ -1075,7 +1081,8 @@ impl Blockchain {
         let finalize_root_dur = t_finalize.elapsed();
 
         let merkle_timings = MerkleTimings {
-            drain_updates: drain_updates_dur,
+            drain_recv: drain_recv_dur,
+            drain_hash: drain_hash_dur,
             storage_roots: storage_roots_dur,
             state_trie: state_trie_dur,
             finalize_root: finalize_root_dur,
@@ -2292,8 +2299,16 @@ impl Blockchain {
             transactions_count,
         );
         info!(
-            "  |    |    |- evm:         {:>4} ms",
-            exec_timings.evm_time.as_millis()
+            "  |    |    |- env_setup:   {:>4} ms",
+            exec_timings.env_setup_time.as_millis()
+        );
+        info!(
+            "  |    |    |- vm_init:     {:>4} ms",
+            exec_timings.vm_init_time.as_millis()
+        );
+        info!(
+            "  |    |    |- vm_exec:     {:>4} ms",
+            exec_timings.vm_exec_time.as_millis()
         );
         info!(
             "  |    |    `- flush:       {:>4} ms",
@@ -2318,8 +2333,12 @@ impl Blockchain {
             merkle_queue_length,
         );
         info!(
-            "  |    |- drain_updates:    {:>4} ms",
-            merkle_timings.drain_updates.as_millis()
+            "  |    |- drain_recv:       {:>4} ms",
+            merkle_timings.drain_recv.as_millis()
+        );
+        info!(
+            "  |    |- drain_hash:       {:>4} ms",
+            merkle_timings.drain_hash.as_millis()
         );
         info!(
             "  |    |- storage_roots:    {:>4} ms",
