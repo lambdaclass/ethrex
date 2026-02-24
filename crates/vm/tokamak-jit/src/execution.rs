@@ -58,6 +58,10 @@ struct JitResumeStateInner {
     return_memory_offset: usize,
     /// CALL return data size (from FrameInput::Call).
     return_memory_size: usize,
+    /// Storage write journal carried across suspend/resume cycles.
+    /// Needed so that a REVERT after multiple suspend/resume rounds
+    /// can still undo all storage writes made during the JIT execution.
+    storage_journal: Vec<(ethrex_common::Address, ethrex_common::H256, ethrex_common::U256)>,
 }
 
 // SAFETY: `Interpreter` contains `SharedMemory` (Arc-backed) and other owned, non-`Rc` types.
@@ -132,7 +136,7 @@ pub fn execute_jit(
     // SAFETY: The pointer was produced by revmc/LLVM via `TokamakCompiler::compile()`,
     // stored in `CompiledCode`, and conforms to the `RawEvmCompilerFn` calling
     // convention. The null check above ensures it's valid.
-    #[expect(unsafe_code)]
+    #[expect(unsafe_code, clippy::missing_transmute_annotations)]
     let f = unsafe { EvmCompilerFn::new(std::mem::transmute::<*const (), _>(ptr)) };
 
     // Execute JIT-compiled code (single step)
@@ -169,6 +173,7 @@ pub fn execute_jit_resume(
     let gas_limit = inner.gas_limit;
     let return_memory_offset = inner.return_memory_offset;
     let return_memory_size = inner.return_memory_size;
+    let restored_journal = inner.storage_journal;
 
     // Apply sub-call result to interpreter: gas credit, stack push, memory write, return_data
     apply_subcall_result(
@@ -187,6 +192,9 @@ pub fn execute_jit_resume(
         storage_original_values,
     );
 
+    // Restore storage journal from previous suspend/resume cycle
+    host.storage_journal = restored_journal;
+
     // Re-invoke JIT function (interpreter has resume_at set by revmc)
     //
     // SAFETY: Same function pointer, interpreter preserves stack/memory/gas state.
@@ -200,13 +208,16 @@ pub fn execute_jit_resume(
 ///
 /// On `Return` → terminal `Success`/`Revert`/`Error`.
 /// On `NewFrame` → `Suspended` with resume state and translated sub-call.
+///
+/// On `Revert`, storage writes recorded in `host.storage_journal` are undone
+/// in reverse order to restore the pre-call state (M2 fix — Volkov R21).
 fn handle_interpreter_action(
     action: InterpreterAction,
     interpreter: Interpreter,
     compiled_fn: EvmCompilerFn,
     gas_limit: u64,
     call_frame: &mut CallFrame,
-    host: LevmHost<'_>,
+    mut host: LevmHost<'_>,
 ) -> Result<JitOutcome, JitError> {
     match action {
         InterpreterAction::Return(result) => {
@@ -228,10 +239,18 @@ fn handle_interpreter_action(
                     gas_used,
                     output: result.output.into(),
                 }),
-                InstructionResult::Revert => Ok(JitOutcome::Revert {
-                    gas_used,
-                    output: result.output.into(),
-                }),
+                InstructionResult::Revert => {
+                    // Rollback storage writes in reverse order
+                    for (addr, key, old_val) in host.storage_journal.drain(..).rev() {
+                        // Best-effort rollback — if this fails, state is already corrupt
+                        let _ =
+                            crate::host::jit_update_account_storage(host.db, addr, key, old_val);
+                    }
+                    Ok(JitOutcome::Revert {
+                        gas_used,
+                        output: result.output.into(),
+                    })
+                }
                 r => Ok(JitOutcome::Error(format!("JIT returned: {r:?}"))),
             }
         }
@@ -248,6 +267,10 @@ fn handle_interpreter_action(
             // Translate revm FrameInput to LEVM JitSubCall
             let sub_call = translate_frame_input(frame_input)?;
 
+            // Move storage journal into resume state so it persists across
+            // suspend/resume cycles (M2 fix — Volkov R21).
+            let journal = std::mem::take(&mut host.storage_journal);
+
             // Pack interpreter + fn into opaque resume state
             let resume_state = JitResumeState(Box::new(JitResumeStateInner {
                 interpreter,
@@ -255,6 +278,7 @@ fn handle_interpreter_action(
                 gas_limit,
                 return_memory_offset,
                 return_memory_size,
+                storage_journal: journal,
             }));
 
             Ok(JitOutcome::Suspended {

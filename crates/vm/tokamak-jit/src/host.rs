@@ -44,6 +44,10 @@ pub struct LevmHost<'a> {
     gas_params: GasParams,
     /// Original storage values before the transaction (for SSTORE gas calculation).
     pub storage_original_values: &'a mut ethrex_levm::jit::dispatch::StorageOriginalValues,
+    /// Journal of storage writes: (address, key, previous_value).
+    /// Used to rollback storage on REVERT. Each entry records the value
+    /// that was present before the SSTORE, so reverting replays in reverse.
+    pub(crate) storage_journal: Vec<(ethrex_common::Address, ethrex_common::H256, ethrex_common::U256)>,
 }
 
 impl<'a> LevmHost<'a> {
@@ -63,6 +67,7 @@ impl<'a> LevmHost<'a> {
             address,
             gas_params,
             storage_original_values,
+            storage_journal: Vec::new(),
         }
     }
 }
@@ -202,6 +207,9 @@ impl Host for LevmHost<'_> {
         })
     }
 
+    // TODO(JIT): EIP-7928 BAL recording not implemented for JIT execution path.
+    // LEVM's get_storage_value records BAL entries via bal_recorder. The JIT path
+    // bypasses this. Add BAL recording when JIT moves beyond PoC phase.
     fn sload_skip_cold_load(
         &mut self,
         address: RevmAddress,
@@ -220,6 +228,9 @@ impl Host for LevmHost<'_> {
         Ok(StateLoad::new(levm_u256_to_revm(&value), is_cold))
     }
 
+    // TODO(JIT): EIP-7928 BAL recording not implemented for JIT execution path.
+    // LEVM's update_account_storage records BAL entries via bal_recorder. The JIT
+    // path bypasses this. Add BAL recording when JIT moves beyond PoC phase.
     fn sstore_skip_cold_load(
         &mut self,
         address: RevmAddress,
@@ -245,6 +256,9 @@ impl Host for LevmHost<'_> {
             .storage_original_values
             .entry(cache_key)
             .or_insert(present);
+
+        // Record pre-write value for rollback on REVERT
+        self.storage_journal.push((levm_addr, levm_key, present));
 
         // Write new value directly into the account's cached storage
         jit_update_account_storage(self.db, levm_addr, levm_key, levm_value)
@@ -339,6 +353,10 @@ impl Host for LevmHost<'_> {
 /// 2. If account was destroyed-and-modified, return zero (storage is invalid).
 /// 3. Fall back to the underlying `Database::get_storage_value`.
 /// 4. Cache the result in both `current_accounts_state` and `initial_accounts_state`.
+///
+// TODO(JIT): EIP-7928 BAL recording not implemented for JIT execution path.
+// LEVM's get_storage_value records BAL entries via bal_recorder. The JIT path
+// bypasses this. Add BAL recording when JIT moves beyond PoC phase.
 fn jit_get_storage_value(
     db: &mut GeneralizedDatabase,
     address: ethrex_common::Address,
@@ -376,9 +394,12 @@ fn jit_get_storage_value(
 }
 
 /// Write a storage value into the generalized database, replicating the
-/// essential logic of `VM::update_account_storage` without call frame backups
-/// or BAL recording (those are handled at a higher level for JIT).
-fn jit_update_account_storage(
+/// essential logic of `VM::update_account_storage` without call frame backups.
+///
+// TODO(JIT): EIP-7928 BAL recording not implemented for JIT execution path.
+// LEVM's update_account_storage records BAL entries via bal_recorder. The JIT
+// path bypasses this. Add BAL recording when JIT moves beyond PoC phase.
+pub(crate) fn jit_update_account_storage(
     db: &mut GeneralizedDatabase,
     address: ethrex_common::Address,
     key: ethrex_common::H256,

@@ -122,12 +122,12 @@ pub fn revm_gas_to_levm(gas: &Gas) -> i64 {
 pub fn levm_memory_to_revm(memory: &mut ethrex_levm::memory::Memory) -> SharedMemory {
     let mut shared = SharedMemory::new();
     let mem_len = memory.len();
-    if mem_len > 0 {
-        if let Ok(data) = memory.load_range(0, mem_len) {
-            // SharedMemory needs to be resized, then we copy data in
-            shared.resize(data.len());
-            shared.slice_mut(0, data.len()).copy_from_slice(&data);
-        }
+    if mem_len > 0
+        && let Ok(data) = memory.load_range(0, mem_len)
+    {
+        // SharedMemory needs to be resized, then we copy data in
+        shared.resize(data.len());
+        shared.slice_mut(0, data.len()).copy_from_slice(&data);
     }
     shared
 }

@@ -71,6 +71,12 @@ impl TokamakCompiler {
             // inside the compiler/backend. Dropping the compiler would free the JIT code
             // memory, invalidating the pointer. We intentionally leak the compiler so the
             // JIT code lives for the entire process lifetime.
+            //
+            // MEMORY IMPACT: Each compilation leaks one EvmCompiler + EvmLlvmBackend
+            // (~1-5 MB LLVM module/machine code per contract). In a long-running node,
+            // this grows proportionally to the number of unique contracts compiled.
+            // Acceptable for PoC; production should use a persistent LLVM context with
+            // explicit lifetime management or a bounded LRU eviction policy.
             std::mem::forget(compiler);
 
             Ok(compiled)

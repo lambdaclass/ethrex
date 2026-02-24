@@ -58,9 +58,7 @@ fn compile_for_jit(bytecode: &Bytes, fork: Fork) -> Result<Code, String> {
         .backend()
         .expect("JIT backend not registered — call init_jit_backend() first");
 
-    backend
-        .compile(&code, fork, &JIT_STATE.cache)
-        .map_err(|e| format!("{e}"))?;
+    backend.compile(&code, fork, &JIT_STATE.cache)?;
 
     // Verify cache entry exists
     if JIT_STATE.cache.get(&(code.hash, fork)).is_none() {
@@ -89,10 +87,11 @@ fn prime_counter_for_jit(code: &Code) {
 /// Measures both interpreter and JIT execution times, computing the speedup ratio.
 /// Returns `None` if JIT compilation fails for this scenario.
 ///
-/// **Interpreter baseline**: Runs the scenario using `runner::run_scenario()`.
-///
-/// **JIT execution**: Pre-compiles bytecode, primes the counter, and runs the VM
-/// so that JIT dispatch fires on every execution.
+/// **Measurement order** (M1 fix — Volkov R21):
+/// 1. Interpreter baseline FIRST — uses `init_vm_interpreter_only()` which sets
+///    `tracer.active = true`, preventing JIT dispatch from firing.
+/// 2. JIT compilation — `init_jit_backend()`, `compile_for_jit()`, `prime_counter_for_jit()`.
+/// 3. JIT execution — uses `init_vm()` (JIT-enabled, `tracer.active = false`).
 #[cfg(feature = "jit-bench")]
 #[expect(clippy::as_conversions, reason = "ns-to-ms conversion for display")]
 pub fn run_jit_scenario(
@@ -105,8 +104,23 @@ pub fn run_jit_scenario(
     let calldata = runner::generate_calldata(iterations);
     let fork = Fork::Cancun;
 
-    // ── JIT compilation (before interpreter baseline) ────────────────────
-    // Compile first to fail fast if bytecode is incompatible with revmc.
+    // ── Interpreter baseline FIRST ──────────────────────────────────────
+    // Measured BEFORE any JIT compilation so the JIT cache is empty and
+    // init_vm_interpreter_only() sets tracer.active=true to block JIT dispatch.
+    let interp_start = Instant::now();
+    for _ in 0..runs {
+        let mut db = runner::init_db(bytecode.clone());
+        let mut vm = runner::init_vm_interpreter_only(&mut db, calldata.clone());
+        let report = black_box(vm.stateless_execute().expect("VM execution failed"));
+        assert!(
+            report.is_success(),
+            "Interpreter execution reverted: {:?}",
+            report.result
+        );
+    }
+    let interpreter_ns = interp_start.elapsed().as_nanos();
+
+    // ── JIT compilation ─────────────────────────────────────────────────
     init_jit_backend();
 
     let code = match compile_for_jit(&bytecode, fork) {
@@ -120,23 +134,8 @@ pub fn run_jit_scenario(
     // Prime counter so JIT dispatch fires during JIT measurement
     prime_counter_for_jit(&code);
 
-    // ── Interpreter baseline ────────────────────────────────────────────
-    // run_scenario() creates fresh VMs each run. The bytecode IS in the JIT
-    // cache now, but the counter was already primed, so JIT dispatch will
-    // actually fire here too. To get a clean interpreter baseline, we
-    // temporarily measure without JIT by using run_scenario which resets
-    // opcode timings — the total_duration_ns is wall clock and includes
-    // JIT overhead. For a fair comparison, we accept that the interpreter
-    // baseline includes any JIT dispatch overhead (which is minimal — just
-    // a cache lookup + fn call that produces the same result).
-    //
-    // Alternative: we could measure interpreter before compiling, but that
-    // contaminates the JIT measurement if background compilation fires.
-    let interp_result = runner::run_scenario(name, bytecode_hex, runs, iterations);
-    let interpreter_ns = interp_result.total_duration_ns;
-
     // ── JIT execution ───────────────────────────────────────────────────
-    let start = Instant::now();
+    let jit_start = Instant::now();
     for _ in 0..runs {
         let mut db = runner::init_db(bytecode.clone());
         let mut vm = runner::init_vm(&mut db, calldata.clone());
@@ -147,8 +146,7 @@ pub fn run_jit_scenario(
             report.result
         );
     }
-    let jit_duration = start.elapsed();
-    let jit_ns = jit_duration.as_nanos();
+    let jit_ns = jit_start.elapsed().as_nanos();
 
     // ── Compute speedup ─────────────────────────────────────────────────
     let speedup = if jit_ns > 0 {

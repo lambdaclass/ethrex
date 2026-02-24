@@ -1419,25 +1419,45 @@ impl<'a> VM<'a> {
 /// Called from `run_execution()` when JIT dispatch succeeds. Converts
 /// `JitOutcome::Success` / `Revert` into the LEVM result type that
 /// `finalize_execution` expects.
+///
+/// **Gas accounting (M3 fix — Volkov R21)**: We ignore `gas_used` from
+/// `JitOutcome` because it only captures execution gas (gas_limit_to_revm
+/// minus gas_remaining). The correct formula matches `execution_handlers.rs`:
+/// `gas_used = call_frame.gas_limit - call_frame.gas_remaining`, which
+/// includes intrinsic gas. By the time we reach here, `call_frame.gas_remaining`
+/// has already been synced from the revm interpreter in `handle_interpreter_action`.
 #[cfg(feature = "tokamak-jit")]
+#[expect(clippy::as_conversions, reason = "remaining gas conversion")]
 fn apply_jit_outcome(
     outcome: crate::jit::types::JitOutcome,
-    _call_frame: &CallFrame,
+    call_frame: &CallFrame,
 ) -> Result<ContextResult, VMError> {
     use crate::errors::TxResult;
     match outcome {
-        crate::jit::types::JitOutcome::Success { gas_used, output } => Ok(ContextResult {
-            result: TxResult::Success,
-            gas_used,
-            gas_spent: gas_used,
-            output,
-        }),
-        crate::jit::types::JitOutcome::Revert { gas_used, output } => Ok(ContextResult {
-            result: TxResult::Revert(VMError::RevertOpcode),
-            gas_used,
-            gas_spent: gas_used,
-            output,
-        }),
+        crate::jit::types::JitOutcome::Success { output, .. } => {
+            let gas_used = call_frame
+                .gas_limit
+                .checked_sub(call_frame.gas_remaining as u64)
+                .ok_or(InternalError::Underflow)?;
+            Ok(ContextResult {
+                result: TxResult::Success,
+                gas_used,
+                gas_spent: gas_used,
+                output,
+            })
+        }
+        crate::jit::types::JitOutcome::Revert { output, .. } => {
+            let gas_used = call_frame
+                .gas_limit
+                .checked_sub(call_frame.gas_remaining as u64)
+                .ok_or(InternalError::Underflow)?;
+            Ok(ContextResult {
+                result: TxResult::Revert(VMError::RevertOpcode),
+                gas_used,
+                gas_spent: gas_used,
+                output,
+            })
+        }
         crate::jit::types::JitOutcome::NotCompiled
         | crate::jit::types::JitOutcome::Error(_)
         | crate::jit::types::JitOutcome::Suspended { .. } => {

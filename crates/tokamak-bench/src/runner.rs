@@ -161,6 +161,31 @@ pub(crate) fn init_vm(db: &mut GeneralizedDatabase, calldata: Bytes) -> VM<'_> {
     VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1).expect("Failed to create VM")
 }
 
+/// Create a VM that forces interpreter-only execution (no JIT dispatch).
+///
+/// Uses `LevmCallTracer::new(true, false)` which sets `active: true`,
+/// causing the JIT dispatch guard (`if !self.tracer.active`) to skip JIT.
+/// This ensures the interpreter baseline is not contaminated by JIT execution.
+pub(crate) fn init_vm_interpreter_only(db: &mut GeneralizedDatabase, calldata: Bytes) -> VM<'_> {
+    let env = Environment {
+        origin: Address::from_low_u64_be(SENDER_ADDRESS),
+        tx_nonce: 0,
+        gas_limit: (i64::MAX - 1) as u64,
+        block_gas_limit: (i64::MAX - 1) as u64,
+        ..Default::default()
+    };
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(Address::from_low_u64_be(CONTRACT_ADDRESS)),
+        data: calldata,
+        ..Default::default()
+    });
+
+    // active=true disables JIT dispatch; only_top_call=true, with_log=false
+    VM::new(env, db, &tx, LevmCallTracer::new(true, false), VMType::L1)
+        .expect("Failed to create VM")
+}
+
 /// Run a single benchmark scenario and collect opcode timing data.
 ///
 /// **Not thread-safe**: This function resets and reads the global `OPCODE_TIMINGS`
