@@ -594,13 +594,22 @@ impl LEVM {
         let t2 = std::time::Instant::now();
         let result = vm.execute().map_err(VMError::into);
         let (vm_prepare, vm_run, vm_finalize) = vm.last_exec_timings;
-        let (sload, sstore, calls, sha3, ext, log, stack, arith, mem, flow) = vm.run_sub_timings;
+        let sub_ticks = vm.run_sub_ticks;
+        let total_ticks = vm.total_run_ticks;
         let t3 = std::time::Instant::now();
         std::mem::swap(&mut vm.stack_pool, stack_pool);
+        // Convert rdtsc ticks to Duration proportionally using vm_run_time.
+        // This eliminates measurement overhead from the reported numbers.
+        let run_secs = vm_run.as_secs_f64();
+        let scale = if total_ticks > 0 { run_secs / total_ticks as f64 } else { 0.0 };
+        let to_dur = |ticks: u64| std::time::Duration::from_secs_f64(ticks as f64 * scale);
         result.map(|r| (r, [
             t1.duration_since(t0), t2.duration_since(t1), t3.duration_since(t2),
             vm_prepare, vm_run, vm_finalize,
-            sload, sstore, calls, sha3, ext, log, stack, arith, mem, flow,
+            to_dur(sub_ticks[0]), to_dur(sub_ticks[1]), to_dur(sub_ticks[2]),
+            to_dur(sub_ticks[3]), to_dur(sub_ticks[4]), to_dur(sub_ticks[5]),
+            to_dur(sub_ticks[6]), to_dur(sub_ticks[7]), to_dur(sub_ticks[8]),
+            to_dur(sub_ticks[9]),
         ]))
     }
 
