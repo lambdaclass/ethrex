@@ -801,6 +801,7 @@ impl<'a> VM<'a> {
         for (condition, reason) in checks {
             if condition {
                 self.early_revert_message_call(gas_limit, reason.to_string())?;
+                self.pre_charge_current_block()?;
                 return Ok(OpcodeResult::Continue);
             }
         }
@@ -822,6 +823,7 @@ impl<'a> VM<'a> {
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
+            self.pre_charge_current_block()?;
             return Ok(OpcodeResult::Continue);
         }
 
@@ -856,19 +858,21 @@ impl<'a> VM<'a> {
 
         self.add_callframe(new_call_frame);
 
-        // Pre-charge the static gas cost of the callee's first basic block,
-        // unless it starts with a JUMPDEST (op_jumpdest will pre-charge).
-        if self.current_call_frame.bytecode.bytecode.first() != Some(&0x5B) {
-            self.current_call_frame
-                .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))?;
-        }
-
         // Changes that revert in case the Create fails.
         self.increment_account_nonce(new_address)?; // 0 -> 1
         self.transfer(deployer, new_address, value)?;
 
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
+
+        // Pre-charge the static gas cost of the callee's first basic block,
+        // unless it starts with a JUMPDEST (op_jumpdest will pre-charge).
+        // Must be after push_backup() so that OOG here correctly reverts
+        // the sub-call's state changes.
+        if self.current_call_frame.bytecode.bytecode.first() != Some(&0x5B) {
+            self.current_call_frame
+                .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))?;
+        }
 
         // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
         // Must be after push_backup() so the log reverts if the child context reverts
@@ -958,6 +962,7 @@ impl<'a> VM<'a> {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
+                self.pre_charge_current_block()?;
                 return Ok(OpcodeResult::Continue);
             }
         }
@@ -970,6 +975,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
+            self.pre_charge_current_block()?;
             return Ok(OpcodeResult::Continue);
         }
 
@@ -1039,6 +1045,8 @@ impl<'a> VM<'a> {
             }
 
             self.tracer.exit_context(&ctx_result, false)?;
+
+            self.pre_charge_current_block()?;
         } else {
             // Create BAL checkpoint before entering nested call for potential revert per EIP-7928
             let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
@@ -1070,19 +1078,19 @@ impl<'a> VM<'a> {
 
             self.add_callframe(new_call_frame);
 
-            // Pre-charge the static gas cost of the callee's first basic block,
-            // unless it starts with a JUMPDEST (op_jumpdest will pre-charge).
-            if self.current_call_frame.bytecode.bytecode.first() != Some(&0x5B) {
-                self.current_call_frame
-                    .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))?;
-            }
-
             // Transfer value from caller to callee.
             if should_transfer_value {
                 self.transfer(msg_sender, to, value)?;
             }
 
             self.substate.push_backup();
+
+            // Pre-charge the static gas cost of the callee's first basic block,
+            // unless it starts with a JUMPDEST (op_jumpdest will pre-charge).
+            if self.current_call_frame.bytecode.bytecode.first() != Some(&0x5B) {
+                self.current_call_frame
+                    .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))?;
+            }
 
             // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
             // Must be after push_backup() so the log reverts if the child context reverts
@@ -1280,6 +1288,18 @@ impl<'a> VM<'a> {
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
         self.current_call_frame.memory.load_range(offset, size)
+    }
+
+    /// Pre-charge the static gas cost of the basic block starting at the
+    /// current pc.  Used after CALL/CREATE early-returns and precompile
+    /// calls so that the parent's post-call block is properly charged.
+    fn pre_charge_current_block(&mut self) -> Result<(), VMError> {
+        let pc = self.current_call_frame.pc;
+        if self.current_call_frame.bytecode.bytecode.get(pc) != Some(&0x5B) {
+            self.current_call_frame
+                .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(pc as u32))?;
+        }
+        Ok(())
     }
 
     #[expect(clippy::as_conversions, reason = "remaining gas conversion")]

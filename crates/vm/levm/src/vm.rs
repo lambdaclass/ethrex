@@ -578,8 +578,17 @@ impl<'a> VM<'a> {
         // Pre-charge the static gas cost of the first basic block,
         // unless it starts with a JUMPDEST (op_jumpdest will pre-charge).
         if self.current_call_frame.bytecode.bytecode.first() != Some(&0x5B) {
-            self.current_call_frame
-                .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))?;
+            if let Err(error) = self
+                .current_call_frame
+                .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))
+            {
+                // OOG during initial block pre-charge: go through
+                // handle_opcode_error so the Tx reverts gracefully
+                // instead of being rejected as invalid.
+                let result = self.handle_opcode_error(error.into())?;
+                self.handle_state_backup(&result)?;
+                return Ok(result);
+            }
         }
 
         loop {
@@ -693,7 +702,7 @@ impl<'a> VM<'a> {
                 timings.update(opcode, time);
             }
 
-            let result = match op_result {
+            let mut result = match op_result {
                 Ok(OpcodeResult::Continue) => continue,
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
@@ -706,7 +715,31 @@ impl<'a> VM<'a> {
             }
 
             // Handle interaction between child and parent callframe.
-            self.handle_return(&result)?;
+            // If the post-call block pre-charge causes OOG in the parent,
+            // that parent also reverts, and we keep unwinding.
+            loop {
+                self.handle_return(&result)?;
+
+                // Pre-charge the static gas cost of the parent's next basic
+                // block (the block right after the CALL/CREATE that spawned
+                // the child).  Skip if next instruction is a JUMPDEST.
+                let next_pc = self.current_call_frame.pc;
+                if self.current_call_frame.bytecode.bytecode.get(next_pc) != Some(&0x5B) {
+                    if let Err(error) = self.current_call_frame.increase_consumed_gas(
+                        self.current_call_frame.bytecode.block_cost(next_pc as u32),
+                    ) {
+                        // Parent OOG — treat as an opcode error on the parent.
+                        result = self.handle_opcode_error(error.into())?;
+                        if self.is_initial_call_frame() {
+                            self.handle_state_backup(&result)?;
+                            return Ok(result);
+                        }
+                        // Continue the loop to unwind to grandparent, etc.
+                        continue;
+                    }
+                }
+                break;
+            }
         }
     }
 

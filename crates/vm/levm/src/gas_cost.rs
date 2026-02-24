@@ -273,6 +273,8 @@ fn compute_gas_create(
     let gas_create_cost = memory_expansion_cost
         .checked_add(init_code_cost)
         .ok_or(OutOfGas)?
+        .checked_add(CREATE_BASE_COST)
+        .ok_or(OutOfGas)?
         .checked_add(hash_cost)
         .ok_or(OutOfGas)?;
 
@@ -288,7 +290,9 @@ pub fn selfdestruct_base(address_was_cold: bool) -> Result<u64, VMError> {
     } else {
         0
     };
-    Ok(cold_cost)
+    SELFDESTRUCT_STATIC
+        .checked_add(cold_cost)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn selfdestruct(
@@ -309,7 +313,9 @@ pub fn selfdestruct(
             .ok_or(OutOfGas)?;
     }
 
-    Ok(dynamic_cost)
+    SELFDESTRUCT_STATIC
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {

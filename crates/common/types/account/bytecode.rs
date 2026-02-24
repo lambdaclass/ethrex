@@ -476,45 +476,49 @@ pub fn process_bytecode(code: &[u8]) -> (Vec<u32>, Vec<(u32, u64)>) {
                     *c += gas_costs::LOGN_STATIC;
                 }
             }
-            // OP_CREATE
+            // OP_CREATE (terminator: 63/64 rule uses gas_remaining,
+            // so opcodes after the call must not be pre-charged).
+            // CREATE_BASE_COST (32000) is charged dynamically by the
+            // opcode handler, not statically here.
             0xF0 => {
-                if let Some(c) = cost_entry.as_deref_mut() {
-                    *c += gas_costs::CREATE_BASE_COST;
-                }
+                cost_entry = Some(costs.entry(i + 1).or_default());
             }
-            // OP_CALL
+            // OP_CALL (terminator: 63/64 rule uses gas_remaining)
             0xF1 => {
                 if let Some(c) = cost_entry.as_deref_mut() {
                     *c += gas_costs::CALL_STATIC;
                 }
+                cost_entry = Some(costs.entry(i + 1).or_default());
             }
-            // OP_CALLCODE
+            // OP_CALLCODE (terminator: 63/64 rule uses gas_remaining)
             0xF2 => {
                 if let Some(c) = cost_entry.as_deref_mut() {
                     *c += gas_costs::CALLCODE_STATIC;
                 }
+                cost_entry = Some(costs.entry(i + 1).or_default());
             }
             // OP_RETURN (terminator)
             0xF3 => {
                 cost_entry = None;
             }
-            // OP_DELEGATECALL
+            // OP_DELEGATECALL (terminator: 63/64 rule uses gas_remaining)
             0xF4 => {
                 if let Some(c) = cost_entry.as_deref_mut() {
                     *c += gas_costs::DELEGATECALL_STATIC;
                 }
+                cost_entry = Some(costs.entry(i + 1).or_default());
             }
-            // OP_CREATE2
+            // OP_CREATE2 (terminator: 63/64 rule uses gas_remaining).
+            // CREATE_BASE_COST (32000) is charged dynamically.
             0xF5 => {
-                if let Some(c) = cost_entry.as_deref_mut() {
-                    *c += gas_costs::CREATE_BASE_COST;
-                }
+                cost_entry = Some(costs.entry(i + 1).or_default());
             }
-            // OP_STATICCALL
+            // OP_STATICCALL (terminator: 63/64 rule uses gas_remaining)
             0xFA => {
                 if let Some(c) = cost_entry.as_deref_mut() {
                     *c += gas_costs::STATICCALL_STATIC;
                 }
+                cost_entry = Some(costs.entry(i + 1).or_default());
             }
             // OP_REVERT (terminator)
             0xFD => {
@@ -524,30 +528,57 @@ pub fn process_bytecode(code: &[u8]) -> (Vec<u32>, Vec<(u32, u64)>) {
             0xFE => {
                 cost_entry = None;
             }
-            // OP_SELFDESTRUCT (terminator)
+            // OP_SELFDESTRUCT (terminator).
+            // SELFDESTRUCT_STATIC (5000) is charged dynamically.
             0xFF => {
-                if let Some(c) = cost_entry.as_deref_mut() {
-                    *c += gas_costs::SELFDESTRUCT_STATIC;
-                }
                 cost_entry = None;
             }
-            // OP_DUPN (EIP-8024)
+            // OP_DUPN (EIP-8024) — has 1-byte immediate operand.
+            // Unlike PUSHn, the immediate byte does NOT shadow JUMPDEST:
+            // a 0x5B at the immediate position is a valid jump target.
+            // We skip the immediate for gas costing (it is not executed
+            // as an opcode) but check for 0x5B to record it as JUMPDEST.
             0xE6 => {
                 if let Some(c) = cost_entry.as_deref_mut() {
                     *c += gas_costs::DUPN;
                 }
+                // Check immediate byte for JUMPDEST without adding gas
+                if code.get(i + 1) == Some(&0x5B) {
+                    cost_entry = Some(costs.entry(i + 1).or_default());
+                    if let Some(c) = cost_entry.as_deref_mut() {
+                        *c += gas_costs::JUMPDEST;
+                    }
+                    targets.push((i + 1) as u32);
+                }
+                i += 1;
             }
-            // OP_SWAPN (EIP-8024)
+            // OP_SWAPN (EIP-8024) — has 1-byte immediate operand (see DUPN note)
             0xE7 => {
                 if let Some(c) = cost_entry.as_deref_mut() {
                     *c += gas_costs::SWAPN;
                 }
+                if code.get(i + 1) == Some(&0x5B) {
+                    cost_entry = Some(costs.entry(i + 1).or_default());
+                    if let Some(c) = cost_entry.as_deref_mut() {
+                        *c += gas_costs::JUMPDEST;
+                    }
+                    targets.push((i + 1) as u32);
+                }
+                i += 1;
             }
-            // OP_EXCHANGE (EIP-8024)
+            // OP_EXCHANGE (EIP-8024) — has 1-byte immediate operand (see DUPN note)
             0xE8 => {
                 if let Some(c) = cost_entry.as_deref_mut() {
                     *c += gas_costs::EXCHANGE;
                 }
+                if code.get(i + 1) == Some(&0x5B) {
+                    cost_entry = Some(costs.entry(i + 1).or_default());
+                    if let Some(c) = cost_entry.as_deref_mut() {
+                        *c += gas_costs::JUMPDEST;
+                    }
+                    targets.push((i + 1) as u32);
+                }
+                i += 1;
             }
             // Unknown/undefined opcodes - no static cost
             _ => (),
