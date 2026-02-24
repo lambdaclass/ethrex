@@ -50,6 +50,69 @@
 | Phase 6-R12: handle_jit_subcall semantic fixes | **완료** |
 | Phase 6-R13: Volkov R13 필수 수정 | **완료** — M1-M3 + R1-R3 적용 |
 | Phase 6-R14: Volkov R14 필수 수정 | **완료** — M1-M3 + R1-R2 적용 |
+| Phase 7: Full dual-execution validation | **완료** — Volkov R20 PROCEED (8.25) |
+| Phase 7-R17: Volkov R17 필수 수정 (4건) | **완료** |
+| Phase 7-R18: Volkov R18 필수 수정 (3건) | **완료** |
+| Phase 7-R19: Volkov R19 필수 수정 (1건) | **완료** |
+
+## Phase 7 완료 요약
+
+### 핵심 변경: Full Dual-Execution Validation
+
+JIT 컴파일된 코드의 정확성을 보장하는 핵심 안전 메커니즘. Validation mode 활성화 시 JIT 실행 후 interpreter로 재실행하여 결과를 비교한다.
+
+### 아키텍처: State-Swap Dual Execution
+
+VM은 `&'a mut GeneralizedDatabase`를 사용하므로 clone 불가. `std::mem::swap`으로 JIT 결과와 pre-JIT 스냅샷을 교환하여 동일 VM 인스턴스에서 interpreter 재실행.
+
+**Flow:**
+1. JIT 실행 전 스냅샷 (db, call_frame, substate, storage_original_values)
+2. JIT 실행 (상태 변경)
+3. `swap_validation_state()` — JIT 상태 ↔ 스냅샷 교환
+4. Interpreter 실행 (원본 상태에서)
+5. 비교 (status, gas, output, refunded_gas, logs, DB state)
+6. Match → swap back to JIT state, record success
+7. Mismatch → keep interpreter state, invalidate cache
+8. Interpreter Err → swap back to JIT state (inconclusive)
+
+### 비교 항목 (validate_dual_execution)
+
+| 항목 | 비교 대상 |
+|------|-----------|
+| Status | success vs revert |
+| gas_used | 실행 가스 |
+| output | 반환 바이트 |
+| refunded_gas | 가스 리펀드 |
+| logs | 개수 + 순서 + 내용 |
+| DB state | account status, balance, nonce, code_hash, storage |
+
+### 새 파일
+
+| 파일 | 용도 |
+|------|------|
+| `levm/src/jit/validation.rs` | 비교 함수 + 17 unit tests |
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `levm/src/vm.rs` | `ValidationSnapshot` type alias, `swap_validation_state()` helper, dual-execution validation block |
+| `levm/src/jit/types.rs` | `validation_successes`, `validation_mismatches` metrics |
+| `levm/src/jit/cache.rs` | `invalidate()` method |
+| `levm/src/jit/mod.rs` | `pub mod validation` |
+| `tokamak-jit/src/tests/dual_execution.rs` | 3 integration tests (storage mismatch, fibonacci match, interpreter err swap-back) |
+
+### 테스트 현황
+
+- `cargo test -p ethrex-levm --features tokamak-jit` — 39 tests pass
+- `cargo test -p tokamak-jit` — 19 tests pass
+- `cargo clippy --workspace --features l2,l2-sql -- -D warnings` — clean
+
+### Volkov 리뷰 궤적
+
+R16=4.0 → R17=4.0 → R18=5.5 → R19=7.0 → **R20=8.25 (PROCEED)**
+
+---
 
 ## Phase 6-R14 수정 완료
 
@@ -428,9 +491,22 @@ Cranelift은 i256 미지원으로 불가. **revmc (Paradigm, LLVM backend)** 채
 
 ## 다음 단계
 
-### Phase 7: Full Validation
+### Phase 8: JIT Benchmarking
 
-1. **Full dual-execution validation** — state snapshotting + interpreter replay
+JIT vs interpreter 성능 비교 벤치마크 인프라 구축.
+
+1. **JIT benchmark scenarios** — `tokamak-bench/src/jit_bench.rs` 스텁 완성
+2. **JIT vs interpreter differential** — 동일 시나리오 JIT/interpreter 양쪽 실행, speedup 측정
+3. **CI integration** — PR별 JIT 성능 regression 감지
+4. **Dashboard** — 시계열 벤치마크 결과 저장 + 트렌드 시각화
+
+### 기존 미완료
+
+| 항목 | 상태 |
+|------|------|
+| Phase 1.2-5: 빌드 검증 | 진행중 |
+| Phase 1.2-6: Sync & Hive 검증 | 미착수 |
+| EIP-7702 delegation 처리 | TODO 코멘트만 |
 
 ## 핵심 컨텍스트
 
