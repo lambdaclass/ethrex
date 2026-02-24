@@ -1420,12 +1420,15 @@ impl<'a> VM<'a> {
 /// `JitOutcome::Success` / `Revert` into the LEVM result type that
 /// `finalize_execution` expects.
 ///
-/// **Gas accounting (M3 fix — Volkov R21)**: We ignore `gas_used` from
-/// `JitOutcome` because it only captures execution gas (gas_limit_to_revm
-/// minus gas_remaining). The correct formula matches `execution_handlers.rs`:
-/// `gas_used = call_frame.gas_limit - call_frame.gas_remaining`, which
-/// includes intrinsic gas. By the time we reach here, `call_frame.gas_remaining`
-/// has already been synced from the revm interpreter in `handle_interpreter_action`.
+/// Gas is computed from the call frame: `gas_limit - max(gas_remaining, 0)`,
+/// matching the interpreter formula in `execution_handlers.rs:80-86`.
+/// We ignore `gas_used` from `JitOutcome` because it only captures execution
+/// gas (gas_limit_to_revm minus gas_remaining), excluding intrinsic gas.
+/// By the time we reach here, `call_frame.gas_remaining` has already been
+/// synced from the revm interpreter in `handle_interpreter_action`.
+///
+/// The `max(0)` clamp prevents wrap-around if `gas_remaining` is negative
+/// (should not happen in practice, but defensive coding).
 #[cfg(feature = "tokamak-jit")]
 #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
 fn apply_jit_outcome(
@@ -1433,11 +1436,15 @@ fn apply_jit_outcome(
     call_frame: &CallFrame,
 ) -> Result<ContextResult, VMError> {
     use crate::errors::TxResult;
+
+    // Clamp to zero before u64 conversion to prevent i64→u64 wrap-around
+    let gas_remaining = call_frame.gas_remaining.max(0) as u64;
+
     match outcome {
         crate::jit::types::JitOutcome::Success { output, .. } => {
             let gas_used = call_frame
                 .gas_limit
-                .checked_sub(call_frame.gas_remaining as u64)
+                .checked_sub(gas_remaining)
                 .ok_or(InternalError::Underflow)?;
             Ok(ContextResult {
                 result: TxResult::Success,
@@ -1449,7 +1456,7 @@ fn apply_jit_outcome(
         crate::jit::types::JitOutcome::Revert { output, .. } => {
             let gas_used = call_frame
                 .gas_limit
-                .checked_sub(call_frame.gas_remaining as u64)
+                .checked_sub(gas_remaining)
                 .ok_or(InternalError::Underflow)?;
             Ok(ContextResult {
                 result: TxResult::Revert(VMError::RevertOpcode),
