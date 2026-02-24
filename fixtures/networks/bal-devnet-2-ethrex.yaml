@@ -36,14 +36,31 @@ port_publisher:
 spamoor_params:
   image: ethpandaops/spamoor:master
   spammers:
-    - scenario: evm-fuzz
+    # Mainnet-like workload mix (~700 tx/s target)
+    # ~40% ERC20 transfers (hot storage: balances, allowances)
+    - scenario: erc20tx
       config:
-        throughput: 220
-        payload_seed: "0x233456"
-        tx_id_offset: 0
-    - scenario: eoatx
-      config:
-        throughput: 30
+        throughput: 280
+        max_wallets: 500
+    # ~25% DEX swaps (complex contract calls, hot pool state)
     - scenario: uniswap-swaps
       config:
-        throughput: 30
+        throughput: 175
+        max_wallets: 300
+    # ~15% simple ETH transfers
+    - scenario: eoatx
+      config:
+        throughput: 105
+    # ~10% contract calls (storage-heavy)
+    - scenario: storagespam
+      config:
+        throughput: 70
+    # ~5% ERC721 mints/transfers (NFTs)
+    - scenario: erc721tx
+      config:
+        throughput: 35
+    # ~5% blob txs (L2 sequencer-like)
+    - scenario: blobs
+      config:
+        throughput: 35
+        max_pending: 16
