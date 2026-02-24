@@ -436,10 +436,11 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, bal, exec_timings) =
+                        let (execution_result, bal, mut exec_timings) =
                             vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
                         // Validate execution went alright
+                        let validation_start = Instant::now();
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
                         validate_receipts_root(&block.header, &execution_result.receipts)?;
                         validate_requests_hash(
@@ -455,6 +456,7 @@ impl Blockchain {
                                 block.body.transactions.len(),
                             )?;
                         }
+                        exec_timings.block_validation = validation_start.elapsed();
 
                         let exec_end_instant = Instant::now();
                         Ok((execution_result, exec_end_instant, exec_timings))
@@ -2195,8 +2197,12 @@ impl Blockchain {
             exec_timings.execute_txs.as_millis()
         );
         info!(
-            "  |    `- post_exec:        {:>4} ms",
+            "  |    |- post_exec:        {:>4} ms",
             exec_timings.post_exec.as_millis()
+        );
+        info!(
+            "  |    `- block_validation: {:>4} ms",
+            exec_timings.block_validation.as_millis()
         );
         info!(
             "  |- merkle:   {:>4} ms  ({:>2}%){}  [concurrent: {} ms, drain: {} ms, overlap: {}%, queue: {}]",

@@ -313,6 +313,7 @@ impl LEVM {
             recover_senders: recover_senders_dur,
             execute_txs: execute_txs_dur,
             post_exec: post_exec_dur,
+            block_validation: std::time::Duration::ZERO,
         };
 
         Ok((

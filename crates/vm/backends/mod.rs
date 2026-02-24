@@ -28,6 +28,7 @@ pub struct ExecTimings {
     pub recover_senders: Duration,
     pub execute_txs: Duration,
     pub post_exec: Duration,
+    pub block_validation: Duration,
 }
 
 #[derive(Clone)]
