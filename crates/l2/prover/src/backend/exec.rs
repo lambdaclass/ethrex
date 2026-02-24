@@ -39,6 +39,10 @@ impl ProverBackend for ExecBackend {
     type ProofOutput = ProgramOutput;
     type SerializedInput = ();
 
+    fn prover_type(&self) -> ProverType {
+        ProverType::Exec
+    }
+
     fn serialize_input(
         &self,
         _input: &ProgramInput,
