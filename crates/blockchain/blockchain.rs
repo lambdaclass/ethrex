@@ -697,13 +697,14 @@ impl Blockchain {
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
+        let t_gathered = Instant::now();
         // Join storage workers for error propagation (should already be done).
         for handle in storage_workers_handles {
             handle
                 .join()
                 .map_err(|_| StoreError::Custom("storage worker panicked".to_string()))??;
         }
-        let t_gathered = Instant::now();
+        let t_joined = Instant::now();
 
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
@@ -716,10 +717,11 @@ impl Blockchain {
             };
         let t_root = Instant::now();
         info!(
-            "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms",
+            "  drain breakdown: barrier={:.1}ms gather={:.1}ms join={:.1}ms root={:.1}ms",
             t_barrier.duration_since(t_drain_start).as_secs_f64() * 1000.0,
             t_gathered.duration_since(t_barrier).as_secs_f64() * 1000.0,
-            t_root.duration_since(t_gathered).as_secs_f64() * 1000.0,
+            t_joined.duration_since(t_gathered).as_secs_f64() * 1000.0,
+            t_root.duration_since(t_joined).as_secs_f64() * 1000.0,
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
