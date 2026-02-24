@@ -7,6 +7,11 @@
 //! Test 2: Mock backend that returns deliberately wrong gas, exercised through
 //! the full VM dispatch path. Verifies that mismatch triggers cache invalidation
 //! and `validation_mismatches` metric increments.
+//!
+//! Test 3: Mock backend that succeeds, but interpreter replay fails with
+//! InternalError (FailingDatabase). Verifies the swap-back recovery path:
+//! VM restores JIT state and returns the JIT result, with no validation
+//! counters incremented.
 
 #[cfg(test)]
 mod tests {
@@ -297,6 +302,260 @@ mod tests {
         assert!(
             JIT_STATE.cache.get(&cache_key).is_none(),
             "cache entry should be invalidated after mismatch"
+        );
+    }
+
+    /// Integration test: interpreter replay failure triggers swap-back recovery.
+    ///
+    /// Registers a mock backend that returns a successful JIT result without
+    /// touching the database. The backing store is a `FailingDatabase` that
+    /// errors on all reads. The bytecode includes BALANCE on an uncached
+    /// address, causing `interpreter_loop` to fail with `InternalError`.
+    ///
+    /// Verifies:
+    /// - VM returns successfully (JIT result, not interpreter error)
+    /// - No `validation_successes` or `validation_mismatches` incremented
+    ///   (validation was inconclusive)
+    /// - Cache entry remains (not invalidated — mismatch was not proven)
+    #[test]
+    #[serial_test::serial]
+    fn test_interpreter_err_swaps_back_to_jit_state() {
+        use ethrex_levm::call_frame::CallFrame;
+        use ethrex_levm::db::Database;
+        use ethrex_levm::environment::Environment;
+        use ethrex_levm::errors::DatabaseError;
+        use ethrex_levm::jit::dispatch::{JitBackend, StorageOriginalValues};
+        use ethrex_levm::jit::types::{JitOutcome, JitResumeState, SubCallResult};
+        use ethrex_levm::vm::{Substate, JIT_STATE};
+
+        use ethrex_common::types::{
+            Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction,
+            Transaction, TxKind,
+        };
+
+        /// Database that always returns errors.
+        /// Forces `interpreter_loop` to fail with InternalError when it
+        /// tries to load an uncached account.
+        struct FailingDatabase;
+
+        impl Database for FailingDatabase {
+            fn get_account_state(
+                &self,
+                _: Address,
+            ) -> Result<AccountState, DatabaseError> {
+                Err(DatabaseError::Custom(
+                    "deliberately failing store".to_string(),
+                ))
+            }
+            fn get_storage_value(
+                &self,
+                _: Address,
+                _: H256,
+            ) -> Result<U256, DatabaseError> {
+                Err(DatabaseError::Custom(
+                    "deliberately failing store".to_string(),
+                ))
+            }
+            fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+                Err(DatabaseError::Custom(
+                    "deliberately failing store".to_string(),
+                ))
+            }
+            fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+                Err(DatabaseError::Custom(
+                    "deliberately failing store".to_string(),
+                ))
+            }
+            fn get_account_code(
+                &self,
+                _: H256,
+            ) -> Result<Code, DatabaseError> {
+                Err(DatabaseError::Custom(
+                    "deliberately failing store".to_string(),
+                ))
+            }
+            fn get_code_metadata(
+                &self,
+                _: H256,
+            ) -> Result<CodeMetadata, DatabaseError> {
+                Err(DatabaseError::Custom(
+                    "deliberately failing store".to_string(),
+                ))
+            }
+        }
+
+        /// Mock backend that returns successful JIT result without touching DB.
+        struct SuccessBackend;
+
+        impl JitBackend for SuccessBackend {
+            fn execute(
+                &self,
+                _compiled: &CompiledCode,
+                _call_frame: &mut CallFrame,
+                _db: &mut GeneralizedDatabase,
+                _substate: &mut Substate,
+                _env: &Environment,
+                _storage_original_values: &mut StorageOriginalValues,
+            ) -> Result<JitOutcome, String> {
+                let mut output = vec![0u8; 32];
+                output[31] = 0x42;
+                Ok(JitOutcome::Success {
+                    gas_used: 50000,
+                    output: Bytes::from(output),
+                })
+            }
+
+            fn execute_resume(
+                &self,
+                _resume_state: JitResumeState,
+                _sub_result: SubCallResult,
+                _call_frame: &mut CallFrame,
+                _db: &mut GeneralizedDatabase,
+                _substate: &mut Substate,
+                _env: &Environment,
+                _storage_original_values: &mut StorageOriginalValues,
+            ) -> Result<JitOutcome, String> {
+                Err("not implemented".to_string())
+            }
+
+            fn compile(
+                &self,
+                _code: &Code,
+                _fork: Fork,
+                _cache: &ethrex_levm::jit::cache::CodeCache,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+        }
+
+        // Bytecode: PUSH20 0xDEAD, BALANCE, POP, PUSH1 0x42, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN
+        // The BALANCE of uncached address 0xDEAD forces a DB read → FailingDatabase → InternalError
+        let mut bytecode_bytes = Vec::new();
+        // PUSH20 <0xDEAD padded to 20 bytes>
+        bytecode_bytes.push(0x73);
+        bytecode_bytes.extend_from_slice(&[0u8; 18]);
+        bytecode_bytes.push(0xDE);
+        bytecode_bytes.push(0xAD);
+        // BALANCE
+        bytecode_bytes.push(0x31);
+        // POP
+        bytecode_bytes.push(0x50);
+        // PUSH1 0x42, PUSH1 0x00, MSTORE (store 0x42 in memory)
+        bytecode_bytes.extend_from_slice(&[0x60, 0x42, 0x60, 0x00, 0x52]);
+        // PUSH1 0x20, PUSH1 0x00, RETURN (return 32 bytes from memory offset 0)
+        bytecode_bytes.extend_from_slice(&[0x60, 0x20, 0x60, 0x00, 0xf3]);
+
+        let fork = Fork::Cancun;
+
+        let contract_addr = Address::from_low_u64_be(0x42);
+        let sender_addr = Address::from_low_u64_be(0x100);
+
+        let code = Code::from_bytecode(Bytes::from(bytecode_bytes));
+
+        // Build account cache — pre-cache contract, sender, and coinbase (Address::zero)
+        // so VM::new and finalize_execution don't hit the FailingDatabase.
+        let mut cache = FxHashMap::default();
+        cache.insert(
+            contract_addr,
+            Account::new(U256::MAX, code.clone(), 0, FxHashMap::default()),
+        );
+        cache.insert(
+            sender_addr,
+            Account::new(
+                U256::MAX,
+                Code::from_bytecode(Bytes::new()),
+                0,
+                FxHashMap::default(),
+            ),
+        );
+        // Pre-cache coinbase (default Address::zero) to avoid DB read in finalize
+        cache.insert(
+            Address::zero(),
+            Account::new(
+                U256::zero(),
+                Code::from_bytecode(Bytes::new()),
+                0,
+                FxHashMap::default(),
+            ),
+        );
+
+        let store: Arc<dyn Database> = Arc::new(FailingDatabase);
+        let mut db = GeneralizedDatabase::new_with_account_state(store, cache);
+
+        #[expect(clippy::as_conversions)]
+        let gas = (i64::MAX - 1) as u64;
+        let env = ethrex_levm::Environment {
+            origin: sender_addr,
+            gas_limit: gas,
+            block_gas_limit: gas,
+            ..Default::default()
+        };
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: TxKind::Call(contract_addr),
+            data: Bytes::new(),
+            ..Default::default()
+        });
+
+        // Reset JIT state and register mock backend
+        JIT_STATE.reset_for_testing();
+        JIT_STATE.register_backend(Arc::new(SuccessBackend));
+
+        // Insert dummy compiled code (has_external_calls = false so validation triggers)
+        let cache_key = (code.hash, fork);
+        #[expect(unsafe_code)]
+        let dummy_compiled =
+            unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, false) };
+        JIT_STATE.cache.insert(cache_key, dummy_compiled);
+
+        // Capture baseline metrics
+        let (_, _, _, _, baseline_successes, baseline_mismatches) =
+            JIT_STATE.metrics.snapshot();
+
+        // Run VM — JIT succeeds, interpreter fails on BALANCE(0xDEAD), swap-back fires
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+        )
+        .expect("VM::new should succeed (all needed accounts pre-cached)");
+
+        let report = vm
+            .stateless_execute()
+            .expect("execution should succeed (JIT result via swap-back)");
+
+        // Verify execution succeeded with JIT result
+        assert!(
+            report.is_success(),
+            "should succeed via JIT swap-back, got: {:?}",
+            report.result
+        );
+        let result_val = U256::from_big_endian(&report.output);
+        assert_eq!(
+            result_val,
+            U256::from(0x42u64),
+            "output should match JIT mock (0x42)"
+        );
+
+        // Verify no validation counters changed (inconclusive, not match/mismatch)
+        let (_, _, _, _, final_successes, final_mismatches) =
+            JIT_STATE.metrics.snapshot();
+        assert_eq!(
+            final_successes.saturating_sub(baseline_successes),
+            0,
+            "should have no new validation successes (inconclusive)"
+        );
+        assert_eq!(
+            final_mismatches.saturating_sub(baseline_mismatches),
+            0,
+            "should have no new validation mismatches (inconclusive)"
+        );
+
+        // Verify cache entry is still present (not invalidated — no proven mismatch)
+        assert!(
+            JIT_STATE.cache.get(&cache_key).is_some(),
+            "cache entry should remain after inconclusive validation"
         );
     }
 }

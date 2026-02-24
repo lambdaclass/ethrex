@@ -19,7 +19,7 @@ pub enum DualExecutionResult {
 /// Compare a JIT execution outcome against an interpreter execution outcome.
 ///
 /// Checks status, gas_used, output bytes, refunded gas, logs, and **DB state
-/// changes** (account balances, nonces, and storage for all modified accounts).
+/// changes** (account status, balances, nonces, and storage for all modified accounts).
 #[allow(clippy::too_many_arguments)]
 pub fn validate_dual_execution(
     jit_result: &ContextResult,
@@ -102,6 +102,8 @@ pub fn validate_dual_execution(
 
 /// Compare modified account states between JIT and interpreter DB snapshots.
 ///
+/// Checks account status (Modified/Destroyed/DestroyedModified), balance, nonce,
+/// and storage for all non-Unmodified accounts.
 /// Returns `Some(reason)` on first mismatch, `None` if all modified accounts match.
 fn compare_account_states(jit_accounts: &CacheDB, interp_accounts: &CacheDB) -> Option<String> {
     // Check every address present in either DB
@@ -115,6 +117,14 @@ fn compare_account_states(jit_accounts: &CacheDB, interp_accounts: &CacheDB) -> 
                 "state mismatch: account {address:?} modified by JIT but absent in interpreter DB"
             ));
         };
+
+        // Compare account status (e.g., Modified vs Destroyed)
+        if jit_account.status != interp_account.status {
+            return Some(format!(
+                "state mismatch: account {address:?} status JIT={:?} interpreter={:?}",
+                jit_account.status, interp_account.status,
+            ));
+        }
 
         // Compare balance
         if jit_account.info.balance != interp_account.info.balance {
@@ -425,6 +435,28 @@ mod tests {
         let result =
             validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
         assert!(matches!(result, DualExecutionResult::Match));
+    }
+
+    #[test]
+    fn test_account_status_mismatch_destroyed_vs_modified() {
+        let addr = Address::from_low_u64_be(0x42);
+
+        let mut jit_db: CacheDB = FxHashMap::default();
+        let mut jit_acct = make_account(100, 1, vec![]);
+        jit_acct.status = AccountStatus::Destroyed;
+        jit_db.insert(addr, jit_acct);
+
+        let mut interp_db: CacheDB = FxHashMap::default();
+        interp_db.insert(addr, make_account(100, 1, vec![])); // Modified by default
+
+        let jit = success_result(21000, &[]);
+        let interp = success_result(21000, &[]);
+        let result =
+            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
+        if let DualExecutionResult::Mismatch { reason } = result {
+            assert!(reason.contains("status"));
+        }
     }
 
     #[test]

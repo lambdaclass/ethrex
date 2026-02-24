@@ -30,6 +30,19 @@ use std::{
     rc::Rc,
 };
 
+/// Snapshot of VM state for JIT dual-execution validation.
+///
+/// Contains clones of the four mutable state components (db, call_frame,
+/// substate, storage_original_values) taken before JIT execution, used to
+/// replay via interpreter and compare results.
+#[cfg(feature = "tokamak-jit")]
+type ValidationSnapshot = (
+    GeneralizedDatabase,
+    CallFrame,
+    Substate,
+    FxHashMap<(Address, H256), U256>,
+);
+
 #[cfg(feature = "tokamak-jit")]
 lazy_static::lazy_static! {
     /// Global JIT compilation state (execution counter + code cache).
@@ -690,34 +703,19 @@ impl<'a> VM<'a> {
                                 .fetch_add(1, Ordering::Relaxed);
 
                             // Dual-execution validation: replay via interpreter and compare.
-                            if let Some((
-                                mut pre_jit_db,
-                                mut pre_jit_frame,
-                                mut pre_jit_substate,
-                                mut pre_jit_storage,
-                            )) = pre_jit_snapshot
-                            {
+                            if let Some(mut snapshot) = pre_jit_snapshot {
                                 // Build JIT result for comparison before swapping state
                                 let jit_result =
                                     apply_jit_outcome(outcome, &self.current_call_frame)?;
                                 let jit_refunded_gas = self.substate.refunded_gas;
                                 let jit_logs = self.substate.extract_logs();
-                                // Capture JIT DB state before swap (pre_jit_db will hold it)
+                                // Capture JIT DB state before swap
                                 let jit_accounts =
                                     self.db.current_accounts_state.clone();
 
                                 // Swap JIT-mutated state with pre-JIT snapshots
                                 // (VM now holds original state for interpreter replay)
-                                mem::swap(self.db, &mut pre_jit_db);
-                                mem::swap(
-                                    &mut self.current_call_frame,
-                                    &mut pre_jit_frame,
-                                );
-                                mem::swap(&mut self.substate, &mut pre_jit_substate);
-                                mem::swap(
-                                    &mut self.storage_original_values,
-                                    &mut pre_jit_storage,
-                                );
+                                self.swap_validation_state(&mut snapshot);
 
                                 // Run interpreter on the original state.
                                 // If interpreter_loop fails (InternalError), swap back to
@@ -730,19 +728,7 @@ impl<'a> VM<'a> {
                                             "[JIT-VALIDATE] interpreter replay failed for \
                                              {bytecode_hash}, trusting JIT result"
                                         );
-                                        mem::swap(self.db, &mut pre_jit_db);
-                                        mem::swap(
-                                            &mut self.current_call_frame,
-                                            &mut pre_jit_frame,
-                                        );
-                                        mem::swap(
-                                            &mut self.substate,
-                                            &mut pre_jit_substate,
-                                        );
-                                        mem::swap(
-                                            &mut self.storage_original_values,
-                                            &mut pre_jit_storage,
-                                        );
+                                        self.swap_validation_state(&mut snapshot);
                                         return Ok(jit_result);
                                     }
                                 };
@@ -765,19 +751,7 @@ impl<'a> VM<'a> {
                                 match validation {
                                     crate::jit::validation::DualExecutionResult::Match => {
                                         // Swap back to JIT state (trusted now)
-                                        mem::swap(self.db, &mut pre_jit_db);
-                                        mem::swap(
-                                            &mut self.current_call_frame,
-                                            &mut pre_jit_frame,
-                                        );
-                                        mem::swap(
-                                            &mut self.substate,
-                                            &mut pre_jit_substate,
-                                        );
-                                        mem::swap(
-                                            &mut self.storage_original_values,
-                                            &mut pre_jit_storage,
-                                        );
+                                        self.swap_validation_state(&mut snapshot);
                                         JIT_STATE.record_validation(&cache_key);
                                         JIT_STATE
                                             .metrics
@@ -819,6 +793,18 @@ impl<'a> VM<'a> {
         }
 
         self.interpreter_loop(0)
+    }
+
+    /// Swap VM mutable state with a validation snapshot.
+    ///
+    /// Used during dual-execution validation to alternate between JIT-mutated
+    /// state and pre-JIT snapshot state. Calling twice restores the original.
+    #[cfg(feature = "tokamak-jit")]
+    fn swap_validation_state(&mut self, snapshot: &mut ValidationSnapshot) {
+        mem::swap(self.db, &mut snapshot.0);
+        mem::swap(&mut self.current_call_frame, &mut snapshot.1);
+        mem::swap(&mut self.substate, &mut snapshot.2);
+        mem::swap(&mut self.storage_original_values, &mut snapshot.3);
     }
 
     /// Shared interpreter loop used by both `run_execution` (stop_depth=0) and
