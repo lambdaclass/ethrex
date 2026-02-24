@@ -2330,6 +2330,18 @@ impl Blockchain {
             exec_timings.vm_run_time.as_millis()
         );
         info!(
+            "  |    |    |    |    |- sload:  {:>4} ms",
+            exec_timings.run_sload_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |    |- sstore: {:>4} ms",
+            exec_timings.run_sstore_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |    `- calls:  {:>4} ms",
+            exec_timings.run_calls_time.as_millis()
+        );
+        info!(
             "  |    |    |    `- finalize: {:>4} ms",
             exec_timings.vm_finalize_time.as_millis()
         );

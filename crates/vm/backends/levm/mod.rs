@@ -220,6 +220,9 @@ impl LEVM {
         let mut vm_exec_time = std::time::Duration::ZERO;
         let mut vm_prepare_time = std::time::Duration::ZERO;
         let mut vm_run_time = std::time::Duration::ZERO;
+        let mut run_sload_time = std::time::Duration::ZERO;
+        let mut run_sstore_time = std::time::Duration::ZERO;
+        let mut run_calls_time = std::time::Duration::ZERO;
         let mut vm_finalize_time = std::time::Duration::ZERO;
         let mut flush_time = std::time::Duration::ZERO;
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
@@ -239,7 +242,8 @@ impl LEVM {
                 }
             }
 
-            let (report, [tx_env, tx_init, tx_exec, tx_prepare, tx_run, tx_finalize]) =
+            let (report, [tx_env, tx_init, tx_exec, tx_prepare, tx_run, tx_finalize,
+                          tx_sload, tx_sstore, tx_calls]) =
                 Self::execute_tx_in_block(
                     tx,
                     tx_sender,
@@ -253,6 +257,9 @@ impl LEVM {
             vm_exec_time += tx_exec;
             vm_prepare_time += tx_prepare;
             vm_run_time += tx_run;
+            run_sload_time += tx_sload;
+            run_sstore_time += tx_sstore;
+            run_calls_time += tx_calls;
             vm_finalize_time += tx_finalize;
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
@@ -332,6 +339,9 @@ impl LEVM {
             vm_exec_time,
             vm_prepare_time,
             vm_run_time,
+            run_sload_time,
+            run_sstore_time,
+            run_calls_time,
             vm_finalize_time,
             flush_time,
             post_exec: t4.duration_since(t3),
@@ -553,7 +563,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
-    ) -> Result<(ExecutionReport, [std::time::Duration; 6]), EvmError> {
+    ) -> Result<(ExecutionReport, [std::time::Duration; 9]), EvmError> {
         let t0 = std::time::Instant::now();
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let t1 = std::time::Instant::now();
@@ -562,11 +572,13 @@ impl LEVM {
         let t2 = std::time::Instant::now();
         let result = vm.execute().map_err(VMError::into);
         let (vm_prepare, vm_run, vm_finalize) = vm.last_exec_timings;
+        let (sload, sstore, calls) = vm.run_sub_timings;
         let t3 = std::time::Instant::now();
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         result.map(|r| (r, [
             t1.duration_since(t0), t2.duration_since(t1), t3.duration_since(t2),
             vm_prepare, vm_run, vm_finalize,
+            sload, sstore, calls,
         ]))
     }
 

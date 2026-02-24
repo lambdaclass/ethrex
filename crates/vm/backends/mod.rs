@@ -38,6 +38,12 @@ pub struct ExecTimings {
     pub vm_prepare_time: Duration,
     /// Within vm.execute(): run_execution (opcode interpreter loop).
     pub vm_run_time: Duration,
+    /// Within run_execution: SLOAD time.
+    pub run_sload_time: Duration,
+    /// Within run_execution: SSTORE time.
+    pub run_sstore_time: Duration,
+    /// Within run_execution: CALL/CREATE family time.
+    pub run_calls_time: Duration,
     /// Within vm.execute(): finalize_execution (hooks: gas refund, coinbase payment).
     pub vm_finalize_time: Duration,
     /// Within execute_txs: time spent flushing state to merkleizer.

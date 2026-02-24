@@ -437,6 +437,8 @@ pub struct VM<'a> {
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
     /// Timings from the last execute() call: (prepare, run, finalize).
     pub last_exec_timings: (std::time::Duration, std::time::Duration, std::time::Duration),
+    /// Run-phase sub-timings: (sload, sstore, calls).
+    pub run_sub_timings: (std::time::Duration, std::time::Duration, std::time::Duration),
 }
 
 impl<'a> VM<'a> {
@@ -486,6 +488,7 @@ impl<'a> VM<'a> {
             env,
             opcode_table: VM::build_opcode_table(fork),
             last_exec_timings: Default::default(),
+            run_sub_timings: Default::default(),
         };
 
         let call_type = if is_create {
@@ -683,12 +686,28 @@ impl<'a> VM<'a> {
                 0x50 => self.op_pop(),
                 0x51 => self.op_mload(),
                 0x52 => self.op_mstore(),
-                0x54 => self.op_sload(),
+                0x54 => {
+                    let t = std::time::Instant::now();
+                    let r = self.op_sload();
+                    self.run_sub_timings.0 += t.elapsed();
+                    r
+                }
                 0x56 => self.op_jump(),
                 0x57 => self.op_jumpi(),
                 0x5b => self.op_jumpdest(),
                 0x5f if self.env.config.fork >= Fork::Shanghai => self.op_push0(),
                 0xf3 => self.op_return(),
+                // Timed: storage and call-family opcodes
+                0x55 | 0xF0 | 0xF1 | 0xF2 | 0xF4 | 0xF5 | 0xFA => {
+                    let t = std::time::Instant::now();
+                    let r = self.opcode_table[opcode as usize].call(self);
+                    let elapsed = t.elapsed();
+                    match opcode {
+                        0x55 => self.run_sub_timings.1 += elapsed, // SSTORE
+                        _    => self.run_sub_timings.2 += elapsed, // CALL/CREATE family
+                    }
+                    r
+                }
                 _ => {
                     // Call the opcode, using the opcode function lookup table.
                     // Indexing will not panic as all the opcode values fit within the table.
