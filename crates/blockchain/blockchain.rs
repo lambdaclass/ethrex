@@ -2330,44 +2330,44 @@ impl Blockchain {
             exec_timings.vm_run_time.as_millis()
         );
         info!(
-            "  |    |    |    |    |- sload:  {:>4} ms",
-            exec_timings.run_sload_time.as_millis()
+            "  |    |    |    |    |- sload:  {:>6.1} ms",
+            exec_timings.run_sload_time.as_secs_f64() * 1000.0
         );
         info!(
-            "  |    |    |    |    |- sstore: {:>4} ms",
-            exec_timings.run_sstore_time.as_millis()
+            "  |    |    |    |    |- sstore: {:>6.1} ms",
+            exec_timings.run_sstore_time.as_secs_f64() * 1000.0
         );
         info!(
-            "  |    |    |    |    |- calls:  {:>4} ms",
-            exec_timings.run_calls_time.as_millis()
+            "  |    |    |    |    |- calls:  {:>6.1} ms",
+            exec_timings.run_calls_time.as_secs_f64() * 1000.0
         );
         info!(
-            "  |    |    |    |    |- sha3:   {:>4} ms",
-            exec_timings.run_sha3_time.as_millis()
+            "  |    |    |    |    |- sha3:   {:>6.1} ms",
+            exec_timings.run_sha3_time.as_secs_f64() * 1000.0
         );
         info!(
-            "  |    |    |    |    |- ext:    {:>4} ms",
-            exec_timings.run_ext_time.as_millis()
+            "  |    |    |    |    |- ext:    {:>6.1} ms",
+            exec_timings.run_ext_time.as_secs_f64() * 1000.0
         );
         info!(
-            "  |    |    |    |    |- log:    {:>4} ms",
-            exec_timings.run_log_time.as_millis()
+            "  |    |    |    |    |- log:    {:>6.1} ms",
+            exec_timings.run_log_time.as_secs_f64() * 1000.0
         );
         info!(
-            "  |    |    |    |    |- stack:  {:>4} ms",
-            exec_timings.run_stack_time.as_millis()
+            "  |    |    |    |    |- stack:  {:>6.1} ms",
+            exec_timings.run_stack_time.as_secs_f64() * 1000.0
         );
         info!(
-            "  |    |    |    |    |- arith:  {:>4} ms",
-            exec_timings.run_arith_time.as_millis()
+            "  |    |    |    |    |- arith:  {:>6.1} ms",
+            exec_timings.run_arith_time.as_secs_f64() * 1000.0
         );
         info!(
-            "  |    |    |    |    |- mem:    {:>4} ms",
-            exec_timings.run_mem_time.as_millis()
+            "  |    |    |    |    |- mem:    {:>6.1} ms",
+            exec_timings.run_mem_time.as_secs_f64() * 1000.0
         );
         info!(
-            "  |    |    |    |    |- flow:   {:>4} ms",
-            exec_timings.run_flow_time.as_millis()
+            "  |    |    |    |    |- flow:   {:>6.1} ms",
+            exec_timings.run_flow_time.as_secs_f64() * 1000.0
         );
         let timed_opcodes = exec_timings.run_sload_time + exec_timings.run_sstore_time
             + exec_timings.run_calls_time + exec_timings.run_sha3_time
@@ -2375,8 +2375,8 @@ impl Blockchain {
             + exec_timings.run_stack_time + exec_timings.run_arith_time
             + exec_timings.run_mem_time + exec_timings.run_flow_time;
         info!(
-            "  |    |    |    |    `- loop:   {:>4} ms",
-            exec_timings.vm_run_time.saturating_sub(timed_opcodes).as_millis()
+            "  |    |    |    |    `- loop:   {:>6.1} ms",
+            exec_timings.vm_run_time.saturating_sub(timed_opcodes).as_secs_f64() * 1000.0
         );
         info!(
             "  |    |    |    `- finalize: {:>4} ms",
