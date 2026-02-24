@@ -114,6 +114,15 @@ const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
 // Result type for execute_block_pipeline
+/// Sub-phase timing breakdown for merkleization.
+#[derive(Debug, Default)]
+struct MerkleTimings {
+    drain_updates: Duration,
+    storage_roots: Duration,
+    state_trie: Duration,
+    finalize_root: Duration,
+}
+
 type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
@@ -122,6 +131,7 @@ type BlockExecutionPipelineResult = (
     [Instant; 6],                 // timing instants
     Duration,                     // warmer duration
     ethrex_vm::backends::ExecTimings, // exec sub-phase timings
+    MerkleTimings,                // merkle sub-phase timings
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -468,27 +478,29 @@ impl Blockchain {
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, StoreError> {
-                        let (account_updates_list, accumulated_updates) = if bal.is_some() {
-                            self.handle_merkleization_bal(
-                                rx,
-                                parent_header_ref,
-                                queue_length_ref,
-                                max_queue_length_ref,
-                            )?
-                        } else {
-                            self.handle_merkleization(
-                                s,
-                                rx,
-                                parent_header_ref,
-                                queue_length_ref,
-                                max_queue_length_ref,
-                            )?
-                        };
+                        let (account_updates_list, accumulated_updates, merkle_timings) =
+                            if bal.is_some() {
+                                self.handle_merkleization_bal(
+                                    rx,
+                                    parent_header_ref,
+                                    queue_length_ref,
+                                    max_queue_length_ref,
+                                )?
+                            } else {
+                                self.handle_merkleization(
+                                    s,
+                                    rx,
+                                    parent_header_ref,
+                                    queue_length_ref,
+                                    max_queue_length_ref,
+                                )?
+                            };
                         let merkle_end_instant = Instant::now();
                         Ok((
                             account_updates_list,
                             accumulated_updates,
                             merkle_end_instant,
+                            merkle_timings,
                         ))
                     })
                     .map_err(|e| {
@@ -511,7 +523,8 @@ impl Blockchain {
                     warmer_duration,
                 ))
             })?;
-        let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
+        let (account_updates_list, accumulated_updates, merkle_end_instant, merkle_timings) =
+            merkleization_result?;
         let (execution_result, exec_end_instant, exec_timings) = execution_result?;
 
         let exec_merkle_end_instant = Instant::now();
@@ -531,6 +544,7 @@ impl Blockchain {
             ],
             warmer_duration,
             exec_timings,
+            merkle_timings,
         ))
     }
 
@@ -547,11 +561,12 @@ impl Blockchain {
         parent_header: &'b BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError>
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>, MerkleTimings), StoreError>
     where
         'a: 's,
         'b: 's,
     {
+        let t0 = Instant::now();
         let mut workers_tx = Vec::with_capacity(16);
         let mut workers_handles = Vec::with_capacity(16);
         for i in 0..16 {
@@ -645,6 +660,7 @@ impl Blockchain {
                 }
             }
         }
+        let t1 = Instant::now();
 
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &workers_tx {
@@ -674,6 +690,8 @@ impl Blockchain {
             }
             state.nodes.extend(nodes);
         }
+
+        let t2 = Instant::now();
 
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
@@ -709,6 +727,8 @@ impl Blockchain {
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
+        let t3 = Instant::now();
+
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
@@ -718,8 +738,16 @@ impl Blockchain {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
                 *EMPTY_TRIE_HASH
             };
+        let t4 = Instant::now();
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+
+        let merkle_timings = MerkleTimings {
+            drain_updates: t1.duration_since(t0),
+            storage_roots: t2.duration_since(t1),
+            state_trie: t3.duration_since(t2),
+            finalize_root: t4.duration_since(t3),
+        };
 
         Ok((
             AccountUpdatesList {
@@ -729,6 +757,7 @@ impl Blockchain {
                 code_updates,
             },
             accumulated_updates,
+            merkle_timings,
         ))
     }
 
@@ -750,11 +779,12 @@ impl Blockchain {
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>, MerkleTimings), StoreError> {
         const NUM_WORKERS: usize = 16;
         let parent_state_root = parent_header.state_root;
 
         // === Stage A: Drain + accumulate all AccountUpdates ===
+        let t_drain = Instant::now();
         // BAL guarantees completeness, so we block until execution finishes.
         let mut all_updates: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
         for updates in rx {
@@ -791,8 +821,10 @@ impl Blockchain {
             }
             accounts.push((hashed, update));
         }
+        let drain_updates_dur = t_drain.elapsed();
 
         // === Stage B: Parallel per-account storage root computation ===
+        let t_storage = Instant::now();
 
         // Sort by storage weight (descending) for greedy bin packing.
         // Every item with real Stage B work MUST have weight >= 1: the greedy
@@ -924,7 +956,10 @@ impl Blockchain {
             Ok(())
         })?;
 
+        let storage_roots_dur = t_storage.elapsed();
+
         // === Stage C: State trie update via 16 shard workers ===
+        let t_state = Instant::now();
 
         // Build per-shard work items
         let mut shards: Vec<Vec<BalStateWorkItem>> = (0..NUM_WORKERS).map(|_| Vec::new()).collect();
@@ -1016,7 +1051,10 @@ impl Blockchain {
             Ok(())
         })?;
 
+        let state_trie_dur = t_state.elapsed();
+
         // === Stage D: Finalize root ===
+        let t_finalize = Instant::now();
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
@@ -1026,6 +1064,14 @@ impl Blockchain {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
                 *EMPTY_TRIE_HASH
             };
+        let finalize_root_dur = t_finalize.elapsed();
+
+        let merkle_timings = MerkleTimings {
+            drain_updates: drain_updates_dur,
+            storage_roots: storage_roots_dur,
+            state_trie: state_trie_dur,
+            finalize_root: finalize_root_dur,
+        };
 
         Ok((
             AccountUpdatesList {
@@ -1035,6 +1081,7 @@ impl Blockchain {
                 code_updates,
             },
             accumulated_updates,
+            merkle_timings,
         ))
     }
 
@@ -1956,6 +2003,7 @@ impl Blockchain {
             instants,
             warmer_duration,
             exec_timings,
+            merkle_timings,
         ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
@@ -2001,6 +2049,7 @@ impl Blockchain {
                 warmer_duration,
                 instants,
                 exec_timings,
+                merkle_timings,
             );
         }
 
@@ -2079,6 +2128,7 @@ impl Blockchain {
             stored_instant,
         ]: [Instant; 7],
         exec_timings: ethrex_vm::backends::ExecTimings,
+        merkle_timings: MerkleTimings,
     ) {
         let total_ms = stored_instant.duration_since(start_instant).as_millis() as u64;
         if total_ms == 0 {
@@ -2213,6 +2263,22 @@ impl Blockchain {
             merkle_drain_ms,
             overlap_pct,
             merkle_queue_length,
+        );
+        info!(
+            "  |    |- drain_updates:    {:>4} ms",
+            merkle_timings.drain_updates.as_millis()
+        );
+        info!(
+            "  |    |- storage_roots:    {:>4} ms",
+            merkle_timings.storage_roots.as_millis()
+        );
+        info!(
+            "  |    |- state_trie:       {:>4} ms",
+            merkle_timings.state_trie.as_millis()
+        );
+        info!(
+            "  |    `- finalize_root:    {:>4} ms",
+            merkle_timings.finalize_root.as_millis()
         );
         info!(
             "  |- store:    {:>4} ms  ({:>2}%){}",

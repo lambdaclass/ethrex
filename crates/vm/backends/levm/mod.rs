@@ -183,6 +183,8 @@ impl LEVM {
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>, super::ExecTimings), EvmError> {
+        let t0 = std::time::Instant::now();
+
         let chain_config = db.store.get_chain_config()?;
         let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
 
@@ -193,9 +195,8 @@ impl LEVM {
             db.set_bal_index(0);
         }
 
-        let t0 = std::time::Instant::now();
         Self::prepare_block(block, db, vm_type)?;
-        let prepare_block_dur = t0.elapsed();
+        let t1 = std::time::Instant::now();
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
@@ -208,13 +209,10 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
-        let t1 = std::time::Instant::now();
         let transactions_with_sender =
             block.body.get_transactions_with_sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
-        let recover_senders_dur = t1.elapsed();
-
         let t2 = std::time::Instant::now();
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
@@ -263,7 +261,7 @@ impl LEVM {
 
             receipts.push(receipt);
         }
-        let execute_txs_dur = t2.elapsed();
+        let t3 = std::time::Instant::now();
 
         #[cfg(feature = "perf_opcode_timings")]
         {
@@ -274,8 +272,6 @@ impl LEVM {
             let precompiles_timings = PRECOMPILES_TIMINGS.lock().expect("poison");
             ::tracing::info!("{}", precompiles_timings.info_pretty());
         }
-
-        let t3 = std::time::Instant::now();
         if queue_length.load(Ordering::Relaxed) == 0 {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
@@ -303,16 +299,16 @@ impl LEVM {
             VMType::L2(_) => Default::default(),
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
-        let post_exec_dur = t3.elapsed();
+        let t4 = std::time::Instant::now();
 
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
 
         let timings = super::ExecTimings {
-            prepare_block: prepare_block_dur,
-            recover_senders: recover_senders_dur,
-            execute_txs: execute_txs_dur,
-            post_exec: post_exec_dur,
+            prepare_block: t1.duration_since(t0),
+            recover_senders: t2.duration_since(t1),
+            execute_txs: t3.duration_since(t2),
+            post_exec: t4.duration_since(t3),
             block_validation: std::time::Duration::ZERO,
         };
 
