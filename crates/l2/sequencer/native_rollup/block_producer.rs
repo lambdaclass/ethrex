@@ -23,19 +23,19 @@ use ethrex_blockchain::payload::{
     BuildPayloadArgs, HeadTransaction, PayloadBuildContext, apply_plain_transaction,
 };
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, payload::create_payload};
-use ethrex_common::merkle_tree::compute_merkle_proof;
+use ethrex_common::merkle_tree::{compute_merkle_proof, compute_merkle_root};
 use ethrex_common::types::{EIP1559Transaction, MempoolTransaction, Transaction, TxKind};
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{Signable, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_levm::execute_precompile::L2_BRIDGE;
+use ethrex_levm::execute_precompile::{L1_ANCHOR, L2_BRIDGE};
 use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use spawned_concurrency::tasks::{
     CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::types::{L1Message, PendingL1Messages};
 
@@ -101,15 +101,67 @@ impl NativeBlockProducer {
         }
     }
 
-    /// Drain all pending L1 messages from the shared queue.
-    fn drain_l1_messages(&self) -> Vec<L1Message> {
+    /// Take L1 messages from the shared queue that fit within the block gas limit.
+    ///
+    /// Pops messages one by one, summing each message's gas limit. Once adding
+    /// another message would exceed `block_gas_limit`, the remaining messages
+    /// stay in the queue for the next block.
+    fn take_l1_messages_for_block(&self) -> Vec<L1Message> {
         match self.pending_l1_messages.lock() {
-            Ok(mut queue) => queue.drain(..).collect(),
+            Ok(mut queue) => {
+                let mut selected = Vec::new();
+                let mut cumulative_gas: u64 = 0;
+
+                while let Some(msg) = queue.front() {
+                    let next_gas = cumulative_gas.saturating_add(msg.gas_limit);
+                    if next_gas > self.config.block_gas_limit {
+                        warn!(
+                            "NativeBlockProducer: L1 messages gas ({next_gas}) would exceed \
+                             block gas limit ({}), deferring {} remaining messages",
+                            self.config.block_gas_limit,
+                            queue.len()
+                        );
+                        break;
+                    }
+                    cumulative_gas = next_gas;
+                    selected.push(queue.pop_front().unwrap());
+                }
+
+                selected
+            }
             Err(e) => {
                 error!("NativeBlockProducer: failed to lock pending_l1_messages: {e}");
                 Vec::new()
             }
         }
+    }
+
+    /// Write the L1 messages Merkle root to the L1Anchor predeploy's storage
+    /// slot 0 in the VM cache, mirroring what the EXECUTE precompile does as a
+    /// system transaction before regular execution. This allows L2 contracts
+    /// (L2Bridge) to verify individual messages via Merkle proofs.
+    fn anchor_l1_messages(
+        messages: &[L1Message],
+        context: &mut PayloadBuildContext,
+    ) -> Result<(), NativeBlockProducerError> {
+        let message_hashes: Vec<H256> = messages.iter().map(L1Message::compute_hash).collect();
+        let merkle_root = compute_merkle_root(&message_hashes);
+
+        let anchor_account =
+            context.vm.db.get_account_mut(L1_ANCHOR).map_err(|e| {
+                NativeBlockProducerError::Vm(format!("failed to load L1Anchor: {e}"))
+            })?;
+        anchor_account
+            .storage
+            .insert(H256::zero(), U256::from_big_endian(merkle_root.as_bytes()));
+
+        debug!(
+            "NativeBlockProducer: anchored L1 messages root {:?} ({} messages)",
+            merkle_root,
+            messages.len()
+        );
+
+        Ok(())
     }
 
     /// Build signed EIP-1559 relayer transactions for each L1 message.
@@ -177,7 +229,7 @@ impl NativeBlockProducer {
                 nonce,
                 max_priority_fee_per_gas: max_priority_fee,
                 max_fee_per_gas: max_fee,
-                gas_limit: 200_000, // generous for processL1Message
+                gas_limit: msg.gas_limit,
                 to: TxKind::Call(L2_BRIDGE),
                 value: U256::zero(),
                 data: Bytes::from(calldata),
@@ -201,8 +253,8 @@ impl NativeBlockProducer {
 
     /// Produce a single L2 block following the payload_builder.rs pattern.
     async fn produce_block(&mut self) -> Result<(), NativeBlockProducerError> {
-        // 1. Drain L1 messages and build relayer txs (executed before mempool txs)
-        let l1_messages = self.drain_l1_messages();
+        // 1. Take L1 messages that fit within the block gas limit and build relayer txs
+        let l1_messages = self.take_l1_messages_for_block();
         let relayer_txs = if !l1_messages.is_empty() {
             info!(
                 "NativeBlockProducer: building relayer txs for {} L1 messages",
@@ -241,13 +293,17 @@ impl NativeBlockProducer {
         let mut context =
             PayloadBuildContext::new(payload, &self.store, &self.blockchain.options.r#type)?;
 
-        // 4. Fill transactions: relayer txs first, then mempool
+        // 4. Anchor L1 messages Merkle root in L1Anchor predeploy before execution.
+        //    Always performed, even with no messages (anchors zero hash).
+        Self::anchor_l1_messages(&l1_messages, &mut context)?;
+
+        // 5. Fill transactions: relayer txs first, then mempool
         self.fill_transactions(&mut context, relayer_txs).await?;
 
-        // 5. Finalize payload (compute state root, receipts root, etc.)
+        // 6. Finalize payload (compute state root, receipts root, etc.)
         self.blockchain.finalize_payload(&mut context)?;
 
-        // 6. Store block
+        // 7. Store block
         let block = context.payload;
         let account_updates = context.account_updates;
 
@@ -270,7 +326,7 @@ impl NativeBlockProducer {
         self.blockchain
             .store_block(block, account_updates_list, execution_result)?;
 
-        // 7. Apply fork choice
+        // 8. Apply fork choice
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         info!(
@@ -310,7 +366,7 @@ impl NativeBlockProducer {
             }
 
             // Relayer txs first, then mempool
-            let is_relayer_tx = false;
+            let mut is_relayer_tx = false;
             let head_tx = if let Some(relayer_tx) = relayer_txs.pop_front() {
                 is_relayer_tx = true;
                 relayer_tx
