@@ -46,6 +46,7 @@ pub mod constants;
 pub mod error;
 pub mod fork_choice;
 pub mod mempool;
+pub mod overlay_vm_db;
 pub mod payload;
 pub mod tracing;
 pub mod vm;
