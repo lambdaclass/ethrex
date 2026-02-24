@@ -182,6 +182,7 @@ impl LEVM {
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
+        anchor: std::time::Instant,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>, super::ExecTimings), EvmError> {
         let t0 = std::time::Instant::now();
 
@@ -214,6 +215,8 @@ impl LEVM {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
         let t2 = std::time::Instant::now();
+        let mut evm_time = std::time::Duration::ZERO;
+        let mut flush_time = std::time::Duration::ZERO;
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
@@ -231,6 +234,7 @@ impl LEVM {
                 }
             }
 
+            let evm_start = std::time::Instant::now();
             let report = Self::execute_tx_in_block(
                 tx,
                 tx_sender,
@@ -239,8 +243,12 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
             )?;
+            evm_time += evm_start.elapsed();
+
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+                let flush_start = std::time::Instant::now();
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                flush_time += flush_start.elapsed();
                 tx_since_last_flush = 0;
             } else {
                 tx_since_last_flush += 1;
@@ -305,10 +313,12 @@ impl LEVM {
         let bal = db.take_bal();
 
         let timings = super::ExecTimings {
-            setup: std::time::Duration::ZERO, // filled by caller
+            setup: t0.duration_since(anchor),
             prepare_block: t1.duration_since(t0),
             recover_senders: t2.duration_since(t1),
             execute_txs: t3.duration_since(t2),
+            evm_time,
+            flush_time,
             post_exec: t4.duration_since(t3),
             block_validation: std::time::Duration::ZERO, // filled by caller
         };

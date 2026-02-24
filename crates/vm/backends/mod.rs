@@ -28,6 +28,10 @@ pub struct ExecTimings {
     pub prepare_block: Duration,
     pub recover_senders: Duration,
     pub execute_txs: Duration,
+    /// Within execute_txs: time spent in EVM execution (sum of all tx executions).
+    pub evm_time: Duration,
+    /// Within execute_txs: time spent flushing state to merkleizer.
+    pub flush_time: Duration,
     pub post_exec: Duration,
     pub block_validation: Duration,
 }
@@ -108,8 +112,9 @@ impl Evm {
         block: &Block,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
+        anchor: std::time::Instant,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>, ExecTimings), EvmError> {
-        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
+        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length, anchor)
     }
 
     /// Wraps [LEVM::execute_tx].

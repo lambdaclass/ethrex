@@ -123,6 +123,13 @@ struct MerkleTimings {
     finalize_root: Duration,
 }
 
+/// Sub-phase timing breakdown for store_block.
+#[derive(Debug, Default)]
+pub(crate) struct StoreTimings {
+    validate_state_root: Duration,
+    db_write: Duration,
+}
+
 type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
@@ -443,14 +450,12 @@ impl Blockchain {
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
                 let (tx, rx) = channel();
-                let exec_phase_start = exec_merkle_start;
+                let anchor = exec_merkle_start;
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let thread_start = Instant::now();
                         let (execution_result, bal, mut exec_timings) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
-                        exec_timings.setup = thread_start.duration_since(exec_phase_start);
+                            vm.execute_block_pipeline(block, tx, queue_length_ref, anchor)?;
 
                         // Validate execution went alright
                         let validation_start = Instant::now();
@@ -1922,6 +1927,36 @@ impl Blockchain {
             .map_err(|e| e.into())
     }
 
+    /// Like [store_block] but returns sub-phase timings.
+    fn store_block_timed(
+        &self,
+        block: Block,
+        account_updates_list: AccountUpdatesList,
+        execution_result: BlockExecutionResult,
+    ) -> Result<StoreTimings, ChainError> {
+        let t0 = Instant::now();
+        validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
+        let t1 = Instant::now();
+
+        let update_batch = UpdateBatch {
+            account_updates: account_updates_list.state_updates,
+            storage_updates: account_updates_list.storage_updates,
+            receipts: vec![(block.hash(), execution_result.receipts)],
+            blocks: vec![block],
+            code_updates: account_updates_list.code_updates,
+        };
+
+        self.storage
+            .store_block_updates(update_batch)
+            .map_err(ChainError::from)?;
+        let t2 = Instant::now();
+
+        Ok(StoreTimings {
+            validate_state_root: t1.duration_since(t0),
+            db_write: t2.duration_since(t1),
+        })
+    }
+
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(&block)?;
@@ -2030,7 +2065,7 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
-        let result = self.store_block(block, account_updates_list, res);
+        let store_timings = self.store_block_timed(block, account_updates_list, res)?;
 
         let stored = Instant::now();
 
@@ -2053,10 +2088,11 @@ impl Blockchain {
                 instants,
                 exec_timings,
                 merkle_timings,
+                store_timings,
             );
         }
 
-        result
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2132,6 +2168,7 @@ impl Blockchain {
         ]: [Instant; 7],
         exec_timings: ethrex_vm::backends::ExecTimings,
         merkle_timings: MerkleTimings,
+        store_timings: StoreTimings,
     ) {
         let total_ms = stored_instant.duration_since(start_instant).as_millis() as u64;
         if total_ms == 0 {
@@ -2250,8 +2287,17 @@ impl Blockchain {
             exec_timings.recover_senders.as_millis()
         );
         info!(
-            "  |    |- execute_txs:      {:>4} ms",
-            exec_timings.execute_txs.as_millis()
+            "  |    |- execute_txs:      {:>4} ms  ({} txs)",
+            exec_timings.execute_txs.as_millis(),
+            transactions_count,
+        );
+        info!(
+            "  |    |    |- evm:         {:>4} ms",
+            exec_timings.evm_time.as_millis()
+        );
+        info!(
+            "  |    |    `- flush:       {:>4} ms",
+            exec_timings.flush_time.as_millis()
         );
         info!(
             "  |    |- post_exec:        {:>4} ms",
@@ -2292,6 +2338,14 @@ impl Blockchain {
             store_ms,
             pct(store_ms),
             bottleneck_marker("store")
+        );
+        info!(
+            "  |    |- validate_root:   {:>4} ms",
+            store_timings.validate_state_root.as_millis()
+        );
+        info!(
+            "  |    `- db_write:        {:>4} ms",
+            store_timings.db_write.as_millis()
         );
         info!(
             "  `- warmer:   {:>4} ms         [finished: {} ms {}]",
