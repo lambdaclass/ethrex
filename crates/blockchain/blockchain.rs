@@ -2627,9 +2627,6 @@ fn handle_account_subtrie(
     let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
     let mut t_process = Duration::ZERO;
     let mut t_shard = Duration::ZERO;
-    let mut inline_count: usize = 0;
-    let mut sharded_count: usize = 0;
-    let mut inline_tries: FxHashMap<H256, Trie> = Default::default();
 
     for msg in rx {
         match msg {
@@ -2676,7 +2673,6 @@ fn handle_account_subtrie(
                 }
 
                 if removed || removed_storage {
-                    inline_tries.remove(&prefix);
                     for tx in senders {
                         tx.send(StorageRequest::Delete(prefix))
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
@@ -2696,52 +2692,22 @@ fn handle_account_subtrie(
                         .map(|a| a.storage_root)
                         .unwrap_or(*EMPTY_TRIE_HASH);
 
-                    let already_sharded = expected_shards.contains_key(&prefix);
-                    let use_inline = if inline_tries.contains_key(&prefix) {
-                        true
-                    } else if !already_sharded {
-                        (sharded_count + inline_count) % 3 == 2
-                    } else {
-                        false
-                    };
-
-                    if use_inline {
-                        let mut storage_trie = inline_tries.remove(&prefix).map_or_else(
-                            || storage.open_storage_trie(prefix, parent_state_root, storage_root),
-                            Ok,
-                        )?;
-                        for (key, value) in account_storage {
-                            let hashed_key = keccak(key);
-                            if value.is_zero() {
-                                storage_trie.remove(hashed_key.as_bytes())?;
-                            } else {
-                                storage_trie.insert(
-                                    hashed_key.as_bytes().to_vec(),
-                                    value.encode_to_vec(),
-                                )?;
-                            }
-                        }
-                        inline_tries.insert(prefix, storage_trie);
-                        inline_count += 1;
-                    } else {
-                        let is_new = !already_sharded;
-                        for (key, value) in account_storage {
-                            let hashed_key = keccak(key);
-                            let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
-                            *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
-                            senders[bucket as usize]
-                                .send(StorageRequest::MerklizeStorage {
-                                    prefix,
-                                    key: hashed_key,
-                                    value,
-                                    storage_root,
-                                })
-                                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                        }
-                        if is_new {
-                            pending_storage_accounts += 1;
-                        }
-                        sharded_count += 1;
+                    let is_new = !expected_shards.contains_key(&prefix);
+                    for (key, value) in account_storage {
+                        let hashed_key = keccak(key);
+                        let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
+                        *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
+                        senders[bucket as usize]
+                            .send(StorageRequest::MerklizeStorage {
+                                prefix,
+                                key: hashed_key,
+                                value,
+                                storage_root,
+                            })
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    }
+                    if is_new {
+                        pending_storage_accounts += 1;
                     }
                 }
                 t_process += t0.elapsed();
@@ -2808,18 +2774,6 @@ fn handle_account_subtrie(
                     {
                         t_shard += t0.elapsed();
                         let t0 = Instant::now();
-                        for (prefix, mut trie) in inline_tries.drain() {
-                            let (new_root, nodes) = trie.collect_changes_since_last_hash();
-                            let acct = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
-                            acct.storage_root = new_root;
-                            let path = prefix.as_bytes();
-                            if *acct != AccountState::default() {
-                                state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
-                            } else {
-                                state_trie.remove(path)?;
-                            }
-                            storage_nodes.push((prefix, nodes));
-                        }
                         let (subroot, state_nodes) =
                             collect_trie(index, std::mem::take(&mut state_trie))?;
                         tx.send(CollectedStateMsg {
@@ -2830,7 +2784,7 @@ fn handle_account_subtrie(
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                         info!(
-                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms inline={inline_count} sharded={sharded_count}",
+                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
                             t_process.as_secs_f64() * 1000.0,
                             t_shard.as_secs_f64() * 1000.0,
                             t0.elapsed().as_secs_f64() * 1000.0,
@@ -2850,18 +2804,6 @@ fn handle_account_subtrie(
                 if pending_storage_accounts == 0 {
                     // All storage accounts already resolved — respond immediately
                     let t0 = Instant::now();
-                    for (prefix, mut trie) in inline_tries.drain() {
-                        let (new_root, nodes) = trie.collect_changes_since_last_hash();
-                        let acct = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
-                        acct.storage_root = new_root;
-                        let path = prefix.as_bytes();
-                        if *acct != AccountState::default() {
-                            state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
-                        } else {
-                            state_trie.remove(path)?;
-                        }
-                        storage_nodes.push((prefix, nodes));
-                    }
                     let (subroot, state_nodes) =
                         collect_trie(index, std::mem::take(&mut state_trie))?;
                     tx.send(CollectedStateMsg {
@@ -2872,7 +2814,7 @@ fn handle_account_subtrie(
                     })
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     info!(
-                        "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms inline={inline_count} sharded={sharded_count}",
+                        "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
                         t_process.as_secs_f64() * 1000.0,
                         t_shard.as_secs_f64() * 1000.0,
                         t0.elapsed().as_secs_f64() * 1000.0,
