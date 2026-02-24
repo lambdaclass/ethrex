@@ -266,30 +266,30 @@ pub struct StorageTrieFactory {
 impl StorageTrieFactory {
     /// Open a storage trie for the given account without any mutex locks.
     pub fn open(&self, account_hash: H256, storage_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
-            state_root: self.state_root,
-            inner: self.trie_cache.clone(),
-            db: Box::new(BackendTrieDB::new_for_storages(
+        let trie_db = TrieWrapper::new(
+            self.state_root,
+            self.trie_cache.clone(),
+            Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written.clone(),
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
     /// Open a read-only state trie handle for parallel account state lookups.
     /// Each call creates an independent Trie instance safe for concurrent use.
     pub fn open_state(&self) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
-            state_root: self.state_root,
-            inner: self.trie_cache.clone(),
-            db: Box::new(BackendTrieDB::new_for_accounts(
+        let trie_db = TrieWrapper::new(
+            self.state_root,
+            self.trie_cache.clone(),
+            Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written.clone(),
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), self.state_root))
     }
 }
@@ -2609,7 +2609,7 @@ impl Store {
         Ok(StorageTrieFactory {
             trie_cache: self
                 .trie_cache
-                .lock()
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
             last_written: self.last_written()?,
