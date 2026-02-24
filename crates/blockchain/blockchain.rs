@@ -626,6 +626,13 @@ impl Blockchain {
                                     }
                                 };
                                 let prov = TrieDBProvider(trie.db());
+                                // Batch-reveal trie nodes along all slot paths before
+                                // applying updates, reducing sequential DB lookups.
+                                let paths: Vec<Nibbles> = slots
+                                    .iter()
+                                    .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+                                    .collect();
+                                sparse.prefetch_paths(&paths, &prov)?;
                                 for (hashed_key, value) in slots {
                                     let nibbles = Nibbles::from_bytes(hashed_key.as_bytes());
                                     if value.is_zero() {
