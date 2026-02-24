@@ -118,7 +118,6 @@
 - [Prover](./prover/prover.md)
   - [Guest program](./prover/guest_program.md)
   - [SP1 Hypercube Integration](./prover/sp1_hypercube.md)
-  - [Native Rollups Integration](./prover/native_rollups.md)
 - [Rich Accounts](./developers/rich-accounts.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)

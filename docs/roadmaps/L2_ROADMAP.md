@@ -41,7 +41,7 @@ Upgrade to SP1 v6 and enable parallel proving for improved throughput.
 
 | Item | Status | Issue/PR | Description |
 |------|--------|----------|-------------|
-| Version Upgrade (v5 → v6) | Pending | — | Upgrade SP1 SDK to Hypercube; keep existing guest program unchanged |
+| Version Upgrade (v5 → v6) | In Progress | [#6188](https://github.com/lambdaclass/ethrex/pull/6188) | Upgrade SP1 SDK to Hypercube; keep existing guest program unchanged |
 | Subblocks (L1) | Pending | — | Implement subblock guest program for L1 blocks; enables multi-GPU proving |
 | L2 Subbatches | Pending | — | Prover-side batch decomposition: batches → blocks → subblocks |
 
@@ -71,14 +71,12 @@ EIP-8079 native rollups where L1 executes L2 state transitions directly via the 
 
 | Item | Status | Issue/PR | Description |
 |------|--------|----------|-------------|
-| Research & Gap Analysis | Research | — | Analyze EIP-8079 spec; document ethrex deviations from vanilla EVM |
-| EXECUTE Precompile PoC | Pending | — | Implement precompile in ethrex L1 with trace generation (feature-gated) |
-| L2 Adaptation | Pending | — | Replace custom tx types with anchoring mechanism; update bridge contracts |
+| Research & Gap Analysis | Done | — | Analyze EIP-8079 spec; document ethrex deviations from vanilla EVM |
+| EXECUTE Precompile PoC | In Progress | [#6186](https://github.com/lambdaclass/ethrex/pull/6186) | Implement precompile in ethrex L1 with trace generation (feature-gated) |
+| L2 PoC | In Progress | [#6248](https://github.com/lambdaclass/ethrex/pull/6248) | Block production and L1 commitment via EXECUTE precompile |
 | Ultra Sound Design | Research | — | Combine native execution with based sequencing; evaluate preconfirmations |
 
 **Context:** EIP-8079 is still in Draft status and not yet scheduled for a specific Ethereum fork (Glamsterdam and Hegota in 2026 have other priorities). ethrex can proceed with PoC and devnet testing while the EIP matures.
-
-**Documentation:** [Native Rollups Integration Guide](../prover/native_rollups.md)
 
 **References:**
 - [EIP-8079: Native Rollups](https://eips.ethereum.org/EIPS/eip-8079)
@@ -109,7 +107,7 @@ Improvements to the proving pipeline.
 
 | Item | Status | Issue/PR | Description |
 |------|--------|----------|-------------|
-| Distributed Proving | Pending | — | Support multiple provers proving consecutive batches; verify all proofs in one tx |
+| Distributed Proving | Done | [#6158](https://github.com/lambdaclass/ethrex/pull/6158) | Support multiple provers proving consecutive batches; verify all proofs in one tx |
 | Elastic Prover Net | Pending | — | Elastic prover network that scales based on demand |
 | Refactors & Cleanup | Pending | [#4170](https://github.com/lambdaclass/ethrex/issues/4170), [#4327](https://github.com/lambdaclass/ethrex/issues/4327), [#4509](https://github.com/lambdaclass/ethrex/issues/4509), [#3768](https://github.com/lambdaclass/ethrex/issues/3768), [#4473](https://github.com/lambdaclass/ethrex/issues/4473) | Code cleanup and minor improvements |
 
@@ -136,7 +134,7 @@ Smart contract improvements.
 | Item | Status | Issue/PR | Description |
 |------|--------|----------|-------------|
 | Normalize Contract Errors | Pending | [#6098](https://github.com/lambdaclass/ethrex/issues/6098) | Standardize error codes in OnChainProposer contracts |
-| Custom Contract Errors | Pending | [#4196](https://github.com/lambdaclass/ethrex/issues/4196) | Replace `require(..., string)` with custom errors |
+| Custom Contract Errors | In Progress | [#4196](https://github.com/lambdaclass/ethrex/issues/4196), [#6206](https://github.com/lambdaclass/ethrex/pull/6206) | Replace `require(..., string)` with custom errors |
 | RIP-7740 Tracking | Pending | [#4552](https://github.com/lambdaclass/ethrex/issues/4552) | CreateX and factory deployment |
 | Deploy create2 Factories | Pending | [#4526](https://github.com/lambdaclass/ethrex/issues/4526) | All factories from RIP-7740 |
 | RIP-7875 Bridge Address | Pending | [#4527](https://github.com/lambdaclass/ethrex/issues/4527) | Change default bridge to `0x1ff` |
@@ -208,4 +206,3 @@ The following sections from the previous roadmap are not part of the core focus 
 - [Stage Compliance Analysis](../l2/stages.md)
 - [zkVM Comparison Benchmarks](../l2/bench/zkvm_comparison.md)
 - [SP1 Hypercube Integration Guide](../prover/sp1_hypercube.md)
-- [Native Rollups Integration Guide](../prover/native_rollups.md)
