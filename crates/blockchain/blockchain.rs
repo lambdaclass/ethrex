@@ -268,7 +268,9 @@ enum AccountRequest {
     MerklizeAccounts {
         accounts: Vec<H256>,
     },
-    CollectState,
+    CollectState {
+        tx: Sender<CollectedStateMsg>,
+    },
 }
 
 struct CollectedStateMsg {
@@ -580,16 +582,14 @@ impl Blockchain {
         }
 
         // Spawn 16 account workers with storage senders for routing
-        let mut account_workers_handles = Vec::with_capacity(16);
         for (i, rx) in account_workers_rx.into_iter().enumerate() {
             let storage_senders = storage_workers_tx.clone();
-            let handle = std::thread::Builder::new()
+            std::thread::Builder::new()
                 .name(format!("block_executor_account_shard_{i}"))
                 .spawn_scoped(scope, move || {
                     self.handle_account_subtrie(rx, parent_header, i as u8, storage_senders)
                 })
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}")))?;
-            account_workers_handles.push(handle);
         }
 
         let mut code_updates: Vec<(H256, Code)> = vec![];
@@ -696,34 +696,41 @@ impl Blockchain {
 
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
-        // Send CollectState signal — account workers defer until all shards arrive,
-        // then return their result via the join handle.
+        // Send CollectState immediately — account workers defer until all shards arrive.
+        // No need to join storage workers first: account workers track expected_shards
+        // and will wait for all StorageShards before producing their result.
+        let (gatherer_tx, gatherer_rx) = channel();
         for tx in &account_workers_tx {
-            tx.send(AccountRequest::CollectState)
-                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            tx.send(AccountRequest::CollectState {
+                tx: gatherer_tx.clone(),
+            })
+            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
+        drop(gatherer_tx);
         drop(account_workers_tx);
 
-        // Join account workers to collect results. While we wait, storage workers
-        // clean up in the background — their thread exit cost overlaps with our joins.
         let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
-        for handle in account_workers_handles {
-            let CollectedStateMsg {
-                index,
-                subroot,
-                state_nodes,
-                storage_nodes,
-            } = handle
-                .join()
-                .map_err(|_| StoreError::Custom("account worker panicked".to_string()))??;
+        for CollectedStateMsg {
+            index,
+            subroot,
+            state_nodes,
+            storage_nodes,
+        } in gatherer_rx
+        {
             storage_updates.extend(storage_nodes);
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
         let t_gathered = Instant::now();
+        // Join storage workers for error propagation (should already be done).
+        for handle in storage_workers_handles {
+            handle
+                .join()
+                .map_err(|_| StoreError::Custom("storage worker panicked".to_string()))??;
+        }
+        let t_joined = Instant::now();
 
-        // Compute root while storage workers finish cleaning up in the background.
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
@@ -734,19 +741,12 @@ impl Blockchain {
                 *EMPTY_TRIE_HASH
             };
         let t_root = Instant::now();
-        // Join storage workers for error propagation (should be done by now).
-        for handle in storage_workers_handles {
-            handle
-                .join()
-                .map_err(|_| StoreError::Custom("storage worker panicked".to_string()))??;
-        }
-        let t_joined = Instant::now();
         info!(
-            "  drain breakdown: barrier={:.1}ms join={:.1}ms root={:.1}ms cleanup={:.1}ms",
+            "  drain breakdown: barrier={:.1}ms gather={:.1}ms join={:.1}ms root={:.1}ms",
             t_barrier.duration_since(t_drain_start).as_secs_f64() * 1000.0,
             t_gathered.duration_since(t_barrier).as_secs_f64() * 1000.0,
-            t_root.duration_since(t_gathered).as_secs_f64() * 1000.0,
-            t_joined.duration_since(t_root).as_secs_f64() * 1000.0,
+            t_joined.duration_since(t_gathered).as_secs_f64() * 1000.0,
+            t_root.duration_since(t_joined).as_secs_f64() * 1000.0,
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
@@ -1200,7 +1200,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         index: u8,
         storage_workers_tx: Vec<Sender<StorageRequest>>,
-    ) -> Result<CollectedStateMsg, StoreError> {
+    ) -> Result<(), StoreError> {
         let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
         let mut storage_nodes = vec![];
         let mut accounts: FxHashMap<H256, AccountState> = Default::default();
@@ -1210,7 +1210,7 @@ impl Blockchain {
         // Held until FinishRouting to keep storage worker channels open.
         let mut storage_workers_tx = Some(storage_workers_tx);
         let mut pending_storage_accounts: usize = 0;
-        let mut collect_requested = false;
+        let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
         let mut t_process = Duration::ZERO;
         let mut t_shard = Duration::ZERO;
         let mut inline_count: usize = 0;
@@ -1397,8 +1397,39 @@ impl Blockchain {
                         }
 
                         pending_storage_accounts -= 1;
-                        if pending_storage_accounts == 0 && collect_requested {
+                        if pending_storage_accounts == 0
+                            && let Some(tx) = pending_collect_tx.take()
+                        {
                             t_shard += t0.elapsed();
+                            let t0 = Instant::now();
+                            for (prefix, mut trie) in inline_tries.drain() {
+                                let (new_root, nodes) = trie.collect_changes_since_last_hash();
+                                let acct =
+                                    accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
+                                acct.storage_root = new_root;
+                                let path = prefix.as_bytes();
+                                if *acct != AccountState::default() {
+                                    state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
+                                } else {
+                                    state_trie.remove(path)?;
+                                }
+                                storage_nodes.push((prefix, nodes));
+                            }
+                            let (subroot, state_nodes) =
+                                collect_trie(index, std::mem::take(&mut state_trie))?;
+                            tx.send(CollectedStateMsg {
+                                index,
+                                subroot,
+                                state_nodes,
+                                storage_nodes: std::mem::take(&mut storage_nodes),
+                            })
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                            info!(
+                                "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms inline={inline_count} sharded={sharded_count}",
+                                t_process.as_secs_f64() * 1000.0,
+                                t_shard.as_secs_f64() * 1000.0,
+                                t0.elapsed().as_secs_f64() * 1000.0,
+                            );
                             break;
                         }
                     }
@@ -1410,42 +1441,45 @@ impl Blockchain {
                         storage_nodes.push((hashed_account, vec![]));
                     }
                 }
-                AccountRequest::CollectState => {
+                AccountRequest::CollectState { tx } => {
                     if pending_storage_accounts == 0 {
+                        // All storage accounts already resolved — respond immediately
+                        let t0 = Instant::now();
+                        for (prefix, mut trie) in inline_tries.drain() {
+                            let (new_root, nodes) = trie.collect_changes_since_last_hash();
+                            let acct = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
+                            acct.storage_root = new_root;
+                            let path = prefix.as_bytes();
+                            if *acct != AccountState::default() {
+                                state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
+                            } else {
+                                state_trie.remove(path)?;
+                            }
+                            storage_nodes.push((prefix, nodes));
+                        }
+                        let (subroot, state_nodes) =
+                            collect_trie(index, std::mem::take(&mut state_trie))?;
+                        tx.send(CollectedStateMsg {
+                            index,
+                            subroot,
+                            state_nodes,
+                            storage_nodes: std::mem::take(&mut storage_nodes),
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        info!(
+                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms inline={inline_count} sharded={sharded_count}",
+                            t_process.as_secs_f64() * 1000.0,
+                            t_shard.as_secs_f64() * 1000.0,
+                            t0.elapsed().as_secs_f64() * 1000.0,
+                        );
                         break;
                     }
                     // Defer until all StorageShards arrive
-                    collect_requested = true;
+                    pending_collect_tx = Some(tx);
                 }
             }
         }
-        // Finalize inline tries and collect state trie
-        let t0 = Instant::now();
-        for (prefix, mut trie) in inline_tries.drain() {
-            let (new_root, nodes) = trie.collect_changes_since_last_hash();
-            let acct = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
-            acct.storage_root = new_root;
-            let path = prefix.as_bytes();
-            if *acct != AccountState::default() {
-                state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
-            } else {
-                state_trie.remove(path)?;
-            }
-            storage_nodes.push((prefix, nodes));
-        }
-        let (subroot, state_nodes) = collect_trie(index, std::mem::take(&mut state_trie))?;
-        info!(
-            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms inline={inline_count} sharded={sharded_count}",
-            t_process.as_secs_f64() * 1000.0,
-            t_shard.as_secs_f64() * 1000.0,
-            t0.elapsed().as_secs_f64() * 1000.0,
-        );
-        Ok(CollectedStateMsg {
-            index,
-            subroot,
-            state_nodes,
-            storage_nodes,
-        })
+        Ok(())
     }
 
     /// Executes a block from a given vm instance an does not clear its state
