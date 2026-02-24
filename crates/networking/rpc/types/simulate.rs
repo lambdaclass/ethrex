@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ethrex_common::{
-    serde_utils, Address, Bytes, H256, U256,
+    Address, Bytes, H256, U256, serde_utils,
     types::{BlockHeader, GenericTransaction, Withdrawal},
 };
 use serde::{Deserialize, Deserializer, Serialize};

@@ -12,10 +12,7 @@ use crate::{
     utils::RpcErr,
 };
 use ethrex_blockchain::{overlay_vm_db::OverlayVmDatabase, vm::StoreVmDatabase};
-use ethrex_common::{
-    Address, H256, U256,
-    types::BlockHeader,
-};
+use ethrex_common::{Address, H256, U256, types::BlockHeader};
 use ethrex_vm::{ExecutionResult, backends::Evm};
 use serde_json::Value;
 use tracing::debug;
@@ -96,10 +93,8 @@ impl RpcHandler for SimulateV1Request {
         // 4. Iterate through block state calls.
         for block_state_call in self.payload.block_state_calls.iter() {
             // 4a. Build simulated block header.
-            let sim_header = build_simulated_header(
-                &prev_header,
-                block_state_call.block_overrides.as_ref(),
-            )?;
+            let sim_header =
+                build_simulated_header(&prev_header, block_state_call.block_overrides.as_ref())?;
 
             // 4b. Validate block sequence.
             validate_block_sequence(&prev_header, &sim_header)?;
@@ -207,12 +202,14 @@ fn build_simulated_header(
     // Reset cached hash since we're modifying fields.
     header.hash = Default::default();
     header.parent_hash = prev.hash();
-    header.number = prev.number.checked_add(1).ok_or_else(|| {
-        RpcErr::BadParams("Block number overflow".to_owned())
-    })?;
-    header.timestamp = prev.timestamp.checked_add(1).ok_or_else(|| {
-        RpcErr::BadParams("Timestamp overflow".to_owned())
-    })?;
+    header.number = prev
+        .number
+        .checked_add(1)
+        .ok_or_else(|| RpcErr::BadParams("Block number overflow".to_owned()))?;
+    header.timestamp = prev
+        .timestamp
+        .checked_add(1)
+        .ok_or_else(|| RpcErr::BadParams("Timestamp overflow".to_owned()))?;
     header.gas_used = 0;
 
     if let Some(o) = overrides {
@@ -233,9 +230,7 @@ fn build_simulated_header(
         }
         if let Some(base_fee) = o.base_fee_per_gas {
             if base_fee > U256::from(u64::MAX) {
-                return Err(RpcErr::BadParams(
-                    "baseFeePerGas overflows u64".to_owned(),
-                ));
+                return Err(RpcErr::BadParams("baseFeePerGas overflows u64".to_owned()));
             }
             header.base_fee_per_gas = Some(base_fee.as_u64());
         }
@@ -247,10 +242,7 @@ fn build_simulated_header(
 }
 
 /// Validate that block numbers and timestamps are strictly increasing.
-fn validate_block_sequence(
-    prev: &BlockHeader,
-    current: &BlockHeader,
-) -> Result<(), RpcErr> {
+fn validate_block_sequence(prev: &BlockHeader, current: &BlockHeader) -> Result<(), RpcErr> {
     if current.number <= prev.number {
         return Err(RpcErr::SimulateError {
             code: -38020,
@@ -406,8 +398,5 @@ fn map_vm_error_to_simulate_error(err: &impl std::fmt::Display) -> RpcErr {
         -32015 // fallback
     };
 
-    RpcErr::SimulateError {
-        code,
-        message: msg,
-    }
+    RpcErr::SimulateError { code, message: msg }
 }

@@ -49,27 +49,18 @@ impl OverlayVmDatabase {
 
     /// Override an account's balance.
     pub fn set_balance(&mut self, address: Address, balance: U256) {
-        self.account_overrides
-            .entry(address)
-            .or_default()
-            .balance = Some(balance);
+        self.account_overrides.entry(address).or_default().balance = Some(balance);
     }
 
     /// Override an account's nonce.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) {
-        self.account_overrides
-            .entry(address)
-            .or_default()
-            .nonce = Some(nonce);
+        self.account_overrides.entry(address).or_default().nonce = Some(nonce);
     }
 
     /// Override an account's code.
     pub fn set_code(&mut self, address: Address, bytecode: Bytes) {
         let code = Code::from_bytecode(bytecode);
-        self.account_overrides
-            .entry(address)
-            .or_default()
-            .code_hash = Some(code.hash);
+        self.account_overrides.entry(address).or_default().code_hash = Some(code.hash);
         self.code_overrides.insert(code.hash, code);
     }
 
@@ -91,10 +82,7 @@ impl OverlayVmDatabase {
     /// Merge `AccountUpdate`s from a simulated block's execution into the overlay.
     pub fn merge_account_updates(&mut self, updates: &[AccountUpdate]) {
         for update in updates {
-            let entry = self
-                .account_overrides
-                .entry(update.address)
-                .or_default();
+            let entry = self.account_overrides.entry(update.address).or_default();
 
             if update.removed {
                 entry.deleted = true;
@@ -151,10 +139,7 @@ impl VmDatabase for OverlayVmDatabase {
         }
 
         // Start from the real account or a blank one.
-        let mut state = self
-            .inner
-            .get_account_state(address)?
-            .unwrap_or_default();
+        let mut state = self.inner.get_account_state(address)?.unwrap_or_default();
 
         if let Some(balance) = overrides.balance {
             state.balance = balance;
