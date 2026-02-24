@@ -612,10 +612,16 @@ pub fn check_and_offer_migration(base_datadir: &Path, network_datadir: &Path, ne
     info!("Found existing database at {base_datadir:?} that can be moved to {network_datadir:?}.");
     print!("Move existing database to the new network-specific directory? (y/n): ");
     use std::io::Write;
-    std::io::stdout().flush().unwrap();
+    if std::io::stdout().flush().is_err() {
+        warn!("Cannot flush stdout. Skipping migration.");
+        return;
+    }
 
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input).unwrap();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        warn!("Cannot read from stdin. Skipping migration.");
+        return;
+    }
 
     if input.trim().eq_ignore_ascii_case("y") {
         if let Err(e) = std::fs::create_dir_all(network_datadir) {
@@ -659,8 +665,11 @@ pub fn check_and_offer_migration(base_datadir: &Path, network_datadir: &Path, ne
                 // Attempt to rollback already-moved files.
                 warn!("Failed to move {src:?} to {dest:?}: {e}. Rolling back.");
                 for (orig_src, orig_dest) in &moves {
-                    if orig_dest.exists() && !orig_src.exists() {
-                        let _ = std::fs::rename(orig_dest, orig_src);
+                    if orig_dest.exists()
+                        && !orig_src.exists()
+                        && let Err(re) = std::fs::rename(orig_dest, orig_src)
+                    {
+                        warn!("Rollback failed for {orig_dest:?} -> {orig_src:?}: {re}");
                     }
                 }
                 warn!("Migration aborted. Database remains at {base_datadir:?}.");

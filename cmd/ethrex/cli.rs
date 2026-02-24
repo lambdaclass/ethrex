@@ -19,7 +19,7 @@ use ethrex_p2p::{
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::error::StoreError;
+use ethrex_storage::{error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -561,8 +561,14 @@ impl Subcommand {
 
         match self {
             Subcommand::RemoveDB { datadir, force } => {
-                let datadir = compute_effective_datadir(&datadir, &network, opts.dev);
-                remove_db(&datadir, force);
+                let effective = compute_effective_datadir(&datadir, &network, opts.dev);
+                if effective != datadir && has_valid_db(&datadir) && !has_valid_db(&effective) {
+                    warn!(
+                        "Database found at old location {datadir:?} but removedb targets {effective:?}. \
+                         Run with --datadir {datadir:?} or migrate first.",
+                    );
+                }
+                remove_db(&effective, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {

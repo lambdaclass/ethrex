@@ -3185,7 +3185,8 @@ pub fn has_valid_db(path: &Path) -> bool {
 
 /// Reads the chain ID from an existing database without performing a full
 /// store initialization. Returns `None` if the database doesn't exist or
-/// the chain config can't be read.
+/// the chain config can't be read. Always returns `None` when compiled
+/// without the `rocksdb` feature.
 pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     if !has_valid_db(path) {
         return None;

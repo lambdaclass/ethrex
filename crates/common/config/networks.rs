@@ -234,6 +234,31 @@ mod tests {
     }
 
     #[test]
+    fn test_all_datadir_suffixes_covers_all_public_networks() {
+        let all = Network::all_datadir_suffixes();
+        // Every public network suffix must appear in all_datadir_suffixes.
+        let networks = [
+            Network::PublicNetwork(PublicNetwork::Mainnet),
+            Network::PublicNetwork(PublicNetwork::Hoodi),
+            Network::PublicNetwork(PublicNetwork::Sepolia),
+        ];
+        for net in &networks {
+            let suffix = net
+                .datadir_suffix()
+                .expect("public networks must have a suffix");
+            assert!(
+                all.contains(&suffix),
+                "all_datadir_suffixes() missing suffix {suffix:?} for {net:?}"
+            );
+        }
+        // "dev" must also be present.
+        assert!(
+            all.contains(&"dev"),
+            "all_datadir_suffixes() missing \"dev\""
+        );
+    }
+
+    #[test]
     fn test_get_bootnodes_works_for_public_networks() {
         Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
