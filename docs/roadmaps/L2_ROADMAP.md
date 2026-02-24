@@ -76,7 +76,7 @@ EIP-8079 native rollups where L1 executes L2 state transitions directly via the 
 | L2 PoC | In Progress | [#6248](https://github.com/lambdaclass/ethrex/pull/6248) | Block production and L1 commitment via EXECUTE precompile |
 | Ultra Sound Design | Research | — | Combine native execution with based sequencing; evaluate preconfirmations |
 
-**Context:** EIP-8079 is still in Draft status and not yet scheduled for a specific Ethereum fork (Glamsterdam and Hegota in 2026 have other priorities). ethrex can proceed with PoC and devnet testing while the EIP matures.
+**Context:** EIP-8079 is still in Draft status and not yet scheduled for a specific Ethereum fork. ethrex can proceed with PoC and devnet testing while the EIP matures.
 
 **References:**
 - [EIP-8079: Native Rollups](https://eips.ethereum.org/EIPS/eip-8079)
