@@ -269,6 +269,15 @@ impl<'a> VM<'a> {
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
         current_call_frame.stack.push(remaining_gas.into())?;
 
+        // Pre-charge the static gas cost of the next basic block.
+        // GAS is a block terminator so that it reports the correct
+        // gas_remaining (only its own cost deducted, not future opcodes).
+        current_call_frame.increase_consumed_gas(
+            current_call_frame
+                .bytecode
+                .block_cost(current_call_frame.pc as u32),
+        )?;
+
         Ok(OpcodeResult::Continue)
     }
 

@@ -411,11 +411,13 @@ pub fn process_bytecode(code: &[u8]) -> (Vec<u32>, Vec<(u32, u64)>) {
                     *c += gas_costs::MSIZE;
                 }
             }
-            // OP_GAS
+            // OP_GAS (terminator: GAS must report gas remaining after its
+            // own cost, so subsequent opcodes belong to a new block)
             0x5A => {
                 if let Some(c) = cost_entry.as_deref_mut() {
                     *c += gas_costs::GAS;
                 }
+                cost_entry = Some(costs.entry(i + 1).or_default());
             }
             // OP_JUMPDEST
             0x5B => {
