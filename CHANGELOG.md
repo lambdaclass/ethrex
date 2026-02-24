@@ -2,6 +2,15 @@
 
 ## Perf
 
+### 2026-02-23
+
+- Check self before parent in Substate warm/cold lookups [#6244](https://github.com/lambdaclass/ethrex/pull/6244)
+- Add precompile result cache shared between warmer and executor threads [#6243](https://github.com/lambdaclass/ethrex/pull/6243)
+
+### 2026-02-13
+
+- Optimize storage layer for block execution by reducing lock contention and allocations [#6207](https://github.com/lambdaclass/ethrex/pull/6207)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)

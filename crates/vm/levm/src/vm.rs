@@ -22,7 +22,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -71,7 +71,7 @@ pub struct Substate {
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
     accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
-    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -85,7 +85,7 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         accessed_addresses: FxHashSet<Address>,
-        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
@@ -173,11 +173,15 @@ impl Substate {
 
     /// Mark an address as selfdestructed and return whether is was already marked.
     pub fn add_selfdestruct(&mut self, address: Address) -> bool {
+        if self.selfdestruct_set.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_selfdestruct(&address))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present || !self.selfdestruct_set.insert(address)
     }
@@ -222,11 +226,21 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
+        // Check self first — short-circuits for re-accessed (warm) slots
+        if self
+            .accessed_storage_slots
+            .get(&address)
+            .map(|set| set.contains(&key))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present
             || !self
@@ -270,11 +284,16 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
+        // Check self first — short-circuits for re-accessed (warm) addresses
+        if self.accessed_addresses.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present || !self.accessed_addresses.insert(address)
     }
@@ -291,11 +310,15 @@ impl Substate {
 
     /// Mark an address as a new account and return whether is was already marked.
     pub fn add_created_account(&mut self, address: Address) -> bool {
+        if self.created_accounts.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_account_created(&address))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present || !self.created_accounts.insert(address)
     }
@@ -401,7 +424,7 @@ pub struct VM<'a> {
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation).
-    pub storage_original_values: BTreeMap<(Address, H256), U256>,
+    pub storage_original_values: FxHashMap<(Address, H256), U256>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Debug mode for development diagnostics.
@@ -436,7 +459,7 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            storage_original_values: BTreeMap::new(),
+            storage_original_values: FxHashMap::default(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
@@ -541,6 +564,7 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.db.store.precompile_cache(),
             );
 
             call_frame.gas_remaining = gas_remaining as i64;
@@ -669,11 +693,10 @@ impl<'a> VM<'a> {
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
+        cache: Option<&precompiles::PrecompileCache>,
     ) -> Result<ContextResult, VMError> {
-        let execute_precompile = precompiles::execute_precompile;
-
         Self::handle_precompile_result(
-            execute_precompile(code_address, calldata, gas_remaining, fork),
+            precompiles::execute_precompile(code_address, calldata, gas_remaining, fork, cache),
             gas_limit,
             *gas_remaining,
         )
@@ -739,7 +762,8 @@ impl Substate {
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = FxHashSet::default();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
+            FxHashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);

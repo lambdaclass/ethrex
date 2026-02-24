@@ -504,6 +504,20 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[command(name = "repl", about = "Interactive REPL for Ethereum JSON-RPC")]
+    Repl {
+        /// JSON-RPC endpoint URL
+        #[arg(short = 'e', long, default_value = "http://localhost:8545")]
+        endpoint: String,
+
+        /// Path to command history file
+        #[arg(long, default_value = "~/.ethrex/history")]
+        history_file: String,
+
+        /// Execute a single command and exit
+        #[arg(short = 'x', long)]
+        execute: Option<String>,
+    },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
@@ -596,6 +610,13 @@ impl Subcommand {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
+            }
+            Subcommand::Repl {
+                endpoint,
+                history_file,
+                execute,
+            } => {
+                ethrex_repl::run(endpoint, history_file, execute).await;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
@@ -753,7 +774,7 @@ pub async fn import_blocks(
             } else {
                 // We need to have the state of the latest 128 blocks
                 blockchain
-                .add_block_pipeline(block)
+                .add_block_pipeline(block, None)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
@@ -861,7 +882,7 @@ pub async fn import_blocks_bench(
                 .map_err(InvalidBlockError::InvalidBody)?;
 
             blockchain
-                .add_block_pipeline(block)
+                .add_block_pipeline(block, None)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),

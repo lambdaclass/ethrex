@@ -215,6 +215,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .proof_coordinator_tdx_private_key,
                 qpl_tool_path: opts.proof_coordinator_opts.proof_coordinator_qpl_tool_path,
                 validium: opts.validium,
+                prover_timeout_ms: opts.proof_coordinator_opts.prover_timeout_ms,
             },
             based: BasedConfig {
                 enabled: opts.based,
@@ -775,6 +776,15 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
+    #[arg(
+        long = "proof-coordinator.prover-timeout",
+        default_value = "600000",
+        value_name = "UINT64",
+        env = "ETHREX_PROOF_COORDINATOR_PROVER_TIMEOUT",
+        help = "Timeout in milliseconds before a batch assignment to a prover is considered stale.",
+        help_heading = "Proof coordinator options"
+    )]
+    pub prover_timeout_ms: u64,
 }
 
 impl Default for ProofCoordinatorOptions {
@@ -794,6 +804,7 @@ impl Default for ProofCoordinatorOptions {
             proof_coordinator_qpl_tool_path: Some(
                 DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH.to_string(),
             ),
+            prover_timeout_ms: 600_000,
         }
     }
 }
@@ -1081,6 +1092,14 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub log_level: Level,
+    #[arg(
+        long,
+        default_value_t = false,
+        env = "PROVER_CLIENT_TIMED",
+        help = "Measure and log proving time for each batch",
+        help_heading = "Prover client options"
+    )]
+    pub timed: bool,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
     #[arg(
         long,
@@ -1098,6 +1117,7 @@ impl From<ProverClientOptions> for ProverConfig {
             backend: config.backend,
             proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
+            timed: config.timed,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: config.sp1_server,
         }
@@ -1113,6 +1133,7 @@ impl Default for ProverClientOptions {
             proving_time_ms: 5000,
             log_level: Level::INFO,
             backend: BackendType::Exec,
+            timed: false,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }
