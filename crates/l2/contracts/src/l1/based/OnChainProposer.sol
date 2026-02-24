@@ -381,16 +381,11 @@ contract OnChainProposer is
         bytes[] calldata sp1ProofsBytes,
         bytes[] calldata tdxSignatures
     ) external {
-        require(
-            !ALIGNED_MODE,
-            "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead."
-        );
+        if (ALIGNED_MODE) revert UseAlignedVerification();
         uint256 batchCount = risc0BlockProofs.length;
-        require(batchCount > 0, "OnChainProposer: empty batch array");
-        require(
-            sp1ProofsBytes.length == batchCount && tdxSignatures.length == batchCount,
-            "OnChainProposer: array length mismatch"
-        );
+        if (batchCount == 0) revert EmptyBatchArray();
+        if (sp1ProofsBytes.length != batchCount || tdxSignatures.length != batchCount)
+            revert BatchArrayLengthMismatch();
         for (uint256 i = 0; i < batchCount; i++) {
             _verifyBatchInternal(
                 firstBatchNumber + i,

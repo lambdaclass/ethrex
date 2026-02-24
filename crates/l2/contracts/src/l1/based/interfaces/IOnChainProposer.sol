@@ -34,7 +34,10 @@ interface IOnChainProposer {
     // Verify errors
     error UseAlignedVerification();
     error UseSmartContractVerification();
+    error BatchNotSequential();
     error BatchNotCommitted();
+    error EmptyBatchArray();
+    error BatchArrayLengthMismatch();
     error ExpiredPrivilegedTransactionDeadline();
     error InvalidRisc0Proof();
     error InvalidSp1Proof();
