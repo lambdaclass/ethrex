@@ -74,6 +74,13 @@ pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 /// Maximum number of concurrent in-flight requests during storage healing.
 pub const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 
+/// Maximum number of concurrent in-flight storage range workers.
+///
+/// Each worker holds up to ~2 MB of in-memory data (512 KB wire response
+/// expanded into Rust structs, plus temporary copies during validation).
+/// 1000 workers × ~2 MB ≈ 2 GB cap on in-flight storage download memory.
+pub const MAX_STORAGE_RANGE_WORKERS: usize = 1000;
+
 // =============================================================================
 // BLOCK SYNC CONFIGURATION
 // =============================================================================

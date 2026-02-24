@@ -811,7 +811,14 @@ pub async fn request_storage_ranges(
             chunk_index += 1;
         }
 
-        if let Some(result) = worker_joinset.try_join_next() {
+        // Drain a completed worker: block if we've hit the concurrency cap,
+        // otherwise poll without waiting.
+        let maybe_result = if worker_joinset.len() >= MAX_STORAGE_RANGE_WORKERS {
+            worker_joinset.join_next().await
+        } else {
+            worker_joinset.try_join_next()
+        };
+        if let Some(result) = maybe_result {
             let result = result.expect("Storage worker task panicked");
             let (peer_id, success) = process_storage_task_result(
                 result,
