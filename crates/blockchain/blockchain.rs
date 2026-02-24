@@ -118,9 +118,10 @@ type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
     Option<Vec<AccountUpdate>>,
-    usize,        // max queue length
-    [Instant; 6], // timing instants
-    Duration,     // warmer duration
+    usize,                        // max queue length
+    [Instant; 6],                 // timing instants
+    Duration,                     // warmer duration
+    ethrex_vm::backends::ExecTimings, // exec sub-phase timings
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -375,14 +376,10 @@ impl Blockchain {
 
     /// Executes a block withing a new vm instance and state
     #[instrument(
-        level = "info",
+        level = "trace",
         name = "Execute Block",
         skip_all,
-        fields(
-            namespace = "block_execution",
-            block_number = block.header.number,
-            gas_used = block.header.gas_used,
-        )
+        fields(namespace = "block_execution")
     )]
     fn execute_block_pipeline(
         &self,
@@ -439,7 +436,7 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, bal) =
+                        let (execution_result, bal, exec_timings) =
                             vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
                         // Validate execution went alright
@@ -460,7 +457,7 @@ impl Blockchain {
                         }
 
                         let exec_end_instant = Instant::now();
-                        Ok((execution_result, exec_end_instant))
+                        Ok((execution_result, exec_end_instant, exec_timings))
                     })
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
@@ -513,7 +510,7 @@ impl Blockchain {
                 ))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
-        let (execution_result, exec_end_instant) = execution_result?;
+        let (execution_result, exec_end_instant, exec_timings) = execution_result?;
 
         let exec_merkle_end_instant = Instant::now();
 
@@ -531,6 +528,7 @@ impl Blockchain {
                 exec_merkle_end_instant,
             ],
             warmer_duration,
+            exec_timings,
         ))
     }
 
@@ -1909,17 +1907,6 @@ impl Blockchain {
         result
     }
 
-    #[instrument(
-        level = "info",
-        name = "Add Block Pipeline",
-        skip_all,
-        fields(
-            namespace = "block_execution",
-            block_number = block.header.number,
-            tx_count = block.body.transactions.len(),
-            gas_used = block.header.gas_used,
-        )
-    )]
     pub fn add_block_pipeline(
         &self,
         block: Block,
@@ -1966,6 +1953,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
+            exec_timings,
         ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
@@ -2001,8 +1989,6 @@ impl Blockchain {
             }
         });
 
-        Self::record_pipeline_metrics(instants);
-
         if self.options.perf_logs_enabled {
             Self::print_add_block_pipeline_logs(
                 gas_used,
@@ -2012,6 +1998,7 @@ impl Blockchain {
                 merkle_queue_length,
                 warmer_duration,
                 instants,
+                exec_timings,
             );
         }
 
@@ -2072,33 +2059,6 @@ impl Blockchain {
         }
     }
 
-    /// Records pipeline histogram metrics unconditionally (not gated by perf_logs_enabled).
-    fn record_pipeline_metrics(_instants: [Instant; 7]) {
-        metrics!(
-            let [
-                start_instant,
-                block_validated_instant,
-                exec_merkle_start,
-                exec_end_instant,
-                _merkle_end_instant,
-                exec_merkle_end_instant,
-                stored_instant,
-            ] = _instants;
-
-            let total = stored_instant.duration_since(start_instant);
-            let validate = block_validated_instant.duration_since(start_instant);
-            let execution = exec_end_instant.duration_since(exec_merkle_start);
-            let merkle_drain = exec_merkle_end_instant.saturating_duration_since(exec_end_instant);
-            let store = stored_instant.duration_since(exec_merkle_end_instant);
-
-            METRICS_BLOCKS.observe_block_total_seconds(total.as_secs_f64());
-            METRICS_BLOCKS.observe_block_validate_seconds(validate.as_secs_f64());
-            METRICS_BLOCKS.observe_block_execution_seconds(execution.as_secs_f64());
-            METRICS_BLOCKS.observe_block_merkle_drain_seconds(merkle_drain.as_secs_f64());
-            METRICS_BLOCKS.observe_block_store_seconds(store.as_secs_f64());
-        );
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn print_add_block_pipeline_logs(
         gas_used: u64,
@@ -2116,6 +2076,7 @@ impl Blockchain {
             exec_merkle_end_instant,
             stored_instant,
         ]: [Instant; 7],
+        exec_timings: ethrex_vm::backends::ExecTimings,
     ) {
         let total_ms = stored_instant.duration_since(start_instant).as_millis() as u64;
         if total_ms == 0 {
@@ -2220,6 +2181,22 @@ impl Blockchain {
             exec_ms,
             pct(exec_ms),
             bottleneck_marker("exec")
+        );
+        info!(
+            "  |    |- prepare_block:    {:>4} ms",
+            exec_timings.prepare_block.as_millis()
+        );
+        info!(
+            "  |    |- recover_senders:  {:>4} ms",
+            exec_timings.recover_senders.as_millis()
+        );
+        info!(
+            "  |    |- execute_txs:      {:>4} ms",
+            exec_timings.execute_txs.as_millis()
+        );
+        info!(
+            "  |    `- post_exec:        {:>4} ms",
+            exec_timings.post_exec.as_millis()
         );
         info!(
             "  |- merkle:   {:>4} ms  ({:>2}%){}  [concurrent: {} ms, drain: {} ms, overlap: {}%, queue: {}]",

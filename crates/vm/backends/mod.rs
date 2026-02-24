@@ -18,7 +18,17 @@ use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Sender;
+use std::time::Duration;
 use tracing::instrument;
+
+/// Sub-phase timing breakdown for block execution.
+#[derive(Debug, Default)]
+pub struct ExecTimings {
+    pub prepare_block: Duration,
+    pub recover_senders: Duration,
+    pub execute_txs: Duration,
+    pub post_exec: Duration,
+}
 
 #[derive(Clone)]
 pub struct Evm {
@@ -96,7 +106,7 @@ impl Evm {
         block: &Block,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
-    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>, ExecTimings), EvmError> {
         LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
     }
 

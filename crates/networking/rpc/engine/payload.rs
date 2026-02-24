@@ -5,14 +5,9 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
-use ethrex_metrics::rpc::{
-    observe_engine_newpayload_precheck, observe_engine_newpayload_worker_exec,
-    record_engine_newpayload_outcome,
-};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
-use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
@@ -51,8 +46,7 @@ impl RpcHandler for NewPayloadV1Request {
                 ))?);
             }
         };
-        let payload_status =
-            handle_new_payload_v1_v2(&self.payload, block, context, None, None).await?;
+        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context, None).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -84,8 +78,7 @@ impl RpcHandler for NewPayloadV2Request {
                 ))?);
             }
         };
-        let payload_status =
-            handle_new_payload_v1_v2(&self.payload, block, context, None, None).await?;
+        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context, None).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -905,20 +898,12 @@ async fn handle_new_payload_v1_v2(
     block: Block,
     context: RpcApiContext,
     bal: Option<BlockAccessList>,
-    version_precheck_duration: Option<Duration>,
 ) -> Result<PayloadStatus, RpcErr> {
-    let total_start = Instant::now();
-    let block_number = block.header.number;
-    let block_hash = payload.block_hash;
-
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
             "New payload requested but syncer is not initialized".to_string(),
         ));
     };
-
-    let precheck_start = Instant::now();
-
     // Validate block hash
     if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
         return Ok(PayloadStatus::invalid_with_err(&error_msg));
@@ -929,12 +914,6 @@ async fn handle_new_payload_v1_v2(
         return Ok(status);
     }
 
-    let mut precheck_duration = precheck_start.elapsed();
-    if let Some(extra) = version_precheck_duration {
-        precheck_duration += extra;
-    }
-    observe_engine_newpayload_precheck(precheck_duration.as_secs_f64());
-
     // We have validated ancestors, the parent is correct
     let latest_valid_hash = block.header.parent_hash;
 
@@ -944,21 +923,7 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let worker_start = Instant::now();
     let payload_status = try_execute_payload(block, &context, latest_valid_hash, bal).await?;
-    let worker_exec_duration = worker_start.elapsed();
-    observe_engine_newpayload_worker_exec(worker_exec_duration.as_secs_f64());
-
-    let total = total_start.elapsed();
-    info!(
-        block_number,
-        %block_hash,
-        precheck_ms = precheck_duration.as_millis() as u64,
-        worker_exec_ms = worker_exec_duration.as_millis() as u64,
-        total_ms = total.as_millis() as u64,
-        "engine_newPayload completed"
-    );
-
     Ok(payload_status)
 }
 
@@ -969,8 +934,6 @@ async fn handle_new_payload_v3(
     expected_blob_versioned_hashes: Vec<H256>,
     bal: Option<BlockAccessList>,
 ) -> Result<PayloadStatus, RpcErr> {
-    let v3_precheck_start = Instant::now();
-
     // V3 specific: validate blob hashes
     let blob_versioned_hashes: Vec<H256> = block
         .body
@@ -985,8 +948,7 @@ async fn handle_new_payload_v3(
         ));
     }
 
-    let v3_precheck_duration = v3_precheck_start.elapsed();
-    handle_new_payload_v1_v2(payload, block, context, bal, Some(v3_precheck_duration)).await
+    handle_new_payload_v1_v2(payload, block, context, bal).await
 }
 
 async fn handle_new_payload_v4(
@@ -997,7 +959,6 @@ async fn handle_new_payload_v4(
     bal: Option<BlockAccessList>,
 ) -> Result<PayloadStatus, RpcErr> {
     // TODO: V4 specific: validate block access list
-    // V4 timing is included via handle_new_payload_v3's precheck measurement
     handle_new_payload_v3(payload, context, block, expected_blob_versioned_hashes, bal).await
 }
 
@@ -1053,7 +1014,7 @@ pub async fn add_block(
 ) -> Result<(), ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
-        .send((notify_send, block, bal, Instant::now()))
+        .send((notify_send, block, bal))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
@@ -1090,7 +1051,6 @@ async fn try_execute_payload(
 
     match add_block(context, block, bal).await {
         Err(ChainError::ParentNotFound) => {
-            record_engine_newpayload_outcome("syncing", "parent_not_found");
             // Start sync
             syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
@@ -1100,13 +1060,11 @@ async fn try_execute_payload(
         // parent payload but it was stashed, then new payload would stash this one too, with a
         // ParentNotFoundError.
         Err(ChainError::ParentStateNotFound) => {
-            record_engine_newpayload_outcome("error", "parent_state_not_found");
             let e = "Failed to obtain parent state";
             error!("{e} for block {block_hash}");
             Err(RpcErr::Internal(e.to_string()))
         }
         Err(ChainError::InvalidBlock(error)) => {
-            record_engine_newpayload_outcome("invalid", "invalid_block");
             warn!("Error executing block: {error}");
             context
                 .storage
@@ -1118,7 +1076,6 @@ async fn try_execute_payload(
             ))
         }
         Err(ChainError::EvmError(error)) => {
-            record_engine_newpayload_outcome("invalid", "evm_error");
             warn!("Error executing block: {error}");
             context
                 .storage
@@ -1130,17 +1087,14 @@ async fn try_execute_payload(
             ))
         }
         Err(ChainError::StoreError(error)) => {
-            record_engine_newpayload_outcome("error", "store_error");
             warn!("Error storing block: {error}");
             Err(RpcErr::Internal(error.to_string()))
         }
         Err(e) => {
-            record_engine_newpayload_outcome("error", "other");
             error!("{e} for block {block_hash}");
             Err(RpcErr::Internal(e.to_string()))
         }
         Ok(()) => {
-            record_engine_newpayload_outcome("valid", "");
             debug!("Block with hash {block_hash} executed and added to storage successfully");
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }
