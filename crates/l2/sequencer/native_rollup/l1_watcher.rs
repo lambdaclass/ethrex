@@ -2,6 +2,7 @@
 //! from the NativeRollup.sol contract and pushes them into the shared
 //! `PendingL1Messages` queue.
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use ethrex_common::utils::keccak;
@@ -15,10 +16,9 @@ use tracing::{debug, error, info, warn};
 
 use super::types::{L1Message, PendingL1Messages};
 
-/// Event topic0: keccak256("L1MessageRecorded(address,address,uint256,uint256,bytes32,uint256)")
-fn l1_message_recorded_topic() -> H256 {
-    keccak(b"L1MessageRecorded(address,address,uint256,uint256,bytes32,uint256)")
-}
+/// Cached event topic: keccak256("L1MessageRecorded(address,address,uint256,uint256,bytes32,uint256)")
+static L1_MESSAGE_RECORDED_TOPIC: LazyLock<H256> =
+    LazyLock::new(|| keccak(b"L1MessageRecorded(address,address,uint256,uint256,bytes32,uint256)"));
 
 #[derive(Clone)]
 pub enum CastMsg {
@@ -63,7 +63,7 @@ impl NativeL1Watcher {
     }
 
     async fn poll_l1_messages(&mut self) {
-        let topic = l1_message_recorded_topic();
+        let topic = *L1_MESSAGE_RECORDED_TOPIC;
 
         let latest_block = match self.eth_client.get_block_number().await {
             Ok(n) => n,

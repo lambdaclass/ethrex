@@ -4,11 +4,12 @@
 //! This module provides the actors (GenServers) that implement the native
 //! rollup L2 lifecycle:
 //!
-//! - **NativeL1Watcher**: polls L1 for `L1MessageRecorded` events
-//! - **NativeBlockProducer**: produces L2 blocks compatible with EXECUTE
-//! - **NativeL1Committer**: submits produced blocks to L1 via advance()
-//!
-//! All communication between actors happens through shared thread-safe queues.
+//! - **NativeL1Watcher**: polls L1 for `L1MessageRecorded` events and pushes
+//!   them into a shared queue
+//! - **NativeBlockProducer**: drains L1 messages, builds relayer txs, adds them
+//!   to the mempool, then uses the standard payload builder flow to produce blocks
+//! - **NativeL1Committer**: reads produced blocks from the Store, generates an
+//!   execution witness, and submits via advance()
 
 pub mod block_producer;
 pub mod l1_committer;
@@ -18,6 +19,7 @@ pub mod types;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_rpc::clients::eth::EthClient;
@@ -28,7 +30,7 @@ use tracing::info;
 use block_producer::{NativeBlockProducer, NativeBlockProducerConfig};
 use l1_committer::NativeL1Committer;
 use l1_watcher::NativeL1Watcher;
-use types::{PendingL1Messages, ProducedBlocks};
+use types::PendingL1Messages;
 
 use ethrex_storage::Store;
 
@@ -53,27 +55,24 @@ pub struct NativeRollupConfig {
     pub block_gas_limit: u64,
     /// L2 chain ID.
     pub chain_id: u64,
-    /// Relayer private key (32 bytes) for signing L2Bridge.processL1Message txs.
-    pub relayer_key: [u8; 32],
+    /// Signer for the relayer that signs L2Bridge.processL1Message txs.
+    pub relayer_signer: Signer,
     /// Signer for L1 transactions (advance() calls).
     pub l1_signer: Signer,
-    /// Runtime bytecode of the L2Bridge contract.
-    pub bridge_runtime: Vec<u8>,
-    /// Runtime bytecode of the L1Anchor contract.
-    pub anchor_runtime: Vec<u8>,
 }
 
 /// Start the native rollup L2 actors.
 ///
 /// Spawns three GenServers:
 /// 1. NativeL1Watcher — polls L1 for L1MessageRecorded events
-/// 2. NativeBlockProducer — produces L2 blocks
-/// 3. NativeL1Committer — submits blocks to L1 via advance()
+/// 2. NativeBlockProducer — drains L1 messages, builds relayer txs, produces blocks
+/// 3. NativeL1Committer — reads blocks from Store, generates witness, submits to L1
 ///
 /// Returns handles to the spawned actors.
 #[allow(clippy::type_complexity)]
 pub fn start_native_rollup_l2(
     store: Store,
+    blockchain: Arc<Blockchain>,
     config: NativeRollupConfig,
 ) -> Result<
     (
@@ -88,9 +87,8 @@ pub fn start_native_rollup_l2(
     info!("  Coinbase: {:?}", config.coinbase);
     info!("  Chain ID: {}", config.chain_id);
 
-    // Shared queues
+    // Shared state
     let pending_l1_messages: PendingL1Messages = Arc::new(Mutex::new(VecDeque::new()));
-    let produced_blocks: ProducedBlocks = Arc::new(Mutex::new(VecDeque::new()));
 
     // Create EthClient for L1
     let eth_client = EthClient::new_with_multiple_urls(config.l1_rpc_urls.clone())?;
@@ -107,20 +105,19 @@ pub fn start_native_rollup_l2(
     info!("  NativeL1Watcher started");
 
     // 2. Spawn NativeBlockProducer
+    let relayer_address = config.relayer_signer.address();
     let producer_config = NativeBlockProducerConfig {
         block_time_ms: config.block_time_ms,
         coinbase: config.coinbase,
         block_gas_limit: config.block_gas_limit,
         chain_id: config.chain_id,
-        relayer_key: config.relayer_key,
+        relayer_signer: config.relayer_signer,
     };
     let producer = NativeBlockProducer::new(
-        store,
+        store.clone(),
         producer_config,
+        blockchain.clone(),
         pending_l1_messages,
-        produced_blocks.clone(),
-        config.bridge_runtime,
-        config.anchor_runtime,
     );
     let producer_handle = producer.start();
     info!("  NativeBlockProducer started");
@@ -130,7 +127,9 @@ pub fn start_native_rollup_l2(
         eth_client,
         config.contract_address,
         config.l1_signer,
-        produced_blocks,
+        store,
+        blockchain,
+        relayer_address,
         config.commit_interval_ms,
     );
     let committer_handle = committer.start();

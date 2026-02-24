@@ -1,5 +1,6 @@
-//! NativeL1Committer GenServer — picks produced L2 blocks from the shared
-//! queue and submits them to the NativeRollup.sol contract via advance().
+//! NativeL1Committer GenServer — reads produced L2 blocks from the Store,
+//! generates an execution witness, and submits them to the NativeRollup.sol
+//! contract via advance().
 //!
 //! The advance() call sends:
 //!   advance(uint256 l1MessagesCount, BlockParams blockParams, bytes transactionsRlp, bytes witnessJson)
@@ -7,27 +8,33 @@
 //! where BlockParams is:
 //!   (bytes32 postStateRoot, bytes32 postReceiptsRoot, address coinbase, bytes32 prevRandao, uint256 timestamp)
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use ethrex_common::types::TxType;
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::{Block, BlockHeader, TxType};
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, send_tx_bump_gas_exponential_backoff,
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::Overrides;
 use ethrex_rpc::clients::eth::EthClient;
+use ethrex_rpc::types::block_identifier::BlockIdentifier;
+use ethrex_storage::Store;
 use spawned_concurrency::tasks::{
     CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
 };
 use tracing::{debug, error, info};
 
-use super::types::{ProducedBlockInfo, ProducedBlocks};
-
 const ADVANCE_FUNCTION_SIGNATURE: &str =
     "advance(uint256,(bytes32,bytes32,address,bytes32,uint256),bytes,bytes)";
+
+/// NativeRollup.sol storage slot 1 stores the current block number.
+const BLOCK_NUMBER_SLOT: u64 = 1;
 
 #[derive(Clone)]
 pub enum CastMsg {
@@ -42,63 +49,127 @@ pub enum NativeL1CommitterError {
     Encoding(String),
     #[error("Internal error: {0}")]
     Internal(#[from] spawned_concurrency::error::GenServerError),
-    #[error("Lock poisoned: {0}")]
-    Lock(String),
     #[error("Signer error: {0}")]
     Signer(String),
+    #[error("Store error: {0}")]
+    Store(#[from] ethrex_storage::error::StoreError),
+    #[error("Chain error: {0}")]
+    Chain(#[from] ethrex_blockchain::error::ChainError),
 }
 
 pub struct NativeL1Committer {
     eth_client: EthClient,
     contract_address: Address,
     signer: Signer,
-    produced_blocks: ProducedBlocks,
+    store: Store,
+    blockchain: Arc<Blockchain>,
+    relayer_address: Address,
     commit_interval_ms: u64,
 }
 
 impl NativeL1Committer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         eth_client: EthClient,
         contract_address: Address,
         signer: Signer,
-        produced_blocks: ProducedBlocks,
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        relayer_address: Address,
         commit_interval_ms: u64,
     ) -> Self {
         Self {
             eth_client,
             contract_address,
             signer,
-            produced_blocks,
+            store,
+            blockchain,
+            relayer_address,
             commit_interval_ms,
         }
     }
 
-    /// Pop the next produced block from the queue and submit it to L1.
+    /// Determine the next block to commit and submit it to L1.
     async fn commit_next_block(&mut self) -> Result<(), NativeL1CommitterError> {
-        let block_info = {
-            let mut queue = self
-                .produced_blocks
-                .lock()
-                .map_err(|e| NativeL1CommitterError::Lock(e.to_string()))?;
-            match queue.pop_front() {
-                Some(info) => info,
-                None => {
-                    debug!("NativeL1Committer: no blocks to commit");
-                    return Ok(());
-                }
+        // 1. Query the on-chain block number from NativeRollup contract storage slot 1
+        let on_chain_block_number = self
+            .eth_client
+            .get_storage_at(
+                self.contract_address,
+                U256::from(BLOCK_NUMBER_SLOT),
+                BlockIdentifier::Tag(ethrex_rpc::types::block_identifier::BlockTag::Latest),
+            )
+            .await?;
+
+        let next_block: u64 = (on_chain_block_number + 1)
+            .try_into()
+            .map_err(|_| NativeL1CommitterError::Encoding("block number overflow".into()))?;
+
+        // 2. Fetch block from Store
+        let block_header = match self.store.get_block_header(next_block)? {
+            Some(h) => h,
+            None => {
+                debug!(
+                    "NativeL1Committer: block {} not produced yet, skipping",
+                    next_block
+                );
+                return Ok(());
             }
         };
 
+        let block_body = match self.store.get_block_body(next_block).await? {
+            Some(b) => b,
+            None => {
+                debug!(
+                    "NativeL1Committer: block {} body not found, skipping",
+                    next_block
+                );
+                return Ok(());
+            }
+        };
+
+        let block = Block {
+            header: block_header.clone(),
+            body: block_body.clone(),
+        };
+
+        // 3. Generate execution witness
+        let witness = self
+            .blockchain
+            .generate_witness_for_blocks(&[block])
+            .await?;
+
+        let witness_json = serde_json::to_vec(&witness)
+            .map_err(|e| NativeL1CommitterError::Encoding(e.to_string()))?;
+
+        // 4. Count L1 messages by counting relayer txs in the block
+        let l1_messages_count: u64 = block_body
+            .transactions
+            .iter()
+            .filter(|tx| tx.sender().ok() == Some(self.relayer_address))
+            .count()
+            .try_into()
+            .map_err(|_| NativeL1CommitterError::Encoding("l1 messages count overflow".into()))?;
+
         info!(
             "NativeL1Committer: committing block {} to L1 (state_root={:?}, l1_msgs={})",
-            block_info.block_number, block_info.post_state_root, block_info.l1_messages_count
+            next_block, block_header.state_root, l1_messages_count
         );
 
-        let tx_hash = self.send_advance(&block_info).await?;
+        // 5. Build and send advance() tx
+        let transactions_rlp = block_body.transactions.encode_to_vec();
+        let tx_hash = self
+            .send_advance(
+                &block_header,
+                &transactions_rlp,
+                &witness_json,
+                l1_messages_count,
+            )
+            .await?;
 
         info!(
             "NativeL1Committer: advance() tx sent for block {}: {:?}",
-            block_info.block_number, tx_hash
+            next_block, tx_hash
         );
 
         Ok(())
@@ -107,24 +178,27 @@ impl NativeL1Committer {
     /// Build and send the advance() transaction to NativeRollup.sol.
     async fn send_advance(
         &self,
-        block: &ProducedBlockInfo,
+        header: &BlockHeader,
+        transactions_rlp: &[u8],
+        witness_json: &[u8],
+        l1_messages_count: u64,
     ) -> Result<H256, NativeL1CommitterError> {
         // BlockParams struct: (postStateRoot, postReceiptsRoot, coinbase, prevRandao, timestamp)
         let block_params = Value::Tuple(vec![
-            Value::FixedBytes(Bytes::from(block.post_state_root.as_bytes().to_vec())),
-            Value::FixedBytes(Bytes::from(block.receipts_root.as_bytes().to_vec())),
-            Value::Address(block.coinbase),
-            Value::FixedBytes(Bytes::from(block.prev_randao.as_bytes().to_vec())),
-            Value::Uint(U256::from(block.timestamp)),
+            Value::FixedBytes(Bytes::from(header.state_root.as_bytes().to_vec())),
+            Value::FixedBytes(Bytes::from(header.receipts_root.as_bytes().to_vec())),
+            Value::Address(header.coinbase),
+            Value::FixedBytes(Bytes::from(header.prev_randao.as_bytes().to_vec())),
+            Value::Uint(U256::from(header.timestamp)),
         ]);
 
         let calldata = encode_calldata(
             ADVANCE_FUNCTION_SIGNATURE,
             &[
-                Value::Uint(U256::from(block.l1_messages_count)),
+                Value::Uint(U256::from(l1_messages_count)),
                 block_params,
-                Value::Bytes(Bytes::from(block.transactions_rlp.clone())),
-                Value::Bytes(Bytes::from(block.witness_json.clone())),
+                Value::Bytes(Bytes::from(transactions_rlp.to_vec())),
+                Value::Bytes(Bytes::from(witness_json.to_vec())),
             ],
         )
         .map_err(|e| NativeL1CommitterError::Encoding(e.to_string()))?;
