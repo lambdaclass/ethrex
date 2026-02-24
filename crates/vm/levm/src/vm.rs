@@ -437,8 +437,13 @@ pub struct VM<'a> {
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
     /// Timings from the last execute() call: (prepare, run, finalize).
     pub last_exec_timings: (std::time::Duration, std::time::Duration, std::time::Duration),
-    /// Run-phase sub-timings: (sload, sstore, calls, sha3, ext, log).
-    pub run_sub_timings: (std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration),
+    /// Run-phase sub-timings: (sload, sstore, calls, sha3, ext, log, stack, arith, mem, flow).
+    pub run_sub_timings: (
+        std::time::Duration, std::time::Duration, std::time::Duration,
+        std::time::Duration, std::time::Duration, std::time::Duration,
+        std::time::Duration, std::time::Duration, std::time::Duration,
+        std::time::Duration,
+    ),
 }
 
 impl<'a> VM<'a> {
@@ -601,125 +606,108 @@ impl<'a> VM<'a> {
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
 
-            // Fast path for common opcodes
+            // All opcodes are timed by category.
+            // Categories: 0=sload, 1=sstore, 2=calls, 3=sha3, 4=ext, 5=log,
+            //             6=stack, 7=arith, 8=mem, 9=flow
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = match opcode {
-                0x5d if self.env.config.fork >= Fork::Cancun => self.op_tstore(),
-                0x60 => self.op_push::<1>(),
-                0x61 => self.op_push::<2>(),
-                0x62 => self.op_push::<3>(),
-                0x63 => self.op_push::<4>(),
-                0x64 => self.op_push::<5>(),
-                0x65 => self.op_push::<6>(),
-                0x66 => self.op_push::<7>(),
-                0x67 => self.op_push::<8>(),
-                0x68 => self.op_push::<9>(),
-                0x69 => self.op_push::<10>(),
-                0x6a => self.op_push::<11>(),
-                0x6b => self.op_push::<12>(),
-                0x6c => self.op_push::<13>(),
-                0x6d => self.op_push::<14>(),
-                0x6e => self.op_push::<15>(),
-                0x6f => self.op_push::<16>(),
-                0x70 => self.op_push::<17>(),
-                0x71 => self.op_push::<18>(),
-                0x72 => self.op_push::<19>(),
-                0x73 => self.op_push::<20>(),
-                0x74 => self.op_push::<21>(),
-                0x75 => self.op_push::<22>(),
-                0x76 => self.op_push::<23>(),
-                0x77 => self.op_push::<24>(),
-                0x78 => self.op_push::<25>(),
-                0x79 => self.op_push::<26>(),
-                0x7a => self.op_push::<27>(),
-                0x7b => self.op_push::<28>(),
-                0x7c => self.op_push::<29>(),
-                0x7d => self.op_push::<30>(),
-                0x7e => self.op_push::<31>(),
-                0x7f => self.op_push::<32>(),
-                0x80 => self.op_dup::<0>(),
-                0x81 => self.op_dup::<1>(),
-                0x82 => self.op_dup::<2>(),
-                0x83 => self.op_dup::<3>(),
-                0x84 => self.op_dup::<4>(),
-                0x85 => self.op_dup::<5>(),
-                0x86 => self.op_dup::<6>(),
-                0x87 => self.op_dup::<7>(),
-                0x88 => self.op_dup::<8>(),
-                0x89 => self.op_dup::<9>(),
-                0x8a => self.op_dup::<10>(),
-                0x8b => self.op_dup::<11>(),
-                0x8c => self.op_dup::<12>(),
-                0x8d => self.op_dup::<13>(),
-                0x8e => self.op_dup::<14>(),
-                0x8f => self.op_dup::<15>(),
-                0x90 => self.op_swap::<1>(),
-                0x91 => self.op_swap::<2>(),
-                0x92 => self.op_swap::<3>(),
-                0x93 => self.op_swap::<4>(),
-                0x94 => self.op_swap::<5>(),
-                0x95 => self.op_swap::<6>(),
-                0x96 => self.op_swap::<7>(),
-                0x97 => self.op_swap::<8>(),
-                0x98 => self.op_swap::<9>(),
-                0x99 => self.op_swap::<10>(),
-                0x9a => self.op_swap::<11>(),
-                0x9b => self.op_swap::<12>(),
-                0x9c => self.op_swap::<13>(),
-                0x9d => self.op_swap::<14>(),
-                0x9e => self.op_swap::<15>(),
-                0x9f => self.op_swap::<16>(),
-                0x00 => self.op_stop(),
-                0x01 => self.op_add(),
-                0x02 => self.op_mul(),
-                0x03 => self.op_sub(),
-                0x10 => self.op_lt(),
-                0x11 => self.op_gt(),
-                0x14 => self.op_eq(),
-                0x15 => self.op_iszero(),
-                0x16 => self.op_and(),
-                0x17 => self.op_or(),
-                0x1b if self.env.config.fork >= Fork::Constantinople => self.op_shl(),
-                0x1c if self.env.config.fork >= Fork::Constantinople => self.op_shr(),
-                0x35 => self.op_calldataload(),
-                0x39 => self.op_codecopy(),
-                0x50 => self.op_pop(),
-                0x51 => self.op_mload(),
-                0x52 => self.op_mstore(),
-                0x54 => {
-                    let t = std::time::Instant::now();
-                    let r = self.op_sload();
-                    self.run_sub_timings.0 += t.elapsed();
-                    r
+            let op_result = {
+                let t = std::time::Instant::now();
+                let r = match opcode {
+                    // Fast path: keep const-generic specialization for hot opcodes
+                    0x60 => self.op_push::<1>(),
+                    0x61 => self.op_push::<2>(),
+                    0x62 => self.op_push::<3>(),
+                    0x63 => self.op_push::<4>(),
+                    0x64 => self.op_push::<5>(),
+                    0x65 => self.op_push::<6>(),
+                    0x66 => self.op_push::<7>(),
+                    0x67 => self.op_push::<8>(),
+                    0x68 => self.op_push::<9>(),
+                    0x69 => self.op_push::<10>(),
+                    0x6a => self.op_push::<11>(),
+                    0x6b => self.op_push::<12>(),
+                    0x6c => self.op_push::<13>(),
+                    0x6d => self.op_push::<14>(),
+                    0x6e => self.op_push::<15>(),
+                    0x6f => self.op_push::<16>(),
+                    0x70 => self.op_push::<17>(),
+                    0x71 => self.op_push::<18>(),
+                    0x72 => self.op_push::<19>(),
+                    0x73 => self.op_push::<20>(),
+                    0x74 => self.op_push::<21>(),
+                    0x75 => self.op_push::<22>(),
+                    0x76 => self.op_push::<23>(),
+                    0x77 => self.op_push::<24>(),
+                    0x78 => self.op_push::<25>(),
+                    0x79 => self.op_push::<26>(),
+                    0x7a => self.op_push::<27>(),
+                    0x7b => self.op_push::<28>(),
+                    0x7c => self.op_push::<29>(),
+                    0x7d => self.op_push::<30>(),
+                    0x7e => self.op_push::<31>(),
+                    0x7f => self.op_push::<32>(),
+                    0x80 => self.op_dup::<0>(),
+                    0x81 => self.op_dup::<1>(),
+                    0x82 => self.op_dup::<2>(),
+                    0x83 => self.op_dup::<3>(),
+                    0x84 => self.op_dup::<4>(),
+                    0x85 => self.op_dup::<5>(),
+                    0x86 => self.op_dup::<6>(),
+                    0x87 => self.op_dup::<7>(),
+                    0x88 => self.op_dup::<8>(),
+                    0x89 => self.op_dup::<9>(),
+                    0x8a => self.op_dup::<10>(),
+                    0x8b => self.op_dup::<11>(),
+                    0x8c => self.op_dup::<12>(),
+                    0x8d => self.op_dup::<13>(),
+                    0x8e => self.op_dup::<14>(),
+                    0x8f => self.op_dup::<15>(),
+                    0x90 => self.op_swap::<1>(),
+                    0x91 => self.op_swap::<2>(),
+                    0x92 => self.op_swap::<3>(),
+                    0x93 => self.op_swap::<4>(),
+                    0x94 => self.op_swap::<5>(),
+                    0x95 => self.op_swap::<6>(),
+                    0x96 => self.op_swap::<7>(),
+                    0x97 => self.op_swap::<8>(),
+                    0x98 => self.op_swap::<9>(),
+                    0x99 => self.op_swap::<10>(),
+                    0x9a => self.op_swap::<11>(),
+                    0x9b => self.op_swap::<12>(),
+                    0x9c => self.op_swap::<13>(),
+                    0x9d => self.op_swap::<14>(),
+                    0x9e => self.op_swap::<15>(),
+                    0x9f => self.op_swap::<16>(),
+                    // All other opcodes go through the lookup table
+                    _ => self.opcode_table[opcode as usize].call(self),
+                };
+                let elapsed = t.elapsed();
+                // Categorize: every opcode is accounted for
+                match opcode {
+                    0x54 => self.run_sub_timings.0 += elapsed,                 // SLOAD
+                    0x55 => self.run_sub_timings.1 += elapsed,                 // SSTORE
+                    0xF0 | 0xF1 | 0xF2 | 0xF4 | 0xF5 | 0xFA
+                        => self.run_sub_timings.2 += elapsed,                  // CALL/CREATE
+                    0x20 => self.run_sub_timings.3 += elapsed,                 // SHA3
+                    0x31 | 0x3B | 0x3C | 0x3F
+                        => self.run_sub_timings.4 += elapsed,                  // BALANCE/EXTCODE*
+                    0xA0..=0xA4 => self.run_sub_timings.5 += elapsed,          // LOG0-LOG4
+                    // Stack: PUSH0-32, DUP1-16, SWAP1-16, POP
+                    0x50 | 0x5f | 0x60..=0x9f
+                        => self.run_sub_timings.6 += elapsed,
+                    // Arithmetic & bitwise: ADD-SIGNEXTEND, LT-SAR
+                    0x01..=0x0B | 0x10..=0x1D
+                        => self.run_sub_timings.7 += elapsed,
+                    // Memory: MLOAD, MSTORE, MSTORE8, CALLDATALOAD, CALLDATASIZE,
+                    //         CALLDATACOPY, CODECOPY, CODESIZE, RETURNDATASIZE,
+                    //         RETURNDATACOPY, MCOPY
+                    0x35..=0x39 | 0x3D | 0x3E | 0x51..=0x53 | 0x59 | 0x5E
+                        => self.run_sub_timings.8 += elapsed,
+                    // Flow/control: STOP, JUMP, JUMPI, JUMPDEST, RETURN, REVERT,
+                    //               TLOAD, TSTORE, SELFDESTRUCT, env queries, etc.
+                    _ => self.run_sub_timings.9 += elapsed,
                 }
-                0x56 => self.op_jump(),
-                0x57 => self.op_jumpi(),
-                0x5b => self.op_jumpdest(),
-                0x5f if self.env.config.fork >= Fork::Shanghai => self.op_push0(),
-                0xf3 => self.op_return(),
-                // Timed: storage, call-family, sha3, ext, log opcodes
-                0x55 | 0xF0 | 0xF1 | 0xF2 | 0xF4 | 0xF5 | 0xFA
-                | 0x20
-                | 0x31 | 0x3B | 0x3C | 0x3F
-                | 0xA0 | 0xA1 | 0xA2 | 0xA3 | 0xA4 => {
-                    let t = std::time::Instant::now();
-                    let r = self.opcode_table[opcode as usize].call(self);
-                    let elapsed = t.elapsed();
-                    match opcode {
-                        0x55 => self.run_sub_timings.1 += elapsed,                 // SSTORE
-                        0xF0 | 0xF1 | 0xF2 | 0xF4 | 0xF5 | 0xFA => self.run_sub_timings.2 += elapsed, // CALL/CREATE
-                        0x20 => self.run_sub_timings.3 += elapsed,                 // SHA3
-                        0x31 | 0x3B | 0x3C | 0x3F => self.run_sub_timings.4 += elapsed, // BALANCE/EXTCODE*
-                        0xA0 ..= 0xA4 => self.run_sub_timings.5 += elapsed,       // LOG0-LOG4
-                        _ => unreachable!(),
-                    }
-                    r
-                }
-                _ => {
-                    // Call the opcode, using the opcode function lookup table.
-                    // Indexing will not panic as all the opcode values fit within the table.
-                    self.opcode_table[opcode as usize].call(self)
-                }
+                r
             };
 
             #[cfg(feature = "perf_opcode_timings")]

@@ -226,6 +226,10 @@ impl LEVM {
         let mut run_sha3_time = std::time::Duration::ZERO;
         let mut run_ext_time = std::time::Duration::ZERO;
         let mut run_log_time = std::time::Duration::ZERO;
+        let mut run_stack_time = std::time::Duration::ZERO;
+        let mut run_arith_time = std::time::Duration::ZERO;
+        let mut run_mem_time = std::time::Duration::ZERO;
+        let mut run_flow_time = std::time::Duration::ZERO;
         let mut vm_finalize_time = std::time::Duration::ZERO;
         let mut flush_time = std::time::Duration::ZERO;
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
@@ -246,7 +250,8 @@ impl LEVM {
             }
 
             let (report, [tx_env, tx_init, tx_exec, tx_prepare, tx_run, tx_finalize,
-                          tx_sload, tx_sstore, tx_calls, tx_sha3, tx_ext, tx_log]) =
+                          tx_sload, tx_sstore, tx_calls, tx_sha3, tx_ext, tx_log,
+                          tx_stack, tx_arith, tx_mem, tx_flow]) =
                 Self::execute_tx_in_block(
                     tx,
                     tx_sender,
@@ -266,6 +271,10 @@ impl LEVM {
             run_sha3_time += tx_sha3;
             run_ext_time += tx_ext;
             run_log_time += tx_log;
+            run_stack_time += tx_stack;
+            run_arith_time += tx_arith;
+            run_mem_time += tx_mem;
+            run_flow_time += tx_flow;
             vm_finalize_time += tx_finalize;
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
@@ -351,6 +360,10 @@ impl LEVM {
             run_sha3_time,
             run_ext_time,
             run_log_time,
+            run_stack_time,
+            run_arith_time,
+            run_mem_time,
+            run_flow_time,
             vm_finalize_time,
             flush_time,
             post_exec: t4.duration_since(t3),
@@ -572,7 +585,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
-    ) -> Result<(ExecutionReport, [std::time::Duration; 12]), EvmError> {
+    ) -> Result<(ExecutionReport, [std::time::Duration; 16]), EvmError> {
         let t0 = std::time::Instant::now();
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let t1 = std::time::Instant::now();
@@ -581,13 +594,13 @@ impl LEVM {
         let t2 = std::time::Instant::now();
         let result = vm.execute().map_err(VMError::into);
         let (vm_prepare, vm_run, vm_finalize) = vm.last_exec_timings;
-        let (sload, sstore, calls, sha3, ext, log) = vm.run_sub_timings;
+        let (sload, sstore, calls, sha3, ext, log, stack, arith, mem, flow) = vm.run_sub_timings;
         let t3 = std::time::Instant::now();
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         result.map(|r| (r, [
             t1.duration_since(t0), t2.duration_since(t1), t3.duration_since(t2),
             vm_prepare, vm_run, vm_finalize,
-            sload, sstore, calls, sha3, ext, log,
+            sload, sstore, calls, sha3, ext, log, stack, arith, mem, flow,
         ]))
     }
 

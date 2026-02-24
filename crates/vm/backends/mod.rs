@@ -50,6 +50,14 @@ pub struct ExecTimings {
     pub run_ext_time: Duration,
     /// Within run_execution: LOG0-LOG4 time.
     pub run_log_time: Duration,
+    /// Within run_execution: PUSH/DUP/SWAP/POP time.
+    pub run_stack_time: Duration,
+    /// Within run_execution: arithmetic & bitwise (ADD, MUL, SUB, DIV, EXP, AND, OR, XOR, SHL, SHR, etc.).
+    pub run_arith_time: Duration,
+    /// Within run_execution: memory ops (MLOAD, MSTORE, CALLDATALOAD, CODECOPY, etc.).
+    pub run_mem_time: Duration,
+    /// Within run_execution: flow/control & env (JUMP, STOP, RETURN, REVERT, TLOAD/TSTORE, env queries, etc.).
+    pub run_flow_time: Duration,
     /// Within vm.execute(): finalize_execution (hooks: gas refund, coinbase payment).
     pub vm_finalize_time: Duration,
     /// Within execute_txs: time spent flushing state to merkleizer.

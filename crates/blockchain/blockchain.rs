@@ -2354,11 +2354,29 @@ impl Blockchain {
             exec_timings.run_log_time.as_millis()
         );
         info!(
-            "  |    |    |    |    `- other:  {:>4} ms",
-            exec_timings.vm_run_time.saturating_sub(
-                exec_timings.run_sload_time + exec_timings.run_sstore_time + exec_timings.run_calls_time
-                + exec_timings.run_sha3_time + exec_timings.run_ext_time + exec_timings.run_log_time
-            ).as_millis()
+            "  |    |    |    |    |- stack:  {:>4} ms",
+            exec_timings.run_stack_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |    |- arith:  {:>4} ms",
+            exec_timings.run_arith_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |    |- mem:    {:>4} ms",
+            exec_timings.run_mem_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |    |- flow:   {:>4} ms",
+            exec_timings.run_flow_time.as_millis()
+        );
+        let timed_opcodes = exec_timings.run_sload_time + exec_timings.run_sstore_time
+            + exec_timings.run_calls_time + exec_timings.run_sha3_time
+            + exec_timings.run_ext_time + exec_timings.run_log_time
+            + exec_timings.run_stack_time + exec_timings.run_arith_time
+            + exec_timings.run_mem_time + exec_timings.run_flow_time;
+        info!(
+            "  |    |    |    |    `- loop:   {:>4} ms",
+            exec_timings.vm_run_time.saturating_sub(timed_opcodes).as_millis()
         );
         info!(
             "  |    |    |    `- finalize: {:>4} ms",
