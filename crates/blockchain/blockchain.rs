@@ -658,22 +658,9 @@ impl Blockchain {
             }
         }
 
-        // Barrier: wait for account workers to finish routing to storage workers.
-        let t_drain_start = Instant::now();
-        {
-            let (flush_tx, flush_rx) = channel();
-            for tx in &account_workers_tx {
-                tx.send(AccountRequest::FinishRouting {
-                    tx: flush_tx.clone(),
-                })
-                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-            }
-            drop(flush_tx);
-            for () in flush_rx {}
-        }
-        let t_barrier = Instant::now();
-
         // Batch early MerklizeAccounts for accounts without storage changes.
+        // Sent before the barrier so workers process them during the wait.
+        let t_drain_start = Instant::now();
         let mut early_batches: [Vec<H256>; 16] = Default::default();
         for hashed_account in hashed_address_cache.values() {
             if !has_storage.contains(hashed_account) {
@@ -688,6 +675,20 @@ impl Blockchain {
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
             }
         }
+
+        // Barrier: wait for account workers to finish routing to storage workers.
+        {
+            let (flush_tx, flush_rx) = channel();
+            for tx in &account_workers_tx {
+                tx.send(AccountRequest::FinishRouting {
+                    tx: flush_tx.clone(),
+                })
+                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            }
+            drop(flush_tx);
+            for () in flush_rx {}
+        }
+        let t_barrier = Instant::now();
 
         // Trigger storage collection — workers send StorageShard directly to account workers.
         for tx in &storage_workers_tx {
