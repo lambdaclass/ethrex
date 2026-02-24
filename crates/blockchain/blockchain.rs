@@ -2590,6 +2590,8 @@ fn handle_storage_subtrie(
                 }
             }
             StorageRequest::CollectStorages => {
+                let t0 = Instant::now();
+                let n_accounts = tree.len();
                 for (prefix, trie) in tree.drain() {
                     let (root, nodes) = collect_trie(index, trie)?;
                     let bucket = prefix.as_fixed_bytes()[0] >> 4;
@@ -2602,6 +2604,11 @@ fn handle_storage_subtrie(
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
+                info!(
+                    "  storage[{index}]: collect={:.1}ms accounts={}",
+                    t0.elapsed().as_secs_f64() * 1000.0,
+                    n_accounts,
+                );
             }
         }
     }
