@@ -615,8 +615,7 @@ impl L1ProofSender {
             }) = err
                 && let Some((batch_number, _)) = batches.first()
             {
-                self.try_delete_invalid_proof(data, *batch_number)
-                    .await?;
+                self.try_delete_invalid_proof(data, *batch_number).await?;
             }
         }
 

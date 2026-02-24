@@ -204,4 +204,3 @@ pub fn get_git_commit_hash() -> String {
 pub fn batch_checkpoint_name(batch_number: u64) -> String {
     format!("checkpoint_batch_{batch_number}")
 }
-
