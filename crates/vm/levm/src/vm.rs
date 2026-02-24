@@ -435,6 +435,8 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Opcode dispatch table, built dynamically per fork.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    /// Timings from the last execute() call: (prepare, run, finalize).
+    pub last_exec_timings: (std::time::Duration, std::time::Duration, std::time::Duration),
 }
 
 impl<'a> VM<'a> {
@@ -483,6 +485,7 @@ impl<'a> VM<'a> {
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+            last_exec_timings: Default::default(),
         };
 
         let call_type = if is_create {
@@ -513,7 +516,9 @@ impl<'a> VM<'a> {
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
+    /// Returns (report, prepare_dur, run_dur, finalize_dur).
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        let t0 = std::time::Instant::now();
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
@@ -530,19 +535,30 @@ impl<'a> VM<'a> {
         // state changes (like value transfers) are reverted from the BAL.
         self.current_call_frame.call_frame_backup.bal_checkpoint =
             self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+        let t1 = std::time::Instant::now();
 
-        if self.is_create()? {
+        let context_result = if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
             if let Some(context_result) = self.handle_create_transaction()? {
-                let report = self.finalize_execution(context_result)?;
-                return Ok(report);
+                context_result
+            } else {
+                self.substate.push_backup();
+                self.run_execution()?
             }
-        }
-
-        self.substate.push_backup();
-        let context_result = self.run_execution()?;
+        } else {
+            self.substate.push_backup();
+            self.run_execution()?
+        };
+        let t2 = std::time::Instant::now();
 
         let report = self.finalize_execution(context_result)?;
+        let t3 = std::time::Instant::now();
+
+        self.last_exec_timings = (
+            t1.duration_since(t0),
+            t2.duration_since(t1),
+            t3.duration_since(t2),
+        );
 
         Ok(report)
     }

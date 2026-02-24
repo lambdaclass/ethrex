@@ -34,6 +34,12 @@ pub struct ExecTimings {
     pub vm_init_time: Duration,
     /// Within execute_txs: time spent in vm.execute() (per tx).
     pub vm_exec_time: Duration,
+    /// Within vm.execute(): prepare_execution (hooks: validation, gas, nonce, value transfer).
+    pub vm_prepare_time: Duration,
+    /// Within vm.execute(): run_execution (opcode interpreter loop).
+    pub vm_run_time: Duration,
+    /// Within vm.execute(): finalize_execution (hooks: gas refund, coinbase payment).
+    pub vm_finalize_time: Duration,
     /// Within execute_txs: time spent flushing state to merkleizer.
     pub flush_time: Duration,
     pub post_exec: Duration,

@@ -218,6 +218,9 @@ impl LEVM {
         let mut env_setup_time = std::time::Duration::ZERO;
         let mut vm_init_time = std::time::Duration::ZERO;
         let mut vm_exec_time = std::time::Duration::ZERO;
+        let mut vm_prepare_time = std::time::Duration::ZERO;
+        let mut vm_run_time = std::time::Duration::ZERO;
+        let mut vm_finalize_time = std::time::Duration::ZERO;
         let mut flush_time = std::time::Duration::ZERO;
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
@@ -236,17 +239,21 @@ impl LEVM {
                 }
             }
 
-            let (report, tx_env, tx_init, tx_exec) = Self::execute_tx_in_block(
-                tx,
-                tx_sender,
-                &block.header,
-                db,
-                vm_type,
-                &mut shared_stack_pool,
-            )?;
+            let (report, [tx_env, tx_init, tx_exec, tx_prepare, tx_run, tx_finalize]) =
+                Self::execute_tx_in_block(
+                    tx,
+                    tx_sender,
+                    &block.header,
+                    db,
+                    vm_type,
+                    &mut shared_stack_pool,
+                )?;
             env_setup_time += tx_env;
             vm_init_time += tx_init;
             vm_exec_time += tx_exec;
+            vm_prepare_time += tx_prepare;
+            vm_run_time += tx_run;
+            vm_finalize_time += tx_finalize;
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 let flush_start = std::time::Instant::now();
@@ -323,6 +330,9 @@ impl LEVM {
             env_setup_time,
             vm_init_time,
             vm_exec_time,
+            vm_prepare_time,
+            vm_run_time,
+            vm_finalize_time,
             flush_time,
             post_exec: t4.duration_since(t3),
             block_validation: std::time::Duration::ZERO, // filled by caller
@@ -535,7 +545,7 @@ impl LEVM {
     }
 
     // Like execute_tx but allows reusing the stack pool
-    /// Returns (report, env_setup, vm_init, vm_exec).
+    /// Per-tx timing: (env_setup, vm_init, vm_exec, vm_prepare, vm_run, vm_finalize).
     fn execute_tx_in_block(
         tx: &Transaction,
         tx_sender: Address,
@@ -543,7 +553,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
-    ) -> Result<(ExecutionReport, std::time::Duration, std::time::Duration, std::time::Duration), EvmError> {
+    ) -> Result<(ExecutionReport, [std::time::Duration; 6]), EvmError> {
         let t0 = std::time::Instant::now();
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let t1 = std::time::Instant::now();
@@ -551,9 +561,13 @@ impl LEVM {
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         let t2 = std::time::Instant::now();
         let result = vm.execute().map_err(VMError::into);
+        let (vm_prepare, vm_run, vm_finalize) = vm.last_exec_timings;
         let t3 = std::time::Instant::now();
         std::mem::swap(&mut vm.stack_pool, stack_pool);
-        result.map(|r| (r, t1.duration_since(t0), t2.duration_since(t1), t3.duration_since(t2)))
+        result.map(|r| (r, [
+            t1.duration_since(t0), t2.duration_since(t1), t3.duration_since(t2),
+            vm_prepare, vm_run, vm_finalize,
+        ]))
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {

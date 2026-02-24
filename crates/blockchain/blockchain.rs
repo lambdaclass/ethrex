@@ -117,8 +117,10 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 /// Sub-phase timing breakdown for merkleization.
 #[derive(Debug, Default)]
 struct MerkleTimings {
-    /// Time spent receiving and merging AccountUpdates from exec thread.
-    drain_recv: Duration,
+    /// Time spent blocked on channel waiting for AccountUpdate batches.
+    drain_wait: Duration,
+    /// Time spent merging AccountUpdates into the accumulator.
+    drain_merge: Duration,
     /// Time spent hashing addresses and extracting code updates.
     drain_hash: Duration,
     storage_roots: Duration,
@@ -754,8 +756,9 @@ impl Blockchain {
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
         let merkle_timings = MerkleTimings {
-            drain_recv: t1.duration_since(t0),
-            drain_hash: Duration::ZERO, // interleaved with recv in non-BAL path
+            drain_wait: t1.duration_since(t0), // non-BAL: wait+merge+hash interleaved
+            drain_merge: Duration::ZERO,
+            drain_hash: Duration::ZERO,
             storage_roots: t2.duration_since(t1),
             state_trie: t3.duration_since(t2),
             finalize_root: t4.duration_since(t3),
@@ -796,10 +799,17 @@ impl Blockchain {
         let parent_state_root = parent_header.state_root;
 
         // === Stage A: Drain + accumulate all AccountUpdates ===
-        let t_drain = Instant::now();
         // BAL guarantees completeness, so we block until execution finishes.
         let mut all_updates: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
-        for updates in rx {
+        let mut drain_wait = Duration::ZERO;
+        let mut drain_merge = Duration::ZERO;
+        loop {
+            let wait_start = Instant::now();
+            let batch = rx.recv();
+            drain_wait += wait_start.elapsed();
+            let Ok(updates) = batch else { break };
+
+            let merge_start = Instant::now();
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
             for update in updates {
@@ -812,8 +822,8 @@ impl Blockchain {
                     }
                 }
             }
+            drain_merge += merge_start.elapsed();
         }
-        let drain_recv_dur = t_drain.elapsed();
 
         // Extract witness accumulator before consuming updates
         let t_hash = Instant::now();
@@ -1081,7 +1091,8 @@ impl Blockchain {
         let finalize_root_dur = t_finalize.elapsed();
 
         let merkle_timings = MerkleTimings {
-            drain_recv: drain_recv_dur,
+            drain_wait,
+            drain_merge,
             drain_hash: drain_hash_dur,
             storage_roots: storage_roots_dur,
             state_trie: state_trie_dur,
@@ -2311,6 +2322,18 @@ impl Blockchain {
             exec_timings.vm_exec_time.as_millis()
         );
         info!(
+            "  |    |    |    |- prepare:  {:>4} ms",
+            exec_timings.vm_prepare_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |- run:      {:>4} ms",
+            exec_timings.vm_run_time.as_millis()
+        );
+        info!(
+            "  |    |    |    `- finalize: {:>4} ms",
+            exec_timings.vm_finalize_time.as_millis()
+        );
+        info!(
             "  |    |    `- flush:       {:>4} ms",
             exec_timings.flush_time.as_millis()
         );
@@ -2333,8 +2356,12 @@ impl Blockchain {
             merkle_queue_length,
         );
         info!(
-            "  |    |- drain_recv:       {:>4} ms",
-            merkle_timings.drain_recv.as_millis()
+            "  |    |- drain_wait:       {:>4} ms",
+            merkle_timings.drain_wait.as_millis()
+        );
+        info!(
+            "  |    |- drain_merge:      {:>4} ms",
+            merkle_timings.drain_merge.as_millis()
         );
         info!(
             "  |    |- drain_hash:       {:>4} ms",
