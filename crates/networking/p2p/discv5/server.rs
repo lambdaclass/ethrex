@@ -562,12 +562,6 @@ impl DiscoveryServer {
             .get_nodes_at_distances(self.local_node.node_id(), find_node_message.distances)
             .await?;
 
-        // Get sender contact for sending response
-        let Some(contact) = self.peer_table.get_contact(sender_id).await? else {
-            trace!(protocol = "discv5", from = %sender_id, "Received FINDNODE from unknown node, cannot respond");
-            return Ok(());
-        };
-
         // Chunk nodes into multiple NODES messages if needed
         let chunks: Vec<_> = nodes.chunks(MAX_ENRS_PER_MESSAGE).collect();
         if chunks.is_empty() {
