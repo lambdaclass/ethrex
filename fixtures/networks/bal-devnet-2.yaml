@@ -1,10 +1,6 @@
 participants:
   - cl_type: lodestar
     cl_image: ethpandaops/lodestar:bal-devnet-2
-    el_type: besu
-    el_image: ethpandaops/besu:bal-devnet-2
-  - cl_type: lodestar
-    cl_image: ethpandaops/lodestar:bal-devnet-2
     el_type: nimbus
     el_image: ethpandaops/nimbus-eth1:bal-devnet-2
   - cl_type: lighthouse
