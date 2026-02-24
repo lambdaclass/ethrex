@@ -230,6 +230,7 @@ impl LEVM {
         let mut run_arith_time = std::time::Duration::ZERO;
         let mut run_mem_time = std::time::Duration::ZERO;
         let mut run_flow_time = std::time::Duration::ZERO;
+        let mut run_fetch_time = std::time::Duration::ZERO;
         let mut vm_finalize_time = std::time::Duration::ZERO;
         let mut flush_time = std::time::Duration::ZERO;
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
@@ -251,7 +252,7 @@ impl LEVM {
 
             let (report, [tx_env, tx_init, tx_exec, tx_prepare, tx_run, tx_finalize,
                           tx_sload, tx_sstore, tx_calls, tx_sha3, tx_ext, tx_log,
-                          tx_stack, tx_arith, tx_mem, tx_flow]) =
+                          tx_stack, tx_arith, tx_mem, tx_flow, tx_fetch]) =
                 Self::execute_tx_in_block(
                     tx,
                     tx_sender,
@@ -275,6 +276,7 @@ impl LEVM {
             run_arith_time += tx_arith;
             run_mem_time += tx_mem;
             run_flow_time += tx_flow;
+            run_fetch_time += tx_fetch;
             vm_finalize_time += tx_finalize;
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
@@ -364,6 +366,7 @@ impl LEVM {
             run_arith_time,
             run_mem_time,
             run_flow_time,
+            run_fetch_time,
             vm_finalize_time,
             flush_time,
             post_exec: t4.duration_since(t3),
@@ -585,7 +588,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
-    ) -> Result<(ExecutionReport, [std::time::Duration; 16]), EvmError> {
+    ) -> Result<(ExecutionReport, [std::time::Duration; 17]), EvmError> {
         let t0 = std::time::Instant::now();
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let t1 = std::time::Instant::now();
@@ -595,6 +598,7 @@ impl LEVM {
         let result = vm.execute().map_err(VMError::into);
         let (vm_prepare, vm_run, vm_finalize) = vm.last_exec_timings;
         let sub_ticks = vm.run_sub_ticks;
+        let fetch_ticks = vm.fetch_ticks;
         let total_ticks = vm.total_run_ticks;
         let t3 = std::time::Instant::now();
         std::mem::swap(&mut vm.stack_pool, stack_pool);
@@ -609,7 +613,7 @@ impl LEVM {
             to_dur(sub_ticks[0]), to_dur(sub_ticks[1]), to_dur(sub_ticks[2]),
             to_dur(sub_ticks[3]), to_dur(sub_ticks[4]), to_dur(sub_ticks[5]),
             to_dur(sub_ticks[6]), to_dur(sub_ticks[7]), to_dur(sub_ticks[8]),
-            to_dur(sub_ticks[9]),
+            to_dur(sub_ticks[9]), to_dur(fetch_ticks),
         ]))
     }
 

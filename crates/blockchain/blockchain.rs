@@ -2374,9 +2374,14 @@ impl Blockchain {
             + exec_timings.run_ext_time + exec_timings.run_log_time
             + exec_timings.run_stack_time + exec_timings.run_arith_time
             + exec_timings.run_mem_time + exec_timings.run_flow_time;
+        let loop_total = exec_timings.vm_run_time.saturating_sub(timed_opcodes);
         info!(
-            "  |    |    |    |    `- loop:   {:>6.1} ms",
-            exec_timings.vm_run_time.saturating_sub(timed_opcodes).as_secs_f64() * 1000.0
+            "  |    |    |    |    |- fetch:  {:>6.1} ms",
+            exec_timings.run_fetch_time.as_secs_f64() * 1000.0
+        );
+        info!(
+            "  |    |    |    |    `- disp:   {:>6.1} ms",
+            loop_total.saturating_sub(exec_timings.run_fetch_time).as_secs_f64() * 1000.0
         );
         info!(
             "  |    |    |    `- finalize: {:>4} ms",

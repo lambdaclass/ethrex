@@ -460,6 +460,8 @@ pub struct VM<'a> {
     /// Run-phase sub-ticks (rdtsc): [sload, sstore, calls, sha3, ext, log, stack, arith, mem, flow].
     /// Raw TSC ticks, converted to Duration proportionally using vm_run_time.
     pub run_sub_ticks: [u64; 10],
+    /// Fetch ticks (rdtsc): next_opcode() + advance_pc() per iteration.
+    pub fetch_ticks: u64,
     /// Total interpreter loop ticks (rdtsc), including loop dispatch overhead.
     pub total_run_ticks: u64,
 }
@@ -512,6 +514,7 @@ impl<'a> VM<'a> {
             opcode_table: VM::build_opcode_table(fork),
             last_exec_timings: Default::default(),
             run_sub_ticks: Default::default(),
+            fetch_ticks: 0,
             total_run_ticks: 0,
         };
 
@@ -620,6 +623,7 @@ impl<'a> VM<'a> {
 
         let loop_start = tick();
         loop {
+            let t_fetch = tick();
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
 
@@ -632,6 +636,7 @@ impl<'a> VM<'a> {
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = {
                 let t = tick();
+                self.fetch_ticks += t - t_fetch;
                 let r = match opcode {
                     // Fast path: keep const-generic specialization for hot opcodes
                     0x60 => self.op_push::<1>(),

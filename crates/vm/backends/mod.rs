@@ -58,6 +58,8 @@ pub struct ExecTimings {
     pub run_mem_time: Duration,
     /// Within run_execution: flow/control & env (JUMP, STOP, RETURN, REVERT, TLOAD/TSTORE, env queries, etc.).
     pub run_flow_time: Duration,
+    /// Within run_execution: loop fetch overhead (next_opcode + advance_pc per iteration).
+    pub run_fetch_time: Duration,
     /// Within vm.execute(): finalize_execution (hooks: gas refund, coinbase payment).
     pub vm_finalize_time: Duration,
     /// Within execute_txs: time spent flushing state to merkleizer.
