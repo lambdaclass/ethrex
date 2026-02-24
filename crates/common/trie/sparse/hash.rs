@@ -319,25 +319,26 @@ fn node_hash(
             buffers.child_path_buf.extend_from_slice(path);
             buffers.child_path_buf.push(0); // placeholder nibble
             let last_idx = buffers.child_path_buf.len() - 1;
-            for i in 0..16u8 {
-                if state_mask & (1 << i) != 0 {
-                    buffers.child_path_buf[last_idx] = i;
-                    child_hashes[i as usize] = match nodes.get(buffers.child_path_buf.as_slice()) {
-                        Some(child_node) => match child_node {
-                            SparseNode::Leaf { hash: Some(h), .. }
-                            | SparseNode::Extension { hash: Some(h), .. }
-                            | SparseNode::Branch { hash: Some(h), .. } => *h,
-                            SparseNode::Hash(h) => *h,
-                            SparseNode::Empty => NodeHash::from_encoded(&[RLP_NULL]),
-                            _ => {
-                                // Fallback: clone path and recurse
-                                let child_path = buffers.child_path_buf.clone();
-                                node_hash(child_node, values, nodes, &child_path, buffers)
-                            }
-                        },
-                        None => NodeHash::default(),
-                    };
-                }
+            let mut mask = *state_mask;
+            while mask != 0 {
+                let i = mask.trailing_zeros() as u8;
+                mask &= mask - 1; // clear lowest set bit
+                buffers.child_path_buf[last_idx] = i;
+                child_hashes[i as usize] = match nodes.get(buffers.child_path_buf.as_slice()) {
+                    Some(child_node) => match child_node {
+                        SparseNode::Leaf { hash: Some(h), .. }
+                        | SparseNode::Extension { hash: Some(h), .. }
+                        | SparseNode::Branch { hash: Some(h), .. } => *h,
+                        SparseNode::Hash(h) => *h,
+                        SparseNode::Empty => NodeHash::from_encoded(&[RLP_NULL]),
+                        _ => {
+                            // Fallback: clone path and recurse
+                            let child_path = buffers.child_path_buf.clone();
+                            node_hash(child_node, values, nodes, &child_path, buffers)
+                        }
+                    },
+                    None => NodeHash::default(),
+                };
             }
 
             // Now encode the branch node
@@ -437,27 +438,27 @@ pub fn encode_node(
             // Look up cached hashes from child nodes, reusing a single buffer
             let mut child_hashes: [NodeHash; 16] = [NodeHash::default(); 16];
             let mut child_path_buf = PathVec::with_capacity(path_data.len() + 1);
-            for i in 0..16u8 {
-                if state_mask & (1 << i) != 0 {
-                    child_path_buf.clear();
-                    child_path_buf.extend_from_slice(path_data);
-                    child_path_buf.push(i);
-                    if let Some(child_node) = nodes.get(child_path_buf.as_slice()) {
-                        child_hashes[i as usize] = match child_node {
-                            SparseNode::Leaf { hash, .. }
-                            | SparseNode::Extension { hash, .. }
-                            | SparseNode::Branch { hash, .. } => hash.unwrap_or_default(),
-                            SparseNode::Hash(h) => *h,
-                            SparseNode::Empty => NodeHash::from_encoded(&[RLP_NULL]),
-                        };
-                    }
+            child_path_buf.extend_from_slice(path_data);
+            child_path_buf.push(0); // placeholder nibble
+            let last_idx = child_path_buf.len() - 1;
+            let mut mask = *state_mask;
+            while mask != 0 {
+                let i = mask.trailing_zeros() as u8;
+                mask &= mask - 1; // clear lowest set bit
+                child_path_buf[last_idx] = i;
+                if let Some(child_node) = nodes.get(child_path_buf.as_slice()) {
+                    child_hashes[i as usize] = match child_node {
+                        SparseNode::Leaf { hash, .. }
+                        | SparseNode::Extension { hash, .. }
+                        | SparseNode::Branch { hash, .. } => hash.unwrap_or_default(),
+                        SparseNode::Hash(h) => *h,
+                        SparseNode::Empty => NodeHash::from_encoded(&[RLP_NULL]),
+                    };
                 }
             }
 
             // Get branch value if any
-            child_path_buf.clear();
-            child_path_buf.extend_from_slice(path_data);
-            child_path_buf.push(16);
+            child_path_buf[last_idx] = 16;
             let empty_value = Vec::new();
             let branch_value = values
                 .get(child_path_buf.as_slice())
