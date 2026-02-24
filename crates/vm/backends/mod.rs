@@ -24,6 +24,7 @@ use tracing::instrument;
 /// Sub-phase timing breakdown for block execution.
 #[derive(Debug, Default)]
 pub struct ExecTimings {
+    pub setup: Duration,
     pub prepare_block: Duration,
     pub recover_senders: Duration,
     pub execute_txs: Duration,

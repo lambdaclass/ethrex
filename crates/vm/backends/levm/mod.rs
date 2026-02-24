@@ -305,11 +305,12 @@ impl LEVM {
         let bal = db.take_bal();
 
         let timings = super::ExecTimings {
+            setup: std::time::Duration::ZERO, // filled by caller
             prepare_block: t1.duration_since(t0),
             recover_senders: t2.duration_since(t1),
             execute_txs: t3.duration_since(t2),
             post_exec: t4.duration_since(t3),
-            block_validation: std::time::Duration::ZERO,
+            block_validation: std::time::Duration::ZERO, // filled by caller
         };
 
         Ok((

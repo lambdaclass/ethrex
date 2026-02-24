@@ -443,11 +443,14 @@ impl Blockchain {
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
                 let (tx, rx) = channel();
+                let exec_phase_start = exec_merkle_start;
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        let thread_start = Instant::now();
                         let (execution_result, bal, mut exec_timings) =
                             vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                        exec_timings.setup = thread_start.duration_since(exec_phase_start);
 
                         // Validate execution went alright
                         let validation_start = Instant::now();
@@ -2233,6 +2236,10 @@ impl Blockchain {
             exec_ms,
             pct(exec_ms),
             bottleneck_marker("exec")
+        );
+        info!(
+            "  |    |- setup:            {:>4} ms",
+            exec_timings.setup.as_millis()
         );
         info!(
             "  |    |- prepare_block:    {:>4} ms",
