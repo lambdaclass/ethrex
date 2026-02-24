@@ -819,7 +819,7 @@ impl Blockchain {
             for (hashed_address, storage_root, updates) in storage_results {
                 storage_updates.push((hashed_address, updates));
 
-                let mut account_state = account_state_cache[&hashed_address].unwrap_or_default();
+                let mut account_state = account_state_cache.get(&hashed_address).copied().flatten().unwrap_or_default();
                 account_state.storage_root = storage_root;
 
                 if let Some(Some(info)) = account_infos.remove(&hashed_address) {
@@ -842,7 +842,7 @@ impl Blockchain {
             for (hashed_address, info_opt) in account_infos {
                 if let Some(info) = info_opt {
                     let mut account_state =
-                        account_state_cache[&hashed_address].unwrap_or_default();
+                        account_state_cache.get(&hashed_address).copied().flatten().unwrap_or_default();
 
                     if cleared_storage.contains(&hashed_address) {
                         account_state.storage_root = *EMPTY_TRIE_HASH;
@@ -866,7 +866,7 @@ impl Blockchain {
                 if processed_cleared.contains(hashed_address) {
                     continue;
                 }
-                let Some(mut account_state) = account_state_cache[hashed_address] else {
+                let Some(mut account_state) = account_state_cache.get(&hashed_address).copied().flatten() else {
                     continue;
                 };
                 if account_state.storage_root != *EMPTY_TRIE_HASH {
