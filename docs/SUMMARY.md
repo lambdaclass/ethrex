@@ -92,6 +92,7 @@
   - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
   - [Aligned Layer Integration](./l2/fundamentals/ethrex_l2_aligned_integration.md)
+  - [Distributed proving](./l2/fundamentals/distributed_proving.md)
 
 # Ethrex for developers
 
@@ -103,6 +104,7 @@
   - [Kurtosis localnet](./developers/l1/kurtosis-localnet.md)
   - [Metrics](./developers/l1/metrics.md)
   - [Dashboards](./developers/l1/dashboards.md)
+  - [Profiling](./developers/l1/profiling.md)
   - [Integrating with other DBs](./developers/l1/storage_api.md)
   - [Testing](./developers/l1/testing/README.md)
     - [Ethereum foundation tests](./developers/l1/testing/ef-tests.md)
@@ -122,6 +124,7 @@
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
   - [FAQ](./ethrex_replay/faq.md)
+- [Interactive REPL](./developers/repl.md)
 - [CLI reference](./CLI.md)
 - [Release Process](./developers/release-process.md)
 - [Troubleshooting]()
