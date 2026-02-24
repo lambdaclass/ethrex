@@ -247,14 +247,20 @@ fn hash_subtrie(subtrie: &mut SparseSubtrie) -> Result<(), TrieError> {
                 old.clear();
                 buffers.rlp_buf = old;
             }
-            // Store the computed hash
-            if let Some(
-                SparseNode::Leaf { hash: h, .. }
-                | SparseNode::Extension { hash: h, .. }
-                | SparseNode::Branch { hash: h, .. },
-            ) = subtrie.nodes.get_mut(path.as_slice())
-            {
-                *h = Some(hash);
+            // Store the computed hash (and mark all children resolved for branches)
+            match subtrie.nodes.get_mut(path.as_slice()) {
+                Some(SparseNode::Leaf { hash: h, .. } | SparseNode::Extension { hash: h, .. }) => {
+                    *h = Some(hash);
+                }
+                Some(SparseNode::Branch {
+                    state_mask,
+                    hash_mask,
+                    hash: h,
+                }) => {
+                    *h = Some(hash);
+                    *hash_mask = *state_mask;
+                }
+                _ => {}
             }
         }
     }
@@ -352,7 +358,7 @@ fn node_hash(
 
             NodeHash::from_encoded(&buffers.rlp_buf)
         }
-        SparseNode::Branch { state_mask, hash } => {
+        SparseNode::Branch { state_mask, hash, .. } => {
             if let Some(h) = hash {
                 return *h;
             }

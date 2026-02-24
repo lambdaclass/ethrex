@@ -64,6 +64,9 @@ pub enum SparseNode {
     /// A branch node with a bitmask of which children exist.
     Branch {
         state_mask: u16,
+        /// Tracks which children have been hashed. When `hash_mask == state_mask`,
+        /// all children are resolved and the branch can be encoded without child lookups.
+        hash_mask: u16,
         hash: Option<NodeHash>,
     },
 }

@@ -149,6 +149,7 @@ pub fn reveal_node_into(
                 path_data,
                 SparseNode::Branch {
                     state_mask,
+                    hash_mask: if revealed_hash.is_some() { state_mask } else { 0 },
                     hash: revealed_hash,
                 },
             );
@@ -449,6 +450,7 @@ pub fn update_leaf(
                     branch_insert_path.clone(),
                     SparseNode::Branch {
                         state_mask,
+                        hash_mask: 0,
                         hash: None,
                     },
                 );
@@ -540,6 +542,7 @@ pub fn update_leaf(
                     branch_insert_path.clone(),
                     SparseNode::Branch {
                         state_mask,
+                        hash_mask: 0,
                         hash: None,
                     },
                 );
@@ -619,6 +622,7 @@ pub fn update_leaf(
                     if let Some(SparseNode::Branch {
                         state_mask: mask,
                         hash,
+                        ..
                     }) = get_node_mut(upper, lower, &current_path)
                     {
                         *mask |= 1 << nibble;
@@ -973,6 +977,7 @@ fn collapse_branch_if_needed(
                     if let Some(SparseNode::Branch {
                         state_mask: mask,
                         hash,
+                        ..
                     }) = get_node_mut(upper, lower, branch_path)
                     {
                         *mask = 1 << only_child_nibble;
@@ -990,6 +995,7 @@ fn collapse_branch_if_needed(
             if let Some(SparseNode::Branch {
                 state_mask: mask,
                 hash,
+                ..
             }) = get_node_mut(upper, lower, branch_path)
             {
                 *mask = new_mask;
@@ -1075,6 +1081,7 @@ fn reveal_node_into_subtrie(
                 PathVec::from_slice(path_data),
                 SparseNode::Branch {
                     state_mask,
+                    hash_mask: if revealed_hash.is_some() { state_mask } else { 0 },
                     hash: revealed_hash,
                 },
             );
