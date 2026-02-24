@@ -54,6 +54,55 @@
 | Phase 7-R17: Volkov R17 필수 수정 (4건) | **완료** |
 | Phase 7-R18: Volkov R18 필수 수정 (3건) | **완료** |
 | Phase 7-R19: Volkov R19 필수 수정 (1건) | **완료** |
+| Phase 8: JIT Benchmarking infrastructure | **완료** |
+
+## Phase 8 완료 요약
+
+### 핵심 변경: JIT vs Interpreter Benchmark Infrastructure
+
+JIT 컴파일 성능을 측정하는 벤치마크 인프라 구축. `tokamak-bench` 크레이트에 `jit-bench` feature flag로 격리.
+
+### 아키텍처
+
+**Feature gating**: `jit-bench` feature → `tokamak-jit` (with `revmc-backend`) optional dependency. LLVM 21 없이도 기존 interpreter 벤치마크 정상 작동.
+
+**Interpreter baseline**: `run_scenario()` 사용. JIT_STATE가 존재하더라도 cache에 컴파일 결과가 없으므로 순수 interpreter 실행.
+
+**JIT execution**: `register_jit_backend()` → `compile_for_jit()` → `prime_counter_for_jit()` → VM 실행. JIT dispatch 경로 활성화.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `tokamak-bench/Cargo.toml` | `tokamak-jit` optional dep, `serial_test` dev-dep, `jit-bench` feature |
+| `tokamak-bench/src/types.rs` | `JitBenchResult`, `JitBenchSuite` 추가 |
+| `tokamak-bench/src/jit_bench.rs` | JIT benchmark runner 전체 재작성 |
+| `tokamak-bench/src/runner.rs` | 4개 helper `pub(crate)` 변경 |
+| `tokamak-bench/src/report.rs` | `jit_suite_to_json`, `jit_suite_from_json`, `jit_to_markdown` 추가 |
+| `tokamak-bench/src/bin/runner.rs` | `jit-bench` CLI subcommand 추가 |
+
+### CLI 사용법
+
+```bash
+# Build with JIT (requires LLVM 21)
+cargo build -p tokamak-bench --features jit-bench --release
+
+# Run JIT benchmark
+cargo run -p tokamak-bench --features jit-bench --release -- jit-bench --runs 5
+
+# Specific scenarios
+cargo run -p tokamak-bench --features jit-bench --release -- jit-bench --scenarios Fibonacci,ERC20Transfer --runs 10
+
+# Markdown output
+cargo run -p tokamak-bench --features jit-bench --release -- jit-bench --markdown
+```
+
+### 검증 결과
+
+- `cargo build -p tokamak-bench` — 성공 (LLVM 없이)
+- `cargo test -p tokamak-bench` — 16 tests pass
+- `cargo clippy -p tokamak-bench -- -D warnings` — clean
+- `cargo clippy --workspace --features l2,l2-sql -- -D warnings` — clean
 
 ## Phase 7 완료 요약
 
@@ -491,14 +540,13 @@ Cranelift은 i256 미지원으로 불가. **revmc (Paradigm, LLVM backend)** 채
 
 ## 다음 단계
 
-### Phase 8: JIT Benchmarking
+### Phase 9: JIT Benchmark CI & Dashboard
 
-JIT vs interpreter 성능 비교 벤치마크 인프라 구축.
+Phase 8 인프라 위에 CI 자동화 및 시각화 구축.
 
-1. **JIT benchmark scenarios** — `tokamak-bench/src/jit_bench.rs` 스텁 완성
-2. **JIT vs interpreter differential** — 동일 시나리오 JIT/interpreter 양쪽 실행, speedup 측정
-3. **CI integration** — PR별 JIT 성능 regression 감지
-4. **Dashboard** — 시계열 벤치마크 결과 저장 + 트렌드 시각화
+1. **CI integration** — PR별 JIT 성능 regression 감지 (`pr-tokamak-bench.yaml` 확장)
+2. **Dashboard** — 시계열 벤치마크 결과 저장 + 트렌드 시각화
+3. **LLVM 21 CI provisioning** — Ubuntu 22.04/24.04에서 LLVM 21 설치 자동화
 
 ### 기존 미완료
 

@@ -71,3 +71,29 @@ impl Default for Thresholds {
         }
     }
 }
+
+/// Result of a JIT vs interpreter benchmark comparison.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JitBenchResult {
+    /// Name of the benchmark scenario.
+    pub scenario: String,
+    /// Interpreter execution time in nanoseconds.
+    pub interpreter_ns: u128,
+    /// JIT execution time in nanoseconds (None if revmc-backend not available).
+    pub jit_ns: Option<u128>,
+    /// Speedup ratio (interpreter_ns / jit_ns). None if JIT not available.
+    pub speedup: Option<f64>,
+    /// Number of iterations.
+    pub runs: u64,
+}
+
+/// A full JIT benchmark suite with metadata.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JitBenchSuite {
+    /// Unix timestamp of the benchmark run.
+    pub timestamp: String,
+    /// Git commit hash.
+    pub commit: String,
+    /// Results for each scenario.
+    pub results: Vec<JitBenchResult>,
+}

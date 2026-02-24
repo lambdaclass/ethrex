@@ -24,8 +24,8 @@ use rustc_hash::FxHashMap;
 
 use crate::types::{BenchResult, BenchSuite, OpcodeEntry};
 
-const SENDER_ADDRESS: u64 = 0x100;
-const CONTRACT_ADDRESS: u64 = 0x42;
+pub(crate) const SENDER_ADDRESS: u64 = 0x100;
+pub(crate) const CONTRACT_ADDRESS: u64 = 0x42;
 
 /// Default scenarios matching the revm_comparison benchmark suite.
 pub struct Scenario {
@@ -94,12 +94,12 @@ fn contracts_bin_dir() -> String {
     )
 }
 
-fn load_contract_bytecode(name: &str) -> Result<String, String> {
+pub(crate) fn load_contract_bytecode(name: &str) -> Result<String, String> {
     let path = format!("{}/{name}.bin-runtime", contracts_bin_dir());
     fs::read_to_string(&path).map_err(|e| format!("Failed to load {path}: {e}"))
 }
 
-fn generate_calldata(iterations: u64) -> Bytes {
+pub(crate) fn generate_calldata(iterations: u64) -> Bytes {
     let hash = keccak_hash(b"Benchmark(uint256)");
     let selector = &hash[..4];
 
@@ -110,7 +110,7 @@ fn generate_calldata(iterations: u64) -> Bytes {
     Bytes::from(calldata)
 }
 
-fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
+pub(crate) fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     let store = Store::new("", ethrex_storage::EngineType::InMemory)
         .expect("Failed to create in-memory store");
     let header = BlockHeader {
@@ -143,7 +143,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache)
 }
 
-fn init_vm(db: &mut GeneralizedDatabase, calldata: Bytes) -> VM<'_> {
+pub(crate) fn init_vm(db: &mut GeneralizedDatabase, calldata: Bytes) -> VM<'_> {
     let env = Environment {
         origin: Address::from_low_u64_be(SENDER_ADDRESS),
         tx_nonce: 0,

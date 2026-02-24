@@ -1,4 +1,4 @@
-use crate::types::{BenchSuite, RegressionReport};
+use crate::types::{BenchSuite, JitBenchSuite, RegressionReport};
 
 pub fn to_json(suite: &BenchSuite) -> String {
     serde_json::to_string_pretty(suite).expect("Failed to serialize BenchSuite")
@@ -63,10 +63,48 @@ pub fn to_markdown(report: &RegressionReport) -> String {
     md
 }
 
+pub fn jit_suite_to_json(suite: &JitBenchSuite) -> String {
+    serde_json::to_string_pretty(suite).expect("Failed to serialize JitBenchSuite")
+}
+
+pub fn jit_suite_from_json(json: &str) -> JitBenchSuite {
+    serde_json::from_str(json).expect("Failed to deserialize JitBenchSuite")
+}
+
+#[expect(clippy::as_conversions, reason = "ns-to-ms conversion for display")]
+pub fn jit_to_markdown(suite: &JitBenchSuite) -> String {
+    let mut md = String::new();
+
+    md.push_str("## JIT vs Interpreter Benchmark\n\n");
+    md.push_str(&format!("Commit: `{}`\n\n", suite.commit));
+    md.push_str("| Scenario | Interpreter (ms) | JIT (ms) | Speedup |\n");
+    md.push_str("|----------|------------------|----------|--------|\n");
+
+    for result in &suite.results {
+        let interp_ms = result.interpreter_ns as f64 / 1_000_000.0;
+        let jit_ms = result
+            .jit_ns
+            .map(|ns| ns as f64 / 1_000_000.0)
+            .unwrap_or(0.0);
+        let speedup = result
+            .speedup
+            .map(|s| format!("{s:.2}x"))
+            .unwrap_or_else(|| "N/A".to_string());
+
+        md.push_str(&format!(
+            "| {} | {interp_ms:.3} | {jit_ms:.3} | {speedup} |\n",
+            result.scenario,
+        ));
+    }
+
+    md.push('\n');
+    md
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{BenchResult, OpcodeEntry, RegressionStatus, Thresholds};
+    use crate::types::{BenchResult, JitBenchResult, OpcodeEntry, RegressionStatus, Thresholds};
 
     #[test]
     fn test_json_roundtrip() {
@@ -117,5 +155,55 @@ mod tests {
         let json = regression_to_json(&report);
         let parsed = regression_from_json(&json);
         assert_eq!(parsed.status, RegressionStatus::Warning);
+    }
+
+    #[test]
+    fn test_jit_suite_json_roundtrip() {
+        let suite = JitBenchSuite {
+            timestamp: "1234567890".to_string(),
+            commit: "abc123".to_string(),
+            results: vec![JitBenchResult {
+                scenario: "Fibonacci".to_string(),
+                interpreter_ns: 10_000_000,
+                jit_ns: Some(2_000_000),
+                speedup: Some(5.0),
+                runs: 10,
+            }],
+        };
+        let json = jit_suite_to_json(&suite);
+        let parsed = jit_suite_from_json(&json);
+        assert_eq!(parsed.commit, "abc123");
+        assert_eq!(parsed.results.len(), 1);
+        assert_eq!(parsed.results[0].speedup, Some(5.0));
+    }
+
+    #[test]
+    fn test_jit_markdown_output() {
+        let suite = JitBenchSuite {
+            timestamp: "0".to_string(),
+            commit: "test123".to_string(),
+            results: vec![
+                JitBenchResult {
+                    scenario: "Fibonacci".to_string(),
+                    interpreter_ns: 12_340_000,
+                    jit_ns: Some(2_100_000),
+                    speedup: Some(5.876),
+                    runs: 10,
+                },
+                JitBenchResult {
+                    scenario: "ERC20Transfer".to_string(),
+                    interpreter_ns: 8_560_000,
+                    jit_ns: None,
+                    speedup: None,
+                    runs: 10,
+                },
+            ],
+        };
+        let md = jit_to_markdown(&suite);
+        assert!(md.contains("JIT vs Interpreter Benchmark"));
+        assert!(md.contains("Fibonacci"));
+        assert!(md.contains("ERC20Transfer"));
+        assert!(md.contains("test123"));
+        assert!(md.contains("N/A"));
     }
 }

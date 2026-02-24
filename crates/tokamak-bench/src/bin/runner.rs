@@ -8,6 +8,8 @@ use tokamak_bench::{
     runner::{Scenario, default_scenarios, run_suite},
     types::Thresholds,
 };
+#[cfg(feature = "jit-bench")]
+use tokamak_bench::report::{jit_suite_to_json, jit_to_markdown};
 
 #[derive(Parser)]
 #[command(name = "tokamak-bench", about = "Tokamak EVM benchmark runner")]
@@ -69,6 +71,30 @@ enum Command {
         /// Output markdown file path (default: stdout)
         #[arg(long)]
         output: Option<String>,
+    },
+
+    /// Run JIT vs interpreter benchmark comparison (requires jit-bench feature)
+    #[cfg(feature = "jit-bench")]
+    JitBench {
+        /// Comma-separated list of scenario names (default: all)
+        #[arg(long)]
+        scenarios: Option<String>,
+
+        /// Number of runs per scenario
+        #[arg(long, default_value = "10")]
+        runs: u64,
+
+        /// Git commit hash for metadata
+        #[arg(long, default_value = "unknown")]
+        commit: String,
+
+        /// Output file path (default: stdout as JSON)
+        #[arg(long)]
+        output: Option<String>,
+
+        /// Output markdown instead of JSON
+        #[arg(long)]
+        markdown: bool,
     },
 }
 
@@ -163,6 +189,54 @@ fn main() {
                     eprintln!("Report written to {path}");
                 }
                 None => println!("{md}"),
+            }
+        }
+
+        #[cfg(feature = "jit-bench")]
+        Command::JitBench {
+            scenarios,
+            runs,
+            commit,
+            output,
+            markdown,
+        } => {
+            let scenario_list: Vec<Scenario> = match &scenarios {
+                Some(names) => {
+                    let defaults = default_scenarios();
+                    names
+                        .split(',')
+                        .filter_map(|name| {
+                            let name = name.trim();
+                            defaults.iter().find(|s| s.name == name).map(|s| Scenario {
+                                name: s.name,
+                                iterations: s.iterations,
+                            })
+                        })
+                        .collect()
+                }
+                None => default_scenarios(),
+            };
+
+            if scenario_list.is_empty() {
+                eprintln!("No valid scenarios selected");
+                process::exit(1);
+            }
+
+            let suite =
+                tokamak_bench::jit_bench::run_jit_suite(&scenario_list, runs, &commit);
+
+            let content = if markdown {
+                jit_to_markdown(&suite)
+            } else {
+                jit_suite_to_json(&suite)
+            };
+
+            match output {
+                Some(path) => {
+                    fs::write(&path, &content).expect("Failed to write output");
+                    eprintln!("JIT benchmark results written to {path}");
+                }
+                None => println!("{content}"),
             }
         }
     }

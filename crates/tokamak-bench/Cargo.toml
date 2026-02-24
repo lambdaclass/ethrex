@@ -19,6 +19,16 @@ hex.workspace = true
 bytes.workspace = true
 rustc-hash.workspace = true
 
+tokamak-jit = { path = "../vm/tokamak-jit", features = ["revmc-backend"], optional = true }
+
+[dev-dependencies]
+serial_test.workspace = true
+ethrex-levm = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = []
+jit-bench = ["dep:tokamak-jit"]
+
 [[bin]]
 name = "tokamak-bench"
 path = "src/bin/runner.rs"
