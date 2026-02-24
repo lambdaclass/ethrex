@@ -74,16 +74,6 @@ impl Evm {
         }
     }
 
-    /// Creates a fresh Evm that reuses this Evm's store (and its read cache).
-    /// The new GeneralizedDatabase starts with empty write state, so only the
-    /// immutable read cache (e.g. CachingDatabase) is preserved.
-    pub fn fresh_with_same_store(&self) -> Self {
-        Evm {
-            db: GeneralizedDatabase::new(self.db.store.clone()),
-            vm_type: self.vm_type,
-        }
-    }
-
     /// Execute a block and return the execution result.
     ///
     /// Also records and returns the Block Access List (EIP-7928) for Amsterdam+ forks.
