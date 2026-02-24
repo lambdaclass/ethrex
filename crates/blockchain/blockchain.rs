@@ -2338,8 +2338,27 @@ impl Blockchain {
             exec_timings.run_sstore_time.as_millis()
         );
         info!(
-            "  |    |    |    |    `- calls:  {:>4} ms",
+            "  |    |    |    |    |- calls:  {:>4} ms",
             exec_timings.run_calls_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |    |- sha3:   {:>4} ms",
+            exec_timings.run_sha3_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |    |- ext:    {:>4} ms",
+            exec_timings.run_ext_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |    |- log:    {:>4} ms",
+            exec_timings.run_log_time.as_millis()
+        );
+        info!(
+            "  |    |    |    |    `- other:  {:>4} ms",
+            exec_timings.vm_run_time.saturating_sub(
+                exec_timings.run_sload_time + exec_timings.run_sstore_time + exec_timings.run_calls_time
+                + exec_timings.run_sha3_time + exec_timings.run_ext_time + exec_timings.run_log_time
+            ).as_millis()
         );
         info!(
             "  |    |    |    `- finalize: {:>4} ms",

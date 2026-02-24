@@ -437,8 +437,8 @@ pub struct VM<'a> {
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
     /// Timings from the last execute() call: (prepare, run, finalize).
     pub last_exec_timings: (std::time::Duration, std::time::Duration, std::time::Duration),
-    /// Run-phase sub-timings: (sload, sstore, calls).
-    pub run_sub_timings: (std::time::Duration, std::time::Duration, std::time::Duration),
+    /// Run-phase sub-timings: (sload, sstore, calls, sha3, ext, log).
+    pub run_sub_timings: (std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration),
 }
 
 impl<'a> VM<'a> {
@@ -697,14 +697,21 @@ impl<'a> VM<'a> {
                 0x5b => self.op_jumpdest(),
                 0x5f if self.env.config.fork >= Fork::Shanghai => self.op_push0(),
                 0xf3 => self.op_return(),
-                // Timed: storage and call-family opcodes
-                0x55 | 0xF0 | 0xF1 | 0xF2 | 0xF4 | 0xF5 | 0xFA => {
+                // Timed: storage, call-family, sha3, ext, log opcodes
+                0x55 | 0xF0 | 0xF1 | 0xF2 | 0xF4 | 0xF5 | 0xFA
+                | 0x20
+                | 0x31 | 0x3B | 0x3C | 0x3F
+                | 0xA0 | 0xA1 | 0xA2 | 0xA3 | 0xA4 => {
                     let t = std::time::Instant::now();
                     let r = self.opcode_table[opcode as usize].call(self);
                     let elapsed = t.elapsed();
                     match opcode {
-                        0x55 => self.run_sub_timings.1 += elapsed, // SSTORE
-                        _    => self.run_sub_timings.2 += elapsed, // CALL/CREATE family
+                        0x55 => self.run_sub_timings.1 += elapsed,                 // SSTORE
+                        0xF0 | 0xF1 | 0xF2 | 0xF4 | 0xF5 | 0xFA => self.run_sub_timings.2 += elapsed, // CALL/CREATE
+                        0x20 => self.run_sub_timings.3 += elapsed,                 // SHA3
+                        0x31 | 0x3B | 0x3C | 0x3F => self.run_sub_timings.4 += elapsed, // BALANCE/EXTCODE*
+                        0xA0 ..= 0xA4 => self.run_sub_timings.5 += elapsed,       // LOG0-LOG4
+                        _ => unreachable!(),
                     }
                     r
                 }

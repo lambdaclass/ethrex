@@ -44,6 +44,12 @@ pub struct ExecTimings {
     pub run_sstore_time: Duration,
     /// Within run_execution: CALL/CREATE family time.
     pub run_calls_time: Duration,
+    /// Within run_execution: SHA3/KECCAK256 time.
+    pub run_sha3_time: Duration,
+    /// Within run_execution: BALANCE/EXTCODESIZE/EXTCODECOPY/EXTCODEHASH time.
+    pub run_ext_time: Duration,
+    /// Within run_execution: LOG0-LOG4 time.
+    pub run_log_time: Duration,
     /// Within vm.execute(): finalize_execution (hooks: gas refund, coinbase payment).
     pub vm_finalize_time: Duration,
     /// Within execute_txs: time spent flushing state to merkleizer.
