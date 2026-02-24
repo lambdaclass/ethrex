@@ -358,6 +358,27 @@ impl Substate {
     pub fn add_log(&mut self, log: Log) {
         self.logs.push(log);
     }
+
+    /// Create a deep, independent snapshot of this substate for JIT dual-execution validation.
+    ///
+    /// Recursively clones the entire parent chain so that the snapshot is fully
+    /// independent of the original.
+    #[cfg(feature = "tokamak-jit")]
+    pub fn snapshot(&self) -> Self {
+        Self {
+            parent: self
+                .parent
+                .as_ref()
+                .map(|p| Box::new(p.snapshot())),
+            selfdestruct_set: self.selfdestruct_set.clone(),
+            accessed_addresses: self.accessed_addresses.clone(),
+            accessed_storage_slots: self.accessed_storage_slots.clone(),
+            created_accounts: self.created_accounts.clone(),
+            refunded_gas: self.refunded_gas,
+            transient_storage: self.transient_storage.clone(),
+            logs: self.logs.clone(),
+        }
+    }
 }
 
 /// The LEVM (Lambda EVM) execution engine.
@@ -604,7 +625,29 @@ impl<'a> VM<'a> {
                 // Dispatch if compiled
                 if let Some(compiled) =
                     crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash, fork)
-                    && let Some(initial_result) = JIT_STATE.execute_jit(
+                {
+                    // Snapshot state before JIT execution for dual-execution validation.
+                    // Only allocate when validation will actually run for this cache key.
+                    // Skip validation for bytecodes with CALL/CREATE — the state-swap
+                    // mechanism cannot correctly replay subcalls (see CRITICAL-1).
+                    let cache_key = (bytecode_hash, fork);
+                    let needs_validation = JIT_STATE.config.validation_mode
+                        && JIT_STATE.should_validate(&cache_key)
+                        && !crate::jit::analyzer::bytecode_has_external_calls(
+                            &self.current_call_frame.bytecode.bytecode,
+                        );
+                    let pre_jit_snapshot = if needs_validation {
+                        Some((
+                            self.db.clone(),
+                            self.current_call_frame.snapshot(),
+                            self.substate.snapshot(),
+                            self.storage_original_values.clone(),
+                        ))
+                    } else {
+                        None
+                    };
+
+                    if let Some(initial_result) = JIT_STATE.execute_jit(
                         &compiled,
                         &mut self.current_call_frame,
                         self.db,
@@ -648,36 +691,87 @@ impl<'a> VM<'a> {
                                 .jit_executions
                                 .fetch_add(1, Ordering::Relaxed);
 
-                            // Validation mode: log JIT outcome for offline comparison
-                            if JIT_STATE.config.validation_mode {
-                                let cache_key = (bytecode_hash, fork);
-                                if JIT_STATE.should_validate(&cache_key) {
-                                    match &outcome {
-                                        crate::jit::types::JitOutcome::Success {
-                                            gas_used,
-                                            output,
-                                        } => {
-                                            eprintln!(
-                                                "[JIT-VALIDATE] hash={bytecode_hash} \
-                                                 fork={fork:?} gas_used={gas_used} \
-                                                 output_len={}",
-                                                output.len()
-                                            );
-                                        }
-                                        crate::jit::types::JitOutcome::Revert {
-                                            gas_used,
-                                            output,
-                                        } => {
-                                            eprintln!(
-                                                "[JIT-VALIDATE] hash={bytecode_hash} \
-                                                 fork={fork:?} REVERT gas_used={gas_used} \
-                                                 output_len={}",
-                                                output.len()
-                                            );
-                                        }
-                                        _ => {}
+                            // Dual-execution validation: replay via interpreter and compare.
+                            if let Some((
+                                mut pre_jit_db,
+                                mut pre_jit_frame,
+                                mut pre_jit_substate,
+                                mut pre_jit_storage,
+                            )) = pre_jit_snapshot
+                            {
+                                // Build JIT result for comparison before swapping state
+                                let jit_result =
+                                    apply_jit_outcome(outcome, &self.current_call_frame)?;
+                                let jit_refunded_gas = self.substate.refunded_gas;
+                                let jit_logs = self.substate.extract_logs();
+
+                                // Swap JIT-mutated state with pre-JIT snapshots
+                                // (VM now holds original state for interpreter replay)
+                                mem::swap(self.db, &mut pre_jit_db);
+                                mem::swap(
+                                    &mut self.current_call_frame,
+                                    &mut pre_jit_frame,
+                                );
+                                mem::swap(&mut self.substate, &mut pre_jit_substate);
+                                mem::swap(
+                                    &mut self.storage_original_values,
+                                    &mut pre_jit_storage,
+                                );
+
+                                // Run interpreter on the original state
+                                let interp_result = self.interpreter_loop(0)?;
+                                let interp_refunded_gas = self.substate.refunded_gas;
+                                let interp_logs = self.substate.extract_logs();
+
+                                // Compare JIT vs interpreter
+                                let validation =
+                                    crate::jit::validation::validate_dual_execution(
+                                        &jit_result,
+                                        &interp_result,
+                                        jit_refunded_gas,
+                                        interp_refunded_gas,
+                                        &jit_logs,
+                                        &interp_logs,
+                                    );
+
+                                match validation {
+                                    crate::jit::validation::DualExecutionResult::Match => {
+                                        // Swap back to JIT state (trusted now)
+                                        mem::swap(self.db, &mut pre_jit_db);
+                                        mem::swap(
+                                            &mut self.current_call_frame,
+                                            &mut pre_jit_frame,
+                                        );
+                                        mem::swap(
+                                            &mut self.substate,
+                                            &mut pre_jit_substate,
+                                        );
+                                        mem::swap(
+                                            &mut self.storage_original_values,
+                                            &mut pre_jit_storage,
+                                        );
+                                        JIT_STATE.record_validation(&cache_key);
+                                        JIT_STATE
+                                            .metrics
+                                            .validation_successes
+                                            .fetch_add(1, Ordering::Relaxed);
+                                        return Ok(jit_result);
                                     }
-                                    JIT_STATE.record_validation(&cache_key);
+                                    crate::jit::validation::DualExecutionResult::Mismatch {
+                                        reason,
+                                    } => {
+                                        // Keep interpreter state (already in VM)
+                                        JIT_STATE.cache.invalidate(&cache_key);
+                                        JIT_STATE
+                                            .metrics
+                                            .validation_mismatches
+                                            .fetch_add(1, Ordering::Relaxed);
+                                        eprintln!(
+                                            "[JIT-VALIDATE] MISMATCH hash={bytecode_hash} \
+                                             fork={fork:?}: {reason}"
+                                        );
+                                        return Ok(interp_result);
+                                    }
                                 }
                             }
 
@@ -690,6 +784,7 @@ impl<'a> VM<'a> {
                                 .fetch_add(1, Ordering::Relaxed);
                             eprintln!("[JIT] fallback for {bytecode_hash}: {msg}");
                         }
+                    }
                     }
                 }
             }

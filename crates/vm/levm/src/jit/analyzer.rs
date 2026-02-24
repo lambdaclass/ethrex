@@ -98,6 +98,28 @@ pub fn analyze_bytecode(bytecode: Bytes, hash: H256, jump_targets: Vec<u32>) -> 
     }
 }
 
+/// Quick scan to determine if bytecode contains any external call/create opcodes.
+///
+/// Used by dual-execution validation to skip validation for CALL/CREATE contracts,
+/// since the state-swap mechanism cannot correctly replay subcalls.
+pub fn bytecode_has_external_calls(bytecode: &[u8]) -> bool {
+    let mut i: usize = 0;
+    while i < bytecode.len() {
+        #[allow(clippy::indexing_slicing)]
+        let opcode = bytecode[i];
+        if matches!(opcode, CALL | CALLCODE | DELEGATECALL | STATICCALL | CREATE | CREATE2) {
+            return true;
+        }
+        // Skip PUSH immediate data
+        let skip = push_size(opcode);
+        #[allow(clippy::arithmetic_side_effects)]
+        {
+            i += 1 + skip;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {

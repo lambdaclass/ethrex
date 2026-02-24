@@ -13,3 +13,4 @@ pub mod compiler_thread;
 pub mod counter;
 pub mod dispatch;
 pub mod types;
+pub mod validation;

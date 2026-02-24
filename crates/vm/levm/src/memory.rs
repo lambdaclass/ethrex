@@ -308,6 +308,21 @@ impl Memory {
     }
 }
 
+impl Memory {
+    /// Create a fully independent copy of this memory for JIT validation snapshots.
+    ///
+    /// Unlike `Clone` (which shares the `Rc<RefCell<Vec<u8>>>`), this creates a
+    /// new allocation so mutations to the clone don't affect the original.
+    #[cfg(feature = "tokamak-jit")]
+    pub fn deep_clone(&self) -> Self {
+        Self {
+            buffer: Rc::new(RefCell::new(self.buffer.borrow().clone())),
+            len: self.len,
+            current_base: self.current_base,
+        }
+    }
+}
+
 impl Default for Memory {
     fn default() -> Self {
         Self::new()

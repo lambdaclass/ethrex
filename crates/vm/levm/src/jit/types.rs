@@ -151,6 +151,10 @@ pub struct JitMetrics {
     pub compilations: AtomicU64,
     /// Number of compilation skips (e.g., external calls detected).
     pub compilation_skips: AtomicU64,
+    /// Number of successful dual-execution validations (JIT matched interpreter).
+    pub validation_successes: AtomicU64,
+    /// Number of dual-execution validation mismatches (JIT diverged from interpreter).
+    pub validation_mismatches: AtomicU64,
 }
 
 impl JitMetrics {
@@ -161,6 +165,8 @@ impl JitMetrics {
             jit_fallbacks: AtomicU64::new(0),
             compilations: AtomicU64::new(0),
             compilation_skips: AtomicU64::new(0),
+            validation_successes: AtomicU64::new(0),
+            validation_mismatches: AtomicU64::new(0),
         }
     }
 
@@ -174,15 +180,19 @@ impl JitMetrics {
         self.jit_fallbacks.store(0, Ordering::Relaxed);
         self.compilations.store(0, Ordering::Relaxed);
         self.compilation_skips.store(0, Ordering::Relaxed);
+        self.validation_successes.store(0, Ordering::Relaxed);
+        self.validation_mismatches.store(0, Ordering::Relaxed);
     }
 
     /// Get a snapshot of all metrics.
-    pub fn snapshot(&self) -> (u64, u64, u64, u64) {
+    pub fn snapshot(&self) -> (u64, u64, u64, u64, u64, u64) {
         (
             self.jit_executions.load(Ordering::Relaxed),
             self.jit_fallbacks.load(Ordering::Relaxed),
             self.compilations.load(Ordering::Relaxed),
             self.compilation_skips.load(Ordering::Relaxed),
+            self.validation_successes.load(Ordering::Relaxed),
+            self.validation_mismatches.load(Ordering::Relaxed),
         )
     }
 }
@@ -204,11 +214,13 @@ mod tests {
         metrics.jit_fallbacks.store(5, Ordering::Relaxed);
         metrics.compilations.store(3, Ordering::Relaxed);
         metrics.compilation_skips.store(2, Ordering::Relaxed);
+        metrics.validation_successes.store(7, Ordering::Relaxed);
+        metrics.validation_mismatches.store(1, Ordering::Relaxed);
 
-        assert_eq!(metrics.snapshot(), (10, 5, 3, 2));
+        assert_eq!(metrics.snapshot(), (10, 5, 3, 2, 7, 1));
 
         metrics.reset();
 
-        assert_eq!(metrics.snapshot(), (0, 0, 0, 0));
+        assert_eq!(metrics.snapshot(), (0, 0, 0, 0, 0, 0));
     }
 }

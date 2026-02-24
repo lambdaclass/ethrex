@@ -396,6 +396,39 @@ impl CallFrame {
         self.bytecode = code;
         Ok(())
     }
+
+    /// Create a deep, independent snapshot of this call frame for JIT dual-execution validation.
+    ///
+    /// Stack values are copied into a new Box, and memory is deep-cloned so that
+    /// mutations to the original don't affect the snapshot.
+    #[cfg(feature = "tokamak-jit")]
+    pub fn snapshot(&self) -> Self {
+        Self {
+            gas_limit: self.gas_limit,
+            gas_remaining: self.gas_remaining,
+            pc: self.pc,
+            msg_sender: self.msg_sender,
+            to: self.to,
+            code_address: self.code_address,
+            bytecode: self.bytecode.clone(),
+            msg_value: self.msg_value,
+            stack: Stack {
+                values: self.stack.values.clone(),
+                offset: self.stack.offset,
+            },
+            memory: self.memory.deep_clone(),
+            calldata: self.calldata.clone(),
+            output: self.output.clone(),
+            sub_return_data: self.sub_return_data.clone(),
+            is_static: self.is_static,
+            depth: self.depth,
+            is_create: self.is_create,
+            call_frame_backup: self.call_frame_backup.clone(),
+            ret_offset: self.ret_offset,
+            ret_size: self.ret_size,
+            should_transfer_value: self.should_transfer_value,
+        }
+    }
 }
 
 impl<'a> VM<'a> {
