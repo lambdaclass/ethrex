@@ -11,6 +11,7 @@ use ethrex_common::U256;
 
 impl<'a> VM<'a> {
     // LT operation
+    #[inline]
     pub fn op_lt(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::LT)?;
@@ -22,6 +23,7 @@ impl<'a> VM<'a> {
     }
 
     // GT operation
+    #[inline]
     pub fn op_gt(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::GT)?;
@@ -71,6 +73,7 @@ impl<'a> VM<'a> {
     }
 
     // EQ operation (equality check)
+    #[inline]
     pub fn op_eq(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
@@ -83,6 +86,7 @@ impl<'a> VM<'a> {
     }
 
     // ISZERO operation (check if zero)
+    #[inline]
     pub fn op_iszero(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::ISZERO)?;
@@ -96,6 +100,7 @@ impl<'a> VM<'a> {
     }
 
     // AND operation
+    #[inline]
     pub fn op_and(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::AND)?;
@@ -106,6 +111,7 @@ impl<'a> VM<'a> {
     }
 
     // OR operation
+    #[inline]
     pub fn op_or(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::OR)?;
@@ -167,6 +173,7 @@ impl<'a> VM<'a> {
 
     #[expect(clippy::arithmetic_side_effects)]
     // SHL operation (shift left)
+    #[inline]
     pub fn op_shl(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
@@ -183,6 +190,7 @@ impl<'a> VM<'a> {
 
     #[expect(clippy::arithmetic_side_effects)]
     // SHR operation (shift right)
+    #[inline]
     pub fn op_shr(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
