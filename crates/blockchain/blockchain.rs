@@ -632,6 +632,7 @@ impl Blockchain {
         }
 
         // Barrier: wait for account workers to finish routing to storage workers.
+        let t_drain_start = Instant::now();
         {
             let (flush_tx, flush_rx) = channel();
             for tx in &account_workers_tx {
@@ -643,6 +644,7 @@ impl Blockchain {
             drop(flush_tx);
             for () in flush_rx {}
         }
+        let t_barrier = Instant::now();
 
         // Batch early MerklizeAccounts for accounts without storage changes.
         let mut early_batches: [Vec<H256>; 16] = Default::default();
@@ -674,6 +676,7 @@ impl Blockchain {
                 .join()
                 .map_err(|_| StoreError::Custom("storage worker panicked".to_string()))??;
         }
+        let t_storage_joined = Instant::now();
 
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
@@ -700,6 +703,8 @@ impl Blockchain {
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
+        let t_state_collected = Instant::now();
+
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
@@ -709,6 +714,14 @@ impl Blockchain {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
                 *EMPTY_TRIE_HASH
             };
+        let t_root = Instant::now();
+        info!(
+            "  drain breakdown: barrier={:.1}ms storage_join={:.1}ms collect_state={:.1}ms root={:.1}ms",
+            t_barrier.duration_since(t_drain_start).as_secs_f64() * 1000.0,
+            t_storage_joined.duration_since(t_barrier).as_secs_f64() * 1000.0,
+            t_state_collected.duration_since(t_storage_joined).as_secs_f64() * 1000.0,
+            t_root.duration_since(t_state_collected).as_secs_f64() * 1000.0,
+        );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
@@ -864,6 +877,9 @@ impl Blockchain {
         let mut received_shards: FxHashMap<H256, u16> = Default::default();
         // Held until FinishRouting to keep storage worker channels open.
         let mut storage_workers_tx = Some(storage_workers_tx);
+        let mut t_process = Duration::ZERO;
+        let mut t_shard = Duration::ZERO;
+        let mut t_collect;
         for msg in rx {
             match msg {
                 AccountRequest::ProcessAccount {
@@ -873,6 +889,7 @@ impl Blockchain {
                     removed,
                     removed_storage,
                 } => {
+                    let t0 = Instant::now();
                     let senders = storage_workers_tx
                         .as_ref()
                         .expect("ProcessAccount after FinishRouting");
@@ -941,6 +958,7 @@ impl Blockchain {
                                 .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                         }
                     }
+                    t_process += t0.elapsed();
                 }
                 AccountRequest::FinishRouting { tx } => {
                     tx.send(())
@@ -953,6 +971,7 @@ impl Blockchain {
                     mut subroot,
                     nodes,
                 } => {
+                    let t0 = Instant::now();
                     let state = storage_state.entry(prefix).or_default();
                     match &mut state.storage_root {
                         Some(root) => {
@@ -998,6 +1017,7 @@ impl Blockchain {
                             state_trie.remove(path)?;
                         }
                     }
+                    t_shard += t0.elapsed();
                 }
                 AccountRequest::MerklizeAccounts { accounts: batch } => {
                     // Info already applied in ProcessAccount — just record empty storage nodes
@@ -1006,6 +1026,7 @@ impl Blockchain {
                     }
                 }
                 AccountRequest::CollectState { tx } => {
+                    let t0 = Instant::now();
                     let (subroot, state_nodes) =
                         collect_trie(index, std::mem::take(&mut state_trie))?;
                     tx.send(CollectedStateMsg {
@@ -1015,6 +1036,13 @@ impl Blockchain {
                         storage_nodes: std::mem::take(&mut storage_nodes),
                     })
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    t_collect = t0.elapsed();
+                    info!(
+                        "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
+                        t_process.as_secs_f64() * 1000.0,
+                        t_shard.as_secs_f64() * 1000.0,
+                        t_collect.as_secs_f64() * 1000.0,
+                    );
                 }
             }
         }
