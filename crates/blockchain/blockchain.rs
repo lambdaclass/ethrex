@@ -563,18 +563,16 @@ impl Blockchain {
 
         // Spawn 16 storage workers with account senders for direct routing
         let mut storage_workers_tx = Vec::with_capacity(16);
-        let mut storage_workers_handles = Vec::with_capacity(16);
         for i in 0..16u8 {
             let (tx, rx) = channel();
             let account_senders = account_workers_tx.clone();
             let storage_clone = self.storage.clone();
-            let handle = std::thread::Builder::new()
+            std::thread::Builder::new()
                 .name(format!("block_executor_storage_shard_{i}"))
                 .spawn(move || {
                     handle_storage_subtrie(storage_clone, rx, parent_state_root, i, account_senders)
                 })
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}")))?;
-            storage_workers_handles.push(handle);
             storage_workers_tx.push(tx);
         }
 
@@ -727,13 +725,6 @@ impl Blockchain {
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
         let t_gathered = Instant::now();
-        // Join storage workers for error propagation (should already be done).
-        for handle in storage_workers_handles {
-            handle
-                .join()
-                .map_err(|_| StoreError::Custom("storage worker panicked".to_string()))??;
-        }
-        let t_joined = Instant::now();
 
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
@@ -746,11 +737,10 @@ impl Blockchain {
             };
         let t_root = Instant::now();
         info!(
-            "  drain breakdown: barrier={:.1}ms gather={:.1}ms join={:.1}ms root={:.1}ms",
+            "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms",
             t_barrier.duration_since(t_drain_start).as_secs_f64() * 1000.0,
             t_gathered.duration_since(t_barrier).as_secs_f64() * 1000.0,
-            t_joined.duration_since(t_gathered).as_secs_f64() * 1000.0,
-            t_root.duration_since(t_joined).as_secs_f64() * 1000.0,
+            t_root.duration_since(t_gathered).as_secs_f64() * 1000.0,
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
