@@ -198,8 +198,8 @@ impl LEVM {
             Self::prepare_block(block, db, vm_type)?;
 
             // Drain system call state and snapshot for per-tx db seeding
-            let _ = LEVM::get_state_transitions_tx(db)?;
-            let system_seed = Arc::new(db.initial_accounts_state.clone());
+            LEVM::get_state_transitions_tx(db)?;
+            let system_seed = Arc::new(std::mem::take(&mut db.initial_accounts_state));
 
             let (receipts, block_gas_used) = Self::execute_block_parallel(
                 block,
@@ -463,21 +463,24 @@ impl LEVM {
         for acct_changes in bal.accounts() {
             let addr = acct_changes.address;
 
-            // Check if any changes exist at or before max_idx for this account
-            let has_relevant = acct_changes
+            // Binary search (slices are sorted ascending by block_access_index):
+            // partition_point returns the number of elements <= max_idx.
+            let balance_pos = acct_changes
                 .balance_changes
+                .partition_point(|c| c.block_access_index <= max_idx);
+            let nonce_pos = acct_changes
+                .nonce_changes
+                .partition_point(|c| c.block_access_index <= max_idx);
+            let slot_positions: Vec<usize> = acct_changes
+                .storage_changes
                 .iter()
-                .any(|c| c.block_access_index <= max_idx)
-                || acct_changes
-                    .nonce_changes
-                    .iter()
-                    .any(|c| c.block_access_index <= max_idx)
-                || acct_changes.storage_changes.iter().any(|sc| {
+                .map(|sc| {
                     sc.slot_changes
-                        .iter()
-                        .any(|c| c.block_access_index <= max_idx)
-                });
-            if !has_relevant {
+                        .partition_point(|c| c.block_access_index <= max_idx)
+                })
+                .collect();
+
+            if balance_pos == 0 && nonce_pos == 0 && slot_positions.iter().all(|&p| p == 0) {
                 continue;
             }
 
@@ -485,39 +488,27 @@ impl LEVM {
             db.get_account(addr)
                 .map_err(|e| EvmError::Custom(format!("seed_db_from_bal load: {e}")))?;
 
-            // Apply balance: latest change with block_access_index <= max_idx
-            for change in acct_changes.balance_changes.iter().rev() {
-                if change.block_access_index <= max_idx {
+            if balance_pos > 0 {
+                let acc = db
+                    .get_account_mut(addr)
+                    .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
+                acc.info.balance = acct_changes.balance_changes[balance_pos - 1].post_balance;
+            }
+
+            if nonce_pos > 0 {
+                let acc = db
+                    .get_account_mut(addr)
+                    .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
+                acc.info.nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
+            }
+
+            for (sc, &pos) in acct_changes.storage_changes.iter().zip(&slot_positions) {
+                if pos > 0 {
+                    let key = ethrex_common::utils::u256_to_h256(sc.slot);
                     let acc = db
                         .get_account_mut(addr)
                         .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
-                    acc.info.balance = change.post_balance;
-                    break;
-                }
-            }
-
-            // Apply nonce: latest change with block_access_index <= max_idx
-            for change in acct_changes.nonce_changes.iter().rev() {
-                if change.block_access_index <= max_idx {
-                    let acc = db
-                        .get_account_mut(addr)
-                        .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
-                    acc.info.nonce = change.post_nonce;
-                    break;
-                }
-            }
-
-            // Apply storage: per slot, latest change with block_access_index <= max_idx
-            for slot_change in &acct_changes.storage_changes {
-                for change in slot_change.slot_changes.iter().rev() {
-                    if change.block_access_index <= max_idx {
-                        let key = ethrex_common::utils::u256_to_h256(slot_change.slot);
-                        let acc = db
-                            .get_account_mut(addr)
-                            .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
-                        acc.storage.insert(key, change.post_value);
-                        break;
-                    }
+                    acc.storage.insert(key, sc.slot_changes[pos - 1].post_value);
                 }
             }
         }
@@ -698,28 +689,29 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 1: Prefetch all account states in parallel.
+        // Phase 1: Prefetch all account states — parallel inner fetch + single write-lock.
         // This warms the CachingDatabase account cache and the TrieLayerCache
         // with state trie nodes, so Phase 2 storage reads benefit from cached lookups.
-        accounts.par_iter().for_each(|ac| {
-            let _ = store.get_account_state(ac.address);
-        });
+        let account_addresses: Vec<Address> = accounts.iter().map(|ac| ac.address).collect();
+        store
+            .prefetch_accounts(&account_addresses)
+            .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
 
-        // Phase 2: Prefetch storage slots and contract code in parallel.
+        // Phase 2: Prefetch storage slots in batch — parallel inner fetch + single write-lock.
         // Storage is flattened to (address, slot) pairs so rayon can distribute
         // work across threads regardless of how many slots each account has.
         // Without flattening, a hot contract with hundreds of slots (e.g. a DEX
         // pool) would monopolize a single thread while others go idle.
-        let slots: Vec<(ethrex_common::Address, ethrex_common::H256)> = accounts
+        let slots: Vec<(Address, ethrex_common::H256)> = accounts
             .iter()
             .flat_map(|ac| {
                 ac.all_storage_slots()
                     .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
             })
             .collect();
-        slots.par_iter().for_each(|(addr, key)| {
-            let _ = store.get_storage_value(*addr, *key);
-        });
+        store
+            .prefetch_storage(&slots)
+            .map_err(|e| EvmError::Custom(format!("prefetch_storage: {e}")))?;
 
         // Code prefetch: get_account_state is a cache hit from Phase 1
         accounts.par_iter().for_each(|ac| {
@@ -732,7 +724,6 @@ impl LEVM {
 
         Ok(())
     }
-
 
     fn send_state_transitions_tx(
         merkleizer: &Sender<Vec<AccountUpdate>>,

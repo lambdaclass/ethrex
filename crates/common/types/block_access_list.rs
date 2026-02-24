@@ -341,7 +341,6 @@ impl AccountChanges {
             .chain(self.storage_changes.iter().map(|sc| sc.slot))
     }
 
-
     /// Returns whether this account has any changes or reads.
     pub fn is_empty(&self) -> bool {
         self.storage_changes.is_empty()
