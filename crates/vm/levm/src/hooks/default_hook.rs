@@ -13,6 +13,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{Code, Fork},
 };
+use std::sync::Arc;
 
 pub const MAX_REFUND_QUOTIENT: u64 = 5;
 
@@ -576,7 +577,7 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
         let calldata = std::mem::take(&mut vm.current_call_frame.calldata);
         (
             // SAFETY: we don't need the hash for the initcode
-            Code::from_bytecode_unchecked(calldata, H256::zero()),
+            Arc::new(Code::from_bytecode_unchecked(calldata, H256::zero())),
             vm.current_call_frame.to,
         )
     } else {
