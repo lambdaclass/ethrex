@@ -1476,6 +1476,88 @@ fn apply_jit_outcome(
     }
 }
 
+#[cfg(test)]
+#[cfg(feature = "tokamak-jit")]
+mod jit_tests {
+    use super::*;
+    use bytes::Bytes;
+
+    /// Verify `apply_jit_outcome` handles negative `gas_remaining` safely.
+    ///
+    /// Without the `max(0)` clamp, `(-1i64) as u64` would produce `u64::MAX`,
+    /// causing `checked_sub` to return `None` → `InternalError::Underflow`.
+    /// With the clamp, `gas_remaining = -1` → 0 → `gas_used = gas_limit`.
+    #[test]
+    fn test_apply_jit_outcome_negative_gas_remaining() {
+        let mut call_frame = CallFrame::new(
+            Address::zero(),
+            Address::zero(),
+            Address::zero(),
+            ethrex_common::types::Code::from_bytecode(Bytes::new()),
+            U256::zero(),
+            Bytes::new(),
+            false,
+            1000,  // gas_limit
+            0,
+            false,
+            false,
+            0,
+            0,
+            crate::call_frame::Stack::default(),
+            crate::memory::Memory::default(),
+        );
+        call_frame.gas_remaining = -1;
+
+        let outcome = crate::jit::types::JitOutcome::Success {
+            gas_used: 0, // ignored by apply_jit_outcome
+            output: Bytes::new(),
+        };
+
+        let result = apply_jit_outcome(outcome, &call_frame)
+            .expect("apply_jit_outcome should not error with negative gas_remaining");
+        assert_eq!(
+            result.gas_used, 1000,
+            "gas_used should equal gas_limit (1000) when gas_remaining is negative, got {}",
+            result.gas_used
+        );
+    }
+
+    /// Verify `apply_jit_outcome` Revert arm also handles negative `gas_remaining`.
+    #[test]
+    fn test_apply_jit_outcome_revert_negative_gas() {
+        let mut call_frame = CallFrame::new(
+            Address::zero(),
+            Address::zero(),
+            Address::zero(),
+            ethrex_common::types::Code::from_bytecode(Bytes::new()),
+            U256::zero(),
+            Bytes::new(),
+            false,
+            500, // gas_limit
+            0,
+            false,
+            false,
+            0,
+            0,
+            crate::call_frame::Stack::default(),
+            crate::memory::Memory::default(),
+        );
+        call_frame.gas_remaining = -100;
+
+        let outcome = crate::jit::types::JitOutcome::Revert {
+            gas_used: 0,
+            output: Bytes::new(),
+        };
+
+        let result = apply_jit_outcome(outcome, &call_frame)
+            .expect("Revert should not error with negative gas_remaining");
+        assert_eq!(
+            result.gas_used, 500,
+            "Revert gas_used should equal gas_limit (500) when gas_remaining is negative"
+        );
+    }
+}
+
 impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {

@@ -388,6 +388,29 @@ mod tests {
         code
     }
 
+    /// Build bytecode that SSTOREs to two different slots then REVERTs.
+    ///
+    /// ```text
+    /// PUSH1 0x0A  PUSH1 0x00  SSTORE   // slot 0 = 10
+    /// PUSH1 0x14  PUSH1 0x01  SSTORE   // slot 1 = 20
+    /// PUSH1 0x00  PUSH1 0x00  REVERT
+    /// ```
+    ///
+    /// Pre-seed slot 0 = 5, slot 1 = 7 → after REVERT, both should be restored.
+    fn make_two_slot_sstore_revert_bytecode() -> Vec<u8> {
+        let mut code = Vec::new();
+        code.push(0x60); code.push(0x0A); // PUSH1 10
+        code.push(0x60); code.push(0x00); // PUSH1 0x00
+        code.push(0x55);                  // SSTORE (slot 0 = 10)
+        code.push(0x60); code.push(0x14); // PUSH1 20
+        code.push(0x60); code.push(0x01); // PUSH1 0x01
+        code.push(0x55);                  // SSTORE (slot 1 = 20)
+        code.push(0x60); code.push(0x00); // PUSH1 0x00
+        code.push(0x60); code.push(0x00); // PUSH1 0x00
+        code.push(0xfd);                  // REVERT
+        code
+    }
+
     /// Verify that JIT SSTORE→REVERT correctly rolls back storage.
     ///
     /// Pre-seeds slot 0 = 5, runs bytecode that writes slot 0 = 0x42 then REVERTs.
@@ -610,6 +633,129 @@ mod tests {
         );
     }
 
+    /// Verify that JIT SSTORE→REVERT rollback works across different slots.
+    ///
+    /// Pre-seeds slot 0 = 5, slot 1 = 7. Runs bytecode that writes
+    /// slot 0 = 10 and slot 1 = 20, then REVERTs. Both slots must be restored.
+    #[cfg(feature = "revmc-backend")]
+    #[test]
+    #[serial_test::serial]
+    fn test_two_slot_sstore_revert_rollback() {
+        use std::sync::Arc;
+
+        use ethrex_common::{
+            Address, U256,
+            constants::EMPTY_TRIE_HASH,
+            types::{Account, BlockHeader, Code},
+        };
+        use ethrex_levm::{
+            Environment,
+            db::gen_db::GeneralizedDatabase,
+            jit::cache::CodeCache,
+            vm::JIT_STATE,
+        };
+        use rustc_hash::FxHashMap;
+
+        use crate::backend::RevmcBackend;
+        use crate::execution::execute_jit;
+
+        JIT_STATE.reset_for_testing();
+
+        let contract_addr = Address::from_low_u64_be(0x42);
+        let sender_addr = Address::from_low_u64_be(0x100);
+        let fork = ethrex_common::types::Fork::Cancun;
+
+        let bytecode = Bytes::from(make_two_slot_sstore_revert_bytecode());
+        let code = Code::from_bytecode(bytecode);
+
+        let backend = RevmcBackend::default();
+        let code_cache = CodeCache::new();
+        backend
+            .compile_and_cache(&code, fork, &code_cache)
+            .expect("JIT compilation should succeed");
+        let compiled = code_cache
+            .get(&(code.hash, fork))
+            .expect("compiled code should be in cache");
+
+        // Pre-seed storage: slot 0 = 5, slot 1 = 7
+        let slot_1 = H256::from_low_u64_be(1);
+        let mut storage = FxHashMap::default();
+        storage.insert(H256::zero(), U256::from(5u64));
+        storage.insert(slot_1, U256::from(7u64));
+
+        let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
+            .expect("in-memory store");
+        let header = BlockHeader {
+            state_root: *EMPTY_TRIE_HASH,
+            ..Default::default()
+        };
+        let vm_db: ethrex_vm::DynVmDatabase = Box::new(
+            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
+        );
+        let mut cache = FxHashMap::default();
+        cache.insert(
+            contract_addr,
+            Account::new(U256::MAX, code.clone(), 0, storage),
+        );
+        cache.insert(
+            sender_addr,
+            Account::new(U256::MAX, Code::from_bytecode(Bytes::new()), 0, FxHashMap::default()),
+        );
+        let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
+
+        #[expect(clippy::as_conversions)]
+        let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
+            sender_addr, contract_addr, contract_addr, code,
+            U256::zero(), Bytes::new(), false,
+            (i64::MAX - 1) as u64, 0, false, false, 0, 0,
+            ethrex_levm::call_frame::Stack::default(),
+            ethrex_levm::memory::Memory::default(),
+        );
+
+        let env = Environment {
+            origin: sender_addr,
+            #[expect(clippy::as_conversions)]
+            gas_limit: (i64::MAX - 1) as u64,
+            #[expect(clippy::as_conversions)]
+            block_gas_limit: (i64::MAX - 1) as u64,
+            ..Default::default()
+        };
+        let mut substate = ethrex_levm::vm::Substate::default();
+        let mut storage_original_values = FxHashMap::default();
+
+        let outcome = execute_jit(
+            &compiled, &mut call_frame, &mut db,
+            &mut substate, &env, &mut storage_original_values,
+        ).expect("JIT execution should not error");
+
+        assert!(
+            matches!(outcome, ethrex_levm::jit::types::JitOutcome::Revert { .. }),
+            "Expected Revert, got: {outcome:?}"
+        );
+
+        // Slot 0 must be restored to 5 (not 10)
+        let slot0_val = db.current_accounts_state
+            .get(&contract_addr)
+            .and_then(|a| a.storage.get(&H256::zero()).copied())
+            .expect("slot 0 should exist");
+        assert_eq!(
+            slot0_val,
+            U256::from(5u64),
+            "Storage slot 0 should be rolled back to 5, got {slot0_val}"
+        );
+
+        // Slot 1 must be restored to 7 (not 20)
+        let slot1_val = db.current_accounts_state
+            .get(&contract_addr)
+            .and_then(|a| a.storage.get(&slot_1).copied())
+            .expect("slot 1 should exist");
+        assert_eq!(
+            slot1_val,
+            U256::from(7u64),
+            "Storage slot 1 should be rolled back to 7, got {slot1_val}"
+        );
+    }
+
     /// Verify that JIT gas_used matches interpreter gas_used for the counter contract.
     ///
     /// Uses apply_jit_outcome's formula (gas_limit - max(gas_remaining, 0))
@@ -752,13 +898,25 @@ mod tests {
 
         match outcome {
             ethrex_levm::jit::types::JitOutcome::Success { gas_used, .. } => {
-                // JitOutcome::gas_used is execution-only gas (no intrinsic).
-                // Our formula from call_frame should match this since
-                // call_frame.gas_limit was set to the same value the JIT received.
+                // Sanity: formula from call_frame matches JitOutcome::gas_used
                 assert_eq!(
                     jit_execution_gas, gas_used,
                     "apply_jit_outcome formula ({jit_execution_gas}) != \
                      JitOutcome::gas_used ({gas_used})"
+                );
+
+                // Cross-check: JIT execution gas + intrinsic gas == interpreter gas_used.
+                // The interpreter's stateless_execute() includes intrinsic gas (21000
+                // for a basic EIP-1559 CALL). The JIT's gas_used is execution-only
+                // (intrinsic gas was deducted before entering execute_jit). So:
+                //   interp_report.gas_used == jit_execution_gas + 21000
+                let intrinsic_gas = 21_000u64;
+                let interp_gas = interp_report.gas_used;
+                assert_eq!(
+                    interp_gas,
+                    jit_execution_gas.checked_add(intrinsic_gas).expect("no overflow"),
+                    "interpreter gas_used ({interp_gas}) != JIT execution gas \
+                     ({jit_execution_gas}) + intrinsic ({intrinsic_gas})"
                 );
             }
             other => panic!("Expected JIT success, got: {other:?}"),
