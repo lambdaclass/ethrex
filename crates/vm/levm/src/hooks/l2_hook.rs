@@ -424,6 +424,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
             hash: H256::zero(),
             bytecode: vec![Opcode::INVALID.into()].into(),
             jump_targets: Vec::new(),
+            static_costs: Vec::new(),
         })?;
         return Ok(());
     }

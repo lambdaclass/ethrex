@@ -20,6 +20,9 @@ use crate::{
     utils::keccak,
 };
 
+mod bytecode;
+pub mod gas_costs;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
     // hash is only used for bytecodes stored in the DB, either for reading it from the DB
@@ -34,6 +37,7 @@ pub struct Code {
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
     pub jump_targets: Vec<u32>,
+    pub static_costs: Vec<(u32, u64)>,
 }
 
 impl Code {
@@ -41,44 +45,32 @@ impl Code {
     // the real code hash (i.e. it was precomputed and we're reusing)
     // or never be read (e.g. for initcode).
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
-        let jump_targets = Self::compute_jump_targets(&code);
+        let (jump_targets, static_costs) = self::bytecode::process_bytecode(&code);
         Self {
             hash,
             bytecode: code,
             jump_targets,
+            static_costs,
         }
     }
 
     pub fn from_bytecode(code: Bytes) -> Self {
-        let jump_targets = Self::compute_jump_targets(&code);
+        let (jump_targets, static_costs) = self::bytecode::process_bytecode(&code);
         Self {
             hash: keccak(code.as_ref()),
             bytecode: code,
             jump_targets,
+            static_costs,
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
-        debug_assert!(code.len() <= u32::MAX as usize);
-        let mut targets = Vec::new();
-        let mut i = 0;
-        while i < code.len() {
-            // TODO: we don't use the constants from the vm module to avoid a circular dependency
-            match code[i] {
-                // OP_JUMPDEST
-                0x5B => {
-                    targets.push(i as u32);
-                }
-                // OP_PUSH1..32
-                c @ 0x60..0x80 => {
-                    // OP_PUSH0
-                    i += (c - 0x5F) as usize;
-                }
-                _ => (),
-            }
-            i += 1;
-        }
-        targets
+    /// Look up the pre-computed static gas cost of the basic block
+    /// starting at `pc`. Returns 0 when `pc` does not head a block
+    /// (e.g. unreachable code after a terminator).
+    pub fn block_cost(&self, pc: u32) -> u64 {
+        self.static_costs
+            .binary_search_by_key(&pc, |&(addr, _)| addr)
+            .map_or(0, |idx| self.static_costs[idx].1)
     }
 
     /// Estimates the size of the Code struct in bytes
@@ -167,6 +159,7 @@ impl Default for Code {
             bytecode: Bytes::new(),
             hash: *EMPTY_KECCACK_HASH,
             jump_targets: Vec::new(),
+            static_costs: Vec::new(),
         }
     }
 }

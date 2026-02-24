@@ -692,13 +692,15 @@ impl Store {
             return Ok(None);
         };
         let bytes = Bytes::from_owner(bytes);
-        let (bytecode_slice, targets) = decode_bytes(&bytes)?;
+        let (bytecode_slice, targets_and_costs) = decode_bytes(&bytes)?;
         let bytecode = bytes.slice_ref(bytecode_slice);
 
+        let (jump_targets, costs) = <Vec<u32>>::decode_unfinished(targets_and_costs)?;
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
+            jump_targets,
+            static_costs: <Vec<_>>::decode(costs)?,
         };
 
         // insert into cache and evict if needed
@@ -3062,10 +3064,13 @@ fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
 
 fn encode_code(code: &Code) -> Vec<u8> {
     let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
+        6 + code.bytecode.len()
+            + std::mem::size_of_val(code.jump_targets.as_slice())
+            + std::mem::size_of_val(code.static_costs.as_slice()),
     );
     code.bytecode.encode(&mut buf);
     code.jump_targets.encode(&mut buf);
+    code.static_costs.encode(&mut buf);
     buf
 }
 

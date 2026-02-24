@@ -1,7 +1,6 @@
 use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, OpcodeResult, VMError},
-    gas_cost,
     vm::VM,
 };
 use std::mem;
@@ -14,7 +13,6 @@ impl<'a> VM<'a> {
     #[inline]
     pub fn op_swap<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SWAPN)?;
 
         current_call_frame.stack.swap::<N>()?;
 
@@ -24,10 +22,6 @@ impl<'a> VM<'a> {
     // SWAPN operation
     #[inline]
     pub fn op_swapn(&mut self) -> Result<OpcodeResult, VMError> {
-        // Increase the consumed gas.
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::SWAPN)?;
-
         let relative_offset = self
             .current_call_frame
             .bytecode
@@ -80,10 +74,6 @@ impl<'a> VM<'a> {
     // EXCHANGE operation
     #[inline]
     pub fn op_exchange(&mut self) -> Result<OpcodeResult, VMError> {
-        // Increase the consumed gas.
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::EXCHANGE)?;
-
         let relative_offset = self
             .current_call_frame
             .bytecode

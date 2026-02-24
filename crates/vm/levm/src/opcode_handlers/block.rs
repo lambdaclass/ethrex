@@ -1,7 +1,6 @@
 use crate::{
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
     errors::{ExceptionalHalt, OpcodeResult, VMError},
-    gas_cost,
     utils::*,
     vm::VM,
 };
@@ -15,8 +14,6 @@ impl<'a> VM<'a> {
     pub fn op_blockhash(&mut self) -> Result<OpcodeResult, VMError> {
         let current_block = self.env.block_number;
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::BLOCKHASH)?;
-
         let block_number = current_call_frame.stack.pop1()?;
 
         // If the block number is not valid, return zero
@@ -43,8 +40,6 @@ impl<'a> VM<'a> {
     pub fn op_coinbase(&mut self) -> Result<OpcodeResult, VMError> {
         let coinbase = self.env.coinbase;
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::COINBASE)?;
-
         current_call_frame.stack.push(address_to_word(coinbase))?;
 
         Ok(OpcodeResult::Continue)
@@ -54,8 +49,6 @@ impl<'a> VM<'a> {
     pub fn op_timestamp(&mut self) -> Result<OpcodeResult, VMError> {
         let timestamp = self.env.timestamp;
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::TIMESTAMP)?;
-
         current_call_frame.stack.push(timestamp)?;
 
         Ok(OpcodeResult::Continue)
@@ -65,8 +58,6 @@ impl<'a> VM<'a> {
     pub fn op_number(&mut self) -> Result<OpcodeResult, VMError> {
         let block_number = self.env.block_number;
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::NUMBER)?;
-
         current_call_frame.stack.push(block_number)?;
 
         Ok(OpcodeResult::Continue)
@@ -80,7 +71,6 @@ impl<'a> VM<'a> {
             u256_from_big_endian_const(self.env.prev_randao.unwrap_or_default().to_fixed_bytes());
 
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
         current_call_frame.stack.push(randao)?;
 
         Ok(OpcodeResult::Continue)
@@ -90,8 +80,6 @@ impl<'a> VM<'a> {
     pub fn op_gaslimit(&mut self) -> Result<OpcodeResult, VMError> {
         let block_gas_limit = self.env.block_gas_limit;
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GASLIMIT)?;
-
         current_call_frame.stack.push(block_gas_limit.into())?;
 
         Ok(OpcodeResult::Continue)
@@ -101,8 +89,6 @@ impl<'a> VM<'a> {
     pub fn op_chainid(&mut self) -> Result<OpcodeResult, VMError> {
         let chain_id = self.env.chain_id;
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
-
         current_call_frame.stack.push(chain_id)?;
 
         Ok(OpcodeResult::Continue)
@@ -110,9 +96,6 @@ impl<'a> VM<'a> {
 
     // SELFBALANCE operation
     pub fn op_selfbalance(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::SELFBALANCE)?;
-
         let address = self.current_call_frame.to;
         let balance = self.db.get_account(address)?.info.balance;
 
@@ -131,8 +114,6 @@ impl<'a> VM<'a> {
         // https://eips.ethereum.org/EIPS/eip-3198
         let base_fee_per_gas = self.env.base_fee_per_gas;
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
-
         current_call_frame.stack.push(base_fee_per_gas)?;
 
         Ok(OpcodeResult::Continue)
@@ -141,8 +122,6 @@ impl<'a> VM<'a> {
     // BLOBHASH operation
     /// Currently not tested
     pub fn op_blobhash(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::BLOBHASH)?;
         let index = self.current_call_frame.stack.pop1()?;
         let blob_hashes = &self.env.tx_blob_hashes;
 
@@ -167,9 +146,6 @@ impl<'a> VM<'a> {
     // BLOBBASEFEE operation
     pub fn op_blobbasefee(&mut self) -> Result<OpcodeResult, VMError> {
         self.current_call_frame
-            .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
-
-        self.current_call_frame
             .stack
             .push(self.env.base_blob_fee_per_gas)?;
 
@@ -179,9 +155,6 @@ impl<'a> VM<'a> {
     // SLOTNUM operation
     pub fn op_slotnum(&mut self) -> Result<OpcodeResult, VMError> {
         // EIP-7843: Returns the slot number of the current block
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::SLOTNUM)?;
-
         self.current_call_frame.stack.push(self.env.slot_number)?;
 
         Ok(OpcodeResult::Continue)
