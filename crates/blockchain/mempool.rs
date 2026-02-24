@@ -154,8 +154,11 @@ impl Mempool {
         Ok(txs)
     }
 
-    pub fn clear_broadcasted_txs(&self) -> Result<(), StoreError> {
-        self.write()?.broadcast_pool.clear();
+    pub fn remove_broadcasted_txs(&self, hashes: &[H256]) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        for hash in hashes {
+            inner.broadcast_pool.remove(hash);
+        }
         Ok(())
     }
 
