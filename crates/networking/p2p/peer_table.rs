@@ -986,10 +986,11 @@ impl PeerTableServer {
                             None => true,
                             Some(r) => node_record.seq > r.seq,
                         };
+                        let contact = occupied_entry.get_mut();
+                        contact.add_protocol(DiscoveryProtocol::Discv5);
                         if should_update {
                             let is_fork_id_valid =
                                 Self::evaluate_fork_id(&node_record, &self.store).await;
-                            let contact = occupied_entry.get_mut();
                             if contact.node.ip != node.ip || contact.node.udp_port != node.udp_port
                             {
                                 contact.validation_timestamp = None;
@@ -1091,7 +1092,7 @@ impl PeerTableServer {
             .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
             .unwrap_or(false);
 
-        !contact.disposable || validation_is_stale || sent_ping_is_stale
+        !contact.disposable && (validation_is_stale || sent_ping_is_stale)
     }
 }
 

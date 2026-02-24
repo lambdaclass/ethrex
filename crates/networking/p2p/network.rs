@@ -121,6 +121,14 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
+    // Warn if discv5 was requested but the feature is not compiled in
+    #[cfg(not(feature = "experimental-discv5"))]
+    if config.discv5_enabled {
+        tracing::warn!(
+            "discv5 was enabled via --p2p.discv5 but the 'experimental-discv5' feature is not compiled in; discv5 will not run"
+        );
+    }
+
     // Start protocol servers first to get their handles
     let discv4_handle = if config.discv4_enabled {
         Some(
