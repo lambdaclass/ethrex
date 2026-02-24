@@ -114,6 +114,15 @@ impl SparseSubtrie {
     fn new_empty() -> Self {
         Self::new(Nibbles::default())
     }
+
+    /// Clear all data while retaining heap allocations for reuse.
+    fn clear(&mut self) {
+        self.nodes.clear();
+        self.values.clear();
+        self.dirty_nodes.clear();
+        self.dirty_values.clear();
+        self.rlp_cache.clear();
+    }
 }
 
 /// State of a lower subtrie partition.
@@ -322,6 +331,19 @@ impl SparseTrie {
         let result = hash::compute_root_sequential(&mut self.upper, &mut self.lower);
         self.prefix_set.clear();
         result
+    }
+
+    /// Clear all data while retaining heap allocations for reuse.
+    /// Useful for storage tries that are rebuilt per-block.
+    pub fn clear(&mut self) {
+        self.upper.clear();
+        for lower in &mut self.lower {
+            if let LowerSubtrie::Revealed(s) | LowerSubtrie::Blind(Some(s)) = lower {
+                s.clear();
+            }
+        }
+        self.prefix_set.clear();
+        self.removed_leaves.clear();
     }
 
     /// Collect modified nodes as (path, RLP-encoded node) pairs
