@@ -24,7 +24,7 @@ use ethrex_common::{
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -338,7 +338,7 @@ pub fn eip7702_get_code(
     db: &mut GeneralizedDatabase,
     accrued_substate: &mut Substate,
     address: Address,
-) -> Result<(bool, u64, Address, Arc<Code>), VMError> {
+) -> Result<(bool, u64, Address, Code), VMError> {
     // Address is the delgated address
     let bytecode = db.get_account_code(address)?;
 
@@ -347,7 +347,7 @@ pub fn eip7702_get_code(
     // return the same address given
     // return the bytecode of the given address
     if !code_has_delegation(&bytecode.bytecode)? {
-        return Ok((false, 0, address, Arc::clone(bytecode)));
+        return Ok((false, 0, address, bytecode.clone()));
     }
 
     // Here the address has a delegation code
@@ -360,7 +360,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = Arc::clone(db.get_account_code(auth_address)?);
+    let authorized_bytecode = db.get_account_code(auth_address)?.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }

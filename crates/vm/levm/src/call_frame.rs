@@ -10,7 +10,7 @@ use bytes::Bytes;
 use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt, hint::assert_unchecked, sync::Arc};
+use std::{collections::HashMap, fmt, hint::assert_unchecked};
 
 /// [`u64`]s that make up a [`U256`]
 const U64_PER_U256: usize = U256::MAX.0.len();
@@ -244,7 +244,7 @@ pub struct CallFrame {
     /// Bytecode to execute.
     /// Its hash field will be bogus for initcodes, as it is inaccessible to the VM
     /// unless associated to an account, which doesn't happen for its initcode.
-    pub bytecode: Arc<Code>,
+    pub bytecode: Code,
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
@@ -322,7 +322,7 @@ impl CallFrame {
         msg_sender: Address,
         to: Address,
         code_address: Address,
-        bytecode: Arc<Code>,
+        bytecode: Code,
         msg_value: U256,
         calldata: Bytes,
         is_static: bool,
@@ -392,7 +392,7 @@ impl CallFrame {
         Ok(())
     }
 
-    pub fn set_code(&mut self, code: Arc<Code>) -> Result<(), VMError> {
+    pub fn set_code(&mut self, code: Code) -> Result<(), VMError> {
         self.bytecode = code;
         Ok(())
     }

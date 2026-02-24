@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
@@ -29,11 +29,10 @@ pub struct Code {
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
     // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
-    pub jump_targets: Vec<u32>,
+    pub jump_targets: Arc<[u32]>,
 }
 
 impl Code {
@@ -58,7 +57,7 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+    fn compute_jump_targets(code: &[u8]) -> Arc<[u32]> {
         debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = Vec::new();
         let mut i = 0;
@@ -78,7 +77,7 @@ impl Code {
             }
             i += 1;
         }
-        targets
+        targets.into()
     }
 
     /// Estimates the size of the Code struct in bytes
@@ -92,8 +91,8 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
-        hash_size + bytes_size + vec_size
+        let arc_size = size_of::<Arc<[u32]>>() + self.jump_targets.len() * size_of::<u32>();
+        hash_size + bytes_size + arc_size
     }
 }
 
@@ -166,7 +165,7 @@ impl Default for Code {
         Self {
             bytecode: Bytes::new(),
             hash: *EMPTY_KECCACK_HASH,
-            jump_targets: Vec::new(),
+            jump_targets: Arc::from([]),
         }
     }
 }

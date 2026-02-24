@@ -421,11 +421,11 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         // If the transaction failed some validation, but it must still be included
         // To prevent it from taking effect, we force it to revert
         vm.current_call_frame.msg_value = U256::zero();
-        vm.current_call_frame.set_code(Arc::new(Code {
+        vm.current_call_frame.set_code(Code {
             hash: H256::zero(),
             bytecode: vec![Opcode::INVALID.into()].into(),
-            jump_targets: Vec::new(),
-        }))?;
+            jump_targets: Arc::from([]),
+        })?;
         return Ok(());
     }
 
