@@ -375,7 +375,7 @@ impl Blockchain {
 
     /// Executes a block withing a new vm instance and state
     #[instrument(
-        level = "trace",
+        level = "info",
         name = "Execute Block",
         skip_all,
         fields(
@@ -1910,7 +1910,7 @@ impl Blockchain {
     }
 
     #[instrument(
-        level = "trace",
+        level = "info",
         name = "Add Block Pipeline",
         skip_all,
         fields(
