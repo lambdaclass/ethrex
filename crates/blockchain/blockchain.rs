@@ -1287,7 +1287,7 @@ impl Blockchain {
                         let use_inline = if inline_tries.contains_key(&prefix) {
                             true
                         } else if !already_sharded {
-                            prefix.as_bytes()[1] % 3 == 0
+                            (sharded_count + inline_count) % 3 == 2
                         } else {
                             false
                         };
