@@ -149,16 +149,14 @@ impl GeneralizedDatabase {
                     && let Some(account) = base.get(&address)
                 {
                     if !self.skip_initial_tracking {
-                        self.initial_accounts_state
-                            .insert(address, account.clone());
+                        self.initial_accounts_state.insert(address, account.clone());
                     }
                     return Ok(entry.insert(account.clone()));
                 }
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
                 if !self.skip_initial_tracking {
-                    self.initial_accounts_state
-                        .insert(address, account.clone());
+                    self.initial_accounts_state.insert(address, account.clone());
                 }
                 Ok(entry.insert(account))
             }
