@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::{RLPEncode, encode_length};
@@ -10,6 +12,20 @@ use crate::nibbles::encode_compact_into;
 use crate::node_hash::NodeHash;
 
 use super::{LowerSubtrie, PathVec, SparseNode, SparseSubtrie, SubtrieBuffers};
+
+/// Dedicated rayon thread pool for trie hashing.
+/// Isolates trie work from other parallel tasks (storage workers, I/O)
+/// to avoid thread contention on the global pool.
+static TRIE_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(16))
+        .unwrap_or(4);
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .thread_name(|i| format!("trie-hash-{i}"))
+        .build()
+        .expect("failed to create trie hashing thread pool")
+});
 
 /// Read the cached hash from a node that has already been hashed.
 /// Used after `hash_subtrie` to avoid recomputing hashes.
@@ -50,17 +66,19 @@ pub fn compute_root(
         .count();
 
     if dirty_count >= MIN_PARALLEL_SUBTRIES {
-        // Hash dirty lower subtries in parallel via rayon.
-        lower.par_iter_mut().try_for_each(|lower_subtrie| {
-            let subtrie = match lower_subtrie {
-                LowerSubtrie::Revealed(s) => s,
-                LowerSubtrie::Blind(Some(s)) => s,
-                LowerSubtrie::Blind(None) => return Ok(()),
-            };
-            if subtrie.dirty_nodes.is_empty() {
-                return Ok(());
-            }
-            hash_subtrie(subtrie)
+        // Hash dirty lower subtries in parallel on the dedicated trie pool.
+        TRIE_POOL.install(|| {
+            lower.par_iter_mut().try_for_each(|lower_subtrie| {
+                let subtrie = match lower_subtrie {
+                    LowerSubtrie::Revealed(s) => s,
+                    LowerSubtrie::Blind(Some(s)) => s,
+                    LowerSubtrie::Blind(None) => return Ok(()),
+                };
+                if subtrie.dirty_nodes.is_empty() {
+                    return Ok(());
+                }
+                hash_subtrie(subtrie)
+            })
         })?;
     } else {
         // Few dirty subtries — hash sequentially to avoid rayon overhead.
