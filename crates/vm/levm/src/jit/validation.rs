@@ -19,7 +19,8 @@ pub enum DualExecutionResult {
 /// Compare a JIT execution outcome against an interpreter execution outcome.
 ///
 /// Checks status, gas_used, output bytes, refunded gas, logs, and **DB state
-/// changes** (account status, balances, nonces, and storage for all modified accounts).
+/// changes** (account status, balances, nonces, code_hash, and storage for all
+/// modified accounts).
 #[allow(clippy::too_many_arguments)]
 pub fn validate_dual_execution(
     jit_result: &ContextResult,
@@ -103,7 +104,7 @@ pub fn validate_dual_execution(
 /// Compare modified account states between JIT and interpreter DB snapshots.
 ///
 /// Checks account status (Modified/Destroyed/DestroyedModified), balance, nonce,
-/// and storage for all non-Unmodified accounts.
+/// code_hash, and storage for all non-Unmodified accounts.
 /// Returns `Some(reason)` on first mismatch, `None` if all modified accounts match.
 fn compare_account_states(jit_accounts: &CacheDB, interp_accounts: &CacheDB) -> Option<String> {
     // Check every address present in either DB
@@ -139,6 +140,14 @@ fn compare_account_states(jit_accounts: &CacheDB, interp_accounts: &CacheDB) -> 
             return Some(format!(
                 "state mismatch: account {address:?} nonce JIT={} interpreter={}",
                 jit_account.info.nonce, interp_account.info.nonce,
+            ));
+        }
+
+        // Compare code_hash (CREATE/CREATE2 may deploy different code)
+        if jit_account.info.code_hash != interp_account.info.code_hash {
+            return Some(format!(
+                "state mismatch: account {address:?} code_hash JIT={:?} interpreter={:?}",
+                jit_account.info.code_hash, interp_account.info.code_hash,
             ));
         }
 
@@ -456,6 +465,30 @@ mod tests {
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("status"));
+        }
+    }
+
+    #[test]
+    fn test_code_hash_mismatch() {
+        let addr = Address::from_low_u64_be(0x42);
+
+        let mut jit_db: CacheDB = FxHashMap::default();
+        let mut jit_acct = make_account(100, 1, vec![]);
+        jit_acct.info.code_hash = H256::from_low_u64_be(0xAA);
+        jit_db.insert(addr, jit_acct);
+
+        let mut interp_db: CacheDB = FxHashMap::default();
+        let mut interp_acct = make_account(100, 1, vec![]);
+        interp_acct.info.code_hash = H256::from_low_u64_be(0xBB);
+        interp_db.insert(addr, interp_acct);
+
+        let jit = success_result(21000, &[]);
+        let interp = success_result(21000, &[]);
+        let result =
+            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
+        if let DualExecutionResult::Mismatch { reason } = result {
+            assert!(reason.contains("code_hash"));
         }
     }
 
