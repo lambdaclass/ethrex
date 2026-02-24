@@ -10,7 +10,7 @@ use crate::{
         },
     },
     metrics::METRICS,
-    peer_table::{DiscoveryProtocol, PeerTable, PeerTableError},
+    peer_table::{DiscoveryProtocol, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     rlpx::utils::compress_pubkey,
     types::{Node, NodeRecord},
     utils::{distance, node_id},
@@ -366,6 +366,13 @@ impl DiscoveryServer {
             return Ok(());
         }
 
+        // Add the peer to the peer table
+        if let Some(record) = &authdata.record {
+            self.peer_table
+                .new_contact_records(vec![record.clone()], self.local_node.node_id())
+                .await?;
+        }
+
         // Derive session keys (we are the recipient, node B)
         let session = derive_session_keys(
             &self.signer,
@@ -532,7 +539,23 @@ impl DiscoveryServer {
         &mut self,
         find_node_message: FindNodeMessage,
         sender_id: H256,
+        sender_addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
+        // Validate sender before doing any work. A peer with a session could
+        // update its ENR to point to a victim IP; the IP check ensures the
+        // response only goes to the address the packet actually came from.
+        let contact = match self
+            .peer_table
+            .validate_contact(&sender_id, sender_addr.ip())
+            .await?
+        {
+            PeerTableOutMessage::Contact(contact) => *contact,
+            reason => {
+                trace!(from = %sender_id, ?reason, "Rejected FINDNODE");
+                return Ok(());
+            }
+        };
+
         // Get nodes at the requested distances from our local node
         let nodes = self
             .peer_table
@@ -774,7 +797,6 @@ impl DiscoveryServer {
 
         // Check if IP voting round should end (in case no new votes triggered it)
         if let Some(start) = self.ip_vote_period_start
-            && self.first_ip_vote_round_completed
             && now.duration_since(start) >= IP_VOTE_WINDOW
         {
             self.finalize_ip_vote_round();
@@ -861,30 +883,40 @@ impl DiscoveryServer {
     }
 
     /// Returns true if the IP is private/local (not useful for external connectivity).
+    /// For IPv6, mirrors the checks from `Ipv6Addr::is_global` (nightly-only).
     fn is_private_ip(ip: IpAddr) -> bool {
         match ip {
             IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
-            IpAddr::V6(v6) => v6.is_loopback(),
+            IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    // unique local (fc00::/7)
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+                    // link-local (fe80::/10)
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
         }
     }
 
     /// Updates local node IP and re-signs the ENR with incremented seq.
     fn update_local_ip(&mut self, new_ip: IpAddr) {
-        // Update runtime node
-        self.local_node.ip = new_ip;
-
-        // Update ENR - increment seq and re-create with new IP
+        // Build ENR from a node with the new IP
+        let mut updated_node = self.local_node.clone();
+        updated_node.ip = new_ip;
         let new_seq = self.local_node_record.seq + 1;
-        if let Ok(mut new_record) = NodeRecord::from_node(&self.local_node, new_seq, &self.signer) {
-            // Preserve fork_id if present
-            if let Some(fork_id) = self.local_node_record.decode_pairs().eth {
-                let _ = new_record.set_fork_id(fork_id, &self.signer);
+        let Ok(mut new_record) = NodeRecord::from_node(&updated_node, new_seq, &self.signer) else {
+            error!(%new_ip, "Failed to create new ENR for IP update");
+            return;
+        };
+        // Preserve fork_id if present
+        if let Some(fork_id) = self.local_node_record.decode_pairs().eth {
+            if new_record.set_fork_id(fork_id, &self.signer).is_err() {
+                error!(%new_ip, "Failed to set fork_id in new ENR, aborting IP update");
+                return;
             }
-            self.local_node_record = new_record;
-
-            // Clear IP votes after successful update
-            self.ip_votes.clear();
         }
+        self.local_node.ip = new_ip;
+        self.local_node_record = new_record;
     }
 
     async fn handle_message(
@@ -906,7 +938,8 @@ impl DiscoveryServer {
                 self.handle_pong(pong_message, sender_id).await?;
             }
             Message::FindNode(find_node_message) => {
-                self.handle_find_node(find_node_message, sender_id).await?;
+                self.handle_find_node(find_node_message, sender_id, sender_addr)
+                    .await?;
             }
             Message::Nodes(nodes_message) => {
                 self.handle_nodes_message(nodes_message).await?;
@@ -1481,7 +1514,7 @@ mod tests {
         server.cleanup_stale_entries();
         assert_eq!(server.ip_votes.len(), 1);
 
-        // First round not completed, so cleanup doesn't trigger finalization based on timeout
+        // Cleanup didn't finalize because the 5-minute window hasn't elapsed
         assert!(!server.first_ip_vote_round_completed);
     }
 
@@ -1531,6 +1564,21 @@ mod tests {
         // Link-local should be ignored
         let link_local: IpAddr = "169.254.1.1".parse().unwrap();
         server.record_ip_vote(link_local, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // IPv6 loopback should be ignored
+        let ipv6_loopback: IpAddr = "::1".parse().unwrap();
+        server.record_ip_vote(ipv6_loopback, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // IPv6 link-local (fe80::/10) should be ignored
+        let ipv6_link_local: IpAddr = "fe80::1".parse().unwrap();
+        server.record_ip_vote(ipv6_link_local, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // IPv6 unique local (fc00::/7) should be ignored
+        let ipv6_unique_local: IpAddr = "fd12::1".parse().unwrap();
+        server.record_ip_vote(ipv6_unique_local, voter1);
         assert!(server.ip_votes.is_empty());
 
         // Public IP should be recorded

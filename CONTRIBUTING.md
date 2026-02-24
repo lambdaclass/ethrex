@@ -42,6 +42,16 @@ All commits must have a verified signature.
 - Use GitHub Issues to report bugs or request features.
 - Include steps to reproduce, expected behavior, and environment details.
 
+## Fork PR CI Notes
+
+If you're contributing from a **fork**, your PR's `GITHUB_TOKEN` has read-only access to organization packages. This means:
+
+- Docker build cache **writes to GHCR** are automatically skipped for fork PRs (the build falls back to GitHub Actions cache instead).
+- Docker build cache **reads from GHCR** still work, so you benefit from cached layers.
+- All required CI checks run identically for fork and same-repo PRs — no checks are skipped.
+
+If a CI job fails with a `403 Forbidden` / `denied: installation not allowed to Write organization package` error, please open an issue — this should not happen.
+
 ## Review Process
 
 - All PRs require review and approval by multiple maintainers.

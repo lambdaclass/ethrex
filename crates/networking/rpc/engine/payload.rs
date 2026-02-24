@@ -1,5 +1,6 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
@@ -45,7 +46,7 @@ impl RpcHandler for NewPayloadV1Request {
                 ))?);
             }
         };
-        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
+        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context, None).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -77,7 +78,7 @@ impl RpcHandler for NewPayloadV2Request {
                 ))?);
             }
         };
-        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
+        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context, None).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -141,6 +142,7 @@ impl RpcHandler for NewPayloadV3Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
+            None,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -223,6 +225,7 @@ impl RpcHandler for NewPayloadV4Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
+            None,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -326,11 +329,13 @@ impl RpcHandler for NewPayloadV5Request {
             )));
         }
 
+        let bal = self.payload.block_access_list.clone();
         let payload_status = handle_new_payload_v4(
             &self.payload,
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
+            bal,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -562,7 +567,7 @@ impl RpcHandler for GetPayloadV6Request {
             )));
         }
 
-        // V6 supports BAL (Amsterdam/Gloas fork, EIP-7928)
+        // V6 supports BAL (Amsterdam EL fork / Glamsterdam, EIP-7928)
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(
                 payload_bundle.block,
@@ -892,6 +897,7 @@ async fn handle_new_payload_v1_v2(
     payload: &ExecutionPayload,
     block: Block,
     context: RpcApiContext,
+    bal: Option<BlockAccessList>,
 ) -> Result<PayloadStatus, RpcErr> {
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
@@ -917,7 +923,7 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status = try_execute_payload(block, &context, latest_valid_hash).await?;
+    let payload_status = try_execute_payload(block, &context, latest_valid_hash, bal).await?;
     Ok(payload_status)
 }
 
@@ -926,6 +932,7 @@ async fn handle_new_payload_v3(
     context: RpcApiContext,
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
+    bal: Option<BlockAccessList>,
 ) -> Result<PayloadStatus, RpcErr> {
     // V3 specific: validate blob hashes
     let blob_versioned_hashes: Vec<H256> = block
@@ -941,7 +948,7 @@ async fn handle_new_payload_v3(
         ));
     }
 
-    handle_new_payload_v1_v2(payload, block, context).await
+    handle_new_payload_v1_v2(payload, block, context, bal).await
 }
 
 async fn handle_new_payload_v4(
@@ -949,9 +956,10 @@ async fn handle_new_payload_v4(
     context: RpcApiContext,
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
+    bal: Option<BlockAccessList>,
 ) -> Result<PayloadStatus, RpcErr> {
     // TODO: V4 specific: validate block access list
-    handle_new_payload_v3(payload, context, block, expected_blob_versioned_hashes).await
+    handle_new_payload_v3(payload, context, block, expected_blob_versioned_hashes, bal).await
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
@@ -999,10 +1007,14 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
-pub async fn add_block(ctx: &RpcApiContext, block: Block) -> Result<(), ChainError> {
+pub async fn add_block(
+    ctx: &RpcApiContext,
+    block: Block,
+    bal: Option<BlockAccessList>,
+) -> Result<(), ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
-        .send((notify_send, block))
+        .send((notify_send, block, bal))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
@@ -1017,6 +1029,7 @@ async fn try_execute_payload(
     block: Block,
     context: &RpcApiContext,
     latest_valid_hash: H256,
+    bal: Option<BlockAccessList>,
 ) -> Result<PayloadStatus, RpcErr> {
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
@@ -1036,7 +1049,7 @@ async fn try_execute_payload(
     // Execute and store the block
     debug!(%block_hash, %block_number, "Executing payload");
 
-    match add_block(context, block).await {
+    match add_block(context, block, bal).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);
