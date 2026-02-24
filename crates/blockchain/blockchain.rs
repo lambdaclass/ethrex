@@ -378,7 +378,11 @@ impl Blockchain {
         level = "trace",
         name = "Execute Block",
         skip_all,
-        fields(namespace = "block_execution")
+        fields(
+            namespace = "block_execution",
+            block_number = block.header.number,
+            gas_used = block.header.gas_used,
+        )
     )]
     fn execute_block_pipeline(
         &self,
@@ -1905,6 +1909,17 @@ impl Blockchain {
         result
     }
 
+    #[instrument(
+        level = "trace",
+        name = "Add Block Pipeline",
+        skip_all,
+        fields(
+            namespace = "block_execution",
+            block_number = block.header.number,
+            tx_count = block.body.transactions.len(),
+            gas_used = block.header.gas_used,
+        )
+    )]
     pub fn add_block_pipeline(
         &self,
         block: Block,
@@ -1986,6 +2001,8 @@ impl Blockchain {
             }
         });
 
+        Self::record_pipeline_metrics(instants);
+
         if self.options.perf_logs_enabled {
             Self::print_add_block_pipeline_logs(
                 gas_used,
@@ -2053,6 +2070,33 @@ impl Blockchain {
             };
             info!("{}{}", base_log, extra_log);
         }
+    }
+
+    /// Records pipeline histogram metrics unconditionally (not gated by perf_logs_enabled).
+    fn record_pipeline_metrics(_instants: [Instant; 7]) {
+        metrics!(
+            let [
+                start_instant,
+                block_validated_instant,
+                exec_merkle_start,
+                exec_end_instant,
+                _merkle_end_instant,
+                exec_merkle_end_instant,
+                stored_instant,
+            ] = _instants;
+
+            let total = stored_instant.duration_since(start_instant);
+            let validate = block_validated_instant.duration_since(start_instant);
+            let execution = exec_end_instant.duration_since(exec_merkle_start);
+            let merkle_drain = exec_merkle_end_instant.saturating_duration_since(exec_end_instant);
+            let store = stored_instant.duration_since(exec_merkle_end_instant);
+
+            METRICS_BLOCKS.observe_block_total_seconds(total.as_secs_f64());
+            METRICS_BLOCKS.observe_block_validate_seconds(validate.as_secs_f64());
+            METRICS_BLOCKS.observe_block_execution_seconds(execution.as_secs_f64());
+            METRICS_BLOCKS.observe_block_merkle_drain_seconds(merkle_drain.as_secs_f64());
+            METRICS_BLOCKS.observe_block_store_seconds(store.as_secs_f64());
+        );
     }
 
     #[allow(clippy::too_many_arguments)]

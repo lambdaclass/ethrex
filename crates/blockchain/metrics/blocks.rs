@@ -37,6 +37,17 @@ pub struct MetricsBlocks {
     warmer_ms: IntGauge,
     /// Warmer finished early (positive) or late (negative) relative to exec, in ms
     warmer_early_ms: IntGauge,
+    // Histogram metrics (seconds-based, for distribution analysis)
+    /// Total block processing time in seconds
+    block_total_seconds: Histogram,
+    /// Block validation time in seconds
+    block_validate_seconds: Histogram,
+    /// Block execution time in seconds
+    block_execution_seconds: Histogram,
+    /// Time spent draining merkle queue after execution in seconds
+    block_merkle_drain_seconds: Histogram,
+    /// Block storage time in seconds
+    block_store_seconds: Histogram,
 }
 
 impl Default for MetricsBlocks {
@@ -157,6 +168,46 @@ impl MetricsBlocks {
                 "Warmer finished early (positive) or late (negative) relative to exec in milliseconds",
             )
             .expect("Failed to create warmer_early_ms metric"),
+            block_total_seconds: Histogram::with_opts(
+                HistogramOpts::new(
+                    "block_total_seconds",
+                    "Total block processing time in seconds",
+                )
+                .buckets(prometheus::exponential_buckets(0.0001, 2.0, 18).expect("Invalid bucket params")),
+            )
+            .expect("Failed to create block_total_seconds metric"),
+            block_validate_seconds: Histogram::with_opts(
+                HistogramOpts::new(
+                    "block_validate_seconds",
+                    "Block validation time in seconds",
+                )
+                .buckets(prometheus::exponential_buckets(0.0001, 2.0, 18).expect("Invalid bucket params")),
+            )
+            .expect("Failed to create block_validate_seconds metric"),
+            block_execution_seconds: Histogram::with_opts(
+                HistogramOpts::new(
+                    "block_execution_seconds",
+                    "Block execution time in seconds",
+                )
+                .buckets(prometheus::exponential_buckets(0.0001, 2.0, 18).expect("Invalid bucket params")),
+            )
+            .expect("Failed to create block_execution_seconds metric"),
+            block_merkle_drain_seconds: Histogram::with_opts(
+                HistogramOpts::new(
+                    "block_merkle_drain_seconds",
+                    "Time spent draining merkle queue after execution in seconds",
+                )
+                .buckets(prometheus::exponential_buckets(0.0001, 2.0, 18).expect("Invalid bucket params")),
+            )
+            .expect("Failed to create block_merkle_drain_seconds metric"),
+            block_store_seconds: Histogram::with_opts(
+                HistogramOpts::new(
+                    "block_store_seconds",
+                    "Block storage time in seconds",
+                )
+                .buckets(prometheus::exponential_buckets(0.0001, 2.0, 18).expect("Invalid bucket params")),
+            )
+            .expect("Failed to create block_store_seconds metric"),
         }
     }
 
@@ -233,6 +284,31 @@ impl MetricsBlocks {
         self.warmer_early_ms.set(warmer_early_ms);
     }
 
+    /// Observe total block processing time. `seconds` should come from `Duration::as_secs_f64()`.
+    pub fn observe_block_total_seconds(&self, seconds: f64) {
+        self.block_total_seconds.observe(seconds);
+    }
+
+    /// Observe block validation time. `seconds` should come from `Duration::as_secs_f64()`.
+    pub fn observe_block_validate_seconds(&self, seconds: f64) {
+        self.block_validate_seconds.observe(seconds);
+    }
+
+    /// Observe block execution time. `seconds` should come from `Duration::as_secs_f64()`.
+    pub fn observe_block_execution_seconds(&self, seconds: f64) {
+        self.block_execution_seconds.observe(seconds);
+    }
+
+    /// Observe merkle drain time. `seconds` should come from `Duration::as_secs_f64()`.
+    pub fn observe_block_merkle_drain_seconds(&self, seconds: f64) {
+        self.block_merkle_drain_seconds.observe(seconds);
+    }
+
+    /// Observe block storage time. `seconds` should come from `Duration::as_secs_f64()`.
+    pub fn observe_block_store_seconds(&self, seconds: f64) {
+        self.block_store_seconds.observe(seconds);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         if self.block_number.get() <= 0 {
             return Ok(String::new());
@@ -277,6 +353,16 @@ impl MetricsBlocks {
         r.register(Box::new(self.warmer_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.warmer_early_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.block_total_seconds.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.block_validate_seconds.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.block_execution_seconds.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.block_merkle_drain_seconds.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.block_store_seconds.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();

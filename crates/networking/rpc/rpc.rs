@@ -61,7 +61,9 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
 use ethrex_common::types::block_access_list::BlockAccessList;
-use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
+use ethrex_metrics::rpc::{
+    RpcOutcome, observe_engine_newpayload_queue_wait, record_async_duration, record_rpc_outcome,
+};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -74,7 +76,7 @@ use std::{
     future::IntoFuture,
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::net::TcpListener;
 use tokio::sync::{
@@ -179,6 +181,7 @@ type BlockWorkerMessage = (
     oneshot::Sender<Result<(), ChainError>>,
     Block,
     Option<BlockAccessList>,
+    Instant, // enqueue time
 );
 
 /// This struct contains all the dependencies that RPC handlers need to process requests,
@@ -407,7 +410,14 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block, bal)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal, enqueued_at)) = block_receiver.blocking_recv() {
+                let queue_wait = enqueued_at.elapsed();
+                tracing::debug!(
+                    queue_wait_ms = queue_wait.as_millis() as u64,
+                    block_number = block.header.number,
+                    "Block dequeued"
+                );
+                observe_engine_newpayload_queue_wait(queue_wait.as_secs_f64());
                 let _ = notify
                     .send(blockchain.add_block_pipeline(block, bal.as_ref()))
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
