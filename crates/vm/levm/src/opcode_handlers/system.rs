@@ -856,6 +856,13 @@ impl<'a> VM<'a> {
 
         self.add_callframe(new_call_frame);
 
+        // Pre-charge the static gas cost of the callee's first basic block,
+        // unless it starts with a JUMPDEST (op_jumpdest will pre-charge).
+        if self.current_call_frame.bytecode.bytecode.first() != Some(&0x5B) {
+            self.current_call_frame
+                .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))?;
+        }
+
         // Changes that revert in case the Create fails.
         self.increment_account_nonce(new_address)?; // 0 -> 1
         self.transfer(deployer, new_address, value)?;
@@ -1062,6 +1069,13 @@ impl<'a> VM<'a> {
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
 
             self.add_callframe(new_call_frame);
+
+            // Pre-charge the static gas cost of the callee's first basic block,
+            // unless it starts with a JUMPDEST (op_jumpdest will pre-charge).
+            if self.current_call_frame.bytecode.bytecode.first() != Some(&0x5B) {
+                self.current_call_frame
+                    .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))?;
+            }
 
             // Transfer value from caller to callee.
             if should_transfer_value {

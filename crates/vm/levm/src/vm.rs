@@ -575,9 +575,12 @@ impl<'a> VM<'a> {
         #[cfg(feature = "perf_opcode_timings")]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
-        // Pre-charge the static gas cost of the first basic block.
-        self.current_call_frame
-            .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))?;
+        // Pre-charge the static gas cost of the first basic block,
+        // unless it starts with a JUMPDEST (op_jumpdest will pre-charge).
+        if self.current_call_frame.bytecode.bytecode.first() != Some(&0x5B) {
+            self.current_call_frame
+                .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(0))?;
+        }
 
         loop {
             let opcode = self.current_call_frame.next_opcode();

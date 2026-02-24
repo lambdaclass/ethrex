@@ -272,11 +272,20 @@ impl<'a> VM<'a> {
         // Pre-charge the static gas cost of the next basic block.
         // GAS is a block terminator so that it reports the correct
         // gas_remaining (only its own cost deducted, not future opcodes).
-        current_call_frame.increase_consumed_gas(
-            current_call_frame
-                .bytecode
-                .block_cost(current_call_frame.pc as u32),
-        )?;
+        // Skip if the next instruction is a JUMPDEST (op_jumpdest will
+        // pre-charge its own block to avoid double-charging).
+        if current_call_frame
+            .bytecode
+            .bytecode
+            .get(current_call_frame.pc)
+            != Some(&0x5B)
+        {
+            current_call_frame.increase_consumed_gas(
+                current_call_frame
+                    .bytecode
+                    .block_cost(current_call_frame.pc as u32),
+            )?;
+        }
 
         Ok(OpcodeResult::Continue)
     }
@@ -362,13 +371,15 @@ impl<'a> VM<'a> {
             // jump() pre-charges the target block's static gas cost.
             Self::jump(&mut self.current_call_frame, jump_address)?;
         } else {
-            // Pre-charge the static gas cost of the fallthrough block.
-            // pc is already past the JUMPI (advanced by the main loop).
-            self.current_call_frame.increase_consumed_gas(
-                self.current_call_frame
-                    .bytecode
-                    .block_cost(self.current_call_frame.pc as u32),
-            )?;
+            // Pre-charge the static gas cost of the fallthrough block,
+            // unless the next instruction is a JUMPDEST (op_jumpdest
+            // will pre-charge its own block to avoid double-charging).
+            let next_pc = self.current_call_frame.pc;
+            if self.current_call_frame.bytecode.bytecode.get(next_pc) != Some(&0x5B) {
+                self.current_call_frame.increase_consumed_gas(
+                    self.current_call_frame.bytecode.block_cost(next_pc as u32),
+                )?;
+            }
         }
 
         Ok(OpcodeResult::Continue)
@@ -376,6 +387,13 @@ impl<'a> VM<'a> {
 
     // JUMPDEST operation
     pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
+        // Pre-charge the static gas cost of the JUMPDEST's basic block
+        // when reached via sequential fallthrough. When reached via
+        // JUMP/JUMPI, jump() already pre-charged and op_jumpdest is
+        // never called (pc skips past the JUMPDEST).
+        let jumpdest_pc = self.current_call_frame.pc.wrapping_sub(1) as u32;
+        self.current_call_frame
+            .increase_consumed_gas(self.current_call_frame.bytecode.block_cost(jumpdest_pc))?;
         Ok(OpcodeResult::Continue)
     }
 
