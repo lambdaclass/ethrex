@@ -78,7 +78,7 @@ Node options:
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
-          [env: ETHREX_MEMPOOL_MAXSIZE=]
+          [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
       --precompute-witnesses
@@ -115,7 +115,7 @@ P2P options:
       --discovery.port <PORT>
           UDP port for P2P discovery.
 
-          [env: ETHREX_DISCOVERY_PORT=]
+          [env: ETHREX_P2P_DISCOVERY_PORT=]
           [default: 30303]
 
       --p2p.tx-broadcasting-interval <INTERVAL_MS>
@@ -287,7 +287,7 @@ Node options:
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
-          [env: ETHREX_MEMPOOL_MAXSIZE=]
+          [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
 P2P options:
@@ -320,7 +320,7 @@ P2P options:
       --discovery.port <PORT>
           UDP port for P2P discovery.
 
-          [env: ETHREX_DISCOVERY_PORT=]
+          [env: ETHREX_P2P_DISCOVERY_PORT=]
           [default: 30303]
 
       --p2p.tx-broadcasting-interval <INTERVAL_MS>

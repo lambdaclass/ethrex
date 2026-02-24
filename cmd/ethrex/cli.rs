@@ -149,7 +149,7 @@ pub struct Options {
         default_value_t = 10_000,
         value_name = "MEMPOOL_MAX_SIZE",
         help_heading = "Node options",
-        env = "ETHREX_MEMPOOL_MAXSIZE"
+        env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
     #[arg(
@@ -250,7 +250,7 @@ pub struct Options {
         value_name = "PORT",
         help = "UDP port for P2P discovery.",
         help_heading = "P2P options",
-        env = "ETHREX_DISCOVERY_PORT"
+        env = "ETHREX_P2P_DISCOVERY_PORT"
     )]
     pub discovery_port: String,
     #[arg(
