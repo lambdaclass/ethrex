@@ -97,14 +97,13 @@ impl NewPooledTransactionHashes {
                         .mempool
                         .get_blobs_bundle(transaction_hash)?
                         .unwrap_or_default();
-                    let p2p_tx = P2PTransaction::EIP4844TransactionWithBlobs(
-                        WrappedEIP4844Transaction {
+                    let p2p_tx =
+                        P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
                             tx: eip4844_tx,
                             wrapper_version: (tx_blobs_bundle.version != 0)
                                 .then_some(tx_blobs_bundle.version),
                             blobs_bundle: tx_blobs_bundle,
-                        },
-                    );
+                        });
                     p2p_tx.encode_canonical_to_vec().len()
                 }
                 _ => transaction.encode_canonical_to_vec().len(),
