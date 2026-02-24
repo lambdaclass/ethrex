@@ -250,7 +250,7 @@ ethrex l2 \
 
 1. Restart the prover(s) - they will automatically generate Groth16 proofs (since `--aligned` is not set)
 2. ProofCoordinator will request proofs starting from `lastVerifiedBatch + 1`
-3. L1ProofSender will submit directly to OnChainProposer.verifyBatch()
+3. L1ProofSender will submit directly to OnChainProposer.verifyBatches()
 
 
 ---
@@ -355,7 +355,7 @@ The response includes:
 
 | Code | Meaning | Action |
 |------|---------|--------|
-| `00h` | Use verifyBatch instead | Contract not in Aligned mode |
+| `00h` | Use verifyBatches instead | Contract not in Aligned mode |
 | `00m` | Invalid Aligned proof | Proof will be deleted and regenerated |
 | `00y` | AlignedProofAggregator call failed | Check aggregator contract address |
 | `00z` | Aligned proof verification failed | Merkle proof invalid |

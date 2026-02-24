@@ -2341,6 +2341,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
+name = "clipboard-win"
+version = "5.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
+dependencies = [
+ "error-code",
+]
+
+[[package]]
 name = "cmake"
 version = "0.1.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3728,6 +3737,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "error-code"
+version = "3.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
+
+[[package]]
 name = "escape8259"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3825,6 +3840,7 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-prover",
+ "ethrex-repl",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk",
@@ -4015,6 +4031,7 @@ dependencies = [
  "ethrex-l2-rpc",
  "ethrex-levm",
  "ethrex-metrics",
+ "ethrex-monitor",
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-rpc",
@@ -4153,6 +4170,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-monitor"
+version = "9.0.0"
+dependencies = [
+ "bytes",
+ "chrono",
+ "color-eyre",
+ "crossterm 0.29.0",
+ "ethrex-common",
+ "ethrex-config",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-sdk",
+ "ethrex-storage",
+ "ethrex-storage-rollup",
+ "futures",
+ "hex",
+ "ratatui",
+ "reqwest",
+ "secp256k1",
+ "serde",
+ "spawned-concurrency",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tui-big-text",
+ "tui-logger",
+ "tui-scrollview",
+]
+
+[[package]]
 name = "ethrex-p2p"
 version = "9.0.0"
 dependencies = [
@@ -4236,6 +4285,23 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.22",
  "url",
+]
+
+[[package]]
+name = "ethrex-repl"
+version = "9.0.0"
+dependencies = [
+ "clap",
+ "colored",
+ "ethereum-types 0.15.1",
+ "hex",
+ "reqwest",
+ "rustyline",
+ "serde",
+ "serde_json",
+ "sha3",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -4544,6 +4610,17 @@ dependencies = [
  "arrayvec",
  "auto_impl",
  "bytes",
+]
+
+[[package]]
+name = "fd-lock"
+version = "4.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
+dependencies = [
+ "cfg-if 1.0.4",
+ "rustix 1.1.3",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7116,6 +7193,18 @@ checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
 dependencies = [
  "bitflags 1.3.2",
  "cfg-if 1.0.4",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.10.0",
+ "cfg-if 1.0.4",
+ "cfg_aliases",
  "libc",
 ]
 
@@ -10062,8 +10151,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.4.1",
- "itertools 0.10.5",
+ "heck 0.5.0",
+ "itertools 0.12.1",
  "log",
  "multimap",
  "once_cell",
@@ -11401,6 +11490,40 @@ dependencies = [
  "quick-error",
  "tempfile",
  "wait-timeout",
+]
+
+[[package]]
+name = "rustyline"
+version = "15.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee1e066dc922e513bda599c6ccb5f3bb2b0ea5870a579448f2622993f0a9a2f"
+dependencies = [
+ "bitflags 2.10.0",
+ "cfg-if 1.0.4",
+ "clipboard-win",
+ "fd-lock",
+ "home",
+ "libc",
+ "log",
+ "memchr",
+ "nix 0.29.0",
+ "radix_trie",
+ "rustyline-derive",
+ "unicode-segmentation",
+ "unicode-width 0.2.0",
+ "utf8parse",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "rustyline-derive"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d66de233f908aebf9cc30ac75ef9103185b4b715c6f2fb7a626aa5e5ede53ab"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
