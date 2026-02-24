@@ -9,7 +9,7 @@ pub enum RpcRequestError {
         method: String,
         source: serde_json::Error,
     },
-    #[error("{method}: {message}")]
+    #[error("{method}: {message} (data: {data:?})")]
     RPCError {
         method: String,
         message: String,
