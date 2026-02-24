@@ -26,8 +26,10 @@ use crate::adapter::{
     fork_to_spec_id, levm_address_to_revm, levm_h256_to_revm, levm_u256_to_revm,
     revm_address_to_levm, revm_u256_to_levm,
 };
+use ethrex_levm::account::AccountStatus;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::Environment;
+use ethrex_levm::errors::InternalError;
 use ethrex_levm::vm::Substate;
 
 /// revm Host implementation backed by LEVM state.
@@ -159,26 +161,32 @@ impl Host for LevmHost<'_> {
             .get_account(levm_addr)
             .map_err(|_| LoadError::DBError)?;
 
+        // Extract all fields from account before dropping the borrow,
+        // so we can call self.db.get_code() below without a double borrow.
         let balance = levm_u256_to_revm(&account.info.balance);
-        let code_hash = levm_h256_to_revm(&account.info.code_hash);
+        let nonce = account.info.nonce;
+        let levm_code_hash = account.info.code_hash;
+        let is_empty = account.info.balance.is_zero()
+            && nonce == 0
+            && levm_code_hash == *ethrex_common::constants::EMPTY_KECCACK_HASH;
+        let code_hash = levm_h256_to_revm(&levm_code_hash);
 
+        // Now account borrow is dropped, safe to borrow self.db again.
         let code = if load_code {
             let code_ref = self
                 .db
-                .get_code(account.info.code_hash)
+                .get_code(levm_code_hash)
                 .map_err(|_| LoadError::DBError)?;
-            Some(revm_bytecode::Bytecode::new_raw(code_ref.bytecode.clone()))
+            Some(revm_bytecode::Bytecode::new_raw(revm_primitives::Bytes(
+                code_ref.bytecode.clone(),
+            )))
         } else {
             None
         };
 
-        let is_empty = account.info.balance.is_zero()
-            && account.info.nonce == 0
-            && account.info.code_hash == ethrex_common::constants::EMPTY_KECCACK_HASH;
-
         let info = RevmAccountInfo {
             balance,
-            nonce: account.info.nonce,
+            nonce,
             code_hash,
             account_id: None,
             code,
@@ -203,9 +211,7 @@ impl Host for LevmHost<'_> {
         let levm_addr = revm_address_to_levm(&address);
         let levm_key = ethrex_common::H256::from(revm_u256_to_levm(&key).to_big_endian());
 
-        let value = self
-            .db
-            .get_storage_value(levm_addr, levm_key)
+        let value = jit_get_storage_value(self.db, levm_addr, levm_key)
             .map_err(|_| LoadError::DBError)?;
 
         // EIP-2929: track cold/warm storage slot access
@@ -230,9 +236,7 @@ impl Host for LevmHost<'_> {
         let is_cold = !self.substate.add_accessed_slot(levm_addr, levm_key);
 
         // Get current (present) value before write
-        let present = self
-            .db
-            .get_storage_value(levm_addr, levm_key)
+        let present = jit_get_storage_value(self.db, levm_addr, levm_key)
             .map_err(|_| LoadError::DBError)?;
 
         // Get or cache the pre-tx original value for SSTORE gas calculation
@@ -242,9 +246,8 @@ impl Host for LevmHost<'_> {
             .entry(cache_key)
             .or_insert(present);
 
-        // Write new value
-        self.db
-            .update_account_storage(levm_addr, levm_key, levm_key_u256, levm_value, present)
+        // Write new value directly into the account's cached storage
+        jit_update_account_storage(self.db, levm_addr, levm_key, levm_value)
             .map_err(|_| LoadError::DBError)?;
 
         Ok(StateLoad::new(
@@ -327,4 +330,61 @@ impl Host for LevmHost<'_> {
             is_cold,
         ))
     }
+}
+
+/// Read a storage value from the generalized database, replicating the logic
+/// of `VM::get_storage_value` without needing access to the call frame backups.
+///
+/// 1. Check the current accounts state cache.
+/// 2. If account was destroyed-and-modified, return zero (storage is invalid).
+/// 3. Fall back to the underlying `Database::get_storage_value`.
+/// 4. Cache the result in both `current_accounts_state` and `initial_accounts_state`.
+fn jit_get_storage_value(
+    db: &mut GeneralizedDatabase,
+    address: ethrex_common::Address,
+    key: ethrex_common::H256,
+) -> Result<ethrex_common::U256, InternalError> {
+    // Ensure the account is loaded into the cache first.
+    let _ = db.get_account(address)?;
+
+    if let Some(account) = db.current_accounts_state.get(&address) {
+        if let Some(value) = account.storage.get(&key) {
+            return Ok(*value);
+        }
+        // If the account was destroyed and then re-created, DB storage is stale.
+        if account.status == AccountStatus::DestroyedModified {
+            return Ok(ethrex_common::U256::zero());
+        }
+    } else {
+        return Err(InternalError::AccountNotFound);
+    }
+
+    // Fall back to the persistent store.
+    let value = db.store.get_storage_value(address, key)?;
+
+    // Cache in initial_accounts_state (for state-diff calculation).
+    if let Some(account) = db.initial_accounts_state.get_mut(&address) {
+        account.storage.insert(key, value);
+    }
+
+    // Cache in current_accounts_state so subsequent reads are fast.
+    if let Some(account) = db.current_accounts_state.get_mut(&address) {
+        account.storage.insert(key, value);
+    }
+
+    Ok(value)
+}
+
+/// Write a storage value into the generalized database, replicating the
+/// essential logic of `VM::update_account_storage` without call frame backups
+/// or BAL recording (those are handled at a higher level for JIT).
+fn jit_update_account_storage(
+    db: &mut GeneralizedDatabase,
+    address: ethrex_common::Address,
+    key: ethrex_common::H256,
+    new_value: ethrex_common::U256,
+) -> Result<(), InternalError> {
+    let account = db.get_account_mut(address)?;
+    account.storage.insert(key, new_value);
+    Ok(())
 }

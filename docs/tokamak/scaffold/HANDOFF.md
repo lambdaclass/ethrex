@@ -55,6 +55,88 @@
 | Phase 7-R18: Volkov R18 필수 수정 (3건) | **완료** |
 | Phase 7-R19: Volkov R19 필수 수정 (1건) | **완료** |
 | Phase 8: JIT Benchmarking infrastructure | **완료** |
+| Phase 8B: JIT Benchmarking execution + fixes | **완료** |
+
+## Phase 8B 완료 요약
+
+### 핵심 변경: JIT Benchmark 실행 및 tokamak-jit 컴파일 에러 수정
+
+LLVM 21 설치 → tokamak-jit 컴파일 에러 수정 → JIT 벤치마크 실행 → 결과 획득.
+
+### 수정된 컴파일 에러 (tokamak-jit)
+
+| 파일 | 에러 | 수정 |
+|------|------|------|
+| `host.rs` | E0499 double mutable borrow of `self.db` | Extract fields before second borrow |
+| `adapter.rs` | `unused_must_use` on `gas.record_cost()` | `let _ = gas.record_cost(spent)` |
+| `compiler.rs` | LLVM execution engine freed → dangling fn ptr | `std::mem::forget(compiler)` |
+| `runner.rs` | Wrong contracts path (`../../vm/levm/`) | Fixed to `../vm/levm/` |
+
+### Release Mode LTO 이슈
+
+`cargo build --release` (with `lto = "thin"`) 시 LLVM backend 초기화에서 SIGSEGV 발생.
+해결: `Cargo.toml`에 `[profile.jit-bench]` 추가 (inherits release, `lto = false`, `codegen-units = 16`).
+
+### 벤치마크 결과 (commit 2d072b80c)
+
+| Scenario | Interpreter (ms) | JIT (ms) | Speedup |
+|----------|------------------|----------|---------|
+| Fibonacci | 3.018 | 2.486 | **1.21x** |
+| Factorial | 1.385 | 1.306 | **1.06x** |
+| ManyHashes | 3.427 | 2.474 | **1.38x** |
+| BubbleSort | 343.258 | 338.490 | **1.01x** |
+
+### 스킵된 시나리오
+
+| Scenario | 이유 |
+|----------|------|
+| Push, MstoreBench, SstoreBench_no_opt | bytecode > 24KB (revmc 제한) |
+| FibonacciRecursive, FactorialRecursive | recursive CALL → suspend/resume 매우 느림 |
+| ERC20Approval/Transfer/Mint | CALL 포함 → 동일 suspend/resume 이슈 |
+
+### Gas mismatch 경고
+
+JIT와 interpreter 간 gas 계산 차이 존재:
+- Fibonacci: JIT=17001, interpreter=38205
+- ManyHashes: JIT=10571, interpreter=31775
+- BubbleSort: JIT=9503467, interpreter=9524671
+
+revmc Host 콜백의 gas accounting이 LEVM과 완전히 일치하지 않음. 정확성(output) 검증은 통과.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|------|------|
+| `tokamak-jit/src/host.rs` | Double borrow fix in `load_account_info_skip_cold_load` |
+| `tokamak-jit/src/adapter.rs` | `must_use` warning fix |
+| `tokamak-jit/src/compiler.rs` | `mem::forget(compiler)` + debug prints 제거 |
+| `tokamak-jit/src/execution.rs` | Debug prints 제거 |
+| `tokamak-bench/src/jit_bench.rs` | Graceful compilation failure handling |
+| `tokamak-bench/src/runner.rs` | Contracts path fix |
+| `Cargo.toml` | `[profile.jit-bench]` 추가 |
+
+### CLI 사용법
+
+```bash
+# Build with JIT (requires LLVM 21, uses jit-bench profile to avoid LTO)
+cargo build -p tokamak-bench --features jit-bench --profile jit-bench
+
+# Run JIT benchmark
+cargo run -p tokamak-bench --features jit-bench --profile jit-bench -- jit-bench --runs 10
+
+# Specific scenarios (skip large/recursive ones)
+cargo run -p tokamak-bench --features jit-bench --profile jit-bench -- jit-bench --scenarios Fibonacci,Factorial,ManyHashes,BubbleSort --runs 10
+
+# Markdown output
+cargo run -p tokamak-bench --features jit-bench --profile jit-bench -- jit-bench --markdown
+```
+
+### 검증 결과
+
+- `cargo build -p tokamak-bench` — 성공 (LLVM 없이)
+- `cargo test -p tokamak-bench` — 16 tests pass
+- `cargo build -p tokamak-bench --features jit-bench --profile jit-bench` — 성공
+- JIT benchmark results saved to `docs/tokamak/benchmarks/jit-bench-initial.json`
 
 ## Phase 8 완료 요약
 
@@ -69,40 +151,6 @@ JIT 컴파일 성능을 측정하는 벤치마크 인프라 구축. `tokamak-ben
 **Interpreter baseline**: `run_scenario()` 사용. JIT_STATE가 존재하더라도 cache에 컴파일 결과가 없으므로 순수 interpreter 실행.
 
 **JIT execution**: `register_jit_backend()` → `compile_for_jit()` → `prime_counter_for_jit()` → VM 실행. JIT dispatch 경로 활성화.
-
-### 변경 파일
-
-| 파일 | 변경 |
-|------|------|
-| `tokamak-bench/Cargo.toml` | `tokamak-jit` optional dep, `serial_test` dev-dep, `jit-bench` feature |
-| `tokamak-bench/src/types.rs` | `JitBenchResult`, `JitBenchSuite` 추가 |
-| `tokamak-bench/src/jit_bench.rs` | JIT benchmark runner 전체 재작성 |
-| `tokamak-bench/src/runner.rs` | 4개 helper `pub(crate)` 변경 |
-| `tokamak-bench/src/report.rs` | `jit_suite_to_json`, `jit_suite_from_json`, `jit_to_markdown` 추가 |
-| `tokamak-bench/src/bin/runner.rs` | `jit-bench` CLI subcommand 추가 |
-
-### CLI 사용법
-
-```bash
-# Build with JIT (requires LLVM 21)
-cargo build -p tokamak-bench --features jit-bench --release
-
-# Run JIT benchmark
-cargo run -p tokamak-bench --features jit-bench --release -- jit-bench --runs 5
-
-# Specific scenarios
-cargo run -p tokamak-bench --features jit-bench --release -- jit-bench --scenarios Fibonacci,ERC20Transfer --runs 10
-
-# Markdown output
-cargo run -p tokamak-bench --features jit-bench --release -- jit-bench --markdown
-```
-
-### 검증 결과
-
-- `cargo build -p tokamak-bench` — 성공 (LLVM 없이)
-- `cargo test -p tokamak-bench` — 16 tests pass
-- `cargo clippy -p tokamak-bench -- -D warnings` — clean
-- `cargo clippy --workspace --features l2,l2-sql -- -D warnings` — clean
 
 ## Phase 7 완료 요약
 

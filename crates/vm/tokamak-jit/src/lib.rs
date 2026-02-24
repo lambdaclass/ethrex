@@ -56,6 +56,7 @@ pub use ethrex_levm::jit::{
 #[cfg(feature = "revmc-backend")]
 pub fn register_jit_backend() {
     use ethrex_levm::jit::compiler_thread::{CompilerRequest, CompilerThread};
+    use ethrex_levm::jit::dispatch::JitBackend;
     use std::sync::Arc;
 
     let backend = Arc::new(backend::RevmcBackend::default());

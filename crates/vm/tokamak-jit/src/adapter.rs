@@ -14,7 +14,7 @@ use crate::error::JitError;
 
 use ethrex_common::types::Fork;
 use revm_interpreter::{Gas, SharedMemory};
-use revm_primitives::{SpecId, U256 as RevmU256};
+use revm_primitives::{hardfork::SpecId, U256 as RevmU256};
 
 /// Convert LEVM `Fork` to revm `SpecId`.
 ///
@@ -103,7 +103,7 @@ pub fn levm_gas_to_revm(gas_remaining: i64, gas_limit: u64) -> Gas {
     let mut gas = Gas::new(gas_limit);
     // Spend the difference between limit and remaining
     let spent = gas_limit.saturating_sub(remaining);
-    gas.record_cost(spent);
+    let _ = gas.record_cost(spent);
     gas
 }
 
@@ -119,13 +119,15 @@ pub fn revm_gas_to_levm(gas: &Gas) -> i64 {
 ///
 /// LEVM's Memory uses `Rc<RefCell<Vec<u8>>>` with base offsets for nested calls.
 /// We extract the active memory slice and copy it into a SharedMemory.
-pub fn levm_memory_to_revm(memory: &ethrex_levm::memory::Memory) -> SharedMemory {
+pub fn levm_memory_to_revm(memory: &mut ethrex_levm::memory::Memory) -> SharedMemory {
     let mut shared = SharedMemory::new();
-    let data = memory.copy_to_vec();
-    if !data.is_empty() {
-        // SharedMemory needs to be resized, then we copy data in
-        shared.resize(data.len());
-        shared.slice_mut(0..data.len()).copy_from_slice(&data);
+    let mem_len = memory.len();
+    if mem_len > 0 {
+        if let Ok(data) = memory.load_range(0, mem_len) {
+            // SharedMemory needs to be resized, then we copy data in
+            shared.resize(data.len());
+            shared.slice_mut(0, data.len()).copy_from_slice(&data);
+        }
     }
     shared
 }
@@ -137,9 +139,9 @@ pub fn revm_memory_to_levm(
     shared: &SharedMemory,
     memory: &mut ethrex_levm::memory::Memory,
 ) -> Result<(), JitError> {
-    let data = shared.slice(0..shared.len());
+    let data = shared.context_memory();
     memory
-        .store_data(0, data)
+        .store_data(0, &data)
         .map_err(|e| JitError::AdapterError(format!("memory write-back failed: {e:?}")))?;
     Ok(())
 }

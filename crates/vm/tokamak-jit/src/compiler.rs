@@ -67,6 +67,12 @@ impl TokamakCompiler {
                 )
             };
 
+            // SAFETY: The compiled function pointer is owned by the LLVM execution engine
+            // inside the compiler/backend. Dropping the compiler would free the JIT code
+            // memory, invalidating the pointer. We intentionally leak the compiler so the
+            // JIT code lives for the entire process lifetime.
+            std::mem::forget(compiler);
+
             Ok(compiled)
         })
     }

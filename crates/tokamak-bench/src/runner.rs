@@ -89,7 +89,7 @@ pub fn default_scenarios() -> Vec<Scenario> {
 /// Path to the compiled contract binaries directory.
 fn contracts_bin_dir() -> String {
     format!(
-        "{}/../../vm/levm/bench/revm_comparison/contracts/bin",
+        "{}/../vm/levm/bench/revm_comparison/contracts/bin",
         env!("CARGO_MANIFEST_DIR")
     )
 }

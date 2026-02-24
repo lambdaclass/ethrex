@@ -27,7 +27,7 @@ use revm_interpreter::{
     CallInput, InputsImpl, Interpreter, InterpreterAction, SharedMemory,
     interpreter::ExtBytecode,
     interpreter_action::FrameInput,
-    interpreter_types::{ReturnData, StackTr},
+    interpreter_types::ReturnData,
 };
 use revm_primitives::U256 as RevmU256;
 use revmc_context::EvmCompilerFn;
@@ -90,13 +90,15 @@ pub fn execute_jit(
     let spec_id = fork_to_spec_id(env.config.fork);
 
     // Build revm Interpreter from LEVM CallFrame
-    let bytecode_raw = Bytecode::new_raw(Bytes::copy_from_slice(&call_frame.bytecode.bytecode));
+    let bytecode_raw = Bytecode::new_raw(revm_primitives::Bytes(Bytes::copy_from_slice(
+        &call_frame.bytecode.bytecode,
+    )));
     let ext_bytecode = ExtBytecode::new(bytecode_raw);
     let input = InputsImpl {
         target_address: levm_address_to_revm(&call_frame.to),
         bytecode_address: None,
         caller_address: levm_address_to_revm(&call_frame.msg_sender),
-        input: CallInput::Bytes(call_frame.calldata.clone()),
+        input: CallInput::Bytes(revm_primitives::Bytes(call_frame.calldata.clone())),
         call_value: crate::adapter::levm_u256_to_revm(&call_frame.msg_value),
     };
 
@@ -224,11 +226,11 @@ fn handle_interpreter_action(
             match result.result {
                 InstructionResult::Stop | InstructionResult::Return => Ok(JitOutcome::Success {
                     gas_used,
-                    output: result.output,
+                    output: result.output.into(),
                 }),
                 InstructionResult::Revert => Ok(JitOutcome::Revert {
                     gas_used,
-                    output: result.output,
+                    output: result.output.into(),
                 }),
                 r => Ok(JitOutcome::Error(format!("JIT returned: {r:?}"))),
             }
@@ -279,8 +281,8 @@ fn translate_frame_input(frame_input: FrameInput) -> Result<JitSubCall, JitError
             let value = revm_u256_to_levm(&call_inputs.value.get());
 
             // Extract calldata — for JIT calls it should be Bytes variant
-            let calldata = match &call_inputs.input {
-                CallInput::Bytes(b) => b.clone(),
+            let calldata: Bytes = match &call_inputs.input {
+                CallInput::Bytes(b) => b.clone().into(),
                 CallInput::SharedBuffer(_) => {
                     // SharedBuffer shouldn't happen in JIT context
                     Bytes::new()
@@ -318,7 +320,7 @@ fn translate_frame_input(frame_input: FrameInput) -> Result<JitSubCall, JitError
                 gas_limit: create_inputs.gas_limit(),
                 caller: revm_address_to_levm(&create_inputs.caller()),
                 value: revm_u256_to_levm(&create_inputs.value()),
-                init_code: create_inputs.init_code().clone(),
+                init_code: create_inputs.init_code().clone().into(),
                 salt,
             })
         }
@@ -340,8 +342,6 @@ fn apply_subcall_result(
     return_memory_offset: usize,
     return_memory_size: usize,
 ) {
-    use revm_interpreter::interpreter_types::MemoryTr;
-
     // 1. Credit unused gas back to the parent interpreter.
     //
     // revmc deducted `gas_limit` from the parent before suspending (in __revmc_builtin_call).
@@ -384,5 +384,5 @@ fn apply_subcall_result(
     // 4. Set return_data for RETURNDATASIZE/RETURNDATACOPY opcodes.
     interpreter
         .return_data
-        .set_buffer(sub_result.output.clone());
+        .set_buffer(revm_primitives::Bytes(sub_result.output.clone()));
 }
