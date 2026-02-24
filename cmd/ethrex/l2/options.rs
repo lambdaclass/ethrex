@@ -36,7 +36,8 @@ pub struct Options {
         long = "sponsorable-addresses",
         value_name = "SPONSORABLE_ADDRESSES_PATH",
         help = "Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs",
-        help_heading = "L2 options"
+        help_heading = "L2 options",
+        env = "ETHREX_SPONSORABLE_ADDRESSES_PATH"
     )]
     pub sponsorable_addresses_file_path: Option<String>,
     //TODO: make optional when the the sponsored feature is complete
@@ -1087,6 +1088,7 @@ pub struct ProverClientOptions {
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
+        env = "PROVER_CLIENT_LOG_LEVEL",
         help = "The verbosity level used for logs.",
         long_help = "Possible values: info, debug, trace, warn, error",
         help_heading = "Prover client options"
