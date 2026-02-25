@@ -660,7 +660,6 @@ impl Blockchain {
 
         // Barrier: send FinishRouting, then overlap early MerklizeAccounts
         // with the wait for workers to finish routing to storage workers.
-        let t_drain_start = Instant::now();
         let (flush_tx, flush_rx) = channel();
         for tx in &account_workers_tx {
             tx.send(AccountRequest::FinishRouting {
@@ -688,7 +687,6 @@ impl Blockchain {
 
         // Wait for all FinishRouting responses.
         for () in flush_rx {}
-        let t_barrier = Instant::now();
 
         // Trigger storage collection — workers send StorageShard directly to account workers.
         for tx in &storage_workers_tx {
@@ -725,7 +723,6 @@ impl Blockchain {
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
-        let t_gathered = Instant::now();
 
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
@@ -736,14 +733,6 @@ impl Blockchain {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
                 *EMPTY_TRIE_HASH
             };
-        let t_root = Instant::now();
-        info!(
-            "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms",
-            t_barrier.duration_since(t_drain_start).as_secs_f64() * 1000.0,
-            t_gathered.duration_since(t_barrier).as_secs_f64() * 1000.0,
-            t_root.duration_since(t_gathered).as_secs_f64() * 1000.0,
-        );
-
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
         Ok((
@@ -2566,7 +2555,6 @@ fn handle_storage_subtrie(
 ) -> Result<(), StoreError> {
     let mut tree: FxHashMap<H256, Trie> = Default::default();
     let mut pre_collected: FxHashMap<H256, Vec<TrieNode>> = Default::default();
-    let mut n_pre_collected: usize = 0;
     let mut dirty = false;
 
     loop {
@@ -2581,7 +2569,6 @@ fn handle_storage_subtrie(
                         nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
                         if !nodes.is_empty() {
                             pre_collected.entry(*prefix).or_default().extend(nodes);
-                            n_pre_collected += 1;
                         }
                     }
                     dirty = false;
@@ -2627,8 +2614,6 @@ fn handle_storage_subtrie(
     }
 
     // Finalize: collect remaining tries, merge with pre-collected, send shards
-    let t0 = Instant::now();
-    let n_accounts = tree.len();
     for (prefix, trie) in tree.drain() {
         let (root, mut nodes) = collect_trie(index, trie)?;
         // Pre-collected nodes first, delta nodes after (delta overwrites stale entries)
@@ -2646,12 +2631,6 @@ fn handle_storage_subtrie(
             })
             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
     }
-    info!(
-        "  storage[{index}]: collect={:.1}ms accounts={} pre_collected={}",
-        t0.elapsed().as_secs_f64() * 1000.0,
-        n_accounts,
-        n_pre_collected,
-    );
     Ok(())
 }
 
@@ -2672,8 +2651,6 @@ fn handle_account_subtrie(
     let mut storage_workers_tx = Some(storage_workers_tx);
     let mut pending_storage_accounts: usize = 0;
     let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
-    let mut t_process = Duration::ZERO;
-    let mut t_shard = Duration::ZERO;
 
     for msg in rx {
         match msg {
@@ -2684,7 +2661,6 @@ fn handle_account_subtrie(
                 removed,
                 removed_storage,
             } => {
-                let t0 = Instant::now();
                 let senders = storage_workers_tx
                     .as_ref()
                     .expect("ProcessAccount after FinishRouting");
@@ -2757,7 +2733,6 @@ fn handle_account_subtrie(
                         pending_storage_accounts += 1;
                     }
                 }
-                t_process += t0.elapsed();
             }
             AccountRequest::FinishRouting { tx } => {
                 tx.send(())
@@ -2770,7 +2745,6 @@ fn handle_account_subtrie(
                 mut subroot,
                 nodes,
             } => {
-                let t0 = Instant::now();
                 let state = storage_state.entry(prefix).or_default();
                 match &mut state.storage_root {
                     Some(root) => {
@@ -2819,8 +2793,6 @@ fn handle_account_subtrie(
                     if pending_storage_accounts == 0
                         && let Some(tx) = pending_collect_tx.take()
                     {
-                        t_shard += t0.elapsed();
-                        let t0 = Instant::now();
                         let (subroot, state_nodes) =
                             collect_trie(index, std::mem::take(&mut state_trie))?;
                         tx.send(CollectedStateMsg {
@@ -2830,16 +2802,9 @@ fn handle_account_subtrie(
                             storage_nodes: std::mem::take(&mut storage_nodes),
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                        info!(
-                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
-                            t_process.as_secs_f64() * 1000.0,
-                            t_shard.as_secs_f64() * 1000.0,
-                            t0.elapsed().as_secs_f64() * 1000.0,
-                        );
                         break;
                     }
                 }
-                t_shard += t0.elapsed();
             }
             AccountRequest::MerklizeAccounts { accounts: batch } => {
                 // Info already applied in ProcessAccount — just record empty storage nodes
@@ -2850,7 +2815,6 @@ fn handle_account_subtrie(
             AccountRequest::CollectState { tx } => {
                 if pending_storage_accounts == 0 {
                     // All storage accounts already resolved — respond immediately
-                    let t0 = Instant::now();
                     let (subroot, state_nodes) =
                         collect_trie(index, std::mem::take(&mut state_trie))?;
                     tx.send(CollectedStateMsg {
@@ -2860,12 +2824,6 @@ fn handle_account_subtrie(
                         storage_nodes: std::mem::take(&mut storage_nodes),
                     })
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    info!(
-                        "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
-                        t_process.as_secs_f64() * 1000.0,
-                        t_shard.as_secs_f64() * 1000.0,
-                        t0.elapsed().as_secs_f64() * 1000.0,
-                    );
                     break;
                 }
                 // Defer until all StorageShards arrive
