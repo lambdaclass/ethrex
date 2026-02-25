@@ -801,6 +801,105 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    /// Migrate all bytecodes in the database from the old format
+    /// (bytecode + jump_table) to the new format (bytecode + jump_table + static_costs).
+    ///
+    /// This reads every entry in ACCOUNT_CODES, detects whether it already
+    /// contains static_costs data, and if not, recomputes the Code (which now
+    /// includes static_costs via `process_bytecode`) and writes it back.
+    ///
+    /// Returns the number of codes migrated.
+    pub async fn migrate_bytecodes(&self) -> Result<u64, StoreError> {
+        const BATCH_SIZE: usize = 500;
+
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let read_txn = backend.begin_read()?;
+            let iter = read_txn.prefix_iterator(ACCOUNT_CODES, b"")?;
+
+            // Collect all entries first so we can drop the read transaction
+            // before opening a write transaction.
+            let entries: Vec<(Box<[u8]>, Box<[u8]>)> = iter.collect::<Result<Vec<_>, _>>()?;
+
+            let total = entries.len();
+            let mut migrated: u64 = 0;
+            let mut skipped: u64 = 0;
+            let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(BATCH_SIZE);
+
+            for (i, (key, value)) in entries.into_iter().enumerate() {
+                let bytes = Bytes::from(value.into_vec());
+
+                // Decode bytecode (first RLP element)
+                let (bytecode_slice, rest) = match decode_bytes(&bytes) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(
+                            key = ?hex::encode(&key),
+                            error = %e,
+                            "Failed to decode bytecode entry, skipping"
+                        );
+                        skipped += 1;
+                        continue;
+                    }
+                };
+
+                // Decode jump_targets and check for remaining data
+                let (_, remainder) = match <Vec<u32>>::decode_unfinished(rest) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(
+                            key = ?hex::encode(&key),
+                            error = %e,
+                            "Failed to decode jump_targets, skipping"
+                        );
+                        skipped += 1;
+                        continue;
+                    }
+                };
+
+                // If there's remaining data after jump_targets, it's already in the
+                // new format (static_costs are appended). Skip it.
+                if !remainder.is_empty() {
+                    skipped += 1;
+                    continue;
+                }
+
+                // Old format: recompute with static_costs
+                let bytecode = bytes.slice_ref(bytecode_slice);
+                let code_hash = H256::from_slice(&key);
+                let code = Code::from_bytecode_unchecked(bytecode, code_hash);
+                let new_value = encode_code(&code);
+
+                batch.push((key.into_vec(), new_value));
+                migrated += 1;
+
+                // Flush batch periodically
+                if batch.len() >= BATCH_SIZE {
+                    let mut tx = backend.begin_write()?;
+                    tx.put_batch(ACCOUNT_CODES, std::mem::take(&mut batch))?;
+                    tx.commit()?;
+                    tracing::info!(
+                        progress = format!("{}/{}", i + 1, total),
+                        migrated,
+                        "Migration batch committed"
+                    );
+                }
+            }
+
+            // Flush remaining
+            if !batch.is_empty() {
+                let mut tx = backend.begin_write()?;
+                tx.put_batch(ACCOUNT_CODES, batch)?;
+                tx.commit()?;
+            }
+
+            tracing::info!(migrated, skipped, total, "Bytecode migration complete");
+            Ok(migrated)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
     /// Clears all checkpoint data created during the last snap sync
     pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
         let db = self.backend.clone();

@@ -442,6 +442,11 @@ pub enum Subcommand {
         last: Option<u64>,
     },
     #[command(
+        name = "migrate-bytecodes",
+        about = "Migrate stored bytecodes from old format (bytecode + jump_table) to new format (bytecode + jump_table + static_costs)"
+    )]
+    MigrateBytecodes,
+    #[command(
         name = "compute-state-root",
         about = "Compute the state root from a genesis file"
     )]
@@ -540,6 +545,9 @@ impl Subcommand {
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
+            }
+            Subcommand::MigrateBytecodes => {
+                migrate_bytecodes(&opts.datadir).await?;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
@@ -974,4 +982,23 @@ pub async fn export_blocks(
         path = %path,
         "Exported blocks to file"
     );
+}
+
+pub async fn migrate_bytecodes(datadir: &Path) -> Result<(), eyre::Error> {
+    init_datadir(datadir);
+    let store = load_store(datadir).await?;
+
+    info!("Starting bytecode migration (old format -> new format with static_costs)");
+    let start = Instant::now();
+
+    let migrated = store.migrate_bytecodes().await?;
+
+    let elapsed = start.elapsed();
+    info!(
+        migrated,
+        elapsed_secs = elapsed.as_secs_f64(),
+        "Bytecode migration finished"
+    );
+
+    Ok(())
 }
