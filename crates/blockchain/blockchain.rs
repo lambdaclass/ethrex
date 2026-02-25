@@ -443,8 +443,9 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, bal) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                        let anchor = std::time::Instant::now();
+                        let (execution_result, bal, _exec_timings, _exec_end) =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref, anchor)?;
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
