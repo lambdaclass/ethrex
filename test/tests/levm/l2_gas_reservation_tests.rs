@@ -424,7 +424,9 @@ fn test_oog_revert_still_pays_l1_fee_vault() {
     )
     .unwrap();
 
-    let report = vm.execute().expect("Execution should complete (revert, not error)");
+    let report = vm
+        .execute()
+        .expect("Execution should complete (revert, not error)");
     assert!(
         !report.is_success(),
         "Transaction should revert due to out-of-gas"
