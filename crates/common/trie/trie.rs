@@ -16,7 +16,7 @@ use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -57,7 +57,7 @@ pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
     pending_removal: FxHashSet<Nibbles>,
-    dirty: FxHashSet<Nibbles>,
+    dirty: FxHashMap<Nibbles, Option<ValueRLP>>,
 }
 
 impl Default for Trie {
@@ -103,7 +103,13 @@ impl Trie {
     pub fn get(&self, pathrlp: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(path.clone()) {
+        // Check dirty overlay first — serves current writes in O(1)
+        if let Some(dirty_value) = self.dirty.get(&path) {
+            return Ok(dirty_value.clone());
+        }
+
+        // Not dirty: try FKV if available
+        if self.db().flatkeyvalue_computed(path.clone()) {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
@@ -132,7 +138,7 @@ impl Trie {
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
-        self.dirty.insert(path.clone());
+        self.dirty.insert(path.clone(), Some(value.clone()));
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -154,7 +160,7 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
-        self.dirty.insert(Nibbles::from_bytes(path));
+        self.dirty.insert(Nibbles::from_bytes(path), None);
         if !self.root.is_valid() {
             return Ok(None);
         }
