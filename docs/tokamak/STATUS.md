@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-25
 **Branch**: `feat/tokamak-proven-execution`
-**Overall Completion**: ~45-50%
+**Overall Completion**: ~55-60%
 
 ---
 
@@ -25,7 +25,7 @@
 
 ## Tier S Features
 
-### Feature #9: JIT-Compiled EVM (~75%)
+### Feature #9: JIT-Compiled EVM (~80%)
 
 **Completed:**
 - revmc/LLVM backend integration (Phases 2-8)
@@ -36,13 +36,13 @@
 - CALL/CREATE suspend/resume
 - Dual-execution validation (JIT vs interpreter)
 - Benchmarking infrastructure + initial results
-- 39 LEVM JIT tests + 19 tokamak-jit tests passing
 - Bytecode size limit graceful fallback (D-2) — negative cache + early size gate + interpreter-only bench results
+- Constant folding optimizer (D-3) — PUSH+PUSH+OP → single PUSH, 6 opcodes (ADD/MUL/SUB/AND/OR/XOR), 42 tests
+- 76 LEVM JIT tests + 27 tokamak-jit tests passing (104 total)
 
 **Remaining:**
 - Recursive CALL performance (suspend/resume is slow — accepted for v1.0)
 - Tiered optimization (profile-guided optimization)
-- Opcode fusion, constant folding
 - Fuzzing + security audit
 - Production deployment
 
@@ -97,11 +97,11 @@ Measured after Volkov R21-R23 fixes (corrected measurement order).
 
 | Component | Location | Lines |
 |-----------|----------|-------|
-| LEVM JIT infra | `crates/vm/levm/src/jit/` (8 files) | ~1,966 |
-| tokamak-jit crate | `crates/vm/tokamak-jit/src/` (13 files) | ~5,470 |
+| LEVM JIT infra | `crates/vm/levm/src/jit/` (9 files) | ~2,700 |
+| tokamak-jit crate | `crates/vm/tokamak-jit/src/` (14 files) | ~5,650 |
 | tokamak-bench crate | `crates/tokamak-bench/src/` (7 files) | ~1,305 |
 | tokamak-debugger | `crates/tokamak-debugger/src/` (1 file) | 2 |
-| **Total** | | **~8,743** |
+| **Total** | | **~9,657** |
 
 Base ethrex codebase: ~103K lines Rust.
 
@@ -141,6 +141,9 @@ R23(5.0) -> R24(8.0)
 - EIP-7928 BAL recording (B-3) — BAL recording in host.rs sload/sstore JIT paths, 5 differential tests (2126e232b)
 - Bytecode size limit fallback (D-2) — oversized_hashes negative cache, early size gate, bench interpreter-only results, 4+3 tests (ff3396efe)
 
+### Recently Completed (Phase D)
+- Constant folding optimizer (D-3) — same-length PUSH+PUSH+OP → single PUSH, 6 opcodes (ADD/MUL/SUB/AND/OR/XOR), pipeline integration in backend.rs, 37 unit + 5 integration tests (fec956fef)
+
 ### CI Verified (PR #6260, run 22379067904)
 - Hive 6/6 suites PASS (tokamak-jit build) — RPC, Devp2p, Auth, Cancun, Paris, Withdrawals
 - Quality Gate PASS — cargo check/clippy/test with all tokamak features
@@ -160,7 +163,7 @@ R23(5.0) -> R24(8.0)
 - External node operator adoption
 
 ### In Progress
-- (none — Phase B, C complete; D-1 decided, D-2 done; next: D-3/E-1 or A-2 Hoodi sync)
+- (none — Phase B, C, D complete; next: E-1 TX Replay Engine or A-2 Hoodi sync)
 
 ---
 
