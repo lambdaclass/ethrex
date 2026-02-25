@@ -2552,6 +2552,11 @@ fn handle_subtrie(
     let mut t_process = Duration::ZERO;
     let mut t_shard = Duration::ZERO;
     let mut pre_collected_state: Vec<TrieNode> = vec![];
+    let mut n_shard_msgs: u32 = 0;
+    let mut n_resolutions: u32 = 0;
+    let mut t_resolve = Duration::ZERO;
+    let mut max_resolve = Duration::ZERO;
+    let mut max_resolve_nodes: usize = 0;
 
     // === Storage-side state ===
     let mut storage_tries: FxHashMap<H256, Trie> = Default::default();
@@ -2602,31 +2607,36 @@ fn handle_subtrie(
                 worker_senders = None;
                 collecting_storages = false;
                 // Check if deferred collect can resolve now
-                if pending_storage_accounts == 0 {
-                    if let Some(tx) = pending_collect_tx.take() {
-                        let t0 = Instant::now();
-                        let (subroot, mut state_nodes) =
-                            collect_trie(index, std::mem::take(&mut state_trie))?;
-                        if !pre_collected_state.is_empty() {
-                            let mut pre = std::mem::take(&mut pre_collected_state);
-                            pre.extend(state_nodes);
-                            state_nodes = pre;
-                        }
-                        tx.send(CollectedStateMsg {
-                            index,
-                            subroot,
-                            state_nodes,
-                            storage_nodes: std::mem::take(&mut storage_nodes),
-                        })
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                        info!(
-                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
-                            t_process.as_secs_f64() * 1000.0,
-                            t_shard.as_secs_f64() * 1000.0,
-                            t0.elapsed().as_secs_f64() * 1000.0,
-                        );
-                        break;
+                if pending_storage_accounts == 0
+                    && let Some(tx) = pending_collect_tx.take()
+                {
+                    let t0 = Instant::now();
+                    let (subroot, mut state_nodes) =
+                        collect_trie(index, std::mem::take(&mut state_trie))?;
+                    if !pre_collected_state.is_empty() {
+                        let mut pre = std::mem::take(&mut pre_collected_state);
+                        pre.extend(state_nodes);
+                        state_nodes = pre;
                     }
+                    tx.send(CollectedStateMsg {
+                        index,
+                        subroot,
+                        state_nodes,
+                        storage_nodes: std::mem::take(&mut storage_nodes),
+                    })
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    info!(
+                        "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms | msgs={} resolve={}/{:.1}ms max_resolve={:.2}ms({}nodes)",
+                        t_process.as_secs_f64() * 1000.0,
+                        t_shard.as_secs_f64() * 1000.0,
+                        t0.elapsed().as_secs_f64() * 1000.0,
+                        n_shard_msgs,
+                        n_resolutions,
+                        t_resolve.as_secs_f64() * 1000.0,
+                        max_resolve.as_secs_f64() * 1000.0,
+                        max_resolve_nodes,
+                    );
+                    break;
                 }
             }
         }
@@ -2826,6 +2836,7 @@ fn handle_subtrie(
                 nodes,
             } => {
                 let t0 = Instant::now();
+                n_shard_msgs += 1;
                 let state = storage_state.entry(prefix).or_default();
                 match &mut state.storage_root {
                     Some(root) => {
@@ -2842,7 +2853,9 @@ fn handle_subtrie(
                 *received |= 1 << shard_index;
                 if *received == expected_shards.get(&prefix).copied().unwrap_or(0) {
                     // All shards received — compute storage root and re-insert
+                    let t_res = Instant::now();
                     let mut state = storage_state.remove(&prefix).expect("shard without state");
+                    let n_nodes = state.nodes.len();
                     let mut new_storage_root = None;
                     if let Some(root) = state.storage_root {
                         if let Some(root) =
@@ -2855,6 +2868,13 @@ fn handle_subtrie(
                             state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
                             new_storage_root = Some(*EMPTY_TRIE_HASH);
                         }
+                    }
+                    let res_elapsed = t_res.elapsed();
+                    n_resolutions += 1;
+                    t_resolve += res_elapsed;
+                    if res_elapsed > max_resolve {
+                        max_resolve = res_elapsed;
+                        max_resolve_nodes = n_nodes;
                     }
                     storage_nodes.push((prefix, state.nodes));
 
@@ -2893,10 +2913,15 @@ fn handle_subtrie(
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                         info!(
-                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
+                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms | msgs={} resolve={}/{:.1}ms max_resolve={:.2}ms({}nodes)",
                             t_process.as_secs_f64() * 1000.0,
                             t_shard.as_secs_f64() * 1000.0,
                             t0.elapsed().as_secs_f64() * 1000.0,
+                            n_shard_msgs,
+                            n_resolutions,
+                            t_resolve.as_secs_f64() * 1000.0,
+                            max_resolve.as_secs_f64() * 1000.0,
+                            max_resolve_nodes,
                         );
                         break;
                     }
