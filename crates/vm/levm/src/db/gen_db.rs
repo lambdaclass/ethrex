@@ -647,6 +647,24 @@ impl<'a> VM<'a> {
         Ok((storage_slot, storage_slot_was_cold))
     }
 
+    /// SSTORE-specialized storage access path that returns current and original values together.
+    /// This keeps the SSTORE hot path tighter by avoiding extra method-level plumbing.
+    #[inline(always)]
+    pub fn access_storage_slot_for_sstore(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<(U256, U256, bool), InternalError> {
+        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
+        let current_value = self.get_storage_value(address, key)?;
+        let original_value = match self.storage_original_values.entry(address).or_default().entry(key)
+        {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => *entry.insert(current_value),
+        };
+        Ok((current_value, original_value, storage_slot_was_cold))
+    }
+
     /// Records a storage slot read to BAL after gas checks have passed.
     /// Per EIP-7928: "If pre-state validation fails, the target is never accessed and must not appear in BAL."
     /// This function should be called AFTER the gas check succeeds.
