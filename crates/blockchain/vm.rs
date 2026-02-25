@@ -3,7 +3,8 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
-use ethrex_storage::{Store, hash_address};
+use ethrex_crypto::keccak::keccak_hash;
+use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
 use rustc_hash::FxHashMap;
 use std::{
@@ -13,7 +14,7 @@ use std::{
 };
 use tracing::instrument;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct AccountStateCacheEntry {
     state: AccountState,
     hashed_address: H256,
@@ -87,7 +88,7 @@ impl StoreVmDatabase {
             .read()
             .map_err(|_| EvmError::Custom("LockError".to_string()))?
             .get(&address)
-            .cloned()
+            .copied()
         {
             return Ok(entry);
         }
@@ -98,12 +99,12 @@ impl StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))?;
         let cached = loaded.map(|state| AccountStateCacheEntry {
             state,
-            hashed_address: H256::from_slice(hash_address(&address).as_slice()),
+            hashed_address: H256::from(keccak_hash(address.to_fixed_bytes())),
         });
         self.account_state_cache
             .write()
             .map_err(|_| EvmError::Custom("LockError".to_string()))?
-            .insert(address, cached.clone());
+            .insert(address, cached);
         Ok(cached)
     }
 }
