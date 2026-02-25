@@ -516,7 +516,7 @@ mod fee_distribution_tests {
         };
 
         let mut vm = create_test_l2_vm(&env, &mut db, &tx, fee_config).unwrap();
-        let report = vm.execute().unwrap();
+        let _report = vm.execute().unwrap();
 
         // L1 fee vault should have received the L1 data availability fee
         let vault_balance = db

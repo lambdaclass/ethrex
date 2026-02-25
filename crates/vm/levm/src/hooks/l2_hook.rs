@@ -66,6 +66,7 @@ impl Hook for L2Hook {
         // Different from L1:
         // Max fee per gas must be sufficient to cover base fee + operator fee
         validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
+        validate_gas_limit_covers_l1_fee(vm, &self.fee_config.l1_fee_config)?;
         Ok(())
     }
 
@@ -222,6 +223,40 @@ fn validate_sufficient_max_fee_per_gas_l2(
 
     if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee {
         return Err(TxValidationError::InsufficientMaxFeePerGas);
+    }
+    Ok(())
+}
+
+/// Validates that the transaction's gas_limit is sufficient to cover both
+/// intrinsic gas and the L1 data availability fee.
+///
+/// Without this check, a user can send a transaction with gas_limit = intrinsic_gas.
+/// The tx passes validation and gets included in the blob, but at finalize time
+/// actual_gas + l1_gas > gas_limit triggers a revert. The recalculated l1_gas becomes 0,
+/// so the L1 fee vault receives nothing — the sequencer pays DA costs with no reimbursement.
+///
+/// This function must be called after add_intrinsic_gas() so that
+/// vm.current_call_frame.gas_used contains the intrinsic gas.
+fn validate_gas_limit_covers_l1_fee(
+    vm: &VM<'_>,
+    l1_fee_config: &Option<L1FeeConfig>,
+) -> Result<(), TxValidationError> {
+    let l1_gas = calculate_l1_fee_gas(vm, l1_fee_config)
+        .map_err(|_| TxValidationError::InsufficientMaxFeePerGas)?;
+    if l1_gas == 0 {
+        return Ok(());
+    }
+    // At this point intrinsic gas has already been consumed from gas_remaining
+    let gas_remaining: u64 = vm.current_call_frame.gas_remaining.try_into().unwrap_or(0);
+    let intrinsic_gas = vm
+        .current_call_frame
+        .gas_limit
+        .saturating_sub(gas_remaining);
+    let min_gas_limit = intrinsic_gas
+        .checked_add(l1_gas)
+        .ok_or(TxValidationError::IntrinsicGasTooLow)?;
+    if vm.current_call_frame.gas_limit < min_gas_limit {
+        return Err(TxValidationError::IntrinsicGasTooLow);
     }
     Ok(())
 }

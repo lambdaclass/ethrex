@@ -46,25 +46,15 @@ fn create_privileged_tx(from: Address, to: Address, value: U256, gas_limit: u64)
 mod l1_gas_limit_tests {
     use super::*;
 
-    /// When L1 data gas + execution gas > gas_limit, the transaction MUST:
-    /// 1. Revert (is_success() == false)
-    /// 2. Consume ALL gas (gas_used == gas_limit)
-    /// 3. Undo any value transfer (recipient balance unchanged)
-    /// 4. Pay the L1 fee vault from remaining gas (gas_limit - execution_gas)
-    /// 5. Charge the sender for the full gas_limit
+    /// When gas_limit cannot cover intrinsic_gas + L1 data gas, the transaction
+    /// MUST be rejected upfront during prepare_execution (never enters the blob).
     ///
-    /// L1 gas calculation:
-    ///   l1_fee = (l1_fee_per_blob_gas * GAS_PER_BLOB / SAFE_BYTES_PER_BLOB) * tx_size
-    ///   l1_gas = l1_fee / gas_price
+    /// Previously this caused a revert at finalize time, but the sequencer paid
+    /// DA costs and got nothing back — a griefing vector (issue #6053).
     ///
-    /// To cause L1 gas overflow with gas_limit just above intrinsic (22000):
-    /// - remaining_gas = 22000 - 21000 = 1000
-    /// - Need l1_gas > 1000
-    /// - With tx_size ~100 bytes, gas_price = 1 wei, need high l1_fee_per_blob_gas
+    /// Now validate_gas_limit_covers_l1_fee rejects these transactions early.
     #[test]
-    fn test_l1_gas_causes_revert_when_exceeding_limit() {
-        // Setup: sender with balance, recipient with 0, L1 fee vault with 0
-        // Include a value transfer to verify it gets undone on revert
+    fn test_l1_gas_causes_rejection_when_exceeding_limit() {
         let value_to_transfer = U256::from(1_000_000_000_000_000_000u128); // 1 ETH
         let initial_sender_balance = U256::from(DEFAULT_SENDER_BALANCE);
 
@@ -75,15 +65,11 @@ mod l1_gas_limit_tests {
             (TEST_COINBASE, U256::zero(), 0),
         ]);
 
-        // Use gas_limit barely above intrinsic_gas so L1 gas easily overflows
-        // intrinsic_gas for simple transfer = 21000
-        // remaining_gas = 22000 - 21000 = 1000
+        // gas_limit barely above intrinsic — not enough for L1 gas
         let gas_limit = 22_000u64;
-
-        // Use very low gas_price (1 wei) so l1_gas = l1_fee / 1 = l1_fee (bigger number)
-        let max_fee_per_gas = 1u64; // 1 wei
+        let max_fee_per_gas = 1u64;
         let max_priority_fee_per_gas = 0u64;
-        let base_fee = 1u64; // 1 wei
+        let base_fee = 1u64;
 
         let tx = create_eip1559_tx(
             TEST_RECIPIENT,
@@ -103,78 +89,34 @@ mod l1_gas_limit_tests {
             false,
         );
 
-        // Configure high L1 fee that will push total gas over the limit.
-        // l1_fee = (l1_fee_per_blob_gas * 131072 / 126976) * tx_size ≈ l1_fee_per_blob_gas * tx_size
-        // l1_gas = l1_fee / gas_price = l1_fee / 1 = l1_fee
-        // With tx_size ~100 bytes and l1_fee_per_blob_gas = 1000, l1_gas ≈ 100000 >> 1000
+        // High L1 fee: l1_gas >> remaining_gas after intrinsic
         let fee_config = FeeConfig {
             base_fee_vault: None,
             operator_fee_config: None,
             l1_fee_config: Some(L1FeeConfig {
                 l1_fee_vault: TEST_L1_FEE_VAULT,
-                l1_fee_per_blob_gas: 1000, // This generates l1_gas >> remaining_gas
+                l1_fee_per_blob_gas: 1000,
             }),
         };
 
+        // Transaction must be rejected during prepare_execution (called by execute)
         let mut vm = create_test_l2_vm(&env, &mut db, &tx, fee_config).unwrap();
-        let report = vm.execute().unwrap();
-
-        // 1. Transaction MUST revert
+        let exec_result = vm.execute();
         assert!(
-            !report.is_success(),
-            "Transaction MUST revert when L1 gas + execution gas exceeds gas_limit"
-        );
-
-        // 2. Transaction MUST consume ALL gas
-        assert_eq!(
-            report.gas_used, gas_limit,
-            "Reverted tx due to L1 gas overflow MUST use full gas_limit. \
-             Expected: {}, Got: {}",
-            gas_limit, report.gas_used
-        );
-
-        // 3. Value transfer MUST be undone - recipient should have 0
-        let recipient_balance = db.get_account(TEST_RECIPIENT).unwrap().info.balance;
-        assert_eq!(
-            recipient_balance,
-            U256::zero(),
-            "Value transfer MUST be undone on L1 gas revert. Recipient balance should be 0, got: {}",
-            recipient_balance
-        );
-
-        // 4. L1 fee vault receives payment from remaining gas
-        // l1_gas (recalculated) = gas_limit - actual_execution_gas = 22000 - 21000 = 1000
-        // l1_fee = 1000 * 1 = 1000 wei
-        let l1_vault_balance = db.get_account(TEST_L1_FEE_VAULT).unwrap().info.balance;
-        assert!(
-            l1_vault_balance > U256::zero(),
-            "L1 fee vault MUST receive payment from remaining gas (gas_limit - execution_gas). \
-             L1 vault balance: {}",
-            l1_vault_balance
-        );
-
-        // 5. Sender should be charged for full gas_limit
-        // Sender pays: gas_limit * gas_price = 22000 * 1 = 22000 wei
-        let sender_balance = db.get_account(TEST_SENDER).unwrap().info.balance;
-        let gas_cost = U256::from(gas_limit) * U256::from(max_fee_per_gas);
-        let expected_sender_balance = initial_sender_balance - gas_cost;
-        assert_eq!(
-            sender_balance, expected_sender_balance,
-            "Sender MUST be charged full gas_limit * gas_price. \
-             Expected: {}, Got: {}",
-            expected_sender_balance, sender_balance
+            exec_result.is_err(),
+            "Transaction MUST be rejected upfront when gas_limit < intrinsic_gas + l1_gas"
         );
     }
 
-    /// Edge case: when gas_limit == intrinsic_gas exactly, L1 fee vault gets 0
-    /// because all gas is consumed by execution, leaving nothing for L1 fee.
-    /// This is correct behavior but the sequencer absorbs the DA cost.
+    /// Edge case: when gas_limit == intrinsic_gas exactly and L1 fee is configured,
+    /// the transaction MUST be rejected upfront because gas_limit < intrinsic + l1_gas.
+    ///
+    /// Previously this caused a revert at finalize with the L1 vault getting 0 — the
+    /// sequencer absorbed DA costs (griefing vector, issue #6053).
     #[test]
-    fn test_l1_gas_revert_with_minimal_gas_limit_l1_vault_gets_zero() {
-        let initial_sender_balance = U256::from(DEFAULT_SENDER_BALANCE);
-
+    fn test_l1_gas_rejected_with_minimal_gas_limit() {
         let mut db = create_test_db_with_accounts(vec![
-            (TEST_SENDER, initial_sender_balance, 0),
+            (TEST_SENDER, U256::from(DEFAULT_SENDER_BALANCE), 0),
             (TEST_RECIPIENT, U256::zero(), 0),
             (TEST_L1_FEE_VAULT, U256::zero(), 0),
         ]);
@@ -202,7 +144,7 @@ mod l1_gas_limit_tests {
             false,
         );
 
-        // High L1 fee to cause revert
+        // High L1 fee — l1_gas will be > 0, making gas_limit insufficient
         let fee_config = FeeConfig {
             base_fee_vault: None,
             operator_fee_config: None,
@@ -212,30 +154,12 @@ mod l1_gas_limit_tests {
             }),
         };
 
+        // Transaction must be rejected during prepare_execution (called by execute)
         let mut vm = create_test_l2_vm(&env, &mut db, &tx, fee_config).unwrap();
-        let report = vm.execute().unwrap();
-
-        // Must revert
-        assert!(!report.is_success(), "Transaction must revert");
-        assert_eq!(report.gas_used, gas_limit, "Must consume all gas");
-
-        // L1 fee vault gets 0 because:
-        // l1_gas = gas_limit - actual_execution_gas = 21000 - 21000 = 0
-        // This is an edge case where sequencer absorbs DA cost
-        let l1_vault_balance = db.get_account(TEST_L1_FEE_VAULT).unwrap().info.balance;
-        assert_eq!(
-            l1_vault_balance,
-            U256::zero(),
-            "When gas_limit == intrinsic_gas, L1 vault gets 0 (no remaining gas for L1 fee)"
-        );
-
-        // Sender still pays full gas_limit
-        let sender_balance = db.get_account(TEST_SENDER).unwrap().info.balance;
-        let gas_cost = U256::from(gas_limit) * U256::from(max_fee_per_gas);
-        assert_eq!(
-            sender_balance,
-            initial_sender_balance - gas_cost,
-            "Sender must pay full gas_limit even when L1 vault gets 0"
+        let exec_result = vm.execute();
+        assert!(
+            exec_result.is_err(),
+            "Transaction MUST be rejected upfront when gas_limit == intrinsic_gas and L1 fee > 0"
         );
     }
 
@@ -304,6 +228,95 @@ mod l1_gas_limit_tests {
         assert!(
             l1_vault_balance > U256::zero(),
             "L1 fee vault should receive payment for DA costs"
+        );
+    }
+
+    /// Boundary test: gas_limit == intrinsic_gas + l1_gas exactly should succeed.
+    /// This verifies the validation uses <= (not <) for the boundary.
+    #[test]
+    fn test_l1_gas_limit_exactly_covers_intrinsic_plus_l1() {
+        use ethrex_levm::hooks::l2_hook::calculate_l1_fee;
+        use ethrex_rlp::encode::RLPEncode;
+
+        let base_fee = 1_000_000_000u64; // 1 gwei
+        let max_fee_per_gas = base_fee;
+        let max_priority_fee_per_gas = 0u64;
+        let l1_fee_per_blob_gas = 10u64;
+
+        // We need to compute l1_gas to set gas_limit = intrinsic + l1_gas exactly.
+        // First create a tx to measure its size, then compute l1_gas from that.
+        let tx = create_eip1559_tx(
+            TEST_RECIPIENT,
+            U256::zero(),
+            100_000, // placeholder gas_limit — doesn't affect tx size
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            0,
+        );
+
+        let tx_size = tx.length();
+        let l1_fee_config = L1FeeConfig {
+            l1_fee_vault: TEST_L1_FEE_VAULT,
+            l1_fee_per_blob_gas,
+        };
+        let l1_fee = calculate_l1_fee(&l1_fee_config, tx_size).unwrap();
+        let l1_gas: u64 = (l1_fee / U256::from(max_fee_per_gas)).try_into().unwrap();
+
+        // Round up: if l1_fee is not evenly divisible, calculate_l1_fee_gas rounds up to 1
+        let l1_gas = if l1_gas == 0 && l1_fee > U256::zero() {
+            1u64
+        } else {
+            l1_gas
+        };
+
+        let intrinsic_gas = 21_000u64;
+        let gas_limit = intrinsic_gas + l1_gas;
+
+        // Re-create tx with exact gas_limit (gas_limit in tx doesn't affect RLP size
+        // for EIP1559, but let's be precise)
+        let tx = create_eip1559_tx(
+            TEST_RECIPIENT,
+            U256::zero(),
+            gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            0,
+        );
+
+        let mut db = create_test_db_with_accounts(vec![
+            (TEST_SENDER, U256::from(DEFAULT_SENDER_BALANCE), 0),
+            (TEST_RECIPIENT, U256::zero(), 0),
+            (TEST_L1_FEE_VAULT, U256::zero(), 0),
+        ]);
+
+        let env = create_eip1559_env(
+            TEST_SENDER,
+            gas_limit,
+            U256::from(max_fee_per_gas),
+            U256::from(max_priority_fee_per_gas),
+            U256::from(base_fee),
+            false,
+        );
+
+        let fee_config = FeeConfig {
+            base_fee_vault: None,
+            operator_fee_config: None,
+            l1_fee_config: Some(l1_fee_config),
+        };
+
+        // VM creation should succeed — gas_limit exactly covers intrinsic + l1
+        let vm_result = create_test_l2_vm(&env, &mut db, &tx, fee_config);
+        assert!(
+            vm_result.is_ok(),
+            "Transaction with gas_limit == intrinsic + l1_gas should be accepted. Error: {:?}",
+            vm_result.err()
+        );
+
+        let mut vm = vm_result.unwrap();
+        let report = vm.execute().unwrap();
+        assert!(
+            report.is_success(),
+            "Transaction should succeed when gas_limit exactly covers intrinsic + l1_gas"
         );
     }
 }
