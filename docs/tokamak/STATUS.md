@@ -25,7 +25,7 @@
 
 ## Tier S Features
 
-### Feature #9: JIT-Compiled EVM (~70%)
+### Feature #9: JIT-Compiled EVM (~75%)
 
 **Completed:**
 - revmc/LLVM backend integration (Phases 2-8)
@@ -138,6 +138,7 @@ R23(5.0) -> R24(8.0)
 - JIT gas alignment (B-1) — Fixed negative SSTORE refund bug in `execution.rs`, added `gas_alignment.rs` with 11 tests (71f39d2d7)
 - Test quality improvements (B-2) — `test_helpers.rs`, `INTRINSIC_GAS` constant, 15+ test DRY refactors (224921e1f)
 - Benchmark statistics (C-3) — `stats.rs` module, warmup/stddev/95% CI support, `--warmup` CLI param (224921e1f)
+- EIP-7928 BAL recording (B-3) — BAL recording in host.rs sload/sstore JIT paths, 5 differential tests (2126e232b)
 
 ### CI Verified (PR #6260, run 22379067904)
 - Hive 6/6 suites PASS (tokamak-jit build) — RPC, Devp2p, Auth, Cancun, Paris, Withdrawals
@@ -158,7 +159,7 @@ R23(5.0) -> R24(8.0)
 - External node operator adoption
 
 ### In Progress
-- EIP-7928 BAL recording for JIT path (TODO comments only, blocked on B-1 ✅)
+- (none — Phase B and C complete, next: Phase D/E decisions or A-2 Hoodi sync)
 
 ---
 

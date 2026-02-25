@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24
-**Context**: Overall ~50% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅, B-3 remaining. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE.
+**Context**: Overall ~50% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE.
 
 ---
 
@@ -78,12 +78,15 @@
 - **Estimate**: 1-2h
 - **Completed**: Session 224921e1f — Created `test_helpers.rs`, added `INTRINSIC_GAS` constant, refactored 15+ duplicate test setups
 
-### B-3. EIP-7928 BAL Recording for JIT [P1]
-- 4 TODO comments exist in `host.rs` for BAL recording
-- Implement BAL recording in sload/sstore JIT paths
-- **Verification**: BAL entries match between JIT and interpreter execution
-- **Dependency**: B-1
+### B-3. EIP-7928 BAL Recording for JIT [P1] ✅ DONE
+- Removed 4 TODO comments from host.rs ✅
+- Implemented BAL recording in sload/sstore JIT paths (host.rs) ✅
+- sload: record_storage_read unconditionally (revmc pre-validates gas) ✅
+- sstore: implicit read + conditional write (skip no-op SSTORE) ✅
+- **Verification**: 5 differential tests passing (bal_recording.rs) — JIT BAL == interpreter BAL ✅
+- **Dependency**: B-1 ✅
 - **Estimate**: 4-8h
+- **Completed**: Session 2126e232b — BAL recording in host.rs, 5 differential tests (counter, sload-only, sstore-noop, sstore-change, multi-sstore)
 
 ---
 
@@ -220,7 +223,7 @@
 ```
 Week 1:  [P0] A-1 ✅ + A-2 ⏳ → A-3 ✅ → A-4 ✅ (Snapsync 수동 필요)
 Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
-Week 3:  [P1] C-1 ✅ + C-2 ✅ → B-3   ← CURRENT
+Week 3:  [P1] C-1 ✅ + C-2 ✅ + B-3 ✅
 Week 4:  [P2] D-1 decision + D-2 → E-1 start
 Week 5+: [P2] E-1 + E-2 → D-3 → E-3
 Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
