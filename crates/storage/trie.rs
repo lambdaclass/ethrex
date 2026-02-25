@@ -24,6 +24,8 @@ pub struct BackendTrieDB {
     /// Storage trie address prefix (for storage tries)
     /// None for state tries, Some(address) for storage tries
     address_prefix: Option<H256>,
+    /// True when FKV generation is complete. Avoids per-read nibble comparison.
+    fkv_complete: bool,
 }
 
 impl BackendTrieDB {
@@ -31,9 +33,10 @@ impl BackendTrieDB {
     pub fn new_for_accounts(
         db: Arc<dyn StorageBackend>,
         last_written: Vec<u8>,
+        fkv_complete: bool,
     ) -> Result<Self, StoreError> {
         let read_view = db.begin_read()?;
-        Self::new_for_accounts_with_view(db, read_view, last_written)
+        Self::new_for_accounts_with_view(db, read_view, last_written, fkv_complete)
     }
 
     /// Create a new BackendTrieDB for the account trie with a shared read view
@@ -41,6 +44,7 @@ impl BackendTrieDB {
         db: Arc<dyn StorageBackend>,
         read_view: Arc<dyn StorageReadView>,
         last_written: Vec<u8>,
+        fkv_complete: bool,
     ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
@@ -50,6 +54,7 @@ impl BackendTrieDB {
             nodes_table: ACCOUNT_TRIE_NODES,
             fkv_table: ACCOUNT_FLATKEYVALUE,
             address_prefix: None,
+            fkv_complete,
         })
     }
 
@@ -57,9 +62,10 @@ impl BackendTrieDB {
     pub fn new_for_storages(
         db: Arc<dyn StorageBackend>,
         last_written: Vec<u8>,
+        fkv_complete: bool,
     ) -> Result<Self, StoreError> {
         let read_view = db.begin_read()?;
-        Self::new_for_storages_with_view(db, read_view, last_written)
+        Self::new_for_storages_with_view(db, read_view, last_written, fkv_complete)
     }
 
     /// Create a new BackendTrieDB for the storage tries with a shared read view
@@ -67,6 +73,7 @@ impl BackendTrieDB {
         db: Arc<dyn StorageBackend>,
         read_view: Arc<dyn StorageReadView>,
         last_written: Vec<u8>,
+        fkv_complete: bool,
     ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
@@ -76,6 +83,7 @@ impl BackendTrieDB {
             nodes_table: STORAGE_TRIE_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: None,
+            fkv_complete,
         })
     }
 
@@ -84,9 +92,16 @@ impl BackendTrieDB {
         db: Arc<dyn StorageBackend>,
         address_prefix: H256,
         last_written: Vec<u8>,
+        fkv_complete: bool,
     ) -> Result<Self, StoreError> {
         let read_view = db.begin_read()?;
-        Self::new_for_account_storage_with_view(db, read_view, address_prefix, last_written)
+        Self::new_for_account_storage_with_view(
+            db,
+            read_view,
+            address_prefix,
+            last_written,
+            fkv_complete,
+        )
     }
 
     /// Create a new BackendTrieDB for a specific storage trie with a shared read view
@@ -95,6 +110,7 @@ impl BackendTrieDB {
         read_view: Arc<dyn StorageReadView>,
         address_prefix: H256,
         last_written: Vec<u8>,
+        fkv_complete: bool,
     ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
@@ -104,6 +120,7 @@ impl BackendTrieDB {
             nodes_table: STORAGE_TRIE_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: Some(address_prefix),
+            fkv_complete,
         })
     }
 
@@ -124,6 +141,9 @@ impl BackendTrieDB {
 
 impl TrieDB for BackendTrieDB {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        if self.fkv_complete {
+            return true;
+        }
         let key = apply_prefix(self.address_prefix, key);
         self.last_computed_flatkeyvalue >= key
     }
@@ -159,10 +179,16 @@ pub struct BackendTrieDBLocked {
     storage_fkv_tx: Box<dyn StorageLockedView>,
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
+    /// True when FKV generation is complete. Avoids per-read nibble comparison.
+    fkv_complete: bool,
 }
 
 impl BackendTrieDBLocked {
-    pub fn new(engine: &dyn StorageBackend, last_written: Vec<u8>) -> Result<Self, StoreError> {
+    pub fn new(
+        engine: &dyn StorageBackend,
+        last_written: Vec<u8>,
+        fkv_complete: bool,
+    ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         let account_trie_tx = engine.begin_locked(ACCOUNT_TRIE_NODES)?;
         let storage_trie_tx = engine.begin_locked(STORAGE_TRIE_NODES)?;
@@ -174,6 +200,7 @@ impl BackendTrieDBLocked {
             account_fkv_tx,
             storage_fkv_tx,
             last_computed_flatkeyvalue,
+            fkv_complete,
         })
     }
 
@@ -197,6 +224,9 @@ impl BackendTrieDBLocked {
 
 impl TrieDB for BackendTrieDBLocked {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        if self.fkv_complete {
+            return true;
+        }
         self.last_computed_flatkeyvalue >= key
     }
 

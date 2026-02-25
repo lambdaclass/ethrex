@@ -48,6 +48,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, RwLock,
+        atomic::{AtomicBool, Ordering},
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
@@ -172,6 +173,9 @@ pub struct Store {
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
+    /// True when FKV generation is complete (last_written == [0xff]).
+    /// Once set to true, never goes back to false.
+    fkv_complete: Arc<AtomicBool>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
@@ -1437,17 +1441,18 @@ impl Store {
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
 
-        let last_written = {
+        let (last_written, is_fkv_complete) = {
             let tx = backend.begin_read()?;
             let last_written = tx
                 .get(MISC_VALUES, "last_written".as_bytes())?
                 .unwrap_or_else(|| vec![0u8; 64]);
             if last_written == [0xff] {
-                vec![0xff; 64]
+                (vec![0xff; 64], true)
             } else {
-                last_written
+                (last_written, false)
             }
         };
+        let fkv_complete = Arc::new(AtomicBool::new(is_fkv_complete));
         let mut background_threads = Vec::new();
         let mut store = Self {
             db_path,
@@ -1458,12 +1463,14 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
+            fkv_complete,
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
+        let fkv_complete_clone = store.fkv_complete.clone();
         background_threads.push(std::thread::spawn(move || {
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
@@ -1478,8 +1485,13 @@ impl Store {
                 }
             }
 
-            let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
-                .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
+            let _ = flatkeyvalue_generator(
+                &backend_clone,
+                &last_computed_fkv,
+                &fkv_complete_clone,
+                &rx,
+            )
+            .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
         }));
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
@@ -2094,7 +2106,8 @@ impl Store {
             .map_err(|_| StoreError::LockError)?
             .clone();
         let last_written = self.last_written()?;
-        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+        let use_fkv = self.fkv_is_complete()
+            || Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
 
         let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
@@ -2454,6 +2467,7 @@ impl Store {
             Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
+                self.fkv_is_complete(),
             )?),
             None,
         );
@@ -2468,6 +2482,7 @@ impl Store {
             Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
+                self.fkv_is_complete(),
             )?),
             state_root,
         ))
@@ -2486,6 +2501,7 @@ impl Store {
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
+                self.fkv_is_complete(),
             )?),
             None,
         );
@@ -2509,6 +2525,7 @@ impl Store {
             Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
+                self.fkv_is_complete(),
             )?),
             Some(account_hash),
         );
@@ -2532,6 +2549,7 @@ impl Store {
                 self.backend.clone(),
                 read_view,
                 last_written,
+                self.fkv_is_complete(),
             )?),
             None,
         );
@@ -2555,6 +2573,7 @@ impl Store {
                 self.backend.clone(),
                 read_view,
                 last_written,
+                self.fkv_is_complete(),
             )?),
             Some(account_hash),
         );
@@ -2573,6 +2592,7 @@ impl Store {
                 self.backend.clone(),
                 account_hash,
                 self.last_written()?,
+                self.fkv_is_complete(),
             )?),
             storage_root,
         ))
@@ -2595,6 +2615,7 @@ impl Store {
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
+                self.fkv_is_complete(),
             )?),
             Some(account_hash),
         );
@@ -2713,6 +2734,10 @@ impl Store {
             .read()
             .map_err(|_| StoreError::LockError)?;
         Ok(last_computed_flatkeyvalue.clone())
+    }
+
+    fn fkv_is_complete(&self) -> bool {
+        self.fkv_complete.load(Ordering::Acquire)
     }
 
     fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
@@ -2839,6 +2864,7 @@ fn apply_trie_updates(
 fn flatkeyvalue_generator(
     backend: &Arc<dyn StorageBackend>,
     last_computed_fkv: &RwLock<Vec<u8>>,
+    fkv_complete: &AtomicBool,
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     info!("Generation of FlatKeyValue started.");
@@ -2888,6 +2914,7 @@ fn flatkeyvalue_generator(
                 backend.clone(),
                 read_tx.clone(),
                 last_written.clone(),
+                false,
             )?),
             state_root,
         )
@@ -2919,6 +2946,7 @@ fn flatkeyvalue_generator(
                     read_tx.clone(),
                     account_hash,
                     path.as_ref().to_vec(),
+                    false,
                 )?),
                 account_state.storage_root,
             )
@@ -2970,6 +2998,7 @@ fn flatkeyvalue_generator(
                 *last_computed_fkv
                     .write()
                     .map_err(|_| StoreError::LockError)? = vec![0xff; 131];
+                fkv_complete.store(true, Ordering::Release);
                 info!("FlatKeyValue generation finished.");
                 return Ok(());
             }
@@ -2997,9 +3026,10 @@ fn fkv_check_for_stop_msg(
 fn state_trie_locked_backend(
     backend: &dyn StorageBackend,
     last_written: Vec<u8>,
+    fkv_complete: bool,
 ) -> Result<BackendTrieDBLocked, StoreError> {
     // No address prefix for state trie
-    BackendTrieDBLocked::new(backend, last_written)
+    BackendTrieDBLocked::new(backend, last_written, fkv_complete)
 }
 
 pub struct AccountProof {
