@@ -4,7 +4,9 @@ use ethrex_common::{
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
 use ethrex_crypto::keccak::keccak_hash;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
+use ethrex_trie::{Nibbles, Trie};
 use ethrex_vm::{EvmError, VmDatabase};
 use rustc_hash::FxHashMap;
 use std::{
@@ -21,6 +23,7 @@ struct AccountStateCacheEntry {
 }
 
 type AccountStateCache = FxHashMap<Address, Option<AccountStateCacheEntry>>;
+type StorageTrieCache = FxHashMap<Address, Arc<Trie>>;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
@@ -34,6 +37,9 @@ pub struct StoreVmDatabase {
     /// This avoids repeated state-trie account decodes when reading many slots
     /// from the same account during execution.
     account_state_cache: Arc<RwLock<AccountStateCache>>,
+    /// Opened per-account storage tries for pre-state reads.
+    /// This avoids reopening and re-decoding the same trie roots on repeated misses.
+    storage_trie_cache: Arc<RwLock<StorageTrieCache>>,
     pub state_root: H256,
 }
 
@@ -54,6 +60,7 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
+            storage_trie_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
         })
     }
@@ -75,6 +82,7 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
+            storage_trie_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
         })
     }
@@ -107,6 +115,48 @@ impl StoreVmDatabase {
             .insert(address, cached);
         Ok(cached)
     }
+
+    fn get_cached_storage_trie(
+        &self,
+        address: Address,
+        entry: &AccountStateCacheEntry,
+    ) -> Result<Arc<Trie>, EvmError> {
+        if let Some(trie) = self
+            .storage_trie_cache
+            .read()
+            .map_err(|_| EvmError::Custom("LockError".to_string()))?
+            .get(&address)
+            .cloned()
+        {
+            return Ok(trie);
+        }
+
+        let mut trie = self
+            .store
+            .open_storage_trie(entry.hashed_address, self.state_root, entry.state.storage_root)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        // Keep root node decoded in-memory for this trie handle to avoid repeating
+        // the first decode step on every slot lookup of the same account.
+        if trie.root.is_valid()
+            && let Some(root_node) = trie
+                .root
+                .get_node(trie.db(), Nibbles::default())
+                .map_err(|e| EvmError::DB(e.to_string()))?
+        {
+            trie.root = root_node.into();
+        }
+
+        let trie = Arc::new(trie);
+        let mut write_guard = self
+            .storage_trie_cache
+            .write()
+            .map_err(|_| EvmError::Custom("LockError".to_string()))?;
+        Ok(write_guard
+            .entry(address)
+            .or_insert_with(|| trie.clone())
+            .clone())
+    }
 }
 
 impl VmDatabase for StoreVmDatabase {
@@ -132,14 +182,12 @@ impl VmDatabase for StoreVmDatabase {
         let Some(entry) = self.get_cached_account_state_entry(address)? else {
             return Ok(None);
         };
-        self.store
-            .get_storage_at_root_with_known_storage_root(
-                self.state_root,
-                entry.hashed_address,
-                entry.state.storage_root,
-                key,
-            )
-            .map_err(|e| EvmError::DB(e.to_string()))
+        let trie = self.get_cached_storage_trie(address, &entry)?;
+        let hashed_key = keccak_hash(key.to_fixed_bytes());
+        trie.get(&hashed_key)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+            .map(|rlp| U256::decode(&rlp).map_err(|e| EvmError::DB(e.to_string())))
+            .transpose()
     }
 
     #[instrument(
