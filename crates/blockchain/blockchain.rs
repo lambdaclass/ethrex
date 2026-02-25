@@ -2562,31 +2562,100 @@ fn handle_subtrie(
     // Held until CollectStorages to keep cross-worker channels open.
     let mut worker_senders: Option<Vec<Sender<WorkerRequest>>> = Some(worker_senders);
     let mut dirty = false;
+    // Storage collection state: when active, we finalize one trie per loop
+    // iteration, interleaving with incoming shard messages to restore pipelining.
+    let mut collecting_storages = false;
+    let mut storage_to_collect: Vec<(H256, Trie)> = vec![];
+    let mut storage_collect_start = Instant::now();
+    let mut n_storage_accounts: usize = 0;
 
     loop {
-        // When dirty, poll non-blocking so we can pre-collect during idle.
-        // When clean, just block — nothing to do until a message arrives.
-        let msg = if dirty {
+        // When collecting storages, finalize one trie per iteration so that
+        // incoming StorageShard messages can be processed in between.
+        if collecting_storages {
+            if let Some((prefix, trie)) = storage_to_collect.pop() {
+                let senders = worker_senders
+                    .as_ref()
+                    .expect("collecting after senders dropped");
+                let (root, mut nodes) = collect_trie(index, trie)?;
+                if let Some(mut pre_nodes) = pre_collected_storage.remove(&prefix) {
+                    pre_nodes.extend(nodes);
+                    nodes = pre_nodes;
+                }
+                let bucket = prefix.as_fixed_bytes()[0] >> 4;
+                senders[bucket as usize]
+                    .send(WorkerRequest::StorageShard {
+                        prefix,
+                        index,
+                        subroot: root,
+                        nodes,
+                    })
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            } else {
+                // All storage tries finalized
+                info!(
+                    "  worker[{index}]: storage_collect={:.1}ms accounts={} pre_collected={}",
+                    storage_collect_start.elapsed().as_secs_f64() * 1000.0,
+                    n_storage_accounts,
+                    n_pre_collected_storage,
+                );
+                worker_senders = None;
+                collecting_storages = false;
+                // Check if deferred collect can resolve now
+                if pending_storage_accounts == 0 {
+                    if let Some(tx) = pending_collect_tx.take() {
+                        let t0 = Instant::now();
+                        let (subroot, mut state_nodes) =
+                            collect_trie(index, std::mem::take(&mut state_trie))?;
+                        if !pre_collected_state.is_empty() {
+                            let mut pre = std::mem::take(&mut pre_collected_state);
+                            pre.extend(state_nodes);
+                            state_nodes = pre;
+                        }
+                        tx.send(CollectedStateMsg {
+                            index,
+                            subroot,
+                            state_nodes,
+                            storage_nodes: std::mem::take(&mut storage_nodes),
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        info!(
+                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
+                            t_process.as_secs_f64() * 1000.0,
+                            t_shard.as_secs_f64() * 1000.0,
+                            t0.elapsed().as_secs_f64() * 1000.0,
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+
+        // When collecting or dirty, poll non-blocking so we can interleave.
+        // When clean and not collecting, just block.
+        let msg = if collecting_storages || dirty {
             match rx.try_recv() {
                 Ok(msg) => msg,
                 Err(_) => {
-                    // Pre-collect state trie
-                    let mut nodes = state_trie.commit_without_storing();
-                    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-                    pre_collected_state.extend(nodes);
-                    // Pre-collect storage tries
-                    for (prefix, trie) in storage_tries.iter_mut() {
-                        let mut nodes = trie.commit_without_storing();
+                    if dirty && !collecting_storages {
+                        // Pre-collect state trie
+                        let mut nodes = state_trie.commit_without_storing();
                         nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-                        if !nodes.is_empty() {
-                            pre_collected_storage
-                                .entry(*prefix)
-                                .or_default()
-                                .extend(nodes);
-                            n_pre_collected_storage += 1;
+                        pre_collected_state.extend(nodes);
+                        // Pre-collect storage tries
+                        for (prefix, trie) in storage_tries.iter_mut() {
+                            let mut nodes = trie.commit_without_storing();
+                            nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+                            if !nodes.is_empty() {
+                                pre_collected_storage
+                                    .entry(*prefix)
+                                    .or_default()
+                                    .extend(nodes);
+                                n_pre_collected_storage += 1;
+                            }
                         }
+                        dirty = false;
                     }
-                    dirty = false;
                     continue;
                 }
             }
@@ -2743,38 +2812,12 @@ fn handle_subtrie(
                 }
             }
             WorkerRequest::CollectStorages => {
-                // Finalize all storage tries and send shards to account-bucket workers
-                let senders = worker_senders
-                    .as_ref()
-                    .expect("CollectStorages after senders dropped");
-                let t0 = Instant::now();
-                let n_accounts = storage_tries.len();
-                for (prefix, trie) in storage_tries.drain() {
-                    let (root, mut nodes) = collect_trie(index, trie)?;
-                    // Pre-collected nodes first, delta nodes after
-                    if let Some(mut pre_nodes) = pre_collected_storage.remove(&prefix) {
-                        pre_nodes.extend(nodes);
-                        nodes = pre_nodes;
-                    }
-                    let bucket = prefix.as_fixed_bytes()[0] >> 4;
-                    senders[bucket as usize]
-                        .send(WorkerRequest::StorageShard {
-                            prefix,
-                            index,
-                            subroot: root,
-                            nodes,
-                        })
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                }
-                info!(
-                    "  worker[{index}]: storage_collect={:.1}ms accounts={} pre_collected={}",
-                    t0.elapsed().as_secs_f64() * 1000.0,
-                    n_accounts,
-                    n_pre_collected_storage,
-                );
-                // Drop senders now — no more cross-worker messages needed.
-                worker_senders = None;
-                // Continue processing StorageShard/CollectState messages.
+                // Drain storage tries into a vec; the loop top finalizes one per
+                // iteration, interleaving with incoming StorageShard messages.
+                collecting_storages = true;
+                storage_collect_start = Instant::now();
+                n_storage_accounts = storage_tries.len();
+                storage_to_collect = storage_tries.drain().collect();
             }
             WorkerRequest::StorageShard {
                 prefix,
@@ -2830,6 +2873,7 @@ fn handle_subtrie(
                     dirty = true;
                     pending_storage_accounts -= 1;
                     if pending_storage_accounts == 0
+                        && !collecting_storages
                         && let Some(tx) = pending_collect_tx.take()
                     {
                         t_shard += t0.elapsed();
@@ -2860,8 +2904,8 @@ fn handle_subtrie(
                 t_shard += t0.elapsed();
             }
             WorkerRequest::CollectState { tx } => {
-                if pending_storage_accounts == 0 {
-                    // All storage accounts already resolved — respond immediately
+                if pending_storage_accounts == 0 && !collecting_storages {
+                    // All storage accounts resolved and collection done — respond immediately
                     let t0 = Instant::now();
                     let (subroot, mut state_nodes) =
                         collect_trie(index, std::mem::take(&mut state_trie))?;
