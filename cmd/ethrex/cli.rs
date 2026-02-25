@@ -151,6 +151,14 @@ pub struct Options {
     )]
     pub log_color: LogColor,
     #[arg(
+        long = "no-migrate",
+        action = ArgAction::SetTrue,
+        help = "Do not migrate an existing database to the network-specific subdirectory.",
+        help_heading = "Node options",
+        env = "ETHREX_NO_MIGRATE"
+    )]
+    pub no_migrate: bool,
+    #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
         help = "Directory to store log files.",
@@ -430,6 +438,7 @@ impl Default for Options {
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            no_migrate: false,
         }
     }
 }
@@ -544,16 +553,17 @@ impl Subcommand {
         let network = get_network(opts);
         let effective_datadir = compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
-        // For subcommands that use the store, offer migration from the old
+        // For subcommands that use the store, migrate from the old
         // unsuffixed datadir layout if applicable.
         match &self {
             Subcommand::Import { .. }
             | Subcommand::ImportBench { .. }
             | Subcommand::Export { .. } => {
-                crate::initializers::check_and_offer_migration(
+                crate::initializers::migrate_datadir_if_needed(
                     &opts.datadir,
                     &effective_datadir,
                     &network,
+                    opts.no_migrate,
                 );
             }
             _ => {}

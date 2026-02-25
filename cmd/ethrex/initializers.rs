@@ -441,7 +441,7 @@ pub async fn init_l1(
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
-    check_and_offer_migration(&opts.datadir, &datadir, &network);
+    migrate_datadir_if_needed(&opts.datadir, &datadir, &network, opts.no_migrate);
 
     if !is_memory_datadir(&datadir) {
         init_datadir(&datadir);
@@ -560,15 +560,21 @@ pub async fn init_l1(
     ))
 }
 
-/// Checks if data from a pre-suffix datadir layout can be migrated to the
-/// new network-specific subdirectory. If so, prompts the user interactively.
+/// Migrates data from a pre-suffix datadir layout to the new network-specific
+/// subdirectory. Migration happens automatically unless `--no-migrate` is set.
 ///
-/// Migration is only offered when ALL of the following hold:
+/// Migration is performed when ALL of the following hold:
 /// - `base_datadir != network_datadir` (a suffix was applied)
 /// - The network-specific dir does not already contain a valid DB
 /// - The base dir contains a valid DB with a matching chain ID
 /// - No other network subdirectories exist in the base dir
-pub fn check_and_offer_migration(base_datadir: &Path, network_datadir: &Path, network: &Network) {
+/// - `no_migrate` is `false`
+pub fn migrate_datadir_if_needed(
+    base_datadir: &Path,
+    network_datadir: &Path,
+    network: &Network,
+    no_migrate: bool,
+) {
     // No suffix applied — nothing to migrate.
     if base_datadir == network_datadir {
         return;
@@ -608,22 +614,17 @@ pub fn check_and_offer_migration(base_datadir: &Path, network_datadir: &Path, ne
         return;
     }
 
-    // All checks passed — prompt the user.
-    info!("Found existing database at {base_datadir:?} that can be moved to {network_datadir:?}.");
-    print!("Move existing database to the new network-specific directory? (y/n): ");
-    use std::io::Write;
-    if std::io::stdout().flush().is_err() {
-        warn!("Cannot flush stdout. Skipping migration.");
+    if no_migrate {
+        info!(
+            "Existing database at {base_datadir:?} can be migrated to {network_datadir:?}. \
+             Skipping because --no-migrate is set."
+        );
         return;
     }
 
-    let mut input = String::new();
-    if std::io::stdin().read_line(&mut input).is_err() {
-        warn!("Cannot read from stdin. Skipping migration.");
-        return;
-    }
-
-    if input.trim().eq_ignore_ascii_case("y") {
+    // All checks passed — migrate automatically.
+    info!("Migrating existing database from {base_datadir:?} to {network_datadir:?}.");
+    {
         if let Err(e) = std::fs::create_dir_all(network_datadir) {
             warn!("Failed to create {network_datadir:?}: {e}");
             return;
@@ -677,8 +678,6 @@ pub fn check_and_offer_migration(base_datadir: &Path, network_datadir: &Path, ne
             }
         }
         info!("Database migrated to {network_datadir:?}.");
-    } else {
-        info!("Migration skipped. A fresh database will be created.");
     }
 }
 
