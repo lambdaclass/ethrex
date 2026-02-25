@@ -2,14 +2,14 @@ use std::fs;
 use std::process;
 
 use clap::{Parser, Subcommand};
+#[cfg(feature = "jit-bench")]
+use tokamak_bench::report::{jit_suite_to_json, jit_to_markdown};
 use tokamak_bench::{
     regression::compare,
     report::{from_json, regression_to_json, to_json, to_markdown},
     runner::{Scenario, default_scenarios, run_suite},
     types::Thresholds,
 };
-#[cfg(feature = "jit-bench")]
-use tokamak_bench::report::{jit_suite_to_json, jit_to_markdown};
 
 #[derive(Parser)]
 #[command(name = "tokamak-bench", about = "Tokamak EVM benchmark runner")]
@@ -222,8 +222,7 @@ fn main() {
                 process::exit(1);
             }
 
-            let suite =
-                tokamak_bench::jit_bench::run_jit_suite(&scenario_list, runs, &commit);
+            let suite = tokamak_bench::jit_bench::run_jit_suite(&scenario_list, runs, &commit);
 
             let content = if markdown {
                 jit_to_markdown(&suite)

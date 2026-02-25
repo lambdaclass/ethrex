@@ -176,11 +176,7 @@ pub fn run_jit_scenario(
 /// Iterates all scenarios, measuring both interpreter and JIT execution times.
 /// Scenarios that fail JIT compilation are skipped with a message.
 #[cfg(feature = "jit-bench")]
-pub fn run_jit_suite(
-    scenarios: &[runner::Scenario],
-    runs: u64,
-    commit: &str,
-) -> JitBenchSuite {
+pub fn run_jit_suite(scenarios: &[runner::Scenario], runs: u64, commit: &str) -> JitBenchSuite {
     let mut results = Vec::new();
 
     for scenario in scenarios {
@@ -196,8 +192,7 @@ pub fn run_jit_suite(
             "Running JIT benchmark: {} ({} runs)...",
             scenario.name, runs
         );
-        if let Some(result) =
-            run_jit_scenario(scenario.name, &bytecode, runs, scenario.iterations)
+        if let Some(result) = run_jit_scenario(scenario.name, &bytecode, runs, scenario.iterations)
         {
             results.push(result);
         }
@@ -235,8 +230,7 @@ mod tests {
             runs: 100,
         };
         let json = serde_json::to_string(&result).expect("serialize");
-        let deserialized: JitBenchResult =
-            serde_json::from_str(&json).expect("deserialize");
+        let deserialized: JitBenchResult = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(deserialized.scenario, "Fibonacci");
         assert_eq!(deserialized.speedup, Some(5.0));
     }
@@ -268,8 +262,7 @@ mod tests {
             }],
         };
         let json = serde_json::to_string_pretty(&suite).expect("serialize");
-        let deserialized: JitBenchSuite =
-            serde_json::from_str(&json).expect("deserialize");
+        let deserialized: JitBenchSuite = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(deserialized.commit, "abc123");
         assert_eq!(deserialized.results.len(), 1);
         assert_eq!(deserialized.results[0].scenario, "Fibonacci");

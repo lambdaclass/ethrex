@@ -249,15 +249,19 @@ jobs:
       - name: Record baseline
         if: ${{ always() }}
         shell: bash
+        env:
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          HIVE_RESULT: ${{ needs.run-hive.result }}
         run: |
           {
             echo "### Tokamak Hive Baseline"
             echo ""
             echo "| Field | Value |"
             echo "|-------|-------|"
-            echo "| Branch | \`${{ github.head_ref || github.ref_name }}\` |"
-            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Branch | \`${BRANCH_NAME}\` |"
+            echo "| Commit | \`${COMMIT_SHA}\` |"
             echo "| Features | \`tokamak-jit\` |"
             echo "| Date | $(date -u +%Y-%m-%dT%H:%M:%SZ) |"
-            echo "| Result | ${{ needs.run-hive.result }} |"
+            echo "| Result | ${HIVE_RESULT} |"
           } >> "${GITHUB_STEP_SUMMARY}"
