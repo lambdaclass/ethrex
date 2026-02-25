@@ -29,9 +29,11 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
+use rustc_hash::FxHashMap;
 use sha2::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
+use std::sync::RwLock;
 
 use crate::constants::{P256_A, P256_B, P256_N};
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
@@ -287,12 +289,50 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
+/// Per-block cache for precompile results shared between warmer and executor.
+pub struct PrecompileCache {
+    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+}
+
+impl Default for PrecompileCache {
+    fn default() -> Self {
+        Self {
+            cache: RwLock::new(FxHashMap::default()),
+        }
+    }
+}
+
+impl PrecompileCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
+        // Graceful degradation: if the lock is poisoned (a thread panicked while
+        // holding it), skip the cache rather than propagating the panic. The cache
+        // is a pure optimization — missing it only costs a recomputation.
+        self.cache
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&(*address, calldata.clone()))
+            .cloned()
+    }
+
+    pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
+        self.cache
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((address, calldata), (output, gas_cost));
+    }
+}
+
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
 pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
     gas_remaining: &mut u64,
     fork: Fork,
+    cache: Option<&PrecompileCache>,
 ) -> Result<Bytes, VMError> {
     type PrecompileFn = fn(&Bytes, &mut u64, Fork) -> Result<Bytes, VMError>;
 
@@ -336,9 +376,18 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
+    // Check cache (skip identity -- copy is cheaper than lookup)
+    if address != IDENTITY.address
+        && let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata))
+    {
+        increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+        return Ok(output);
+    }
+
     #[cfg(feature = "perf_opcode_timings")]
     let precompile_time_start = std::time::Instant::now();
 
+    let gas_before = *gas_remaining;
     let result = precompile(calldata, gas_remaining, fork);
 
     #[cfg(feature = "perf_opcode_timings")]
@@ -347,6 +396,15 @@ pub fn execute_precompile(
         #[allow(clippy::expect_used)]
         let mut timings = crate::timings::PRECOMPILES_TIMINGS.lock().expect("poison");
         timings.update(address, time);
+    }
+
+    // Cache result on success (skip identity)
+    if address != IDENTITY.address
+        && let Some(cache) = cache
+        && let Ok(output) = &result
+    {
+        let gas_cost = gas_before.saturating_sub(*gas_remaining);
+        cache.insert(address, calldata.clone(), output.clone(), gas_cost);
     }
 
     result

@@ -19,6 +19,7 @@ pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
 
 impl<'a> VM<'a> {
     // POP operation
+    #[inline]
     pub fn op_pop(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::POP)?;
@@ -80,6 +81,7 @@ impl<'a> VM<'a> {
     }
 
     // MSTORE operation
+    #[inline]
     pub fn op_mstore(&mut self) -> Result<OpcodeResult, VMError> {
         let [offset, value] = *self.current_call_frame.stack.pop()?;
 
@@ -127,6 +129,7 @@ impl<'a> VM<'a> {
     }
 
     // SLOAD operation
+    #[inline]
     pub fn op_sload(&mut self) -> Result<OpcodeResult, VMError> {
         let (storage_slot_key, address) = {
             let current_call_frame = &mut self.current_call_frame;

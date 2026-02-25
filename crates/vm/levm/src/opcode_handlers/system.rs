@@ -261,6 +261,7 @@ impl<'a> VM<'a> {
     }
 
     // RETURN operation
+    #[inline]
     pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [offset, size] = *current_call_frame.stack.pop()?;
@@ -980,6 +981,7 @@ impl<'a> VM<'a> {
                 gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.db.store.precompile_cache(),
             )?;
 
             let call_frame = &mut self.current_call_frame;
