@@ -26,14 +26,28 @@ pub async fn start_prover(config: ProverConfig) {
             // CudaProver builder internally calls block_on(), which panics inside a tokio
             // runtime. Spawn initialization on a separate OS thread to avoid this.
             #[cfg(feature = "gpu")]
-            PROVER_SETUP.get_or_init(|| {
+            {
                 let endpoint = config.sp1_server.clone();
-                std::thread::spawn(move || init_prover_setup(endpoint))
+                let setup = std::thread::spawn(move || init_prover_setup(endpoint))
                     .join()
-                    .expect("Failed to initialize SP1 prover setup")
-            });
+                    .unwrap_or_else(|e| {
+                        tracing::error!("SP1 setup thread panicked: {e:?}");
+                        std::process::exit(1);
+                    })
+                    .unwrap_or_else(|e| {
+                        tracing::error!("Failed to initialize SP1 prover setup: {e}");
+                        std::process::exit(1);
+                    });
+                PROVER_SETUP.get_or_init(|| setup);
+            }
             #[cfg(not(feature = "gpu"))]
-            PROVER_SETUP.get_or_init(|| init_prover_setup(None));
+            {
+                let setup = init_prover_setup(None).unwrap_or_else(|e| {
+                    tracing::error!("Failed to initialize SP1 prover setup: {e}");
+                    std::process::exit(1);
+                });
+                PROVER_SETUP.get_or_init(|| setup);
+            }
             let prover = Prover::new(Sp1Backend::new(), &config);
             prover.start().await;
         }

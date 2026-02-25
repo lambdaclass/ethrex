@@ -45,17 +45,17 @@ pub static PROVER_SETUP: OnceLock<ProverSetup> = OnceLock::new();
 /// instead, which handles this by spawning initialization on a separate OS thread.
 ///
 /// `CpuProver::new()` does not have this limitation and can be called from any context.
-pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
+pub fn init_prover_setup(_endpoint: Option<Url>) -> Result<ProverSetup, String> {
     #[cfg(not(feature = "gpu"))]
     let client = CpuProver::new();
     #[cfg(feature = "gpu")]
     let client = sp1_sdk::blocking::ProverClient::builder().cuda().build();
 
     let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
-    let pk = client.setup(elf).expect("Failed to setup SP1 prover");
+    let pk = client.setup(elf).map_err(|e| format!("Failed to setup SP1 prover: {e}"))?;
     let vk = pk.verifying_key().clone();
 
-    ProverSetup { client, pk, vk }
+    Ok(ProverSetup { client, pk, vk })
 }
 
 /// SP1-specific proof output containing the proof and verifying key.
@@ -100,12 +100,15 @@ impl Sp1Backend {
     /// fresh thread avoids this since that thread has no associated runtime.
     ///
     /// This only runs once thanks to `OnceLock` — subsequent calls return the cached setup.
-    fn get_setup(&self) -> &ProverSetup {
-        PROVER_SETUP.get_or_init(|| {
-            std::thread::spawn(|| init_prover_setup(None))
-                .join()
-                .expect("Failed to initialize prover setup")
-        })
+    fn get_setup(&self) -> Result<&ProverSetup, BackendError> {
+        if let Some(setup) = PROVER_SETUP.get() {
+            return Ok(setup);
+        }
+        let setup = std::thread::spawn(|| init_prover_setup(None))
+            .join()
+            .map_err(|e| BackendError::initialization(format!("SP1 setup thread panicked: {e:?}")))?
+            .map_err(BackendError::initialization)?;
+        Ok(PROVER_SETUP.get_or_init(|| setup))
     }
 
     fn convert_format(format: ProofFormat) -> SP1ProofMode {
@@ -130,7 +133,7 @@ impl Sp1Backend {
     /// which panics inside a tokio runtime. `std::thread::scope` lets us borrow `setup`
     /// safely across the thread boundary.
     fn execute_with_stdin(&self, stdin: &SP1Stdin) -> Result<(), BackendError> {
-        let setup = self.get_setup();
+        let setup = self.get_setup()?;
         let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
         let stdin = stdin.clone();
         std::thread::scope(|s| {
@@ -142,7 +145,7 @@ impl Sp1Backend {
                     .map_err(BackendError::execution)
             })
             .join()
-            .expect("SP1 execute thread panicked")
+            .map_err(|e| BackendError::execution(format!("SP1 execute thread panicked: {e:?}")))?
         })?;
         Ok(())
     }
@@ -156,7 +159,7 @@ impl Sp1Backend {
         stdin: &SP1Stdin,
         format: ProofFormat,
     ) -> Result<Sp1ProveOutput, BackendError> {
-        let setup = self.get_setup();
+        let setup = self.get_setup()?;
         let sp1_format = Self::convert_format(format);
         let stdin = stdin.clone();
         let proof = std::thread::scope(|s| {
@@ -169,7 +172,7 @@ impl Sp1Backend {
                     .map_err(BackendError::proving)
             })
             .join()
-            .expect("SP1 prove thread panicked")
+            .map_err(|e| BackendError::proving(format!("SP1 prove thread panicked: {e:?}")))?
         })?;
         Ok(Sp1ProveOutput::new(proof, setup.vk.clone()))
     }
@@ -205,7 +208,7 @@ impl ProverBackend for Sp1Backend {
     }
 
     fn verify(&self, proof: &Self::ProofOutput) -> Result<(), BackendError> {
-        let setup = self.get_setup();
+        let setup = self.get_setup()?;
         std::thread::scope(|s| {
             s.spawn(|| {
                 setup
@@ -214,7 +217,7 @@ impl ProverBackend for Sp1Backend {
                     .map_err(BackendError::verification)
             })
             .join()
-            .expect("SP1 verify thread panicked")
+            .map_err(|e| BackendError::verification(format!("SP1 verify thread panicked: {e:?}")))?
         })?;
         Ok(())
     }
