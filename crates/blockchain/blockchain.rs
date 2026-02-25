@@ -705,19 +705,9 @@ impl Blockchain {
 
         let collapsed = self.collapse_root_node(parent_header, None, root)?;
         let state_trie_hash = if let Some(root) = collapsed {
-            let t0 = Instant::now();
             let mut root = NodeRef::from(root);
             let hash = root.commit(Nibbles::default(), &mut state_updates);
-            let t1 = Instant::now();
-            let result = hash.finalize();
-            let t2 = Instant::now();
-            info!(
-                "  root detail: commit={}us finalize={}us updates={}",
-                t1.duration_since(t0).as_micros(),
-                t2.duration_since(t1).as_micros(),
-                state_updates.len(),
-            );
-            result
+            hash.finalize()
         } else {
             state_updates.push((Nibbles::default(), vec![RLP_NULL]));
             *EMPTY_TRIE_HASH
