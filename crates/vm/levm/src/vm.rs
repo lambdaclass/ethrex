@@ -173,11 +173,15 @@ impl Substate {
 
     /// Mark an address as selfdestructed and return whether is was already marked.
     pub fn add_selfdestruct(&mut self, address: Address) -> bool {
+        if self.selfdestruct_set.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_selfdestruct(&address))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present || !self.selfdestruct_set.insert(address)
     }
@@ -222,11 +226,21 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
+        // Check self first — short-circuits for re-accessed (warm) slots
+        if self
+            .accessed_storage_slots
+            .get(&address)
+            .map(|set| set.contains(&key))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present
             || !self
@@ -270,11 +284,16 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
+        // Check self first — short-circuits for re-accessed (warm) addresses
+        if self.accessed_addresses.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present || !self.accessed_addresses.insert(address)
     }
@@ -291,11 +310,15 @@ impl Substate {
 
     /// Mark an address as a new account and return whether is was already marked.
     pub fn add_created_account(&mut self, address: Address) -> bool {
+        if self.created_accounts.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_account_created(&address))
-            .unwrap_or_default();
+            .unwrap_or(false);
 
         is_present || !self.created_accounts.insert(address)
     }
@@ -627,12 +650,29 @@ impl<'a> VM<'a> {
                 0x9d => self.op_swap::<14>(),
                 0x9e => self.op_swap::<15>(),
                 0x9f => self.op_swap::<16>(),
+                0x00 => self.op_stop(),
                 0x01 => self.op_add(),
+                0x02 => self.op_mul(),
+                0x03 => self.op_sub(),
+                0x10 => self.op_lt(),
+                0x11 => self.op_gt(),
+                0x14 => self.op_eq(),
+                0x15 => self.op_iszero(),
+                0x16 => self.op_and(),
+                0x17 => self.op_or(),
+                0x1b if self.env.config.fork >= Fork::Constantinople => self.op_shl(),
+                0x1c if self.env.config.fork >= Fork::Constantinople => self.op_shr(),
+                0x35 => self.op_calldataload(),
                 0x39 => self.op_codecopy(),
+                0x50 => self.op_pop(),
                 0x51 => self.op_mload(),
+                0x52 => self.op_mstore(),
+                0x54 => self.op_sload(),
                 0x56 => self.op_jump(),
                 0x57 => self.op_jumpi(),
                 0x5b => self.op_jumpdest(),
+                0x5f if self.env.config.fork >= Fork::Shanghai => self.op_push0(),
+                0xf3 => self.op_return(),
                 _ => {
                     // Call the opcode, using the opcode function lookup table.
                     // Indexing will not panic as all the opcode values fit within the table.
