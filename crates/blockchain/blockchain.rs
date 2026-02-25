@@ -2213,15 +2213,15 @@ impl Blockchain {
             METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
             METRICS_BLOCKS.set_latest_gigagas(throughput);
             METRICS_BLOCKS.set_transaction_count(transactions_count as i64);
-            METRICS_BLOCKS.set_validate_ms(validate_ms as i64);
-            METRICS_BLOCKS.set_execution_ms(exec_ms as i64);
-            METRICS_BLOCKS.set_merkle_concurrent_ms(merkle_concurrent_ms as i64);
-            METRICS_BLOCKS.set_merkle_drain_ms(merkle_drain_ms as i64);
-            METRICS_BLOCKS.set_merkle_ms(_merkle_total_ms as i64);
-            METRICS_BLOCKS.set_merkle_overlap_pct(overlap_pct as i64);
-            METRICS_BLOCKS.set_store_ms(store_ms as i64);
-            METRICS_BLOCKS.set_warmer_ms(warmer_ms as i64);
-            METRICS_BLOCKS.set_warmer_early_ms(warmer_early_ms as i64);
+            METRICS_BLOCKS.set_validate_ms(validate_ms);
+            METRICS_BLOCKS.set_execution_ms(exec_ms);
+            METRICS_BLOCKS.set_merkle_concurrent_ms(merkle_concurrent_ms);
+            METRICS_BLOCKS.set_merkle_drain_ms(merkle_drain_ms);
+            METRICS_BLOCKS.set_merkle_ms(_merkle_total_ms);
+            METRICS_BLOCKS.set_merkle_overlap_pct(overlap_pct);
+            METRICS_BLOCKS.set_store_ms(store_ms);
+            METRICS_BLOCKS.set_warmer_ms(warmer_ms);
+            METRICS_BLOCKS.set_warmer_early_ms(warmer_early_ms);
         );
     }
 
