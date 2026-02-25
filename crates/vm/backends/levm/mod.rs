@@ -627,6 +627,9 @@ impl LEVM {
                 #[allow(clippy::cast_possible_truncation)]
                 Self::seed_db_from_bal(&mut tx_db, bal, tx_idx as u16)?;
 
+                // Snapshot seeded state as initial for post-execution diff
+                tx_db.snapshot_current_as_initial();
+
                 let report = LEVM::execute_tx_in_block(
                     tx,
                     *sender,
@@ -635,6 +638,15 @@ impl LEVM {
                     vm_type,
                     &mut stack_pool,
                 )?;
+
+                // Validate execution results against BAL claims (per-tx)
+                // BAL index for tx at position i is i+1 (0 = system calls)
+                #[allow(clippy::cast_possible_truncation)]
+                let bal_idx = (tx_idx + 1) as u16;
+                let diff = tx_db.compute_tx_diff();
+                bal.validate_tx_diff(bal_idx, &diff).map_err(|e| {
+                    EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
+                })?;
 
                 Ok((tx_idx, tx.tx_type(), report))
             })

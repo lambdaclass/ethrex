@@ -387,6 +387,76 @@ impl GeneralizedDatabase {
         Ok(account_updates)
     }
 
+    /// Snapshots current_accounts_state as the initial state and enables tracking.
+    /// Used for parallel per-tx DBs: call this after seed_db_from_bal but before
+    /// execute_tx_in_block, so the diff captures just this tx's mutations.
+    pub fn snapshot_current_as_initial(&mut self) {
+        self.initial_accounts_state = self.current_accounts_state.clone();
+        self.skip_initial_tracking = false;
+    }
+
+    /// Computes a TxStateDiff by comparing current vs initial account state.
+    /// Used for per-tx BAL validation after parallel execution.
+    pub fn compute_tx_diff(&self) -> ethrex_common::types::block_access_list::TxStateDiff {
+        use ethrex_common::types::block_access_list::{TxAccountDiff, TxStateDiff};
+
+        let mut diff = TxStateDiff::default();
+
+        for (address, current) in &self.current_accounts_state {
+            if current.is_unmodified() {
+                continue;
+            }
+
+            let initial = match self.initial_accounts_state.get(address) {
+                Some(acc) => acc,
+                None => continue, // shouldn't happen after snapshot
+            };
+
+            let mut account_diff = TxAccountDiff::default();
+            let mut has_changes = false;
+
+            // Balance
+            if current.info.balance != initial.info.balance {
+                account_diff.balance = Some(current.info.balance);
+                has_changes = true;
+            }
+
+            // Nonce
+            if current.info.nonce != initial.info.nonce {
+                account_diff.nonce = Some(current.info.nonce);
+                has_changes = true;
+            }
+
+            // Code
+            if current.info.code_hash != initial.info.code_hash {
+                let code_bytes = self
+                    .codes
+                    .get(&current.info.code_hash)
+                    .map(|c| c.bytecode.clone())
+                    .unwrap_or_default();
+                account_diff.code = Some(code_bytes);
+                has_changes = true;
+            }
+
+            // Storage
+            for (key, new_value) in &current.storage {
+                let old_value = initial.storage.get(key).copied().unwrap_or(U256::zero());
+                if *new_value != old_value {
+                    account_diff
+                        .storage
+                        .insert(U256::from_big_endian(key.as_bytes()), *new_value);
+                    has_changes = true;
+                }
+            }
+
+            if has_changes {
+                diff.accounts.insert(*address, account_diff);
+            }
+        }
+
+        diff
+    }
+
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in self.current_accounts_state.drain() {
