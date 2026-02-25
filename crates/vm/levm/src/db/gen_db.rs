@@ -173,7 +173,7 @@ impl GeneralizedDatabase {
                         }
                     };
 
-                    code.bytecode.len() as u64
+                    code.code_len as u64
                 };
 
                 let metadata = CodeMetadata {
@@ -557,17 +557,16 @@ impl<'a> VM<'a> {
             // This is needed for:
             // 1. Distinguishing CREATE empty code vs delegation clear
             // 2. Net-zero code change detection (e.g., delegate then reset in same tx)
-            let current_code_bytes = self
+            let (current_code_bytes, has_code) = self
                 .db
                 .current_accounts_state
                 .get(&address)
                 .and_then(|account| self.db.codes.get(&account.info.code_hash))
-                .map(|c| c.bytecode.clone())
+                .map(|c| (c.bytecode.slice(..c.code_len), c.code_len > 0))
                 .unwrap_or_default();
-            let has_code = !current_code_bytes.is_empty();
             recorder.capture_initial_code_presence(address, has_code);
             recorder.set_initial_code(address, current_code_bytes);
-            recorder.record_code_change(address, new_bytecode.bytecode.clone());
+            recorder.record_code_change(address, new_bytecode.bytecode.slice(..new_bytecode.code_len));
         }
 
         let acc = self.get_account_mut(address)?;

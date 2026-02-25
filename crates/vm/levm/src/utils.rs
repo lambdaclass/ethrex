@@ -346,13 +346,14 @@ pub fn eip7702_get_code(
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !code_has_delegation(&bytecode.bytecode)? {
+    let original_bytecode = bytecode.bytecode.slice(..bytecode.code_len);
+    if !code_has_delegation(&original_bytecode)? {
         return Ok((false, 0, address, bytecode.clone()));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
+    let auth_address = get_authorized_address_from_code(&original_bytecode)?;
 
     let access_cost = if accrued_substate.add_accessed_address(auth_address) {
         WARM_ADDRESS_ACCESS_COST
@@ -400,8 +401,8 @@ impl<'a> VM<'a> {
 
             // 5. Verify the code of authority is either empty or already delegated.
             // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
-            let empty_or_delegated = authority_code.bytecode.is_empty()
-                || code_has_delegation(&authority_code.bytecode)?;
+            let empty_or_delegated = authority_code.code_len == 0
+                || code_has_delegation(&authority_code.bytecode.slice(..authority_code.code_len))?;
 
             // Record authority as touched for BAL per EIP-7928, even if validation fails later.
             // This ensures authority appears in BAL with empty change set when:
@@ -549,8 +550,10 @@ impl<'a> VM<'a> {
     /// Calculates the minimum gas to be consumed in the transaction.
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
+        let create_calldata;
         let calldata = if self.is_create()? {
-            &self.current_call_frame.bytecode.bytecode
+            create_calldata = self.current_call_frame.bytecode.bytecode.slice(..self.current_call_frame.bytecode.code_len);
+            &create_calldata
         } else {
             &self.current_call_frame.calldata
         };

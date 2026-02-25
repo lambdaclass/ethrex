@@ -364,13 +364,12 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        if self.pc < self.bytecode.bytecode.len() {
-            #[expect(unsafe_code, reason = "bounds checked above")]
-            unsafe {
-                *self.bytecode.bytecode.get_unchecked(self.pc)
-            }
-        } else {
-            0
+        // SAFETY: bytecode always has a trailing STOP (0x00) sentinel,
+        // and pc is bounded by the interpreter loop (advances by opcode width,
+        // stops at STOP/RETURN/REVERT).
+        #[expect(unsafe_code, reason = "bytecode has trailing STOP sentinel")]
+        unsafe {
+            *self.bytecode.bytecode.get_unchecked(self.pc)
         }
     }
 
@@ -470,11 +469,9 @@ impl<'a> VM<'a> {
 
     #[inline(always)]
     pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame.pc = self
-            .current_call_frame
-            .pc
-            .checked_add(count)
-            .ok_or(InternalError::Overflow)?;
+        // PC starts at 0 and bytecodes are bounded by practical limits (EIP-3860: max 49152
+        // bytes for initcode). usize on 64-bit cannot overflow from bytecode advances.
+        self.current_call_frame.pc = self.current_call_frame.pc.wrapping_add(count);
         Ok(())
     }
 }

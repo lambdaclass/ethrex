@@ -28,7 +28,11 @@ pub struct Code {
     // We use a bogus H256::zero() value for initcodes as there is no way for the VM or
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
+    /// Bytecode with a trailing STOP (0x00) sentinel byte appended.
+    /// Use `code_len` for the original length (without sentinel).
     pub bytecode: Bytes,
+    /// Original bytecode length, excluding the trailing STOP sentinel.
+    pub code_len: usize,
     // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
     // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
     // this does not apply to previous forks. This is tested in the EEST tests, which would
@@ -42,18 +46,31 @@ impl Code {
     // or never be read (e.g. for initcode).
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
+        let code_len = code.len();
+        // Append a trailing STOP (0x00) sentinel so next_opcode() never needs a bounds check.
+        let mut padded = Vec::with_capacity(code_len + 1);
+        padded.extend_from_slice(&code);
+        padded.push(0x00);
         Self {
             hash,
-            bytecode: code,
+            bytecode: padded.into(),
+            code_len,
             jump_targets,
         }
     }
 
     pub fn from_bytecode(code: Bytes) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
+        let hash = keccak(code.as_ref());
+        let code_len = code.len();
+        // Append a trailing STOP (0x00) sentinel so next_opcode() never needs a bounds check.
+        let mut padded = Vec::with_capacity(code_len + 1);
+        padded.extend_from_slice(&code);
+        padded.push(0x00);
         Self {
-            hash: keccak(code.as_ref()),
-            bytecode: code,
+            hash,
+            bytecode: padded.into(),
+            code_len,
             jump_targets,
         }
     }
@@ -92,8 +109,9 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
+        let code_len_size = size_of::<usize>();
         let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
-        hash_size + bytes_size + vec_size
+        hash_size + bytes_size + code_len_size + vec_size
     }
 }
 
@@ -164,7 +182,8 @@ impl Default for AccountState {
 impl Default for Code {
     fn default() -> Self {
         Self {
-            bytecode: Bytes::new(),
+            bytecode: Bytes::from_static(&[0x00]), // Sentinel STOP byte
+            code_len: 0,
             hash: *EMPTY_KECCACK_HASH,
             jump_targets: Vec::new(),
         }

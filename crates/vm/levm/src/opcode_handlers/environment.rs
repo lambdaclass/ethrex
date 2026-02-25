@@ -188,7 +188,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(U256::from(current_call_frame.bytecode.bytecode.len()))?;
+            .push(U256::from(current_call_frame.bytecode.code_len))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -215,7 +215,7 @@ impl<'a> VM<'a> {
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
         if let Some(code_offset_end) = code_offset.checked_add(size)
-            && code_offset_end <= current_call_frame.bytecode.bytecode.len()
+            && code_offset_end <= current_call_frame.bytecode.code_len
         {
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             let slice = unsafe {
@@ -229,7 +229,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let code_len = current_call_frame.bytecode.bytecode.len();
+        let code_len = current_call_frame.bytecode.code_len;
 
         #[expect(clippy::arithmetic_side_effects)]
         let slice = if code_offset < code_len {
@@ -326,7 +326,7 @@ impl<'a> VM<'a> {
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
         if let Some(offset_end) = offset.checked_add(size)
-            && offset_end <= bytecode.bytecode.len()
+            && offset_end <= bytecode.code_len
         {
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             let slice = unsafe { bytecode.bytecode.get_unchecked(offset..offset_end) };
@@ -337,7 +337,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let code_len = bytecode.bytecode.len();
+        let code_len = bytecode.code_len;
 
         #[expect(clippy::arithmetic_side_effects)]
         let slice = if offset < code_len {

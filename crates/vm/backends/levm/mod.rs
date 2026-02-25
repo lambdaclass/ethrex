@@ -597,23 +597,36 @@ impl LEVM {
         let t2 = std::time::Instant::now();
         let result = vm.execute().map_err(VMError::into);
         let (vm_prepare, vm_run, vm_finalize) = vm.last_exec_timings;
-        let sub_ticks = vm.run_sub_ticks;
-        let fetch_ticks = vm.fetch_ticks;
-        let total_ticks = vm.total_run_ticks;
         let t3 = std::time::Instant::now();
         std::mem::swap(&mut vm.stack_pool, stack_pool);
-        // Convert rdtsc ticks to Duration proportionally using vm_run_time.
-        // This eliminates measurement overhead from the reported numbers.
-        let run_secs = vm_run.as_secs_f64();
-        let scale = if total_ticks > 0 { run_secs / total_ticks as f64 } else { 0.0 };
-        let to_dur = |ticks: u64| std::time::Duration::from_secs_f64(ticks as f64 * scale);
+
+        #[cfg(feature = "perf_opcode_timings")]
+        let sub_durations = {
+            let sub_ticks = vm.run_sub_ticks;
+            let fetch_ticks = vm.fetch_ticks;
+            let total_ticks = vm.total_run_ticks;
+            // Convert rdtsc ticks to Duration proportionally using vm_run_time.
+            // This eliminates measurement overhead from the reported numbers.
+            let run_secs = vm_run.as_secs_f64();
+            let scale = if total_ticks > 0 { run_secs / total_ticks as f64 } else { 0.0 };
+            let to_dur = |ticks: u64| std::time::Duration::from_secs_f64(ticks as f64 * scale);
+            [
+                to_dur(sub_ticks[0]), to_dur(sub_ticks[1]), to_dur(sub_ticks[2]),
+                to_dur(sub_ticks[3]), to_dur(sub_ticks[4]), to_dur(sub_ticks[5]),
+                to_dur(sub_ticks[6]), to_dur(sub_ticks[7]), to_dur(sub_ticks[8]),
+                to_dur(sub_ticks[9]), to_dur(fetch_ticks),
+            ]
+        };
+        #[cfg(not(feature = "perf_opcode_timings"))]
+        let sub_durations = [std::time::Duration::ZERO; 11];
+
         result.map(|r| (r, [
             t1.duration_since(t0), t2.duration_since(t1), t3.duration_since(t2),
             vm_prepare, vm_run, vm_finalize,
-            to_dur(sub_ticks[0]), to_dur(sub_ticks[1]), to_dur(sub_ticks[2]),
-            to_dur(sub_ticks[3]), to_dur(sub_ticks[4]), to_dur(sub_ticks[5]),
-            to_dur(sub_ticks[6]), to_dur(sub_ticks[7]), to_dur(sub_ticks[8]),
-            to_dur(sub_ticks[9]), to_dur(fetch_ticks),
+            sub_durations[0], sub_durations[1], sub_durations[2],
+            sub_durations[3], sub_durations[4], sub_durations[5],
+            sub_durations[6], sub_durations[7], sub_durations[8],
+            sub_durations[9], sub_durations[10],
         ]))
     }
 
@@ -884,7 +897,7 @@ pub fn generic_system_contract_levm(
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .any(|contract| contract.address == contract_address)
-        && db.get_account_code(contract_address)?.bytecode.is_empty()
+        && db.get_account_code(contract_address)?.code_len == 0
     {
         return Err(EvmError::SystemContractCallFailed(format!(
             "System contract: {contract_address} has no code after deployment"

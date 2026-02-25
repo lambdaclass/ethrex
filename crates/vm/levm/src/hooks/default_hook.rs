@@ -99,7 +99,7 @@ impl Hook for DefaultHook {
 
         // (9) SENDER_NOT_EOA
         let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, &code.bytecode)?;
+        validate_sender(sender_address, &code.bytecode.slice(..code.code_len))?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;

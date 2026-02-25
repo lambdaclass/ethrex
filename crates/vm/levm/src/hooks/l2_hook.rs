@@ -422,7 +422,8 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         vm.current_call_frame.msg_value = U256::zero();
         vm.current_call_frame.set_code(Code {
             hash: H256::zero(),
-            bytecode: vec![Opcode::INVALID.into()].into(),
+            bytecode: vec![Opcode::INVALID.into(), 0x00].into(),
+            code_len: 1,
             jump_targets: Vec::new(),
         })?;
         return Ok(());
@@ -534,7 +535,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
 
     // (9) SENDER_NOT_EOA
     let code = vm.db.get_code(sender_info.code_hash)?;
-    default_hook::validate_sender(sender_address, &code.bytecode)?;
+    default_hook::validate_sender(sender_address, &code.bytecode.slice(..code.code_len))?;
 
     // (10) GAS_ALLOWANCE_EXCEEDED
     default_hook::validate_gas_allowance(vm)?;

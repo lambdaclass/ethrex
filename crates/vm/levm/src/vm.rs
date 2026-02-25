@@ -35,6 +35,7 @@ pub type Storage = HashMap<U256, H256>;
 
 /// Low-overhead timestamp counter for opcode-level timing.
 /// Uses rdtsc on x86_64 (~1-2ns), falls back to Instant on other archs (~20-50ns).
+#[cfg(feature = "perf_opcode_timings")]
 #[inline(always)]
 fn tick() -> u64 {
     #[cfg(target_arch = "x86_64")]
@@ -459,10 +460,13 @@ pub struct VM<'a> {
     pub last_exec_timings: (std::time::Duration, std::time::Duration, std::time::Duration),
     /// Run-phase sub-ticks (rdtsc): [sload, sstore, calls, sha3, ext, log, stack, arith, mem, flow].
     /// Raw TSC ticks, converted to Duration proportionally using vm_run_time.
+    #[cfg(feature = "perf_opcode_timings")]
     pub run_sub_ticks: [u64; 10],
     /// Fetch ticks (rdtsc): next_opcode() + advance_pc() per iteration.
+    #[cfg(feature = "perf_opcode_timings")]
     pub fetch_ticks: u64,
     /// Total interpreter loop ticks (rdtsc), including loop dispatch overhead.
+    #[cfg(feature = "perf_opcode_timings")]
     pub total_run_ticks: u64,
 }
 
@@ -513,8 +517,11 @@ impl<'a> VM<'a> {
             env,
             opcode_table: VM::build_opcode_table(fork),
             last_exec_timings: Default::default(),
+            #[cfg(feature = "perf_opcode_timings")]
             run_sub_ticks: Default::default(),
+            #[cfg(feature = "perf_opcode_timings")]
             fetch_ticks: 0,
+            #[cfg(feature = "perf_opcode_timings")]
             total_run_ticks: 0,
         };
 
@@ -621,22 +628,31 @@ impl<'a> VM<'a> {
         #[cfg(feature = "perf_opcode_timings")]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
+        #[cfg(feature = "perf_opcode_timings")]
         let loop_start = tick();
         loop {
+            #[cfg(feature = "perf_opcode_timings")]
             let t_fetch = tick();
+
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
 
-            // All opcodes are timed by category using rdtsc (~1-2ns overhead).
+            // When perf_opcode_timings is enabled, all opcodes are timed by category
+            // using rdtsc (~1-2ns overhead).
             // Categories: 0=sload, 1=sstore, 2=calls, 3=sha3, 4=ext, 5=log,
             //             6=stack, 7=arith, 8=mem, 9=flow
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = {
-                let t = tick();
-                self.fetch_ticks += t - t_fetch;
+                #[cfg(feature = "perf_opcode_timings")]
+                #[allow(clippy::arithmetic_side_effects)]
+                let t = {
+                    let t = tick();
+                    self.fetch_ticks += t - t_fetch;
+                    t
+                };
                 let r = match opcode {
                     // Fast path: keep const-generic specialization for hot opcodes
                     0x60 => self.op_push::<1>(),
@@ -706,31 +722,35 @@ impl<'a> VM<'a> {
                     // All other opcodes go through the lookup table
                     _ => self.opcode_table[opcode as usize].call(self),
                 };
-                let elapsed = tick() - t;
-                // Categorize: every opcode is accounted for
-                match opcode {
-                    0x54 => self.run_sub_ticks[0] += elapsed,                 // SLOAD
-                    0x55 => self.run_sub_ticks[1] += elapsed,                 // SSTORE
-                    0xF0 | 0xF1 | 0xF2 | 0xF4 | 0xF5 | 0xFA
-                        => self.run_sub_ticks[2] += elapsed,                  // CALL/CREATE
-                    0x20 => self.run_sub_ticks[3] += elapsed,                 // SHA3
-                    0x31 | 0x3B | 0x3C | 0x3F
-                        => self.run_sub_ticks[4] += elapsed,                  // BALANCE/EXTCODE*
-                    0xA0..=0xA4 => self.run_sub_ticks[5] += elapsed,          // LOG0-LOG4
-                    // Stack: PUSH0-32, DUP1-16, SWAP1-16, POP
-                    0x50 | 0x5f | 0x60..=0x9f
-                        => self.run_sub_ticks[6] += elapsed,
-                    // Arithmetic & bitwise: ADD-SIGNEXTEND, LT-SAR
-                    0x01..=0x0B | 0x10..=0x1D
-                        => self.run_sub_ticks[7] += elapsed,
-                    // Memory: MLOAD, MSTORE, MSTORE8, CALLDATALOAD, CALLDATASIZE,
-                    //         CALLDATACOPY, CODECOPY, CODESIZE, RETURNDATASIZE,
-                    //         RETURNDATACOPY, MCOPY
-                    0x35..=0x39 | 0x3D | 0x3E | 0x51..=0x53 | 0x59 | 0x5E
-                        => self.run_sub_ticks[8] += elapsed,
-                    // Flow/control: STOP, JUMP, JUMPI, JUMPDEST, RETURN, REVERT,
-                    //               TLOAD, TSTORE, SELFDESTRUCT, env queries, etc.
-                    _ => self.run_sub_ticks[9] += elapsed,
+                #[cfg(feature = "perf_opcode_timings")]
+                #[allow(clippy::arithmetic_side_effects)]
+                {
+                    let elapsed = tick() - t;
+                    // Categorize: every opcode is accounted for
+                    match opcode {
+                        0x54 => self.run_sub_ticks[0] += elapsed,                 // SLOAD
+                        0x55 => self.run_sub_ticks[1] += elapsed,                 // SSTORE
+                        0xF0 | 0xF1 | 0xF2 | 0xF4 | 0xF5 | 0xFA
+                            => self.run_sub_ticks[2] += elapsed,                  // CALL/CREATE
+                        0x20 => self.run_sub_ticks[3] += elapsed,                 // SHA3
+                        0x31 | 0x3B | 0x3C | 0x3F
+                            => self.run_sub_ticks[4] += elapsed,                  // BALANCE/EXTCODE*
+                        0xA0..=0xA4 => self.run_sub_ticks[5] += elapsed,          // LOG0-LOG4
+                        // Stack: PUSH0-32, DUP1-16, SWAP1-16, POP
+                        0x50 | 0x5f | 0x60..=0x9f
+                            => self.run_sub_ticks[6] += elapsed,
+                        // Arithmetic & bitwise: ADD-SIGNEXTEND, LT-SAR
+                        0x01..=0x0B | 0x10..=0x1D
+                            => self.run_sub_ticks[7] += elapsed,
+                        // Memory: MLOAD, MSTORE, MSTORE8, CALLDATALOAD, CALLDATASIZE,
+                        //         CALLDATACOPY, CODECOPY, CODESIZE, RETURNDATASIZE,
+                        //         RETURNDATACOPY, MCOPY
+                        0x35..=0x39 | 0x3D | 0x3E | 0x51..=0x53 | 0x59 | 0x5E
+                            => self.run_sub_ticks[8] += elapsed,
+                        // Flow/control: STOP, JUMP, JUMPI, JUMPDEST, RETURN, REVERT,
+                        //               TLOAD, TSTORE, SELFDESTRUCT, env queries, etc.
+                        _ => self.run_sub_ticks[9] += elapsed,
+                    }
                 }
                 r
             };
@@ -750,7 +770,9 @@ impl<'a> VM<'a> {
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
                 self.handle_state_backup(&result)?;
-                self.total_run_ticks = tick() - loop_start;
+                #[cfg(feature = "perf_opcode_timings")]
+                #[allow(clippy::arithmetic_side_effects)]
+                { self.total_run_ticks = tick() - loop_start; }
                 return Ok(result);
             }
 
