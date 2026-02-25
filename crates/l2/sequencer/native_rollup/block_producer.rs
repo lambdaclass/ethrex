@@ -219,7 +219,7 @@ impl NativeBlockProducer {
                     Value::Address(msg.to),
                     Value::Uint(msg.value),
                     Value::Uint(U256::from(msg.gas_limit)),
-                    Value::Bytes(Bytes::new()), // empty data for PoC
+                    Value::Bytes(msg.data.clone()),
                     Value::Uint(msg.nonce),
                     Value::Array(
                         merkle_proof

@@ -16,15 +16,15 @@
 
 use bytes::Bytes;
 use ethrex_common::types::TxType;
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{Address, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, send_generic_transaction,
+    build_generic_tx, calldata::encode_calldata, create_deploy, send_generic_transaction,
     wait_for_transaction_receipt,
 };
-use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::clients::Overrides;
+use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use reqwest::Url;
 use secp256k1::SecretKey;
@@ -45,6 +45,11 @@ const L2_BRIDGE_ADDRESS: &str = "0x000000000000000000000000000000000000fffd";
 const TEST_PRIVATE_KEY: &str = "0000000000000000000000000000000000000000000000000000000000000042";
 
 const ONE_ETH: u64 = 1_000_000_000_000_000_000;
+
+/// Counter.sol initcode (compiled with solc --bin --optimize).
+/// Deploys a Counter contract with `count()` (selector 0x06661abd) and
+/// `increment()` (selector 0xd09de08a, payable).
+const COUNTER_INITCODE_HEX: &str = "6080604052348015600e575f5ffd5b5060e080601a5f395ff3fe608060405260043610602f575f3560e01c806306661abd1460335780636d4ce63c146057578063d09de08a146068575b5f5ffd5b348015603d575f5ffd5b5060455f5481565b60405190815260200160405180910390f35b3480156061575f5ffd5b505f546045565b606e6070565b005b60015f5f828254607f91906086565b9091555050565b8082018082111560a457634e487b7160e01b5f52601160045260245ffd5b9291505056fea26469706673582212207799e79076af790391bf7137f3f28f32f374dfc98b94553ba76891a74e4abada64736f6c634300081f0033";
 
 /// Deposit ETH from L1 to L2, then withdraw a portion back to L1 with proof.
 #[tokio::test]
@@ -358,5 +363,103 @@ async fn native_rollup_bridge_roundtrip() {
             >= l1_receiver_balance_before + withdraw_amount,
         "L1 receiver did not receive withdrawal amount. Before: {l1_receiver_balance_before}, \
          After: {l1_receiver_balance_after}, Expected gain: ~{withdraw_amount}"
+    );
+
+    // ── Phase 6: Counter contract demo via L1→L2 message ─────────────────
+
+    // Deploy Counter on L2 using test_signer (has ETH from Phase 1 deposit)
+    let counter_initcode =
+        Bytes::from(hex::decode(COUNTER_INITCODE_HEX).expect("Invalid Counter initcode hex"));
+
+    let (_deploy_tx_hash, counter_address) = create_deploy(
+        &l2_client,
+        &test_signer,
+        counter_initcode,
+        Overrides {
+            gas_limit: Some(500_000),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("Failed to deploy Counter on L2");
+    println!("Counter deployed on L2 at {counter_address:#x}");
+
+    // Send an L1→L2 message calling counter.increment() (selector 0xd09de08a, payable)
+    let increment_selector = Bytes::from(hex::decode("d09de08a").expect("Invalid selector hex"));
+
+    let counter_msg_calldata = Bytes::from(
+        encode_calldata(
+            "sendL1Message(address,uint256,bytes)",
+            &[
+                Value::Address(counter_address),
+                Value::Uint(U256::from(105_000u64)),
+                Value::Bytes(increment_selector),
+            ],
+        )
+        .expect("encode sendL1Message for counter failed"),
+    );
+
+    let counter_msg_tx = build_generic_tx(
+        &l1_client,
+        TxType::EIP1559,
+        contract_address,
+        l1_signer.address(),
+        counter_msg_calldata,
+        Overrides {
+            gas_limit: Some(500_000),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("Failed to build counter L1 message tx");
+
+    let counter_msg_tx_hash = send_generic_transaction(&l1_client, counter_msg_tx, &l1_signer)
+        .await
+        .expect("Failed to send counter L1 message tx");
+
+    let counter_msg_receipt = wait_for_transaction_receipt(counter_msg_tx_hash, &l1_client, 30)
+        .await
+        .expect("Counter L1 message receipt not found");
+    assert!(
+        counter_msg_receipt.receipt.status,
+        "Counter L1 message tx reverted on L1"
+    );
+    println!("Counter L1 message sent: {counter_msg_tx_hash:#x}");
+
+    // Poll L2 counter.count() until it returns >= 1 (timeout ~120s)
+    // selector for count() auto-getter: 0x06661abd
+    let count_calldata = Bytes::from(hex::decode("06661abd").expect("Invalid count selector hex"));
+
+    let mut counter_incremented = false;
+    for i in 0..60 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let result = l2_client
+            .call(
+                counter_address,
+                count_calldata.clone(),
+                Overrides::default(),
+            )
+            .await
+            .unwrap_or_default();
+        let result_bytes = hex::decode(result.trim_start_matches("0x")).unwrap_or_default();
+        if result_bytes.len() >= 32 {
+            let count = U256::from_big_endian(&result_bytes[..32]);
+            if count >= U256::from(1u64) {
+                println!(
+                    "Counter incremented via L1→L2 message after ~{}s, count={}",
+                    (i + 1) * 2,
+                    count
+                );
+                counter_incremented = true;
+                break;
+            }
+        }
+        if i % 10 == 0 {
+            println!("Waiting for counter increment... ({i}/60)");
+        }
+    }
+    assert!(
+        counter_incremented,
+        "Counter was not incremented via L1→L2 message within timeout"
     );
 }

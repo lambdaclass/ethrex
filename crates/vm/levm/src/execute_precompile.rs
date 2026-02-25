@@ -381,9 +381,9 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         // cache and record the initial value so get_state_transitions() can
         // compute the storage diff.
         let l1_anchor_value = U256::from_big_endian(l1_anchor.as_bytes());
-        let anchor_account = gen_db.get_account_mut(L1_ANCHOR).map_err(|e| {
-            custom_err(format!("Failed to load L1Anchor account: {e}"))
-        })?;
+        let anchor_account = gen_db
+            .get_account_mut(L1_ANCHOR)
+            .map_err(|e| custom_err(format!("Failed to load L1Anchor account: {e}")))?;
         anchor_account.storage.insert(H256::zero(), l1_anchor_value);
         if let Some(initial) = gen_db.initial_accounts_state.get_mut(&L1_ANCHOR) {
             initial.storage.entry(H256::zero()).or_insert(U256::zero());

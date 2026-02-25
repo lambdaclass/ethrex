@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use bytes::Bytes;
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 
@@ -17,6 +18,10 @@ pub struct L1Message {
     pub nonce: U256,
     pub value: U256,
     pub gas_limit: u64,
+    /// Full calldata bytes forwarded to the L2 target contract.
+    pub data: Bytes,
+    /// Precomputed keccak256(_data) — computed by the watcher at parse time
+    /// so the block producer and committer don't need to recompute it.
     pub data_hash: H256,
 }
 

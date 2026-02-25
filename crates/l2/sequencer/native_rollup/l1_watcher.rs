@@ -5,8 +5,10 @@
 use std::sync::LazyLock;
 use std::time::Duration;
 
+use bytes::Bytes;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::types::receipt::RpcLog;
 use spawned_concurrency::tasks::{
@@ -16,9 +18,10 @@ use tracing::{debug, error, info, warn};
 
 use super::types::{L1Message, PendingL1Messages};
 
-/// Cached event topic: keccak256("L1MessageRecorded(address,address,uint256,uint256,bytes32,uint256)")
+/// Cached event topic: keccak256("L1MessageRecorded(address,address,uint256,uint256,bytes,uint256)")
+/// Must stay in sync with the event declaration in NativeRollup.sol.
 static L1_MESSAGE_RECORDED_TOPIC: LazyLock<H256> =
-    LazyLock::new(|| keccak(b"L1MessageRecorded(address,address,uint256,uint256,bytes32,uint256)"));
+    LazyLock::new(|| keccak(b"L1MessageRecorded(address,address,uint256,uint256,bytes,uint256)"));
 
 #[derive(Clone)]
 pub enum CastMsg {
@@ -146,10 +149,14 @@ impl NativeL1Watcher {
     ///     address indexed to,       // topic[2]
     ///     uint256 value,            // data[0..32]
     ///     uint256 gasLimit,         // data[32..64]
-    ///     bytes32 dataHash,         // data[64..96]
+    ///     bytes data,               // data[64..96] = ABI offset, data[96..128] = byte length, data[128..128+len] = bytes
     ///     uint256 indexed nonce     // topic[3]
     /// )
     /// ```
+    ///
+    /// Because `bytes` is a dynamic ABI type, the log data uses the standard
+    /// head/tail encoding: a 32-byte offset pointer at position 64, followed by
+    /// the length-prefixed byte array at the pointed-to position.
     fn parse_l1_message_recorded(log: &RpcLog) -> Result<L1Message, NativeL1WatcherError> {
         let topics = &log.log.topics;
         let data = &log.log.data;
@@ -160,9 +167,9 @@ impl NativeL1Watcher {
                 topics.len()
             )));
         }
-        if data.len() < 96 {
+        if data.len() < 128 {
             return Err(NativeL1WatcherError::Parse(format!(
-                "Expected at least 96 bytes of data, got {}",
+                "Expected at least 128 bytes of data, got {}",
                 data.len()
             )));
         }
@@ -204,11 +211,27 @@ impl NativeL1Watcher {
             .try_into()
             .map_err(|_| NativeL1WatcherError::Parse("gasLimit exceeds u64".into()))?;
 
-        // data[64..96] = dataHash
-        let data_hash_bytes = data
-            .get(64..96)
-            .ok_or(parse_err("data too short for dataHash"))?;
-        let data_hash = H256::from_slice(data_hash_bytes);
+        // data[64..96] = ABI offset for `bytes data` (skip — we know it points to 96)
+        // data[96..128] = byte length of `data`
+        let byte_len_word = data
+            .get(96..128)
+            .ok_or(parse_err("data too short for bytes length"))?;
+        let byte_len: usize = U256::from_big_endian(byte_len_word)
+            .try_into()
+            .map_err(|_| NativeL1WatcherError::Parse("bytes length exceeds usize".into()))?;
+
+        // data[128..128+byte_len] = actual calldata bytes
+        let msg_data: Bytes = if byte_len == 0 {
+            Bytes::new()
+        } else {
+            let raw = data
+                .get(128..128 + byte_len)
+                .ok_or(parse_err("data too short for bytes content"))?;
+            Bytes::copy_from_slice(raw)
+        };
+
+        // Compute data_hash = keccak256(msg_data) at parse time
+        let data_hash = H256(keccak_hash(&msg_data));
 
         Ok(L1Message {
             sender,
@@ -216,6 +239,7 @@ impl NativeL1Watcher {
             nonce,
             value,
             gas_limit,
+            data: msg_data,
             data_hash,
         })
     }

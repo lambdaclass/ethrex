@@ -63,7 +63,7 @@ contract NativeRollup {
     bool private _locked;
 
     event StateAdvanced(uint256 indexed newBlockNumber, bytes32 newStateRoot, uint256 burnedFees);
-    event L1MessageRecorded(address indexed sender, address indexed to, uint256 value, uint256 gasLimit, bytes32 dataHash, uint256 indexed nonce);
+    event L1MessageRecorded(address indexed sender, address indexed to, uint256 value, uint256 gasLimit, bytes data, uint256 indexed nonce);
     event WithdrawalClaimed(address indexed receiver, uint256 amount, uint256 indexed blockNumber, uint256 indexed messageId);
 
     modifier nonReentrant() {
@@ -101,7 +101,7 @@ contract NativeRollup {
         bytes32 dataHash = keccak256(_data);
         bytes32 messageHash = keccak256(abi.encodePacked(_from, _to, _value, _gasLimit, dataHash, nonce));
         pendingL1Messages.push(messageHash);
-        emit L1MessageRecorded(_from, _to, _value, _gasLimit, dataHash, nonce);
+        emit L1MessageRecorded(_from, _to, _value, _gasLimit, _data, nonce);
     }
 
     /// @dev Consume gas in a tight loop so the L1 caller pays for the gas that
