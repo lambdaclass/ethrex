@@ -710,9 +710,10 @@ impl Store {
         Ok(Some(code))
     }
 
-    /// Check if account code exists by its hash, without reading the full bytecode.
-    /// More efficient than get_account_code for existence checks since it skips
-    /// blob value reads and RLP decoding.
+    /// Check if account code exists by its hash, without constructing the full `Code` struct.
+    /// More efficient than `get_account_code` for existence checks since it skips
+    /// RLP decoding and `Code` struct construction (no `jump_targets` deserialization).
+    /// Note: The underlying `get()` still reads the value from RocksDB (including blob files).
     pub fn code_exists(&self, code_hash: H256) -> Result<bool, StoreError> {
         // Check cache first
         if self

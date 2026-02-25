@@ -21,7 +21,6 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 #[cfg(feature = "rocksdb")]
 use ethrex_trie::Trie;
-use rayon::iter::ParallelIterator;
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
@@ -784,7 +783,13 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     use rayon::prelude::*;
     let missing: Vec<_> = unique_hashes
         .par_iter()
-        .filter(|code_hash| !store.code_exists(**code_hash).unwrap_or(false))
+        .filter(|code_hash| match store.code_exists(**code_hash) {
+            Ok(exists) => !exists,
+            Err(e) => {
+                error!("DB error checking code hash {:x}: {e}", code_hash);
+                true
+            }
+        })
         .collect();
 
     if !missing.is_empty() {
