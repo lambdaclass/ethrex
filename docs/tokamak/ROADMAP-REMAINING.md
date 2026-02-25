@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24
-**Context**: Overall ~35-40% complete. JIT core done (Phases 2-8). Phase A infra built, CI verification pending.
+**Context**: Overall ~40-45% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요).
 
 ---
 
@@ -22,13 +22,12 @@
 
 > "Without Hive and sync, this is not an Ethereum client. It's a library."
 
-### A-1. Hive Test Integration [P0] 🔧 INFRA DONE / ⏳ VERIFICATION PENDING
-- ~~Add Hive test suites to `pr-tokamak.yaml` (mirror upstream `pr-main_l1.yaml`)~~ ✅
+### A-1. Hive Test Integration [P0] ✅ VERIFIED
+- ~~Add Hive test suites to `pr-tokamak.yaml`~~ ✅
 - ~~Suites: RPC Compat, Devp2p, Engine Auth, Engine Cancun, Engine Paris, Engine Withdrawals~~ ✅
 - ~~Reuse upstream `check-hive-results.sh` + pinned Hive version~~ ✅
-- **Verification**: All 6 Hive suites pass on `feat/tokamak-proven-execution` — ❌ NOT YET RUN
-- **Infra**: `fc720f46f` — 6 Hive suites in `pr-tokamak.yaml`, Docker build with `--features tokamak-jit`, Hive Gate aggregation job
-- **Remaining**: Push commit → PR CI 트리거 → Hive 6개 Suite 통과 확인
+- **Verification**: All 6 Hive suites pass — ✅ PR #6260, run 22379067904
+- **Done**: `fc720f46f` + `bd8e881` — Hive Gate PASS, all 6 suites green
 
 ### A-2. Testnet Sync Verification [P0] 🔧 INFRA DONE / ⏳ VERIFICATION PENDING
 - ~~Run Hoodi testnet sync using existing `tooling/sync/` infrastructure~~ ✅ (workflow created)
@@ -38,20 +37,19 @@
 - **Infra**: `fc720f46f` — `tokamak-sync.yaml` (manual dispatch, Hoodi/Sepolia, Kurtosis + Lighthouse, `--features tokamak-jit`)
 - **Remaining**: workflow_dispatch 수동 실행 → Hoodi sync 완료 확인 → 결과 문서화
 
-### A-3. Tokamak Feature Flag Safety [P0] 🔧 INFRA DONE / ⏳ VERIFICATION PENDING
-- ~~Verify `--features tokamak` does NOT break Hive tests~~ (CI checks build, Hive not yet run)
-- ~~Verify `--features tokamak-jit` does NOT break Hive tests~~ (CI checks build, Hive not yet run)
-- Key concern: JIT dispatch must not interfere with consensus
-- **Verification**: Hive pass rate with tokamak features == without — ❌ COMPARISON NOT YET DONE
-- **Infra**: Quality Gate checks all 4 feature flags (build + clippy + tests), Docker build uses `--features tokamak-jit`
-- **Remaining**: A-1 Hive 통과 후 → upstream main Hive 통과율과 비교
+### A-3. Tokamak Feature Flag Safety [P0] ✅ VERIFIED
+- ~~Verify `--features tokamak` does NOT break Hive tests~~ ✅
+- ~~Verify `--features tokamak-jit` does NOT break Hive tests~~ ✅
+- ~~Key concern: JIT dispatch must not interfere with consensus~~ ✅
+- **Verification**: Hive pass rate with tokamak-jit == upstream (both 6/6) — ✅ PR #6260
+- **Done**: Quality Gate (all 4 flags) + Hive Gate (tokamak-jit build) all green
 
-### A-4. Phase 1.2 Completion [P0] ⏳ PARTIALLY DONE
-- ~~Build verification (Phase 1.2-5): all workspace crates compile with tokamak features~~ ✅ (criteria 1-5 PASS)
-- Record baseline Hive pass rate for Tokamak branch — ❌ PENDING (A-1 필요)
-- Document any regressions vs upstream — ❌ PENDING
-- **Verification**: Phase 1.2 criteria 1-5 PASS, criteria 6-9 PENDING (CI)
-- **Remaining**: A-1/A-2 검증 완료 → criteria 6 (pr-tokamak CI), 7 (Docker), 8 (Hive baseline), 9 (Snapsync) 확인
+### A-4. Phase 1.2 Completion [P0] ✅ VERIFIED (8/9, Snapsync 수동 필요)
+- ~~Build verification (Phase 1.2-5): all workspace crates compile with tokamak features~~ ✅
+- ~~Record baseline Hive pass rate for Tokamak branch~~ ✅ (6/6 PASS, Hive Gate records baseline)
+- ~~Document any regressions vs upstream~~ ✅ (0 regressions — same 6/6 pass rate)
+- **Verification**: Phase 1.2 criteria 1-8 PASS, criterion 9 (Snapsync) requires manual dispatch
+- **Remaining**: `tokamak-sync.yaml` workflow_dispatch → Hoodi sync 확인
 
 ---
 
@@ -211,8 +209,8 @@
 ## Execution Order
 
 ```
-Week 1:  [P0] A-1 + A-2 (parallel) → A-3 → A-4  🔧 INFRA DONE, ⏳ CI VERIFICATION PENDING
-Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1
+Week 1:  [P0] A-1 ✅ + A-2 ⏳ → A-3 ✅ → A-4 ✅ (Snapsync 수동 필요)
+Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1   ← CURRENT
 Week 3:  [P1] B-1 (continued) + C-1 → B-3
 Week 4:  [P2] D-1 decision + D-2 → E-1 start
 Week 5+: [P2] E-1 + E-2 → D-3 → E-3

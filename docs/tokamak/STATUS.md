@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-25
 **Branch**: `feat/tokamak-proven-execution`
-**Overall Completion**: ~35-40%
+**Overall Completion**: ~40-45%
 
 ---
 
@@ -11,7 +11,7 @@
 | Phase | Description | Completion | Status |
 |-------|-------------|-----------|--------|
 | Phase 0 | Research & Decision | **100%** | ethrex fork confirmed (FINAL) |
-| Phase 1 | Foundation | **~95%** | CI infra built (fc720f46f), Hive/Sync verification pending |
+| Phase 1 | Foundation | **~98%** | Hive 6/6 PASS (PR #6260), Snapsync 수동 실행 필요 |
 | Phase 2 | JIT Foundation (revmc) | **100%** | LLVM backend integrated |
 | Phase 3 | JIT Execution Wiring | **100%** | LevmHost + execution bridge |
 | Phase 4 | Production JIT Hardening | **100%** | LRU cache, auto-compile, tracing bypass |
@@ -137,11 +137,14 @@ R23(5.0) -> R24(8.0)
 - Test quality improvements (B-2) — `test_helpers.rs`, `INTRINSIC_GAS` constant, 15+ test DRY refactors (224921e1f)
 - Benchmark statistics (C-3) — `stats.rs` module, warmup/stddev/95% CI support, `--warmup` CLI param (224921e1f)
 
-### Awaiting CI Verification
-- Hive 6 suites 실행 및 통과 확인 (commit push 후 자동 트리거)
-- Hoodi testnet sync 실행 (workflow_dispatch 수동 트리거 필요)
-- Hive pass rate 비교: tokamak features on vs off
-- Phase 1.2 criteria 6-9 확인
+### CI Verified (PR #6260, run 22379067904)
+- Hive 6/6 suites PASS (tokamak-jit build) — RPC, Devp2p, Auth, Cancun, Paris, Withdrawals
+- Quality Gate PASS — cargo check/clippy/test with all tokamak features
+- Docker Build (tokamak-jit) PASS
+- Feature flag safety confirmed — tokamak-jit Hive == upstream (both 6/6)
+
+### Awaiting Manual Verification
+- Hoodi testnet sync (`tokamak-sync.yaml` workflow_dispatch 수동 트리거 필요)
 
 ### Not Started
 - Mainnet full sync as Tokamak client
