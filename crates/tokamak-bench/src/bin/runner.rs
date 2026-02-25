@@ -5,8 +5,11 @@ use clap::{Parser, Subcommand};
 #[cfg(feature = "jit-bench")]
 use tokamak_bench::report::{jit_suite_to_json, jit_to_markdown};
 use tokamak_bench::{
-    regression::compare,
-    report::{from_json, regression_to_json, to_json, to_markdown},
+    regression::{compare, compare_jit},
+    report::{
+        from_json, jit_regression_to_json, jit_regression_to_markdown, jit_suite_from_json,
+        regression_to_json, to_json, to_markdown,
+    },
     runner::{Scenario, default_scenarios, run_suite},
     types::Thresholds,
 };
@@ -75,6 +78,29 @@ enum Command {
         /// Output markdown file path (default: stdout)
         #[arg(long)]
         output: Option<String>,
+    },
+
+    /// Compare baseline and current JIT benchmark results for speedup regression
+    JitCompare {
+        /// Path to baseline JIT benchmark JSON file
+        #[arg(long)]
+        baseline: String,
+
+        /// Path to current JIT benchmark JSON file
+        #[arg(long)]
+        current: String,
+
+        /// Speedup drop threshold percentage (default: 20%)
+        #[arg(long, default_value = "20.0")]
+        threshold: f64,
+
+        /// Output JSON file path (default: stdout as markdown)
+        #[arg(long)]
+        output: Option<String>,
+
+        /// Output JSON instead of markdown
+        #[arg(long)]
+        json: bool,
     },
 
     /// Run JIT vs interpreter benchmark comparison (requires jit-bench feature)
@@ -198,6 +224,41 @@ fn main() {
                     eprintln!("Report written to {path}");
                 }
                 None => println!("{md}"),
+            }
+        }
+
+        Command::JitCompare {
+            baseline,
+            current,
+            threshold,
+            output,
+            json,
+        } => {
+            let baseline_json =
+                fs::read_to_string(&baseline).expect("Failed to read baseline file");
+            let current_json = fs::read_to_string(&current).expect("Failed to read current file");
+
+            let baseline_suite = jit_suite_from_json(&baseline_json);
+            let current_suite = jit_suite_from_json(&current_json);
+
+            let report = compare_jit(&baseline_suite, &current_suite, threshold);
+
+            let content = if json {
+                jit_regression_to_json(&report)
+            } else {
+                jit_regression_to_markdown(&report)
+            };
+
+            match output {
+                Some(path) => {
+                    fs::write(&path, &content).expect("Failed to write output");
+                    eprintln!("JIT comparison written to {path}");
+                }
+                None => println!("{content}"),
+            }
+
+            if report.status == tokamak_bench::types::RegressionStatus::Regression {
+                process::exit(1);
             }
         }
 

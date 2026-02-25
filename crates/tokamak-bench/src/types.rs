@@ -108,3 +108,22 @@ pub struct JitBenchSuite {
     /// Results for each scenario.
     pub results: Vec<JitBenchResult>,
 }
+
+/// A single scenario's JIT speedup regression entry.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JitSpeedupDelta {
+    pub scenario: String,
+    pub baseline_speedup: f64,
+    pub current_speedup: f64,
+    /// Negative = regression (speedup dropped).
+    pub change_percent: f64,
+}
+
+/// Report comparing JIT speedup ratios between baseline and current.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JitRegressionReport {
+    pub status: RegressionStatus,
+    pub threshold_percent: f64,
+    pub regressions: Vec<JitSpeedupDelta>,
+    pub improvements: Vec<JitSpeedupDelta>,
+}

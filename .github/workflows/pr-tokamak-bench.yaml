@@ -1,4 +1,4 @@
-name: Tokamak Opcode Benchmark
+name: Tokamak Benchmark
 
 on:
   pull_request:
@@ -6,6 +6,7 @@ on:
     paths:
       - "crates/vm/levm/**"
       - "crates/tokamak-bench/**"
+      - "crates/vm/tokamak-jit/**"
       - ".github/workflows/pr-tokamak-bench.yaml"
 
 concurrency:
@@ -178,4 +179,175 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
           body-path: report.md
+          edit-mode: replace
+
+  # ─── JIT Benchmark Jobs ─────────────────────────────────────────────
+  # Requires LLVM 21 for revmc backend. Uses continue-on-error until
+  # C-2 (LLVM 21 CI provisioning) is complete.
+
+  jit-bench-pr:
+    name: JIT Benchmark PR
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Install LLVM 21
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-21-dev libpolly-21-dev || echo "::warning::LLVM 21 install failed — JIT bench will be skipped"
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
+
+      - name: Compile benchmark contracts
+        run: |
+          cd crates/vm/levm
+          make compile-contracts
+
+      - name: Build tokamak-bench with JIT
+        run: cargo build --release -p tokamak-bench --features jit-bench
+
+      - name: Run JIT benchmarks
+        run: |
+          target/release/tokamak-bench jit-bench \
+            --runs 10 \
+            --commit "${{ github.event.pull_request.head.sha }}" \
+            --output jit-bench-pr.json
+
+      - name: Upload JIT PR results
+        uses: actions/upload-artifact@v4
+        with:
+          name: jit-bench-pr
+          path: jit-bench-pr.json
+
+  jit-bench-main:
+    name: JIT Benchmark Main
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Install LLVM 21
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-21-dev libpolly-21-dev || echo "::warning::LLVM 21 install failed — JIT bench will be skipped"
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
+
+      - name: Compile benchmark contracts
+        run: |
+          cd crates/vm/levm
+          make compile-contracts
+
+      - name: Check if tokamak-bench exists
+        id: check
+        run: |
+          if cargo metadata --no-deps --format-version 1 2>/dev/null | grep -q '"name":"tokamak-bench"'; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::tokamak-bench not found on base branch"
+          fi
+
+      - name: Build tokamak-bench with JIT
+        if: steps.check.outputs.exists == 'true'
+        run: cargo build --release -p tokamak-bench --features jit-bench
+
+      - name: Run JIT benchmarks
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          target/release/tokamak-bench jit-bench \
+            --runs 10 \
+            --commit "${{ github.event.pull_request.base.sha }}" \
+            --output jit-bench-main.json
+
+      - name: Upload JIT main results
+        if: steps.check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jit-bench-main
+          path: jit-bench-main.json
+
+  compare-jit-results:
+    name: Compare JIT Results
+    runs-on: ubuntu-latest
+    needs: [jit-bench-pr, jit-bench-main]
+    if: always() && needs.jit-bench-pr.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Build tokamak-bench
+        run: cargo build --release -p tokamak-bench
+
+      - name: Download JIT PR results
+        uses: actions/download-artifact@v4
+        with:
+          name: jit-bench-pr
+          path: ./results
+
+      - name: Download JIT main results
+        id: download-main
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: jit-bench-main
+          path: ./results
+
+      - name: Compare JIT speedup
+        id: compare-jit
+        continue-on-error: true
+        if: steps.download-main.outcome == 'success'
+        run: |
+          target/release/tokamak-bench jit-compare \
+            --baseline results/jit-bench-main.json \
+            --current results/jit-bench-pr.json \
+            --threshold 20.0 \
+            --output jit-report.md
+
+      - name: Generate first-run JIT report
+        if: steps.download-main.outcome != 'success'
+        run: |
+          {
+            echo "## JIT Speedup Regression: **Baseline**"
+            echo ""
+            echo "No baseline JIT benchmark found on the base branch."
+            echo "This PR establishes the initial JIT benchmark baseline."
+          } > jit-report.md
+
+      - name: Find JIT comment
+        continue-on-error: true
+        uses: peter-evans/find-comment@v3
+        id: fc-jit
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "JIT Speedup Regression"
+
+      - name: Post JIT PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc-jit.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: jit-report.md
           edit-mode: replace

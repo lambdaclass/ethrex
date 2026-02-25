@@ -1,4 +1,4 @@
-use crate::types::{BenchSuite, JitBenchSuite, RegressionReport};
+use crate::types::{BenchSuite, JitBenchSuite, JitRegressionReport, RegressionReport};
 
 pub fn to_json(suite: &BenchSuite) -> String {
     serde_json::to_string_pretty(suite).expect("Failed to serialize BenchSuite")
@@ -112,6 +112,60 @@ pub fn jit_to_markdown(suite: &JitBenchSuite) -> String {
     md
 }
 
+pub fn jit_regression_to_json(report: &JitRegressionReport) -> String {
+    serde_json::to_string_pretty(report).expect("Failed to serialize JitRegressionReport")
+}
+
+pub fn jit_regression_from_json(json: &str) -> JitRegressionReport {
+    serde_json::from_str(json).expect("Failed to deserialize JitRegressionReport")
+}
+
+pub fn jit_regression_to_markdown(report: &JitRegressionReport) -> String {
+    let mut md = String::new();
+
+    md.push_str(&format!(
+        "## JIT Speedup Regression: **{}**\n\n",
+        report.status
+    ));
+    md.push_str(&format!(
+        "Threshold: {:.0}% speedup drop\n\n",
+        report.threshold_percent
+    ));
+
+    if report.regressions.is_empty() && report.improvements.is_empty() {
+        md.push_str("No significant JIT speedup changes detected.\n");
+        return md;
+    }
+
+    if !report.regressions.is_empty() {
+        md.push_str("### Regressions\n\n");
+        md.push_str("| Scenario | Baseline Speedup | Current Speedup | Change |\n");
+        md.push_str("|----------|-----------------|-----------------|--------|\n");
+        for r in &report.regressions {
+            md.push_str(&format!(
+                "| {} | {:.2}x | {:.2}x | {:+.1}% |\n",
+                r.scenario, r.baseline_speedup, r.current_speedup, r.change_percent
+            ));
+        }
+        md.push('\n');
+    }
+
+    if !report.improvements.is_empty() {
+        md.push_str("### Improvements\n\n");
+        md.push_str("| Scenario | Baseline Speedup | Current Speedup | Change |\n");
+        md.push_str("|----------|-----------------|-----------------|--------|\n");
+        for r in &report.improvements {
+            md.push_str(&format!(
+                "| {} | {:.2}x | {:.2}x | {:+.1}% |\n",
+                r.scenario, r.baseline_speedup, r.current_speedup, r.change_percent
+            ));
+        }
+        md.push('\n');
+    }
+
+    md
+}
+
 /// Generate a suite-level statistics markdown section.
 #[expect(clippy::as_conversions, reason = "ns-to-ms conversion for display")]
 pub fn suite_stats_to_markdown(suite: &BenchSuite) -> String {
@@ -155,7 +209,10 @@ pub fn suite_stats_to_markdown(suite: &BenchSuite) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{BenchResult, JitBenchResult, OpcodeEntry, RegressionStatus, Thresholds};
+    use crate::types::{
+        BenchResult, JitBenchResult, JitRegressionReport, JitSpeedupDelta, OpcodeEntry,
+        RegressionStatus, Thresholds,
+    };
 
     #[test]
     fn test_json_roundtrip() {
@@ -263,6 +320,64 @@ mod tests {
         assert!(md.contains("ERC20Transfer"));
         assert!(md.contains("test123"));
         assert!(md.contains("N/A"));
+    }
+
+    #[test]
+    fn test_jit_regression_json_roundtrip() {
+        let report = JitRegressionReport {
+            status: RegressionStatus::Regression,
+            threshold_percent: 20.0,
+            regressions: vec![JitSpeedupDelta {
+                scenario: "Fibonacci".to_string(),
+                baseline_speedup: 2.5,
+                current_speedup: 1.8,
+                change_percent: -28.0,
+            }],
+            improvements: vec![],
+        };
+        let json = jit_regression_to_json(&report);
+        let parsed = jit_regression_from_json(&json);
+        assert_eq!(parsed.status, RegressionStatus::Regression);
+        assert_eq!(parsed.regressions.len(), 1);
+    }
+
+    #[test]
+    fn test_jit_regression_markdown_stable() {
+        let report = JitRegressionReport {
+            status: RegressionStatus::Stable,
+            threshold_percent: 20.0,
+            regressions: vec![],
+            improvements: vec![],
+        };
+        let md = jit_regression_to_markdown(&report);
+        assert!(md.contains("Stable"));
+        assert!(md.contains("No significant"));
+    }
+
+    #[test]
+    fn test_jit_regression_markdown_with_entries() {
+        let report = JitRegressionReport {
+            status: RegressionStatus::Regression,
+            threshold_percent: 20.0,
+            regressions: vec![JitSpeedupDelta {
+                scenario: "BubbleSort".to_string(),
+                baseline_speedup: 2.24,
+                current_speedup: 1.50,
+                change_percent: -33.0,
+            }],
+            improvements: vec![JitSpeedupDelta {
+                scenario: "Fibonacci".to_string(),
+                baseline_speedup: 2.5,
+                current_speedup: 3.2,
+                change_percent: 28.0,
+            }],
+        };
+        let md = jit_regression_to_markdown(&report);
+        assert!(md.contains("Regression"));
+        assert!(md.contains("BubbleSort"));
+        assert!(md.contains("2.24x"));
+        assert!(md.contains("Fibonacci"));
+        assert!(md.contains("Improvements"));
     }
 
     #[test]
