@@ -82,7 +82,7 @@ use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
-use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
+use ethrex_trie::{Nibbles, Node, NodeHash, NodeRef, Trie, TrieError, TrieNode};
 use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -703,25 +703,35 @@ impl Blockchain {
         }
         let t_gathered = Instant::now();
 
-        let t_a = Instant::now();
         let collapsed = self.collapse_root_node(parent_header, None, root)?;
-        let t_b = Instant::now();
-        let state_trie_hash = if let Some(root) = collapsed {
-            let mut root = NodeRef::from(root);
-            let hash = root.commit(Nibbles::default(), &mut state_updates);
-            hash.finalize()
-        } else {
-            state_updates.push((Nibbles::default(), vec![RLP_NULL]));
-            *EMPTY_TRIE_HASH
+        let state_trie_hash = match collapsed {
+            Some(root @ Node::Branch(_)) => {
+                // For Branch roots (>1 children), all children already have cached
+                // hashes from collect_trie. Encode directly to skip commit()'s
+                // recursive descent and Nibbles allocations.
+                let buf = root.encode_to_vec();
+                let hash = NodeHash::from_encoded(&buf);
+                state_updates.push((Nibbles::default(), buf));
+                hash.finalize()
+            }
+            Some(root) => {
+                // For restructured roots (Extension/Leaf from 1-child collapse),
+                // the child NodeRef lacks a cached hash, so use commit().
+                let mut root = NodeRef::from(root);
+                let hash = root.commit(Nibbles::default(), &mut state_updates);
+                hash.finalize()
+            }
+            None => {
+                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+                *EMPTY_TRIE_HASH
+            }
         };
         let t_root = Instant::now();
         info!(
-            "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms (collapse={}us commit={}us)",
+            "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms",
             t_barrier.duration_since(t_drain_start).as_secs_f64() * 1000.0,
             t_gathered.duration_since(t_barrier).as_secs_f64() * 1000.0,
             t_root.duration_since(t_gathered).as_secs_f64() * 1000.0,
-            t_b.duration_since(t_a).as_micros(),
-            t_root.duration_since(t_b).as_micros(),
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
