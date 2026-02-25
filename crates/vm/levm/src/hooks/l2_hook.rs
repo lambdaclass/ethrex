@@ -130,9 +130,6 @@ fn finalize_non_privileged_execution(
     // EIP-7778: pre-refund gas for block accounting
     let total_gas_pre_refund = ctx_result.gas_used;
 
-    // No revert path needed — l1_gas was reserved in prepare_execution,
-    // so actual_gas_used <= gas_limit is guaranteed.
-
     default_hook::delete_self_destruct_accounts(vm)?;
 
     let fee_token_ratio = if let Some(fee_token) = vm.env.fee_token {
