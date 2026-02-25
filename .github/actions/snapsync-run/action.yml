@@ -90,7 +90,7 @@ runs:
 
         assertoor_params:
           tests:
-            - file: https://raw.githubusercontent.com/lambdaclass/ethrex/${GITHUB_SHA}/.github/config/assertoor/syncing-check.yaml
+            - file: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/.github/config/assertoor/syncing-check.yaml
               timeout: "${TIMEOUT}"
 
         YAML
