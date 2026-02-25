@@ -2858,12 +2858,24 @@ fn handle_subtrie(
                     let n_nodes = state.nodes.len();
                     let mut new_storage_root = None;
                     if let Some(root) = state.storage_root {
-                        if let Some(root) =
-                            collapse_root_node(&storage, parent_state_root, Some(prefix), *root)?
-                        {
+                        let t_collapse = Instant::now();
+                        let collapsed =
+                            collapse_root_node(&storage, parent_state_root, Some(prefix), *root)?;
+                        let collapse_us = t_collapse.elapsed().as_micros();
+                        if let Some(root) = collapsed {
+                            let t_commit = Instant::now();
                             let mut root = NodeRef::from(root);
                             let hash = root.commit(Nibbles::default(), &mut state.nodes);
                             new_storage_root = Some(hash.finalize());
+                            let commit_us = t_commit.elapsed().as_micros();
+                            let this_elapsed = t_res.elapsed();
+                            if this_elapsed > max_resolve {
+                                info!(
+                                    "    resolve[{index}]: {:.2}ms collapse={collapse_us}us commit={commit_us}us nodes={n_nodes}->{}",
+                                    this_elapsed.as_secs_f64() * 1000.0,
+                                    state.nodes.len(),
+                                );
+                            }
                         } else {
                             state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
                             new_storage_root = Some(*EMPTY_TRIE_HASH);
