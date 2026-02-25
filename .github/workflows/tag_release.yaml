@@ -95,7 +95,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 6.0.0-rc.1
+          ~/.sp1/bin/sp1up --version 6.0.0
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
@@ -185,7 +185,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 6.0.0-rc.1
+          ~/.sp1/bin/sp1up --version 6.0.0
 
       - name: Install RISC0
         if: ${{ matrix.zkvm == 'risc0' }}
