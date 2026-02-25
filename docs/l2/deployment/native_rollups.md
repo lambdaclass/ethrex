@@ -79,6 +79,14 @@ The L2Bridge is preminted with an effectively infinite ETH balance (`U256::MAX /
 - `solc` (Solidity compiler) — needed to compile the contracts during build
 - `rex` (cast-compatible CLI) — for querying contracts in the demo steps. Install: `cargo install rex-cli` (or use `cast` from Foundry as a drop-in replacement)
 
+> [!NOTE]
+> **Rex CLI syntax quirks:**
+> - `rex balance` and `rex block-number` take `[RPC_URL]` as a **positional** argument (e.g., `rex balance 0x... http://localhost:1729`), not `--rpc-url`.
+> - `rex send` and `rex call` use `--rpc-url` as a named option and `-k` for the private key.
+> - `rex deploy` takes `[PRIVATE_KEY]` as a **positional** argument.
+> - `--value` is always in **wei** (e.g., `1000000000000000000` for 1 ETH).
+> - `bytes` arguments should be passed as hex **without** the `0x` prefix (e.g., `d09de08a`), or as `""` for empty bytes.
+
 Verify solc is installed:
 
 ```shell
@@ -95,45 +103,59 @@ All commands are run from the repository root.
 
 ### Setup
 
+Build the binary first (this compiles the Solidity contracts and embeds them):
+
+```shell
+COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,native-rollups
+```
+
 #### Terminal 1 — Start L1
 
 Start a local ethrex L1 with the EXECUTE precompile enabled:
 
 ```shell
-NATIVE_ROLLUPS=1 make -C crates/l2 rm-db-l1 init-l1
+./target/release/ethrex \
+  --network fixtures/genesis/l1.json \
+  --http.port 8545 --http.addr 0.0.0.0 --authrpc.port 8551 \
+  --dev --datadir /tmp/ethrex_l1
 ```
 
 Wait until you see L1 producing blocks (the `--dev` flag auto-mines).
 
-#### Terminal 2 — Deploy contracts
+#### Terminal 2 — Deploy contracts and start L2
 
-Deploy `NativeRollup.sol` to L1, generate the L2 genesis, and fund the contract:
+Deploy `NativeRollup.sol` to L1 and generate the L2 genesis:
 
 ```shell
-NATIVE_ROLLUPS=1 make -C crates/l2 deploy-l1
+./target/release/ethrex l2 deploy \
+  --eth-rpc-url http://localhost:8545 \
+  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --native-rollups \
+  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --genesis-l2-path fixtures/genesis/native_l2.json
 ```
 
 You should see output like:
 
 ```
 NativeRollup.sol deployed at: 0x...
-Funded NativeRollup contract with 100 ETH
 Contract address written to cmd/.env
 ```
 
-Save the contract address for later:
+Save the contract address and start the L2 node:
 
 ```shell
 source cmd/.env
-echo $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS
-```
 
-#### Terminal 3 — Start L2
-
-Start the native rollup L2 node:
-
-```shell
-NATIVE_ROLLUPS=1 make -C crates/l2 rm-db-l2 init-l2
+./target/release/ethrex l2 \
+  --native-rollups \
+  --native-rollups.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollups.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --network fixtures/genesis/native_l2.json \
+  --http.port 1729 --http.addr 0.0.0.0 \
+  --datadir /tmp/ethrex_l2 \
+  --eth.rpc-url http://localhost:8545
 ```
 
 ### Step 1: Verify the L2 is advancing
@@ -142,17 +164,17 @@ Once the L2 is running, you should see log lines like:
 
 ```
 NativeBlockProducer: produced block N
-NativeL1Committer: advance() tx sent for block N
+NativeL1Committer: committed block N to L1 (state_root=..., l1_msgs=0, tx=...)
 ```
 
 Query the L1 contract to verify:
 
 ```shell
 # L2 block number committed to L1
-rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockNumber()(uint256)" --rpc-url http://localhost:8545
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockNumber()" --rpc-url http://localhost:8545
 
 # L2 block number from the L2 RPC directly
-rex block-number --rpc-url http://localhost:1729
+rex block-number http://localhost:1729
 ```
 
 The L1 value should trail the L2 value by a few blocks (the committer runs on a configurable interval).
@@ -163,48 +185,81 @@ The `NativeRollup.sol` contract exposes public getters for all its state:
 
 ```shell
 # Current L2 state root
-rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "stateRoot()(bytes32)" --rpc-url http://localhost:8545
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "stateRoot()" --rpc-url http://localhost:8545
 
 # Block gas limit
-rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockGasLimit()(uint256)" --rpc-url http://localhost:8545
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockGasLimit()" --rpc-url http://localhost:8545
 
 # Last base fee per gas
-rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "lastBaseFeePerGas()(uint256)" --rpc-url http://localhost:8545
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "lastBaseFeePerGas()" --rpc-url http://localhost:8545
 
 # Last gas used
-rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "lastGasUsed()(uint256)" --rpc-url http://localhost:8545
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "lastGasUsed()" --rpc-url http://localhost:8545
 ```
 
-### Step 3: Deposit (L1 → L2)
+### Step 3: Deposit ETH (L1 → L2)
 
 Send ETH from L1 to a fresh account on L2.
 
 ```shell
 # Pick a fresh address (not pre-funded on L2)
-# Private key 0x42 → address 0xC083e9947Cf02b463B4376E084e1a1720F808DfB
-DEPOSIT_TO=0xC083e9947Cf02b463B4376E084e1a1720F808DfB
+# Private key 0x42 → address 0x6f4c950442e1af093bcff730381e63ae9171b87a
+DEPOSIT_TO=0x6f4c950442e1af093bcff730381e63ae9171b87a
 
 # Check L2 balance is 0
-rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
+rex balance $DEPOSIT_TO http://localhost:1729
 
 # Deposit 1 ETH via sendL1Message(to, gasLimit, data)
 # Uses the L1 deployer key (pre-funded with 1M ETH)
+# Note: --value is in wei (1 ETH = 1000000000000000000)
 rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
   "sendL1Message(address,uint256,bytes)" \
-  $DEPOSIT_TO 105000 0x \
-  --value 1ether \
+  $DEPOSIT_TO 105000 "" \
+  --value 1000000000000000000 \
   --rpc-url http://localhost:8545 \
-  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+  -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
 # Watch the L2 logs in Terminal 3 — the watcher picks up the message and
 # the block producer includes a relayer tx for it.
 
-# After a few seconds, check the L2 balance again:
-rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
-# Should show 1 ETH (1000000000000000000 wei)
+# After ~10 seconds, check the L2 balance:
+rex balance $DEPOSIT_TO http://localhost:1729
+# Should show 1000000000000000000 (1 ETH in wei)
 ```
 
-### Step 4: Withdraw (L2 → L1)
+### Step 4: Deploy a contract on L2 and call it from L1
+
+This step demonstrates that L1→L2 messages can carry arbitrary calldata, not just ETH transfers. We deploy a Counter contract on L2, then increment it by sending a message from L1.
+
+```shell
+# Deploy Counter.sol on L2 (increment + get functions)
+# The bytecode is from `solc --bin --optimize crates/l2/contracts/src/example/Counter.sol`
+COUNTER_BYTECODE=0x6080604052348015600e575f5ffd5b5060e080601a5f395ff3fe608060405260043610602f575f3560e01c806306661abd1460335780636d4ce63c146057578063d09de08a146068575b5f5ffd5b348015603d575f5ffd5b5060455f5481565b60405190815260200160405180910390f35b3480156061575f5ffd5b505f546045565b606e6070565b005b60015f5f828254607f91906086565b9091555050565b8082018082111560a457634e487b7160e01b5f52601160045260245ffd5b9291505056fea26469706673582212207799e79076af790391bf7137f3f28f32f374dfc98b94553ba76891a74e4abada64736f6c634300081f0033
+
+rex deploy --bytecode $COUNTER_BYTECODE \
+  --rpc-url http://localhost:1729 \
+  0 0x0000000000000000000000000000000000000000000000000000000000000042
+# Note the deployed contract address from the output
+COUNTER=<deployed_address>
+
+# Verify counter starts at 0
+rex call $COUNTER "count()" --rpc-url http://localhost:1729
+
+# Send an L1 message that calls increment() on the counter
+# increment() selector = 0xd09de08a (pass without 0x prefix as bytes arg)
+rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  "sendL1Message(address,uint256,bytes)" \
+  $COUNTER 105000 d09de08a \
+  --value 0 \
+  --rpc-url http://localhost:8545 \
+  -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+
+# Wait ~10 seconds for the L2 to process the L1 message, then check:
+rex call $COUNTER "count()" --rpc-url http://localhost:1729
+# Should return 1
+```
+
+### Step 5: Withdraw ETH (L2 → L1)
 
 Send ETH from L2 back to an L1 address.
 
@@ -213,16 +268,16 @@ Send ETH from L2 back to an L1 address.
 L1_RECEIVER=0xE25583099BA105D9ec0A67f5Ae86D90e50036425
 
 # Record L1 balance before
-rex balance $L1_RECEIVER --rpc-url http://localhost:8545
+rex balance $L1_RECEIVER http://localhost:8545
 
 # Withdraw 0.5 ETH from L2 via L2Bridge.withdraw(receiver)
 # Uses the test account's private key (0x42)
 rex send 0x000000000000000000000000000000000000fffd \
   "withdraw(address)" \
   $L1_RECEIVER \
-  --value 0.5ether \
+  --value 500000000000000000 \
   --rpc-url http://localhost:1729 \
-  --private-key 0x0000000000000000000000000000000000000000000000000000000000000042
+  -k 0x0000000000000000000000000000000000000000000000000000000000000042
 ```
 
 Wait for the L2 block containing the withdrawal to be committed to L1 (watch the committer logs in Terminal 3).
@@ -241,14 +296,14 @@ rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
   "claimWithdrawal(address,address,uint256,uint256,uint256,bytes[],bytes[])" \
   FROM RECEIVER AMOUNT MESSAGE_ID BLOCK_NUMBER '[ACCOUNT_PROOF]' '[STORAGE_PROOF]' \
   --rpc-url http://localhost:8545 \
-  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+  -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
 # Verify the L1 balance increased
-rex balance $L1_RECEIVER --rpc-url http://localhost:8545
+rex balance $L1_RECEIVER http://localhost:8545
 ```
 
 > [!TIP]
-> The integration test at `test/tests/l2/native_rollup_bridge.rs` automates the full deposit/withdraw roundtrip including proof fetching and claim submission. Run it with:
+> The integration test at `test/tests/l2/native_rollup_bridge.rs` automates the full deposit/withdraw/counter roundtrip including proof fetching and claim submission. Run it with:
 > ```shell
 > cargo test -p ethrex-test --features native-rollups -- l2::native_rollup_bridge --nocapture
 > ```
@@ -258,7 +313,7 @@ rex balance $L1_RECEIVER --rpc-url http://localhost:8545
 Remove the databases to start fresh:
 
 ```shell
-make -C crates/l2 rm-db-l1 rm-db-l2
+rm -rf /tmp/ethrex_l1 /tmp/ethrex_l2
 ```
 
 ## Further reading
