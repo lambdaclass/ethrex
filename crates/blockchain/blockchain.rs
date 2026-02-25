@@ -412,18 +412,28 @@ impl Blockchain {
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
+                let warmer_warm_cache = Some(warm_cache);
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
                         // Warming uses the same caching store, sharing cached state with execution.
-                        // Precompile cache lives inside CachingDatabase, shared automatically.
+                        // WarmCache provides lock-free cross-thread sharing of prewarmed state.
                         let start = Instant::now();
                         if let Some(bal) = bal {
                             // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            let _ = LEVM::warm_block_from_bal(bal, caching_store);
+                            let _ = LEVM::warm_block_from_bal(
+                                bal,
+                                caching_store,
+                                warmer_warm_cache,
+                            );
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            let _ = LEVM::warm_block(block, caching_store, vm_type);
+                            let _ = LEVM::warm_block(
+                                block,
+                                caching_store,
+                                vm_type,
+                                warmer_warm_cache,
+                            );
                         }
                         start.elapsed()
                     })

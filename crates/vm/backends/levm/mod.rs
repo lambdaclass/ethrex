@@ -26,6 +26,7 @@ use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
 };
 use ethrex_levm::db::Database;
+use ethrex_levm::db::warm_cache::WarmCache;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
@@ -324,8 +325,12 @@ impl LEVM {
         block: &Block,
         store: Arc<dyn Database>,
         vm_type: VMType,
+        warm_cache: Option<Arc<WarmCache>>,
     ) -> Result<(), EvmError> {
-        let mut db = GeneralizedDatabase::new(store.clone());
+        let mut db = match &warm_cache {
+            Some(wc) => GeneralizedDatabase::new_with_warm_cache(store.clone(), wc.clone()),
+            None => GeneralizedDatabase::new(store.clone()),
+        };
 
         let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
@@ -342,7 +347,12 @@ impl LEVM {
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
                 // Each sender group gets its own db instance for state propagation
-                let mut group_db = GeneralizedDatabase::new(store.clone());
+                let mut group_db = match &warm_cache {
+                    Some(wc) => {
+                        GeneralizedDatabase::new_with_warm_cache(store.clone(), wc.clone())
+                    }
+                    None => GeneralizedDatabase::new(store.clone()),
+                };
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
                 for tx in txs {
@@ -386,6 +396,7 @@ impl LEVM {
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
+        warm_cache: Option<Arc<WarmCache>>,
     ) -> Result<(), EvmError> {
         let accounts = bal.accounts();
         if accounts.is_empty() {
@@ -396,7 +407,11 @@ impl LEVM {
         // This warms the CachingDatabase account cache and the TrieLayerCache
         // with state trie nodes, so Phase 2 storage reads benefit from cached lookups.
         accounts.par_iter().for_each(|ac| {
-            let _ = store.get_account_state(ac.address);
+            if let Ok(state) = store.get_account_state(ac.address) {
+                if let Some(wc) = &warm_cache {
+                    wc.insert_account(ac.address, state);
+                }
+            }
         });
 
         // Phase 2: Prefetch storage slots and contract code in parallel.
@@ -412,7 +427,11 @@ impl LEVM {
             })
             .collect();
         slots.par_iter().for_each(|(addr, key)| {
-            let _ = store.get_storage_value(*addr, *key);
+            if let Ok(value) = store.get_storage_value(*addr, *key) {
+                if let Some(wc) = &warm_cache {
+                    wc.insert_storage(*addr, *key, value);
+                }
+            }
         });
 
         // Code prefetch: get_account_state is a cache hit from Phase 1
@@ -420,7 +439,11 @@ impl LEVM {
             if let Ok(acct) = store.get_account_state(ac.address)
                 && acct.code_hash != *EMPTY_KECCACK_HASH
             {
-                let _ = store.get_account_code(acct.code_hash);
+                if let Ok(code) = store.get_account_code(acct.code_hash) {
+                    if let Some(wc) = &warm_cache {
+                        wc.insert_code(acct.code_hash, code);
+                    }
+                }
             }
         });
 

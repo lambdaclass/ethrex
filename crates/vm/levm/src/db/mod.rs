@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod gen_db;
+pub mod warm_cache;
 
 // Type aliases for cache storage maps
 type AccountCache = FxHashMap<Address, AccountState>;

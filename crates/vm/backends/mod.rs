@@ -14,6 +14,7 @@ use ethrex_common::{Address, types::fee_config::FeeConfig};
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
+pub use ethrex_levm::db::warm_cache::WarmCache;
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;

@@ -10,6 +10,7 @@ use ethrex_common::types::block_access_list::{BlockAccessList, BlockAccessListRe
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
+use super::warm_cache::WarmCache;
 use crate::account::AccountStatus;
 use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
@@ -34,6 +35,8 @@ pub struct GeneralizedDatabase {
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
+    /// Optional shared warm cache for prewarming (DashMap-based, lock-free reads).
+    pub warm_cache: Option<Arc<WarmCache>>,
 }
 
 impl GeneralizedDatabase {
@@ -46,6 +49,20 @@ impl GeneralizedDatabase {
             codes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
+            warm_cache: None,
+        }
+    }
+
+    pub fn new_with_warm_cache(store: Arc<dyn Database>, warm_cache: Arc<WarmCache>) -> Self {
+        Self {
+            store,
+            current_accounts_state: Default::default(),
+            initial_accounts_state: Default::default(),
+            tx_backup: None,
+            codes: Default::default(),
+            code_metadata: Default::default(),
+            bal_recorder: None,
+            warm_cache: Some(warm_cache),
         }
     }
 
@@ -101,6 +118,7 @@ impl GeneralizedDatabase {
             codes,
             code_metadata: Default::default(),
             bal_recorder: None,
+            warm_cache: None,
         }
     }
 
@@ -114,7 +132,17 @@ impl GeneralizedDatabase {
                 if let Some(account) = self.initial_accounts_state.get(&address) {
                     return Ok(entry.insert(account.clone()));
                 }
-                let state = self.store.get_account_state(address)?;
+                let state = if let Some(cache) = &self.warm_cache {
+                    if let Some(state) = cache.get_account(&address) {
+                        state
+                    } else {
+                        let state = self.store.get_account_state(address)?;
+                        cache.insert_account(address, state);
+                        state
+                    }
+                } else {
+                    self.store.get_account_state(address)?
+                };
                 let account = LevmAccount::from(state);
                 self.initial_accounts_state.insert(address, account.clone());
                 Ok(entry.insert(account))
@@ -142,7 +170,17 @@ impl GeneralizedDatabase {
         match self.codes.entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let code = self.store.get_account_code(code_hash)?;
+                let code = if let Some(cache) = &self.warm_cache {
+                    if let Some(code) = cache.get_code(&code_hash) {
+                        code
+                    } else {
+                        let code = self.store.get_account_code(code_hash)?;
+                        cache.insert_code(code_hash, code.clone());
+                        code
+                    }
+                } else {
+                    self.store.get_account_code(code_hash)?
+                };
                 Ok(entry.insert(code))
             }
         }
@@ -205,7 +243,18 @@ impl GeneralizedDatabase {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        let value = self.store.get_storage_value(address, key)?;
+        // Check warm cache first (populated by prewarmer)
+        let value = if let Some(cache) = &self.warm_cache {
+            if let Some(value) = cache.get_storage(&address, &key) {
+                value
+            } else {
+                let value = self.store.get_storage_value(address, key)?;
+                cache.insert_storage(address, key, value);
+                value
+            }
+        } else {
+            self.store.get_storage_value(address, key)?
+        };
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
             Some(account) => {
