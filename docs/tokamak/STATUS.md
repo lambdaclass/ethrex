@@ -19,7 +19,7 @@
 | Phase 6 | CALL/CREATE Resume | **100%** | Suspend/resume + LLVM memory mgmt |
 | Phase 7 | Dual-Execution Validation | **100%** | State-swap validation, Volkov R20 PROCEED |
 | Phase 8 | JIT Benchmarking | **100%** | Infrastructure + benchmark execution |
-| Phase 9 | Benchmark CI & Dashboard | **~50%** | JIT speedup regression CI done (C-1), LLVM provisioning pending (C-2) |
+| Phase 9 | Benchmark CI & Dashboard | **~75%** | C-1 ✅ C-2 ✅ C-3 ✅ — All Phase C tasks complete. Dashboard remaining (F-2). |
 
 ---
 
@@ -46,7 +46,7 @@
 - Fuzzing + security audit
 - Production deployment
 
-### Feature #10: Continuous Benchmarking (~50%)
+### Feature #10: Continuous Benchmarking (~60%)
 
 **Completed:**
 - `tokamak-bench` crate with 12 scenarios
@@ -133,6 +133,7 @@ R23(5.0) -> R24(8.0)
 - Feature flag CI — Quality Gate checks all 4 feature flags (fc720f46f)
 
 ### Recently Completed (Phase B/C)
+- LLVM 21 CI provisioning (C-2) — Reusable composite action `.github/actions/install-llvm/`, removed `continue-on-error`, Polly fix (5ea9c8376)
 - JIT benchmark CI (C-1) — `compare_jit()`, `JitCompare` CLI, 3 CI jobs, 10 tests, PR comment integration (d17a71c24)
 - JIT gas alignment (B-1) — Fixed negative SSTORE refund bug in `execution.rs`, added `gas_alignment.rs` with 11 tests (71f39d2d7)
 - Test quality improvements (B-2) — `test_helpers.rs`, `INTRINSIC_GAS` constant, 15+ test DRY refactors (224921e1f)

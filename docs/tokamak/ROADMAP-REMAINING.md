@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24
-**Context**: Overall ~50% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅, B-3 remaining. Phase C: C-1 ✅ C-3 ✅, C-2 remaining.
+**Context**: Overall ~50% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅, B-3 remaining. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE.
 
 ---
 
@@ -102,12 +102,16 @@
 - **Estimate**: 4h
 - **Completed**: Session d17a71c24 — `compare_jit()`, `JitCompare` CLI, `JitRegressionReport` types, CI jobs with LLVM 21 + `continue-on-error`
 
-### C-2. LLVM 21 CI Provisioning [P1]
-- Remove `continue-on-error: true` from jit-backend CI job
-- Either: package LLVM 21 in custom Docker image, OR use GitHub-hosted runner with brew
-- **Verification**: JIT backend job fails the PR if compilation breaks
+### C-2. LLVM 21 CI Provisioning [P1] ✅ DONE
+- Created reusable `.github/actions/install-llvm/` composite action ✅
+- Installs llvm-21, llvm-21-dev, libpolly-21-dev (fixes Polly linking issue) ✅
+- Modern GPG key method (tee to trusted.gpg.d, not deprecated apt-key) ✅
+- Updated `pr-tokamak.yaml` and `pr-tokamak-bench.yaml` to use the action ✅
+- Removed `continue-on-error: true` from jit-backend and jit-bench jobs ✅
+- **Verification**: JIT backend job now fails the PR if compilation breaks ✅
 - **Dependency**: None
 - **Estimate**: 4-8h
+- **Completed**: Session 5ea9c8376 — Composite action + workflow updates
 
 ### C-3. Benchmark Statistics [P1] ✅ DONE
 - Add warmup runs (discard first 2) ✅
@@ -216,7 +220,7 @@
 ```
 Week 1:  [P0] A-1 ✅ + A-2 ⏳ → A-3 ✅ → A-4 ✅ (Snapsync 수동 필요)
 Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
-Week 3:  [P1] C-1 ✅ + C-2 → B-3   ← CURRENT
+Week 3:  [P1] C-1 ✅ + C-2 ✅ → B-3   ← CURRENT
 Week 4:  [P2] D-1 decision + D-2 → E-1 start
 Week 5+: [P2] E-1 + E-2 → D-3 → E-3
 Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
