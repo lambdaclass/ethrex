@@ -24,10 +24,8 @@
 use bytes::Bytes;
 use revm_bytecode::Bytecode;
 use revm_interpreter::{
-    CallInput, InputsImpl, Interpreter, InterpreterAction, SharedMemory,
-    interpreter::ExtBytecode,
-    interpreter_action::FrameInput,
-    interpreter_types::ReturnData,
+    CallInput, InputsImpl, Interpreter, InterpreterAction, SharedMemory, interpreter::ExtBytecode,
+    interpreter_action::FrameInput, interpreter_types::ReturnData,
 };
 use revm_primitives::U256 as RevmU256;
 use revmc_context::EvmCompilerFn;
@@ -61,7 +59,11 @@ struct JitResumeStateInner {
     /// Storage write journal carried across suspend/resume cycles.
     /// Needed so that a REVERT after multiple suspend/resume rounds
     /// can still undo all storage writes made during the JIT execution.
-    storage_journal: Vec<(ethrex_common::Address, ethrex_common::H256, ethrex_common::U256)>,
+    storage_journal: Vec<(
+        ethrex_common::Address,
+        ethrex_common::H256,
+        ethrex_common::U256,
+    )>,
 }
 
 // SAFETY: `Interpreter` contains `SharedMemory` (Arc-backed) and other owned, non-`Rc` types.

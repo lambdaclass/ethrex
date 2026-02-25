@@ -358,8 +358,7 @@ mod tests {
 
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
-        let result =
-            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
         assert!(matches!(result, DualExecutionResult::Match));
     }
 
@@ -375,8 +374,7 @@ mod tests {
 
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
-        let result =
-            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("balance"));
@@ -395,8 +393,7 @@ mod tests {
 
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
-        let result =
-            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("nonce"));
@@ -416,8 +413,7 @@ mod tests {
 
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
-        let result =
-            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("storage slot"));
@@ -441,8 +437,7 @@ mod tests {
         // Different values but both unmodified — should be Match
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
-        let result =
-            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
         assert!(matches!(result, DualExecutionResult::Match));
     }
 
@@ -460,8 +455,7 @@ mod tests {
 
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
-        let result =
-            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("status"));
@@ -484,8 +478,7 @@ mod tests {
 
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
-        let result =
-            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("code_hash"));
@@ -499,21 +492,21 @@ mod tests {
         let slot2 = H256::from_low_u64_be(2);
 
         let mut jit_db: CacheDB = FxHashMap::default();
-        jit_db.insert(
-            addr,
-            make_account(100, 1, vec![(slot1, U256::from(10))]),
-        );
+        jit_db.insert(addr, make_account(100, 1, vec![(slot1, U256::from(10))]));
 
         let mut interp_db: CacheDB = FxHashMap::default();
         interp_db.insert(
             addr,
-            make_account(100, 1, vec![(slot1, U256::from(10)), (slot2, U256::from(5))]),
+            make_account(
+                100,
+                1,
+                vec![(slot1, U256::from(10)), (slot2, U256::from(5))],
+            ),
         );
 
         let jit = success_result(21000, &[]);
         let interp = success_result(21000, &[]);
-        let result =
-            validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
+        let result = validate_dual_execution(&jit, &interp, 0, 0, &[], &[], &jit_db, &interp_db);
         assert!(matches!(result, DualExecutionResult::Mismatch { .. }));
         if let DualExecutionResult::Mismatch { reason } = result {
             assert!(reason.contains("storage slot"));

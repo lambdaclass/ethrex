@@ -107,7 +107,10 @@ pub fn bytecode_has_external_calls(bytecode: &[u8]) -> bool {
     while i < bytecode.len() {
         #[allow(clippy::indexing_slicing)]
         let opcode = bytecode[i];
-        if matches!(opcode, CALL | CALLCODE | DELEGATECALL | STATICCALL | CREATE | CREATE2) {
+        if matches!(
+            opcode,
+            CALL | CALLCODE | DELEGATECALL | STATICCALL | CREATE | CREATE2
+        ) {
             return true;
         }
         // Skip PUSH immediate data

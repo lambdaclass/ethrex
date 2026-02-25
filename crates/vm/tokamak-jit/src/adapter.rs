@@ -14,7 +14,7 @@ use crate::error::JitError;
 
 use ethrex_common::types::Fork;
 use revm_interpreter::{Gas, SharedMemory};
-use revm_primitives::{hardfork::SpecId, U256 as RevmU256};
+use revm_primitives::{U256 as RevmU256, hardfork::SpecId};
 
 /// Convert LEVM `Fork` to revm `SpecId`.
 ///

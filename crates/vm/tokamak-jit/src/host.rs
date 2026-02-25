@@ -47,7 +47,11 @@ pub struct LevmHost<'a> {
     /// Journal of storage writes: (address, key, previous_value).
     /// Used to rollback storage on REVERT. Each entry records the value
     /// that was present before the SSTORE, so reverting replays in reverse.
-    pub(crate) storage_journal: Vec<(ethrex_common::Address, ethrex_common::H256, ethrex_common::U256)>,
+    pub(crate) storage_journal: Vec<(
+        ethrex_common::Address,
+        ethrex_common::H256,
+        ethrex_common::U256,
+    )>,
 }
 
 impl<'a> LevmHost<'a> {
@@ -219,8 +223,8 @@ impl Host for LevmHost<'_> {
         let levm_addr = revm_address_to_levm(&address);
         let levm_key = ethrex_common::H256::from(revm_u256_to_levm(&key).to_big_endian());
 
-        let value = jit_get_storage_value(self.db, levm_addr, levm_key)
-            .map_err(|_| LoadError::DBError)?;
+        let value =
+            jit_get_storage_value(self.db, levm_addr, levm_key).map_err(|_| LoadError::DBError)?;
 
         // EIP-2929: track cold/warm storage slot access
         let is_cold = !self.substate.add_accessed_slot(levm_addr, levm_key);
@@ -247,8 +251,8 @@ impl Host for LevmHost<'_> {
         let is_cold = !self.substate.add_accessed_slot(levm_addr, levm_key);
 
         // Get current (present) value before write
-        let present = jit_get_storage_value(self.db, levm_addr, levm_key)
-            .map_err(|_| LoadError::DBError)?;
+        let present =
+            jit_get_storage_value(self.db, levm_addr, levm_key).map_err(|_| LoadError::DBError)?;
 
         // Get or cache the pre-tx original value for SSTORE gas calculation
         let cache_key = (levm_addr, levm_key);

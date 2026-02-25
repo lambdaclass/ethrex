@@ -346,8 +346,9 @@ mod tests {
         let sender_addr = Address::from_low_u64_be(0x100);
 
         let callee_code = Code::from_bytecode(Bytes::from(make_reverting_bytecode()));
-        let caller_code =
-            Code::from_bytecode(Bytes::from(make_checked_staticcall_caller(callee_addr.into())));
+        let caller_code = Code::from_bytecode(Bytes::from(make_checked_staticcall_caller(
+            callee_addr.into(),
+        )));
 
         let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
             .expect("in-memory store");
@@ -1009,10 +1010,7 @@ mod tests {
     fn run_factory_via_interpreter(
         factory_addr: ethrex_common::Address,
         factory_code: ethrex_common::types::Code,
-        extra_accounts: Vec<(
-            ethrex_common::Address,
-            ethrex_common::types::Account,
-        )>,
+        extra_accounts: Vec<(ethrex_common::Address, ethrex_common::types::Account)>,
     ) -> ethrex_levm::errors::ExecutionReport {
         use std::sync::Arc;
 
@@ -1089,8 +1087,8 @@ mod tests {
     #[test]
     fn test_create_success_interpreter() {
         use bytes::Bytes;
-        use ethrex_common::{Address, U256};
         use ethrex_common::types::Code;
+        use ethrex_common::{Address, U256};
 
         let factory_addr = Address::from_low_u64_be(0x42);
         let factory_code = Code::from_bytecode(Bytes::from(make_create_factory_bytecode()));
@@ -1120,8 +1118,8 @@ mod tests {
     #[test]
     fn test_create_collision_interpreter() {
         use bytes::Bytes;
-        use ethrex_common::{Address, U256, evm::calculate_create_address};
         use ethrex_common::types::{Account, Code};
+        use ethrex_common::{Address, U256, evm::calculate_create_address};
         use rustc_hash::FxHashMap;
 
         let factory_addr = Address::from_low_u64_be(0x42);
@@ -1133,8 +1131,7 @@ mod tests {
 
         // Pre-seed the collision address with code so create_would_collide() returns true
         let collision_code = Code::from_bytecode(Bytes::from(vec![0x60, 0x00, 0xF3]));
-        let collision_account =
-            Account::new(U256::zero(), collision_code, 0, FxHashMap::default());
+        let collision_account = Account::new(U256::zero(), collision_code, 0, FxHashMap::default());
 
         let report = run_factory_via_interpreter(
             factory_addr,
@@ -1164,8 +1161,8 @@ mod tests {
     #[test]
     fn test_create2_success_interpreter() {
         use bytes::Bytes;
-        use ethrex_common::{Address, U256};
         use ethrex_common::types::Code;
+        use ethrex_common::{Address, U256};
 
         let factory_addr = Address::from_low_u64_be(0x42);
         let factory_code = Code::from_bytecode(Bytes::from(make_create2_factory_bytecode()));
@@ -1233,8 +1230,7 @@ mod tests {
         let factory_code = Code::from_bytecode(Bytes::from(make_create_factory_bytecode()));
 
         // --- Interpreter baseline ---
-        let interp_report =
-            run_factory_via_interpreter(factory_addr, factory_code.clone(), vec![]);
+        let interp_report = run_factory_via_interpreter(factory_addr, factory_code.clone(), vec![]);
         assert!(
             interp_report.is_success(),
             "Interpreter CREATE should succeed: {:?}",
@@ -1251,10 +1247,7 @@ mod tests {
             .compile_and_cache(&factory_code, fork, &JIT_STATE.cache)
             .expect("JIT compilation of CREATE factory should succeed");
         assert!(
-            JIT_STATE
-                .cache
-                .get(&(factory_code.hash, fork))
-                .is_some(),
+            JIT_STATE.cache.get(&(factory_code.hash, fork)).is_some(),
             "factory should be in JIT cache"
         );
 
@@ -1376,8 +1369,7 @@ mod tests {
         let factory_code = Code::from_bytecode(Bytes::from(make_create2_factory_bytecode()));
 
         // --- Interpreter baseline ---
-        let interp_report =
-            run_factory_via_interpreter(factory_addr, factory_code.clone(), vec![]);
+        let interp_report = run_factory_via_interpreter(factory_addr, factory_code.clone(), vec![]);
         assert!(
             interp_report.is_success(),
             "Interpreter CREATE2 should succeed: {:?}",
@@ -1394,10 +1386,7 @@ mod tests {
             .compile_and_cache(&factory_code, fork, &JIT_STATE.cache)
             .expect("JIT compilation of CREATE2 factory should succeed");
         assert!(
-            JIT_STATE
-                .cache
-                .get(&(factory_code.hash, fork))
-                .is_some(),
+            JIT_STATE.cache.get(&(factory_code.hash, fork)).is_some(),
             "factory should be in JIT cache"
         );
 
@@ -1573,8 +1562,7 @@ mod tests {
         let caller_code = Code::from_bytecode(Bytes::from(make_value_call_to_precompile()));
 
         // --- Interpreter baseline ---
-        let interp_report =
-            run_factory_via_interpreter(caller_addr, caller_code.clone(), vec![]);
+        let interp_report = run_factory_via_interpreter(caller_addr, caller_code.clone(), vec![]);
         assert!(
             interp_report.is_success(),
             "Interpreter precompile value-call should succeed: {:?}",
@@ -1712,8 +1700,12 @@ mod tests {
         // Pre-calculate the collision address (nonce=0 for fresh factory account)
         let collision_addr = calculate_create_address(factory_addr, 0);
         let collision_code = Code::from_bytecode(Bytes::from(vec![0x60, 0x00, 0xF3]));
-        let collision_account =
-            Account::new(U256::zero(), collision_code.clone(), 0, FxHashMap::default());
+        let collision_account = Account::new(
+            U256::zero(),
+            collision_code.clone(),
+            0,
+            FxHashMap::default(),
+        );
 
         // --- Interpreter baseline ---
         let interp_report = run_factory_via_interpreter(

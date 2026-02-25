@@ -379,10 +379,7 @@ impl Substate {
     #[cfg(feature = "tokamak-jit")]
     pub fn snapshot(&self) -> Self {
         Self {
-            parent: self
-                .parent
-                .as_ref()
-                .map(|p| Box::new(p.snapshot())),
+            parent: self.parent.as_ref().map(|p| Box::new(p.snapshot())),
             selfdestruct_set: self.selfdestruct_set.clone(),
             accessed_addresses: self.accessed_addresses.clone(),
             accessed_storage_slots: self.accessed_storage_slots.clone(),
@@ -665,128 +662,126 @@ impl<'a> VM<'a> {
                         &mut self.substate,
                         &self.env,
                         &mut self.storage_original_values,
-                    )
-                {
-                    // Resume loop: handle CALL/CREATE suspensions
-                    let mut outcome_result = initial_result;
-                    while let Ok(crate::jit::types::JitOutcome::Suspended {
-                        resume_state,
-                        sub_call,
-                    }) = outcome_result
-                    {
-                        match self.handle_jit_subcall(sub_call) {
-                            Ok(sub_result) => {
-                                outcome_result = JIT_STATE
-                                    .execute_jit_resume(
-                                        resume_state,
-                                        sub_result,
-                                        &mut self.current_call_frame,
-                                        self.db,
-                                        &mut self.substate,
-                                        &self.env,
-                                        &mut self.storage_original_values,
-                                    )
-                                    .unwrap_or(Err("no JIT backend for resume".to_string()));
-                            }
-                            Err(e) => {
-                                outcome_result = Err(format!("JIT subcall error: {e:?}"));
-                                break;
-                            }
-                        }
-                    }
-
-                    match outcome_result {
-                        Ok(outcome) => {
-                            JIT_STATE
-                                .metrics
-                                .jit_executions
-                                .fetch_add(1, Ordering::Relaxed);
-
-                            // Dual-execution validation: replay via interpreter and compare.
-                            if let Some(mut snapshot) = pre_jit_snapshot {
-                                // Build JIT result for comparison before swapping state
-                                let jit_result =
-                                    apply_jit_outcome(outcome, &self.current_call_frame)?;
-                                let jit_refunded_gas = self.substate.refunded_gas;
-                                let jit_logs = self.substate.extract_logs();
-                                // Capture JIT DB state before swap
-                                let jit_accounts =
-                                    self.db.current_accounts_state.clone();
-
-                                // Swap JIT-mutated state with pre-JIT snapshots
-                                // (VM now holds original state for interpreter replay)
-                                self.swap_validation_state(&mut snapshot);
-
-                                // Run interpreter on the original state.
-                                // If interpreter_loop fails (InternalError), swap back to
-                                // JIT state and return JIT result — validation is inconclusive
-                                // but JIT succeeded, and InternalError is a programming bug.
-                                let interp_result = match self.interpreter_loop(0) {
-                                    Ok(result) => result,
-                                    Err(_e) => {
-                                        eprintln!(
-                                            "[JIT-VALIDATE] interpreter replay failed for \
-                                             {bytecode_hash}, trusting JIT result"
-                                        );
-                                        self.swap_validation_state(&mut snapshot);
-                                        return Ok(jit_result);
-                                    }
-                                };
-                                let interp_refunded_gas = self.substate.refunded_gas;
-                                let interp_logs = self.substate.extract_logs();
-
-                                // Compare JIT vs interpreter (including DB state)
-                                let validation =
-                                    crate::jit::validation::validate_dual_execution(
-                                        &jit_result,
-                                        &interp_result,
-                                        jit_refunded_gas,
-                                        interp_refunded_gas,
-                                        &jit_logs,
-                                        &interp_logs,
-                                        &jit_accounts,
-                                        &self.db.current_accounts_state,
-                                    );
-
-                                match validation {
-                                    crate::jit::validation::DualExecutionResult::Match => {
-                                        // Swap back to JIT state (trusted now)
-                                        self.swap_validation_state(&mut snapshot);
-                                        JIT_STATE.record_validation(&cache_key);
-                                        JIT_STATE
-                                            .metrics
-                                            .validation_successes
-                                            .fetch_add(1, Ordering::Relaxed);
-                                        return Ok(jit_result);
-                                    }
-                                    crate::jit::validation::DualExecutionResult::Mismatch {
-                                        reason,
-                                    } => {
-                                        // Keep interpreter state (already in VM)
-                                        JIT_STATE.cache.invalidate(&cache_key);
-                                        JIT_STATE
-                                            .metrics
-                                            .validation_mismatches
-                                            .fetch_add(1, Ordering::Relaxed);
-                                        eprintln!(
-                                            "[JIT-VALIDATE] MISMATCH hash={bytecode_hash} \
-                                             fork={fork:?}: {reason}"
-                                        );
-                                        return Ok(interp_result);
-                                    }
+                    ) {
+                        // Resume loop: handle CALL/CREATE suspensions
+                        let mut outcome_result = initial_result;
+                        while let Ok(crate::jit::types::JitOutcome::Suspended {
+                            resume_state,
+                            sub_call,
+                        }) = outcome_result
+                        {
+                            match self.handle_jit_subcall(sub_call) {
+                                Ok(sub_result) => {
+                                    outcome_result = JIT_STATE
+                                        .execute_jit_resume(
+                                            resume_state,
+                                            sub_result,
+                                            &mut self.current_call_frame,
+                                            self.db,
+                                            &mut self.substate,
+                                            &self.env,
+                                            &mut self.storage_original_values,
+                                        )
+                                        .unwrap_or(Err("no JIT backend for resume".to_string()));
+                                }
+                                Err(e) => {
+                                    outcome_result = Err(format!("JIT subcall error: {e:?}"));
+                                    break;
                                 }
                             }
+                        }
 
-                            return apply_jit_outcome(outcome, &self.current_call_frame);
+                        match outcome_result {
+                            Ok(outcome) => {
+                                JIT_STATE
+                                    .metrics
+                                    .jit_executions
+                                    .fetch_add(1, Ordering::Relaxed);
+
+                                // Dual-execution validation: replay via interpreter and compare.
+                                if let Some(mut snapshot) = pre_jit_snapshot {
+                                    // Build JIT result for comparison before swapping state
+                                    let jit_result =
+                                        apply_jit_outcome(outcome, &self.current_call_frame)?;
+                                    let jit_refunded_gas = self.substate.refunded_gas;
+                                    let jit_logs = self.substate.extract_logs();
+                                    // Capture JIT DB state before swap
+                                    let jit_accounts = self.db.current_accounts_state.clone();
+
+                                    // Swap JIT-mutated state with pre-JIT snapshots
+                                    // (VM now holds original state for interpreter replay)
+                                    self.swap_validation_state(&mut snapshot);
+
+                                    // Run interpreter on the original state.
+                                    // If interpreter_loop fails (InternalError), swap back to
+                                    // JIT state and return JIT result — validation is inconclusive
+                                    // but JIT succeeded, and InternalError is a programming bug.
+                                    let interp_result = match self.interpreter_loop(0) {
+                                        Ok(result) => result,
+                                        Err(_e) => {
+                                            eprintln!(
+                                                "[JIT-VALIDATE] interpreter replay failed for \
+                                             {bytecode_hash}, trusting JIT result"
+                                            );
+                                            self.swap_validation_state(&mut snapshot);
+                                            return Ok(jit_result);
+                                        }
+                                    };
+                                    let interp_refunded_gas = self.substate.refunded_gas;
+                                    let interp_logs = self.substate.extract_logs();
+
+                                    // Compare JIT vs interpreter (including DB state)
+                                    let validation =
+                                        crate::jit::validation::validate_dual_execution(
+                                            &jit_result,
+                                            &interp_result,
+                                            jit_refunded_gas,
+                                            interp_refunded_gas,
+                                            &jit_logs,
+                                            &interp_logs,
+                                            &jit_accounts,
+                                            &self.db.current_accounts_state,
+                                        );
+
+                                    match validation {
+                                        crate::jit::validation::DualExecutionResult::Match => {
+                                            // Swap back to JIT state (trusted now)
+                                            self.swap_validation_state(&mut snapshot);
+                                            JIT_STATE.record_validation(&cache_key);
+                                            JIT_STATE
+                                                .metrics
+                                                .validation_successes
+                                                .fetch_add(1, Ordering::Relaxed);
+                                            return Ok(jit_result);
+                                        }
+                                        crate::jit::validation::DualExecutionResult::Mismatch {
+                                            reason,
+                                        } => {
+                                            // Keep interpreter state (already in VM)
+                                            JIT_STATE.cache.invalidate(&cache_key);
+                                            JIT_STATE
+                                                .metrics
+                                                .validation_mismatches
+                                                .fetch_add(1, Ordering::Relaxed);
+                                            eprintln!(
+                                                "[JIT-VALIDATE] MISMATCH hash={bytecode_hash} \
+                                             fork={fork:?}: {reason}"
+                                            );
+                                            return Ok(interp_result);
+                                        }
+                                    }
+                                }
+
+                                return apply_jit_outcome(outcome, &self.current_call_frame);
+                            }
+                            Err(msg) => {
+                                JIT_STATE
+                                    .metrics
+                                    .jit_fallbacks
+                                    .fetch_add(1, Ordering::Relaxed);
+                                eprintln!("[JIT] fallback for {bytecode_hash}: {msg}");
+                            }
                         }
-                        Err(msg) => {
-                            JIT_STATE
-                                .metrics
-                                .jit_fallbacks
-                                .fetch_add(1, Ordering::Relaxed);
-                            eprintln!("[JIT] fallback for {bytecode_hash}: {msg}");
-                        }
-                    }
                     }
                 }
             }
@@ -930,9 +925,7 @@ impl<'a> VM<'a> {
                 if stop_depth > 0 {
                     let child = self.pop_call_frame()?;
                     if result.is_success() {
-                        self.merge_call_frame_backup_with_parent(
-                            &child.call_frame_backup,
-                        )?;
+                        self.merge_call_frame_backup_with_parent(&child.call_frame_backup)?;
                     }
                     let mut child_stack = child.stack;
                     child_stack.clear();
@@ -1106,9 +1099,7 @@ impl<'a> VM<'a> {
                         // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
                         // Self-transfers (caller == target) do NOT emit a log
                         if self.env.config.fork >= Fork::Amsterdam && caller != target {
-                            let log = crate::utils::create_eth_transfer_log(
-                                caller, target, value,
-                            );
+                            let log = crate::utils::create_eth_transfer_log(caller, target, value);
                             self.substate.add_log(log);
                         }
                     }
@@ -1124,8 +1115,7 @@ impl<'a> VM<'a> {
 
                 // Create BAL checkpoint before entering nested call for potential revert
                 // per EIP-7928 (ref: generic_call)
-                let bal_checkpoint =
-                    self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+                let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
                 // Load target bytecode
                 let code_hash = self.db.get_account(code_address)?.info.code_hash;
@@ -1172,8 +1162,7 @@ impl<'a> VM<'a> {
                     && !value.is_zero()
                     && caller != target
                 {
-                    let log =
-                        crate::utils::create_eth_transfer_log(caller, target, value);
+                    let log = crate::utils::create_eth_transfer_log(caller, target, value);
                     self.substate.add_log(log);
                 }
 
@@ -1281,14 +1270,11 @@ impl<'a> VM<'a> {
 
                 // Create BAL checkpoint before entering create call for potential revert
                 // per EIP-7928 (ref: generic_create)
-                let bal_checkpoint =
-                    self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+                let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
                 // SAFETY: init code hash is never used (matches generic_create pattern)
-                let bytecode = ethrex_common::types::Code::from_bytecode_unchecked(
-                    init_code,
-                    H256::zero(),
-                );
+                let bytecode =
+                    ethrex_common::types::Code::from_bytecode_unchecked(init_code, H256::zero());
 
                 let mut stack = self.stack_pool.pop().unwrap_or_default();
                 stack.clear();
@@ -1332,11 +1318,7 @@ impl<'a> VM<'a> {
                 // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
                 // Must be after push_backup() so the log reverts if the child context reverts
                 if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
-                    let log = crate::utils::create_eth_transfer_log(
-                        caller,
-                        deploy_address,
-                        value,
-                    );
+                    let log = crate::utils::create_eth_transfer_log(caller, deploy_address, value);
                     self.substate.add_log(log);
                 }
 
@@ -1352,11 +1334,7 @@ impl<'a> VM<'a> {
                     gas_limit,
                     gas_used: result.gas_used,
                     output: result.output,
-                    created_address: if success {
-                        Some(deploy_address)
-                    } else {
-                        None
-                    },
+                    created_address: if success { Some(deploy_address) } else { None },
                 })
             }
         }
@@ -1497,7 +1475,7 @@ mod jit_tests {
             U256::zero(),
             Bytes::new(),
             false,
-            1000,  // gas_limit
+            1000, // gas_limit
             0,
             false,
             false,

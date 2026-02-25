@@ -352,12 +352,16 @@ mod tests {
     /// Pre-seed slot 0 with 5 → after REVERT, slot 0 should still be 5.
     fn make_sstore_revert_bytecode() -> Vec<u8> {
         let mut code = Vec::new();
-        code.push(0x60); code.push(0x42); // PUSH1 0x42
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0x55);                  // SSTORE (slot 0 = 0x42)
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0xfd);                  // REVERT
+        code.push(0x60);
+        code.push(0x42); // PUSH1 0x42
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0x55); // SSTORE (slot 0 = 0x42)
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0xfd); // REVERT
         code
     }
 
@@ -373,18 +377,26 @@ mod tests {
     /// Pre-seed slot 0 with 5 → after REVERT, slot 0 should still be 5.
     fn make_multi_sstore_revert_bytecode() -> Vec<u8> {
         let mut code = Vec::new();
-        code.push(0x60); code.push(0x0A); // PUSH1 10
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0x55);                  // SSTORE (slot 0 = 10)
-        code.push(0x60); code.push(0x14); // PUSH1 20
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0x55);                  // SSTORE (slot 0 = 20)
-        code.push(0x60); code.push(0x1E); // PUSH1 30
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0x55);                  // SSTORE (slot 0 = 30)
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0xfd);                  // REVERT
+        code.push(0x60);
+        code.push(0x0A); // PUSH1 10
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0x55); // SSTORE (slot 0 = 10)
+        code.push(0x60);
+        code.push(0x14); // PUSH1 20
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0x55); // SSTORE (slot 0 = 20)
+        code.push(0x60);
+        code.push(0x1E); // PUSH1 30
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0x55); // SSTORE (slot 0 = 30)
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0xfd); // REVERT
         code
     }
 
@@ -399,15 +411,21 @@ mod tests {
     /// Pre-seed slot 0 = 5, slot 1 = 7 → after REVERT, both should be restored.
     fn make_two_slot_sstore_revert_bytecode() -> Vec<u8> {
         let mut code = Vec::new();
-        code.push(0x60); code.push(0x0A); // PUSH1 10
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0x55);                  // SSTORE (slot 0 = 10)
-        code.push(0x60); code.push(0x14); // PUSH1 20
-        code.push(0x60); code.push(0x01); // PUSH1 0x01
-        code.push(0x55);                  // SSTORE (slot 1 = 20)
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0x60); code.push(0x00); // PUSH1 0x00
-        code.push(0xfd);                  // REVERT
+        code.push(0x60);
+        code.push(0x0A); // PUSH1 10
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0x55); // SSTORE (slot 0 = 10)
+        code.push(0x60);
+        code.push(0x14); // PUSH1 20
+        code.push(0x60);
+        code.push(0x01); // PUSH1 0x01
+        code.push(0x55); // SSTORE (slot 1 = 20)
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0x60);
+        code.push(0x00); // PUSH1 0x00
+        code.push(0xfd); // REVERT
         code
     }
 
@@ -427,10 +445,7 @@ mod tests {
             types::{Account, BlockHeader, Code},
         };
         use ethrex_levm::{
-            Environment,
-            db::gen_db::GeneralizedDatabase,
-            jit::cache::CodeCache,
-            vm::JIT_STATE,
+            Environment, db::gen_db::GeneralizedDatabase, jit::cache::CodeCache, vm::JIT_STATE,
         };
         use rustc_hash::FxHashMap;
 
@@ -476,15 +491,30 @@ mod tests {
         );
         cache.insert(
             sender_addr,
-            Account::new(U256::MAX, Code::from_bytecode(Bytes::new()), 0, FxHashMap::default()),
+            Account::new(
+                U256::MAX,
+                Code::from_bytecode(Bytes::new()),
+                0,
+                FxHashMap::default(),
+            ),
         );
         let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
 
         #[expect(clippy::as_conversions)]
         let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
-            sender_addr, contract_addr, contract_addr, code,
-            U256::zero(), Bytes::new(), false,
-            (i64::MAX - 1) as u64, 0, false, false, 0, 0,
+            sender_addr,
+            contract_addr,
+            contract_addr,
+            code,
+            U256::zero(),
+            Bytes::new(),
+            false,
+            (i64::MAX - 1) as u64,
+            0,
+            false,
+            false,
+            0,
+            0,
             ethrex_levm::call_frame::Stack::default(),
             ethrex_levm::memory::Memory::default(),
         );
@@ -501,9 +531,14 @@ mod tests {
         let mut storage_original_values = FxHashMap::default();
 
         let outcome = execute_jit(
-            &compiled, &mut call_frame, &mut db,
-            &mut substate, &env, &mut storage_original_values,
-        ).expect("JIT execution should not error");
+            &compiled,
+            &mut call_frame,
+            &mut db,
+            &mut substate,
+            &env,
+            &mut storage_original_values,
+        )
+        .expect("JIT execution should not error");
 
         // Outcome must be Revert
         assert!(
@@ -512,7 +547,8 @@ mod tests {
         );
 
         // Storage slot 0 must be restored to 5 (not 0x42)
-        let slot_val = db.current_accounts_state
+        let slot_val = db
+            .current_accounts_state
             .get(&contract_addr)
             .and_then(|a| a.storage.get(&H256::zero()).copied())
             .expect("slot 0 should exist");
@@ -539,10 +575,7 @@ mod tests {
             types::{Account, BlockHeader, Code},
         };
         use ethrex_levm::{
-            Environment,
-            db::gen_db::GeneralizedDatabase,
-            jit::cache::CodeCache,
-            vm::JIT_STATE,
+            Environment, db::gen_db::GeneralizedDatabase, jit::cache::CodeCache, vm::JIT_STATE,
         };
         use rustc_hash::FxHashMap;
 
@@ -587,15 +620,30 @@ mod tests {
         );
         cache.insert(
             sender_addr,
-            Account::new(U256::MAX, Code::from_bytecode(Bytes::new()), 0, FxHashMap::default()),
+            Account::new(
+                U256::MAX,
+                Code::from_bytecode(Bytes::new()),
+                0,
+                FxHashMap::default(),
+            ),
         );
         let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
 
         #[expect(clippy::as_conversions)]
         let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
-            sender_addr, contract_addr, contract_addr, code,
-            U256::zero(), Bytes::new(), false,
-            (i64::MAX - 1) as u64, 0, false, false, 0, 0,
+            sender_addr,
+            contract_addr,
+            contract_addr,
+            code,
+            U256::zero(),
+            Bytes::new(),
+            false,
+            (i64::MAX - 1) as u64,
+            0,
+            false,
+            false,
+            0,
+            0,
             ethrex_levm::call_frame::Stack::default(),
             ethrex_levm::memory::Memory::default(),
         );
@@ -612,9 +660,14 @@ mod tests {
         let mut storage_original_values = FxHashMap::default();
 
         let outcome = execute_jit(
-            &compiled, &mut call_frame, &mut db,
-            &mut substate, &env, &mut storage_original_values,
-        ).expect("JIT execution should not error");
+            &compiled,
+            &mut call_frame,
+            &mut db,
+            &mut substate,
+            &env,
+            &mut storage_original_values,
+        )
+        .expect("JIT execution should not error");
 
         assert!(
             matches!(outcome, ethrex_levm::jit::types::JitOutcome::Revert { .. }),
@@ -622,7 +675,8 @@ mod tests {
         );
 
         // Storage slot 0 must be restored to 5 (not 10, 20, or 30)
-        let slot_val = db.current_accounts_state
+        let slot_val = db
+            .current_accounts_state
             .get(&contract_addr)
             .and_then(|a| a.storage.get(&H256::zero()).copied())
             .expect("slot 0 should exist");
@@ -649,10 +703,7 @@ mod tests {
             types::{Account, BlockHeader, Code},
         };
         use ethrex_levm::{
-            Environment,
-            db::gen_db::GeneralizedDatabase,
-            jit::cache::CodeCache,
-            vm::JIT_STATE,
+            Environment, db::gen_db::GeneralizedDatabase, jit::cache::CodeCache, vm::JIT_STATE,
         };
         use rustc_hash::FxHashMap;
 
@@ -699,15 +750,30 @@ mod tests {
         );
         cache.insert(
             sender_addr,
-            Account::new(U256::MAX, Code::from_bytecode(Bytes::new()), 0, FxHashMap::default()),
+            Account::new(
+                U256::MAX,
+                Code::from_bytecode(Bytes::new()),
+                0,
+                FxHashMap::default(),
+            ),
         );
         let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
 
         #[expect(clippy::as_conversions)]
         let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
-            sender_addr, contract_addr, contract_addr, code,
-            U256::zero(), Bytes::new(), false,
-            (i64::MAX - 1) as u64, 0, false, false, 0, 0,
+            sender_addr,
+            contract_addr,
+            contract_addr,
+            code,
+            U256::zero(),
+            Bytes::new(),
+            false,
+            (i64::MAX - 1) as u64,
+            0,
+            false,
+            false,
+            0,
+            0,
             ethrex_levm::call_frame::Stack::default(),
             ethrex_levm::memory::Memory::default(),
         );
@@ -724,9 +790,14 @@ mod tests {
         let mut storage_original_values = FxHashMap::default();
 
         let outcome = execute_jit(
-            &compiled, &mut call_frame, &mut db,
-            &mut substate, &env, &mut storage_original_values,
-        ).expect("JIT execution should not error");
+            &compiled,
+            &mut call_frame,
+            &mut db,
+            &mut substate,
+            &env,
+            &mut storage_original_values,
+        )
+        .expect("JIT execution should not error");
 
         assert!(
             matches!(outcome, ethrex_levm::jit::types::JitOutcome::Revert { .. }),
@@ -734,7 +805,8 @@ mod tests {
         );
 
         // Slot 0 must be restored to 5 (not 10)
-        let slot0_val = db.current_accounts_state
+        let slot0_val = db
+            .current_accounts_state
             .get(&contract_addr)
             .and_then(|a| a.storage.get(&H256::zero()).copied())
             .expect("slot 0 should exist");
@@ -745,7 +817,8 @@ mod tests {
         );
 
         // Slot 1 must be restored to 7 (not 20)
-        let slot1_val = db.current_accounts_state
+        let slot1_val = db
+            .current_accounts_state
             .get(&contract_addr)
             .and_then(|a| a.storage.get(&slot_1).copied())
             .expect("slot 1 should exist");
@@ -822,11 +895,15 @@ mod tests {
         );
         interp_cache.insert(
             sender_addr,
-            Account::new(U256::MAX, Code::from_bytecode(Bytes::new()), 0, FxHashMap::default()),
+            Account::new(
+                U256::MAX,
+                Code::from_bytecode(Bytes::new()),
+                0,
+                FxHashMap::default(),
+            ),
         );
-        let mut interp_db = GeneralizedDatabase::new_with_account_state(
-            Arc::new(vm_db), interp_cache,
-        );
+        let mut interp_db =
+            GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), interp_cache);
 
         let env = Environment {
             origin: sender_addr,
@@ -842,8 +919,14 @@ mod tests {
             ..Default::default()
         });
 
-        let mut vm = VM::new(env.clone(), &mut interp_db, &tx, LevmCallTracer::disabled(), VMType::L1)
-            .expect("VM::new should succeed");
+        let mut vm = VM::new(
+            env.clone(),
+            &mut interp_db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+        )
+        .expect("VM::new should succeed");
         let interp_report = vm.stateless_execute().expect("interpreter should succeed");
         assert!(interp_report.is_success());
 
@@ -864,7 +947,12 @@ mod tests {
         );
         jit_cache.insert(
             sender_addr,
-            Account::new(U256::MAX, Code::from_bytecode(Bytes::new()), 0, FxHashMap::default()),
+            Account::new(
+                U256::MAX,
+                Code::from_bytecode(Bytes::new()),
+                0,
+                FxHashMap::default(),
+            ),
         );
         let mut jit_db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db2), jit_cache);
 
@@ -874,9 +962,19 @@ mod tests {
 
         #[expect(clippy::as_conversions)]
         let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
-            sender_addr, contract_addr, contract_addr, counter_code,
-            U256::zero(), Bytes::new(), false,
-            gas_limit, 0, false, false, 0, 0,
+            sender_addr,
+            contract_addr,
+            contract_addr,
+            counter_code,
+            U256::zero(),
+            Bytes::new(),
+            false,
+            gas_limit,
+            0,
+            false,
+            false,
+            0,
+            0,
             ethrex_levm::call_frame::Stack::default(),
             ethrex_levm::memory::Memory::default(),
         );
@@ -885,15 +983,21 @@ mod tests {
         let mut storage_original_values = FxHashMap::default();
 
         let outcome = execute_jit(
-            &compiled, &mut call_frame, &mut jit_db,
-            &mut substate, &env, &mut storage_original_values,
-        ).expect("JIT execution should succeed");
+            &compiled,
+            &mut call_frame,
+            &mut jit_db,
+            &mut substate,
+            &env,
+            &mut storage_original_values,
+        )
+        .expect("JIT execution should succeed");
 
         // Compute gas_used using apply_jit_outcome's formula:
         // gas_used = gas_limit - max(gas_remaining, 0)
         #[expect(clippy::as_conversions)]
         let jit_gas_remaining = call_frame.gas_remaining.max(0) as u64;
-        let jit_execution_gas = gas_limit.checked_sub(jit_gas_remaining)
+        let jit_execution_gas = gas_limit
+            .checked_sub(jit_gas_remaining)
             .expect("gas_limit >= gas_remaining");
 
         match outcome {
@@ -914,7 +1018,9 @@ mod tests {
                 let interp_gas = interp_report.gas_used;
                 assert_eq!(
                     interp_gas,
-                    jit_execution_gas.checked_add(intrinsic_gas).expect("no overflow"),
+                    jit_execution_gas
+                        .checked_add(intrinsic_gas)
+                        .expect("no overflow"),
                     "interpreter gas_used ({interp_gas}) != JIT execution gas \
                      ({jit_execution_gas}) + intrinsic ({intrinsic_gas})"
                 );

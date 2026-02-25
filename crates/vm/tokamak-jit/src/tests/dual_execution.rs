@@ -21,11 +21,11 @@ mod tests {
     use ethrex_common::types::{
         Account, BlockHeader, Code, EIP1559Transaction, Fork, Transaction, TxKind,
     };
-    use ethrex_common::{constants::EMPTY_TRIE_HASH, Address, H256, U256};
+    use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
     use ethrex_levm::db::gen_db::GeneralizedDatabase;
     use ethrex_levm::jit::cache::CompiledCode;
     use ethrex_levm::tracing::LevmCallTracer;
-    use ethrex_levm::vm::{VMType, VM};
+    use ethrex_levm::vm::{VM, VMType};
     use rustc_hash::FxHashMap;
 
     use crate::tests::storage::make_counter_bytecode;
@@ -122,23 +122,14 @@ mod tests {
             .compile_and_cache(&counter_code, fork, &JIT_STATE.cache)
             .expect("compilation should succeed");
         assert!(
-            JIT_STATE
-                .cache
-                .get(&(counter_code.hash, fork))
-                .is_some(),
+            JIT_STATE.cache.get(&(counter_code.hash, fork)).is_some(),
             "compiled code should be in JIT_STATE cache"
         );
 
         // Run VM (JIT will dispatch since code is in cache, validation runs since
         // validation_mode=true and validation_counts=0 < max_validation_runs=3)
-        let mut vm = VM::new(
-            env,
-            &mut db,
-            &tx,
-            LevmCallTracer::disabled(),
-            VMType::L1,
-        )
-        .expect("VM::new should succeed");
+        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+            .expect("VM::new should succeed");
 
         let report = vm
             .stateless_execute()
@@ -168,10 +159,7 @@ mod tests {
 
         // Verify cache entry is still present (not invalidated)
         assert!(
-            JIT_STATE
-                .cache
-                .get(&(counter_code.hash, fork))
-                .is_some(),
+            JIT_STATE.cache.get(&(counter_code.hash, fork)).is_some(),
             "cache entry should still exist after successful validation"
         );
     }
@@ -189,7 +177,7 @@ mod tests {
         use ethrex_levm::environment::Environment;
         use ethrex_levm::jit::dispatch::{JitBackend, StorageOriginalValues};
         use ethrex_levm::jit::types::{JitOutcome, JitResumeState, SubCallResult};
-        use ethrex_levm::vm::{Substate, JIT_STATE};
+        use ethrex_levm::vm::{JIT_STATE, Substate};
 
         /// Mock backend that returns deliberately wrong gas to trigger mismatch.
         struct MismatchBackend;
@@ -247,25 +235,17 @@ mod tests {
         // Insert dummy compiled code into cache (null pointer — mock doesn't dereference it)
         let cache_key = (counter_code.hash, fork);
         #[expect(unsafe_code)]
-        let dummy_compiled =
-            unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, false) };
+        let dummy_compiled = unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, false) };
         JIT_STATE.cache.insert(cache_key, dummy_compiled);
         assert!(JIT_STATE.cache.get(&cache_key).is_some());
 
         // Capture baseline metrics (non-serial tests may run concurrently and
         // modify JIT_STATE, so we compare deltas instead of absolute values).
-        let (_, _, _, _, baseline_successes, baseline_mismatches) =
-            JIT_STATE.metrics.snapshot();
+        let (_, _, _, _, baseline_successes, baseline_mismatches) = JIT_STATE.metrics.snapshot();
 
         // Run VM — JIT dispatches to mock backend, validation detects mismatch
-        let mut vm = VM::new(
-            env,
-            &mut db,
-            &tx,
-            LevmCallTracer::disabled(),
-            VMType::L1,
-        )
-        .expect("VM::new should succeed");
+        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+            .expect("VM::new should succeed");
 
         let report = vm
             .stateless_execute()
@@ -285,8 +265,7 @@ mod tests {
         );
 
         // Verify mismatch was detected (compare delta from baseline)
-        let (_, _, _, _, final_successes, final_mismatches) =
-            JIT_STATE.metrics.snapshot();
+        let (_, _, _, _, final_successes, final_mismatches) = JIT_STATE.metrics.snapshot();
         assert_eq!(
             final_mismatches.saturating_sub(baseline_mismatches),
             1,
@@ -326,7 +305,7 @@ mod tests {
         use ethrex_levm::errors::DatabaseError;
         use ethrex_levm::jit::dispatch::{JitBackend, StorageOriginalValues};
         use ethrex_levm::jit::types::{JitOutcome, JitResumeState, SubCallResult};
-        use ethrex_levm::vm::{Substate, JIT_STATE};
+        use ethrex_levm::vm::{JIT_STATE, Substate};
 
         use ethrex_common::types::{
             Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction,
@@ -339,19 +318,12 @@ mod tests {
         struct FailingDatabase;
 
         impl Database for FailingDatabase {
-            fn get_account_state(
-                &self,
-                _: Address,
-            ) -> Result<AccountState, DatabaseError> {
+            fn get_account_state(&self, _: Address) -> Result<AccountState, DatabaseError> {
                 Err(DatabaseError::Custom(
                     "deliberately failing store".to_string(),
                 ))
             }
-            fn get_storage_value(
-                &self,
-                _: Address,
-                _: H256,
-            ) -> Result<U256, DatabaseError> {
+            fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
                 Err(DatabaseError::Custom(
                     "deliberately failing store".to_string(),
                 ))
@@ -366,18 +338,12 @@ mod tests {
                     "deliberately failing store".to_string(),
                 ))
             }
-            fn get_account_code(
-                &self,
-                _: H256,
-            ) -> Result<Code, DatabaseError> {
+            fn get_account_code(&self, _: H256) -> Result<Code, DatabaseError> {
                 Err(DatabaseError::Custom(
                     "deliberately failing store".to_string(),
                 ))
             }
-            fn get_code_metadata(
-                &self,
-                _: H256,
-            ) -> Result<CodeMetadata, DatabaseError> {
+            fn get_code_metadata(&self, _: H256) -> Result<CodeMetadata, DatabaseError> {
                 Err(DatabaseError::Custom(
                     "deliberately failing store".to_string(),
                 ))
@@ -503,23 +469,15 @@ mod tests {
         // Insert dummy compiled code (has_external_calls = false so validation triggers)
         let cache_key = (code.hash, fork);
         #[expect(unsafe_code)]
-        let dummy_compiled =
-            unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, false) };
+        let dummy_compiled = unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, false) };
         JIT_STATE.cache.insert(cache_key, dummy_compiled);
 
         // Capture baseline metrics
-        let (_, _, _, _, baseline_successes, baseline_mismatches) =
-            JIT_STATE.metrics.snapshot();
+        let (_, _, _, _, baseline_successes, baseline_mismatches) = JIT_STATE.metrics.snapshot();
 
         // Run VM — JIT succeeds, interpreter fails on BALANCE(0xDEAD), swap-back fires
-        let mut vm = VM::new(
-            env,
-            &mut db,
-            &tx,
-            LevmCallTracer::disabled(),
-            VMType::L1,
-        )
-        .expect("VM::new should succeed (all needed accounts pre-cached)");
+        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+            .expect("VM::new should succeed (all needed accounts pre-cached)");
 
         let report = vm
             .stateless_execute()
@@ -539,8 +497,7 @@ mod tests {
         );
 
         // Verify no validation counters changed (inconclusive, not match/mismatch)
-        let (_, _, _, _, final_successes, final_mismatches) =
-            JIT_STATE.metrics.snapshot();
+        let (_, _, _, _, final_successes, final_mismatches) = JIT_STATE.metrics.snapshot();
         assert_eq!(
             final_successes.saturating_sub(baseline_successes),
             0,
