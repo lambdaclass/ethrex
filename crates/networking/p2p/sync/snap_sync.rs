@@ -41,7 +41,7 @@ use crate::utils::{
     get_code_hashes_snapshots_dir,
 };
 
-use super::{AccountStorageRoots, SyncError};
+use super::{StorageTrieTracker, SyncError};
 
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
@@ -292,7 +292,7 @@ pub async fn snap_sync(
     let mut code_hash_collector: CodeHashCollector =
         CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
-    let mut storage_accounts = AccountStorageRoots::default();
+    let mut tracker = StorageTrieTracker::default();
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
         // We start by downloading all of the leafs of the trie of accounts
         // The function request_account_range writes the leafs into files in
@@ -321,7 +321,7 @@ pub async fn snap_sync(
         #[allow(unused_variables)]
         let (computed_state_root, accounts_with_storage) = insert_accounts(
             store.clone(),
-            &mut storage_accounts,
+            &mut tracker,
             &account_state_snapshots_dir,
             datadir,
             &mut code_hash_collector,
@@ -329,7 +329,7 @@ pub async fn snap_sync(
         .await?;
         info!(
             "Finished inserting account ranges, total storage accounts: {}",
-            storage_accounts.accounts_with_storage_root.len()
+            tracker.remaining_count()
         );
         *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
@@ -360,7 +360,7 @@ pub async fn snap_sync(
                 peers,
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut state_leafs_healed,
-                &mut storage_accounts,
+                &mut tracker,
                 &mut code_hash_collector,
             )
             .await?
@@ -369,52 +369,44 @@ pub async fn snap_sync(
             };
 
             info!(
-                "Started request_storage_ranges with {} accounts with storage root unchanged",
-                storage_accounts.accounts_with_storage_root.len()
+                "Started request_storage_ranges: {} small tries, {} big tries, {} total big intervals remaining",
+                tracker.small_tries.len(),
+                tracker.big_tries.len(),
+                tracker
+                    .big_tries
+                    .values()
+                    .map(|b| b.intervals.len())
+                    .sum::<usize>(),
             );
             storage_range_request_attempts += 1;
             if storage_range_request_attempts < 5 {
                 chunk_index = request_storage_ranges(
                     peers,
-                    &mut storage_accounts,
+                    &mut tracker,
                     account_storages_snapshots_dir.as_ref(),
                     chunk_index,
                     &mut pivot_header,
-                    store.clone(),
                 )
                 .await?;
             } else {
-                for (acc_hash, (maybe_root, old_intervals)) in
-                    storage_accounts.accounts_with_storage_root.iter()
-                {
-                    // When we fall into this case what happened is there are certain accounts for which
-                    // the storage root went back to a previous value we already had, and thus could not download
-                    // their storage leaves because we were using an old value for their storage root.
-                    // The fallback is to ensure we mark it for storage healing.
-                    storage_accounts.healed_accounts.insert(*acc_hash);
-                    debug!(
-                        "We couldn't download these accounts on request_storage_ranges. Falling back to storage healing for it.
-                        Account hash: {:x?}, {:x?}. Number of intervals {}",
-                        acc_hash,
-                        maybe_root,
-                        old_intervals.len()
-                    );
-                }
+                tracker.drain_all_to_healed();
 
                 warn!(
                     "Storage could not be downloaded after multiple attempts. Marking for healing.
                     This could impact snap sync time (healing may take a while)."
                 );
-
-                storage_accounts.accounts_with_storage_root.clear();
             }
 
             info!(
-                "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
-                storage_accounts.accounts_with_storage_root.len(),
-                // These accounts are marked as heals if they're a big account. This is
-                // because we don't know if the storage root is still valid
-                storage_accounts.healed_accounts.len(),
+                "Ended request_storage_ranges: {} small tries, {} big tries, {} total big intervals, {} healed accounts",
+                tracker.small_tries.len(),
+                tracker.big_tries.len(),
+                tracker
+                    .big_tries
+                    .values()
+                    .map(|b| b.intervals.len())
+                    .sum::<usize>(),
+                tracker.healed_accounts.len(),
             );
             if !block_is_stale(&pivot_header) {
                 break;
@@ -465,7 +457,7 @@ pub async fn snap_sync(
             peers,
             calculate_staleness_timestamp(pivot_header.timestamp),
             &mut global_state_leafs_healed,
-            &mut storage_accounts,
+            &mut tracker,
             &mut code_hash_collector,
         )
         .await?;
@@ -474,7 +466,7 @@ pub async fn snap_sync(
         }
         healing_done = heal_storage_trie(
             pivot_header.state_root,
-            &storage_accounts,
+            &tracker,
             peers,
             store.clone(),
             HashMap::new(),
@@ -806,7 +798,7 @@ fn compute_storage_roots(
 #[cfg(not(feature = "rocksdb"))]
 async fn insert_accounts(
     store: Store,
-    storage_accounts: &mut AccountStorageRoots,
+    tracker: &mut StorageTrieTracker,
     account_state_snapshots_dir: &Path,
     _: &Path,
     code_hash_collector: &mut CodeHashCollector,
@@ -825,12 +817,11 @@ async fn insert_accounts(
             RLPDecode::decode(&snapshot_contents)
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-        storage_accounts.accounts_with_storage_root.extend(
-            account_states_snapshot.iter().filter_map(|(hash, state)| {
-                (state.storage_root != *EMPTY_TRIE_HASH)
-                    .then_some((*hash, (Some(state.storage_root), Vec::new())))
-            }),
-        );
+        for (hash, state) in &account_states_snapshot {
+            if state.storage_root != *EMPTY_TRIE_HASH {
+                tracker.insert_account(*hash, state.storage_root);
+            }
+        }
 
         // Collect valid code hashes from current account snapshot
         let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
@@ -941,7 +932,7 @@ async fn insert_storages(
 #[cfg(feature = "rocksdb")]
 async fn insert_accounts(
     store: Store,
-    storage_accounts: &mut AccountStorageRoots,
+    tracker: &mut StorageTrieTracker,
     account_state_snapshots_dir: &Path,
     datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
@@ -984,10 +975,7 @@ async fn insert_accounts(
                     .fetch_add(1, Ordering::Relaxed);
                 let account_state = AccountState::decode(v).expect("We should have accounts here");
                 if account_state.storage_root != *EMPTY_TRIE_HASH {
-                    storage_accounts.accounts_with_storage_root.insert(
-                        H256::from_slice(k),
-                        (Some(account_state.storage_root), Vec::new()),
-                    );
+                    tracker.insert_account(H256::from_slice(k), account_state.storage_root);
                 }
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
@@ -1001,8 +989,13 @@ async fn insert_accounts(
     std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
 
-    let accounts_with_storage =
-        BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
+    let accounts_with_storage: BTreeSet<H256> = tracker
+        .small_tries
+        .values()
+        .flat_map(|t| t.accounts.iter())
+        .chain(tracker.big_tries.values().flat_map(|t| t.accounts.iter()))
+        .copied()
+        .collect();
     Ok((compute_state_root, accounts_with_storage))
 }
 

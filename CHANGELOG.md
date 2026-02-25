@@ -15,6 +15,10 @@
 
 - Optimize storage layer for block execution by reducing lock contention and allocations [#6207](https://github.com/lambdaclass/ethrex/pull/6207)
 
+### 2026-02-10
+
+- Refactor storage download to use `StorageTrieTracker` [#6171](https://github.com/lambdaclass/ethrex/pull/6171)
+
 ### 2026-02-06
 
 - Defer KZG blob proof verification from P2P to mempool insertion [#6150](https://github.com/lambdaclass/ethrex/pull/6150)
