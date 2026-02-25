@@ -163,11 +163,6 @@ impl NativeL1Committer {
             .try_into()
             .map_err(|_| NativeL1CommitterError::Encoding("l1 messages count overflow".into()))?;
 
-        info!(
-            "NativeL1Committer: committing block {} to L1 (state_root={:?}, l1_msgs={})",
-            next_block, block_header.state_root, l1_messages_count
-        );
-
         // 5. Build and send advance() tx
         let transactions_rlp = block_body.transactions.encode_to_vec();
         let tx_hash = self
@@ -180,8 +175,8 @@ impl NativeL1Committer {
             .await?;
 
         info!(
-            "NativeL1Committer: advance() tx sent for block {}: {:?}",
-            next_block, tx_hash
+            "NativeL1Committer: committed block {} to L1 (state_root={:?}, l1_msgs={}, tx={:?})",
+            next_block, block_header.state_root, l1_messages_count, tx_hash
         );
 
         Ok(())

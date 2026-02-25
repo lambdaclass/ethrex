@@ -270,7 +270,7 @@ impl NativeBlockProducer {
         // 1. Take L1 messages that fit within the block gas limit and build relayer txs
         let l1_messages = self.take_l1_messages_for_block();
         let relayer_txs = if !l1_messages.is_empty() {
-            info!(
+            debug!(
                 "NativeBlockProducer: building relayer txs for {} L1 messages",
                 l1_messages.len()
             );

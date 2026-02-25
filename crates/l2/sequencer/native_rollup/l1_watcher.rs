@@ -121,7 +121,7 @@ impl NativeL1Watcher {
             match self.pending_messages.lock() {
                 Ok(mut queue) => {
                     for msg in &parsed {
-                        info!(
+                        debug!(
                             "NativeL1Watcher: queued L1 message nonce={} sender={:?} to={:?} value={}",
                             msg.nonce, msg.sender, msg.to, msg.value
                         );
