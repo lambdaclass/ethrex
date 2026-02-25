@@ -625,6 +625,7 @@ impl<'a> VM<'a> {
     /// Note: This function does NOT record to BAL. Per EIP-7928, BAL recording
     /// must happen after gas checks pass. Use `record_storage_slot_to_bal()`
     /// separately after the gas check succeeds.
+    #[inline(always)]
     pub fn access_storage_slot(
         &mut self,
         address: Address,
@@ -645,6 +646,7 @@ impl<'a> VM<'a> {
     /// Records a storage slot read to BAL after gas checks have passed.
     /// Per EIP-7928: "If pre-state validation fails, the target is never accessed and must not appear in BAL."
     /// This function should be called AFTER the gas check succeeds.
+    #[inline(always)]
     pub fn record_storage_slot_to_bal(&mut self, address: Address, key: U256) {
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
             recorder.record_storage_read(address, key);
@@ -664,6 +666,11 @@ impl<'a> VM<'a> {
             }
             // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values
             if account.status == AccountStatus::DestroyedModified {
+                return Ok(U256::zero());
+            }
+            // Fast path: accounts with empty storage root cannot have pre-existing slots in DB.
+            // If a slot was written earlier in this tx it would already be present in `account.storage`.
+            if !account.has_storage {
                 return Ok(U256::zero());
             }
         } else {

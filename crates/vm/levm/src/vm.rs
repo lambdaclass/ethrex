@@ -225,29 +225,24 @@ impl Substate {
     }
 
     /// Mark an address as accessed and return whether is was already marked.
+    #[inline(always)]
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
-        // Check self first — short-circuits for re-accessed (warm) slots
-        if self
-            .accessed_storage_slots
-            .get(&address)
-            .map(|set| set.contains(&key))
-            .unwrap_or(false)
-        {
+        // Try to cache the access in the current substate first. This keeps the
+        // fast path to a single map lookup and avoids repeatedly traversing parent
+        // substates for slots that were warm only in ancestors.
+        let was_already_in_current = {
+            let slots = self.accessed_storage_slots.entry(address).or_default();
+            !slots.insert(key)
+        };
+
+        if was_already_in_current {
             return true;
         }
 
-        let is_present = self
-            .parent
+        self.parent
             .as_ref()
             .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or(false);
-
-        is_present
-            || !self
-                .accessed_storage_slots
-                .entry(address)
-                .or_default()
-                .insert(key)
+            .unwrap_or(false)
     }
 
     /// Return whether an address has already been accessed.
