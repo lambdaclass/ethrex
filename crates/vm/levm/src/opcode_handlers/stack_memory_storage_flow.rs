@@ -11,6 +11,7 @@ use ethrex_common::{
     U256,
     utils::{u256_to_big_endian, u256_to_h256},
 };
+use std::collections::hash_map::Entry;
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -181,7 +182,13 @@ impl<'a> VM<'a> {
         // BAL recording happens AFTER the SSTORE_STIPEND check but BEFORE the main gas check.
         let key = u256_to_h256(storage_slot_key);
         let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
-        let original_value = self.get_original_storage(to, key)?;
+        let original_value = {
+            let entry = self.storage_original_values.entry(to).or_default().entry(key);
+            match entry {
+                Entry::Occupied(entry) => *entry.get(),
+                Entry::Vacant(entry) => *entry.insert(current_value),
+            }
+        };
 
         // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
         // Per EIP-7928 test_bal_sstore_and_oog: if SSTORE passes the stipend check but fails the

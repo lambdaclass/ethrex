@@ -423,8 +423,9 @@ pub struct VM<'a> {
     pub tx: Transaction,
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
-    /// Original storage values before transaction (for SSTORE gas calculation).
-    pub storage_original_values: FxHashMap<(Address, H256), U256>,
+    /// Original storage values before transaction (for SSTORE gas calculation),
+    /// keyed first by account to avoid hashing the full tuple on each access.
+    pub storage_original_values: FxHashMap<Address, FxHashMap<H256, U256>>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Debug mode for development diagnostics.

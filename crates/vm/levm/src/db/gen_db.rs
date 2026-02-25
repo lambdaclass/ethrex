@@ -608,12 +608,17 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        if let Some(value) = self.storage_original_values.get(&(address, key)) {
+        if let Some(address_values) = self.storage_original_values.get(&address)
+            && let Some(value) = address_values.get(&key)
+        {
             return Ok(*value);
         }
 
         let value = self.get_storage_value(address, key)?;
-        self.storage_original_values.insert((address, key), value);
+        self.storage_original_values
+            .entry(address)
+            .or_default()
+            .insert(key, value);
         Ok(value)
     }
 
