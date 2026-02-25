@@ -40,7 +40,7 @@ jobs:
         run: |
           case "$INPUT_NETWORK" in
             hoodi)
-              json='[{"network":"hoodi","timeout":"1h"}]'
+              json='[{"network":"hoodi","timeout":"3h"}]'
               ;;
             sepolia)
               json='[{"network":"sepolia","timeout":"3h30m"}]'
