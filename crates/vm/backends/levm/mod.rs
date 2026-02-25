@@ -212,8 +212,15 @@ impl LEVM {
                 system_seed,
             )?;
 
-            // Withdrawals + requests still run on main db (not needed for state —
-            // BAL already covers everything — but needed for request extraction)
+            // Seed main db with post-tx state (excluding withdrawal effects) so
+            // request extraction system calls see user-queued requests on predeploys.
+            // Withdrawal index is n_txs+1 in BAL; we use n_txs to avoid double-applying
+            // withdrawal balances (process_withdrawals handles those below).
+            #[allow(clippy::cast_possible_truncation)]
+            let last_tx_idx = block.body.transactions.len() as u16;
+            Self::seed_db_from_bal(db, bal, last_tx_idx)?;
+
+            // Withdrawals apply on top of seeded state; requests read predeploy storage
             if let Some(withdrawals) = &block.body.withdrawals {
                 Self::process_withdrawals(db, withdrawals)?;
             }
@@ -222,7 +229,8 @@ impl LEVM {
                 VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
                 VMType::L2(_) => Default::default(),
             };
-            // Do NOT send withdrawal/request state transitions — BAL already covers them
+            // State transitions for merkleizer come from bal_to_account_updates,
+            // not from db — no need to call send_state_transitions_tx here.
 
             return Ok((
                 BlockExecutionResult {
@@ -446,14 +454,35 @@ impl LEVM {
                 && prestate.code_hash == *EMPTY_KECCACK_HASH;
             let removed = post_empty && !pre_empty;
 
-            let update = AccountUpdate {
-                address: addr,
-                removed,
-                info: Some(AccountInfo {
+            let balance_changed = acct_changes
+                .balance_changes
+                .last()
+                .is_some_and(|c| c.post_balance != prestate.balance);
+            let nonce_changed = acct_changes
+                .nonce_changes
+                .last()
+                .is_some_and(|c| c.post_nonce != prestate.nonce);
+            let code_changed = acct_changes.code_changes.last().is_some();
+            let acc_info_updated = balance_changed || nonce_changed || code_changed;
+
+            if !removed && !acc_info_updated && added_storage.is_empty() {
+                continue;
+            }
+
+            let info = if acc_info_updated {
+                Some(AccountInfo {
                     code_hash,
                     balance,
                     nonce,
-                }),
+                })
+            } else {
+                None
+            };
+
+            let update = AccountUpdate {
+                address: addr,
+                removed,
+                info,
                 code,
                 added_storage,
                 removed_storage: false, // EIP-6780: SELFDESTRUCT only same-tx
@@ -490,15 +519,33 @@ impl LEVM {
             let nonce_pos = acct_changes
                 .nonce_changes
                 .partition_point(|c| c.block_access_index <= max_idx);
+            let code_pos = acct_changes
+                .code_changes
+                .partition_point(|c| c.block_access_index <= max_idx);
             let any_storage = acct_changes.storage_changes.iter().any(|sc| {
                 sc.slot_changes
                     .first()
                     .is_some_and(|c| c.block_access_index <= max_idx)
             });
 
-            if balance_pos == 0 && nonce_pos == 0 && !any_storage {
+            if balance_pos == 0 && nonce_pos == 0 && !any_storage && code_pos == 0 {
                 continue;
             }
+
+            // Compute code update before borrowing acc (borrow checker: can't access
+            // db.codes while acc holds a mutable borrow of db)
+            let code_update = if code_pos > 0 {
+                let last = &acct_changes.code_changes[code_pos - 1];
+                if last.new_code.is_empty() {
+                    Some((*EMPTY_KECCACK_HASH, None))
+                } else {
+                    use ethrex_common::types::Code;
+                    let code_obj = Code::from_bytecode(last.new_code.clone());
+                    Some((code_obj.hash, Some(code_obj)))
+                }
+            } else {
+                None
+            };
 
             // Load account into cache, then apply all changes with a single mut ref
             db.get_account(addr)
@@ -513,6 +560,9 @@ impl LEVM {
             if nonce_pos > 0 {
                 acc.info.nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
             }
+            if let Some((hash, _)) = &code_update {
+                acc.info.code_hash = *hash;
+            }
             for sc in &acct_changes.storage_changes {
                 let pos = sc
                     .slot_changes
@@ -521,6 +571,11 @@ impl LEVM {
                     let key = ethrex_common::utils::u256_to_h256(sc.slot);
                     acc.storage.insert(key, sc.slot_changes[pos - 1].post_value);
                 }
+            }
+
+            // Insert code object after acc borrow is released
+            if let Some((hash, Some(code_obj))) = code_update {
+                db.codes.entry(hash).or_insert(code_obj);
             }
         }
         Ok(())
