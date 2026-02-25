@@ -1,0 +1,35 @@
+name: Install LLVM 21
+description: Install LLVM 21 for revmc JIT backend compilation
+
+inputs:
+  version:
+    description: "LLVM major version"
+    required: false
+    default: "21"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install LLVM ${{ inputs.version }}
+      shell: bash
+      run: |
+        LLVM_VERSION="${{ inputs.version }}"
+
+        # Add LLVM apt repository (modern GPG key method)
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
+          sudo tee /etc/apt/trusted.gpg.d/llvm-snapshot.asc > /dev/null
+        echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-${LLVM_VERSION} main" | \
+          sudo tee /etc/apt/sources.list.d/llvm-${LLVM_VERSION}.list
+        sudo apt-get update
+
+        # Install LLVM dev packages (including Polly for revmc)
+        sudo apt-get install -y \
+          llvm-${LLVM_VERSION} \
+          llvm-${LLVM_VERSION}-dev \
+          libpolly-${LLVM_VERSION}-dev
+
+        # Set environment variable for llvm-sys crate
+        echo "LLVM_SYS_${LLVM_VERSION}1_PREFIX=/usr/lib/llvm-${LLVM_VERSION}" >> "$GITHUB_ENV"
+
+        # Verify installation
+        /usr/lib/llvm-${LLVM_VERSION}/bin/llvm-config --version

@@ -182,13 +182,11 @@ jobs:
           edit-mode: replace
 
   # ─── JIT Benchmark Jobs ─────────────────────────────────────────────
-  # Requires LLVM 21 for revmc backend. Uses continue-on-error until
-  # C-2 (LLVM 21 CI provisioning) is complete.
+  # Requires LLVM 21 for revmc backend (C-2: provisioned via install-llvm action).
 
   jit-bench-pr:
     name: JIT Benchmark PR
-    runs-on: ubuntu-latest
-    continue-on-error: true
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -197,11 +195,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install LLVM 21
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
-          sudo apt-get update
-          sudo apt-get install -y llvm-21-dev libpolly-21-dev || echo "::warning::LLVM 21 install failed — JIT bench will be skipped"
+        uses: ./.github/actions/install-llvm
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -229,8 +223,7 @@ jobs:
 
   jit-bench-main:
     name: JIT Benchmark Main
-    runs-on: ubuntu-latest
-    continue-on-error: true
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout base
         uses: actions/checkout@v4
@@ -241,11 +234,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install LLVM 21
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
-          sudo apt-get update
-          sudo apt-get install -y llvm-21-dev libpolly-21-dev || echo "::warning::LLVM 21 install failed — JIT bench will be skipped"
+        uses: ./.github/actions/install-llvm
 
       - name: Install solc
         uses: ./.github/actions/install-solc
