@@ -52,7 +52,9 @@ pub fn init_prover_setup(_endpoint: Option<Url>) -> Result<ProverSetup, String> 
     let client = sp1_sdk::blocking::ProverClient::builder().cuda().build();
 
     let elf = Elf::from(ZKVM_SP1_PROGRAM_ELF);
-    let pk = client.setup(elf).map_err(|e| format!("Failed to setup SP1 prover: {e}"))?;
+    let pk = client
+        .setup(elf)
+        .map_err(|e| format!("Failed to setup SP1 prover: {e}"))?;
     let vk = pk.verifying_key().clone();
 
     Ok(ProverSetup { client, pk, vk })
