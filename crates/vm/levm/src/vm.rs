@@ -632,8 +632,9 @@ impl<'a> VM<'a> {
                     // Safe because forks don't change mid-run (see counter.rs doc).
                     if count == JIT_STATE.config.compilation_threshold {
                         // Check size BEFORE queuing compilation
-                        if self.current_call_frame.bytecode.bytecode.len()
-                            > JIT_STATE.config.max_bytecode_size
+                        if JIT_STATE
+                            .config
+                            .is_bytecode_oversized(self.current_call_frame.bytecode.bytecode.len())
                         {
                             JIT_STATE.mark_oversized(bytecode_hash);
                             JIT_STATE

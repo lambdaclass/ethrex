@@ -48,7 +48,7 @@ impl RevmcBackend {
         cache: &CodeCache,
     ) -> Result<(), JitError> {
         // Check bytecode size limit
-        if code.bytecode.len() > self.config.max_bytecode_size {
+        if self.config.is_bytecode_oversized(code.bytecode.len()) {
             return Err(JitError::BytecodeTooLarge {
                 size: code.bytecode.len(),
                 max: self.config.max_bytecode_size,
@@ -91,7 +91,7 @@ impl RevmcBackend {
 
     /// Analyze bytecode without compiling (for testing/inspection).
     pub fn analyze(&self, code: &Code) -> Result<AnalyzedBytecode, JitError> {
-        if code.bytecode.len() > self.config.max_bytecode_size {
+        if self.config.is_bytecode_oversized(code.bytecode.len()) {
             return Err(JitError::BytecodeTooLarge {
                 size: code.bytecode.len(),
                 max: self.config.max_bytecode_size,

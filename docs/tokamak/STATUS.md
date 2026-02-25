@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-25
 **Branch**: `feat/tokamak-proven-execution`
-**Overall Completion**: ~40-45%
+**Overall Completion**: ~45-50%
 
 ---
 
@@ -37,10 +37,10 @@
 - Dual-execution validation (JIT vs interpreter)
 - Benchmarking infrastructure + initial results
 - 39 LEVM JIT tests + 19 tokamak-jit tests passing
+- Bytecode size limit graceful fallback (D-2) — negative cache + early size gate + interpreter-only bench results
 
 **Remaining:**
-- Recursive CALL performance (suspend/resume is slow)
-- Bytecode size limit (revmc 24KB limit)
+- Recursive CALL performance (suspend/resume is slow — accepted for v1.0)
 - Tiered optimization (profile-guided optimization)
 - Opcode fusion, constant folding
 - Fuzzing + security audit
@@ -88,8 +88,8 @@ Measured after Volkov R21-R23 fixes (corrected measurement order).
 | Factorial | 2.36ms | 1.41ms | **1.67x** |
 | ManyHashes | 2.26ms | 1.55ms | **1.46x** |
 
-**Skipped**: Push/MstoreBench/SstoreBench (bytecode > 24KB revmc limit),
-FibonacciRecursive/FactorialRecursive/ERC20* (recursive CALL suspend/resume too slow).
+**Interpreter-only**: Push/MstoreBench/SstoreBench (bytecode > 24KB, graceful fallback via D-2).
+**Skipped**: FibonacciRecursive/FactorialRecursive/ERC20* (recursive CALL suspend/resume too slow).
 
 ---
 
@@ -139,6 +139,7 @@ R23(5.0) -> R24(8.0)
 - Test quality improvements (B-2) — `test_helpers.rs`, `INTRINSIC_GAS` constant, 15+ test DRY refactors (224921e1f)
 - Benchmark statistics (C-3) — `stats.rs` module, warmup/stddev/95% CI support, `--warmup` CLI param (224921e1f)
 - EIP-7928 BAL recording (B-3) — BAL recording in host.rs sload/sstore JIT paths, 5 differential tests (2126e232b)
+- Bytecode size limit fallback (D-2) — oversized_hashes negative cache, early size gate, bench interpreter-only results, 4+3 tests (ff3396efe)
 
 ### CI Verified (PR #6260, run 22379067904)
 - Hive 6/6 suites PASS (tokamak-jit build) — RPC, Devp2p, Auth, Cancun, Paris, Withdrawals
@@ -159,7 +160,7 @@ R23(5.0) -> R24(8.0)
 - External node operator adoption
 
 ### In Progress
-- (none — Phase B and C complete, next: Phase D/E decisions or A-2 Hoodi sync)
+- (none — Phase B, C complete; D-1 decided, D-2 done; next: D-3/E-1 or A-2 Hoodi sync)
 
 ---
 

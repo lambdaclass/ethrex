@@ -26,6 +26,13 @@ pub struct JitConfig {
     pub max_validation_runs: u64,
 }
 
+impl JitConfig {
+    /// Check if a bytecode length exceeds the JIT compilation size limit.
+    pub fn is_bytecode_oversized(&self, len: usize) -> bool {
+        len > self.max_bytecode_size
+    }
+}
+
 impl Default for JitConfig {
     fn default() -> Self {
         Self {

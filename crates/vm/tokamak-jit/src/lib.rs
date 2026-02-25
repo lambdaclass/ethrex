@@ -70,7 +70,10 @@ pub fn register_jit_backend() {
         match request {
             CompilerRequest::Compile(req) => {
                 // Early size check — avoid wasting compilation time on oversized bytecodes
-                if req.code.bytecode.len() > ethrex_levm::vm::JIT_STATE.config.max_bytecode_size {
+                if ethrex_levm::vm::JIT_STATE
+                    .config
+                    .is_bytecode_oversized(req.code.bytecode.len())
+                {
                     ethrex_levm::vm::JIT_STATE.mark_oversized(req.code.hash);
                     ethrex_levm::vm::JIT_STATE
                         .metrics
