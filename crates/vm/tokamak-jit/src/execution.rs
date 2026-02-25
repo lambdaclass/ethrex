@@ -227,10 +227,20 @@ fn handle_interpreter_action(
             call_frame.gas_remaining = revm_gas_to_levm(&result.gas);
 
             // Sync gas refunds from revm interpreter to LEVM substate.
+            //
+            // `refunded()` returns i64 — negative values arise when SSTORE
+            // patterns subtract from accumulated refunds (e.g., clear-then-restore:
+            // slot 5→0→5 produces a negative delta). Previously, negative values
+            // were silently dropped via `u64::try_from`, causing refund mismatch
+            // between JIT and interpreter. Now we saturating-subtract the absolute
+            // value for negative refunds.
             let refunded = result.gas.refunded();
-            if let Ok(refunded_u64) = u64::try_from(refunded) {
+            if refunded >= 0 {
                 host.substate.refunded_gas =
-                    host.substate.refunded_gas.saturating_add(refunded_u64);
+                    host.substate.refunded_gas.saturating_add(refunded as u64);
+            } else {
+                host.substate.refunded_gas =
+                    host.substate.refunded_gas.saturating_sub(refunded.unsigned_abs());
             }
 
             let gas_used = gas_limit.saturating_sub(result.gas.remaining());
