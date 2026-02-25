@@ -190,6 +190,33 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
+        if modulus == U256::one() {
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
+        }
+
+        if multiplicand == U256::one() {
+            current_call_frame
+                .stack
+                .push(multiplier.checked_rem(modulus).unwrap_or_default())?;
+            return Ok(OpcodeResult::Continue);
+        }
+
+        if multiplier == U256::one() {
+            current_call_frame
+                .stack
+                .push(multiplicand.checked_rem(modulus).unwrap_or_default())?;
+            return Ok(OpcodeResult::Continue);
+        }
+
+        let (product, overflow) = multiplicand.overflowing_mul(multiplier);
+        if !overflow {
+            current_call_frame
+                .stack
+                .push(product.checked_rem(modulus).unwrap_or_default())?;
+            return Ok(OpcodeResult::Continue);
+        }
+
         #[cfg(feature = "zisk")]
         let product_mod = {
             use ziskos::zisklib::mulmod256_c;
