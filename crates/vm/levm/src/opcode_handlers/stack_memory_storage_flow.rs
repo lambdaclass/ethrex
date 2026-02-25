@@ -142,7 +142,7 @@ impl<'a> VM<'a> {
 
         // Note: access_storage_slot does NOT record to BAL per EIP-7928.
         // BAL recording must happen AFTER gas check passes.
-        let (value, storage_slot_was_cold) = self.access_storage_slot(address, key)?;
+        let (value, storage_slot_was_cold) = self.access_storage_slot_for_sload(address, key)?;
 
         self.current_call_frame
             .increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
