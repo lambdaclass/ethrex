@@ -82,7 +82,7 @@ use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
-use ethrex_trie::{Nibbles, Node, NodeHash, NodeRef, Trie, TrieError, TrieNode};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
 use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -704,28 +704,15 @@ impl Blockchain {
         let t_gathered = Instant::now();
 
         let collapsed = self.collapse_root_node(parent_header, None, root)?;
-        let (state_trie_hash, _root_keep) = match collapsed {
-            Some(root @ Node::Branch(_)) => {
-                // For Branch roots (>1 children), all children already have cached
-                // hashes from collect_trie. Encode directly to skip commit()'s
-                // recursive descent and Nibbles allocations.
-                let buf = root.encode_to_vec();
-                let hash = NodeHash::from_encoded(&buf);
-                state_updates.push((Nibbles::default(), buf));
+        let (state_trie_hash, _root_keep) =
+            if let Some(root) = collapsed {
+                let mut root = NodeRef::from(root);
+                let hash = root.commit(Nibbles::default(), &mut state_updates);
                 (hash.finalize(), Some(root))
-            }
-            Some(root) => {
-                // For restructured roots (Extension/Leaf from 1-child collapse),
-                // the child NodeRef lacks a cached hash, so use commit().
-                let mut root_ref = NodeRef::from(root);
-                let hash = root_ref.commit(Nibbles::default(), &mut state_updates);
-                (hash.finalize(), None)
-            }
-            None => {
+            } else {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
                 (*EMPTY_TRIE_HASH, None)
-            }
-        };
+            };
         let t_root = Instant::now();
         info!(
             "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms",
