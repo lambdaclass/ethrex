@@ -3,10 +3,7 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
-use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{Store, hash_address};
-use ethrex_trie::Trie;
 use ethrex_vm::{EvmError, VmDatabase};
 use rustc_hash::FxHashMap;
 use std::{
@@ -23,7 +20,6 @@ struct AccountStateCacheEntry {
 }
 
 type AccountStateCache = FxHashMap<Address, Option<AccountStateCacheEntry>>;
-type StorageTrieCache = FxHashMap<Address, Arc<Trie>>;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
@@ -37,9 +33,6 @@ pub struct StoreVmDatabase {
     /// This avoids repeated state-trie account decodes when reading many slots
     /// from the same account during execution.
     account_state_cache: Arc<RwLock<AccountStateCache>>,
-    /// Per-account opened storage tries for pre-state reads.
-    /// Reusing trie handles avoids opening a trie on every storage-slot miss.
-    storage_trie_cache: Arc<RwLock<StorageTrieCache>>,
     pub state_root: H256,
 }
 
@@ -60,7 +53,6 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
-            storage_trie_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
         })
     }
@@ -82,7 +74,6 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
-            storage_trie_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
         })
     }
@@ -115,40 +106,6 @@ impl StoreVmDatabase {
             .insert(address, cached.clone());
         Ok(cached)
     }
-
-    fn get_cached_storage_trie(
-        &self,
-        address: Address,
-        entry: &AccountStateCacheEntry,
-    ) -> Result<Arc<Trie>, EvmError> {
-        if let Some(trie) = self
-            .storage_trie_cache
-            .read()
-            .map_err(|_| EvmError::Custom("LockError".to_string()))?
-            .get(&address)
-            .cloned()
-        {
-            return Ok(trie);
-        }
-
-        let trie = Arc::new(
-            self.store
-                .open_storage_trie(
-                    entry.hashed_address,
-                    self.state_root,
-                    entry.state.storage_root,
-                )
-                .map_err(|e| EvmError::DB(e.to_string()))?,
-        );
-        let mut write_guard = self
-            .storage_trie_cache
-            .write()
-            .map_err(|_| EvmError::Custom("LockError".to_string()))?;
-        Ok(write_guard
-            .entry(address)
-            .or_insert_with(|| trie.clone())
-            .clone())
-    }
 }
 
 impl VmDatabase for StoreVmDatabase {
@@ -174,13 +131,14 @@ impl VmDatabase for StoreVmDatabase {
         let Some(entry) = self.get_cached_account_state_entry(address)? else {
             return Ok(None);
         };
-        let storage_trie = self.get_cached_storage_trie(address, &entry)?;
-        let hashed_key = keccak_hash(key.to_fixed_bytes());
-        storage_trie
-            .get(&hashed_key)
-            .map_err(|e| EvmError::DB(e.to_string()))?
-            .map(|rlp| U256::decode(&rlp).map_err(|e| EvmError::DB(e.to_string())))
-            .transpose()
+        self.store
+            .get_storage_at_root_with_known_storage_root(
+                self.state_root,
+                entry.hashed_address,
+                entry.state.storage_root,
+                key,
+            )
+            .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     #[instrument(
