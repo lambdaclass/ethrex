@@ -5,10 +5,11 @@ use crate::{
     api::{
         StorageBackend, StorageReadView,
         tables::{
-            ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLAT, ACCOUNT_FLATKEYVALUE,
+            ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLAT, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -2233,6 +2234,37 @@ impl Store {
             return Ok(None);
         };
         Ok(Some(AccountState::decode(&encoded_state)?))
+    }
+
+    /// Read account state from flat storage (ACCOUNT_FLAT CF).
+    /// Returns None if the account doesn't exist in flat state.
+    pub fn get_account_state_flat(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let key = hash_address_fixed(&address);
+        let txn = self.backend.begin_read()?;
+        txn.get(ACCOUNT_FLAT, key.as_bytes())?
+            .map(|bytes| AccountState::decode(&bytes).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
+    /// Read a storage slot from flat storage (STORAGE_FLAT CF).
+    /// Returns None if the slot doesn't exist in flat state.
+    pub fn get_storage_flat(
+        &self,
+        address: Address,
+        key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let addr_hash = hash_address_fixed(&address);
+        let key_hash = hash_key_fixed(&key);
+        let mut flat_key = [0u8; 64];
+        flat_key[..32].copy_from_slice(addr_hash.as_bytes());
+        flat_key[32..].copy_from_slice(&key_hash);
+        let txn = self.backend.begin_read()?;
+        txn.get(STORAGE_FLAT, &flat_key)?
+            .map(|bytes| U256::decode(&bytes).map_err(StoreError::RLPDecode))
+            .transpose()
     }
 
     /// Constructs a merkle proof for the given account address against a given state.

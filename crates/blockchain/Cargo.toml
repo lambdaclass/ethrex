@@ -38,6 +38,7 @@ default = ["secp256k1"]
 secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
+flat-state-reads = ["ethrex-storage/flat-state-reads"]
 
 [lints.clippy]
 unwrap_used = "deny"

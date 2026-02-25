@@ -33,6 +33,7 @@ lru = "0.16.2"
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
+flat-state-reads = []
 
 [dev-dependencies]
 hex.workspace = true
