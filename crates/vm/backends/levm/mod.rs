@@ -207,8 +207,7 @@ impl LEVM {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
 
-        let mut first_flush = true;
-        let mut tx_since_last_flush: u32 = 0;
+        let mut tx_since_last_flush: u32 = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
@@ -235,14 +234,9 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
             )?;
-            if queue_length.load(Ordering::Relaxed) == 0 {
-                if first_flush || tx_since_last_flush > 5 {
-                    LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
-                    first_flush = false;
-                    tx_since_last_flush = 0;
-                } else {
-                    tx_since_last_flush += 1;
-                }
+            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                tx_since_last_flush = 0;
             } else {
                 tx_since_last_flush += 1;
             }
