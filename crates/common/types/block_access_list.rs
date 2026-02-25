@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use bytes::{BufMut, Bytes};
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{

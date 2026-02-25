@@ -1928,6 +1928,13 @@ impl Blockchain {
         Ok(produced_bal)
     }
 
+    /// Runs the full block pipeline (execute + merkleize + store).
+    ///
+    /// Returns a two-level Result:
+    /// - Outer `Err`: pipeline couldn't start (e.g. parent header not found).
+    /// - Inner `Result`: block storage outcome. The produced BAL is returned
+    ///   regardless of whether storage succeeded, so callers like
+    ///   `add_block_pipeline_bal` can retrieve it even on storage failure.
     fn add_block_pipeline_inner(
         &self,
         block: Block,

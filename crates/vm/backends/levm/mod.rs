@@ -740,7 +740,7 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        ::tracing::info!(
+        ::tracing::debug!(
             "[PARALLEL] block {} | {} txs | exec: {:.1}ms",
             block.header.number,
             n_txs,
