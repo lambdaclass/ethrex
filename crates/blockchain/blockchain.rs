@@ -98,6 +98,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
@@ -112,6 +113,20 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+
+/// Background thread for dropping large tree structures off the critical path.
+/// Accepts any `Send` value and drops it on a dedicated thread, avoiding
+/// recursive deallocation costs (~500us for state trie roots) on hot paths.
+static DROP_SENDER: LazyLock<Sender<Box<dyn Send>>> = LazyLock::new(|| {
+    let (tx, rx) = channel::<Box<dyn Send>>();
+    std::thread::Builder::new()
+        .name("drop_thread".to_string())
+        .spawn(move || {
+            for _ in rx {}
+        })
+        .expect("failed to spawn drop thread");
+    tx
+});
 
 // Result type for execute_block_pipeline
 type BlockExecutionPipelineResult = (
@@ -704,14 +719,15 @@ impl Blockchain {
         let t_gathered = Instant::now();
 
         let collapsed = self.collapse_root_node(parent_header, None, root)?;
-        let (state_trie_hash, _root_keep) =
+        let state_trie_hash =
             if let Some(root) = collapsed {
                 let mut root = NodeRef::from(root);
                 let hash = root.commit(Nibbles::default(), &mut state_updates);
-                (hash.finalize(), Some(root))
+                let _ = DROP_SENDER.send(Box::new(root));
+                hash.finalize()
             } else {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
-                (*EMPTY_TRIE_HASH, None)
+                *EMPTY_TRIE_HASH
             };
         let t_root = Instant::now();
         info!(
@@ -1023,6 +1039,7 @@ impl Blockchain {
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
                 let hash = root.commit(Nibbles::default(), &mut state_updates);
+                let _ = DROP_SENDER.send(Box::new(root));
                 hash.finalize()
             } else {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
@@ -2868,6 +2885,7 @@ fn handle_subtrie(
                             let t_commit = Instant::now();
                             let mut root = NodeRef::from(root);
                             let hash = root.commit(Nibbles::default(), &mut state.nodes);
+                            let _ = DROP_SENDER.send(Box::new(root));
                             new_storage_root = Some(hash.finalize());
                             let commit_us = t_commit.elapsed().as_micros();
                             let this_elapsed = t_res.elapsed();
