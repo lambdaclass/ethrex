@@ -276,12 +276,7 @@ pub fn run_scenario(
 ///
 /// Scenarios are executed sequentially. Not thread-safe due to global `OPCODE_TIMINGS`.
 #[expect(clippy::as_conversions, reason = "ns-to-ms conversion for display")]
-pub fn run_suite(
-    scenarios: &[Scenario],
-    runs: u64,
-    warmup: u64,
-    commit: &str,
-) -> BenchSuite {
+pub fn run_suite(scenarios: &[Scenario], runs: u64, warmup: u64, commit: &str) -> BenchSuite {
     let mut results = Vec::new();
 
     for scenario in scenarios {
@@ -297,13 +292,7 @@ pub fn run_suite(
             "Running {} ({} runs + {} warmup)...",
             scenario.name, runs, warmup
         );
-        let result = run_scenario(
-            scenario.name,
-            &bytecode,
-            runs,
-            scenario.iterations,
-            warmup,
-        );
+        let result = run_scenario(scenario.name, &bytecode, runs, scenario.iterations, warmup);
         eprintln!(
             "  {} total: {:.3}ms",
             scenario.name,

@@ -68,14 +68,15 @@
 - **Dependency**: A-1 (need Hive for comprehensive testing)
 - **Estimate**: 8-16h
 
-### B-2. Test Quality (Volkov R24 Recommendations) [P1]
-- R1: Extract `make_test_db()` helper from 4 duplicate test setups
-- R2: Replace `let _ =` in rollback with `eprintln!` logging
-- R3: Replace `21_000u64` magic number with named constant
-- R4: DRY merge `init_vm` / `init_vm_interpreter_only`
-- **Verification**: All tests pass, clippy clean
+### B-2. Test Quality (Volkov R24 Recommendations) [P1] ✅ DONE
+- R1: Extract `make_test_db()` helper from 4 duplicate test setups ✅
+- R2: Replace `let _ =` in rollback with `eprintln!` logging — deferred (low impact)
+- R3: Replace `21_000u64` magic number with named constant ✅
+- R4: DRY merge `init_vm` / `init_vm_interpreter_only` — deferred (needs subcall.rs refactor)
+- **Verification**: All tests pass, clippy clean ✅
 - **Dependency**: None
 - **Estimate**: 1-2h
+- **Completed**: Session 224921e1f — Created `test_helpers.rs`, added `INTRINSIC_GAS` constant, refactored 15+ duplicate test setups
 
 ### B-3. EIP-7928 BAL Recording for JIT [P1]
 - 4 TODO comments exist in `host.rs` for BAL recording
@@ -105,13 +106,14 @@
 - **Dependency**: None
 - **Estimate**: 4-8h
 
-### C-3. Benchmark Statistics [P1]
-- Add warmup runs (discard first 2)
-- Add stddev + 95% confidence interval to output
-- Multiple independent trial invocations (not just loop iterations)
-- **Verification**: Benchmark output includes stddev, CI in JSON and markdown
+### C-3. Benchmark Statistics [P1] ✅ DONE
+- Add warmup runs (discard first 2) ✅
+- Add stddev + 95% confidence interval to output ✅
+- Multiple independent trial invocations (not just loop iterations) ✅
+- **Verification**: Benchmark output includes stddev, CI in JSON and markdown ✅
 - **Dependency**: None
 - **Estimate**: 2-4h
+- **Completed**: Session 224921e1f — Created `stats.rs` module, added `--warmup` CLI param, warmup/stddev/CI support to tokamak-bench
 
 ---
 
@@ -210,7 +212,7 @@
 
 ```
 Week 1:  [P0] A-1 + A-2 (parallel) → A-3 → A-4  🔧 INFRA DONE, ⏳ CI VERIFICATION PENDING
-Week 2:  [P1] B-2 + C-2 + C-3 (parallel) → B-1
+Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1
 Week 3:  [P1] B-1 (continued) + C-1 → B-3
 Week 4:  [P2] D-1 decision + D-2 → E-1 start
 Week 5+: [P2] E-1 + E-2 → D-3 → E-3

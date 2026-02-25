@@ -18,9 +18,7 @@ mod tests {
     use bytes::Bytes;
     use std::sync::Arc;
 
-    use ethrex_common::types::{
-        Code, Fork, Transaction,
-    };
+    use ethrex_common::types::{Code, Fork, Transaction};
     use ethrex_common::{Address, H256, U256};
     use ethrex_levm::db::gen_db::GeneralizedDatabase;
     use ethrex_levm::jit::cache::CompiledCode;
@@ -273,9 +271,7 @@ mod tests {
         use ethrex_levm::jit::types::{JitOutcome, JitResumeState, SubCallResult};
         use ethrex_levm::vm::{JIT_STATE, Substate};
 
-        use ethrex_common::types::{
-            Account, AccountState, ChainConfig, Code, CodeMetadata,
-        };
+        use ethrex_common::types::{Account, AccountState, ChainConfig, Code, CodeMetadata};
 
         use crate::tests::test_helpers::{CONTRACT_ADDR, SENDER_ADDR};
 

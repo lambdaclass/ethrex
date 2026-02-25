@@ -50,16 +50,8 @@ pub fn compute_stats(durations: &[Duration]) -> Option<BenchStats> {
     // 95% CI margin = z * (stddev / sqrt(n))
     let ci_margin = Z_95 * stddev / n_f.sqrt();
 
-    let min_ns = ns_values
-        .iter()
-        .map(|x| *x as u128)
-        .min()
-        .unwrap_or(0);
-    let max_ns = ns_values
-        .iter()
-        .map(|x| *x as u128)
-        .max()
-        .unwrap_or(0);
+    let min_ns = ns_values.iter().map(|x| *x as u128).min().unwrap_or(0);
+    let max_ns = ns_values.iter().map(|x| *x as u128).max().unwrap_or(0);
 
     Some(BenchStats {
         mean_ns: mean,

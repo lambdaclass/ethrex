@@ -81,8 +81,7 @@ mod tests {
         let mut storage = FxHashMap::default();
         storage.insert(H256::zero(), U256::from(5u64));
 
-        let (contract_addr, sender_addr, accounts) =
-            make_contract_accounts(counter_code, storage);
+        let (contract_addr, sender_addr, accounts) = make_contract_accounts(counter_code, storage);
         let mut db = make_test_db(accounts);
         let env = make_test_env(sender_addr);
         let tx = make_test_tx(contract_addr, Bytes::new());
@@ -113,10 +112,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_counter_jit_vs_interpreter() {
-        use ethrex_levm::{
-            jit::cache::CodeCache,
-            vm::JIT_STATE,
-        };
+        use ethrex_levm::{jit::cache::CodeCache, vm::JIT_STATE};
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
@@ -172,8 +168,7 @@ mod tests {
         assert_eq!(interp_result, U256::from(6u64), "Interpreter: 5 + 1 = 6");
 
         // --- JIT direct execution path ---
-        let (_, _, jit_accounts) =
-            make_contract_accounts(counter_code.clone(), storage);
+        let (_, _, jit_accounts) = make_contract_accounts(counter_code.clone(), storage);
         let mut jit_db = make_test_db(jit_accounts);
 
         #[expect(clippy::as_conversions)]
@@ -354,8 +349,7 @@ mod tests {
         let mut storage = FxHashMap::default();
         storage.insert(H256::zero(), U256::from(5u64));
 
-        let (contract_addr, sender_addr, accounts) =
-            make_contract_accounts(code.clone(), storage);
+        let (contract_addr, sender_addr, accounts) = make_contract_accounts(code.clone(), storage);
         let mut db = make_test_db(accounts);
         let env = make_test_env(sender_addr);
 
@@ -443,8 +437,7 @@ mod tests {
         let mut storage = FxHashMap::default();
         storage.insert(H256::zero(), U256::from(5u64));
 
-        let (contract_addr, sender_addr, accounts) =
-            make_contract_accounts(code.clone(), storage);
+        let (contract_addr, sender_addr, accounts) = make_contract_accounts(code.clone(), storage);
         let mut db = make_test_db(accounts);
         let env = make_test_env(sender_addr);
 
@@ -667,8 +660,7 @@ mod tests {
         assert!(interp_report.is_success());
 
         // --- JIT direct execution path ---
-        let (_, _, jit_accounts) =
-            make_contract_accounts(counter_code.clone(), storage);
+        let (_, _, jit_accounts) = make_contract_accounts(counter_code.clone(), storage);
         let mut jit_db = make_test_db(jit_accounts);
 
         #[expect(clippy::as_conversions)]

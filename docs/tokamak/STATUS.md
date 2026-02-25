@@ -133,6 +133,10 @@ R23(5.0) -> R24(8.0)
 - Sync CI infra — `tokamak-sync.yaml` with Hoodi/Sepolia (fc720f46f)
 - Feature flag CI — Quality Gate checks all 4 feature flags (fc720f46f)
 
+### Recently Completed (Phase B/C)
+- Test quality improvements (B-2) — `test_helpers.rs`, `INTRINSIC_GAS` constant, 15+ test DRY refactors (224921e1f)
+- Benchmark statistics (C-3) — `stats.rs` module, warmup/stddev/95% CI support, `--warmup` CLI param (224921e1f)
+
 ### Awaiting CI Verification
 - Hive 6 suites 실행 및 통과 확인 (commit push 후 자동 트리거)
 - Hoodi testnet sync 실행 (workflow_dispatch 수동 트리거 필요)

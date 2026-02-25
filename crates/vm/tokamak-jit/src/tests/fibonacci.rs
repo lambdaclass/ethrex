@@ -263,10 +263,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_fibonacci_jit_vs_interpreter_validation() {
-        use ethrex_levm::{
-            jit::cache::CodeCache,
-            vm::JIT_STATE,
-        };
+        use ethrex_levm::{jit::cache::CodeCache, vm::JIT_STATE};
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;

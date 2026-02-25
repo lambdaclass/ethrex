@@ -118,8 +118,12 @@ pub fn suite_stats_to_markdown(suite: &BenchSuite) -> String {
     let mut md = String::new();
 
     md.push_str("## Scenario Statistics\n\n");
-    md.push_str("| Scenario | Mean (ms) | Stddev (ms) | 95% CI (ms) | Min (ms) | Max (ms) | Runs |\n");
-    md.push_str("|----------|-----------|-------------|-------------|----------|----------|------|\n");
+    md.push_str(
+        "| Scenario | Mean (ms) | Stddev (ms) | 95% CI (ms) | Min (ms) | Max (ms) | Runs |\n",
+    );
+    md.push_str(
+        "|----------|-----------|-------------|-------------|----------|----------|------|\n",
+    );
 
     for result in &suite.results {
         if let Some(ref s) = result.stats {
