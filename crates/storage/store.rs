@@ -234,6 +234,9 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// Semantic account updates for writing flat state CFs.
+    /// When present, flat state entries are written synchronously in the same WriteBatch.
+    pub flat_state_updates: Vec<AccountUpdate>,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1394,6 +1397,63 @@ impl Store {
             let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
+        }
+
+        // Write flat state entries to the same WriteBatch for atomicity
+        for update in &update_batch.flat_state_updates {
+            let addr_hash = hash_address_fixed(&update.address);
+
+            if update.removed {
+                tx.delete(ACCOUNT_FLAT, addr_hash.as_bytes())?;
+                // Prefix-delete all storage for this account.
+                // SELFDESTRUCT is rare (EIP-6780) so scan cost is acceptable.
+                let read_view = self.backend.begin_read()?;
+                let iter = read_view.prefix_iterator(STORAGE_FLAT, addr_hash.as_bytes())?;
+                for result in iter {
+                    let (key, _) = result?;
+                    if key.len() == 64 && key.starts_with(addr_hash.as_bytes()) {
+                        tx.delete(STORAGE_FLAT, &key)?;
+                    } else {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            // Build account state from update info
+            if let Some(info) = &update.info {
+                let current = self.get_account_state_flat(update.address)?;
+                let mut account_state = current.unwrap_or_default();
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+                tx.put(ACCOUNT_FLAT, addr_hash.as_bytes(), &account_state.encode_to_vec())?;
+            }
+
+            if update.removed_storage {
+                let read_view = self.backend.begin_read()?;
+                let iter = read_view.prefix_iterator(STORAGE_FLAT, addr_hash.as_bytes())?;
+                for result in iter {
+                    let (key, _) = result?;
+                    if key.len() == 64 && key.starts_with(addr_hash.as_bytes()) {
+                        tx.delete(STORAGE_FLAT, &key)?;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            for (storage_key, storage_value) in &update.added_storage {
+                let key_hash = hash_key_fixed(storage_key);
+                let mut flat_key = [0u8; 64];
+                flat_key[..32].copy_from_slice(addr_hash.as_bytes());
+                flat_key[32..].copy_from_slice(&key_hash);
+                if storage_value.is_zero() {
+                    tx.delete(STORAGE_FLAT, &flat_key)?;
+                } else {
+                    tx.put(STORAGE_FLAT, &flat_key, &storage_value.encode_to_vec())?;
+                }
+            }
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.

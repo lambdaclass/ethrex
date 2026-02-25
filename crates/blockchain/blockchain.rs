@@ -566,13 +566,9 @@ impl Blockchain {
         let mut code_updates: Vec<(H256, Code)> = vec![];
         let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
 
-        // Accumulator for witness generation (only used if precompute_witnesses is true)
+        // Accumulator for account updates. Always enabled to support flat state writes.
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-            if self.options.precompute_witnesses {
-                Some(FxHashMap::default())
-            } else {
-                None
-            };
+            Some(FxHashMap::default());
 
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -768,12 +764,8 @@ impl Blockchain {
             }
         }
 
-        // Extract witness accumulator before consuming updates
-        let accumulated_updates = if self.options.precompute_witnesses {
-            Some(all_updates.values().cloned().collect::<Vec<_>>())
-        } else {
-            None
-        };
+        // Always extract accumulated updates for flat state writes
+        let accumulated_updates = Some(all_updates.values().cloned().collect::<Vec<_>>());
 
         // Extract code updates and build work items with pre-hashed addresses
         let mut code_updates: Vec<(H256, Code)> = Vec::new();
@@ -1449,7 +1441,7 @@ impl Blockchain {
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), account_updates_list, execution_result)?;
+            self.store_block(block.clone(), account_updates_list, execution_result, account_updates.clone())?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -1851,6 +1843,7 @@ impl Blockchain {
         block: Block,
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
+        flat_state_updates: Vec<AccountUpdate>,
     ) -> Result<(), ChainError> {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
@@ -1861,6 +1854,7 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
+            flat_state_updates,
         };
 
         self.storage
@@ -1887,7 +1881,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, account_updates_list, res, updates);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -1960,6 +1954,12 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
+        // Clone account updates for flat state writes before witness generation consumes them
+        let flat_updates = accumulated_updates
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
         {
@@ -1974,7 +1974,7 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, account_updates_list, res, flat_updates);
 
         let stored = Instant::now();
 
@@ -2336,6 +2336,7 @@ impl Blockchain {
             blocks,
             receipts: all_receipts,
             code_updates,
+            flat_state_updates: account_updates,
         };
 
         self.storage

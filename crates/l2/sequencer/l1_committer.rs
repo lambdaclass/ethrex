@@ -822,6 +822,7 @@ impl L1Committer {
                         // Use the block header's gas_used
                         block_gas_used: potential_batch_block.header.gas_used,
                     },
+                    account_updates.clone(),
                 )?;
             } else {
                 warn!(
