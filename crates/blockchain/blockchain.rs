@@ -2022,9 +2022,9 @@ impl Blockchain {
                 METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
                 METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
-                METRICS_BLOCKS.set_execution_ms(executed.duration_since(since).as_millis() as i64);
-                METRICS_BLOCKS.set_merkle_ms(merkleized.duration_since(executed).as_millis() as i64);
-                METRICS_BLOCKS.set_store_ms(stored.duration_since(merkleized).as_millis() as i64);
+                METRICS_BLOCKS.set_execution_ms(executed.duration_since(since).as_secs_f64() * 1000.0);
+                METRICS_BLOCKS.set_merkle_ms(merkleized.duration_since(executed).as_secs_f64() * 1000.0);
+                METRICS_BLOCKS.set_store_ms(stored.duration_since(merkleized).as_secs_f64() * 1000.0);
                 METRICS_BLOCKS.set_transaction_count(transactions_count as i64);
             );
 
