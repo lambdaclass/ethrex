@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24
-**Context**: Overall ~55% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE.
+**Context**: Overall ~60% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE.
 
 ---
 
@@ -152,12 +152,14 @@
 - **Dependency**: None
 - **Completed**: Session ff3396efe
 
-### D-3. Opcode Fusion / Constant Folding [P2]
-- PUSH+PUSH+ADD -> single operation
-- Requires bytecode analysis pass before compilation
-- Impact: Potentially +30-50% on arithmetic-heavy contracts
-- **Dependency**: D-1, D-2 (optimizations build on stable base)
-- **Estimate**: 20-40h (research + implementation)
+### D-3. Opcode Fusion / Constant Folding [P2] ✅ DONE
+- Same-length PUSH+PUSH+OP → single wider PUSH replacement (no offset changes) ✅
+- Supports ADD, SUB, MUL, AND, OR, XOR with SUB wrapping edge case handling ✅
+- optimizer.rs: detect_patterns() scan + optimize() constant folding ✅
+- Pipeline integration between analyze_bytecode() and TokamakCompiler::compile() ✅
+- **Verification**: 37 unit tests + 5 integration tests (42 total) ✅
+- **Dependency**: D-1 ✅, D-2 ✅
+- **Completed**: Session fec956fef
 
 ---
 
@@ -229,8 +231,8 @@
 Week 1:  [P0] A-1 ✅ + A-2 ⏳ → A-3 ✅ → A-4 ✅ (Snapsync 수동 필요)
 Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
 Week 3:  [P1] C-1 ✅ + C-2 ✅ + B-3 ✅
-Week 4:  [P2] D-1 decision ✅ + D-2 ✅ → E-1 start
-Week 5+: [P2] E-1 + E-2 → D-3 → E-3
+Week 4:  [P2] D-1 decision ✅ + D-2 ✅ + D-3 ✅ → E-1 start
+Week 5+: [P2] E-1 + E-2 → E-3
 Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
 ```
 
