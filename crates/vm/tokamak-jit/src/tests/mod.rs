@@ -1,4 +1,5 @@
 pub mod bal_recording;
+pub mod constant_folding;
 pub mod dual_execution;
 pub mod fibonacci;
 pub mod gas_alignment;

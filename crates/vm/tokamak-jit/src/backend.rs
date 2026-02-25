@@ -11,6 +11,7 @@ use ethrex_levm::jit::{
     analyzer::analyze_bytecode,
     cache::CodeCache,
     dispatch::JitBackend,
+    optimizer,
     types::{AnalyzedBytecode, JitConfig, JitOutcome, JitResumeState, SubCallResult},
 };
 use ethrex_levm::vm::Substate;
@@ -64,6 +65,17 @@ impl RevmcBackend {
         let analyzed =
             analyze_bytecode(code.bytecode.clone(), code.hash, code.jump_targets.clone());
 
+        // Apply constant folding optimization before compilation
+        let (analyzed, opt_stats) = optimizer::optimize(analyzed);
+        if opt_stats.patterns_folded > 0 {
+            tracing::info!(
+                hash = %code.hash,
+                patterns_folded = opt_stats.patterns_folded,
+                opcodes_eliminated = opt_stats.opcodes_eliminated,
+                "Bytecode optimized before JIT compilation"
+            );
+        }
+
         // Log if bytecode has external calls (used for metrics, no longer a gate)
         if analyzed.has_external_calls {
             tracing::info!(
@@ -98,11 +110,10 @@ impl RevmcBackend {
             });
         }
 
-        Ok(analyze_bytecode(
-            code.bytecode.clone(),
-            code.hash,
-            code.jump_targets.clone(),
-        ))
+        let analyzed =
+            analyze_bytecode(code.bytecode.clone(), code.hash, code.jump_targets.clone());
+        let (analyzed, _opt_stats) = optimizer::optimize(analyzed);
+        Ok(analyzed)
     }
 }
 

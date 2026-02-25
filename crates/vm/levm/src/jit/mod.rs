@@ -12,5 +12,6 @@ pub mod cache;
 pub mod compiler_thread;
 pub mod counter;
 pub mod dispatch;
+pub mod optimizer;
 pub mod types;
 pub mod validation;
