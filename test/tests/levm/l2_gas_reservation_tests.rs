@@ -1,0 +1,271 @@
+//! Tests for L2 gas reservation: reserving L1 DA fee gas upfront in prepare_execution.
+//!
+//! The reservation approach consumes l1_gas from gas_remaining during prepare_execution,
+//! so execution physically cannot use the L1 fee portion. This guarantees the L1 fee vault
+//! always receives the full l1_gas payment, eliminating the griefing vector where a user
+//! sends a transaction with gas_limit = intrinsic_gas.
+
+use bytes::Bytes;
+use ethrex_common::{
+    Address, H256, U256,
+    constants::GAS_PER_BLOB,
+    types::{
+        Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
+        SAFE_BYTES_PER_BLOB, Transaction, TxKind,
+        fee_config::{FeeConfig, L1FeeConfig},
+    },
+};
+use ethrex_levm::{
+    db::{Database, gen_db::GeneralizedDatabase},
+    environment::{EVMConfig, Environment},
+    errors::{DatabaseError, TxValidationError, VMError},
+    tracing::LevmCallTracer,
+    vm::{VM, VMType},
+};
+use ethrex_rlp::encode::RLPEncode;
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
+
+// ==================== Test Database ====================
+
+struct TestDatabase;
+
+impl Database for TestDatabase {
+    fn get_account_state(&self, _address: Address) -> Result<AccountState, DatabaseError> {
+        Ok(AccountState::default())
+    }
+
+    fn get_storage_value(&self, _address: Address, _key: H256) -> Result<U256, DatabaseError> {
+        Ok(U256::zero())
+    }
+
+    fn get_block_hash(&self, _block_number: u64) -> Result<H256, DatabaseError> {
+        Ok(H256::zero())
+    }
+
+    fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+        Ok(ChainConfig::default())
+    }
+
+    fn get_account_code(&self, _code_hash: H256) -> Result<Code, DatabaseError> {
+        Ok(Code::default())
+    }
+
+    fn get_code_metadata(&self, _code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+        Ok(CodeMetadata { length: 0 })
+    }
+}
+
+// ==================== Constants ====================
+
+const GAS_PRICE: u64 = 1000;
+const L1_FEE_PER_BLOB_GAS: u64 = 10_000;
+const SENDER: u64 = 0x1000;
+const RECIPIENT: u64 = 0x2000;
+const L1_FEE_VAULT: u64 = 0xAA00;
+const SENDER_BALANCE: u64 = 10_000_000_000;
+
+// ==================== Helpers ====================
+
+fn sender_addr() -> Address {
+    Address::from_low_u64_be(SENDER)
+}
+
+fn recipient_addr() -> Address {
+    Address::from_low_u64_be(RECIPIENT)
+}
+
+fn l1_fee_vault_addr() -> Address {
+    Address::from_low_u64_be(L1_FEE_VAULT)
+}
+
+fn fee_config() -> FeeConfig {
+    FeeConfig {
+        base_fee_vault: None,
+        operator_fee_config: None,
+        l1_fee_config: Some(L1FeeConfig {
+            l1_fee_vault: l1_fee_vault_addr(),
+            l1_fee_per_blob_gas: L1_FEE_PER_BLOB_GAS,
+        }),
+    }
+}
+
+fn make_tx(gas_limit: u64) -> Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: GAS_PRICE,
+        gas_limit,
+        to: TxKind::Call(recipient_addr()),
+        value: U256::zero(),
+        data: Bytes::new(),
+        ..Default::default()
+    })
+}
+
+/// Computes l1_gas for a given transaction using the same formula as calculate_l1_fee_gas.
+fn compute_l1_gas(tx: &Transaction) -> u64 {
+    let tx_size = tx.length();
+    let l1_fee_per_blob: u64 = L1_FEE_PER_BLOB_GAS * u64::from(GAS_PER_BLOB);
+    let l1_fee_per_blob_byte = l1_fee_per_blob / SAFE_BYTES_PER_BLOB as u64;
+    let l1_fee = l1_fee_per_blob_byte * tx_size as u64;
+    let l1_gas = l1_fee / GAS_PRICE;
+    if l1_gas == 0 && l1_fee > 0 { 1 } else { l1_gas }
+}
+
+fn make_env(gas_limit: u64) -> Environment {
+    let fork = Fork::Prague;
+    let blob_schedule = EVMConfig::canonical_values(fork);
+    Environment {
+        origin: sender_addr(),
+        gas_limit,
+        config: EVMConfig::new(fork, blob_schedule),
+        block_number: U256::from(1),
+        coinbase: Address::from_low_u64_be(0xCCC),
+        timestamp: U256::from(1000),
+        prev_randao: Some(H256::zero()),
+        difficulty: U256::zero(),
+        slot_number: U256::zero(),
+        chain_id: U256::from(1),
+        base_fee_per_gas: U256::from(GAS_PRICE),
+        base_blob_fee_per_gas: U256::from(1),
+        gas_price: U256::from(GAS_PRICE),
+        block_excess_blob_gas: None,
+        block_blob_gas_used: None,
+        tx_blob_hashes: vec![],
+        tx_max_priority_fee_per_gas: Some(U256::zero()),
+        tx_max_fee_per_gas: Some(U256::from(GAS_PRICE)),
+        tx_max_fee_per_blob_gas: None,
+        tx_nonce: 0,
+        block_gas_limit: gas_limit * 2,
+        is_privileged: false,
+        fee_token: None,
+    }
+}
+
+fn make_db(sender_balance: U256) -> GeneralizedDatabase {
+    let accounts: FxHashMap<Address, Account> = [(
+        sender_addr(),
+        Account::new(sender_balance, Code::default(), 0, FxHashMap::default()),
+    )]
+    .into_iter()
+    .collect();
+
+    GeneralizedDatabase::new_with_account_state(Arc::new(TestDatabase), accounts)
+}
+
+// ==================== Tests ====================
+
+/// A transaction with gas_limit = intrinsic_gas (21000) should be rejected upfront
+/// when L1 fee config is set, because there's no room for l1_gas after intrinsic gas.
+#[test]
+fn test_insufficient_gas_for_l1_fee_rejected() {
+    let gas_limit = 21_000;
+    let tx = make_tx(gas_limit);
+
+    // Sanity: l1_gas should be > 0 with our fee config
+    let l1_gas = compute_l1_gas(&tx);
+    assert!(l1_gas > 0, "l1_gas should be positive for this test");
+
+    let env = make_env(gas_limit);
+    let mut db = make_db(U256::from(SENDER_BALANCE));
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config()),
+    )
+    .unwrap();
+
+    let result = vm.execute();
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow))
+        ),
+        "Expected IntrinsicGasTooLow, got {result:?}"
+    );
+}
+
+/// A transaction with gas_limit exactly covering intrinsic_gas + l1_gas should succeed.
+/// The execution gas budget is 0, but for a simple EOA transfer that's fine.
+#[test]
+fn test_gas_limit_exactly_covers_intrinsic_plus_l1() {
+    // First create a tx with a placeholder gas_limit to compute l1_gas
+    let placeholder_tx = make_tx(100_000);
+    let l1_gas = compute_l1_gas(&placeholder_tx);
+    assert!(l1_gas > 0, "l1_gas should be positive for this test");
+
+    // The exact gas_limit = intrinsic_gas + l1_gas
+    let gas_limit = 21_000 + l1_gas;
+
+    // Re-create the tx with the exact gas_limit (tx size changes slightly with gas_limit)
+    let tx = make_tx(gas_limit);
+    // Recompute l1_gas with the actual tx (gas_limit affects RLP size)
+    let actual_l1_gas = compute_l1_gas(&tx);
+    // Adjust gas_limit if the RLP size changed
+    let gas_limit = 21_000 + actual_l1_gas;
+    let tx = make_tx(gas_limit);
+    let final_l1_gas = compute_l1_gas(&tx);
+    // If this still doesn't converge, just add some margin
+    let gas_limit = if final_l1_gas > actual_l1_gas {
+        21_000 + final_l1_gas
+    } else {
+        gas_limit
+    };
+    let tx = make_tx(gas_limit);
+
+    let env = make_env(gas_limit);
+    let mut db = make_db(U256::from(SENDER_BALANCE));
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config()),
+    )
+    .unwrap();
+
+    let report = vm.execute().expect("Execution should succeed");
+    assert!(
+        report.is_success(),
+        "Transaction should succeed when gas_limit covers intrinsic + l1_gas"
+    );
+}
+
+/// A transaction with ample gas_limit should succeed and the L1 fee vault should
+/// receive the correct payment.
+#[test]
+fn test_l1_fee_vault_receives_full_payment() {
+    let gas_limit = 100_000;
+    let tx = make_tx(gas_limit);
+    let l1_gas = compute_l1_gas(&tx);
+    assert!(l1_gas > 0, "l1_gas should be positive for this test");
+
+    let env = make_env(gas_limit);
+    let mut db = make_db(U256::from(SENDER_BALANCE));
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config()),
+    )
+    .unwrap();
+
+    let report = vm.execute().expect("Execution should succeed");
+    assert!(report.is_success(), "Transaction should succeed");
+
+    // Verify L1 fee vault received the correct payment: l1_gas * gas_price
+    let l1_vault_balance = vm.db.get_account(l1_fee_vault_addr()).unwrap().info.balance;
+    let expected_l1_fee = U256::from(l1_gas) * U256::from(GAS_PRICE);
+    assert_eq!(
+        l1_vault_balance, expected_l1_fee,
+        "L1 fee vault should receive exactly l1_gas * gas_price"
+    );
+}
