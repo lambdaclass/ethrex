@@ -378,3 +378,63 @@ fn test_contract_execution_with_l1_gas_reservation() {
         "L1 fee vault should receive full l1_gas * gas_price even with contract execution"
     );
 }
+
+/// A contract call that runs out of execution gas should revert, but the
+/// L1 fee vault must still receive the full l1_gas payment thanks to the
+/// upfront reservation.
+#[test]
+fn test_oog_revert_still_pays_l1_fee_vault() {
+    // Contract bytecode: infinite loop that always runs out of gas.
+    // JUMPDEST  -- 5b  (offset 0)
+    // PUSH1 0   -- 60 00
+    // JUMP      -- 56
+    let bytecode = Bytes::from(vec![
+        0x5b, // JUMPDEST
+        0x60, 0x00, // PUSH1 0
+        0x56, // JUMP
+    ]);
+    let contract_account = Account::new(
+        U256::zero(),
+        Code::from_bytecode(bytecode),
+        1,
+        FxHashMap::default(),
+    );
+
+    // Use a gas_limit that covers intrinsic + l1_gas + a small execution budget,
+    // but the infinite loop will exhaust it.
+    let preliminary_tx = make_tx_to(30_000, contract_addr());
+    let l1_gas = compute_l1_gas(&preliminary_tx);
+    assert!(l1_gas > 0, "l1_gas should be positive for this test");
+
+    let gas_limit = 21_000 + l1_gas + 100; // only 100 gas for execution
+    let tx = make_tx_to(gas_limit, contract_addr());
+
+    let env = make_env(gas_limit);
+    let mut db = make_db_with_accounts(
+        U256::from(SENDER_BALANCE),
+        vec![(contract_addr(), contract_account)],
+    );
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config()),
+    )
+    .unwrap();
+
+    let report = vm.execute().expect("Execution should complete (revert, not error)");
+    assert!(
+        !report.is_success(),
+        "Transaction should revert due to out-of-gas"
+    );
+
+    // L1 fee vault must still receive the full l1_gas payment
+    let l1_vault_balance = vm.db.get_account(l1_fee_vault_addr()).unwrap().info.balance;
+    let expected_l1_fee = U256::from(l1_gas) * U256::from(GAS_PRICE);
+    assert_eq!(
+        l1_vault_balance, expected_l1_fee,
+        "L1 fee vault should receive full l1_gas * gas_price even when execution reverts"
+    );
+}
