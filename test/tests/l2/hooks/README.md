@@ -27,20 +27,19 @@ hooks/
 L2 transactions pay fees distributed to multiple recipients:
 
 ```
-sender pays: effective_gas_price * gas_used + l1_fee
+gas_price = min(max_priority_fee + base_fee + operator_fee, max_fee)
+
+sender pays: gas_price * gas_used + l1_fee
 
 Distribution:
   base_fee_vault:     base_fee_per_gas * gas_used
   operator_vault:     operator_fee_per_gas * gas_used
-  coinbase:           (priority_fee - operator_fee) * gas_used
+  coinbase:           (gas_price - base_fee - operator_fee) * gas_used
   l1_fee_vault:       l1_fee_per_blob_gas * (GAS_PER_BLOB / SAFE_BYTES_PER_BLOB) * tx_size
 ```
 
-Priority fee capping (EIP-1559 + operator fee):
-
-```
-effective_priority = min(max_priority_fee, max_fee - base_fee - operator_fee)
-```
+Validation enforces `max_fee >= base_fee + operator_fee`, so the operator is
+always paid even when `max_priority_fee = 0` (coinbase gets nothing in that case).
 
 Special transaction types:
 - **Privileged (bridge)**: from `COMMON_BRIDGE_L2_ADDRESS` (0x...ffff), no gas fees, no nonce checks, can mint ETH
