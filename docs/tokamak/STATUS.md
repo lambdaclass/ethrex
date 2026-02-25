@@ -39,7 +39,6 @@
 - 39 LEVM JIT tests + 19 tokamak-jit tests passing
 
 **Remaining:**
-- Gas accounting full alignment (JIT gas differs in edge cases)
 - Recursive CALL performance (suspend/resume is slow)
 - Bytecode size limit (revmc 24KB limit)
 - Tiered optimization (profile-guided optimization)
@@ -134,6 +133,7 @@ R23(5.0) -> R24(8.0)
 - Feature flag CI — Quality Gate checks all 4 feature flags (fc720f46f)
 
 ### Recently Completed (Phase B/C)
+- JIT gas alignment (B-1) — Fixed negative SSTORE refund bug in `execution.rs`, added `gas_alignment.rs` with 11 tests (71f39d2d7)
 - Test quality improvements (B-2) — `test_helpers.rs`, `INTRINSIC_GAS` constant, 15+ test DRY refactors (224921e1f)
 - Benchmark statistics (C-3) — `stats.rs` module, warmup/stddev/95% CI support, `--warmup` CLI param (224921e1f)
 
@@ -156,8 +156,7 @@ R23(5.0) -> R24(8.0)
 - External node operator adoption
 
 ### In Progress
-- JIT gas accounting edge cases
-- EIP-7928 BAL recording for JIT path (TODO comments only)
+- EIP-7928 BAL recording for JIT path (TODO comments only, blocked on B-1 ✅)
 
 ---
 

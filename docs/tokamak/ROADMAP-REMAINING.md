@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24
-**Context**: Overall ~40-45% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요).
+**Context**: Overall ~45-50% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅, B-3 remaining.
 
 ---
 
@@ -57,14 +57,16 @@
 
 > "JIT works but isn't production-safe yet."
 
-### B-1. JIT Gas Accounting Alignment [P1]
-- Root-cause gas mismatch between JIT and interpreter
-- Known: JitOutcome::gas_used excludes intrinsic gas (handled by apply_jit_outcome)
-- Unknown: Edge cases in SSTORE gas (EIP-2929 warm/cold), CALL stipend
-- Verification: `test_jit_gas_matches_interpreter` passing is necessary but not sufficient
-- **Verification**: Run dual-execution on full Hive engine test suite, zero gas mismatches
+### B-1. JIT Gas Accounting Alignment [P1] ✅ DONE
+- Root-cause gas mismatch between JIT and interpreter ✅
+- Fixed: negative SSTORE refund bug in `execution.rs` — `u64::try_from` silently dropped negative refunds ✅
+- Known: JitOutcome::gas_used excludes intrinsic gas (handled by apply_jit_outcome) ✅
+- Edge cases: SSTORE EIP-2200/EIP-3529 (zero→nonzero, nonzero→zero, restore, clear-then-restore) all tested ✅
+- Documented: revmc upstream `REFUND_SSTORE_CLEARS = 15000` (pre-EIP-3529) vs LEVM 4800 — execution gas unaffected
+- **Verification**: 11 gas alignment tests passing (7 SSTORE edge cases + 3 memory expansion + 1 combined) ✅
 - **Dependency**: A-1 (need Hive for comprehensive testing)
 - **Estimate**: 8-16h
+- **Completed**: Session 71f39d2d7 — Fixed negative refund bug, added `gas_alignment.rs` test module
 
 ### B-2. Test Quality (Volkov R24 Recommendations) [P1] ✅ DONE
 - R1: Extract `make_test_db()` helper from 4 duplicate test setups ✅
@@ -210,8 +212,8 @@
 
 ```
 Week 1:  [P0] A-1 ✅ + A-2 ⏳ → A-3 ✅ → A-4 ✅ (Snapsync 수동 필요)
-Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1   ← CURRENT
-Week 3:  [P1] B-1 (continued) + C-1 → B-3
+Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
+Week 3:  [P1] C-1 + C-2 (parallel) → B-3   ← CURRENT
 Week 4:  [P2] D-1 decision + D-2 → E-1 start
 Week 5+: [P2] E-1 + E-2 → D-3 → E-3
 Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
