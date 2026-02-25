@@ -202,10 +202,6 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
-        // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
-        // The value itself can be safely changed.
-        let mut tx_since_last_flush = 2;
-
         let transactions_with_sender =
             block.body.get_transactions_with_sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
@@ -236,11 +232,8 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
             )?;
-            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+            if queue_length.load(Ordering::Relaxed) == 0 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
-                tx_since_last_flush = 0;
-            } else {
-                tx_since_last_flush += 1;
             }
 
             // EIP-7778: Separate gas tracking
