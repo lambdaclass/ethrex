@@ -20,7 +20,7 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::types::{fork_choice::ForkChoiceState, payload::ExecutionPayload};
-use ethrex_storage::error::StoreError;
+use ethrex_storage::{Store, error::StoreError};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -937,6 +937,15 @@ pub async fn export_blocks(
         }
         Ok(store) => store,
     };
+    export_blocks_with_store(path, &store, first_number, last_number).await;
+}
+
+pub async fn export_blocks_with_store(
+    path: &str,
+    store: &Store,
+    first_number: Option<u64>,
+    last_number: Option<u64>,
+) {
     let start = first_number.unwrap_or_default();
 
     // If we have no latest block then we don't have any blocks to export
@@ -1074,14 +1083,14 @@ pub async fn truncate_blocks(
         "Truncating blocks"
     );
 
-    // Export first if requested
+    // Export first if requested (reuse the already-open store to avoid RocksDB lock conflicts)
     if let Some(path) = export_path {
         info!(path = path, "Exporting blocks (RLP) before truncation");
-        export_blocks(path, datadir, Some(from_block), Some(latest)).await;
+        export_blocks_with_store(path, &store, Some(from_block), Some(latest)).await;
     }
     if let Some(prefix) = export_jsonl_prefix {
         info!(prefix = prefix, "Exporting blocks (JSONL) before truncation");
-        export_blocks_jsonl(prefix, datadir, Some(from_block), Some(latest)).await?;
+        export_blocks_jsonl_with_store(prefix, &store, Some(from_block), Some(latest)).await?;
     }
 
     let removed = store.truncate_from(from_block).await?;
@@ -1104,7 +1113,15 @@ pub async fn export_blocks_jsonl(
 ) -> Result<(), eyre::Error> {
     init_datadir(datadir);
     let store = load_store(datadir).await?;
+    export_blocks_jsonl_with_store(prefix, &store, first_number, last_number).await
+}
 
+pub async fn export_blocks_jsonl_with_store(
+    prefix: &str,
+    store: &Store,
+    first_number: Option<u64>,
+    last_number: Option<u64>,
+) -> Result<(), eyre::Error> {
     let latest_number = match store.get_latest_block_number().await {
         Ok(number) => number,
         Err(StoreError::MissingLatestBlockNumber) => {
