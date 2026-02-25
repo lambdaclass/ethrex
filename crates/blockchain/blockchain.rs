@@ -237,18 +237,8 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
     }
 }
 
-enum StorageRequest {
-    Delete(H256),
-    MerklizeStorage {
-        prefix: H256,
-        key: H256,
-        value: U256,
-        storage_root: H256,
-    },
-    CollectStorages,
-}
-
-enum AccountRequest {
+enum WorkerRequest {
+    // From main thread (routed by account bucket)
     ProcessAccount {
         prefix: H256,
         info: Option<AccountInfo>,
@@ -259,17 +249,27 @@ enum AccountRequest {
     FinishRouting {
         tx: Sender<()>,
     },
+    MerklizeAccounts {
+        accounts: Vec<H256>,
+    },
+    CollectStorages,
+    CollectState {
+        tx: Sender<CollectedStateMsg>,
+    },
+    // Cross-worker storage messages (routed by storage key bucket)
+    MerklizeStorage {
+        prefix: H256,
+        key: H256,
+        value: U256,
+        storage_root: H256,
+    },
+    DeleteStorage(H256),
+    // Cross-worker storage results (routed by account bucket)
     StorageShard {
         prefix: H256,
         index: u8,
         subroot: Box<BranchNode>,
         nodes: Vec<TrieNode>,
-    },
-    MerklizeAccounts {
-        accounts: Vec<H256>,
-    },
-    CollectState {
-        tx: Sender<CollectedStateMsg>,
     },
 }
 
@@ -552,44 +552,23 @@ impl Blockchain {
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
-        // Create account channels first (storage workers need senders)
-        let mut account_workers_tx = Vec::with_capacity(16);
-        let mut account_workers_rx = Vec::with_capacity(16);
+        // Create 16 worker channels
+        let mut workers_tx = Vec::with_capacity(16);
+        let mut workers_rx = Vec::with_capacity(16);
         for _ in 0..16 {
             let (tx, rx) = channel();
-            account_workers_tx.push(tx);
-            account_workers_rx.push(rx);
+            workers_tx.push(tx);
+            workers_rx.push(rx);
         }
 
-        // Spawn 16 storage workers with account senders for direct routing
-        let mut storage_workers_tx = Vec::with_capacity(16);
-        for i in 0..16u8 {
-            let (tx, rx) = channel();
-            let account_senders = account_workers_tx.clone();
+        // Spawn 16 unified workers (each gets clone of all 16 senders)
+        for (i, rx) in workers_rx.into_iter().enumerate() {
+            let all_senders = workers_tx.clone();
             let storage_clone = self.storage.clone();
             std::thread::Builder::new()
-                .name(format!("block_executor_storage_shard_{i}"))
+                .name(format!("block_executor_shard_{i}"))
                 .spawn(move || {
-                    handle_storage_subtrie(storage_clone, rx, parent_state_root, i, account_senders)
-                })
-                .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}")))?;
-            storage_workers_tx.push(tx);
-        }
-
-        // Spawn 16 account workers with storage senders for routing
-        for (i, rx) in account_workers_rx.into_iter().enumerate() {
-            let storage_senders = storage_workers_tx.clone();
-            let storage_clone = self.storage.clone();
-            std::thread::Builder::new()
-                .name(format!("block_executor_account_shard_{i}"))
-                .spawn(move || {
-                    handle_account_subtrie(
-                        storage_clone,
-                        rx,
-                        parent_state_root,
-                        i as u8,
-                        storage_senders,
-                    )
+                    handle_subtrie(storage_clone, rx, parent_state_root, i as u8, all_senders)
                 })
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}")))?;
         }
@@ -646,8 +625,8 @@ impl Blockchain {
                 }
 
                 let bucket = hashed_address.as_fixed_bytes()[0] >> 4;
-                account_workers_tx[bucket as usize]
-                    .send(AccountRequest::ProcessAccount {
+                workers_tx[bucket as usize]
+                    .send(WorkerRequest::ProcessAccount {
                         prefix: hashed_address,
                         info,
                         storage,
@@ -659,11 +638,11 @@ impl Blockchain {
         }
 
         // Barrier: send FinishRouting, then overlap early MerklizeAccounts
-        // with the wait for workers to finish routing to storage workers.
+        // with the wait for workers to finish routing storage keys.
         let t_drain_start = Instant::now();
         let (flush_tx, flush_rx) = channel();
-        for tx in &account_workers_tx {
-            tx.send(AccountRequest::FinishRouting {
+        for tx in &workers_tx {
+            tx.send(WorkerRequest::FinishRouting {
                 tx: flush_tx.clone(),
             })
             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
@@ -680,8 +659,8 @@ impl Blockchain {
         }
         for (i, batch) in early_batches.into_iter().enumerate() {
             if !batch.is_empty() {
-                account_workers_tx[i]
-                    .send(AccountRequest::MerklizeAccounts { accounts: batch })
+                workers_tx[i]
+                    .send(WorkerRequest::MerklizeAccounts { accounts: batch })
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
             }
         }
@@ -690,27 +669,24 @@ impl Blockchain {
         for () in flush_rx {}
         let t_barrier = Instant::now();
 
-        // Trigger storage collection — workers send StorageShard directly to account workers.
-        for tx in &storage_workers_tx {
-            tx.send(StorageRequest::CollectStorages)
+        // Trigger storage collection — workers finalize storage tries and send shards.
+        for tx in &workers_tx {
+            tx.send(WorkerRequest::CollectStorages)
                 .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
-        drop(storage_workers_tx);
 
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
-        // Send CollectState immediately — account workers defer until all shards arrive.
-        // No need to join storage workers first: account workers track expected_shards
-        // and will wait for all StorageShards before producing their result.
+        // Send CollectState immediately — workers defer until all shards arrive.
         let (gatherer_tx, gatherer_rx) = channel();
-        for tx in &account_workers_tx {
-            tx.send(AccountRequest::CollectState {
+        for tx in &workers_tx {
+            tx.send(WorkerRequest::CollectState {
                 tx: gatherer_tx.clone(),
             })
             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
         drop(gatherer_tx);
-        drop(account_workers_tx);
+        drop(workers_tx);
 
         let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
@@ -2557,16 +2533,34 @@ fn collapse_root_node(
     }))
 }
 
-fn handle_storage_subtrie(
+fn handle_subtrie(
     storage: Store,
-    rx: Receiver<StorageRequest>,
+    rx: Receiver<WorkerRequest>,
     parent_state_root: H256,
     index: u8,
-    account_workers_tx: Vec<Sender<AccountRequest>>,
+    worker_senders: Vec<Sender<WorkerRequest>>,
 ) -> Result<(), StoreError> {
-    let mut tree: FxHashMap<H256, Trie> = Default::default();
-    let mut pre_collected: FxHashMap<H256, Vec<TrieNode>> = Default::default();
-    let mut n_pre_collected: usize = 0;
+    // === Account-side state ===
+    let mut state_trie = storage.open_state_trie(parent_state_root)?;
+    let mut storage_nodes: Vec<(H256, Vec<TrieNode>)> = vec![];
+    let mut accounts: FxHashMap<H256, AccountState> = Default::default();
+    let mut expected_shards: FxHashMap<H256, u16> = Default::default();
+    let mut storage_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
+    let mut received_shards: FxHashMap<H256, u16> = Default::default();
+    let mut pending_storage_accounts: usize = 0;
+    let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
+    let mut t_process = Duration::ZERO;
+    let mut t_shard = Duration::ZERO;
+    let mut pre_collected_state: Vec<TrieNode> = vec![];
+
+    // === Storage-side state ===
+    let mut storage_tries: FxHashMap<H256, Trie> = Default::default();
+    let mut pre_collected_storage: FxHashMap<H256, Vec<TrieNode>> = Default::default();
+    let mut n_pre_collected_storage: usize = 0;
+
+    // === Control state ===
+    // Held until CollectStorages to keep cross-worker channels open.
+    let mut worker_senders: Option<Vec<Sender<WorkerRequest>>> = Some(worker_senders);
     let mut dirty = false;
 
     loop {
@@ -2576,12 +2570,20 @@ fn handle_storage_subtrie(
             match rx.try_recv() {
                 Ok(msg) => msg,
                 Err(_) => {
-                    for (prefix, trie) in tree.iter_mut() {
+                    // Pre-collect state trie
+                    let mut nodes = state_trie.commit_without_storing();
+                    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+                    pre_collected_state.extend(nodes);
+                    // Pre-collect storage tries
+                    for (prefix, trie) in storage_tries.iter_mut() {
                         let mut nodes = trie.commit_without_storing();
                         nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
                         if !nodes.is_empty() {
-                            pre_collected.entry(*prefix).or_default().extend(nodes);
-                            n_pre_collected += 1;
+                            pre_collected_storage
+                                .entry(*prefix)
+                                .or_default()
+                                .extend(nodes);
+                            n_pre_collected_storage += 1;
                         }
                     }
                     dirty = false;
@@ -2596,108 +2598,7 @@ fn handle_storage_subtrie(
         };
 
         match msg {
-            StorageRequest::CollectStorages => break,
-            StorageRequest::Delete(prefix) => {
-                pre_collected.remove(&prefix);
-                tree.insert(prefix, Trie::new_temp());
-                dirty = true;
-            }
-            StorageRequest::MerklizeStorage {
-                prefix,
-                key,
-                value,
-                storage_root,
-            } => {
-                let trie = match tree.entry(prefix) {
-                    Entry::Occupied(e) => e.into_mut(),
-                    Entry::Vacant(e) => e.insert(storage.open_storage_trie(
-                        prefix,
-                        parent_state_root,
-                        storage_root,
-                    )?),
-                };
-                if value.is_zero() {
-                    trie.remove(key.as_bytes())?;
-                } else {
-                    trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
-                }
-                dirty = true;
-            }
-        }
-    }
-
-    // Finalize: collect remaining tries, merge with pre-collected, send shards
-    let t0 = Instant::now();
-    let n_accounts = tree.len();
-    for (prefix, trie) in tree.drain() {
-        let (root, mut nodes) = collect_trie(index, trie)?;
-        // Pre-collected nodes first, delta nodes after (delta overwrites stale entries)
-        if let Some(mut pre_nodes) = pre_collected.remove(&prefix) {
-            pre_nodes.extend(nodes);
-            nodes = pre_nodes;
-        }
-        let bucket = prefix.as_fixed_bytes()[0] >> 4;
-        account_workers_tx[bucket as usize]
-            .send(AccountRequest::StorageShard {
-                prefix,
-                index,
-                subroot: root,
-                nodes,
-            })
-            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-    }
-    info!(
-        "  storage[{index}]: collect={:.1}ms accounts={} pre_collected={}",
-        t0.elapsed().as_secs_f64() * 1000.0,
-        n_accounts,
-        n_pre_collected,
-    );
-    Ok(())
-}
-
-fn handle_account_subtrie(
-    storage: Store,
-    rx: Receiver<AccountRequest>,
-    parent_state_root: H256,
-    index: u8,
-    storage_workers_tx: Vec<Sender<StorageRequest>>,
-) -> Result<(), StoreError> {
-    let mut state_trie = storage.open_state_trie(parent_state_root)?;
-    let mut storage_nodes = vec![];
-    let mut accounts: FxHashMap<H256, AccountState> = Default::default();
-    let mut expected_shards: FxHashMap<H256, u16> = Default::default();
-    let mut storage_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
-    let mut received_shards: FxHashMap<H256, u16> = Default::default();
-    // Held until FinishRouting to keep storage worker channels open.
-    let mut storage_workers_tx = Some(storage_workers_tx);
-    let mut pending_storage_accounts: usize = 0;
-    let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
-    let mut t_process = Duration::ZERO;
-    let mut t_shard = Duration::ZERO;
-    let mut pre_collected_state: Vec<TrieNode> = vec![];
-    let mut dirty = false;
-
-    loop {
-        let msg = if dirty {
-            match rx.try_recv() {
-                Ok(msg) => msg,
-                Err(_) => {
-                    let mut nodes = state_trie.commit_without_storing();
-                    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-                    pre_collected_state.extend(nodes);
-                    dirty = false;
-                    continue;
-                }
-            }
-        } else {
-            match rx.recv() {
-                Ok(msg) => msg,
-                Err(_) => break,
-            }
-        };
-
-        match msg {
-            AccountRequest::ProcessAccount {
+            WorkerRequest::ProcessAccount {
                 prefix,
                 info,
                 storage: account_storage,
@@ -2705,9 +2606,9 @@ fn handle_account_subtrie(
                 removed_storage,
             } => {
                 let t0 = Instant::now();
-                let senders = storage_workers_tx
+                let senders = worker_senders
                     .as_ref()
-                    .expect("ProcessAccount after FinishRouting");
+                    .expect("ProcessAccount after CollectStorages");
 
                 // Always load account to warm state trie during execution overlap
                 match accounts.entry(prefix) {
@@ -2740,9 +2641,14 @@ fn handle_account_subtrie(
                 }
 
                 if removed || removed_storage {
-                    for tx in senders {
-                        tx.send(StorageRequest::Delete(prefix))
-                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    // Delete locally + send DeleteStorage to other 15 workers
+                    pre_collected_storage.remove(&prefix);
+                    storage_tries.insert(prefix, Trie::new_temp());
+                    for (i, tx) in senders.iter().enumerate() {
+                        if i as u8 != index {
+                            tx.send(WorkerRequest::DeleteStorage(prefix))
+                                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        }
                     }
                     accounts.get_mut(&prefix).expect("just loaded").storage_root = *EMPTY_TRIE_HASH;
                     if expected_shards.insert(prefix, 0xFFFF).is_none() {
@@ -2766,14 +2672,31 @@ fn handle_account_subtrie(
                         let hashed_key = keccak(key);
                         let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
                         *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
-                        senders[bucket as usize]
-                            .send(StorageRequest::MerklizeStorage {
-                                prefix,
-                                key: hashed_key,
-                                value,
-                                storage_root,
-                            })
-                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        if bucket == index {
+                            // Local storage: insert directly
+                            let trie = match storage_tries.entry(prefix) {
+                                Entry::Occupied(e) => e.into_mut(),
+                                Entry::Vacant(e) => e.insert(storage.open_storage_trie(
+                                    prefix,
+                                    parent_state_root,
+                                    storage_root,
+                                )?),
+                            };
+                            if value.is_zero() {
+                                trie.remove(hashed_key.as_bytes())?;
+                            } else {
+                                trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+                            }
+                        } else {
+                            senders[bucket as usize]
+                                .send(WorkerRequest::MerklizeStorage {
+                                    prefix,
+                                    key: hashed_key,
+                                    value,
+                                    storage_root,
+                                })
+                                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        }
                     }
                     if is_new {
                         pending_storage_accounts += 1;
@@ -2782,12 +2705,78 @@ fn handle_account_subtrie(
                 dirty = true;
                 t_process += t0.elapsed();
             }
-            AccountRequest::FinishRouting { tx } => {
+            WorkerRequest::MerklizeStorage {
+                prefix,
+                key,
+                value,
+                storage_root,
+            } => {
+                let trie = match storage_tries.entry(prefix) {
+                    Entry::Occupied(e) => e.into_mut(),
+                    Entry::Vacant(e) => e.insert(storage.open_storage_trie(
+                        prefix,
+                        parent_state_root,
+                        storage_root,
+                    )?),
+                };
+                if value.is_zero() {
+                    trie.remove(key.as_bytes())?;
+                } else {
+                    trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+                }
+                dirty = true;
+            }
+            WorkerRequest::DeleteStorage(prefix) => {
+                pre_collected_storage.remove(&prefix);
+                storage_tries.insert(prefix, Trie::new_temp());
+                dirty = true;
+            }
+            WorkerRequest::FinishRouting { tx } => {
                 tx.send(())
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                storage_workers_tx = None;
+                // Do NOT drop senders — still needed for CollectStorages.
             }
-            AccountRequest::StorageShard {
+            WorkerRequest::MerklizeAccounts { accounts: batch } => {
+                // Info already applied in ProcessAccount — just record empty storage nodes
+                for hashed_account in batch {
+                    storage_nodes.push((hashed_account, vec![]));
+                }
+            }
+            WorkerRequest::CollectStorages => {
+                // Finalize all storage tries and send shards to account-bucket workers
+                let senders = worker_senders
+                    .as_ref()
+                    .expect("CollectStorages after senders dropped");
+                let t0 = Instant::now();
+                let n_accounts = storage_tries.len();
+                for (prefix, trie) in storage_tries.drain() {
+                    let (root, mut nodes) = collect_trie(index, trie)?;
+                    // Pre-collected nodes first, delta nodes after
+                    if let Some(mut pre_nodes) = pre_collected_storage.remove(&prefix) {
+                        pre_nodes.extend(nodes);
+                        nodes = pre_nodes;
+                    }
+                    let bucket = prefix.as_fixed_bytes()[0] >> 4;
+                    senders[bucket as usize]
+                        .send(WorkerRequest::StorageShard {
+                            prefix,
+                            index,
+                            subroot: root,
+                            nodes,
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                }
+                info!(
+                    "  worker[{index}]: storage_collect={:.1}ms accounts={} pre_collected={}",
+                    t0.elapsed().as_secs_f64() * 1000.0,
+                    n_accounts,
+                    n_pre_collected_storage,
+                );
+                // Drop senders now — no more cross-worker messages needed.
+                worker_senders = None;
+                // Continue processing StorageShard/CollectState messages.
+            }
+            WorkerRequest::StorageShard {
                 prefix,
                 index: shard_index,
                 mut subroot,
@@ -2870,13 +2859,7 @@ fn handle_account_subtrie(
                 }
                 t_shard += t0.elapsed();
             }
-            AccountRequest::MerklizeAccounts { accounts: batch } => {
-                // Info already applied in ProcessAccount — just record empty storage nodes
-                for hashed_account in batch {
-                    storage_nodes.push((hashed_account, vec![]));
-                }
-            }
-            AccountRequest::CollectState { tx } => {
+            WorkerRequest::CollectState { tx } => {
                 if pending_storage_accounts == 0 {
                     // All storage accounts already resolved — respond immediately
                     let t0 = Instant::now();
