@@ -421,10 +421,14 @@ impl Blockchain {
                         let start = Instant::now();
                         if let Some(bal) = bal {
                             // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            let _ = LEVM::warm_block_from_bal(bal, caching_store);
+                            if let Err(e) = LEVM::warm_block_from_bal(bal, caching_store) {
+                                debug!("BAL warming failed (non-fatal): {e}");
+                            }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            let _ = LEVM::warm_block(block, caching_store, vm_type);
+                            if let Err(e) = LEVM::warm_block(block, caching_store, vm_type) {
+                                debug!("Block warming failed (non-fatal): {e}");
+                            }
                         }
                         start.elapsed()
                     })
