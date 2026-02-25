@@ -527,6 +527,8 @@ impl LEVM {
             let code_pos = acct_changes
                 .code_changes
                 .partition_point(|c| c.block_access_index <= max_idx);
+            // Each slot's slot_changes are sorted ascending by block_access_index,
+            // so if the first entry is <= max_idx, at least one change is in scope.
             let any_storage = acct_changes.storage_changes.iter().any(|sc| {
                 sc.slot_changes
                     .first()
@@ -564,6 +566,10 @@ impl LEVM {
                     .as_ref()
                     .map(|(h, _)| *h)
                     .unwrap_or(*EMPTY_KECCACK_HASH);
+                // NOTE: has_storage is false for newly inserted accounts. This is safe
+                // because this DB is only used for the parallel execution path (state
+                // comes from BAL, not get_state_transitions_tx). Do not reuse this DB
+                // for sequential fallback without fixing has_storage.
                 let acc = db
                     .current_accounts_state
                     .entry(addr)
@@ -633,14 +639,14 @@ impl LEVM {
     fn execute_block_parallel(
         block: &Block,
         txs_with_sender: &[(&Transaction, Address)],
-        _db: &mut GeneralizedDatabase,
+        db: &mut GeneralizedDatabase,
         vm_type: VMType,
         bal: &BlockAccessList,
         merkleizer: &Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
     ) -> Result<(Vec<Receipt>, u64), EvmError> {
-        let store = _db.store.clone();
+        let store = db.store.clone();
         let header = &block.header;
         let n_txs = txs_with_sender.len();
 
@@ -669,6 +675,8 @@ impl LEVM {
                     system_seed.clone(),
                     bal_account_count,
                 );
+                // Small capacity: parallel txs rarely nest >8 call frames, and
+                // over-allocating per-tx wastes memory across many rayon tasks.
                 let mut stack_pool = Vec::with_capacity(8);
 
                 // Pre-seed with BAL-derived intermediate state.
@@ -926,20 +934,25 @@ impl LEVM {
             // Storage: for each slot in execution state, check it's expected
             for (key_h256, &value) in &account.storage {
                 let slot_u256 = U256::from_big_endian(key_h256.as_bytes());
-                if let Some(sc) = acct.storage_changes.iter().find(|sc| sc.slot == slot_u256)
-                    && !has_exact_change_storage(&sc.slot_changes, bal_idx)
-                {
-                    let seeded_pos = sc
-                        .slot_changes
-                        .partition_point(|c| c.block_access_index <= seed_idx);
-                    if seeded_pos > 0 {
-                        let seeded = sc.slot_changes[seeded_pos - 1].post_value;
-                        if value != seeded {
-                            return Err(format!(
-                                "account {addr:?} storage slot {slot_u256} changed by \
-                                 execution ({value}) but BAL has no change at index \
-                                 {bal_idx} (seeded={seeded})"
-                            ));
+                // EIP-7928 requires storage_changes sorted by slot, so use binary search.
+                let pos = acct
+                    .storage_changes
+                    .partition_point(|sc| sc.slot < slot_u256);
+                if pos < acct.storage_changes.len() && acct.storage_changes[pos].slot == slot_u256 {
+                    let sc = &acct.storage_changes[pos];
+                    if !has_exact_change_storage(&sc.slot_changes, bal_idx) {
+                        let seeded_pos = sc
+                            .slot_changes
+                            .partition_point(|c| c.block_access_index <= seed_idx);
+                        if seeded_pos > 0 {
+                            let seeded = sc.slot_changes[seeded_pos - 1].post_value;
+                            if value != seeded {
+                                return Err(format!(
+                                    "account {addr:?} storage slot {slot_u256} changed by \
+                                     execution ({value}) but BAL has no change at index \
+                                     {bal_idx} (seeded={seeded})"
+                                ));
+                            }
                         }
                     }
                 }

@@ -165,7 +165,7 @@ async fn run(
 
 /// Two-pass parallel execution check for Amsterdam tests.
 ///
-/// Pass 1 (sequential): runs every block with `add_block_pipeline_returning_bal` to collect the
+/// Pass 1 (sequential): runs every block with `add_block_pipeline_bal` to collect the
 /// BAL that each block produces.  Pass 2 (parallel): creates a fresh chain and re-runs every
 /// block passing the corresponding BAL so the BAL-warmed parallel path is exercised.  The final
 /// post-state of pass 2 must match the expected post-state.
@@ -186,7 +186,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
         let hash = block.hash();
 
         let produced_bal = blockchain1
-            .add_block_pipeline_returning_bal(block, None)
+            .add_block_pipeline_bal(block, None)
             .map_err(|e| format!("Two-pass pass-1 failed for test {test_key}: {e:?}"))?;
 
         apply_fork_choice(&store1, hash, hash, hash)
