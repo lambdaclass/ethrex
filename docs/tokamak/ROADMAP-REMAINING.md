@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24
-**Context**: Overall ~50% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE.
+**Context**: Overall ~55% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE.
 
 ---
 
@@ -131,21 +131,26 @@
 
 > "From 2x to 3-5x target."
 
-### D-1. Recursive CALL Performance [P2]
+### D-1. Recursive CALL Performance [P2] — DECISION: (c) Accept for v1.0
 - Current: JIT suspend -> LEVM dispatch -> JIT resume is extremely slow
-- Options: (a) inline small calls, (b) JIT-to-JIT direct dispatch, (c) accept limitation
-- Impact: FibonacciRecursive, ERC20 scenarios currently skipped
-- **Decision needed**: Which approach? Cost/benefit analysis.
-- **Dependency**: B-1
-- **Estimate**: 16-40h (high uncertainty)
+- **Decision**: (c) Accept limitation for v1.0 — non-recursive scenarios already 2-2.5x speedup
+- Impact: FibonacciRecursive, ERC20 scenarios remain skipped in benchmarks
+- Future options (v1.1+):
+  - (a) Inline small calls — inline child bytecode into parent JIT, ~20-30h
+  - (b) JIT-to-JIT direct dispatch — skip LEVM for JIT-compiled children, ~30-40h, may need revmc changes
+- **Dependency**: B-1 ✅
+- **Rationale**: Most real-world ERC20 transfers use 1-2 CALL depth, not deep recursion. Invest effort in D-2 (bytecode fallback) first.
 
-### D-2. Bytecode Size Limit Workaround [P2]
-- revmc hard limit: 24576 bytes
-- Options: (a) chunk compilation, (b) interpreter fallback for large contracts, (c) upstream fix
-- Impact: Push/MstoreBench/SstoreBench skip compilation
-- **Decision needed**: Accept fallback or invest in chunking?
+### D-2. Bytecode Size Limit — Graceful Interpreter Fallback [P2] ✅ DONE
+- revmc hard limit: 24576 bytes (EIP-170 MAX_CODE_SIZE)
+- **Decision**: (b) Explicit interpreter fallback with negative cache
+- Added `oversized_hashes` negative cache to JitState — O(1) skip for known-oversized bytecodes ✅
+- Early size gate in VM dispatch at compilation threshold ✅
+- Belt-and-suspenders size check in background compiler thread ✅
+- Benchmarks now report interpreter-only results instead of silently dropping oversized scenarios ✅
+- **Verification**: 4 unit tests (dispatch.rs) + 3 integration tests (oversized.rs, revmc-gated) ✅
 - **Dependency**: None
-- **Estimate**: 8-16h
+- **Completed**: Session ff3396efe
 
 ### D-3. Opcode Fusion / Constant Folding [P2]
 - PUSH+PUSH+ADD -> single operation
@@ -224,7 +229,7 @@
 Week 1:  [P0] A-1 ✅ + A-2 ⏳ → A-3 ✅ → A-4 ✅ (Snapsync 수동 필요)
 Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
 Week 3:  [P1] C-1 ✅ + C-2 ✅ + B-3 ✅
-Week 4:  [P2] D-1 decision + D-2 → E-1 start
+Week 4:  [P2] D-1 decision ✅ + D-2 ✅ → E-1 start
 Week 5+: [P2] E-1 + E-2 → D-3 → E-3
 Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
 ```
@@ -235,7 +240,7 @@ Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
 
 | Decision | Options | Recommendation |
 |----------|---------|----------------|
-| Recursive CALL strategy | (a) Inline (b) JIT-to-JIT (c) Accept | (c) Accept for v1.0, (b) for v1.1 |
+| Recursive CALL strategy | (a) Inline (b) JIT-to-JIT (c) Accept | **(c) Accept for v1.0** ✅ decided — revisit (a)/(b) for v1.1 |
 | Bytecode size limit | (a) Chunk (b) Fallback (c) Upstream fix | (b) Fallback -- least effort, already works |
 | L2 timeline | (a) Now (b) After mainnet (c) Skip | (b) After mainnet -- L1 correctness first |
 | Debugger scope | (a) Full Web UI (b) CLI only (c) Skip | (b) CLI MVP -- prove value, web UI in v1.1 |
