@@ -17,8 +17,6 @@ pub struct BackendTrieDB {
     /// Using Arc allows sharing a single read view across multiple BackendTrieDB
     /// instances (e.g., state trie + storage trie in a single query).
     read_view: Arc<dyn StorageReadView>,
-    /// Last flatkeyvalue path already generated
-    last_computed_flatkeyvalue: Nibbles,
     nodes_table: &'static str,
     fkv_table: &'static str,
     /// Storage trie address prefix (for storage tries)

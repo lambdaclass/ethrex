@@ -2807,10 +2807,6 @@ impl Store {
         Ok(last_computed_flatkeyvalue.clone())
     }
 
-    fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
-        let account_nibbles = Nibbles::from_bytes(account.as_bytes());
-        &last_written[0..64] > account_nibbles.as_ref()
-    }
 }
 
 type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;

@@ -30,10 +30,6 @@ pub trait TrieDB: Send + Sync {
     fn commit(&self) -> Result<(), TrieError> {
         Ok(())
     }
-
-    fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
-        false
-    }
 }
 
 // TODO: we should replace this with BackendTrieDB
