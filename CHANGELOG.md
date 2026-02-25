@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-25
+
+- Speed up snap sync validation with parallelism and deduplication [#6191](https://github.com/lambdaclass/ethrex/pull/6191)
+
 ### 2026-02-24
 
 - Expand fast-path dispatch in LEVM interpreter loop [#6245](https://github.com/lambdaclass/ethrex/pull/6245)
