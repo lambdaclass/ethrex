@@ -1,4 +1,4 @@
-mod initializers;
+pub mod initializers;
 
 pub mod command;
 pub mod deployer;

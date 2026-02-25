@@ -52,10 +52,6 @@ contract NativeRollup {
     /// @notice Storage slot of sentMessages mapping in L2Bridge (slot 3).
     uint256 constant L2_BRIDGE_SENT_MESSAGES_SLOT = 3;
 
-    /// @notice Default gas limit for L1 messages sent via receive().
-    /// Matches CommonBridge's deposit gas limit (21000 * 5).
-    uint256 constant DEFAULT_GAS_LIMIT = 21_000 * 5;
-
     bytes32[] public pendingL1Messages;
     uint256 public l1MessageIndex;
 
@@ -81,20 +77,18 @@ contract NativeRollup {
         stateRoot = _initialStateRoot;
         blockGasLimit = _blockGasLimit;
         lastBaseFeePerGas = _initialBaseFee;
-        lastGasUsed = _blockGasLimit / 2;
+        lastGasUsed = 0;
     }
 
     // ===== L1 Messaging =====
 
     function sendL1Message(address _to, uint256 _gasLimit, bytes calldata _data) external payable {
+        _burnGas(_gasLimit);
         _recordL1Message(msg.sender, _to, msg.value, _gasLimit, _data);
     }
 
-    receive() external payable {
-        require(msg.value > 0, "Must send ETH");
-        _burnGas(DEFAULT_GAS_LIMIT);
-        _recordL1Message(msg.sender, msg.sender, msg.value, DEFAULT_GAS_LIMIT, "");
-    }
+    /// @notice Accept ETH without creating an L1 message.
+    receive() external payable {}
 
     function _recordL1Message(
         address _from,

@@ -23,6 +23,12 @@ use std::{
 };
 use tracing::Level;
 
+#[cfg(feature = "native-rollups")]
+use ethrex_l2::NativeRollupConfig;
+
+#[cfg(feature = "native-rollups")]
+use clap::ArgAction;
+
 pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
 
 #[derive(Parser, Debug)]
@@ -105,6 +111,92 @@ pub struct SequencerOptions {
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
+    #[cfg(feature = "native-rollups")]
+    #[command(flatten)]
+    pub native_rollup_opts: NativeRollupOptions,
+}
+
+#[cfg(feature = "native-rollups")]
+#[derive(Parser, Debug)]
+pub struct NativeRollupOptions {
+    #[arg(
+        long = "native-rollups",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_NATIVE_ROLLUPS",
+        action = ArgAction::SetTrue,
+        help_heading = "Native rollups options",
+        help = "Enable native rollup L2 mode."
+    )]
+    pub enabled: bool,
+    #[arg(
+        long = "native-rollups.contract-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS",
+        help_heading = "Native rollups options",
+        help = "Address of NativeRollup.sol on L1."
+    )]
+    pub contract_address: Option<Address>,
+    #[arg(
+        long = "native-rollups.relayer-pk",
+        value_name = "PRIVATE_KEY",
+        value_parser = utils::parse_private_key,
+        env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
+        default_value = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+        help_heading = "Native rollups options",
+        help = "Private key for the relayer account (signs processL1Message txs on L2)."
+    )]
+    pub relayer_private_key: SecretKey,
+    #[arg(
+        long = "native-rollups.l1-pk",
+        value_name = "PRIVATE_KEY",
+        value_parser = utils::parse_private_key,
+        env = "ETHREX_NATIVE_ROLLUPS_L1_PK",
+        default_value = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
+        help_heading = "Native rollups options",
+        help = "Private key for L1 transactions (advance() calls)."
+    )]
+    pub l1_private_key: SecretKey,
+    #[arg(
+        long = "native-rollups.block-time",
+        id = "native_rollups_block_time_ms",
+        default_value = "5000",
+        value_name = "UINT64",
+        env = "ETHREX_NATIVE_ROLLUPS_BLOCK_TIME",
+        help_heading = "Native rollups options",
+        help = "Block production interval in milliseconds."
+    )]
+    pub block_time_ms: u64,
+    #[arg(
+        long = "native-rollups.commit-interval",
+        id = "native_rollups_commit_interval_ms",
+        default_value = "10000",
+        value_name = "UINT64",
+        env = "ETHREX_NATIVE_ROLLUPS_COMMIT_INTERVAL",
+        help_heading = "Native rollups options",
+        help = "L1 commit interval in milliseconds."
+    )]
+    pub commit_interval_ms: u64,
+}
+
+#[cfg(feature = "native-rollups")]
+impl Default for NativeRollupOptions {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            contract_address: None,
+            relayer_private_key: utils::parse_private_key(
+                "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+            )
+            .expect("Valid default relayer key"),
+            l1_private_key: utils::parse_private_key(
+                "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
+            )
+            .expect("Valid default L1 key"),
+            block_time_ms: 5000,
+            commit_interval_ms: 10000,
+        }
+    }
 }
 
 pub fn parse_signer(
@@ -1126,5 +1218,34 @@ impl Default for ProverClientOptions {
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }
+    }
+}
+
+#[cfg(feature = "native-rollups")]
+impl NativeRollupOptions {
+    pub fn to_config(
+        &self,
+        l1_rpc_urls: Vec<Url>,
+        chain_id: u64,
+    ) -> Result<NativeRollupConfig, SequencerOptionsError> {
+        let contract_address = self
+            .contract_address
+            .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?;
+        let relayer_signer: Signer = LocalSigner::new(self.relayer_private_key).into();
+        let l1_signer: Signer = LocalSigner::new(self.l1_private_key).into();
+
+        Ok(NativeRollupConfig {
+            l1_rpc_urls,
+            contract_address,
+            block_time_ms: self.block_time_ms,
+            watch_interval_ms: 2000,
+            commit_interval_ms: self.commit_interval_ms,
+            max_block_step: 5000,
+            coinbase: relayer_signer.address(),
+            block_gas_limit: 30_000_000,
+            chain_id,
+            relayer_signer,
+            l1_signer,
+        })
     }
 }

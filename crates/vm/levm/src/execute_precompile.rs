@@ -367,37 +367,27 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         },
     };
 
-    // 5. Write l1_anchor to L1Anchor predeploy storage (system transaction)
-    //    This anchors the L1 messages Merkle root on L2 before executing regular
-    //    transactions, allowing L2 contracts to verify messages via Merkle proofs.
+    // 5. Write l1_anchor to L1Anchor predeploy storage and execute the block.
+    //    The anchor is written to the GeneralizedDatabase's VM cache (not directly
+    //    to the GuestProgramState trie) so that get_state_transitions() captures the
+    //    storage change, exactly matching the block producer's code path.
     let db = Arc::new(GuestProgramStateDb::new(guest_state));
-    {
-        use ethrex_common::types::AccountUpdate;
-        use rustc_hash::FxHashMap;
-
-        let mut storage = FxHashMap::default();
-        storage.insert(
-            H256::zero(), // slot 0
-            U256::from_big_endian(l1_anchor.as_bytes()),
-        );
-
-        let anchor_update = AccountUpdate {
-            address: L1_ANCHOR,
-            added_storage: storage,
-            ..Default::default()
-        };
-
-        db.state
-            .lock()
-            .map_err(|e| custom_err(format!("Lock poisoned: {e}")))?
-            .apply_account_updates(&[anchor_update])
-            .map_err(|e| custom_err(format!("Failed to write L1Anchor storage: {e}")))?;
-    }
-
-    // 6. Execute the block
     let (_all_logs, block_gas_used) = {
         let db_dyn: Arc<dyn crate::db::Database> = db.clone();
         let mut gen_db = GeneralizedDatabase::new(db_dyn);
+
+        // Anchor L1 messages Merkle root in L1Anchor predeploy storage.
+        // This mirrors NativeBlockProducer::anchor_l1_messages: write to the VM
+        // cache and record the initial value so get_state_transitions() can
+        // compute the storage diff.
+        let l1_anchor_value = U256::from_big_endian(l1_anchor.as_bytes());
+        let anchor_account = gen_db.get_account_mut(L1_ANCHOR).map_err(|e| {
+            custom_err(format!("Failed to load L1Anchor account: {e}"))
+        })?;
+        anchor_account.storage.insert(H256::zero(), l1_anchor_value);
+        if let Some(initial) = gen_db.initial_accounts_state.get_mut(&L1_ANCHOR) {
+            initial.storage.entry(H256::zero()).or_insert(U256::zero());
+        }
 
         let (logs, gas_used) = execute_block(&block, &mut gen_db)?;
 
@@ -424,6 +414,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         .map_err(|e| custom_err(format!("Failed to compute final state root: {e}")))?;
 
     if final_root != expected_post_state_root {
+        // DEBUG: dump expected vs actual
         return Err(custom_err(format!(
             "Final state root mismatch: expected {expected_post_state_root:?}, got {final_root:?}"
         )));

@@ -367,6 +367,107 @@ pub async fn init_l2(
     Ok(())
 }
 
+#[cfg(feature = "native-rollups")]
+pub async fn init_native_rollup_l2(
+    opts: L2Options,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+) -> eyre::Result<()> {
+    use ethrex_l2::NativeRollupConfig;
+    use ethrex_l2_rpc::signer::LocalSigner;
+
+    raise_fd_limit()?;
+    let datadir = opts.node_opts.datadir.clone();
+    init_datadir(&opts.node_opts.datadir);
+
+    let network = get_network(&opts.node_opts);
+    let genesis = network.get_genesis()?;
+    let store = init_store(&datadir, genesis).await?;
+
+    // Native rollup L2 uses BlockchainType::L1 because the whole point of native
+    // rollups is that L2 blocks run through an unmodified L1 execution environment
+    // (the EXECUTE precompile). The L2 must produce blocks that the L1 VM can
+    // re-execute identically, so the L2 node uses the same precompile set and
+    // execution rules as L1.
+    let blockchain_opts = ethrex_blockchain::BlockchainOptions {
+        max_mempool_size: opts.node_opts.mempool_max_size,
+        r#type: BlockchainType::L1,
+        perf_logs_enabled: true,
+        max_blobs_per_block: None,
+        precompute_witnesses: opts.node_opts.precompute_witnesses,
+    };
+
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    blockchain.set_synced();
+
+    let signer = get_signer(&datadir);
+    let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
+    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
+
+    let tracker = TaskTracker::new();
+
+    // Init a minimal rollup store (needed for RPC)
+    let rollup_store_dir = datadir.join("rollup_store");
+    let rollup_store = init_rollup_store(&rollup_store_dir).await;
+
+    init_rpc_api(
+        &opts.node_opts,
+        &opts,
+        None, // no p2p peer handler
+        local_p2p_node,
+        local_node_record,
+        store.clone(),
+        blockchain.clone(),
+        None, // no syncer
+        tracker,
+        rollup_store,
+        log_filter_handler,
+        Some(30_000_000), // block gas limit
+    );
+
+    let native_opts = &opts.sequencer_opts.native_rollup_opts;
+    let contract_address = native_opts
+        .contract_address
+        .ok_or_else(|| eyre::eyre!("--native-rollups.contract-address is required"))?;
+
+    let l1_rpc_url = opts
+        .sequencer_opts
+        .eth_opts
+        .rpc_url
+        .first()
+        .cloned()
+        .ok_or_else(|| eyre::eyre!("--eth.rpc-url is required"))?;
+
+    let relayer_signer: ethrex_l2_rpc::signer::Signer =
+        LocalSigner::new(native_opts.relayer_private_key).into();
+    let l1_signer: ethrex_l2_rpc::signer::Signer =
+        LocalSigner::new(native_opts.l1_private_key).into();
+
+    let config = NativeRollupConfig {
+        l1_rpc_urls: vec![l1_rpc_url],
+        contract_address,
+        block_time_ms: native_opts.block_time_ms,
+        watch_interval_ms: 5000,
+        commit_interval_ms: native_opts.commit_interval_ms,
+        max_block_step: 5000,
+        coinbase: relayer_signer.address(),
+        block_gas_limit: 30_000_000,
+        chain_id: store.get_chain_config().chain_id,
+        relayer_signer,
+        l1_signer,
+    };
+
+    let (_watcher_handle, _producer_handle, _committer_handle) =
+        ethrex_l2::start_native_rollup_l2(store, blockchain, config)
+            .map_err(|e| eyre::eyre!("Failed to start native rollup L2: {e}"))?;
+
+    info!("Native Rollup L2 started, press Ctrl+C to stop");
+
+    tokio::signal::ctrl_c().await?;
+
+    info!("Shutting down Native Rollup L2...");
+    Ok(())
+}
+
 pub fn get_l1_fee_config(sequencer_opts: &SequencerOptions) -> Option<L1FeeConfig> {
     if sequencer_opts.based {
         // If based is enabled, skip L1 fee configuration

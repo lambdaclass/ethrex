@@ -124,7 +124,9 @@ impl NativeBlockProducer {
                         break;
                     }
                     cumulative_gas = next_gas;
-                    selected.push(queue.pop_front().unwrap());
+                    if let Some(msg) = queue.pop_front() {
+                        selected.push(msg);
+                    }
                 }
 
                 selected
@@ -154,6 +156,18 @@ impl NativeBlockProducer {
         anchor_account
             .storage
             .insert(H256::zero(), U256::from_big_endian(merkle_root.as_bytes()));
+
+        // Also record the old value in initial_accounts_state so that
+        // get_state_transitions() can compute the storage diff. Since we
+        // write directly into the cache (this is a system action, not an EVM
+        // execution), we must manually ensure the key exists in the initial
+        // state — otherwise the diff will fail with "old value not found".
+        if let Some(initial_account) = context.vm.db.initial_accounts_state.get_mut(&L1_ANCHOR) {
+            initial_account
+                .storage
+                .entry(H256::zero())
+                .or_insert(U256::zero());
+        }
 
         debug!(
             "NativeBlockProducer: anchored L1 messages root {:?} ({} messages)",

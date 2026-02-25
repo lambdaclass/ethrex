@@ -20,6 +20,7 @@ use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, send_tx_bump_gas_exponential_backoff,
 };
+use ethrex_levm::execute_precompile::L1_ANCHOR;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::Overrides;
 use ethrex_rpc::clients::eth::EthClient;
@@ -133,10 +134,21 @@ impl NativeL1Committer {
             body: block_body.clone(),
         };
 
-        // 3. Generate execution witness
+        // 3. Generate execution witness.
+        //    Read the L1 messages Merkle root from L1Anchor's storage (the
+        //    block producer already computed and stored it). The witness
+        //    generator must apply this write before re-executing the block so
+        //    that (a) the witness includes L1Anchor's trie nodes, and (b) the
+        //    re-execution produces the same state root as the original block.
+        let l1_anchor_value = self
+            .store
+            .get_storage_at(next_block, L1_ANCHOR, H256::zero())?
+            .unwrap_or(U256::zero());
+
+        let pre_execution_writes = vec![(L1_ANCHOR, H256::zero(), l1_anchor_value)];
         let witness = self
             .blockchain
-            .generate_witness_for_blocks(&[block])
+            .generate_witness_for_blocks_with_pre_execution_writes(&[block], &pre_execution_writes)
             .await?;
 
         let witness_json = serde_json::to_vec(&witness)
