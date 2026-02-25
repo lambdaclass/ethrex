@@ -39,7 +39,7 @@ inputs:
     required: false
     default: "linux/amd64"
   variant:
-    description: "Build variant for cache separation (l1 or l2)"
+    description: "Build variant for cache separation (e.g., l1, l2, tokamak)"
     required: false
     default: "l1"
   cache_write:

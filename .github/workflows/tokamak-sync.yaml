@@ -1,0 +1,111 @@
+name: Tokamak Sync Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Network name"
+        required: false
+        default: "hoodi"
+        type: choice
+        options:
+          - hoodi
+          - sepolia
+      build_profile:
+        description: "Cargo build profile (release or release-with-debug-assertions)"
+        required: false
+        default: "release"
+      build_flags:
+        description: "Additional cargo build flags"
+        required: false
+        default: "--features tokamak-jit"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tokamak-sync-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - id: targets
+        shell: bash
+        env:
+          INPUT_NETWORK: ${{ inputs.network }}
+        run: |
+          case "$INPUT_NETWORK" in
+            hoodi)
+              json='[{"network":"hoodi","timeout":"1h"}]'
+              ;;
+            sepolia)
+              json='[{"network":"sepolia","timeout":"3h30m"}]'
+              ;;
+            *)
+              echo "::error::Unsupported network value '$INPUT_NETWORK'. Allowed values: hoodi, sepolia."
+              exit 1
+              ;;
+          esac
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+
+  engine-restart:
+    name: Restart Kurtosis Engine
+    runs-on: ethrex-sync
+    steps:
+      - name: Restart engine to match CLI version
+        run: kurtosis engine restart
+
+  sync:
+    needs: [prepare, engine-restart]
+    name: Sync ${{ matrix.network }} (tokamak-jit)
+    runs-on: ethrex-sync
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Cleanup stale Docker and Kurtosis resources
+        run: |
+          kurtosis engine stop || true
+          docker network prune -f
+          docker image prune -f
+
+      - name: Run Snapsync Test
+        uses: ./.github/actions/snapsync-run
+        id: snapsync
+        with:
+          network: ${{ matrix.network }}
+          timeout: ${{ matrix.timeout }}
+          cl_type: lighthouse
+          cl_image: "sigp/lighthouse:v8.0.1"
+          build_local: "true"
+          build_profile: ${{ inputs.build_profile }}
+          build_flags: ${{ inputs.build_flags }}
+
+      - name: Report result
+        if: ${{ always() }}
+        shell: bash
+        env:
+          NETWORK: ${{ matrix.network }}
+          BUILD_FLAGS: ${{ inputs.build_flags }}
+          OUTCOME: ${{ steps.snapsync.outcome }}
+        run: |
+          {
+            echo "### Tokamak Sync Verification"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Network | \`${NETWORK}\` |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Build Flags | \`${BUILD_FLAGS}\` |"
+            echo "| Result | ${OUTCOME} |"
+            echo "| Date | $(date -u +%Y-%m-%dT%H:%M:%SZ) |"
+          } >> "${GITHUB_STEP_SUMMARY}"

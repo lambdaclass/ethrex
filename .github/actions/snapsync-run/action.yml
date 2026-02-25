@@ -23,6 +23,10 @@ inputs:
     description: Cargo profile to use when building locally (e.g., release, release-with-debug-assertions).
     required: false
     default: release
+  build_flags:
+    description: "Additional cargo build flags (e.g., --features tokamak-jit)"
+    required: false
+    default: ""
   cl_type:
     description: Consensus layer type (lighthouse, prysm, etc).
     required: false
@@ -47,11 +51,13 @@ runs:
       shell: bash
       env:
         BUILD_PROFILE: ${{ inputs.build_profile }}
+        BUILD_FLAGS: ${{ inputs.build_flags }}
         IMAGE_TAG: ${{ inputs.ethrex_tag }}
       run: |
-        echo "Building ethrex with profile: ${BUILD_PROFILE}"
+        echo "Building ethrex with profile: ${BUILD_PROFILE}, flags: ${BUILD_FLAGS}"
         docker build \
           --build-arg PROFILE="${BUILD_PROFILE}" \
+          --build-arg BUILD_FLAGS="${BUILD_FLAGS}" \
           -t ethrex-local:${IMAGE_TAG} \
           -f Dockerfile .
 
@@ -115,6 +121,7 @@ runs:
       env:
         BUILD_LOCAL: ${{ inputs.build_local }}
         BUILD_PROFILE: ${{ inputs.build_profile }}
+        BUILD_FLAGS: ${{ inputs.build_flags }}
         ETHREX_IMAGE: ${{ inputs.ethrex_image }}
         ETHREX_TAG: ${{ inputs.ethrex_tag }}
       run: |
@@ -130,5 +137,8 @@ runs:
           echo "- ${version:-unavailable}"
           if [ "$BUILD_LOCAL" = "true" ]; then
             echo "- Build Profile: ${BUILD_PROFILE}"
+            if [ -n "${BUILD_FLAGS}" ]; then
+              echo "- Build Flags: ${BUILD_FLAGS}"
+            fi
           fi
         } >> "${GITHUB_STEP_SUMMARY}"

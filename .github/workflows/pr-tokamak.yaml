@@ -8,7 +8,9 @@ on:
       - "crates/tokamak-bench/**"
       - "crates/tokamak-debugger/**"
       - "crates/vm/levm/src/**"
+      - "crates/vm/src/**"
       - "docs/tokamak/**"
+      - "Dockerfile"
       - ".github/workflows/pr-tokamak.yaml"
   workflow_dispatch:
 
@@ -18,6 +20,8 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
+  packages: write
 
 env:
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
@@ -92,3 +96,168 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+  docker-build-tokamak:
+    name: Build Docker (tokamak-jit)
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - id: docker
+        name: Build Ethrex Docker Image (tokamak-jit)
+        uses: ./.github/actions/build-docker
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+          build_args: BUILD_FLAGS=--features tokamak-jit
+          variant: tokamak
+          cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_tokamak_image
+          path: /tmp/ethrex_image.tar
+
+  run-hive:
+    name: Hive (tokamak) - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: docker-build-tokamak
+    env:
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Rpc Compat tests"
+            simulation: ethereum/rpc-compat
+            buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
+            artifact_prefix: rpc_compat
+          - name: "Devp2p tests"
+            simulation: devp2p
+            limit: discv4|eth|snap
+            artifact_prefix: devp2p
+          - name: "Engine Auth and EC tests"
+            simulation: ethereum/engine
+            limit: engine-(auth|exchange-capabilities)/
+            artifact_prefix: engine_auth_ec
+          - name: "Cancun Engine tests"
+            simulation: ethereum/engine
+            limit: "engine-cancun"
+            artifact_prefix: engine_cancun
+          - name: "Paris Engine tests"
+            simulation: ethereum/engine
+            limit: "engine-api"
+            artifact_prefix: engine_paris
+          - name: "Engine withdrawal tests"
+            simulation: ethereum/engine
+            limit: "engine-withdrawals"
+            artifact_prefix: engine_withdrawals
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Download ethrex tokamak image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_tokamak_image
+          path: /tmp
+
+      - name: Load image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Load hive client config
+        id: client-config
+        shell: bash
+        run: |
+          {
+            echo "config<<EOF"
+            cat .github/config/hive/clients.yaml
+            echo "EOF"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Determine hive flags
+        id: hive-flags
+        shell: bash
+        env:
+          SIM_LIMIT: ${{ matrix.limit }}
+          SIM_BUILDARG: ${{ matrix.buildarg }}
+        run: |
+          FLAGS='--sim.parallelism 4 --sim.loglevel 3'
+          if [[ -n "$SIM_LIMIT" ]]; then
+            escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
+            FLAGS+=" --sim.limit '$escaped_limit'"
+          fi
+          if [[ -n "$SIM_BUILDARG" ]]; then
+            FLAGS+=" --sim.buildarg $SIM_BUILDARG"
+          fi
+          echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the Container registry
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Run Hive Simulation
+        id: run-hive-action
+        uses: ethpandaops/hive-github-action@v0.5.0
+        with:
+          hive_repository: ethereum/hive
+          hive_version: 0921fb7833e3de180eacdc9f26de6e51dcab0dba
+          simulator: ${{ matrix.simulation }}
+          client: ethrex
+          client_config: ${{ steps.client-config.outputs.config }}
+          extra_flags: ${{ steps.hive-flags.outputs.flags }}
+
+      - name: Check Hive Results For Failures
+        id: verify-hive-results
+        if: ${{ success() }}
+        shell: bash
+        run: ./.github/scripts/check-hive-results.sh src/results
+
+      - name: Upload Hive Failure Logs
+        if: ${{ failure() && steps.verify-hive-results.conclusion == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive_tokamak_failed_logs_${{ matrix.artifact_prefix }}
+          path: src/results/failed_logs
+          if-no-files-found: warn
+
+  hive-gate:
+    name: Hive Gate (tokamak)
+    runs-on: ubuntu-latest
+    needs: run-hive
+    if: ${{ always() }}
+    steps:
+      - name: Check Hive results
+        run: |
+          if [ "${{ needs.run-hive.result }}" != "success" ]; then
+            echo "Hive tests failed for tokamak-jit build"
+            exit 1
+          fi
+
+      - name: Record baseline
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo "### Tokamak Hive Baseline"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Branch | \`${{ github.head_ref || github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Features | \`tokamak-jit\` |"
+            echo "| Date | $(date -u +%Y-%m-%dT%H:%M:%SZ) |"
+            echo "| Result | ${{ needs.run-hive.result }} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
