@@ -118,9 +118,10 @@ type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
     Option<Vec<AccountUpdate>>,
-    usize,        // max queue length
-    [Instant; 6], // timing instants
-    Duration,     // warmer duration
+    Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
+    usize,                   // max queue length
+    [Instant; 6],            // timing instants
+    Duration,                // warmer duration
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -456,7 +457,7 @@ impl Blockchain {
                         }
 
                         let exec_end_instant = Instant::now();
-                        Ok((execution_result, exec_end_instant))
+                        Ok((execution_result, produced_bal, exec_end_instant))
                     })
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
@@ -509,7 +510,7 @@ impl Blockchain {
                 ))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
-        let (execution_result, exec_end_instant) = execution_result?;
+        let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
         let exec_merkle_end_instant = Instant::now();
 
@@ -517,6 +518,7 @@ impl Blockchain {
             execution_result,
             account_updates_list,
             accumulated_updates,
+            produced_bal,
             max_queue_length,
             [
                 start_instant,
@@ -1948,6 +1950,7 @@ impl Blockchain {
             res,
             account_updates_list,
             accumulated_updates,
+            _produced_bal,
             merkle_queue_length,
             instants,
             warmer_duration,
@@ -1999,6 +2002,99 @@ impl Blockchain {
         }
 
         result
+    }
+
+    /// Same as [`add_block_pipeline`] but also returns the BAL produced during execution.
+    /// On Amsterdam+ blocks the returned value is `Some(bal)`, otherwise `None`.
+    pub fn add_block_pipeline_returning_bal(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<Option<BlockAccessList>, ChainError> {
+        // Validate if it can be the new head and find the parent
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            self.storage.add_pending_block(block)?;
+            return Err(ChainError::ParentNotFound);
+        };
+
+        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
+            let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
+                self.storage.clone(),
+                parent_header.clone(),
+            )?);
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
+            let vm = match self.options.r#type.clone() {
+                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L2(l2_config) => Evm::new_from_db_for_l2(
+                    logger.clone(),
+                    *l2_config.fee_config.read().map_err(|_| {
+                        EvmError::Custom("Fee config lock was poisoned".to_string())
+                    })?,
+                ),
+            };
+            (vm, Some(logger))
+        } else {
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+            let vm = self.new_evm(vm_db)?;
+            (vm, None)
+        };
+
+        let (
+            res,
+            account_updates_list,
+            accumulated_updates,
+            produced_bal,
+            merkle_queue_length,
+            instants,
+            warmer_duration,
+        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
+
+        let (gas_used, gas_limit, block_number, transactions_count) = (
+            block.header.gas_used,
+            block.header.gas_limit,
+            block.header.number,
+            block.body.transactions.len(),
+        );
+
+        if let Some(logger) = logger
+            && let Some(account_updates) = accumulated_updates
+        {
+            let block_hash = block.hash();
+            let witness = self.generate_witness_from_account_updates(
+                account_updates,
+                &block,
+                parent_header,
+                &logger,
+            )?;
+            self.storage
+                .store_witness(block_hash, block_number, witness)?;
+        };
+
+        self.store_block(block, account_updates_list, res)?;
+
+        let stored = Instant::now();
+
+        let instants = std::array::from_fn(move |i| {
+            if i < instants.len() {
+                instants[i]
+            } else {
+                stored
+            }
+        });
+
+        if self.options.perf_logs_enabled {
+            Self::print_add_block_pipeline_logs(
+                gas_used,
+                gas_limit,
+                block_number,
+                transactions_count,
+                merkle_queue_length,
+                warmer_duration,
+                instants,
+            );
+        }
+
+        Ok(produced_bal)
     }
 
     #[allow(clippy::too_many_arguments)]

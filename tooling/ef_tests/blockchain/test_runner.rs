@@ -13,7 +13,7 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
-        InvalidBlockHeaderError,
+        InvalidBlockHeaderError, block_access_list::BlockAccessList,
     },
 };
 use ethrex_guest_program::input::ProgramInput;
@@ -94,6 +94,14 @@ pub async fn run_ef_test(
 
     run(test_key, test, &blockchain, &store).await?;
 
+    // For Amsterdam tests, exercise the parallel BAL execution path as a correctness check.
+    // Two-pass approach: pass 1 collects the BAL produced by sequential execution, pass 2
+    // re-executes using that BAL to drive parallel (BAL-warmed) execution and verifies the
+    // same final state is reached.
+    if test.network == Fork::Amsterdam {
+        run_two_pass_parallel(test_key, test).await?;
+    }
+
     // Run stateless if backend was specified for this.
     // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
@@ -152,6 +160,69 @@ async fn run(
 
     // Final post-state verification
     check_poststate_against_db(test_key, test, store).await;
+    Ok(())
+}
+
+/// Two-pass parallel execution check for Amsterdam tests.
+///
+/// Pass 1 (sequential): runs every block with `add_block_pipeline_returning_bal` to collect the
+/// BAL that each block produces.  Pass 2 (parallel): creates a fresh chain and re-runs every
+/// block passing the corresponding BAL so the BAL-warmed parallel path is exercised.  The final
+/// post-state of pass 2 must match the expected post-state.
+async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
+    // ---- Pass 1: sequential, collect BALs ----
+    let store1 = build_store_for_test(test).await;
+    let blockchain1 = Blockchain::new(store1.clone(), BlockchainOptions::default());
+
+    let mut bals: Vec<BlockAccessList> = Vec::with_capacity(test.blocks.len());
+
+    for block_fixture in test.blocks.iter() {
+        // Skip fixtures that expect an exception — the normal run() already verified them.
+        if block_fixture.expect_exception.is_some() {
+            return Ok(());
+        }
+
+        let block: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let hash = block.hash();
+
+        let produced_bal = blockchain1
+            .add_block_pipeline_returning_bal(block, None)
+            .map_err(|e| {
+                format!("Two-pass pass-1 failed for test {test_key}: {e:?}")
+            })?;
+
+        apply_fork_choice(&store1, hash, hash, hash)
+            .await
+            .map_err(|e| format!("Two-pass pass-1 fork choice failed for test {test_key}: {e:?}"))?;
+
+        // If execution produced no BAL (non-Amsterdam block in a transition test), skip pass 2.
+        match produced_bal {
+            Some(bal) => bals.push(bal),
+            None => return Ok(()),
+        }
+    }
+
+    // ---- Pass 2: parallel (BAL-driven), verify post-state ----
+    let store2 = build_store_for_test(test).await;
+    let blockchain2 = Blockchain::new(store2.clone(), BlockchainOptions::default());
+
+    for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {
+        let block: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let hash = block.hash();
+
+        blockchain2
+            .add_block_pipeline(block, Some(bal))
+            .map_err(|e| {
+                format!("Two-pass pass-2 (parallel) failed for test {test_key}: {e:?}")
+            })?;
+
+        apply_fork_choice(&store2, hash, hash, hash)
+            .await
+            .map_err(|e| format!("Two-pass pass-2 fork choice failed for test {test_key}: {e:?}"))?;
+    }
+
+    // Verify post-state matches expected
+    check_poststate_against_db(test_key, test, &store2).await;
     Ok(())
 }
 
