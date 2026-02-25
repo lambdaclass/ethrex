@@ -72,6 +72,8 @@ pub struct Substate {
     accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
     accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
+    /// Tiny hot-path cache for repeated warm checks of the same `(address, slot)`.
+    last_accessed_slot: Option<(Address, H256)>,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -93,6 +95,7 @@ impl Substate {
             selfdestruct_set: FxHashSet::default(),
             accessed_addresses,
             accessed_storage_slots,
+            last_accessed_slot: None,
             created_accounts: FxHashSet::default(),
             refunded_gas: 0,
             transient_storage: TransientStorage::new(),
@@ -124,6 +127,7 @@ impl Substate {
                     .or_default()
                     .extend(slot_set);
             }
+            self.last_accessed_slot = delta.last_accessed_slot.or(self.last_accessed_slot);
             self.created_accounts.extend(delta.created_accounts);
             self.refunded_gas = delta.refunded_gas;
             self.transient_storage.extend(delta.transient_storage);
@@ -226,28 +230,35 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
+        if self.last_accessed_slot == Some((address, key)) {
+            return true;
+        }
+
         // Check self first — short-circuits for re-accessed (warm) slots
-        if self
+        let was_present = if self
             .accessed_storage_slots
             .get(&address)
             .map(|set| set.contains(&key))
             .unwrap_or(false)
         {
-            return true;
-        }
+            true
+        } else {
+            let is_present = self
+                .parent
+                .as_ref()
+                .map(|parent| parent.is_slot_accessed(&address, &key))
+                .unwrap_or(false);
 
-        let is_present = self
-            .parent
-            .as_ref()
-            .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or(false);
+            is_present
+                || !self
+                    .accessed_storage_slots
+                    .entry(address)
+                    .or_default()
+                    .insert(key)
+        };
 
-        is_present
-            || !self
-                .accessed_storage_slots
-                .entry(address)
-                .or_default()
-                .insert(key)
+        self.last_accessed_slot = Some((address, key));
+        was_present
     }
 
     /// Return whether an address has already been accessed.
