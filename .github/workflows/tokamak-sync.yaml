@@ -52,17 +52,10 @@ jobs:
           esac
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
 
-  engine-restart:
-    name: Restart Kurtosis Engine
-    runs-on: ethrex-sync
-    steps:
-      - name: Restart engine to match CLI version
-        run: kurtosis engine restart
-
   sync:
-    needs: [prepare, engine-restart]
+    needs: [prepare]
     name: Sync ${{ matrix.network }} (tokamak-jit)
-    runs-on: ethrex-sync
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -71,11 +64,13 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Cleanup stale Docker and Kurtosis resources
+      - name: Install Kurtosis
+        shell: bash
         run: |
-          kurtosis engine stop || true
-          docker network prune -f
-          docker image prune -f
+          echo "deb [trusted=yes] https://apt.fury.io/kurtosis-tech/ /" | sudo tee /etc/apt/sources.list.d/kurtosis.list
+          sudo apt-get update
+          sudo apt-get install -y kurtosis-cli
+          kurtosis engine start
 
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
