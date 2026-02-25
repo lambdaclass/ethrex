@@ -672,8 +672,12 @@ impl<'a> VM<'a> {
 
         let value = self.db.get_value_from_database(address, key)?;
 
-        // Update the account with the fetched value
-        let account = self.get_account_mut(address)?;
+        // Cache-fill only: this is a read-path miss, not a state mutation.
+        let account = self
+            .db
+            .current_accounts_state
+            .get_mut(&address)
+            .ok_or(InternalError::AccountNotFound)?;
         account.storage.insert(key, value);
 
         Ok(value)
