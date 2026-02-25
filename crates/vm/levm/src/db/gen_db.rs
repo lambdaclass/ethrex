@@ -630,6 +630,16 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<(U256, bool), InternalError> {
+        self.access_storage_slot_for_sload(address, key)
+    }
+
+    /// SLOAD-specialized storage access path.
+    #[inline(always)]
+    pub fn access_storage_slot_for_sload(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<(U256, bool), InternalError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
 
