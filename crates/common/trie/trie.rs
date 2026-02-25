@@ -103,16 +103,18 @@ impl Trie {
     pub fn get(&self, pathrlp: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(path.clone()) {
-            let Some(value_rlp) = self.db.get(path)? else {
-                return Ok(None);
-            };
-            if value_rlp.is_empty() {
-                return Ok(None);
+        // Try FKV direct lookup unless the path has uncommitted writes.
+        // BackendTrieDB routes leaf-length keys to FKV tables automatically.
+        if !self.dirty.contains(&path) {
+            if let Some(value_rlp) = self.db.get(path.clone())? {
+                if value_rlp.is_empty() {
+                    return Ok(None);
+                }
+                return Ok(Some(value_rlp));
             }
-            return Ok(Some(value_rlp));
         }
 
+        // FKV returned None or path is dirty — fall through to trie traversal.
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => {
