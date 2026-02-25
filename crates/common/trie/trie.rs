@@ -591,11 +591,9 @@ impl Trie {
                     })
                     .collect();
 
-                children
-                    .par_iter()
-                    .try_for_each(|(start_path, start_ref)| {
-                        validate_subtree(db, start_path.clone(), start_ref.clone())
-                    })
+                children.par_iter().try_for_each(|(start_path, start_ref)| {
+                    validate_subtree(db, start_path.clone(), start_ref.clone())
+                })
             }
             _ => {
                 // Non-branch root (rare): validate sequentially

@@ -908,7 +908,7 @@ async fn insert_storages(
     account_storages_snapshots_dir: &Path,
     _: &Path,
 ) -> Result<(), SyncError> {
-    use rayon::iter::IntoParallelIterator;
+    use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
     for entry in std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
