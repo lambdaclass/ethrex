@@ -161,7 +161,7 @@ pub struct NativeRollupOptions {
     #[arg(
         long = "native-rollups.block-time",
         id = "native_rollups_block_time_ms",
-        default_value = "5000",
+        default_value = "10000",
         value_name = "UINT64",
         env = "ETHREX_NATIVE_ROLLUPS_BLOCK_TIME",
         help_heading = "Native rollups options",
@@ -171,7 +171,7 @@ pub struct NativeRollupOptions {
     #[arg(
         long = "native-rollups.commit-interval",
         id = "native_rollups_commit_interval_ms",
-        default_value = "10000",
+        default_value = "3000",
         value_name = "UINT64",
         env = "ETHREX_NATIVE_ROLLUPS_COMMIT_INTERVAL",
         help_heading = "Native rollups options",
@@ -194,8 +194,8 @@ impl Default for NativeRollupOptions {
                 "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
             )
             .expect("Valid default L1 key"),
-            block_time_ms: 5000,
-            commit_interval_ms: 10000,
+            block_time_ms: 10000,
+            commit_interval_ms: 3000,
         }
     }
 }

@@ -155,7 +155,8 @@ source cmd/.env
   --network fixtures/genesis/native_l2.json \
   --http.port 1729 --http.addr 0.0.0.0 \
   --datadir /tmp/ethrex_l2 \
-  --eth.rpc-url http://localhost:8545
+  --eth.rpc-url http://localhost:8545 \
+  --no-monitor
 ```
 
 ### Step 1: Verify the L2 is advancing
@@ -233,10 +234,9 @@ This step demonstrates that L1→L2 messages can carry arbitrary calldata, not j
 
 ```shell
 # Deploy Counter.sol on L2 (increment + get functions)
-# The bytecode is from `solc --bin --optimize crates/l2/contracts/src/example/Counter.sol`
-COUNTER_BYTECODE=0x6080604052348015600e575f5ffd5b5060e080601a5f395ff3fe608060405260043610602f575f3560e01c806306661abd1460335780636d4ce63c146057578063d09de08a146068575b5f5ffd5b348015603d575f5ffd5b5060455f5481565b60405190815260200160405180910390f35b3480156061575f5ffd5b505f546045565b606e6070565b005b60015f5f828254607f91906086565b9091555050565b8082018082111560a457634e487b7160e01b5f52601160045260245ffd5b9291505056fea26469706673582212207799e79076af790391bf7137f3f28f32f374dfc98b94553ba76891a74e4abada64736f6c634300081f0033
-
-rex deploy --bytecode $COUNTER_BYTECODE \
+# Uses the deposit recipient account (funded with 1 ETH in Step 3)
+rex deploy --contract-path crates/l2/contracts/src/example/Counter.sol \
+  --remappings "" \
   --rpc-url http://localhost:1729 \
   0 0x0000000000000000000000000000000000000000000000000000000000000042
 # Note the deployed contract address from the output

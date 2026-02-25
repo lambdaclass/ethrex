@@ -1889,7 +1889,7 @@ pub async fn deploy_native_rollup_contracts(
         Bytes::new(),
         Overrides {
             nonce: Some(fund_nonce),
-            gas_limit: Some(21_000),
+            gas_limit: Some(30_000),
             max_fee_per_gas: Some(gas_price),
             max_priority_fee_per_gas: Some(gas_price),
             value: Some(fund_amount),
