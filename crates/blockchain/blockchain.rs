@@ -703,7 +703,9 @@ impl Blockchain {
         }
         let t_gathered = Instant::now();
 
+        let t_a = Instant::now();
         let collapsed = self.collapse_root_node(parent_header, None, root)?;
+        let t_b = Instant::now();
         let state_trie_hash = if let Some(root) = collapsed {
             let mut root = NodeRef::from(root);
             let hash = root.commit(Nibbles::default(), &mut state_updates);
@@ -714,10 +716,12 @@ impl Blockchain {
         };
         let t_root = Instant::now();
         info!(
-            "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms",
+            "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms (collapse={}us commit={}us)",
             t_barrier.duration_since(t_drain_start).as_secs_f64() * 1000.0,
             t_gathered.duration_since(t_barrier).as_secs_f64() * 1000.0,
             t_root.duration_since(t_gathered).as_secs_f64() * 1000.0,
+            t_b.duration_since(t_a).as_micros(),
+            t_root.duration_since(t_b).as_micros(),
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
