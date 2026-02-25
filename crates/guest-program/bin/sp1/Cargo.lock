@@ -1850,7 +1850,7 @@ dependencies = [
  "once_cell",
  "sha2",
  "signature",
- "sp1-lib 6.0.0",
+ "sp1-lib 6.0.1",
 ]
 
 [[package]]
@@ -2107,7 +2107,7 @@ dependencies = [
  "hex",
  "primeorder",
  "sha2",
- "sp1-lib 6.0.0",
+ "sp1-lib 6.0.1",
 ]
 
 [[package]]
@@ -3123,14 +3123,14 @@ dependencies = [
 
 [[package]]
 name = "sp1-lib"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53f179ca7ad5d0d0ca36356ef2c4851eea02226cd409e4b414e4379d79582f11"
+checksum = "27c49bc98323d52ec8bef7ae7db15fa095182edfdc2e7d9123f0c57173014e48"
 dependencies = [
  "bincode",
  "elliptic-curve",
  "serde",
- "sp1-primitives 6.0.0",
+ "sp1-primitives 6.0.1",
 ]
 
 [[package]]
@@ -3155,9 +3155,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-primitives"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bda0eaba853f3c162e6b62dc8eb25f25100ee0792f59919ef905811809e81e5"
+checksum = "04953c36911214897091107e2a3443fcf531892b0883ce57d4a2eea65d28c72b"
 dependencies = [
  "bincode",
  "blake3",
@@ -3179,9 +3179,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-zkvm"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a2e09d266c1b20f311fdeeafffc1e465629edf0b3c3e70dfa8a4d7e68b27324"
+checksum = "3fdf86a2a275e6788a1b34d71bc607fa5d5452d0149a15d34f7945f005ad6e37"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -3192,8 +3192,8 @@ dependencies = [
  "libm",
  "rand",
  "sha2",
- "sp1-lib 6.0.0",
- "sp1-primitives 6.0.0",
+ "sp1-lib 6.0.1",
+ "sp1-primitives 6.0.1",
 ]
 
 [[package]]
@@ -3279,7 +3279,7 @@ dependencies = [
  "num-bigint 0.4.6",
  "rand",
  "rustc-hex",
- "sp1-lib 6.0.0",
+ "sp1-lib 6.0.1",
 ]
 
 [[package]]
@@ -3398,7 +3398,7 @@ source = "git+https://github.com/sp1-patches/tiny-keccak?tag=patch-2.0.2-sp1-6.0
 dependencies = [
  "cfg-if",
  "crunchy",
- "sp1-lib 6.0.0",
+ "sp1-lib 6.0.1",
 ]
 
 [[package]]

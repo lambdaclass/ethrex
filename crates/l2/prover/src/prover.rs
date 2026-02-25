@@ -188,14 +188,6 @@ impl<B: ProverBackend> Prover<B> {
             ProofData::ProverTypeNotNeeded { prover_type } => {
                 return Ok(InputRequest::ProverTypeNotNeeded(prover_type));
             }
-            ProofData::ProverTypeNotNeeded { prover_type } => {
-                error!(
-                    "Proof coordinator does not need {prover_type} proofs. \
-                     This prover's backend is not in the required proof types for this deployment. \
-                     Shutting down."
-                );
-                std::process::exit(1);
-            }
             _ => return Err("Expecting ProofData::Response".to_owned()),
         };
 

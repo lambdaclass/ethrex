@@ -11,7 +11,7 @@ lto = "thin"
 codegen-units = 1
 
 [dependencies]
-sp1-zkvm = { version = "=6.0.0" }
+sp1-zkvm = { version = "=6.0.1" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 ethrex-guest-program = { path = "../../", features = ["sp1-cycles"] }

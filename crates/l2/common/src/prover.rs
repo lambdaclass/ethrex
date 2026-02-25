@@ -198,11 +198,6 @@ pub enum ProofData {
     /// backend type is not in the set of required proof types for this deployment.
     ProverTypeNotNeeded { prover_type: ProverType },
 
-    /// 4b.
-    /// The Server responds with ProverTypeNotNeeded when the connecting prover's
-    /// backend type is not in the set of required proof types for this deployment.
-    ProverTypeNotNeeded { prover_type: ProverType },
-
     /// 5.
     /// The Server responds with a BatchResponse containing the ProverInputData.
     /// If the BatchResponse is ProofData::BatchResponse{None, None},

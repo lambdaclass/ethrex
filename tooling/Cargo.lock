@@ -2423,21 +2423,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
-name = "cmake"
-version = "0.1.57"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75443c44cd6b379beb8c5b45d85d0773baf31cce901fe7bb252f4eff3008ef7d"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
 dependencies = [
  "error-code",
+]
+
+[[package]]
+name = "cmake"
+version = "0.1.57"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75443c44cd6b379beb8c5b45d85d0773baf31cce901fe7bb252f4eff3008ef7d"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -3953,8 +3953,8 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_with",
- "sp1-build 6.0.0",
- "sp1-sdk 6.0.0",
+ "sp1-build 6.0.1",
+ "sp1-sdk 6.0.1",
  "thiserror 2.0.18",
 ]
 
@@ -4214,8 +4214,8 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_json",
- "sp1-prover 6.0.0",
- "sp1-sdk 6.0.0",
+ "sp1-prover 6.0.1",
+ "sp1-sdk 6.0.1",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -4228,7 +4228,7 @@ dependencies = [
 name = "ethrex-repl"
 version = "4.0.0"
 dependencies = [
- "clap 4.5.54",
+ "clap 4.5.58",
  "colored",
  "ethereum-types",
  "hex",
@@ -9060,7 +9060,7 @@ checksum = "5d66de233f908aebf9cc30ac75ef9103185b4b715c6f2fb7a626aa5e5ede53ab"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn 2.0.115",
 ]
 
 [[package]]
@@ -10154,9 +10154,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-build"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc332e424a0b3a6f9e74e5d031ec452ff4d4788b8757aa1dfd95faffd7b5261f"
+checksum = "0c469c584f9a1f0f7a64283c94c074d1edb0446a2ff76a7f60f7e4ce804f4b2c"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -10367,9 +10367,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-cuda"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72e491eeaf96f0af3ed58b7e4f8a7114a15ef290078a7d2a29773a5cc6a13451"
+checksum = "03e57b85361e6fcc7d5405867eb036c10969518fb8173e3d6744574f97954766"
 dependencies = [
  "bincode",
  "bytes",
@@ -10379,7 +10379,7 @@ dependencies = [
  "sp1-core-executor 6.0.1",
  "sp1-core-machine 6.0.1",
  "sp1-primitives 6.0.1",
- "sp1-prover 6.0.0",
+ "sp1-prover 6.0.1",
  "sp1-prover-types",
  "thiserror 1.0.69",
  "tokio",
@@ -10617,9 +10617,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-prover"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46e5c7fb18987d289bb4675dd3b74e35b523e57d083599fd84a0580ee6514e8f"
+checksum = "a47f86dbe432038fed00fd869b0937d11b87abdb0e34a676aaeb5a723f1e31e3"
 dependencies = [
  "anyhow",
  "bincode",
@@ -11024,9 +11024,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-sdk"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6834292441c04b3680706155a5ade5c480552b13f1471001a635bdbf8197906"
+checksum = "378f702c65ac9bea522fdde527f0260a95af155aa10d089e1e9e6ba660b60f50"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11052,13 +11052,13 @@ dependencies = [
  "slop-stacked",
  "slop-sumcheck",
  "slop-tensor",
- "sp1-build 6.0.0",
+ "sp1-build 6.0.1",
  "sp1-core-executor 6.0.1",
  "sp1-core-machine 6.0.1",
- "sp1-cuda 6.0.0",
+ "sp1-cuda 6.0.1",
  "sp1-hypercube",
  "sp1-primitives 6.0.1",
- "sp1-prover 6.0.0",
+ "sp1-prover 6.0.1",
  "sp1-prover-types",
  "sp1-recursion-executor",
  "sp1-recursion-gnark-ffi 6.0.1",
