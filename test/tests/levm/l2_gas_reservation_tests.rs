@@ -141,6 +141,7 @@ fn make_env(gas_limit: u64) -> Environment {
         block_gas_limit: gas_limit * 2,
         is_privileged: false,
         fee_token: None,
+        disable_balance_check: false,
     }
 }
 
@@ -194,29 +195,15 @@ fn test_insufficient_gas_for_l1_fee_rejected() {
 /// The execution gas budget is 0, but for a simple EOA transfer that's fine.
 #[test]
 fn test_gas_limit_exactly_covers_intrinsic_plus_l1() {
-    // First create a tx with a placeholder gas_limit to compute l1_gas
-    let placeholder_tx = make_tx(100_000);
-    let l1_gas = compute_l1_gas(&placeholder_tx);
+    // Build the tx once, compute l1_gas, then rebuild with the exact gas_limit.
+    // One iteration is enough since a small gas_limit change barely affects RLP size.
+    let tx = make_tx(22_000);
+    let l1_gas = compute_l1_gas(&tx);
     assert!(l1_gas > 0, "l1_gas should be positive for this test");
 
-    // The exact gas_limit = intrinsic_gas + l1_gas
     let gas_limit = 21_000 + l1_gas;
-
-    // Re-create the tx with the exact gas_limit (tx size changes slightly with gas_limit)
     let tx = make_tx(gas_limit);
-    // Recompute l1_gas with the actual tx (gas_limit affects RLP size)
-    let actual_l1_gas = compute_l1_gas(&tx);
-    // Adjust gas_limit if the RLP size changed
-    let gas_limit = 21_000 + actual_l1_gas;
-    let tx = make_tx(gas_limit);
-    let final_l1_gas = compute_l1_gas(&tx);
-    // If this still doesn't converge, just add some margin
-    let gas_limit = if final_l1_gas > actual_l1_gas {
-        21_000 + final_l1_gas
-    } else {
-        gas_limit
-    };
-    let tx = make_tx(gas_limit);
+    assert_eq!(compute_l1_gas(&tx), l1_gas, "l1_gas should be stable");
 
     let env = make_env(gas_limit);
     let mut db = make_db(U256::from(SENDER_BALANCE));
@@ -234,6 +221,37 @@ fn test_gas_limit_exactly_covers_intrinsic_plus_l1() {
     assert!(
         report.is_success(),
         "Transaction should succeed when gas_limit covers intrinsic + l1_gas"
+    );
+}
+
+/// With L1 fee disabled, gas_limit = 21000 (intrinsic gas) is enough for a simple transfer.
+#[test]
+fn test_no_l1_fee_config_21000_is_enough() {
+    let gas_limit = 21_000;
+    let tx = make_tx(gas_limit);
+
+    let no_l1_fee_config = FeeConfig {
+        base_fee_vault: None,
+        operator_fee_config: None,
+        l1_fee_config: None,
+    };
+
+    let env = make_env(gas_limit);
+    let mut db = make_db(U256::from(SENDER_BALANCE));
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(no_l1_fee_config),
+    )
+    .unwrap();
+
+    let report = vm.execute().expect("Execution should succeed");
+    assert!(
+        report.is_success(),
+        "Transaction with gas_limit=21000 should succeed when L1 fee is disabled"
     );
 }
 
