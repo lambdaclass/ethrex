@@ -69,6 +69,15 @@ pub fn register_jit_backend() {
     let compiler_thread = CompilerThread::start(move |request| {
         match request {
             CompilerRequest::Compile(req) => {
+                // Early size check — avoid wasting compilation time on oversized bytecodes
+                if req.code.bytecode.len() > ethrex_levm::vm::JIT_STATE.config.max_bytecode_size {
+                    ethrex_levm::vm::JIT_STATE.mark_oversized(req.code.hash);
+                    ethrex_levm::vm::JIT_STATE
+                        .metrics
+                        .compilation_skips
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return;
+                }
                 match backend_for_thread.compile(&req.code, req.fork, &cache) {
                     Ok(()) => {
                         use std::sync::atomic::Ordering;

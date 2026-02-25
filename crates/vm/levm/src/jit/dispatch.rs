@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock};
 
 use ethrex_common::types::Fork;
 use ethrex_common::{H256, U256};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::cache::{CacheKey, CodeCache, CompiledCode};
 use super::compiler_thread::{CompilationRequest, CompilerThread};
@@ -87,6 +87,9 @@ pub struct JitState {
     compiler_thread: RwLock<Option<CompilerThread>>,
     /// Per-(hash, fork) validation run counter for output-only validation.
     validation_counts: RwLock<FxHashMap<CacheKey, u64>>,
+    /// Bytecodes known to exceed `max_bytecode_size` — negative cache to
+    /// avoid repeated size checks and compilation attempts.
+    oversized_hashes: RwLock<FxHashSet<H256>>,
 }
 
 impl JitState {
@@ -102,6 +105,7 @@ impl JitState {
             metrics: JitMetrics::new(),
             compiler_thread: RwLock::new(None),
             validation_counts: RwLock::new(FxHashMap::default()),
+            oversized_hashes: RwLock::new(FxHashSet::default()),
         }
     }
 
@@ -116,6 +120,7 @@ impl JitState {
             metrics: JitMetrics::new(),
             compiler_thread: RwLock::new(None),
             validation_counts: RwLock::new(FxHashMap::default()),
+            oversized_hashes: RwLock::new(FxHashSet::default()),
         }
     }
 
@@ -144,6 +149,10 @@ impl JitState {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         {
             self.validation_counts.write().unwrap().clear();
+        }
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        {
+            self.oversized_hashes.write().unwrap().clear();
         }
     }
 
@@ -254,6 +263,26 @@ impl JitState {
         count < self.config.max_validation_runs
     }
 
+    /// Check if a bytecode hash is known to be oversized.
+    ///
+    /// Returns `true` if the bytecode was previously marked via [`mark_oversized`].
+    /// Uses a read-lock on a small `FxHashSet` — negligible overhead.
+    pub fn is_oversized(&self, hash: &H256) -> bool {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let guard = self.oversized_hashes.read().unwrap();
+        guard.contains(hash)
+    }
+
+    /// Mark a bytecode hash as oversized (too large for JIT compilation).
+    ///
+    /// Subsequent calls to [`is_oversized`] for this hash will return `true`,
+    /// allowing the VM dispatch to skip JIT entirely.
+    pub fn mark_oversized(&self, hash: H256) {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let mut guard = self.oversized_hashes.write().unwrap();
+        guard.insert(hash);
+    }
+
     /// Record that a validation run occurred for this (hash, fork) pair.
     pub fn record_validation(&self, key: &CacheKey) {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
@@ -279,4 +308,44 @@ pub fn try_jit_dispatch(
     fork: Fork,
 ) -> Option<Arc<CompiledCode>> {
     state.cache.get(&(*bytecode_hash, fork))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_oversized_default_empty() {
+        let state = JitState::new();
+        let hash = H256::from_low_u64_be(0x42);
+        assert!(!state.is_oversized(&hash));
+    }
+
+    #[test]
+    fn test_mark_and_check_oversized() {
+        let state = JitState::new();
+        let hash = H256::from_low_u64_be(0x42);
+        state.mark_oversized(hash);
+        assert!(state.is_oversized(&hash));
+    }
+
+    #[test]
+    fn test_oversized_does_not_affect_other_hashes() {
+        let state = JitState::new();
+        let h1 = H256::from_low_u64_be(0x01);
+        let h2 = H256::from_low_u64_be(0x02);
+        state.mark_oversized(h1);
+        assert!(state.is_oversized(&h1));
+        assert!(!state.is_oversized(&h2));
+    }
+
+    #[test]
+    fn test_oversized_reset_clears() {
+        let state = JitState::new();
+        let hash = H256::from_low_u64_be(0x42);
+        state.mark_oversized(hash);
+        assert!(state.is_oversized(&hash));
+        state.reset_for_testing();
+        assert!(!state.is_oversized(&hash));
+    }
 }

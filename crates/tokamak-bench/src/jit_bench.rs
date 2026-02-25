@@ -135,8 +135,16 @@ pub fn run_jit_scenario(
     let code = match compile_for_jit(&bytecode, fork) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("  {name}: JIT compilation failed — {e}");
-            return None;
+            eprintln!("  {name}: JIT compilation failed — {e} (interpreter-only)");
+            return Some(JitBenchResult {
+                scenario: name.to_string(),
+                interpreter_ns,
+                jit_ns: None,
+                speedup: None,
+                runs,
+                interp_stats,
+                jit_stats: None,
+            });
         }
     };
 

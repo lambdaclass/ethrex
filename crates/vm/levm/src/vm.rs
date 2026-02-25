@@ -625,149 +625,165 @@ impl<'a> VM<'a> {
                 let count = JIT_STATE.counter.increment(&bytecode_hash);
                 let fork = self.env.config.fork;
 
-                // Auto-compile on threshold — try background thread first, fall back to sync.
-                // NOTE: counter is keyed by hash only (not fork). This fires once per bytecode.
-                // Safe because forks don't change mid-run (see counter.rs doc).
-                if count == JIT_STATE.config.compilation_threshold
-                    && !JIT_STATE
-                        .request_compilation(self.current_call_frame.bytecode.clone(), fork)
-                {
-                    // No background thread — compile synchronously
-                    if let Some(backend) = JIT_STATE.backend() {
-                        match backend.compile(
-                            &self.current_call_frame.bytecode,
-                            fork,
-                            &JIT_STATE.cache,
-                        ) {
-                            Ok(()) => {
-                                JIT_STATE
-                                    .metrics
-                                    .compilations
-                                    .fetch_add(1, Ordering::Relaxed);
-                            }
-                            Err(e) => {
-                                eprintln!("[JIT] compilation failed for {bytecode_hash}: {e}");
-                                JIT_STATE
-                                    .metrics
-                                    .jit_fallbacks
-                                    .fetch_add(1, Ordering::Relaxed);
+                // Skip JIT entirely for bytecodes known to exceed max_bytecode_size.
+                if !JIT_STATE.is_oversized(&bytecode_hash) {
+                    // Auto-compile on threshold — try background thread first, fall back to sync.
+                    // NOTE: counter is keyed by hash only (not fork). This fires once per bytecode.
+                    // Safe because forks don't change mid-run (see counter.rs doc).
+                    if count == JIT_STATE.config.compilation_threshold {
+                        // Check size BEFORE queuing compilation
+                        if self.current_call_frame.bytecode.bytecode.len()
+                            > JIT_STATE.config.max_bytecode_size
+                        {
+                            JIT_STATE.mark_oversized(bytecode_hash);
+                            JIT_STATE
+                                .metrics
+                                .compilation_skips
+                                .fetch_add(1, Ordering::Relaxed);
+                        } else if !JIT_STATE
+                            .request_compilation(self.current_call_frame.bytecode.clone(), fork)
+                        {
+                            // No background thread — compile synchronously
+                            if let Some(backend) = JIT_STATE.backend() {
+                                match backend.compile(
+                                    &self.current_call_frame.bytecode,
+                                    fork,
+                                    &JIT_STATE.cache,
+                                ) {
+                                    Ok(()) => {
+                                        JIT_STATE
+                                            .metrics
+                                            .compilations
+                                            .fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "[JIT] compilation failed for {bytecode_hash}: {e}"
+                                        );
+                                        JIT_STATE
+                                            .metrics
+                                            .jit_fallbacks
+                                            .fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
                             }
                         }
                     }
-                }
 
-                // Dispatch if compiled
-                if let Some(compiled) =
-                    crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash, fork)
-                {
-                    // Snapshot state before JIT execution for dual-execution validation.
-                    // Only allocate when validation will actually run for this cache key.
-                    // Skip validation for bytecodes with CALL/CREATE — the state-swap
-                    // mechanism cannot correctly replay subcalls (see CRITICAL-1).
-                    let cache_key = (bytecode_hash, fork);
-                    let needs_validation = JIT_STATE.config.validation_mode
-                        && JIT_STATE.should_validate(&cache_key)
-                        && !compiled.has_external_calls;
-                    let pre_jit_snapshot = if needs_validation {
-                        Some((
-                            self.db.clone(),
-                            self.current_call_frame.snapshot(),
-                            self.substate.snapshot(),
-                            self.storage_original_values.clone(),
-                        ))
-                    } else {
-                        None
-                    };
+                    // Dispatch if compiled
+                    if let Some(compiled) =
+                        crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &bytecode_hash, fork)
+                    {
+                        // Snapshot state before JIT execution for dual-execution validation.
+                        // Only allocate when validation will actually run for this cache key.
+                        // Skip validation for bytecodes with CALL/CREATE — the state-swap
+                        // mechanism cannot correctly replay subcalls (see CRITICAL-1).
+                        let cache_key = (bytecode_hash, fork);
+                        let needs_validation = JIT_STATE.config.validation_mode
+                            && JIT_STATE.should_validate(&cache_key)
+                            && !compiled.has_external_calls;
+                        let pre_jit_snapshot = if needs_validation {
+                            Some((
+                                self.db.clone(),
+                                self.current_call_frame.snapshot(),
+                                self.substate.snapshot(),
+                                self.storage_original_values.clone(),
+                            ))
+                        } else {
+                            None
+                        };
 
-                    if let Some(initial_result) = JIT_STATE.execute_jit(
-                        &compiled,
-                        &mut self.current_call_frame,
-                        self.db,
-                        &mut self.substate,
-                        &self.env,
-                        &mut self.storage_original_values,
-                    ) {
-                        // Resume loop: handle CALL/CREATE suspensions
-                        let mut outcome_result = initial_result;
-                        while let Ok(crate::jit::types::JitOutcome::Suspended {
-                            resume_state,
-                            sub_call,
-                        }) = outcome_result
-                        {
-                            match self.handle_jit_subcall(sub_call) {
-                                Ok(sub_result) => {
-                                    outcome_result = JIT_STATE
-                                        .execute_jit_resume(
-                                            resume_state,
-                                            sub_result,
-                                            &mut self.current_call_frame,
-                                            self.db,
-                                            &mut self.substate,
-                                            &self.env,
-                                            &mut self.storage_original_values,
-                                        )
-                                        .unwrap_or(Err("no JIT backend for resume".to_string()));
-                                }
-                                Err(e) => {
-                                    outcome_result = Err(format!("JIT subcall error: {e:?}"));
-                                    break;
+                        if let Some(initial_result) = JIT_STATE.execute_jit(
+                            &compiled,
+                            &mut self.current_call_frame,
+                            self.db,
+                            &mut self.substate,
+                            &self.env,
+                            &mut self.storage_original_values,
+                        ) {
+                            // Resume loop: handle CALL/CREATE suspensions
+                            let mut outcome_result = initial_result;
+                            while let Ok(crate::jit::types::JitOutcome::Suspended {
+                                resume_state,
+                                sub_call,
+                            }) = outcome_result
+                            {
+                                match self.handle_jit_subcall(sub_call) {
+                                    Ok(sub_result) => {
+                                        outcome_result = JIT_STATE
+                                            .execute_jit_resume(
+                                                resume_state,
+                                                sub_result,
+                                                &mut self.current_call_frame,
+                                                self.db,
+                                                &mut self.substate,
+                                                &self.env,
+                                                &mut self.storage_original_values,
+                                            )
+                                            .unwrap_or(
+                                                Err("no JIT backend for resume".to_string()),
+                                            );
+                                    }
+                                    Err(e) => {
+                                        outcome_result = Err(format!("JIT subcall error: {e:?}"));
+                                        break;
+                                    }
                                 }
                             }
-                        }
 
-                        match outcome_result {
-                            Ok(outcome) => {
-                                JIT_STATE
-                                    .metrics
-                                    .jit_executions
-                                    .fetch_add(1, Ordering::Relaxed);
+                            match outcome_result {
+                                Ok(outcome) => {
+                                    JIT_STATE
+                                        .metrics
+                                        .jit_executions
+                                        .fetch_add(1, Ordering::Relaxed);
 
-                                // Dual-execution validation: replay via interpreter and compare.
-                                if let Some(mut snapshot) = pre_jit_snapshot {
-                                    // Build JIT result for comparison before swapping state
-                                    let jit_result =
-                                        apply_jit_outcome(outcome, &self.current_call_frame)?;
-                                    let jit_refunded_gas = self.substate.refunded_gas;
-                                    let jit_logs = self.substate.extract_logs();
-                                    // Capture JIT DB state before swap
-                                    let jit_accounts = self.db.current_accounts_state.clone();
+                                    // Dual-execution validation: replay via interpreter and compare.
+                                    if let Some(mut snapshot) = pre_jit_snapshot {
+                                        // Build JIT result for comparison before swapping state
+                                        let jit_result =
+                                            apply_jit_outcome(outcome, &self.current_call_frame)?;
+                                        let jit_refunded_gas = self.substate.refunded_gas;
+                                        let jit_logs = self.substate.extract_logs();
+                                        // Capture JIT DB state before swap
+                                        let jit_accounts = self.db.current_accounts_state.clone();
 
-                                    // Swap JIT-mutated state with pre-JIT snapshots
-                                    // (VM now holds original state for interpreter replay)
-                                    self.swap_validation_state(&mut snapshot);
+                                        // Swap JIT-mutated state with pre-JIT snapshots
+                                        // (VM now holds original state for interpreter replay)
+                                        self.swap_validation_state(&mut snapshot);
 
-                                    // Run interpreter on the original state.
-                                    // If interpreter_loop fails (InternalError), swap back to
-                                    // JIT state and return JIT result — validation is inconclusive
-                                    // but JIT succeeded, and InternalError is a programming bug.
-                                    let interp_result = match self.interpreter_loop(0) {
-                                        Ok(result) => result,
-                                        Err(_e) => {
-                                            eprintln!(
-                                                "[JIT-VALIDATE] interpreter replay failed for \
+                                        // Run interpreter on the original state.
+                                        // If interpreter_loop fails (InternalError), swap back to
+                                        // JIT state and return JIT result — validation is inconclusive
+                                        // but JIT succeeded, and InternalError is a programming bug.
+                                        let interp_result = match self.interpreter_loop(0) {
+                                            Ok(result) => result,
+                                            Err(_e) => {
+                                                eprintln!(
+                                                    "[JIT-VALIDATE] interpreter replay failed for \
                                              {bytecode_hash}, trusting JIT result"
+                                                );
+                                                self.swap_validation_state(&mut snapshot);
+                                                return Ok(jit_result);
+                                            }
+                                        };
+                                        let interp_refunded_gas = self.substate.refunded_gas;
+                                        let interp_logs = self.substate.extract_logs();
+
+                                        // Compare JIT vs interpreter (including DB state)
+                                        let validation =
+                                            crate::jit::validation::validate_dual_execution(
+                                                &jit_result,
+                                                &interp_result,
+                                                jit_refunded_gas,
+                                                interp_refunded_gas,
+                                                &jit_logs,
+                                                &interp_logs,
+                                                &jit_accounts,
+                                                &self.db.current_accounts_state,
                                             );
-                                            self.swap_validation_state(&mut snapshot);
-                                            return Ok(jit_result);
-                                        }
-                                    };
-                                    let interp_refunded_gas = self.substate.refunded_gas;
-                                    let interp_logs = self.substate.extract_logs();
 
-                                    // Compare JIT vs interpreter (including DB state)
-                                    let validation =
-                                        crate::jit::validation::validate_dual_execution(
-                                            &jit_result,
-                                            &interp_result,
-                                            jit_refunded_gas,
-                                            interp_refunded_gas,
-                                            &jit_logs,
-                                            &interp_logs,
-                                            &jit_accounts,
-                                            &self.db.current_accounts_state,
-                                        );
-
-                                    match validation {
+                                        match validation {
                                         crate::jit::validation::DualExecutionResult::Match => {
                                             // Swap back to JIT state (trusted now)
                                             self.swap_validation_state(&mut snapshot);
@@ -794,20 +810,21 @@ impl<'a> VM<'a> {
                                             return Ok(interp_result);
                                         }
                                     }
-                                }
+                                    }
 
-                                return apply_jit_outcome(outcome, &self.current_call_frame);
-                            }
-                            Err(msg) => {
-                                JIT_STATE
-                                    .metrics
-                                    .jit_fallbacks
-                                    .fetch_add(1, Ordering::Relaxed);
-                                eprintln!("[JIT] fallback for {bytecode_hash}: {msg}");
+                                    return apply_jit_outcome(outcome, &self.current_call_frame);
+                                }
+                                Err(msg) => {
+                                    JIT_STATE
+                                        .metrics
+                                        .jit_fallbacks
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    eprintln!("[JIT] fallback for {bytecode_hash}: {msg}");
+                                }
                             }
                         }
                     }
-                }
+                } // if !JIT_STATE.is_oversized
             }
         }
 
