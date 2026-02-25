@@ -3,11 +3,11 @@ participants:
     cl_image: ethpandaops/lodestar:bal-devnet-2
     el_type: nimbus
     el_image: ethpandaops/nimbus-eth1:bal-devnet-2
-  - cl_type: lighthouse
-    supernode: true
-    cl_image: ethpandaops/lighthouse:bal-devnet-2
-    el_type: nethermind
-    el_image: ethpandaops/nethermind:bal-devnet-2
+  # - cl_type: lighthouse
+  #   supernode: true
+  #   cl_image: ethpandaops/lighthouse:bal-devnet-2
+  #   el_type: nethermind
+  #   el_image: ethpandaops/nethermind:bal-devnet-2
   - cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:bal-devnet-2
     supernode: true

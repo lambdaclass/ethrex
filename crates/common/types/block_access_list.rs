@@ -444,201 +444,116 @@ impl BlockAccessList {
         keccak(buf)
     }
 
-    /// Validates that the computed state diff from tx execution matches
-    /// the BAL's claimed mutations at the given `tx_idx`.
-    ///
-    /// BAL indexing: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
-    /// For the first user transaction, pass tx_idx = 1.
-    ///
-    /// Returns Ok(()) if valid, Err with description if mismatch.
-    pub fn validate_tx_diff(&self, tx_idx: u16, computed: &TxStateDiff) -> Result<(), String> {
-        // For each account in BAL, check changes at exactly tx_idx
-        for acct_changes in &self.inner {
-            let addr = acct_changes.address;
+    /// Builds a validation index for fast per-tx BAL verification.
+    /// Call once per block before parallel execution.
+    pub fn build_validation_index(&self) -> BalAddressIndex {
+        let mut addr_to_idx =
+            FxHashMap::with_capacity_and_hasher(self.inner.len(), Default::default());
+        let mut tx_to_accounts: FxHashMap<u16, Vec<usize>> = FxHashMap::default();
 
-            // Check balance changes at this index
-            let bal_balance = acct_changes
-                .balance_changes
-                .iter()
-                .find(|c| c.block_access_index == tx_idx)
-                .map(|c| c.post_balance);
+        for (i, acct) in self.inner.iter().enumerate() {
+            addr_to_idx.insert(acct.address, i);
 
-            // Check nonce changes at this index
-            let bal_nonce = acct_changes
-                .nonce_changes
-                .iter()
-                .find(|c| c.block_access_index == tx_idx)
-                .map(|c| c.post_nonce);
-
-            // Check code changes at this index
-            let bal_code = acct_changes
-                .code_changes
-                .iter()
-                .find(|c| c.block_access_index == tx_idx)
-                .map(|c| &c.new_code);
-
-            // Check storage changes at this index
-            let mut bal_storage: FxHashMap<U256, U256> = FxHashMap::default();
-            for sc in &acct_changes.storage_changes {
-                if let Some(change) = sc
-                    .slot_changes
-                    .iter()
-                    .find(|c| c.block_access_index == tx_idx)
-                {
-                    bal_storage.insert(sc.slot, change.post_value);
+            // Collect all block_access_indices where this account has changes
+            let mut seen_indices = BTreeSet::new();
+            for bc in &acct.balance_changes {
+                seen_indices.insert(bc.block_access_index);
+            }
+            for nc in &acct.nonce_changes {
+                seen_indices.insert(nc.block_access_index);
+            }
+            for cc in &acct.code_changes {
+                seen_indices.insert(cc.block_access_index);
+            }
+            for sc in &acct.storage_changes {
+                for change in &sc.slot_changes {
+                    seen_indices.insert(change.block_access_index);
                 }
             }
 
-            let has_bal_changes = bal_balance.is_some()
-                || bal_nonce.is_some()
-                || bal_code.is_some()
-                || !bal_storage.is_empty();
-
-            if !has_bal_changes {
-                // BAL has no changes at this index for this account.
-                // Check computed diff doesn't claim changes either.
-                if let Some(diff) = computed.accounts.get(&addr) {
-                    if diff.balance.is_some() {
-                        return Err(format!(
-                            "BAL validation: account {addr:?} has balance change in execution but not in BAL at index {tx_idx}"
-                        ));
-                    }
-                    if diff.nonce.is_some() {
-                        return Err(format!(
-                            "BAL validation: account {addr:?} has nonce change in execution but not in BAL at index {tx_idx}"
-                        ));
-                    }
-                    if diff.code.is_some() {
-                        return Err(format!(
-                            "BAL validation: account {addr:?} has code change in execution but not in BAL at index {tx_idx}"
-                        ));
-                    }
-                    if !diff.storage.is_empty() {
-                        return Err(format!(
-                            "BAL validation: account {addr:?} has storage changes in execution but not in BAL at index {tx_idx}"
-                        ));
-                    }
-                }
-                continue;
-            }
-
-            // BAL claims changes at this index. Computed diff must agree.
-            let diff = computed.accounts.get(&addr);
-
-            // Validate balance
-            if let Some(expected_balance) = bal_balance {
-                let actual_balance = diff.and_then(|d| d.balance);
-                if actual_balance != Some(expected_balance) {
-                    return Err(format!(
-                        "BAL validation: account {addr:?} balance mismatch at index {tx_idx}: \
-                         BAL claims {expected_balance}, execution produced {actual_balance:?}"
-                    ));
-                }
-            } else if let Some(diff) = diff
-                && diff.balance.is_some()
-            {
-                return Err(format!(
-                    "BAL validation: account {addr:?} has balance change in execution but not in BAL at index {tx_idx}"
-                ));
-            }
-
-            // Validate nonce
-            if let Some(expected_nonce) = bal_nonce {
-                let actual_nonce = diff.and_then(|d| d.nonce);
-                if actual_nonce != Some(expected_nonce) {
-                    return Err(format!(
-                        "BAL validation: account {addr:?} nonce mismatch at index {tx_idx}: \
-                         BAL claims {expected_nonce}, execution produced {actual_nonce:?}"
-                    ));
-                }
-            } else if let Some(diff) = diff
-                && diff.nonce.is_some()
-            {
-                return Err(format!(
-                    "BAL validation: account {addr:?} has nonce change in execution but not in BAL at index {tx_idx}"
-                ));
-            }
-
-            // Validate code
-            if let Some(expected_code) = bal_code {
-                let actual_code = diff.and_then(|d| d.code.as_ref());
-                match actual_code {
-                    Some(actual) if actual == expected_code => {}
-                    _ => {
-                        return Err(format!(
-                            "BAL validation: account {addr:?} code mismatch at index {tx_idx}"
-                        ));
-                    }
-                }
-            } else if let Some(diff) = diff
-                && diff.code.is_some()
-            {
-                return Err(format!(
-                    "BAL validation: account {addr:?} has code change in execution but not in BAL at index {tx_idx}"
-                ));
-            }
-
-            // Validate storage
-            let actual_storage = diff.map(|d| &d.storage);
-            for (slot, expected_value) in &bal_storage {
-                let actual = actual_storage.and_then(|s| s.get(slot));
-                if actual != Some(expected_value) {
-                    return Err(format!(
-                        "BAL validation: account {addr:?} storage slot {slot} mismatch at index {tx_idx}: \
-                         BAL claims {expected_value}, execution produced {actual:?}"
-                    ));
-                }
-            }
-            // Check for extra storage in computed diff
-            if let Some(storage) = actual_storage {
-                for slot in storage.keys() {
-                    if !bal_storage.contains_key(slot) {
-                        return Err(format!(
-                            "BAL validation: account {addr:?} has storage change for slot {slot} in execution but not in BAL at index {tx_idx}"
-                        ));
-                    }
-                }
+            for idx in seen_indices {
+                tx_to_accounts.entry(idx).or_default().push(i);
             }
         }
 
-        // Check for accounts in computed diff that are NOT in BAL at all
-        for (addr, diff) in &computed.accounts {
-            let in_bal = self.inner.iter().any(|ac| ac.address == *addr);
-            if !in_bal {
-                let has_changes = diff.balance.is_some()
-                    || diff.nonce.is_some()
-                    || diff.code.is_some()
-                    || !diff.storage.is_empty();
-                if has_changes {
-                    return Err(format!(
-                        "BAL validation: account {addr:?} modified in execution but not present in BAL"
-                    ));
-                }
-            }
+        BalAddressIndex {
+            addr_to_idx,
+            tx_to_accounts,
         }
-
-        Ok(())
     }
 }
 
-/// Per-transaction state diff for BAL validation.
-/// Captures the actual mutations produced by executing a single transaction.
-#[derive(Debug, Default)]
-pub struct TxStateDiff {
-    pub accounts: FxHashMap<Address, TxAccountDiff>,
+/// Pre-computed index for fast per-tx BAL validation lookups.
+/// Built once per block, shared read-only across parallel tx validations.
+pub struct BalAddressIndex {
+    /// Maps each address in the BAL to its index in `BlockAccessList.inner`.
+    pub addr_to_idx: FxHashMap<Address, usize>,
+    /// For each block_access_index, the BAL-inner indices with changes at that index.
+    pub tx_to_accounts: FxHashMap<u16, Vec<usize>>,
 }
 
-/// Per-account state diff within a single transaction.
-#[derive(Debug, Default)]
-pub struct TxAccountDiff {
-    /// New balance if changed, None if unchanged.
-    pub balance: Option<U256>,
-    /// New nonce if changed, None if unchanged.
-    pub nonce: Option<u64>,
-    /// New code bytes if code changed, None if not.
-    pub code: Option<Bytes>,
-    /// Storage slots that changed: slot -> new_value.
-    pub storage: FxHashMap<U256, U256>,
+/// Binary search for exact match at `idx` in balance changes (sorted by block_access_index).
+pub fn find_exact_change_balance(changes: &[BalanceChange], idx: u16) -> Option<U256> {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    if pos < changes.len() && changes[pos].block_access_index == idx {
+        Some(changes[pos].post_balance)
+    } else {
+        None
+    }
+}
+
+/// Returns true if there is a balance change exactly at `idx`.
+pub fn has_exact_change_balance(changes: &[BalanceChange], idx: u16) -> bool {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    pos < changes.len() && changes[pos].block_access_index == idx
+}
+
+/// Binary search for exact match at `idx` in nonce changes.
+pub fn find_exact_change_nonce(changes: &[NonceChange], idx: u16) -> Option<u64> {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    if pos < changes.len() && changes[pos].block_access_index == idx {
+        Some(changes[pos].post_nonce)
+    } else {
+        None
+    }
+}
+
+/// Returns true if there is a nonce change exactly at `idx`.
+pub fn has_exact_change_nonce(changes: &[NonceChange], idx: u16) -> bool {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    pos < changes.len() && changes[pos].block_access_index == idx
+}
+
+/// Binary search for exact match at `idx` in code changes.
+pub fn find_exact_change_code(changes: &[CodeChange], idx: u16) -> Option<&Bytes> {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    if pos < changes.len() && changes[pos].block_access_index == idx {
+        Some(&changes[pos].new_code)
+    } else {
+        None
+    }
+}
+
+/// Returns true if there is a code change exactly at `idx`.
+pub fn has_exact_change_code(changes: &[CodeChange], idx: u16) -> bool {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    pos < changes.len() && changes[pos].block_access_index == idx
+}
+
+/// Binary search for exact match at `idx` in storage changes.
+pub fn find_exact_change_storage(changes: &[StorageChange], idx: u16) -> Option<U256> {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    if pos < changes.len() && changes[pos].block_access_index == idx {
+        Some(changes[pos].post_value)
+    } else {
+        None
+    }
+}
+
+/// Returns true if there is a storage change exactly at `idx`.
+pub fn has_exact_change_storage(changes: &[StorageChange], idx: u16) -> bool {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    pos < changes.len() && changes[pos].block_access_index == idx
 }
 
 impl RLPEncode for BlockAccessList {

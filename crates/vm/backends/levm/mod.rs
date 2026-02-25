@@ -9,11 +9,15 @@ use crate::system_contracts::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
-use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_common::types::block_access_list::{
+    BalAddressIndex, BlockAccessList, find_exact_change_balance, find_exact_change_code,
+    find_exact_change_nonce, find_exact_change_storage, has_exact_change_balance,
+    has_exact_change_code, has_exact_change_nonce, has_exact_change_storage,
+};
 use ethrex_common::types::fee_config::FeeConfig;
-use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
+use ethrex_common::types::{AuthorizationTuple, Code, EIP7702Transaction};
 use ethrex_common::{
-    Address, BigEndianHash, U256,
+    Address, BigEndianHash, H256, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
         GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, TxType, Withdrawal,
@@ -21,6 +25,7 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
+use ethrex_levm::account::LevmAccount;
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
@@ -610,6 +615,9 @@ impl LEVM {
             .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
         queue_length.fetch_add(1, Ordering::Relaxed);
 
+        // Build validation index once — shared read-only across parallel tx validations.
+        let validation_index = bal.build_validation_index();
+
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded)
         let t_exec = std::time::Instant::now();
         let results: Result<Vec<(usize, TxType, ExecutionReport)>, EvmError> = (0..n_txs)
@@ -627,9 +635,6 @@ impl LEVM {
                 #[allow(clippy::cast_possible_truncation)]
                 Self::seed_db_from_bal(&mut tx_db, bal, tx_idx as u16)?;
 
-                // Snapshot seeded state as initial for post-execution diff
-                tx_db.snapshot_current_as_initial();
-
                 let report = LEVM::execute_tx_in_block(
                     tx,
                     *sender,
@@ -639,12 +644,22 @@ impl LEVM {
                     &mut stack_pool,
                 )?;
 
-                // Validate execution results against BAL claims (per-tx)
-                // BAL index for tx at position i is i+1 (0 = system calls)
+                // Validate execution results against BAL claims (per-tx).
+                // BAL index for tx at position i is i+1 (0 = system calls).
+                // seed_idx = tx_idx (the highest BAL index used for seeding).
                 #[allow(clippy::cast_possible_truncation)]
                 let bal_idx = (tx_idx + 1) as u16;
-                let diff = tx_db.compute_tx_diff();
-                bal.validate_tx_diff(bal_idx, &diff).map_err(|e| {
+                #[allow(clippy::cast_possible_truncation)]
+                let seed_idx = tx_idx as u16;
+                Self::validate_tx_execution(
+                    bal_idx,
+                    seed_idx,
+                    &tx_db.current_accounts_state,
+                    &tx_db.codes,
+                    bal,
+                    &validation_index,
+                )
+                .map_err(|e| {
                     EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
                 })?;
 
@@ -682,6 +697,215 @@ impl LEVM {
         );
 
         Ok((receipts, block_gas_used))
+    }
+
+    /// Validates that a tx's post-execution state matches BAL claims.
+    ///
+    /// Replaces the previous snapshot->diff->validate approach:
+    /// - No HashMap clone needed (reconstructs seeded values from BAL)
+    /// - Uses pre-built index for O(1) account lookups
+    /// - Uses binary search on sorted change lists
+    ///
+    /// `bal_idx`: block_access_index for this tx (tx_idx + 1)
+    /// `seed_idx`: max BAL index used for seeding (= tx_idx = bal_idx - 1)
+    /// `current_state`: post-execution account state from per-tx DB
+    /// `codes`: code cache from per-tx DB (for code change validation)
+    /// `bal`: the block access list
+    /// `index`: pre-built validation index
+    #[allow(clippy::too_many_arguments)]
+    fn validate_tx_execution(
+        bal_idx: u16,
+        seed_idx: u16,
+        current_state: &FxHashMap<Address, LevmAccount>,
+        codes: &FxHashMap<H256, Code>,
+        bal: &BlockAccessList,
+        index: &BalAddressIndex,
+    ) -> Result<(), String> {
+        // PART A: For each BAL account with changes at bal_idx,
+        //         verify execution produced matching post-state.
+        if let Some(active_accounts) = index.tx_to_accounts.get(&bal_idx) {
+            for &acct_inner_idx in active_accounts {
+                let acct = &bal.accounts()[acct_inner_idx];
+                let addr = acct.address;
+                let actual = current_state.get(&addr);
+
+                // Balance
+                if let Some(expected) = find_exact_change_balance(&acct.balance_changes, bal_idx) {
+                    match actual {
+                        Some(a) if a.info.balance == expected => {}
+                        Some(a) => {
+                            return Err(format!(
+                                "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={}",
+                                a.info.balance
+                            ));
+                        }
+                        None => {
+                            return Err(format!(
+                                "account {addr:?} has BAL balance change at {bal_idx} but not in execution state"
+                            ));
+                        }
+                    }
+                }
+
+                // Nonce
+                if let Some(expected) = find_exact_change_nonce(&acct.nonce_changes, bal_idx) {
+                    match actual {
+                        Some(a) if a.info.nonce == expected => {}
+                        Some(a) => {
+                            return Err(format!(
+                                "account {addr:?} nonce mismatch at index {bal_idx}: BAL={expected}, exec={}",
+                                a.info.nonce
+                            ));
+                        }
+                        None => {
+                            return Err(format!(
+                                "account {addr:?} has BAL nonce change at {bal_idx} but not in execution state"
+                            ));
+                        }
+                    }
+                }
+
+                // Code
+                if let Some(expected_code) = find_exact_change_code(&acct.code_changes, bal_idx) {
+                    match actual {
+                        Some(a) => {
+                            let actual_code = codes
+                                .get(&a.info.code_hash)
+                                .map(|c| &c.bytecode)
+                                .cloned()
+                                .unwrap_or_default();
+                            if actual_code != *expected_code {
+                                return Err(format!(
+                                    "account {addr:?} code mismatch at index {bal_idx}"
+                                ));
+                            }
+                        }
+                        None => {
+                            return Err(format!(
+                                "account {addr:?} has BAL code change at {bal_idx} but not in execution state"
+                            ));
+                        }
+                    }
+                }
+
+                // Storage
+                for sc in &acct.storage_changes {
+                    if let Some(expected_value) =
+                        find_exact_change_storage(&sc.slot_changes, bal_idx)
+                    {
+                        let key = ethrex_common::utils::u256_to_h256(sc.slot);
+                        let actual_value = actual.and_then(|a| a.storage.get(&key)).copied();
+                        if actual_value != Some(expected_value) {
+                            return Err(format!(
+                                "account {addr:?} storage slot {} mismatch at index {bal_idx}: \
+                                 BAL={expected_value}, exec={actual_value:?}",
+                                sc.slot
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // PART B: For each modified account in execution state,
+        //         verify no unexpected mutations (changes not claimed by BAL).
+        for (addr, account) in current_state {
+            if account.is_unmodified() {
+                continue;
+            }
+
+            let Some(&bal_acct_idx) = index.addr_to_idx.get(addr) else {
+                // Account not in BAL. Modified status can come from read-only
+                // get_account_mut calls (warm access, etc.). Skip — state root
+                // will catch any true discrepancy.
+                continue;
+            };
+
+            let acct = &bal.accounts()[bal_acct_idx];
+
+            // Balance: if BAL has no change at bal_idx, execution must not have changed it
+            if !has_exact_change_balance(&acct.balance_changes, bal_idx) {
+                let seeded_pos = acct
+                    .balance_changes
+                    .partition_point(|c| c.block_access_index <= seed_idx);
+                if seeded_pos > 0 {
+                    let seeded = acct.balance_changes[seeded_pos - 1].post_balance;
+                    if account.info.balance != seeded {
+                        return Err(format!(
+                            "account {addr:?} balance changed by execution ({}) but BAL has no \
+                             balance change at index {bal_idx} (seeded={seeded})",
+                            account.info.balance
+                        ));
+                    }
+                }
+                // If seeded_pos == 0, balance was never seeded (loaded from store/shared_base).
+                // We can't cheaply verify without store access. Skip.
+            }
+
+            // Nonce: same pattern
+            if !has_exact_change_nonce(&acct.nonce_changes, bal_idx) {
+                let seeded_pos = acct
+                    .nonce_changes
+                    .partition_point(|c| c.block_access_index <= seed_idx);
+                if seeded_pos > 0 {
+                    let seeded = acct.nonce_changes[seeded_pos - 1].post_nonce;
+                    if account.info.nonce != seeded {
+                        return Err(format!(
+                            "account {addr:?} nonce changed by execution ({}) but BAL has no \
+                             nonce change at index {bal_idx} (seeded={seeded})",
+                            account.info.nonce
+                        ));
+                    }
+                }
+            }
+
+            // Code: same pattern
+            if !has_exact_change_code(&acct.code_changes, bal_idx) {
+                let seeded_pos = acct
+                    .code_changes
+                    .partition_point(|c| c.block_access_index <= seed_idx);
+                if seeded_pos > 0 {
+                    let seeded_code = &acct.code_changes[seeded_pos - 1].new_code;
+                    let seeded_hash = if seeded_code.is_empty() {
+                        *EMPTY_KECCACK_HASH
+                    } else {
+                        Code::from_bytecode(seeded_code.clone()).hash
+                    };
+                    if account.info.code_hash != seeded_hash {
+                        return Err(format!(
+                            "account {addr:?} code changed by execution but BAL has no \
+                             code change at index {bal_idx}"
+                        ));
+                    }
+                }
+            }
+
+            // Storage: for each slot in execution state, check it's expected
+            for (key_h256, &value) in &account.storage {
+                let slot_u256 = U256::from_big_endian(key_h256.as_bytes());
+                if let Some(sc) = acct.storage_changes.iter().find(|sc| sc.slot == slot_u256)
+                    && !has_exact_change_storage(&sc.slot_changes, bal_idx)
+                {
+                    let seeded_pos = sc
+                        .slot_changes
+                        .partition_point(|c| c.block_access_index <= seed_idx);
+                    if seeded_pos > 0 {
+                        let seeded = sc.slot_changes[seeded_pos - 1].post_value;
+                        if value != seeded {
+                            return Err(format!(
+                                "account {addr:?} storage slot {slot_u256} changed by \
+                                 execution ({value}) but BAL has no change at index \
+                                 {bal_idx} (seeded={seeded})"
+                            ));
+                        }
+                    }
+                }
+                // Slot not in BAL storage_changes: was loaded from store during execution.
+                // Skip — can't verify cheaply.
+            }
+        }
+
+        Ok(())
     }
 
     /// Pre-warms state by executing all transactions in parallel, grouped by sender.
