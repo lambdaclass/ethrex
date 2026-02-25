@@ -2490,10 +2490,8 @@ fn collapse_root_node(
     storage: &Store,
     parent_state_root: H256,
     prefix: Option<H256>,
-    mut root: BranchNode,
+    root: BranchNode,
 ) -> Result<Option<Node>, StoreError> {
-    // Ensures the children are included in the final commit
-    root.choices.iter_mut().for_each(NodeRef::clear_hash);
     let children: Vec<(usize, &NodeRef)> = root
         .choices
         .iter()
@@ -2857,7 +2855,10 @@ fn handle_subtrie(
                     let mut state = storage_state.remove(&prefix).expect("shard without state");
                     let n_nodes = state.nodes.len();
                     let mut new_storage_root = None;
-                    if let Some(root) = state.storage_root {
+                    if let Some(mut root) = state.storage_root {
+                        // Storage shards only retain nodes matching their shard index,
+                        // so children from other shards need clear_hash to be re-committed.
+                        root.choices.iter_mut().for_each(NodeRef::clear_hash);
                         let t_collapse = Instant::now();
                         let collapsed =
                             collapse_root_node(&storage, parent_state_root, Some(prefix), *root)?;
