@@ -254,6 +254,22 @@ pub struct Options {
     )]
     pub discovery_port: String,
     #[arg(
+        long = "p2p.discv4",
+        default_value_t = true,
+        action = ArgAction::Set,
+        help = "Enable discv4 discovery.",
+        help_heading = "P2P options"
+    )]
+    pub discv4_enabled: bool,
+    #[arg(
+        long = "p2p.discv5",
+        default_value_t = false,
+        action = ArgAction::Set,
+        help = "Enable discv5 discovery (experimental).",
+        help_heading = "P2P options"
+    )]
+    pub discv5_enabled: bool,
+    #[arg(
         long = "p2p.tx-broadcasting-interval",
         default_value_t = BROADCAST_INTERVAL_MS,
         value_name = "INTERVAL_MS",
@@ -332,6 +348,8 @@ impl Options {
             authrpc_jwtsecret: "jwt.hex".to_string(),
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            discv4_enabled: true,
+            discv5_enabled: false,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -352,6 +370,8 @@ impl Options {
             authrpc_jwtsecret: "jwt.hex".into(),
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            discv4_enabled: true,
+            discv5_enabled: false,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -376,6 +396,8 @@ impl Default for Options {
             p2p_addr: None,
             p2p_port: Default::default(),
             discovery_port: Default::default(),
+            discv4_enabled: true,
+            discv5_enabled: false,
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),

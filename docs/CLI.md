@@ -118,6 +118,18 @@ P2P options:
           [env: ETHREX_P2P_DISCOVERY_PORT=]
           [default: 30303]
 
+      --p2p.discv4 <DISCV4_ENABLED>
+          Enable discv4 discovery.
+
+          [default: true]
+          [possible values: true, false]
+
+      --p2p.discv5 <DISCV5_ENABLED>
+          Enable discv5 discovery (experimental).
+
+          [default: false]
+          [possible values: true, false]
+
       --p2p.tx-broadcasting-interval <INTERVAL_MS>
           Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
 
