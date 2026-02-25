@@ -92,13 +92,13 @@ use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::LazyLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
-use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
@@ -121,9 +121,7 @@ static DROP_SENDER: LazyLock<Sender<Box<dyn Send>>> = LazyLock::new(|| {
     let (tx, rx) = channel::<Box<dyn Send>>();
     std::thread::Builder::new()
         .name("drop_thread".to_string())
-        .spawn(move || {
-            for _ in rx {}
-        })
+        .spawn(move || for _ in rx {})
         .expect("failed to spawn drop thread");
     tx
 });
@@ -654,7 +652,6 @@ impl Blockchain {
 
         // Barrier: send FinishRouting, then overlap early MerklizeAccounts
         // with the wait for workers to finish routing storage keys.
-        let t_drain_start = Instant::now();
         let (flush_tx, flush_rx) = channel();
         for tx in &workers_tx {
             tx.send(WorkerRequest::FinishRouting {
@@ -682,7 +679,6 @@ impl Blockchain {
 
         // Wait for all FinishRouting responses.
         for () in flush_rx {}
-        let t_barrier = Instant::now();
 
         // Trigger storage collection — workers finalize storage tries and send shards.
         for tx in &workers_tx {
@@ -716,26 +712,17 @@ impl Blockchain {
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
-        let t_gathered = Instant::now();
 
         let collapsed = self.collapse_root_node(parent_header, None, root)?;
-        let state_trie_hash =
-            if let Some(root) = collapsed {
-                let mut root = NodeRef::from(root);
-                let hash = root.commit(Nibbles::default(), &mut state_updates);
-                let _ = DROP_SENDER.send(Box::new(root));
-                hash.finalize()
-            } else {
-                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
-                *EMPTY_TRIE_HASH
-            };
-        let t_root = Instant::now();
-        info!(
-            "  drain breakdown: barrier={:.1}ms gather={:.1}ms root={:.1}ms",
-            t_barrier.duration_since(t_drain_start).as_secs_f64() * 1000.0,
-            t_gathered.duration_since(t_barrier).as_secs_f64() * 1000.0,
-            t_root.duration_since(t_gathered).as_secs_f64() * 1000.0,
-        );
+        let state_trie_hash = if let Some(root) = collapsed {
+            let mut root = NodeRef::from(root);
+            let hash = root.commit(Nibbles::default(), &mut state_updates);
+            let _ = DROP_SENDER.send(Box::new(root));
+            hash.finalize()
+        } else {
+            state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+            *EMPTY_TRIE_HASH
+        };
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
@@ -2549,6 +2536,46 @@ fn collapse_root_node(
     }))
 }
 
+/// Collect the state trie shard, merge pre-collected nodes, and send results.
+fn collect_and_send(
+    index: u8,
+    state_trie: &mut Trie,
+    pre_collected_state: &mut Vec<TrieNode>,
+    storage_nodes: &mut Vec<(H256, Vec<TrieNode>)>,
+    tx: Sender<CollectedStateMsg>,
+) -> Result<(), StoreError> {
+    let (subroot, mut state_nodes) = collect_trie(index, std::mem::take(state_trie))?;
+    if !pre_collected_state.is_empty() {
+        let mut pre = std::mem::take(pre_collected_state);
+        pre.extend(state_nodes);
+        state_nodes = pre;
+    }
+    tx.send(CollectedStateMsg {
+        index,
+        subroot,
+        state_nodes,
+        storage_nodes: std::mem::take(storage_nodes),
+    })
+    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+    Ok(())
+}
+
+/// Open or get an existing storage trie for the given account prefix.
+fn get_or_open_storage_trie<'a>(
+    storage_tries: &'a mut FxHashMap<H256, Trie>,
+    storage: &Store,
+    parent_state_root: H256,
+    prefix: H256,
+    storage_root: H256,
+) -> Result<&'a mut Trie, StoreError> {
+    match storage_tries.entry(prefix) {
+        Entry::Occupied(e) => Ok(e.into_mut()),
+        Entry::Vacant(e) => {
+            Ok(e.insert(storage.open_storage_trie(prefix, parent_state_root, storage_root)?))
+        }
+    }
+}
+
 fn handle_subtrie(
     storage: Store,
     rx: Receiver<WorkerRequest>,
@@ -2556,7 +2583,6 @@ fn handle_subtrie(
     index: u8,
     worker_senders: Vec<Sender<WorkerRequest>>,
 ) -> Result<(), StoreError> {
-    // === Account-side state ===
     let mut state_trie = storage.open_state_trie(parent_state_root)?;
     let mut storage_nodes: Vec<(H256, Vec<TrieNode>)> = vec![];
     let mut accounts: FxHashMap<H256, AccountState> = Default::default();
@@ -2565,30 +2591,17 @@ fn handle_subtrie(
     let mut received_shards: FxHashMap<H256, u16> = Default::default();
     let mut pending_storage_accounts: usize = 0;
     let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
-    let mut t_process = Duration::ZERO;
-    let mut t_shard = Duration::ZERO;
     let mut pre_collected_state: Vec<TrieNode> = vec![];
-    let mut n_shard_msgs: u32 = 0;
-    let mut n_resolutions: u32 = 0;
-    let mut t_resolve = Duration::ZERO;
-    let mut max_resolve = Duration::ZERO;
-    let mut max_resolve_nodes: usize = 0;
-
-    // === Storage-side state ===
     let mut storage_tries: FxHashMap<H256, Trie> = Default::default();
     let mut pre_collected_storage: FxHashMap<H256, Vec<TrieNode>> = Default::default();
-    let mut n_pre_collected_storage: usize = 0;
 
-    // === Control state ===
     // Held until CollectStorages to keep cross-worker channels open.
     let mut worker_senders: Option<Vec<Sender<WorkerRequest>>> = Some(worker_senders);
     let mut dirty = false;
-    // Storage collection state: when active, we finalize one trie per loop
-    // iteration, interleaving with incoming shard messages to restore pipelining.
+    // When active, we finalize one storage trie per loop iteration,
+    // interleaving with incoming StorageShard messages.
     let mut collecting_storages = false;
     let mut storage_to_collect: Vec<(H256, Trie)> = vec![];
-    let mut storage_collect_start = Instant::now();
-    let mut n_storage_accounts: usize = 0;
 
     loop {
         // When collecting storages, finalize one trie per iteration so that
@@ -2614,44 +2627,19 @@ fn handle_subtrie(
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
             } else {
                 // All storage tries finalized
-                info!(
-                    "  worker[{index}]: storage_collect={:.1}ms accounts={} pre_collected={}",
-                    storage_collect_start.elapsed().as_secs_f64() * 1000.0,
-                    n_storage_accounts,
-                    n_pre_collected_storage,
-                );
                 worker_senders = None;
                 collecting_storages = false;
                 // Check if deferred collect can resolve now
                 if pending_storage_accounts == 0
                     && let Some(tx) = pending_collect_tx.take()
                 {
-                    let t0 = Instant::now();
-                    let (subroot, mut state_nodes) =
-                        collect_trie(index, std::mem::take(&mut state_trie))?;
-                    if !pre_collected_state.is_empty() {
-                        let mut pre = std::mem::take(&mut pre_collected_state);
-                        pre.extend(state_nodes);
-                        state_nodes = pre;
-                    }
-                    tx.send(CollectedStateMsg {
+                    collect_and_send(
                         index,
-                        subroot,
-                        state_nodes,
-                        storage_nodes: std::mem::take(&mut storage_nodes),
-                    })
-                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    info!(
-                        "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms | msgs={} resolve={}/{:.1}ms max_resolve={:.2}ms({}nodes)",
-                        t_process.as_secs_f64() * 1000.0,
-                        t_shard.as_secs_f64() * 1000.0,
-                        t0.elapsed().as_secs_f64() * 1000.0,
-                        n_shard_msgs,
-                        n_resolutions,
-                        t_resolve.as_secs_f64() * 1000.0,
-                        max_resolve.as_secs_f64() * 1000.0,
-                        max_resolve_nodes,
-                    );
+                        &mut state_trie,
+                        &mut pre_collected_state,
+                        &mut storage_nodes,
+                        tx,
+                    )?;
                     break;
                 }
             }
@@ -2677,7 +2665,6 @@ fn handle_subtrie(
                                     .entry(*prefix)
                                     .or_default()
                                     .extend(nodes);
-                                n_pre_collected_storage += 1;
                             }
                         }
                         dirty = false;
@@ -2700,7 +2687,6 @@ fn handle_subtrie(
                 removed,
                 removed_storage,
             } => {
-                let t0 = Instant::now();
                 let senders = worker_senders
                     .as_ref()
                     .expect("ProcessAccount after CollectStorages");
@@ -2751,7 +2737,6 @@ fn handle_subtrie(
                     }
                     if removed {
                         dirty = true;
-                        t_process += t0.elapsed();
                         continue;
                     }
                 }
@@ -2769,14 +2754,13 @@ fn handle_subtrie(
                         *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
                         if bucket == index {
                             // Local storage: insert directly
-                            let trie = match storage_tries.entry(prefix) {
-                                Entry::Occupied(e) => e.into_mut(),
-                                Entry::Vacant(e) => e.insert(storage.open_storage_trie(
-                                    prefix,
-                                    parent_state_root,
-                                    storage_root,
-                                )?),
-                            };
+                            let trie = get_or_open_storage_trie(
+                                &mut storage_tries,
+                                &storage,
+                                parent_state_root,
+                                prefix,
+                                storage_root,
+                            )?;
                             if value.is_zero() {
                                 trie.remove(hashed_key.as_bytes())?;
                             } else {
@@ -2798,7 +2782,6 @@ fn handle_subtrie(
                     }
                 }
                 dirty = true;
-                t_process += t0.elapsed();
             }
             WorkerRequest::MerklizeStorage {
                 prefix,
@@ -2806,14 +2789,13 @@ fn handle_subtrie(
                 value,
                 storage_root,
             } => {
-                let trie = match storage_tries.entry(prefix) {
-                    Entry::Occupied(e) => e.into_mut(),
-                    Entry::Vacant(e) => e.insert(storage.open_storage_trie(
-                        prefix,
-                        parent_state_root,
-                        storage_root,
-                    )?),
-                };
+                let trie = get_or_open_storage_trie(
+                    &mut storage_tries,
+                    &storage,
+                    parent_state_root,
+                    prefix,
+                    storage_root,
+                )?;
                 if value.is_zero() {
                     trie.remove(key.as_bytes())?;
                 } else {
@@ -2841,8 +2823,6 @@ fn handle_subtrie(
                 // Drain storage tries into a vec; the loop top finalizes one per
                 // iteration, interleaving with incoming StorageShard messages.
                 collecting_storages = true;
-                storage_collect_start = Instant::now();
-                n_storage_accounts = storage_tries.len();
                 storage_to_collect = storage_tries.drain().collect();
             }
             WorkerRequest::StorageShard {
@@ -2851,8 +2831,6 @@ fn handle_subtrie(
                 mut subroot,
                 nodes,
             } => {
-                let t0 = Instant::now();
-                n_shard_msgs += 1;
                 let state = storage_state.entry(prefix).or_default();
                 match &mut state.storage_root {
                     Some(root) => {
@@ -2868,53 +2846,30 @@ fn handle_subtrie(
                 let received = received_shards.entry(prefix).or_insert(0u16);
                 *received |= 1 << shard_index;
                 if *received == expected_shards.get(&prefix).copied().unwrap_or(0) {
-                    // All shards received — compute storage root and re-insert
-                    let t_res = Instant::now();
+                    // All shards received — resolve storage root
                     let mut state = storage_state.remove(&prefix).expect("shard without state");
-                    let n_nodes = state.nodes.len();
-                    let mut new_storage_root = None;
-                    if let Some(mut root) = state.storage_root {
-                        // Storage shards only retain nodes matching their shard index,
-                        // so children from other shards need clear_hash to be re-committed.
+                    let new_storage_root = if let Some(mut root) = state.storage_root {
+                        // Children from other shards need clear_hash to be re-committed.
                         root.choices.iter_mut().for_each(NodeRef::clear_hash);
-                        let t_collapse = Instant::now();
                         let collapsed =
                             collapse_root_node(&storage, parent_state_root, Some(prefix), *root)?;
-                        let collapse_us = t_collapse.elapsed().as_micros();
                         if let Some(root) = collapsed {
-                            let t_commit = Instant::now();
                             let mut root = NodeRef::from(root);
                             let hash = root.commit(Nibbles::default(), &mut state.nodes);
                             let _ = DROP_SENDER.send(Box::new(root));
-                            new_storage_root = Some(hash.finalize());
-                            let commit_us = t_commit.elapsed().as_micros();
-                            let this_elapsed = t_res.elapsed();
-                            if this_elapsed > max_resolve {
-                                info!(
-                                    "    resolve[{index}]: {:.2}ms collapse={collapse_us}us commit={commit_us}us nodes={n_nodes}->{}",
-                                    this_elapsed.as_secs_f64() * 1000.0,
-                                    state.nodes.len(),
-                                );
-                            }
+                            hash.finalize()
                         } else {
                             state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
-                            new_storage_root = Some(*EMPTY_TRIE_HASH);
+                            *EMPTY_TRIE_HASH
                         }
-                    }
-                    let res_elapsed = t_res.elapsed();
-                    n_resolutions += 1;
-                    t_resolve += res_elapsed;
-                    if res_elapsed > max_resolve {
-                        max_resolve = res_elapsed;
-                        max_resolve_nodes = n_nodes;
-                    }
+                    } else {
+                        *EMPTY_TRIE_HASH
+                    };
                     storage_nodes.push((prefix, state.nodes));
 
-                    // Info already applied in ProcessAccount — just update storage_root
+                    // Update account's storage root and re-insert into state trie
                     let old_state = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
-                    if let Some(storage_root) = new_storage_root {
-                        old_state.storage_root = storage_root;
-                    }
+                    old_state.storage_root = new_storage_root;
                     let path = prefix.as_bytes();
                     if *old_state != AccountState::default() {
                         state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
@@ -2928,62 +2883,26 @@ fn handle_subtrie(
                         && !collecting_storages
                         && let Some(tx) = pending_collect_tx.take()
                     {
-                        t_shard += t0.elapsed();
-                        let t0 = Instant::now();
-                        let (subroot, mut state_nodes) =
-                            collect_trie(index, std::mem::take(&mut state_trie))?;
-                        if !pre_collected_state.is_empty() {
-                            let mut pre = std::mem::take(&mut pre_collected_state);
-                            pre.extend(state_nodes);
-                            state_nodes = pre;
-                        }
-                        tx.send(CollectedStateMsg {
+                        collect_and_send(
                             index,
-                            subroot,
-                            state_nodes,
-                            storage_nodes: std::mem::take(&mut storage_nodes),
-                        })
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                        info!(
-                            "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms | msgs={} resolve={}/{:.1}ms max_resolve={:.2}ms({}nodes)",
-                            t_process.as_secs_f64() * 1000.0,
-                            t_shard.as_secs_f64() * 1000.0,
-                            t0.elapsed().as_secs_f64() * 1000.0,
-                            n_shard_msgs,
-                            n_resolutions,
-                            t_resolve.as_secs_f64() * 1000.0,
-                            max_resolve.as_secs_f64() * 1000.0,
-                            max_resolve_nodes,
-                        );
+                            &mut state_trie,
+                            &mut pre_collected_state,
+                            &mut storage_nodes,
+                            tx,
+                        )?;
                         break;
                     }
                 }
-                t_shard += t0.elapsed();
             }
             WorkerRequest::CollectState { tx } => {
                 if pending_storage_accounts == 0 && !collecting_storages {
-                    // All storage accounts resolved and collection done — respond immediately
-                    let t0 = Instant::now();
-                    let (subroot, mut state_nodes) =
-                        collect_trie(index, std::mem::take(&mut state_trie))?;
-                    if !pre_collected_state.is_empty() {
-                        let mut pre = std::mem::take(&mut pre_collected_state);
-                        pre.extend(state_nodes);
-                        state_nodes = pre;
-                    }
-                    tx.send(CollectedStateMsg {
+                    collect_and_send(
                         index,
-                        subroot,
-                        state_nodes,
-                        storage_nodes: std::mem::take(&mut storage_nodes),
-                    })
-                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    info!(
-                        "  worker[{index}]: process={:.1}ms shard={:.1}ms collect={:.1}ms",
-                        t_process.as_secs_f64() * 1000.0,
-                        t_shard.as_secs_f64() * 1000.0,
-                        t0.elapsed().as_secs_f64() * 1000.0,
-                    );
+                        &mut state_trie,
+                        &mut pre_collected_state,
+                        &mut storage_nodes,
+                        tx,
+                    )?;
                     break;
                 }
                 // Defer until all StorageShards arrive
