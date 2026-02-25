@@ -244,8 +244,25 @@ fn validate_sufficient_max_fee_per_gas_l2(
 ///
 /// If gas_limit < intrinsic_gas + l1_gas, increase_consumed_gas returns
 /// OutOfGas, which we map to IntrinsicGasTooLow to reject the tx upfront.
+///
+/// On Prague+, also validates gas_limit >= floor + l1_gas (EIP-7623).
+/// Finalize computes actual_gas_used = max(execution_gas, floor) + l1_gas,
+/// so without this check a tx with heavy calldata could pass validation
+/// but underflow in refund_sender.
 fn reserve_l1_gas(vm: &mut VM<'_>, l1_fee_config: &Option<L1FeeConfig>) -> Result<(), VMError> {
     let l1_gas = calculate_l1_fee_gas(vm, l1_fee_config)?;
+
+    // On Prague+, the EIP-7623 gas floor can raise execution_gas above
+    // intrinsic_gas at finalize time. Since actual_gas_used = execution_gas + l1_gas,
+    // we must ensure gas_limit can cover floor + l1_gas.
+    if vm.env.config.fork >= Fork::Prague {
+        let floor = vm.get_min_gas_used()?;
+        let floor_plus_l1 = floor.checked_add(l1_gas).ok_or(InternalError::Overflow)?;
+        if vm.env.gas_limit < floor_plus_l1 {
+            return Err(TxValidationError::IntrinsicGasTooLow.into());
+        }
+    }
+
     vm.current_call_frame
         .increase_consumed_gas(l1_gas)
         .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
