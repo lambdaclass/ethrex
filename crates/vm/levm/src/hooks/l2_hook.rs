@@ -246,11 +246,9 @@ fn validate_sufficient_max_fee_per_gas_l2(
 /// OutOfGas, which we map to IntrinsicGasTooLow to reject the tx upfront.
 fn reserve_l1_gas(vm: &mut VM<'_>, l1_fee_config: &Option<L1FeeConfig>) -> Result<(), VMError> {
     let l1_gas = calculate_l1_fee_gas(vm, l1_fee_config)?;
-    if l1_gas > 0 {
-        vm.current_call_frame
-            .increase_consumed_gas(l1_gas)
-            .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
-    }
+    vm.current_call_frame
+        .increase_consumed_gas(l1_gas)
+        .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
     Ok(())
 }
 
