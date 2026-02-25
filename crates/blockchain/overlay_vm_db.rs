@@ -125,6 +125,23 @@ impl OverlayVmDatabase {
     pub fn set_block_hash(&mut self, number: u64, hash: H256) {
         self.block_hash_overrides.insert(number, hash);
     }
+
+    /// Access the underlying store for trie operations (e.g. stateRoot computation).
+    pub fn store(&self) -> &ethrex_storage::Store {
+        &self.inner.store
+    }
+
+    /// The block hash of the base block used when opening the state trie.
+    pub fn base_block_hash(&self) -> H256 {
+        self.inner.block_hash
+    }
+
+    /// Get the chain config from the underlying store.
+    pub fn get_chain_config(
+        &self,
+    ) -> Result<ethrex_common::types::ChainConfig, ethrex_vm::EvmError> {
+        self.inner.get_chain_config()
+    }
 }
 
 impl VmDatabase for OverlayVmDatabase {
