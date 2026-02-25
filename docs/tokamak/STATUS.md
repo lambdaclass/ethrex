@@ -19,7 +19,7 @@
 | Phase 6 | CALL/CREATE Resume | **100%** | Suspend/resume + LLVM memory mgmt |
 | Phase 7 | Dual-Execution Validation | **100%** | State-swap validation, Volkov R20 PROCEED |
 | Phase 8 | JIT Benchmarking | **100%** | Infrastructure + benchmark execution |
-| Phase 9 | Benchmark CI & Dashboard | **0%** | Not started |
+| Phase 9 | Benchmark CI & Dashboard | **~50%** | JIT speedup regression CI done (C-1), LLVM provisioning pending (C-2) |
 
 ---
 
@@ -46,21 +46,21 @@
 - Fuzzing + security audit
 - Production deployment
 
-### Feature #10: Continuous Benchmarking (~35%)
+### Feature #10: Continuous Benchmarking (~50%)
 
 **Completed:**
 - `tokamak-bench` crate with 12 scenarios
-- CLI: `run` / `compare` / `report` subcommands
-- Regression detection with thresholds
-- CI workflow (`pr-tokamak-bench.yaml`)
+- CLI: `run` / `compare` / `report` / `jit-compare` subcommands
+- Regression detection with thresholds (opcode + JIT speedup)
+- CI workflow (`pr-tokamak-bench.yaml`) with JIT benchmark jobs
 - JIT benchmark infrastructure
 - JSON output + markdown report generation
+- JIT speedup regression detection with PR comments
 
 **Remaining:**
 - Geth/Reth comparison via JSON-RPC
 - State root differential testing
 - Public dashboard (clients.tokamak.network)
-- PR-level regression blocking
 - Precompile timing export
 
 ### Feature #21: Time-Travel Debugger (~2%)
@@ -133,6 +133,7 @@ R23(5.0) -> R24(8.0)
 - Feature flag CI — Quality Gate checks all 4 feature flags (fc720f46f)
 
 ### Recently Completed (Phase B/C)
+- JIT benchmark CI (C-1) — `compare_jit()`, `JitCompare` CLI, 3 CI jobs, 10 tests, PR comment integration (d17a71c24)
 - JIT gas alignment (B-1) — Fixed negative SSTORE refund bug in `execution.rs`, added `gas_alignment.rs` with 11 tests (71f39d2d7)
 - Test quality improvements (B-2) — `test_helpers.rs`, `INTRINSIC_GAS` constant, 15+ test DRY refactors (224921e1f)
 - Benchmark statistics (C-3) — `stats.rs` module, warmup/stddev/95% CI support, `--warmup` CLI param (224921e1f)

@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24
-**Context**: Overall ~45-50% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅, B-3 remaining.
+**Context**: Overall ~50% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅, B-3 remaining. Phase C: C-1 ✅ C-3 ✅, C-2 remaining.
 
 ---
 
@@ -91,13 +91,16 @@
 
 > "Performance gains mean nothing without regression prevention."
 
-### C-1. Phase 9: JIT Benchmark CI [P1]
-- Add JIT benchmark job to `pr-tokamak-bench.yaml`
-- Compare JIT speedup ratios between PR and base
-- Flag regression if speedup drops >20%
-- **Verification**: PR with intentional regression is flagged
+### C-1. Phase 9: JIT Benchmark CI [P1] ✅ DONE
+- Add JIT benchmark job to `pr-tokamak-bench.yaml` ✅
+- Compare JIT speedup ratios between PR and base ✅ (`compare_jit()` + `jit-compare` CLI)
+- Flag regression if speedup drops >20% ✅ (exit code 1 on regression)
+- 3 CI jobs: `jit-bench-pr`, `jit-bench-main`, `compare-jit-results` ✅
+- PR comment with JIT speedup regression report ✅
+- **Verification**: 10 unit tests passing (regression/improvement/edge cases) ✅
 - **Dependency**: None
 - **Estimate**: 4h
+- **Completed**: Session d17a71c24 — `compare_jit()`, `JitCompare` CLI, `JitRegressionReport` types, CI jobs with LLVM 21 + `continue-on-error`
 
 ### C-2. LLVM 21 CI Provisioning [P1]
 - Remove `continue-on-error: true` from jit-backend CI job
@@ -213,7 +216,7 @@
 ```
 Week 1:  [P0] A-1 ✅ + A-2 ⏳ → A-3 ✅ → A-4 ✅ (Snapsync 수동 필요)
 Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
-Week 3:  [P1] C-1 + C-2 (parallel) → B-3   ← CURRENT
+Week 3:  [P1] C-1 ✅ + C-2 → B-3   ← CURRENT
 Week 4:  [P2] D-1 decision + D-2 → E-1 start
 Week 5+: [P2] E-1 + E-2 → D-3 → E-3
 Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
