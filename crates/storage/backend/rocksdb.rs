@@ -1,7 +1,7 @@
 use crate::api::tables::{
-    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE,
-    STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+    ACCOUNT_CODES, ACCOUNT_FLAT, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
+    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STORAGE_FLAT,
+    STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
     PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
@@ -130,7 +130,7 @@ impl RocksDBBackend {
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
+                ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE | ACCOUNT_FLAT | STORAGE_FLAT => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);

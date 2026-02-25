@@ -90,6 +90,16 @@ pub const ACCOUNT_FLATKEYVALUE: &str = "account_flatkeyvalue";
 /// - [`Vec<u8>`] = `node_data`
 pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
+/// Account flat state column family: [`[u8; 32]`] => [`Vec<u8>`]
+/// - Key: `keccak(address)` (32 bytes)
+/// - Value: RLP-encoded `AccountState`
+pub const ACCOUNT_FLAT: &str = "account_flat";
+
+/// Storage flat state column family: [`[u8; 64]`] => [`Vec<u8>`]
+/// - Key: `keccak(address) || keccak(storage_key)` (64 bytes)
+/// - Value: RLP-encoded `U256`
+pub const STORAGE_FLAT: &str = "storage_flat";
+
 pub const MISC_VALUES: &str = "misc_values";
 
 /// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]
@@ -102,7 +112,7 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+pub const TABLES: [&str; 21] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -120,6 +130,8 @@ pub const TABLES: [&str; 19] = [
     FULLSYNC_HEADERS,
     ACCOUNT_FLATKEYVALUE,
     STORAGE_FLATKEYVALUE,
+    ACCOUNT_FLAT,
+    STORAGE_FLAT,
     MISC_VALUES,
     EXECUTION_WITNESSES,
 ];
