@@ -10,89 +10,9 @@
 //! These tests ensure the fee distribution logic is mathematically correct.
 
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
-use ethrex_common::types::{EIP1559Transaction, Transaction, TxKind};
 use ethrex_common::{Address, H256, U256};
-use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::vm::{VM, VMType};
-use once_cell::sync::OnceCell;
 
 use super::test_utils::*;
-use bytes::Bytes;
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-fn create_test_l2_vm<'a>(
-    env: &ethrex_levm::environment::Environment,
-    db: &'a mut ethrex_levm::db::gen_db::GeneralizedDatabase,
-    tx: &Transaction,
-    fee_config: FeeConfig,
-) -> Result<VM<'a>, ethrex_levm::errors::VMError> {
-    let vm_type = VMType::L2(fee_config);
-    VM::new(env.clone(), db, tx, LevmCallTracer::disabled(), vm_type)
-}
-
-fn create_eip1559_tx(
-    to: Address,
-    value: U256,
-    gas_limit: u64,
-    max_fee_per_gas: u64,
-    max_priority_fee_per_gas: u64,
-    nonce: u64,
-) -> Transaction {
-    Transaction::EIP1559Transaction(EIP1559Transaction {
-        nonce,
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        gas_limit,
-        to: TxKind::Call(to),
-        value,
-        data: Bytes::new(),
-        access_list: Vec::new(),
-        chain_id: 1,
-        signature_y_parity: false,
-        signature_r: U256::zero(),
-        signature_s: U256::zero(),
-        inner_hash: OnceCell::new(),
-    })
-}
-
-fn create_eip1559_env(
-    origin: Address,
-    gas_limit: u64,
-    max_fee_per_gas: U256,
-    max_priority_fee_per_gas: U256,
-    base_fee: U256,
-) -> ethrex_levm::environment::Environment {
-    use ethrex_common::types::Fork;
-    use ethrex_levm::EVMConfig;
-
-    ethrex_levm::environment::Environment {
-        origin,
-        gas_limit,
-        config: EVMConfig::new(Fork::Cancun, EVMConfig::canonical_values(Fork::Cancun)),
-        block_number: U256::from(1),
-        coinbase: TEST_COINBASE,
-        timestamp: U256::from(1000),
-        prev_randao: Some(H256::zero()),
-        difficulty: U256::zero(),
-        chain_id: U256::from(1),
-        base_fee_per_gas: base_fee,
-        base_blob_fee_per_gas: U256::zero(),
-        gas_price: max_fee_per_gas,
-        block_excess_blob_gas: None,
-        block_blob_gas_used: None,
-        tx_blob_hashes: Vec::new(),
-        tx_max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
-        tx_max_fee_per_gas: Some(max_fee_per_gas),
-        tx_max_fee_per_blob_gas: None,
-        tx_nonce: 0,
-        block_gas_limit: u64::MAX,
-        is_privileged: false,
-        fee_token: None,
-    }
-}
 
 // ============================================================================
 // Section 1: Exact Base Fee Calculation Tests
@@ -129,6 +49,7 @@ mod base_fee_exact_tests {
             U256::from(max_fee),
             U256::from(max_priority_fee),
             U256::from(base_fee),
+            false,
         );
 
         let fee_config = FeeConfig {
@@ -186,6 +107,7 @@ mod base_fee_exact_tests {
                 U256::from(max_fee),
                 U256::from(max_priority),
                 U256::from(base_fee),
+                false,
             );
 
             let fee_config = FeeConfig {
@@ -249,6 +171,7 @@ mod operator_fee_exact_tests {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         let fee_config = FeeConfig {
@@ -309,6 +232,7 @@ mod operator_fee_exact_tests {
                 U256::from(max_fee),
                 U256::from(max_priority),
                 U256::from(base_fee),
+                false,
             );
 
             let fee_config = FeeConfig {
@@ -376,6 +300,7 @@ mod coinbase_fee_exact_tests {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         let fee_config = FeeConfig {
@@ -437,6 +362,7 @@ mod coinbase_fee_exact_tests {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         // No operator fee configured
@@ -504,6 +430,7 @@ mod total_fee_accounting_tests {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         let fee_config = FeeConfig {
@@ -596,6 +523,7 @@ mod total_fee_accounting_tests {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         let fee_config = FeeConfig::default();
@@ -659,6 +587,7 @@ mod l1_fee_calculation_tests {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         let fee_config = FeeConfig {
@@ -720,6 +649,7 @@ mod l1_fee_calculation_tests {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         // No L1 fee config
@@ -772,6 +702,7 @@ mod gas_refund_exact_tests {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         let fee_config = FeeConfig::default();
@@ -852,6 +783,7 @@ mod multi_tx_tests {
                 U256::from(max_fee),
                 U256::from(max_priority),
                 U256::from(base_fee),
+                false,
             );
             env.tx_nonce = nonce;
 
@@ -912,6 +844,7 @@ mod fee_calculation_edge_cases {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         let fee_config = FeeConfig {
@@ -965,6 +898,7 @@ mod fee_calculation_edge_cases {
             U256::from(max_fee),
             U256::from(max_priority),
             U256::from(base_fee),
+            false,
         );
 
         let fee_config = FeeConfig {
@@ -1072,10 +1006,10 @@ mod priority_fee_capping_tests {
         ]);
 
         let gas_limit = 21_000u64;
-        let base_fee = 100u64;               // 100 wei
-        let operator_fee_per_gas = 50u64;    // 50 wei
-        let max_priority_fee = 200u64;       // 200 wei
-        let max_fee_per_gas = 500u64;        // 500 wei (plenty of room)
+        let base_fee = 100u64; // 100 wei
+        let operator_fee_per_gas = 50u64; // 50 wei
+        let max_priority_fee = 200u64; // 200 wei
+        let max_fee_per_gas = 500u64; // 500 wei (plenty of room)
 
         // Verify: max_priority + base + operator = 200 + 100 + 50 = 350 <= 500 ✓
         assert!(
@@ -1166,10 +1100,10 @@ mod priority_fee_capping_tests {
         ]);
 
         let gas_limit = 21_000u64;
-        let base_fee = 100u64;               // 100 wei
-        let operator_fee_per_gas = 50u64;    // 50 wei
-        let max_priority_fee = 100u64;       // 100 wei (user wants 100 priority)
-        let max_fee_per_gas = 200u64;        // 200 wei (but total is capped)
+        let base_fee = 100u64; // 100 wei
+        let operator_fee_per_gas = 50u64; // 50 wei
+        let max_priority_fee = 100u64; // 100 wei (user wants 100 priority)
+        let max_fee_per_gas = 200u64; // 200 wei (but total is capped)
 
         // Verify EIP-1559 constraint: max_priority <= max_fee
         assert!(
@@ -1242,7 +1176,8 @@ mod priority_fee_capping_tests {
         assert!(
             effective_priority < max_priority_fee,
             "Test validation: effective_priority ({}) should be less than max_priority ({})",
-            effective_priority, max_priority_fee
+            effective_priority,
+            max_priority_fee
         );
 
         assert_eq!(
@@ -1272,8 +1207,8 @@ mod priority_fee_capping_tests {
         let gas_limit = 21_000u64;
         let base_fee = 100u64;
         let operator_fee_per_gas = 50u64;
-        let max_priority_fee = 0u64;         // User doesn't want to tip
-        let max_fee_per_gas = 200u64;        // Enough to cover base + operator
+        let max_priority_fee = 0u64; // User doesn't want to tip
+        let max_fee_per_gas = 200u64; // Enough to cover base + operator
 
         let tx = create_eip1559_tx(
             TEST_RECIPIENT,
@@ -1358,8 +1293,8 @@ mod priority_fee_capping_tests {
         let gas_limit = 21_000u64;
         let base_fee = 100u64;
         let operator_fee_per_gas = 50u64;
-        let max_fee_per_gas = 150u64;        // max_fee is exactly base + operator
-        let max_priority_fee = 100u64;       // User wants to tip, but can't due to max_fee cap
+        let max_fee_per_gas = 150u64; // max_fee is exactly base + operator
+        let max_priority_fee = 100u64; // User wants to tip, but can't due to max_fee cap
 
         // Verify EIP-1559 constraint: max_priority <= max_fee
         assert!(
@@ -1592,14 +1527,26 @@ mod priority_fee_capping_tests {
 
         // Verify individual components
         let gas_used = U256::from(report.gas_used);
-        assert_eq!(base_vault, U256::from(base_fee) * gas_used, "Base fee vault mismatch");
-        assert_eq!(operator_vault, U256::from(operator_fee_per_gas) * gas_used, "Operator vault mismatch");
+        assert_eq!(
+            base_vault,
+            U256::from(base_fee) * gas_used,
+            "Base fee vault mismatch"
+        );
+        assert_eq!(
+            operator_vault,
+            U256::from(operator_fee_per_gas) * gas_used,
+            "Operator vault mismatch"
+        );
         // Coinbase = (effective_priority - operator) * gas = (80 - 0) * gas = 80 * gas
         // Wait, let me recalculate:
         // gas_price = min(80 + 150, 300) = 230
         // priority = 230 - 100 = 130
         // coinbase = 130 - 50 = 80
-        assert_eq!(coinbase, U256::from(max_priority_fee) * gas_used, "Coinbase mismatch");
+        assert_eq!(
+            coinbase,
+            U256::from(max_priority_fee) * gas_used,
+            "Coinbase mismatch"
+        );
     }
 }
 

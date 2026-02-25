@@ -14,7 +14,6 @@
 //! 5. finalize_execution tests (requires VM)
 //! 6. Edge cases and error handling
 
-use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::SAFE_BYTES_PER_BLOB;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{H160, U256};
@@ -199,15 +198,10 @@ mod l1_fee_calculation_tests {
 
         let fee = result.unwrap();
 
-        // Expected: (1 * GAS_PER_BLOB / SAFE_BYTES_PER_BLOB) * 100
-        // GAS_PER_BLOB = 131072 (2^17)
-        // SAFE_BYTES_PER_BLOB = 126976 (4096 * 31)
-        // fee_per_byte = 131072 / 126976 = 1 (integer division)
-        // fee = 1 * 100 = 100
-        let expected_fee_per_byte = U256::from(GAS_PER_BLOB) / U256::from(SAFE_BYTES_PER_BLOB);
-        let expected_fee = expected_fee_per_byte * U256::from(tx_size);
-
-        assert_eq!(fee, expected_fee, "L1 fee calculation mismatch");
+        // GAS_PER_BLOB / SAFE_BYTES_PER_BLOB = 131072 / 126976 = 1 (integer division)
+        // fee = 1 * l1_fee_per_blob_gas(1) * tx_size(100) = 100
+        let expected = U256::from(100u64);
+        assert_eq!(fee, expected, "L1 fee calculation mismatch");
     }
 
     #[test]
@@ -239,13 +233,11 @@ mod l1_fee_calculation_tests {
 
         let fee = result.unwrap();
 
-        // Expected: (100 * GAS_PER_BLOB / SAFE_BYTES_PER_BLOB) * SAFE_BYTES_PER_BLOB
-        // = 100 * GAS_PER_BLOB (approximately, due to integer division)
-        let fee_per_blob = U256::from(100u64) * U256::from(GAS_PER_BLOB);
-        let fee_per_byte = fee_per_blob / U256::from(SAFE_BYTES_PER_BLOB);
-        let expected_fee = fee_per_byte * U256::from(tx_size);
-
-        assert_eq!(fee, expected_fee);
+        // fee_per_blob = 100 * 131072 = 13_107_200
+        // fee_per_byte = 13_107_200 / 126976 = 103 (integer division)
+        // fee = 103 * 126976 = 13_078_528
+        let expected = U256::from(13_078_528u64);
+        assert_eq!(fee, expected);
     }
 
     #[test]
@@ -271,21 +263,17 @@ mod l1_fee_calculation_tests {
             l1_fee_vault: TEST_L1_FEE_VAULT,
             l1_fee_per_blob_gas: u64::MAX, // Maximum possible value
         };
-        // Very large transaction size to trigger potential overflow
+        // Very large transaction size to trigger overflow in checked_mul
         let tx_size = usize::MAX;
 
         let result = calculate_l1_fee(&fee_config, tx_size);
 
-        // This should either succeed with a large value or return an overflow error
-        // depending on implementation details
-        // The current implementation uses checked_mul which should handle overflow
-        if let Err(e) = result {
-            // Overflow is an acceptable result
-            assert!(
-                format!("{:?}", e).contains("Overflow"),
-                "Error should be overflow-related"
-            );
-        }
+        // u64::MAX * GAS_PER_BLOB overflows U256 intermediate, so this must return Err
+        assert!(result.is_err(), "Expected Err for overflow inputs, got Ok");
+        assert!(
+            format!("{:?}", result.unwrap_err()).contains("Overflow"),
+            "Error should be overflow-related"
+        );
     }
 
     #[test]
@@ -702,61 +690,6 @@ mod assertion_tests {
         let db = create_default_test_db();
         assert_nonce(&db, TEST_SENDER, 100);
     }
-}
-
-// ============================================================================
-// Section 10: Integration Test Placeholders
-// These tests require full VM setup and are more complex.
-// They test the Hook trait methods directly.
-// ============================================================================
-
-mod integration_test_stubs {
-    // NOTE: These tests require full VM instantiation which is complex.
-    // They are documented here for completeness but would need additional
-    // infrastructure to run properly.
-
-    // Privileged transaction tests (prepare_execution)
-    // - privileged_tx_from_bridge_mints_eth
-    // - privileged_tx_insufficient_balance_reverts
-    // - privileged_tx_intrinsic_gas_failure_reverts
-    // - privileged_tx_skips_nonce_check
-    // - privileged_tx_validates_gas_allowance
-    // - privileged_tx_value_transfer_works
-
-    // Fee token transaction tests (prepare_execution)
-    // - fee_token_validates_registration
-    // - fee_token_checks_ratio
-    // - fee_token_deducts_upfront_cost
-    // - fee_token_validates_sender_balance
-    // - fee_token_validates_nonce
-    // - fee_token_validates_sender_eoa
-    // - fee_token_validates_max_fee_per_gas
-
-    // Normal L2 transaction tests (prepare_execution)
-    // - normal_tx_delegates_to_default_hook
-    // - normal_tx_validates_operator_fee
-
-    // Privileged transaction finalization tests (finalize_execution)
-    // - privileged_tx_success_no_undo
-    // - privileged_tx_failure_undoes_value
-    // - privileged_tx_bridge_failure_no_undo
-    // - privileged_tx_deletes_selfdestructed
-
-    // Non-privileged finalization tests (finalize_execution)
-    // - non_privileged_failure_undoes_value
-    // - non_privileged_calculates_gas_refund
-    // - non_privileged_l1_gas_exceeds_limit_reverts
-    // - non_privileged_pays_l1_fee_vault
-    // - non_privileged_pays_base_fee_vault
-    // - non_privileged_pays_operator_fee
-    // - non_privileged_pays_coinbase
-    // - non_privileged_refunds_sender
-
-    // Fee token finalization tests (finalize_execution)
-    // - fee_token_pays_vaults_via_contract
-    // - fee_token_refunds_sender_via_contract
-    // - fee_token_burns_base_fee_if_no_vault
-    // - fee_token_ratio_applied_to_payments
 }
 
 // ============================================================================

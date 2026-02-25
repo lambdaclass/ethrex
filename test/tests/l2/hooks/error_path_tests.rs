@@ -9,11 +9,9 @@
 //! Testing error paths is critical for security.
 
 use ethrex_common::types::fee_config::{FeeConfig, OperatorFeeConfig};
-use ethrex_common::types::{EIP1559Transaction, PrivilegedL2Transaction, Transaction, TxKind};
-use ethrex_common::{Address, H160, H256, U256};
+use ethrex_common::types::{PrivilegedL2Transaction, Transaction, TxKind};
+use ethrex_common::{Address, H160, U256};
 use ethrex_levm::hooks::l2_hook::COMMON_BRIDGE_L2_ADDRESS;
-use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::vm::{VM, VMType};
 use once_cell::sync::OnceCell;
 
 use super::test_utils::*;
@@ -22,41 +20,6 @@ use bytes::Bytes;
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-fn create_test_l2_vm<'a>(
-    env: &ethrex_levm::environment::Environment,
-    db: &'a mut ethrex_levm::db::gen_db::GeneralizedDatabase,
-    tx: &Transaction,
-    fee_config: FeeConfig,
-) -> Result<VM<'a>, ethrex_levm::errors::VMError> {
-    let vm_type = VMType::L2(fee_config);
-    VM::new(env.clone(), db, tx, LevmCallTracer::disabled(), vm_type)
-}
-
-fn create_eip1559_tx(
-    to: Address,
-    value: U256,
-    gas_limit: u64,
-    max_fee_per_gas: u64,
-    max_priority_fee_per_gas: u64,
-    nonce: u64,
-) -> Transaction {
-    Transaction::EIP1559Transaction(EIP1559Transaction {
-        nonce,
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        gas_limit,
-        to: TxKind::Call(to),
-        value,
-        data: Bytes::new(),
-        access_list: Vec::new(),
-        chain_id: 1,
-        signature_y_parity: false,
-        signature_r: U256::zero(),
-        signature_s: U256::zero(),
-        inner_hash: OnceCell::new(),
-    })
-}
 
 fn create_privileged_tx(from: Address, to: Address, value: U256, gas_limit: u64) -> Transaction {
     Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
@@ -72,43 +35,6 @@ fn create_privileged_tx(from: Address, to: Address, value: U256, gas_limit: u64)
         from,
         inner_hash: OnceCell::new(),
     })
-}
-
-fn create_eip1559_env(
-    origin: Address,
-    gas_limit: u64,
-    max_fee_per_gas: U256,
-    max_priority_fee_per_gas: U256,
-    base_fee: U256,
-    is_privileged: bool,
-) -> ethrex_levm::environment::Environment {
-    use ethrex_common::types::Fork;
-    use ethrex_levm::EVMConfig;
-
-    ethrex_levm::environment::Environment {
-        origin,
-        gas_limit,
-        config: EVMConfig::new(Fork::Cancun, EVMConfig::canonical_values(Fork::Cancun)),
-        block_number: U256::from(1),
-        coinbase: TEST_COINBASE,
-        timestamp: U256::from(1000),
-        prev_randao: Some(H256::zero()),
-        difficulty: U256::zero(),
-        chain_id: U256::from(1),
-        base_fee_per_gas: base_fee,
-        base_blob_fee_per_gas: U256::zero(),
-        gas_price: max_fee_per_gas,
-        block_excess_blob_gas: None,
-        block_blob_gas_used: None,
-        tx_blob_hashes: Vec::new(),
-        tx_max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
-        tx_max_fee_per_gas: Some(max_fee_per_gas),
-        tx_max_fee_per_blob_gas: None,
-        tx_nonce: 0,
-        block_gas_limit: u64::MAX,
-        is_privileged,
-        fee_token: None,
-    }
 }
 
 /// Non-bridge privileged address for testing
@@ -137,7 +63,12 @@ mod privileged_forced_revert_tests {
         let large_value = U256::from(1_000_000_000_000_000_000u128); // 1 ETH
         let gas_limit = 21_000u64;
 
-        let tx = create_privileged_tx(NON_BRIDGE_PRIVILEGED, TEST_RECIPIENT, large_value, gas_limit);
+        let tx = create_privileged_tx(
+            NON_BRIDGE_PRIVILEGED,
+            TEST_RECIPIENT,
+            large_value,
+            gas_limit,
+        );
 
         let env = create_eip1559_env(
             NON_BRIDGE_PRIVILEGED,
@@ -196,7 +127,12 @@ mod privileged_forced_revert_tests {
         let mint_value = U256::from(10_000_000_000_000_000_000u128); // 10 ETH
         let gas_limit = 21_000u64;
 
-        let tx = create_privileged_tx(COMMON_BRIDGE_L2_ADDRESS, TEST_RECIPIENT, mint_value, gas_limit);
+        let tx = create_privileged_tx(
+            COMMON_BRIDGE_L2_ADDRESS,
+            TEST_RECIPIENT,
+            mint_value,
+            gas_limit,
+        );
 
         let env = create_eip1559_env(
             COMMON_BRIDGE_L2_ADDRESS,
@@ -238,7 +174,12 @@ mod privileged_forced_revert_tests {
         // Gas limit below intrinsic (21000 for simple transfer)
         let gas_limit = 1000u64;
 
-        let tx = create_privileged_tx(NON_BRIDGE_PRIVILEGED, TEST_RECIPIENT, U256::zero(), gas_limit);
+        let tx = create_privileged_tx(
+            NON_BRIDGE_PRIVILEGED,
+            TEST_RECIPIENT,
+            U256::zero(),
+            gas_limit,
+        );
 
         let env = create_eip1559_env(
             NON_BRIDGE_PRIVILEGED,
@@ -562,14 +503,7 @@ mod balance_edge_cases {
 
         let value = U256::from(1_000_000u64); // More than 1000 wei extra
 
-        let tx = create_eip1559_tx(
-            TEST_RECIPIENT,
-            value,
-            gas_limit,
-            max_fee,
-            max_priority,
-            0,
-        );
+        let tx = create_eip1559_tx(TEST_RECIPIENT, value, gas_limit, max_fee, max_priority, 0);
 
         let env = create_eip1559_env(
             TEST_SENDER,

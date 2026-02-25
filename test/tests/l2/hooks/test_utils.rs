@@ -9,15 +9,17 @@ use bytes::Bytes;
 use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::types::{
-    AccountInfo, AccountState, Fork, LegacyTransaction, Transaction, TxKind,
+    AccountInfo, AccountState, EIP1559Transaction, Fork, LegacyTransaction, Transaction, TxKind,
 };
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_levm::EVMConfig;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::Environment;
-use ethrex_levm::errors::DatabaseError;
+use ethrex_levm::errors::{DatabaseError, VMError};
 use ethrex_levm::hooks::l2_hook::COMMON_BRIDGE_L2_ADDRESS;
+use ethrex_levm::tracing::LevmCallTracer;
+use ethrex_levm::vm::{VM, VMType};
 use once_cell::sync::OnceCell;
 use rustc_hash::FxHashMap;
 
@@ -403,3 +405,82 @@ pub fn assert_nonce(db: &GeneralizedDatabase, address: Address, expected: u64) {
 }
 
 // Re-exports are already imported at the top of the file, no need to re-export.
+
+// ============================================================================
+// VM Integration Test Helpers
+// ============================================================================
+
+/// Creates a test VM configured for L2 execution.
+#[allow(dead_code)]
+pub fn create_test_l2_vm<'a>(
+    env: &Environment,
+    db: &'a mut GeneralizedDatabase,
+    tx: &Transaction,
+    fee_config: FeeConfig,
+) -> Result<VM<'a>, VMError> {
+    let vm_type = VMType::L2(fee_config);
+    VM::new(env.clone(), db, tx, LevmCallTracer::disabled(), vm_type)
+}
+
+/// Creates an EIP-1559 transaction for testing.
+#[allow(dead_code)]
+pub fn create_eip1559_tx(
+    to: Address,
+    value: U256,
+    gas_limit: u64,
+    max_fee_per_gas: u64,
+    max_priority_fee_per_gas: u64,
+    nonce: u64,
+) -> Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        gas_limit,
+        to: TxKind::Call(to),
+        value,
+        data: Bytes::new(),
+        access_list: Vec::new(),
+        chain_id: 1,
+        signature_y_parity: false,
+        signature_r: U256::zero(),
+        signature_s: U256::zero(),
+        inner_hash: OnceCell::new(),
+    })
+}
+
+/// Creates an environment for EIP-1559 transactions.
+#[allow(dead_code)]
+pub fn create_eip1559_env(
+    origin: Address,
+    gas_limit: u64,
+    max_fee_per_gas: U256,
+    max_priority_fee_per_gas: U256,
+    base_fee: U256,
+    is_privileged: bool,
+) -> Environment {
+    Environment {
+        origin,
+        gas_limit,
+        config: EVMConfig::new(Fork::Cancun, EVMConfig::canonical_values(Fork::Cancun)),
+        block_number: U256::from(1),
+        coinbase: TEST_COINBASE,
+        timestamp: U256::from(1000),
+        prev_randao: Some(H256::zero()),
+        difficulty: U256::zero(),
+        chain_id: U256::from(1),
+        base_fee_per_gas: base_fee,
+        base_blob_fee_per_gas: U256::zero(),
+        gas_price: max_fee_per_gas,
+        block_excess_blob_gas: None,
+        block_blob_gas_used: None,
+        tx_blob_hashes: Vec::new(),
+        tx_max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
+        tx_max_fee_per_gas: Some(max_fee_per_gas),
+        tx_max_fee_per_blob_gas: None,
+        tx_nonce: 0,
+        block_gas_limit: u64::MAX,
+        is_privileged,
+        fee_token: None,
+    }
+}

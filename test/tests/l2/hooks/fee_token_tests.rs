@@ -16,9 +16,9 @@ use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig
 use ethrex_common::types::{EIP1559Transaction, Transaction, TxKind};
 use ethrex_common::{Address, H160, U256};
 use ethrex_levm::hooks::l2_hook::{
-    encode_fee_token_call, encode_fee_token_ratio_call, encode_is_fee_token_call,
     COMMON_BRIDGE_L2_ADDRESS, FEE_TOKEN_RATIO_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS,
-    IS_FEE_TOKEN_SELECTOR, LOCK_FEE_SELECTOR, PAY_FEE_SELECTOR,
+    IS_FEE_TOKEN_SELECTOR, LOCK_FEE_SELECTOR, PAY_FEE_SELECTOR, encode_fee_token_call,
+    encode_fee_token_ratio_call, encode_is_fee_token_call,
 };
 use once_cell::sync::OnceCell;
 
