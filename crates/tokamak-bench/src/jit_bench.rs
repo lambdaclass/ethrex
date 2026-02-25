@@ -19,7 +19,7 @@ use std::hint::black_box;
 #[cfg(feature = "jit-bench")]
 use std::sync::OnceLock;
 #[cfg(feature = "jit-bench")]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "jit-bench")]
 use bytes::Bytes;
@@ -30,6 +30,8 @@ use ethrex_levm::vm::JIT_STATE;
 
 #[cfg(feature = "jit-bench")]
 use crate::runner;
+#[cfg(feature = "jit-bench")]
+use crate::stats;
 
 /// One-time JIT backend registration.
 #[cfg(feature = "jit-bench")]
@@ -82,7 +84,7 @@ fn prime_counter_for_jit(code: &Code) {
     }
 }
 
-/// Run a single JIT benchmark scenario.
+/// Run a single JIT benchmark scenario with per-run timing and warmup.
 ///
 /// Measures both interpreter and JIT execution times, computing the speedup ratio.
 /// Returns `None` if JIT compilation fails for this scenario.
@@ -99,26 +101,33 @@ pub fn run_jit_scenario(
     bytecode_hex: &str,
     runs: u64,
     iterations: u64,
+    warmup: u64,
 ) -> Option<JitBenchResult> {
     let bytecode = Bytes::from(hex::decode(bytecode_hex).expect("Invalid hex bytecode"));
     let calldata = runner::generate_calldata(iterations);
     let fork = Fork::Cancun;
 
+    let total_runs = warmup + runs;
+
     // ── Interpreter baseline FIRST ──────────────────────────────────────
     // Measured BEFORE any JIT compilation so the JIT cache is empty and
     // init_vm_interpreter_only() sets tracer.active=true to block JIT dispatch.
-    let interp_start = Instant::now();
-    for _ in 0..runs {
+    let mut interp_durations: Vec<Duration> = Vec::with_capacity(total_runs as usize);
+    for _ in 0..total_runs {
         let mut db = runner::init_db(bytecode.clone());
         let mut vm = runner::init_vm_interpreter_only(&mut db, calldata.clone());
+        let run_start = Instant::now();
         let report = black_box(vm.stateless_execute().expect("VM execution failed"));
+        interp_durations.push(run_start.elapsed());
         assert!(
             report.is_success(),
             "Interpreter execution reverted: {:?}",
             report.result
         );
     }
-    let interpreter_ns = interp_start.elapsed().as_nanos();
+    let interp_measured = stats::split_warmup(&interp_durations, warmup as usize);
+    let interpreter_ns: u128 = interp_measured.iter().map(|d| d.as_nanos()).sum();
+    let interp_stats = stats::compute_stats(interp_measured);
 
     // ── JIT compilation ─────────────────────────────────────────────────
     init_jit_backend();
@@ -135,18 +144,22 @@ pub fn run_jit_scenario(
     prime_counter_for_jit(&code);
 
     // ── JIT execution ───────────────────────────────────────────────────
-    let jit_start = Instant::now();
-    for _ in 0..runs {
+    let mut jit_durations: Vec<Duration> = Vec::with_capacity(total_runs as usize);
+    for _ in 0..total_runs {
         let mut db = runner::init_db(bytecode.clone());
         let mut vm = runner::init_vm(&mut db, calldata.clone());
+        let run_start = Instant::now();
         let report = black_box(vm.stateless_execute().expect("VM execution failed"));
+        jit_durations.push(run_start.elapsed());
         assert!(
             report.is_success(),
             "JIT VM execution reverted: {:?}",
             report.result
         );
     }
-    let jit_ns = jit_start.elapsed().as_nanos();
+    let jit_measured = stats::split_warmup(&jit_durations, warmup as usize);
+    let jit_ns: u128 = jit_measured.iter().map(|d| d.as_nanos()).sum();
+    let jit_stats = stats::compute_stats(jit_measured);
 
     // ── Compute speedup ─────────────────────────────────────────────────
     let speedup = if jit_ns > 0 {
@@ -161,6 +174,20 @@ pub fn run_jit_scenario(
         jit_ns as f64 / 1_000_000.0,
         speedup.unwrap_or(0.0),
     );
+    if let Some(ref s) = interp_stats {
+        eprintln!(
+            "    interp: mean={:.3}ms, stddev={:.3}ms",
+            s.mean_ns / 1_000_000.0,
+            s.stddev_ns / 1_000_000.0,
+        );
+    }
+    if let Some(ref s) = jit_stats {
+        eprintln!(
+            "    jit:    mean={:.3}ms, stddev={:.3}ms",
+            s.mean_ns / 1_000_000.0,
+            s.stddev_ns / 1_000_000.0,
+        );
+    }
 
     Some(JitBenchResult {
         scenario: name.to_string(),
@@ -168,6 +195,8 @@ pub fn run_jit_scenario(
         jit_ns: Some(jit_ns),
         speedup,
         runs,
+        interp_stats,
+        jit_stats,
     })
 }
 
@@ -176,7 +205,12 @@ pub fn run_jit_scenario(
 /// Iterates all scenarios, measuring both interpreter and JIT execution times.
 /// Scenarios that fail JIT compilation are skipped with a message.
 #[cfg(feature = "jit-bench")]
-pub fn run_jit_suite(scenarios: &[runner::Scenario], runs: u64, commit: &str) -> JitBenchSuite {
+pub fn run_jit_suite(
+    scenarios: &[runner::Scenario],
+    runs: u64,
+    warmup: u64,
+    commit: &str,
+) -> JitBenchSuite {
     let mut results = Vec::new();
 
     for scenario in scenarios {
@@ -189,10 +223,11 @@ pub fn run_jit_suite(scenarios: &[runner::Scenario], runs: u64, commit: &str) ->
         };
 
         eprintln!(
-            "Running JIT benchmark: {} ({} runs)...",
-            scenario.name, runs
+            "Running JIT benchmark: {} ({} runs + {} warmup)...",
+            scenario.name, runs, warmup
         );
-        if let Some(result) = run_jit_scenario(scenario.name, &bytecode, runs, scenario.iterations)
+        if let Some(result) =
+            run_jit_scenario(scenario.name, &bytecode, runs, scenario.iterations, warmup)
         {
             results.push(result);
         }
@@ -228,6 +263,8 @@ mod tests {
             jit_ns: Some(200_000),
             speedup: Some(5.0),
             runs: 100,
+            interp_stats: None,
+            jit_stats: None,
         };
         let json = serde_json::to_string(&result).expect("serialize");
         let deserialized: JitBenchResult = serde_json::from_str(&json).expect("deserialize");
@@ -243,6 +280,8 @@ mod tests {
             jit_ns: None,
             speedup: None,
             runs: 10,
+            interp_stats: None,
+            jit_stats: None,
         };
         let json = serde_json::to_string(&result).expect("serialize");
         assert!(json.contains("\"jit_ns\":null"));
@@ -259,6 +298,8 @@ mod tests {
                 jit_ns: Some(200_000),
                 speedup: Some(5.0),
                 runs: 10,
+                interp_stats: None,
+                jit_stats: None,
             }],
         };
         let json = serde_json::to_string_pretty(&suite).expect("serialize");

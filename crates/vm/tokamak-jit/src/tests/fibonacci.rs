@@ -125,6 +125,16 @@ const FIBONACCI_VALUES: [(u64, u64); 11] = [
 mod tests {
     use super::*;
 
+    use ethrex_common::U256;
+    use ethrex_common::types::Code;
+    use ethrex_levm::tracing::LevmCallTracer;
+    use ethrex_levm::vm::{VM, VMType};
+    use rustc_hash::FxHashMap;
+
+    use crate::tests::test_helpers::{
+        make_contract_accounts, make_test_db, make_test_env, make_test_tx,
+    };
+
     #[test]
     fn test_fibonacci_bytecode_is_valid() {
         let code = make_fibonacci_bytecode();
@@ -175,32 +185,15 @@ mod tests {
 
     /// Compile Fibonacci bytecode via revmc/LLVM, register the JIT backend,
     /// then execute through the full VM dispatch path (vm.rs → JIT → host).
-    ///
-    /// This is the Phase 3 E2E test: bytecode is pre-compiled, inserted into
-    /// the cache, and the VM's JIT dispatch picks it up instead of interpreting.
     #[cfg(feature = "revmc-backend")]
     #[test]
     #[serial_test::serial]
     fn test_fibonacci_jit_execution() {
         use std::sync::Arc;
 
-        use ethrex_common::{
-            Address, U256,
-            constants::EMPTY_TRIE_HASH,
-            types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
-        };
-        use ethrex_levm::{
-            Environment,
-            db::gen_db::GeneralizedDatabase,
-            tracing::LevmCallTracer,
-            vm::{JIT_STATE, VM, VMType},
-        };
-        use rustc_hash::FxHashMap;
+        use ethrex_levm::vm::{JIT_STATE, VM, VMType};
 
         use crate::backend::RevmcBackend;
-
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
 
         let bytecode = Bytes::from(make_fibonacci_bytecode());
         let fib_code = Code::from_bytecode(bytecode);
@@ -228,46 +221,11 @@ mod tests {
             calldata[24..32].copy_from_slice(&n.to_be_bytes());
             let calldata = Bytes::from(calldata);
 
-            let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-                .expect("in-memory store");
-            let header = BlockHeader {
-                state_root: *EMPTY_TRIE_HASH,
-                ..Default::default()
-            };
-            let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-                ethrex_blockchain::vm::StoreVmDatabase::new(store, header)
-                    .expect("StoreVmDatabase"),
-            );
-
-            let mut cache = FxHashMap::default();
-            cache.insert(
-                contract_addr,
-                Account::new(U256::MAX, fib_code.clone(), 0, FxHashMap::default()),
-            );
-            cache.insert(
-                sender_addr,
-                Account::new(
-                    U256::MAX,
-                    Code::from_bytecode(Bytes::new()),
-                    0,
-                    FxHashMap::default(),
-                ),
-            );
-            let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
-
-            let env = Environment {
-                origin: sender_addr,
-                #[expect(clippy::as_conversions)]
-                gas_limit: (i64::MAX - 1) as u64,
-                #[expect(clippy::as_conversions)]
-                block_gas_limit: (i64::MAX - 1) as u64,
-                ..Default::default()
-            };
-            let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-                to: TxKind::Call(contract_addr),
-                data: calldata,
-                ..Default::default()
-            });
+            let (contract_addr, sender_addr, accounts) =
+                make_contract_accounts(fib_code.clone(), FxHashMap::default());
+            let mut db = make_test_db(accounts);
+            let env = make_test_env(sender_addr);
+            let tx = make_test_tx(contract_addr, calldata);
 
             let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
                 .unwrap_or_else(|e| panic!("VM::new failed for fib({n}): {e:?}"));
@@ -305,29 +263,17 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_fibonacci_jit_vs_interpreter_validation() {
-        use std::sync::Arc;
-
-        use ethrex_common::{
-            Address, U256,
-            constants::EMPTY_TRIE_HASH,
-            types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
-        };
         use ethrex_levm::{
-            Environment,
-            db::gen_db::GeneralizedDatabase,
-            tracing::LevmCallTracer,
-            vm::{JIT_STATE, VM, VMType},
+            jit::cache::CodeCache,
+            vm::JIT_STATE,
         };
-        use rustc_hash::FxHashMap;
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
+        use crate::tests::test_helpers::TEST_GAS_LIMIT;
 
         // Reset JIT state for test isolation
         JIT_STATE.reset_for_testing();
-
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
 
         let bytecode = Bytes::from(make_fibonacci_bytecode());
         let fib_code = Code::from_bytecode(bytecode);
@@ -349,46 +295,11 @@ mod tests {
             let calldata = Bytes::from(calldata);
 
             // --- Interpreter path ---
-            let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-                .expect("in-memory store");
-            let header = BlockHeader {
-                state_root: *EMPTY_TRIE_HASH,
-                ..Default::default()
-            };
-            let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-                ethrex_blockchain::vm::StoreVmDatabase::new(store, header)
-                    .expect("StoreVmDatabase"),
-            );
-            let mut interp_cache = FxHashMap::default();
-            interp_cache.insert(
-                contract_addr,
-                Account::new(U256::MAX, fib_code.clone(), 0, FxHashMap::default()),
-            );
-            interp_cache.insert(
-                sender_addr,
-                Account::new(
-                    U256::MAX,
-                    Code::from_bytecode(Bytes::new()),
-                    0,
-                    FxHashMap::default(),
-                ),
-            );
-            let mut interp_db =
-                GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), interp_cache);
-
-            let env = Environment {
-                origin: sender_addr,
-                #[expect(clippy::as_conversions)]
-                gas_limit: (i64::MAX - 1) as u64,
-                #[expect(clippy::as_conversions)]
-                block_gas_limit: (i64::MAX - 1) as u64,
-                ..Default::default()
-            };
-            let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-                to: TxKind::Call(contract_addr),
-                data: calldata.clone(),
-                ..Default::default()
-            });
+            let (contract_addr, sender_addr, interp_accounts) =
+                make_contract_accounts(fib_code.clone(), FxHashMap::default());
+            let mut interp_db = make_test_db(interp_accounts);
+            let env = make_test_env(sender_addr);
+            let tx = make_test_tx(contract_addr, calldata.clone());
 
             let mut vm = VM::new(
                 env.clone(),
@@ -404,32 +315,9 @@ mod tests {
                 .unwrap_or_else(|e| panic!("Interpreter fib({n}) failed: {e:?}"));
 
             // --- JIT direct execution path ---
-            let store2 = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-                .expect("in-memory store");
-            let header2 = BlockHeader {
-                state_root: *EMPTY_TRIE_HASH,
-                ..Default::default()
-            };
-            let vm_db2: ethrex_vm::DynVmDatabase = Box::new(
-                ethrex_blockchain::vm::StoreVmDatabase::new(store2, header2)
-                    .expect("StoreVmDatabase"),
-            );
-            let mut jit_account_cache = FxHashMap::default();
-            jit_account_cache.insert(
-                contract_addr,
-                Account::new(U256::MAX, fib_code.clone(), 0, FxHashMap::default()),
-            );
-            jit_account_cache.insert(
-                sender_addr,
-                Account::new(
-                    U256::MAX,
-                    Code::from_bytecode(Bytes::new()),
-                    0,
-                    FxHashMap::default(),
-                ),
-            );
-            let mut jit_db =
-                GeneralizedDatabase::new_with_account_state(Arc::new(vm_db2), jit_account_cache);
+            let (_, _, jit_accounts) =
+                make_contract_accounts(fib_code.clone(), FxHashMap::default());
+            let mut jit_db = make_test_db(jit_accounts);
 
             // Build a minimal CallFrame matching what the VM would create
             #[expect(clippy::as_conversions)]
@@ -440,13 +328,13 @@ mod tests {
                 fib_code.clone(),
                 U256::zero(), // msg_value
                 calldata,
-                false,                 // is_static
-                (i64::MAX - 1) as u64, // gas_limit
-                0,                     // depth
-                false,                 // should_transfer_value
-                false,                 // is_create
-                0,                     // ret_offset
-                0,                     // ret_size
+                false,          // is_static
+                TEST_GAS_LIMIT, // gas_limit
+                0,              // depth
+                false,          // should_transfer_value
+                false,          // is_create
+                0,              // ret_offset
+                0,              // ret_size
                 ethrex_levm::call_frame::Stack::default(),
                 ethrex_levm::memory::Memory::default(),
             );
@@ -500,24 +388,6 @@ mod tests {
     /// the expected Fibonacci sequence values.
     #[test]
     fn test_fibonacci_interpreter_execution() {
-        use std::sync::Arc;
-
-        use ethrex_common::{
-            Address, U256,
-            constants::EMPTY_TRIE_HASH,
-            types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
-        };
-        use ethrex_levm::{
-            Environment,
-            db::gen_db::GeneralizedDatabase,
-            tracing::LevmCallTracer,
-            vm::{VM, VMType},
-        };
-        use rustc_hash::FxHashMap;
-
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
-
         let bytecode = Bytes::from(make_fibonacci_bytecode());
         let fib_code = Code::from_bytecode(bytecode);
 
@@ -527,48 +397,11 @@ mod tests {
             calldata[24..32].copy_from_slice(&n.to_be_bytes());
             let calldata = Bytes::from(calldata);
 
-            // Create in-memory database with contract and sender accounts
-            let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-                .expect("in-memory store");
-            let header = BlockHeader {
-                state_root: *EMPTY_TRIE_HASH,
-                ..Default::default()
-            };
-            let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-                ethrex_blockchain::vm::StoreVmDatabase::new(store, header)
-                    .expect("StoreVmDatabase"),
-            );
-
-            let mut cache = FxHashMap::default();
-            cache.insert(
-                contract_addr,
-                Account::new(U256::MAX, fib_code.clone(), 0, FxHashMap::default()),
-            );
-            cache.insert(
-                sender_addr,
-                Account::new(
-                    U256::MAX,
-                    Code::from_bytecode(Bytes::new()),
-                    0,
-                    FxHashMap::default(),
-                ),
-            );
-            let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
-
-            // Create VM
-            let env = Environment {
-                origin: sender_addr,
-                #[expect(clippy::as_conversions)]
-                gas_limit: (i64::MAX - 1) as u64,
-                #[expect(clippy::as_conversions)]
-                block_gas_limit: (i64::MAX - 1) as u64,
-                ..Default::default()
-            };
-            let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-                to: TxKind::Call(contract_addr),
-                data: calldata,
-                ..Default::default()
-            });
+            let (contract_addr, sender_addr, accounts) =
+                make_contract_accounts(fib_code.clone(), FxHashMap::default());
+            let mut db = make_test_db(accounts);
+            let env = make_test_env(sender_addr);
+            let tx = make_test_tx(contract_addr, calldata);
 
             let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
                 .unwrap_or_else(|e| panic!("VM::new failed for fib({n}): {e:?}"));

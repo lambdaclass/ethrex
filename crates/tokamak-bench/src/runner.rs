@@ -1,7 +1,7 @@
 use std::fs;
 use std::hint::black_box;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
@@ -22,10 +22,14 @@ use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use rustc_hash::FxHashMap;
 
+use crate::stats;
 use crate::types::{BenchResult, BenchSuite, OpcodeEntry};
 
 pub(crate) const SENDER_ADDRESS: u64 = 0x100;
 pub(crate) const CONTRACT_ADDRESS: u64 = 0x42;
+
+/// Default number of warmup runs to discard before measurement.
+pub const DEFAULT_WARMUP: u64 = 2;
 
 /// Default scenarios matching the revm_comparison benchmark suite.
 pub struct Scenario {
@@ -161,6 +165,7 @@ pub(crate) fn init_vm(db: &mut GeneralizedDatabase, calldata: Bytes) -> VM<'_> {
     VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1).expect("Failed to create VM")
 }
 
+#[cfg(feature = "jit-bench")]
 /// Create a VM that forces interpreter-only execution (no JIT dispatch).
 ///
 /// Uses `LevmCallTracer::new(true, false)` which sets `active: true`,
@@ -186,11 +191,20 @@ pub(crate) fn init_vm_interpreter_only(db: &mut GeneralizedDatabase, calldata: B
         .expect("Failed to create VM")
 }
 
-/// Run a single benchmark scenario and collect opcode timing data.
+/// Run a single benchmark scenario with per-run timing and warmup.
+///
+/// Collects individual run durations, discards warmup runs, and computes
+/// statistics (mean, stddev, 95% CI).
 ///
 /// **Not thread-safe**: This function resets and reads the global `OPCODE_TIMINGS`
 /// singleton. Concurrent calls will produce incorrect results.
-pub fn run_scenario(name: &str, bytecode_hex: &str, runs: u64, iterations: u64) -> BenchResult {
+pub fn run_scenario(
+    name: &str,
+    bytecode_hex: &str,
+    runs: u64,
+    iterations: u64,
+    warmup: u64,
+) -> BenchResult {
     let bytecode = Bytes::from(hex::decode(bytecode_hex).expect("Invalid hex bytecode"));
     let calldata = generate_calldata(iterations);
 
@@ -200,18 +214,28 @@ pub fn run_scenario(name: &str, bytecode_hex: &str, runs: u64, iterations: u64) 
         .expect("OPCODE_TIMINGS poisoned")
         .reset();
 
-    let start = Instant::now();
-    for _ in 0..runs {
+    let total_runs = warmup + runs;
+    let mut durations: Vec<Duration> = Vec::with_capacity(total_runs as usize);
+
+    for _ in 0..total_runs {
         let mut db = init_db(bytecode.clone());
         let mut vm = init_vm(&mut db, calldata.clone());
+        let run_start = Instant::now();
         let report = black_box(vm.stateless_execute().expect("VM execution failed"));
+        durations.push(run_start.elapsed());
         assert!(
             report.is_success(),
             "VM execution reverted: {:?}",
             report.result
         );
     }
-    let total_duration = start.elapsed();
+
+    // Discard warmup runs
+    let measured = stats::split_warmup(&durations, warmup as usize);
+    let total_duration: Duration = measured.iter().sum();
+
+    // Compute statistics
+    let bench_stats = stats::compute_stats(measured);
 
     // Extract opcode timings
     let timings = OPCODE_TIMINGS.lock().expect("OPCODE_TIMINGS poisoned");
@@ -244,13 +268,20 @@ pub fn run_scenario(name: &str, bytecode_hex: &str, runs: u64, iterations: u64) 
         total_duration_ns: total_duration.as_nanos(),
         runs,
         opcode_timings,
+        stats: bench_stats,
     }
 }
 
 /// Run the full benchmark suite.
 ///
 /// Scenarios are executed sequentially. Not thread-safe due to global `OPCODE_TIMINGS`.
-pub fn run_suite(scenarios: &[Scenario], runs: u64, commit: &str) -> BenchSuite {
+#[expect(clippy::as_conversions, reason = "ns-to-ms conversion for display")]
+pub fn run_suite(
+    scenarios: &[Scenario],
+    runs: u64,
+    warmup: u64,
+    commit: &str,
+) -> BenchSuite {
     let mut results = Vec::new();
 
     for scenario in scenarios {
@@ -262,13 +293,32 @@ pub fn run_suite(scenarios: &[Scenario], runs: u64, commit: &str) -> BenchSuite 
             }
         };
 
-        eprintln!("Running {} ({} runs)...", scenario.name, runs);
-        let result = run_scenario(scenario.name, &bytecode, runs, scenario.iterations);
+        eprintln!(
+            "Running {} ({} runs + {} warmup)...",
+            scenario.name, runs, warmup
+        );
+        let result = run_scenario(
+            scenario.name,
+            &bytecode,
+            runs,
+            scenario.iterations,
+            warmup,
+        );
         eprintln!(
             "  {} total: {:.3}ms",
             scenario.name,
             result.total_duration_ns as f64 / 1_000_000.0
         );
+        if let Some(ref s) = result.stats {
+            eprintln!(
+                "  {} mean: {:.3}ms, stddev: {:.3}ms, 95% CI: [{:.3}, {:.3}]ms",
+                scenario.name,
+                s.mean_ns / 1_000_000.0,
+                s.stddev_ns / 1_000_000.0,
+                s.ci_lower_ns / 1_000_000.0,
+                s.ci_upper_ns / 1_000_000.0,
+            );
+        }
         results.push(result);
     }
 

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::stats::BenchStats;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BenchSuite {
     pub timestamp: String,
@@ -13,6 +15,9 @@ pub struct BenchResult {
     pub total_duration_ns: u128,
     pub runs: u64,
     pub opcode_timings: Vec<OpcodeEntry>,
+    /// Statistical summary of per-run durations (None if < 2 samples).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stats: Option<BenchStats>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -85,6 +90,12 @@ pub struct JitBenchResult {
     pub speedup: Option<f64>,
     /// Number of iterations.
     pub runs: u64,
+    /// Interpreter per-run statistics (None if < 2 samples).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interp_stats: Option<BenchStats>,
+    /// JIT per-run statistics (None if < 2 samples or JIT unavailable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jit_stats: Option<BenchStats>,
 }
 
 /// A full JIT benchmark suite with metadata.

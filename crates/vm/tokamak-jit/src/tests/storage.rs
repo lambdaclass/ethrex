@@ -51,6 +51,16 @@ pub fn make_counter_bytecode() -> Vec<u8> {
 mod tests {
     use super::*;
 
+    use ethrex_common::U256;
+    use ethrex_common::types::Code;
+    use ethrex_levm::tracing::LevmCallTracer;
+    use ethrex_levm::vm::{VM, VMType};
+    use rustc_hash::FxHashMap;
+
+    use crate::tests::test_helpers::{
+        make_contract_accounts, make_test_db, make_test_env, make_test_tx,
+    };
+
     #[test]
     fn test_counter_bytecode_is_valid() {
         let code = make_counter_bytecode();
@@ -65,70 +75,17 @@ mod tests {
     /// Pre-seeds storage slot 0 with value 5, expects output = 6.
     #[test]
     fn test_counter_interpreter_execution() {
-        use std::sync::Arc;
-
-        use ethrex_common::{
-            Address, U256,
-            constants::EMPTY_TRIE_HASH,
-            types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
-        };
-        use ethrex_levm::{
-            Environment,
-            db::gen_db::GeneralizedDatabase,
-            tracing::LevmCallTracer,
-            vm::{VM, VMType},
-        };
-        use rustc_hash::FxHashMap;
-
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
-
         let bytecode = Bytes::from(make_counter_bytecode());
         let counter_code = Code::from_bytecode(bytecode);
 
-        // Pre-seed storage: slot 0 = 5
         let mut storage = FxHashMap::default();
         storage.insert(H256::zero(), U256::from(5u64));
 
-        let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-            .expect("in-memory store");
-        let header = BlockHeader {
-            state_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        };
-        let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
-        );
-
-        let mut cache = FxHashMap::default();
-        cache.insert(
-            contract_addr,
-            Account::new(U256::MAX, counter_code, 0, storage),
-        );
-        cache.insert(
-            sender_addr,
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                FxHashMap::default(),
-            ),
-        );
-        let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
-
-        let env = Environment {
-            origin: sender_addr,
-            #[expect(clippy::as_conversions)]
-            gas_limit: (i64::MAX - 1) as u64,
-            #[expect(clippy::as_conversions)]
-            block_gas_limit: (i64::MAX - 1) as u64,
-            ..Default::default()
-        };
-        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: TxKind::Call(contract_addr),
-            data: Bytes::new(),
-            ..Default::default()
-        });
+        let (contract_addr, sender_addr, accounts) =
+            make_contract_accounts(counter_code, storage);
+        let mut db = make_test_db(accounts);
+        let env = make_test_env(sender_addr);
+        let tx = make_test_tx(contract_addr, Bytes::new());
 
         let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
             .expect("VM::new should succeed");
@@ -156,21 +113,10 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_counter_jit_vs_interpreter() {
-        use std::sync::Arc;
-
-        use ethrex_common::{
-            Address, U256,
-            constants::EMPTY_TRIE_HASH,
-            types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
-        };
         use ethrex_levm::{
-            Environment,
-            db::gen_db::GeneralizedDatabase,
             jit::cache::CodeCache,
-            tracing::LevmCallTracer,
-            vm::{JIT_STATE, VM, VMType},
+            vm::JIT_STATE,
         };
-        use rustc_hash::FxHashMap;
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
@@ -178,8 +124,6 @@ mod tests {
         // Reset JIT state for test isolation
         JIT_STATE.reset_for_testing();
 
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
         let fork = ethrex_common::types::Fork::Cancun;
 
         let bytecode = Bytes::from(make_counter_bytecode());
@@ -200,45 +144,11 @@ mod tests {
         storage.insert(H256::zero(), U256::from(5u64));
 
         // --- Interpreter path ---
-        let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-            .expect("in-memory store");
-        let header = BlockHeader {
-            state_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        };
-        let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
-        );
-        let mut interp_cache = FxHashMap::default();
-        interp_cache.insert(
-            contract_addr,
-            Account::new(U256::MAX, counter_code.clone(), 0, storage.clone()),
-        );
-        interp_cache.insert(
-            sender_addr,
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                FxHashMap::default(),
-            ),
-        );
-        let mut interp_db =
-            GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), interp_cache);
-
-        let env = Environment {
-            origin: sender_addr,
-            #[expect(clippy::as_conversions)]
-            gas_limit: (i64::MAX - 1) as u64,
-            #[expect(clippy::as_conversions)]
-            block_gas_limit: (i64::MAX - 1) as u64,
-            ..Default::default()
-        };
-        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: TxKind::Call(contract_addr),
-            data: Bytes::new(),
-            ..Default::default()
-        });
+        let (contract_addr, sender_addr, interp_accounts) =
+            make_contract_accounts(counter_code.clone(), storage.clone());
+        let mut interp_db = make_test_db(interp_accounts);
+        let env = make_test_env(sender_addr);
+        let tx = make_test_tx(contract_addr, Bytes::new());
 
         let mut vm = VM::new(
             env.clone(),
@@ -262,31 +172,9 @@ mod tests {
         assert_eq!(interp_result, U256::from(6u64), "Interpreter: 5 + 1 = 6");
 
         // --- JIT direct execution path ---
-        let store2 = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-            .expect("in-memory store");
-        let header2 = BlockHeader {
-            state_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        };
-        let vm_db2: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store2, header2).expect("StoreVmDatabase"),
-        );
-        let mut jit_account_cache = FxHashMap::default();
-        jit_account_cache.insert(
-            contract_addr,
-            Account::new(U256::MAX, counter_code.clone(), 0, storage),
-        );
-        jit_account_cache.insert(
-            sender_addr,
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                FxHashMap::default(),
-            ),
-        );
-        let mut jit_db =
-            GeneralizedDatabase::new_with_account_state(Arc::new(vm_db2), jit_account_cache);
+        let (_, _, jit_accounts) =
+            make_contract_accounts(counter_code.clone(), storage);
+        let mut jit_db = make_test_db(jit_accounts);
 
         #[expect(clippy::as_conversions)]
         let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
@@ -297,7 +185,7 @@ mod tests {
             U256::zero(),
             Bytes::new(),
             false,
-            (i64::MAX - 1) as u64,
+            TEST_GAS_LIMIT,
             0,
             false,
             false,
@@ -331,7 +219,7 @@ mod tests {
                 assert_eq!(jit_result, U256::from(6u64), "JIT: 5 + 1 = 6");
 
                 // Note: JitOutcome::gas_used is execution-only gas (excludes intrinsic).
-                // The interpreter's gas_used includes intrinsic gas (21000 for basic tx).
+                // The interpreter's gas_used includes INTRINSIC_GAS for basic tx.
                 // The corrected apply_jit_outcome formula computes gas from call_frame
                 // (gas_limit - gas_remaining), which matches the interpreter. We verify
                 // this separately in test_jit_gas_matches_interpreter.
@@ -350,6 +238,7 @@ mod tests {
     /// ```
     ///
     /// Pre-seed slot 0 with 5 → after REVERT, slot 0 should still be 5.
+    #[cfg(feature = "revmc-backend")]
     fn make_sstore_revert_bytecode() -> Vec<u8> {
         let mut code = Vec::new();
         code.push(0x60);
@@ -375,6 +264,7 @@ mod tests {
     /// ```
     ///
     /// Pre-seed slot 0 with 5 → after REVERT, slot 0 should still be 5.
+    #[cfg(feature = "revmc-backend")]
     fn make_multi_sstore_revert_bytecode() -> Vec<u8> {
         let mut code = Vec::new();
         code.push(0x60);
@@ -409,6 +299,7 @@ mod tests {
     /// ```
     ///
     /// Pre-seed slot 0 = 5, slot 1 = 7 → after REVERT, both should be restored.
+    #[cfg(feature = "revmc-backend")]
     fn make_two_slot_sstore_revert_bytecode() -> Vec<u8> {
         let mut code = Vec::new();
         code.push(0x60);
@@ -437,25 +328,13 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_sstore_revert_rollback() {
-        use std::sync::Arc;
-
-        use ethrex_common::{
-            Address, U256,
-            constants::EMPTY_TRIE_HASH,
-            types::{Account, BlockHeader, Code},
-        };
-        use ethrex_levm::{
-            Environment, db::gen_db::GeneralizedDatabase, jit::cache::CodeCache, vm::JIT_STATE,
-        };
-        use rustc_hash::FxHashMap;
+        use ethrex_levm::{jit::cache::CodeCache, vm::JIT_STATE};
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
 
         JIT_STATE.reset_for_testing();
 
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
         let fork = ethrex_common::types::Fork::Cancun;
 
         let bytecode = Bytes::from(make_sstore_revert_bytecode());
@@ -475,30 +354,10 @@ mod tests {
         let mut storage = FxHashMap::default();
         storage.insert(H256::zero(), U256::from(5u64));
 
-        let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-            .expect("in-memory store");
-        let header = BlockHeader {
-            state_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        };
-        let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
-        );
-        let mut cache = FxHashMap::default();
-        cache.insert(
-            contract_addr,
-            Account::new(U256::MAX, code.clone(), 0, storage),
-        );
-        cache.insert(
-            sender_addr,
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                FxHashMap::default(),
-            ),
-        );
-        let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
+        let (contract_addr, sender_addr, accounts) =
+            make_contract_accounts(code.clone(), storage);
+        let mut db = make_test_db(accounts);
+        let env = make_test_env(sender_addr);
 
         #[expect(clippy::as_conversions)]
         let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
@@ -509,7 +368,7 @@ mod tests {
             U256::zero(),
             Bytes::new(),
             false,
-            (i64::MAX - 1) as u64,
+            TEST_GAS_LIMIT,
             0,
             false,
             false,
@@ -519,14 +378,6 @@ mod tests {
             ethrex_levm::memory::Memory::default(),
         );
 
-        let env = Environment {
-            origin: sender_addr,
-            #[expect(clippy::as_conversions)]
-            gas_limit: (i64::MAX - 1) as u64,
-            #[expect(clippy::as_conversions)]
-            block_gas_limit: (i64::MAX - 1) as u64,
-            ..Default::default()
-        };
         let mut substate = ethrex_levm::vm::Substate::default();
         let mut storage_original_values = FxHashMap::default();
 
@@ -567,25 +418,13 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_multi_sstore_revert_rollback() {
-        use std::sync::Arc;
-
-        use ethrex_common::{
-            Address, U256,
-            constants::EMPTY_TRIE_HASH,
-            types::{Account, BlockHeader, Code},
-        };
-        use ethrex_levm::{
-            Environment, db::gen_db::GeneralizedDatabase, jit::cache::CodeCache, vm::JIT_STATE,
-        };
-        use rustc_hash::FxHashMap;
+        use ethrex_levm::{jit::cache::CodeCache, vm::JIT_STATE};
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
 
         JIT_STATE.reset_for_testing();
 
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
         let fork = ethrex_common::types::Fork::Cancun;
 
         let bytecode = Bytes::from(make_multi_sstore_revert_bytecode());
@@ -604,30 +443,10 @@ mod tests {
         let mut storage = FxHashMap::default();
         storage.insert(H256::zero(), U256::from(5u64));
 
-        let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-            .expect("in-memory store");
-        let header = BlockHeader {
-            state_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        };
-        let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
-        );
-        let mut cache = FxHashMap::default();
-        cache.insert(
-            contract_addr,
-            Account::new(U256::MAX, code.clone(), 0, storage),
-        );
-        cache.insert(
-            sender_addr,
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                FxHashMap::default(),
-            ),
-        );
-        let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
+        let (contract_addr, sender_addr, accounts) =
+            make_contract_accounts(code.clone(), storage);
+        let mut db = make_test_db(accounts);
+        let env = make_test_env(sender_addr);
 
         #[expect(clippy::as_conversions)]
         let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
@@ -638,7 +457,7 @@ mod tests {
             U256::zero(),
             Bytes::new(),
             false,
-            (i64::MAX - 1) as u64,
+            TEST_GAS_LIMIT,
             0,
             false,
             false,
@@ -648,14 +467,6 @@ mod tests {
             ethrex_levm::memory::Memory::default(),
         );
 
-        let env = Environment {
-            origin: sender_addr,
-            #[expect(clippy::as_conversions)]
-            gas_limit: (i64::MAX - 1) as u64,
-            #[expect(clippy::as_conversions)]
-            block_gas_limit: (i64::MAX - 1) as u64,
-            ..Default::default()
-        };
         let mut substate = ethrex_levm::vm::Substate::default();
         let mut storage_original_values = FxHashMap::default();
 
@@ -695,25 +506,13 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_two_slot_sstore_revert_rollback() {
-        use std::sync::Arc;
-
-        use ethrex_common::{
-            Address, U256,
-            constants::EMPTY_TRIE_HASH,
-            types::{Account, BlockHeader, Code},
-        };
-        use ethrex_levm::{
-            Environment, db::gen_db::GeneralizedDatabase, jit::cache::CodeCache, vm::JIT_STATE,
-        };
-        use rustc_hash::FxHashMap;
+        use ethrex_levm::{jit::cache::CodeCache, vm::JIT_STATE};
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
 
         JIT_STATE.reset_for_testing();
 
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
         let fork = ethrex_common::types::Fork::Cancun;
 
         let bytecode = Bytes::from(make_two_slot_sstore_revert_bytecode());
@@ -734,30 +533,22 @@ mod tests {
         storage.insert(H256::zero(), U256::from(5u64));
         storage.insert(slot_1, U256::from(7u64));
 
-        let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-            .expect("in-memory store");
-        let header = BlockHeader {
-            state_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        };
-        let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
-        );
-        let mut cache = FxHashMap::default();
-        cache.insert(
-            contract_addr,
-            Account::new(U256::MAX, code.clone(), 0, storage),
-        );
-        cache.insert(
-            sender_addr,
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                FxHashMap::default(),
-            ),
-        );
-        let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
+        let contract_addr = Address::from_low_u64_be(0x42);
+        let sender_addr = Address::from_low_u64_be(0x100);
+        let accounts = vec![
+            TestAccount {
+                address: contract_addr,
+                code: code.clone(),
+                storage,
+            },
+            TestAccount {
+                address: sender_addr,
+                code: Code::from_bytecode(Bytes::new()),
+                storage: FxHashMap::default(),
+            },
+        ];
+        let mut db = make_test_db(accounts);
+        let env = make_test_env(sender_addr);
 
         #[expect(clippy::as_conversions)]
         let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
@@ -768,7 +559,7 @@ mod tests {
             U256::zero(),
             Bytes::new(),
             false,
-            (i64::MAX - 1) as u64,
+            TEST_GAS_LIMIT,
             0,
             false,
             false,
@@ -778,14 +569,6 @@ mod tests {
             ethrex_levm::memory::Memory::default(),
         );
 
-        let env = Environment {
-            origin: sender_addr,
-            #[expect(clippy::as_conversions)]
-            gas_limit: (i64::MAX - 1) as u64,
-            #[expect(clippy::as_conversions)]
-            block_gas_limit: (i64::MAX - 1) as u64,
-            ..Default::default()
-        };
         let mut substate = ethrex_levm::vm::Substate::default();
         let mut storage_original_values = FxHashMap::default();
 
@@ -837,29 +620,16 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_jit_gas_matches_interpreter() {
-        use std::sync::Arc;
-
-        use ethrex_common::{
-            Address, U256,
-            constants::EMPTY_TRIE_HASH,
-            types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
-        };
         use ethrex_levm::{
-            Environment,
-            db::gen_db::GeneralizedDatabase,
             jit::cache::CodeCache,
-            tracing::LevmCallTracer,
             vm::{JIT_STATE, VM, VMType},
         };
-        use rustc_hash::FxHashMap;
 
         use crate::backend::RevmcBackend;
         use crate::execution::execute_jit;
 
         JIT_STATE.reset_for_testing();
 
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
         let fork = ethrex_common::types::Fork::Cancun;
 
         let bytecode = Bytes::from(make_counter_bytecode());
@@ -879,45 +649,11 @@ mod tests {
         storage.insert(H256::zero(), U256::from(5u64));
 
         // --- Interpreter path ---
-        let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-            .expect("in-memory store");
-        let header = BlockHeader {
-            state_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        };
-        let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
-        );
-        let mut interp_cache = FxHashMap::default();
-        interp_cache.insert(
-            contract_addr,
-            Account::new(U256::MAX, counter_code.clone(), 0, storage.clone()),
-        );
-        interp_cache.insert(
-            sender_addr,
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                FxHashMap::default(),
-            ),
-        );
-        let mut interp_db =
-            GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), interp_cache);
-
-        let env = Environment {
-            origin: sender_addr,
-            #[expect(clippy::as_conversions)]
-            gas_limit: (i64::MAX - 1) as u64,
-            #[expect(clippy::as_conversions)]
-            block_gas_limit: (i64::MAX - 1) as u64,
-            ..Default::default()
-        };
-        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: TxKind::Call(contract_addr),
-            data: Bytes::new(),
-            ..Default::default()
-        });
+        let (contract_addr, sender_addr, interp_accounts) =
+            make_contract_accounts(counter_code.clone(), storage.clone());
+        let mut interp_db = make_test_db(interp_accounts);
+        let env = make_test_env(sender_addr);
+        let tx = make_test_tx(contract_addr, Bytes::new());
 
         let mut vm = VM::new(
             env.clone(),
@@ -931,34 +667,9 @@ mod tests {
         assert!(interp_report.is_success());
 
         // --- JIT direct execution path ---
-        let store2 = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-            .expect("in-memory store");
-        let header2 = BlockHeader {
-            state_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        };
-        let vm_db2: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store2, header2).expect("StoreVmDatabase"),
-        );
-        let mut jit_cache = FxHashMap::default();
-        jit_cache.insert(
-            contract_addr,
-            Account::new(U256::MAX, counter_code.clone(), 0, storage),
-        );
-        jit_cache.insert(
-            sender_addr,
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                FxHashMap::default(),
-            ),
-        );
-        let mut jit_db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db2), jit_cache);
-
-        // Use same gas_limit as the interpreter's call frame to isolate execution gas
-        #[expect(clippy::as_conversions)]
-        let gas_limit = (i64::MAX - 1) as u64;
+        let (_, _, jit_accounts) =
+            make_contract_accounts(counter_code.clone(), storage);
+        let mut jit_db = make_test_db(jit_accounts);
 
         #[expect(clippy::as_conversions)]
         let mut call_frame = ethrex_levm::call_frame::CallFrame::new(
@@ -969,7 +680,7 @@ mod tests {
             U256::zero(),
             Bytes::new(),
             false,
-            gas_limit,
+            TEST_GAS_LIMIT,
             0,
             false,
             false,
@@ -996,7 +707,7 @@ mod tests {
         // gas_used = gas_limit - max(gas_remaining, 0)
         #[expect(clippy::as_conversions)]
         let jit_gas_remaining = call_frame.gas_remaining.max(0) as u64;
-        let jit_execution_gas = gas_limit
+        let jit_execution_gas = TEST_GAS_LIMIT
             .checked_sub(jit_gas_remaining)
             .expect("gas_limit >= gas_remaining");
 
@@ -1009,20 +720,19 @@ mod tests {
                      JitOutcome::gas_used ({gas_used})"
                 );
 
-                // Cross-check: JIT execution gas + intrinsic gas == interpreter gas_used.
-                // The interpreter's stateless_execute() includes intrinsic gas (21000
-                // for a basic EIP-1559 CALL). The JIT's gas_used is execution-only
+                // Cross-check: JIT execution gas + INTRINSIC_GAS == interpreter gas_used.
+                // The interpreter's stateless_execute() includes INTRINSIC_GAS
+                // for a basic EIP-1559 CALL. The JIT's gas_used is execution-only
                 // (intrinsic gas was deducted before entering execute_jit). So:
-                //   interp_report.gas_used == jit_execution_gas + 21000
-                let intrinsic_gas = 21_000u64;
+                //   interp_report.gas_used == jit_execution_gas + INTRINSIC_GAS
                 let interp_gas = interp_report.gas_used;
                 assert_eq!(
                     interp_gas,
                     jit_execution_gas
-                        .checked_add(intrinsic_gas)
+                        .checked_add(INTRINSIC_GAS)
                         .expect("no overflow"),
                     "interpreter gas_used ({interp_gas}) != JIT execution gas \
-                     ({jit_execution_gas}) + intrinsic ({intrinsic_gas})"
+                     ({jit_execution_gas}) + intrinsic ({INTRINSIC_GAS})"
                 );
             }
             other => panic!("Expected JIT success, got: {other:?}"),

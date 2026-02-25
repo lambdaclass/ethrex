@@ -77,8 +77,8 @@ pub fn jit_to_markdown(suite: &JitBenchSuite) -> String {
 
     md.push_str("## JIT vs Interpreter Benchmark\n\n");
     md.push_str(&format!("Commit: `{}`\n\n", suite.commit));
-    md.push_str("| Scenario | Interpreter (ms) | JIT (ms) | Speedup |\n");
-    md.push_str("|----------|------------------|----------|--------|\n");
+    md.push_str("| Scenario | Interpreter (ms) | JIT (ms) | Speedup | Interp Stddev (ms) | JIT Stddev (ms) |\n");
+    md.push_str("|----------|------------------|----------|---------|--------------------|-----------------|\n");
 
     for result in &suite.results {
         let interp_ms = result.interpreter_ns as f64 / 1_000_000.0;
@@ -91,10 +91,57 @@ pub fn jit_to_markdown(suite: &JitBenchSuite) -> String {
             .map(|s| format!("{s:.2}x"))
             .unwrap_or_else(|| "N/A".to_string());
 
+        let interp_stddev = result
+            .interp_stats
+            .as_ref()
+            .map(|s| format!("{:.3}", s.stddev_ns / 1_000_000.0))
+            .unwrap_or_else(|| "N/A".to_string());
+        let jit_stddev = result
+            .jit_stats
+            .as_ref()
+            .map(|s| format!("{:.3}", s.stddev_ns / 1_000_000.0))
+            .unwrap_or_else(|| "N/A".to_string());
+
         md.push_str(&format!(
-            "| {} | {interp_ms:.3} | {jit_ms:.3} | {speedup} |\n",
+            "| {} | {interp_ms:.3} | {jit_ms:.3} | {speedup} | {interp_stddev} | {jit_stddev} |\n",
             result.scenario,
         ));
+    }
+
+    md.push('\n');
+    md
+}
+
+/// Generate a suite-level statistics markdown section.
+#[expect(clippy::as_conversions, reason = "ns-to-ms conversion for display")]
+pub fn suite_stats_to_markdown(suite: &BenchSuite) -> String {
+    let mut md = String::new();
+
+    md.push_str("## Scenario Statistics\n\n");
+    md.push_str("| Scenario | Mean (ms) | Stddev (ms) | 95% CI (ms) | Min (ms) | Max (ms) | Runs |\n");
+    md.push_str("|----------|-----------|-------------|-------------|----------|----------|------|\n");
+
+    for result in &suite.results {
+        if let Some(ref s) = result.stats {
+            md.push_str(&format!(
+                "| {} | {:.3} | {:.3} | [{:.3}, {:.3}] | {:.3} | {:.3} | {} |\n",
+                result.scenario,
+                s.mean_ns / 1_000_000.0,
+                s.stddev_ns / 1_000_000.0,
+                s.ci_lower_ns / 1_000_000.0,
+                s.ci_upper_ns / 1_000_000.0,
+                s.min_ns as f64 / 1_000_000.0,
+                s.max_ns as f64 / 1_000_000.0,
+                s.samples,
+            ));
+        } else {
+            md.push_str(&format!(
+                "| {} | {:.3} | N/A | N/A | N/A | N/A | {} |\n",
+                result.scenario,
+                result.total_duration_ns as f64 / 1_000_000.0 / result.runs as f64,
+                result.runs,
+            ));
+        }
     }
 
     md.push('\n');
@@ -121,6 +168,7 @@ mod tests {
                     total_ns: 1000,
                     count: 10,
                 }],
+                stats: None,
             }],
         };
 
@@ -168,6 +216,8 @@ mod tests {
                 jit_ns: Some(2_000_000),
                 speedup: Some(5.0),
                 runs: 10,
+                interp_stats: None,
+                jit_stats: None,
             }],
         };
         let json = jit_suite_to_json(&suite);
@@ -189,6 +239,8 @@ mod tests {
                     jit_ns: Some(2_100_000),
                     speedup: Some(5.876),
                     runs: 10,
+                    interp_stats: None,
+                    jit_stats: None,
                 },
                 JitBenchResult {
                     scenario: "ERC20Transfer".to_string(),
@@ -196,6 +248,8 @@ mod tests {
                     jit_ns: None,
                     speedup: None,
                     runs: 10,
+                    interp_stats: None,
+                    jit_stats: None,
                 },
             ],
         };
@@ -205,5 +259,33 @@ mod tests {
         assert!(md.contains("ERC20Transfer"));
         assert!(md.contains("test123"));
         assert!(md.contains("N/A"));
+    }
+
+    #[test]
+    fn test_suite_stats_markdown() {
+        use crate::stats::BenchStats;
+        let suite = BenchSuite {
+            timestamp: "0".to_string(),
+            commit: "test".to_string(),
+            results: vec![BenchResult {
+                scenario: "Fibonacci".to_string(),
+                total_duration_ns: 35_500_000,
+                runs: 10,
+                opcode_timings: vec![],
+                stats: Some(BenchStats {
+                    mean_ns: 3_550_000.0,
+                    stddev_ns: 120_000.0,
+                    ci_lower_ns: 3_475_000.0,
+                    ci_upper_ns: 3_625_000.0,
+                    min_ns: 3_410_000,
+                    max_ns: 3_780_000,
+                    samples: 10,
+                }),
+            }],
+        };
+        let md = suite_stats_to_markdown(&suite);
+        assert!(md.contains("Fibonacci"));
+        assert!(md.contains("Stddev"));
+        assert!(md.contains("95% CI"));
     }
 }

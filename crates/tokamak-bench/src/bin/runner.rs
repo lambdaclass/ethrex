@@ -30,6 +30,10 @@ enum Command {
         #[arg(long, default_value = "10")]
         runs: u64,
 
+        /// Number of warmup runs to discard before measurement
+        #[arg(long, default_value = "2")]
+        warmup: u64,
+
         /// Git commit hash for metadata
         #[arg(long, default_value = "unknown")]
         commit: String,
@@ -84,6 +88,10 @@ enum Command {
         #[arg(long, default_value = "10")]
         runs: u64,
 
+        /// Number of warmup runs to discard before measurement
+        #[arg(long, default_value = "2")]
+        warmup: u64,
+
         /// Git commit hash for metadata
         #[arg(long, default_value = "unknown")]
         commit: String,
@@ -105,6 +113,7 @@ fn main() {
         Command::Run {
             scenarios,
             runs,
+            warmup,
             commit,
             output,
         } => {
@@ -130,7 +139,7 @@ fn main() {
                 process::exit(1);
             }
 
-            let suite = run_suite(&scenario_list, runs, &commit);
+            let suite = run_suite(&scenario_list, runs, warmup, &commit);
             let json = to_json(&suite);
 
             match output {
@@ -196,6 +205,7 @@ fn main() {
         Command::JitBench {
             scenarios,
             runs,
+            warmup,
             commit,
             output,
             markdown,
@@ -222,7 +232,8 @@ fn main() {
                 process::exit(1);
             }
 
-            let suite = tokamak_bench::jit_bench::run_jit_suite(&scenario_list, runs, &commit);
+            let suite =
+                tokamak_bench::jit_bench::run_jit_suite(&scenario_list, runs, warmup, &commit);
 
             let content = if markdown {
                 jit_to_markdown(&suite)

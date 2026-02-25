@@ -102,6 +102,7 @@ mod tests {
                     total_ns: avg_ns * 100,
                     count: 100,
                 }],
+                stats: None,
             }],
         }
     }

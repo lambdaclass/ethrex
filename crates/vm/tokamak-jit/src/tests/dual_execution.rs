@@ -19,9 +19,9 @@ mod tests {
     use std::sync::Arc;
 
     use ethrex_common::types::{
-        Account, BlockHeader, Code, EIP1559Transaction, Fork, Transaction, TxKind,
+        Code, Fork, Transaction,
     };
-    use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
+    use ethrex_common::{Address, H256, U256};
     use ethrex_levm::db::gen_db::GeneralizedDatabase;
     use ethrex_levm::jit::cache::CompiledCode;
     use ethrex_levm::tracing::LevmCallTracer;
@@ -29,6 +29,9 @@ mod tests {
     use rustc_hash::FxHashMap;
 
     use crate::tests::storage::make_counter_bytecode;
+    use crate::tests::test_helpers::{
+        make_contract_accounts, make_test_db, make_test_env, make_test_tx,
+    };
 
     /// Helper: create the standard counter contract VM setup.
     ///
@@ -40,54 +43,17 @@ mod tests {
         Transaction,
         Code,
     ) {
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
-
         let bytecode = Bytes::from(make_counter_bytecode());
         let counter_code = Code::from_bytecode(bytecode);
 
         let mut storage = FxHashMap::default();
         storage.insert(H256::zero(), U256::from(5u64));
 
-        let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
-            .expect("in-memory store");
-        let header = BlockHeader {
-            state_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        };
-        let vm_db: ethrex_vm::DynVmDatabase = Box::new(
-            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
-        );
-
-        let mut cache = FxHashMap::default();
-        cache.insert(
-            contract_addr,
-            Account::new(U256::MAX, counter_code.clone(), 0, storage),
-        );
-        cache.insert(
-            sender_addr,
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                FxHashMap::default(),
-            ),
-        );
-        let db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
-
-        #[expect(clippy::as_conversions)]
-        let gas = (i64::MAX - 1) as u64;
-        let env = ethrex_levm::Environment {
-            origin: sender_addr,
-            gas_limit: gas,
-            block_gas_limit: gas,
-            ..Default::default()
-        };
-        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: TxKind::Call(contract_addr),
-            data: Bytes::new(),
-            ..Default::default()
-        });
+        let (contract_addr, sender_addr, accounts) =
+            make_contract_accounts(counter_code.clone(), storage);
+        let db = make_test_db(accounts);
+        let env = make_test_env(sender_addr);
+        let tx = make_test_tx(contract_addr, Bytes::new());
 
         (db, env, tx, counter_code)
     }
@@ -308,9 +274,10 @@ mod tests {
         use ethrex_levm::vm::{JIT_STATE, Substate};
 
         use ethrex_common::types::{
-            Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction,
-            Transaction, TxKind,
+            Account, AccountState, ChainConfig, Code, CodeMetadata,
         };
+
+        use crate::tests::test_helpers::{CONTRACT_ADDR, SENDER_ADDR};
 
         /// Database that always returns errors.
         /// Forces `interpreter_loop` to fail with InternalError when it
@@ -413,8 +380,8 @@ mod tests {
 
         let fork = Fork::Cancun;
 
-        let contract_addr = Address::from_low_u64_be(0x42);
-        let sender_addr = Address::from_low_u64_be(0x100);
+        let contract_addr = Address::from_low_u64_be(CONTRACT_ADDR);
+        let sender_addr = Address::from_low_u64_be(SENDER_ADDR);
 
         let code = Code::from_bytecode(Bytes::from(bytecode_bytes));
 
@@ -448,19 +415,8 @@ mod tests {
         let store: Arc<dyn Database> = Arc::new(FailingDatabase);
         let mut db = GeneralizedDatabase::new_with_account_state(store, cache);
 
-        #[expect(clippy::as_conversions)]
-        let gas = (i64::MAX - 1) as u64;
-        let env = ethrex_levm::Environment {
-            origin: sender_addr,
-            gas_limit: gas,
-            block_gas_limit: gas,
-            ..Default::default()
-        };
-        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: TxKind::Call(contract_addr),
-            data: Bytes::new(),
-            ..Default::default()
-        });
+        let env = make_test_env(sender_addr);
+        let tx = make_test_tx(contract_addr, Bytes::new());
 
         // Reset JIT state and register mock backend
         JIT_STATE.reset_for_testing();
