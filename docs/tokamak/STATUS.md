@@ -1,6 +1,6 @@
 # Tokamak Client Status Report
 
-**Date**: 2026-02-25
+**Date**: 2026-02-26
 **Branch**: `feat/tokamak-proven-execution`
 **Overall Completion**: ~55-60%
 
@@ -63,15 +63,19 @@
 - Public dashboard (clients.tokamak.network)
 - Precompile timing export
 
-### Feature #21: Time-Travel Debugger (~2%)
+### Feature #21: Time-Travel Debugger (~25%)
 
 **Completed:**
-- `tokamak-debugger` skeleton crate (feature flag only)
+- `tokamak-debugger` crate with replay engine (E-1)
+- LEVM `OpcodeRecorder` hook trait (feature-gated `tokamak-debugger`)
+- Per-opcode step recording: opcode, PC, gas, depth, stack top-N, memory size, code address
+- Forward/backward/goto navigation API (`ReplayEngine`)
+- Stack `peek()` for non-destructive stack inspection
+- 14 tests: basic replay (4), navigation (5), gas tracking (3), nested calls (2)
 
 **Remaining:**
-- TX replay + state reconstruction
-- Interactive CLI (step, breakpoint, inspect)
-- `debug_timeTravel` RPC endpoint
+- Interactive CLI (step, breakpoint, inspect) — E-2
+- `debug_timeTravel` RPC endpoint — E-3
 - Web UI (optional)
 
 ---
@@ -100,8 +104,9 @@ Measured after Volkov R21-R23 fixes (corrected measurement order).
 | LEVM JIT infra | `crates/vm/levm/src/jit/` (9 files) | ~2,700 |
 | tokamak-jit crate | `crates/vm/tokamak-jit/src/` (14 files) | ~5,650 |
 | tokamak-bench crate | `crates/tokamak-bench/src/` (7 files) | ~1,305 |
-| tokamak-debugger | `crates/tokamak-debugger/src/` (1 file) | 2 |
-| **Total** | | **~9,657** |
+| tokamak-debugger | `crates/tokamak-debugger/src/` (8 files) | ~450 |
+| LEVM debugger hook | `crates/vm/levm/src/debugger_hook.rs` | ~27 |
+| **Total** | | **~10,130** |
 
 Base ethrex codebase: ~103K lines Rust.
 
@@ -144,6 +149,9 @@ R23(5.0) -> R24(8.0)
 ### Recently Completed (Phase D)
 - Constant folding optimizer (D-3) — same-length PUSH+PUSH+OP → single PUSH, 6 opcodes (ADD/MUL/SUB/AND/OR/XOR), pipeline integration in backend.rs, 37 unit + 5 integration tests (fec956fef)
 
+### Recently Completed (Phase E)
+- TX Replay Engine (E-1) — LEVM OpcodeRecorder hook, DebugRecorder, ReplayEngine with forward/backward/goto navigation, 14 tests
+
 ### CI Verified (PR #6260, run 22379067904)
 - Hive 6/6 suites PASS (tokamak-jit build) — RPC, Devp2p, Auth, Cancun, Paris, Withdrawals
 - Quality Gate PASS — cargo check/clippy/test with all tokamak features
@@ -156,14 +164,14 @@ R23(5.0) -> R24(8.0)
 ### Not Started
 - Mainnet full sync as Tokamak client
 - L2 integration (`tokamak-l2` flag declared, no implementation)
-- Time-Travel Debugger (empty skeleton)
+- Time-Travel Debugger CLI (E-2) + RPC endpoint (E-3)
 - Cross-client benchmark (Geth/Reth comparison)
 - Public benchmark dashboard
 - EF grant application
 - External node operator adoption
 
 ### In Progress
-- (none — Phase B, C, D complete; next: E-1 TX Replay Engine or A-2 Hoodi sync)
+- (none — Phase B, C, D, E-1 complete; next: E-2 Debugger CLI or A-2 Hoodi sync)
 
 ---
 

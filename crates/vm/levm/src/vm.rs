@@ -476,6 +476,9 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Opcode dispatch table, built dynamically per fork.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    /// Per-opcode recorder for time-travel debugging.
+    #[cfg(feature = "tokamak-debugger")]
+    pub opcode_recorder: Option<Rc<RefCell<dyn crate::debugger_hook::OpcodeRecorder>>>,
 }
 
 impl<'a> VM<'a> {
@@ -524,6 +527,8 @@ impl<'a> VM<'a> {
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+            #[cfg(feature = "tokamak-debugger")]
+            opcode_recorder: None,
         };
 
         let call_type = if is_create {
@@ -861,6 +866,20 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
+
+            #[cfg(feature = "tokamak-debugger")]
+            if let Some(recorder) = self.opcode_recorder.as_ref() {
+                recorder.borrow_mut().record_step(
+                    opcode,
+                    self.current_call_frame.pc,
+                    self.current_call_frame.gas_remaining,
+                    self.call_frames.len(),
+                    &self.current_call_frame.stack,
+                    self.current_call_frame.memory.len,
+                    self.current_call_frame.code_address,
+                );
+            }
+
             self.advance_pc(1)?;
 
             #[cfg(feature = "perf_opcode_timings")]

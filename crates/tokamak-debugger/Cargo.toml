@@ -5,7 +5,16 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-ethrex-levm.workspace = true
+ethrex-levm = { workspace = true, features = ["tokamak-debugger"] }
+ethrex-common = { workspace = true, default-features = false }
+bytes.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+ethrex-storage.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-vm.workspace = true
+rustc-hash.workspace = true
 
 [lints]
 workspace = true

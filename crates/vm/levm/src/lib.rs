@@ -82,6 +82,8 @@ pub mod utils;
 pub mod vm;
 pub use environment::*;
 pub mod account;
+#[cfg(feature = "tokamak-debugger")]
+pub mod debugger_hook;
 #[cfg(feature = "tokamak-jit")]
 pub mod jit;
 #[cfg(feature = "perf_opcode_timings")]

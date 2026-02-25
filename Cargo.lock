@@ -13491,7 +13491,14 @@ dependencies = [
 name = "tokamak-debugger"
 version = "9.0.0"
 dependencies = [
+ "bytes",
+ "ethrex-blockchain",
+ "ethrex-common",
  "ethrex-levm",
+ "ethrex-storage",
+ "ethrex-vm",
+ "rustc-hash 2.1.1",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

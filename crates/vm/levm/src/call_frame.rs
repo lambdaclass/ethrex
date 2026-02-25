@@ -162,6 +162,14 @@ impl Stack {
         self.offset = STACK_LIMIT;
     }
 
+    /// Peek at the value at `index` from the top of the stack (0 = top).
+    ///
+    /// Returns `None` if `index` is beyond current stack depth.
+    #[cfg(feature = "tokamak-debugger")]
+    pub fn peek(&self, index: usize) -> Option<U256> {
+        self.values.get(self.offset.wrapping_add(index)).copied()
+    }
+
     /// Pushes a copy of the value at depth N
     #[inline]
     pub fn dup<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {

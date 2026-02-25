@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
-**Created**: 2026-02-24
-**Context**: Overall ~60% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE.
+**Created**: 2026-02-24 | **Updated**: 2026-02-26
+**Context**: Overall ~60% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE.
 
 ---
 
@@ -167,13 +167,15 @@
 
 > "Time-Travel Debugger MVP."
 
-### E-1. Debugger Core: TX Replay Engine [P2]
-- Replay transaction opcode-by-opcode using LEVM
-- Record state snapshots at each step
-- Support forward/backward navigation
-- **Verification**: Can replay a known mainnet TX and show each opcode + state
-- **Dependency**: A-2 (need synced state for real TX replay)
-- **Estimate**: 20-30h
+### E-1. Debugger Core: TX Replay Engine [P2] ✅ DONE
+- LEVM `OpcodeRecorder` hook trait in `debugger_hook.rs` (feature-gated `tokamak-debugger`) ✅
+- `DebugRecorder` captures per-opcode step: opcode, PC, gas, depth, stack top-N, memory size, code address ✅
+- `ReplayEngine::record()` executes TX with recorder, builds `ReplayTrace` ✅
+- Navigation API: `forward()`, `backward()`, `goto()`, `current_step()`, `steps_range()` ✅
+- Stack `peek()` method for non-destructive inspection ✅
+- **Verification**: 14 tests passing — basic replay (4), navigation (5), gas tracking (3), nested calls (2) ✅
+- **Dependency**: None (uses test-constructed bytecodes, not synced state)
+- **Completed**: Session — LEVM hook + tokamak-debugger engine + 14 tests
 
 ### E-2. Debugger CLI [P2]
 - Interactive CLI: `step`, `step-back`, `break <pc>`, `inspect <slot>`, `continue`
@@ -231,8 +233,8 @@
 Week 1:  [P0] A-1 ✅ + A-2 ⏳ → A-3 ✅ → A-4 ✅ (Snapsync 수동 필요)
 Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
 Week 3:  [P1] C-1 ✅ + C-2 ✅ + B-3 ✅
-Week 4:  [P2] D-1 decision ✅ + D-2 ✅ + D-3 ✅ → E-1 start
-Week 5+: [P2] E-1 + E-2 → E-3
+Week 4:  [P2] D-1 decision ✅ + D-2 ✅ + D-3 ✅ → E-1 ✅
+Week 5+: [P2] E-2 + E-3
 Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
 ```
 
