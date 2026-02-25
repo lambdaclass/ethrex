@@ -703,20 +703,25 @@ impl Blockchain {
         }
         let t_gathered = Instant::now();
 
+        let t0 = Instant::now();
         let collapsed = self.collapse_root_node(parent_header, None, root)?;
+        let t1 = Instant::now();
         let state_trie_hash = match collapsed {
             Some(root @ Node::Branch(_)) => {
-                // For Branch roots (>1 children), all children already have cached
-                // hashes from collect_trie. Encode directly to skip commit()'s
-                // recursive descent and Nibbles allocations.
                 let buf = root.encode_to_vec();
+                let t2 = Instant::now();
                 let hash = NodeHash::from_encoded(&buf);
                 state_updates.push((Nibbles::default(), buf));
+                let t3 = Instant::now();
+                info!(
+                    "  root detail: collapse={}us encode={}us hash+push={}us",
+                    t1.duration_since(t0).as_micros(),
+                    t2.duration_since(t1).as_micros(),
+                    t3.duration_since(t2).as_micros(),
+                );
                 hash.finalize()
             }
             Some(root) => {
-                // For restructured roots (Extension/Leaf from 1-child collapse),
-                // the child NodeRef lacks a cached hash, so use commit().
                 let mut root = NodeRef::from(root);
                 let hash = root.commit(Nibbles::default(), &mut state_updates);
                 hash.finalize()
