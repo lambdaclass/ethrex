@@ -14,12 +14,9 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::{
-        self,
-        utils::SelectableScroller,
-        widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
-    },
-    sequencer::errors::MonitorError,
+    error::MonitorError,
+    utils::SelectableScroller,
+    widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
 };
 
 /*
@@ -166,20 +163,22 @@ impl L2ToL1MessagesTable {
         eth_client: &EthClient,
         rollup_client: &EthClient,
     ) -> Result<(), MonitorError> {
-        let mut new_l1_to_l2_messages = Self::fetch_new_items(
+        let mut new_l2_to_l1_messages = Self::fetch_new_items(
             &mut self.last_l2_block_fetched,
             self.common_bridge_address,
             eth_client,
             rollup_client,
         )
         .await?;
-        new_l1_to_l2_messages.truncate(50);
+        new_l2_to_l1_messages.drain(..new_l2_to_l1_messages.len().saturating_sub(50));
 
-        let n_new_latest_batches = new_l1_to_l2_messages.len();
-        self.items.truncate(50 - n_new_latest_batches);
+        let n_new = new_l2_to_l1_messages.len();
+        let items_to_keep = 50usize.saturating_sub(n_new);
+        self.items
+            .drain(..self.items.len().saturating_sub(items_to_keep));
         self.refresh_items(eth_client, rollup_client).await?;
-        self.items.extend_from_slice(&new_l1_to_l2_messages);
-        self.items.rotate_right(n_new_latest_batches);
+        self.items.extend_from_slice(&new_l2_to_l1_messages);
+        self.items.rotate_right(n_new);
 
         Ok(())
     }
@@ -207,7 +206,7 @@ impl L2ToL1MessagesTable {
         eth_client: &EthClient,
         rollup_client: &EthClient,
     ) -> Result<Vec<L2ToL1MessageRow>, MonitorError> {
-        let logs = monitor::utils::get_logs(
+        let logs = crate::utils::get_logs(
             last_l2_block_fetched,
             COMMON_BRIDGE_L2_ADDRESS,
             vec![],
