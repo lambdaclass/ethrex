@@ -12,14 +12,12 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::{
-        utils::SelectableScroller,
-        widget::{
-            ADDRESS_LENGTH_IN_DIGITS, BLOCK_SIZE_LENGTH_IN_DIGITS, GAS_USED_LENGTH_IN_DIGITS,
-            HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS, TX_NUMBER_LENGTH_IN_DIGITS,
-        },
+    error::MonitorError,
+    utils::SelectableScroller,
+    widget::{
+        ADDRESS_LENGTH_IN_DIGITS, BLOCK_SIZE_LENGTH_IN_DIGITS, GAS_USED_LENGTH_IN_DIGITS,
+        HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS, TX_NUMBER_LENGTH_IN_DIGITS,
     },
-    sequencer::errors::MonitorError,
 };
 
 struct BlockEntry {
@@ -75,10 +73,12 @@ impl BlocksTable {
 
     pub async fn on_tick(&mut self, store: &Store) -> Result<(), MonitorError> {
         let mut new_blocks = Self::refresh_items(&mut self.last_l2_block_known, store).await?;
-        new_blocks.truncate(50);
+        new_blocks.drain(..new_blocks.len().saturating_sub(50));
 
         let n_new_blocks = new_blocks.len();
-        self.items.truncate(50 - n_new_blocks);
+        let items_to_keep = 50usize.saturating_sub(n_new_blocks);
+        self.items
+            .drain(..self.items.len().saturating_sub(items_to_keep));
         self.items.extend_from_slice(&new_blocks);
         self.items.rotate_right(n_new_blocks);
 

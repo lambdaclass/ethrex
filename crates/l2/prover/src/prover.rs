@@ -4,7 +4,7 @@ use crate::{
 };
 use ethrex_guest_program::input::ProgramInput;
 use ethrex_l2::sequencer::utils::get_git_commit_hash;
-use ethrex_l2_common::prover::{BatchProof, ProofData, ProofFormat};
+use ethrex_l2_common::prover::{BatchProof, ProofData, ProofFormat, ProverType};
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -64,6 +64,18 @@ struct ProverData {
     format: ProofFormat,
 }
 
+/// The result of polling a proof coordinator for work.
+enum InputRequest {
+    /// A batch was assigned to this prover.
+    Batch(Box<ProverData>),
+    /// No work available right now (prover ahead of proposer, proof already
+    /// exists, version mismatch). The prover should retry later.
+    RetryLater,
+    /// The coordinator permanently rejected this prover's type.
+    /// The prover should skip this coordinator and continue with others.
+    ProverTypeNotNeeded(ProverType),
+}
+
 struct Prover<B: ProverBackend> {
     backend: B,
     proof_coordinator_endpoints: Vec<Url>,
@@ -91,21 +103,28 @@ impl<B: ProverBackend> Prover<B> {
                 .map(|url| url.to_string())
                 .collect::<Vec<String>>()
         );
-        // Build the prover depending on the prover_type passed as argument.
         loop {
             sleep(Duration::from_millis(self.proving_time_ms)).await;
 
             for endpoint in &self.proof_coordinator_endpoints {
-                let Ok(Some(prover_data)) = self
-                    .request_new_input(endpoint)
-                    .await
-                    .inspect_err(|e| error!(%endpoint, "Failed to request new data from: {e}"))
-                else {
-                    continue;
+                let prover_data = match self.request_new_input(endpoint).await {
+                    Ok(InputRequest::Batch(data)) => *data,
+                    Ok(InputRequest::RetryLater) => continue,
+                    Ok(InputRequest::ProverTypeNotNeeded(prover_type)) => {
+                        error!(
+                            %endpoint,
+                            "Proof coordinator does not need {prover_type} proofs. \
+                             This prover's backend is not in the required proof types \
+                             for this deployment."
+                        );
+                        continue;
+                    }
+                    Err(e) => {
+                        error!(%endpoint, "Failed to request new data: {e}");
+                        continue;
+                    }
                 };
 
-                // If we get the input
-                // Generate the Proof
                 let batch_proof = if self.timed {
                     self.backend
                         .prove_timed(prover_data.input, prover_data.format)
@@ -146,8 +165,7 @@ impl<B: ProverBackend> Prover<B> {
         }
     }
 
-    async fn request_new_input(&self, endpoint: &Url) -> Result<Option<ProverData>, String> {
-        // Request the input with the correct batch_number
+    async fn request_new_input(&self, endpoint: &Url) -> Result<InputRequest, String> {
         let request =
             ProofData::batch_request(self.commit_hash.clone(), self.backend.prover_type());
         let response = connect_to_prover_server_wr(endpoint, &request)
@@ -160,12 +178,15 @@ impl<B: ProverBackend> Prover<B> {
                 input,
                 format,
             } => (batch_number, input, format),
-            ProofData::NoBatchForVersion { commit_hash } => {
+            ProofData::VersionMismatch => {
                 warn!(
-                    "Received no batch available to prove for current version: {}. The prover may be older or newer to the next batch to prove",
-                    commit_hash,
+                    "Version mismatch: the next batch to prove was built with a different code \
+                     version. This prover may need to be updated."
                 );
-                return Ok(None);
+                return Ok(InputRequest::RetryLater);
+            }
+            ProofData::ProverTypeNotNeeded { prover_type } => {
+                return Ok(InputRequest::ProverTypeNotNeeded(prover_type));
             }
             ProofData::ProverTypeNotNeeded { prover_type } => {
                 error!(
@@ -179,11 +200,11 @@ impl<B: ProverBackend> Prover<B> {
         };
 
         let (Some(batch_number), Some(input), Some(format)) = (batch_number, input, format) else {
-            warn!(
+            debug!(
                 %endpoint,
-                "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
+                "No batches to prove right now, the prover may be ahead of the proposer"
             );
-            return Ok(None);
+            return Ok(InputRequest::RetryLater);
         };
 
         info!(%endpoint, "Received Response for batch_number: {batch_number}");
@@ -201,11 +222,11 @@ impl<B: ProverBackend> Prover<B> {
             blocks: input.blocks,
             execution_witness: input.execution_witness,
         };
-        Ok(Some(ProverData {
+        Ok(InputRequest::Batch(Box::new(ProverData {
             batch_number,
             input,
             format,
-        }))
+        })))
     }
 
     async fn submit_proof(

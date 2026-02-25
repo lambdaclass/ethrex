@@ -31,6 +31,7 @@ ethrex-l2-rpc.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
 ethrex-sdk = { path = "./sdk" }
+ethrex-monitor.workspace = true
 ethrex-p2p.workspace = true
 hex.workspace = true
 bytes.workspace = true

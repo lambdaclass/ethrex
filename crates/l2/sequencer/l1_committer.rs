@@ -2,7 +2,6 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, SequencerConfig,
     sequencer::{
         errors::CommitterError,
-        sequencer_state::{SequencerState, SequencerStatus},
         utils::{
             self, batch_checkpoint_name, fetch_blocks_with_respective_fee_configs,
             get_git_commit_hash, system_now_ms,
@@ -22,6 +21,7 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_common::{
     calldata::Value,
     merkle_tree::compute_merkle_root,
@@ -558,7 +558,7 @@ impl L1Committer {
                 *fee_config_guard = *fee_config;
             }
 
-            one_time_checkpoint_blockchain.add_block_pipeline(block.clone())?;
+            one_time_checkpoint_blockchain.add_block_pipeline(block.clone(), None)?;
         }
 
         Ok(())
@@ -855,7 +855,7 @@ impl L1Committer {
                     *fee_config_guard = fee_config;
                 }
 
-                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone())?
+                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone(), None)?
             };
 
             // Accumulate block data with the rest of the batch.
@@ -1398,7 +1398,7 @@ impl L1Committer {
             arbitrary_base_blob_gas_price: self.arbitrary_base_blob_gas_price,
             validium: self.validium,
             based: self.based,
-            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
             committer_wake_up_ms: self.committer_wake_up_ms,
             last_committed_batch_timestamp: self.last_committed_batch_timestamp,
             last_committed_batch: self.last_committed_batch,
@@ -1409,7 +1409,7 @@ impl L1Committer {
     }
 
     async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
                     .await
@@ -1678,7 +1678,7 @@ pub async fn regenerate_state(
             *fee_config_guard = fee_config;
         }
 
-        if let Err(err) = blockchain.add_block_pipeline(block) {
+        if let Err(err) = blockchain.add_block_pipeline(block, None) {
             return Err(CommitterError::FailedToCreateCheckpoint(err.to_string()));
         }
     }

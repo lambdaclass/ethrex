@@ -42,12 +42,10 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
             }
             _ => Err("No blocks to prove.".to_owned()),
         },
-        ProofData::NoBatchForVersion {
-            commit_hash: server_code_version,
-        } => Err(format!(
-            "Next batch does not match with the current version. Server code: {}, Prover code: {}",
-            server_code_version, commit_hash
-        )),
+        ProofData::VersionMismatch => Err(
+            "Version mismatch: the next batch to prove was built with a different code version"
+                .to_owned(),
+        ),
         _ => Err("Expecting ProofData::Response".to_owned()),
     }
 }
