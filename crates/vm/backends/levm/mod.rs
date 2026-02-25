@@ -25,7 +25,7 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
-use ethrex_levm::account::LevmAccount;
+use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
@@ -552,29 +552,66 @@ impl LEVM {
                 None
             };
 
-            // Load account into cache, then apply all changes with a single mut ref
-            db.get_account(addr)
-                .map_err(|e| EvmError::Custom(format!("seed_db_from_bal load: {e}")))?;
-            let acc = db
-                .get_account_mut(addr)
-                .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
+            // When BAL covers all account info fields (balance + nonce + code), insert
+            // a default LevmAccount directly to skip the store/shared_base lookup.
+            // For partial coverage, load from store to fill missing fields.
+            let has_all_info = balance_pos > 0 && nonce_pos > 0 && code_pos > 0;
+            if has_all_info {
+                use ethrex_common::types::AccountInfo;
+                let balance = acct_changes.balance_changes[balance_pos - 1].post_balance;
+                let nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
+                let code_hash = code_update
+                    .as_ref()
+                    .map(|(h, _)| *h)
+                    .unwrap_or(*EMPTY_KECCACK_HASH);
+                let acc = db
+                    .current_accounts_state
+                    .entry(addr)
+                    .or_insert_with(|| LevmAccount {
+                        info: AccountInfo::default(),
+                        storage: FxHashMap::default(),
+                        has_storage: false,
+                        status: AccountStatus::Modified,
+                    });
+                acc.info.balance = balance;
+                acc.info.nonce = nonce;
+                acc.info.code_hash = code_hash;
+                acc.mark_modified();
+            } else {
+                // Partial BAL coverage — load from store/shared_base, then overwrite
+                // the covered fields. get_account already caches, so get_account_mut
+                // will be a cache hit.
+                db.get_account(addr)
+                    .map_err(|e| EvmError::Custom(format!("seed_db_from_bal load: {e}")))?;
+                let acc = db
+                    .get_account_mut(addr)
+                    .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
 
-            if balance_pos > 0 {
-                acc.info.balance = acct_changes.balance_changes[balance_pos - 1].post_balance;
+                if balance_pos > 0 {
+                    acc.info.balance = acct_changes.balance_changes[balance_pos - 1].post_balance;
+                }
+                if nonce_pos > 0 {
+                    acc.info.nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
+                }
+                if let Some((hash, _)) = &code_update {
+                    acc.info.code_hash = *hash;
+                }
             }
-            if nonce_pos > 0 {
-                acc.info.nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
-            }
-            if let Some((hash, _)) = &code_update {
-                acc.info.code_hash = *hash;
-            }
-            for sc in &acct_changes.storage_changes {
-                let pos = sc
-                    .slot_changes
-                    .partition_point(|c| c.block_access_index <= max_idx);
-                if pos > 0 {
-                    let key = ethrex_common::utils::u256_to_h256(sc.slot);
-                    acc.storage.insert(key, sc.slot_changes[pos - 1].post_value);
+
+            // Apply storage changes (works for both paths since acc is now in current_accounts_state)
+            if any_storage {
+                let acc = db
+                    .current_accounts_state
+                    .get_mut(&addr)
+                    .expect("account was just inserted");
+                for sc in &acct_changes.storage_changes {
+                    let pos = sc
+                        .slot_changes
+                        .partition_point(|c| c.block_access_index <= max_idx);
+                    if pos > 0 {
+                        let key = ethrex_common::utils::u256_to_h256(sc.slot);
+                        acc.storage.insert(key, sc.slot_changes[pos - 1].post_value);
+                    }
                 }
             }
 
@@ -618,14 +655,20 @@ impl LEVM {
         // Build validation index once — shared read-only across parallel tx validations.
         let validation_index = bal.build_validation_index();
 
+        // Pre-compute capacity hint for per-tx DBs from BAL account count.
+        let bal_account_count = bal.accounts().len();
+
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded)
         let t_exec = std::time::Instant::now();
         let results: Result<Vec<(usize, TxType, ExecutionReport)>, EvmError> = (0..n_txs)
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
                 let (tx, sender) = &txs_with_sender[tx_idx];
-                let mut tx_db =
-                    GeneralizedDatabase::new_with_shared_base(store.clone(), system_seed.clone());
+                let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
+                    store.clone(),
+                    system_seed.clone(),
+                    bal_account_count,
+                );
                 let mut stack_pool = Vec::with_capacity(8);
 
                 // Pre-seed with BAL-derived intermediate state.
@@ -1015,9 +1058,10 @@ impl LEVM {
             .map_err(|e| EvmError::Custom(format!("prefetch_storage: {e}")))?;
 
         // Phase 3: Code prefetch — collect code hashes from Phase 1 account states
-        // (already cached), then batch-fetch codes in parallel.
+        // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
+        // Uses par_iter for collection since blocks can have thousands of accounts.
         let code_hashes: Vec<ethrex_common::H256> = accounts
-            .iter()
+            .par_iter()
             .filter_map(|ac| {
                 store
                     .get_account_state(ac.address)

@@ -64,13 +64,26 @@ impl GeneralizedDatabase {
     /// Skips initial_accounts_state tracking since parallel per-tx DBs never
     /// call get_state_transitions_tx (state comes from BAL instead).
     pub fn new_with_shared_base(store: Arc<dyn Database>, shared_base: Arc<CacheDB>) -> Self {
+        Self::new_with_shared_base_and_capacity(store, shared_base, 0)
+    }
+
+    /// Like `new_with_shared_base` but pre-allocates account/code maps to
+    /// `capacity` entries, avoiding rehashing during BAL seeding.
+    pub fn new_with_shared_base_and_capacity(
+        store: Arc<dyn Database>,
+        shared_base: Arc<CacheDB>,
+        capacity: usize,
+    ) -> Self {
         Self {
             store,
-            current_accounts_state: Default::default(),
+            current_accounts_state: FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            ),
             initial_accounts_state: Default::default(),
             shared_base: Some(shared_base),
             tx_backup: None,
-            codes: Default::default(),
+            codes: FxHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,

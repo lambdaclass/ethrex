@@ -187,13 +187,13 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
         let produced_bal = blockchain1
             .add_block_pipeline_returning_bal(block, None)
-            .map_err(|e| {
-                format!("Two-pass pass-1 failed for test {test_key}: {e:?}")
-            })?;
+            .map_err(|e| format!("Two-pass pass-1 failed for test {test_key}: {e:?}"))?;
 
         apply_fork_choice(&store1, hash, hash, hash)
             .await
-            .map_err(|e| format!("Two-pass pass-1 fork choice failed for test {test_key}: {e:?}"))?;
+            .map_err(|e| {
+                format!("Two-pass pass-1 fork choice failed for test {test_key}: {e:?}")
+            })?;
 
         // If execution produced no BAL (non-Amsterdam block in a transition test), skip pass 2.
         match produced_bal {
@@ -212,13 +212,13 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
         blockchain2
             .add_block_pipeline(block, Some(bal))
-            .map_err(|e| {
-                format!("Two-pass pass-2 (parallel) failed for test {test_key}: {e:?}")
-            })?;
+            .map_err(|e| format!("Two-pass pass-2 (parallel) failed for test {test_key}: {e:?}"))?;
 
         apply_fork_choice(&store2, hash, hash, hash)
             .await
-            .map_err(|e| format!("Two-pass pass-2 fork choice failed for test {test_key}: {e:?}"))?;
+            .map_err(|e| {
+                format!("Two-pass pass-2 fork choice failed for test {test_key}: {e:?}")
+            })?;
     }
 
     // Verify post-state matches expected
