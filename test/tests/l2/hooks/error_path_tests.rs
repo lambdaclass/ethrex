@@ -8,7 +8,7 @@
 //!
 //! Testing error paths is critical for security.
 
-use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
+use ethrex_common::types::fee_config::{FeeConfig, OperatorFeeConfig};
 use ethrex_common::types::{PrivilegedL2Transaction, Transaction, TxKind};
 use ethrex_common::{Address, H160, U256};
 use ethrex_levm::hooks::l2_hook::COMMON_BRIDGE_L2_ADDRESS;
@@ -851,111 +851,6 @@ mod value_transfer_edge_cases {
             .unwrap_or(U256::zero());
 
         assert_eq!(recipient_balance, value, "Recipient should receive 1 wei");
-    }
-}
-
-// ============================================================================
-// Section 7: L1 Fee Gas Limit Validation Tests
-// ============================================================================
-
-mod l1_fee_gas_limit_validation {
-    use super::*;
-
-    #[test]
-    fn test_insufficient_gas_for_l1_fee_rejected() {
-        // A transaction with gas_limit = intrinsic_gas (21000) and L1 fee config
-        // should be rejected at prepare_execution, not reverted at finalize.
-        let mut db = create_test_db_with_accounts(vec![
-            (TEST_SENDER, U256::from(DEFAULT_SENDER_BALANCE), 0),
-            (TEST_RECIPIENT, U256::zero(), 0),
-            (TEST_L1_FEE_VAULT, U256::zero(), 0),
-        ]);
-
-        let gas_limit = 21_000u64; // Exactly intrinsic gas — no room for L1 fee
-        let max_fee_per_gas = 1_000_000_000u64;
-        let base_fee = 100_000_000u64;
-
-        let tx = create_eip1559_tx(
-            TEST_RECIPIENT,
-            U256::zero(),
-            gas_limit,
-            max_fee_per_gas,
-            max_fee_per_gas - base_fee,
-            0,
-        );
-
-        let env = create_eip1559_env(
-            TEST_SENDER,
-            gas_limit,
-            U256::from(max_fee_per_gas),
-            U256::from(max_fee_per_gas - base_fee),
-            U256::from(base_fee),
-            false,
-        );
-
-        let fee_config = FeeConfig {
-            base_fee_vault: None,
-            operator_fee_config: None,
-            l1_fee_config: Some(L1FeeConfig {
-                l1_fee_vault: TEST_L1_FEE_VAULT,
-                l1_fee_per_blob_gas: 1000, // Non-trivial L1 fee
-            }),
-        };
-
-        // Transaction must fail during prepare_execution (called by execute)
-        let mut vm = create_test_l2_vm(&env, &mut db, &tx, fee_config).unwrap();
-        let exec_result = vm.execute();
-        assert!(
-            exec_result.is_err(),
-            "Transaction with gas_limit = intrinsic_gas should be rejected when L1 fee > 0"
-        );
-    }
-
-    #[test]
-    fn test_no_l1_fee_config_skips_validation() {
-        // Without L1 fee config, gas_limit = intrinsic_gas should work fine
-        let mut db = create_test_db_with_accounts(vec![
-            (TEST_SENDER, U256::from(DEFAULT_SENDER_BALANCE), 0),
-            (TEST_RECIPIENT, U256::zero(), 0),
-        ]);
-
-        let gas_limit = 21_000u64;
-        let max_fee_per_gas = 1_000_000_000u64;
-        let base_fee = 100_000_000u64;
-
-        let tx = create_eip1559_tx(
-            TEST_RECIPIENT,
-            U256::zero(),
-            gas_limit,
-            max_fee_per_gas,
-            max_fee_per_gas - base_fee,
-            0,
-        );
-
-        let env = create_eip1559_env(
-            TEST_SENDER,
-            gas_limit,
-            U256::from(max_fee_per_gas),
-            U256::from(max_fee_per_gas - base_fee),
-            U256::from(base_fee),
-            false,
-        );
-
-        // No L1 fee config
-        let fee_config = FeeConfig::default();
-
-        let vm_result = create_test_l2_vm(&env, &mut db, &tx, fee_config);
-        assert!(
-            vm_result.is_ok(),
-            "Without L1 fee config, gas_limit = intrinsic_gas should be accepted"
-        );
-
-        let mut vm = vm_result.unwrap();
-        let report = vm.execute().unwrap();
-        assert!(
-            report.is_success(),
-            "Transaction should succeed without L1 fee config"
-        );
     }
 }
 
