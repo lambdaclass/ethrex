@@ -11,7 +11,7 @@
 | Phase | Description | Completion | Status |
 |-------|-------------|-----------|--------|
 | Phase 0 | Research & Decision | **100%** | ethrex fork confirmed (FINAL) |
-| Phase 1 | Foundation | **~98%** | Hive 6/6 PASS (PR #6260), Snapsync 수동 실행 필요 |
+| Phase 1 | Foundation | **100%** | Hive 6/6 PASS, Hoodi sync PASS (1h48m), all P0 complete |
 | Phase 2 | JIT Foundation (revmc) | **100%** | LLVM backend integrated |
 | Phase 3 | JIT Execution Wiring | **100%** | LevmHost + execution bridge |
 | Phase 4 | Production JIT Hardening | **100%** | LRU cache, auto-compile, tracing bypass |
@@ -158,8 +158,10 @@ R23(5.0) -> R24(8.0)
 - Docker Build (tokamak-jit) PASS
 - Feature flag safety confirmed — tokamak-jit Hive == upstream (both 6/6)
 
-### Awaiting Manual Verification
-- Hoodi testnet sync (`tokamak-sync.yaml` workflow_dispatch 수동 트리거 필요)
+### Hoodi Sync Verified (run 22404315946)
+- Hoodi snap sync PASS — 1h48m35s, `release-with-debug-assertions`, `--features tokamak-jit`
+- assertoor `synced-check`: EL + CL both synced
+- Ran on `ubuntu-latest` with Kurtosis + Lighthouse v8.0.1
 
 ### Not Started
 - Mainnet full sync as Tokamak client
@@ -171,7 +173,7 @@ R23(5.0) -> R24(8.0)
 - External node operator adoption
 
 ### In Progress
-- (none — Phase B, C, D, E-1 complete; next: E-2 Debugger CLI or A-2 Hoodi sync)
+- (none — Phase A ALL COMPLETE, Phase B/C/D complete, E-1 complete; next: E-2 Debugger CLI)
 
 ---
 

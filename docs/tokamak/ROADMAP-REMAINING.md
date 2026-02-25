@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-26
-**Context**: Overall ~60% complete. JIT core done (Phases 2-8). Phase A nearly complete (A-2 Sync 수동 실행 필요). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE.
+**Context**: Overall ~65% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE.
 
 ---
 
@@ -29,13 +29,13 @@
 - **Verification**: All 6 Hive suites pass — ✅ PR #6260, run 22379067904
 - **Done**: `fc720f46f` + `bd8e881` — Hive Gate PASS, all 6 suites green
 
-### A-2. Testnet Sync Verification [P0] 🔧 INFRA DONE / ⏳ VERIFICATION PENDING
-- ~~Run Hoodi testnet sync using existing `tooling/sync/` infrastructure~~ ✅ (workflow created)
-- Verify state trie validation passes — ❌ NOT YET RUN
-- Document sync time + any failures — ❌ NOT YET RUN
-- **Verification**: Hoodi sync completes, state root matches — ❌ NOT YET RUN
+### A-2. Testnet Sync Verification [P0] ✅ VERIFIED
+- ~~Run Hoodi testnet sync using existing `tooling/sync/` infrastructure~~ ✅
+- ~~Verify state trie validation passes~~ ✅ (release-with-debug-assertions profile, debug_assert! enabled)
+- ~~Document sync time + any failures~~ ✅
+- **Verification**: Hoodi snap sync completed in 1h48m35s — ✅ run 22404315946
 - **Infra**: `fc720f46f` — `tokamak-sync.yaml` (manual dispatch, Hoodi/Sepolia, Kurtosis + Lighthouse, `--features tokamak-jit`)
-- **Remaining**: workflow_dispatch 수동 실행 → Hoodi sync 완료 확인 → 결과 문서화
+- **Done**: `8f0328df7` — URL fix (`${GITHUB_REPOSITORY}`), ubuntu-latest runner, 3h timeout, assertoor synced-check PASS
 
 ### A-3. Tokamak Feature Flag Safety [P0] ✅ VERIFIED
 - ~~Verify `--features tokamak` does NOT break Hive tests~~ ✅
@@ -44,12 +44,12 @@
 - **Verification**: Hive pass rate with tokamak-jit == upstream (both 6/6) — ✅ PR #6260
 - **Done**: Quality Gate (all 4 flags) + Hive Gate (tokamak-jit build) all green
 
-### A-4. Phase 1.2 Completion [P0] ✅ VERIFIED (8/9, Snapsync 수동 필요)
+### A-4. Phase 1.2 Completion [P0] ✅ VERIFIED (9/9)
 - ~~Build verification (Phase 1.2-5): all workspace crates compile with tokamak features~~ ✅
 - ~~Record baseline Hive pass rate for Tokamak branch~~ ✅ (6/6 PASS, Hive Gate records baseline)
 - ~~Document any regressions vs upstream~~ ✅ (0 regressions — same 6/6 pass rate)
-- **Verification**: Phase 1.2 criteria 1-8 PASS, criterion 9 (Snapsync) requires manual dispatch
-- **Remaining**: `tokamak-sync.yaml` workflow_dispatch → Hoodi sync 확인
+- ~~Snapsync verification~~ ✅ (Hoodi snap sync PASS — run 22404315946)
+- **Verification**: Phase 1.2 criteria 1-9 ALL PASS
 
 ---
 
@@ -230,7 +230,7 @@
 ## Execution Order
 
 ```
-Week 1:  [P0] A-1 ✅ + A-2 ⏳ → A-3 ✅ → A-4 ✅ (Snapsync 수동 필요)
+Week 1:  [P0] A-1 ✅ + A-2 ✅ → A-3 ✅ → A-4 ✅ (9/9 ALL PASS)
 Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
 Week 3:  [P1] C-1 ✅ + C-2 ✅ + B-3 ✅
 Week 4:  [P2] D-1 decision ✅ + D-2 ✅ + D-3 ✅ → E-1 ✅
