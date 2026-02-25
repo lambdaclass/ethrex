@@ -239,8 +239,10 @@ fn handle_interpreter_action(
                 host.substate.refunded_gas =
                     host.substate.refunded_gas.saturating_add(refunded as u64);
             } else {
-                host.substate.refunded_gas =
-                    host.substate.refunded_gas.saturating_sub(refunded.unsigned_abs());
+                host.substate.refunded_gas = host
+                    .substate
+                    .refunded_gas
+                    .saturating_sub(refunded.unsigned_abs());
             }
 
             let gas_used = gas_limit.saturating_sub(result.gas.remaining());

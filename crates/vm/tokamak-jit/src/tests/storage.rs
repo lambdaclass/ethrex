@@ -51,15 +51,15 @@ pub fn make_counter_bytecode() -> Vec<u8> {
 mod tests {
     use super::*;
 
-    use ethrex_common::{Address, U256};
     use ethrex_common::types::Code;
+    use ethrex_common::{Address, U256};
     use ethrex_levm::tracing::LevmCallTracer;
     use ethrex_levm::vm::{VM, VMType};
     use rustc_hash::FxHashMap;
 
     use crate::tests::test_helpers::{
-        TestAccount, make_contract_accounts, make_test_db, make_test_env, make_test_tx,
-        INTRINSIC_GAS, TEST_GAS_LIMIT,
+        INTRINSIC_GAS, TEST_GAS_LIMIT, TestAccount, make_contract_accounts, make_test_db,
+        make_test_env, make_test_tx,
     };
 
     #[test]

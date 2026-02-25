@@ -211,9 +211,6 @@ impl Host for LevmHost<'_> {
         })
     }
 
-    // TODO(JIT): EIP-7928 BAL recording not implemented for JIT execution path.
-    // LEVM's get_storage_value records BAL entries via bal_recorder. The JIT path
-    // bypasses this. Add BAL recording when JIT moves beyond PoC phase.
     fn sload_skip_cold_load(
         &mut self,
         address: RevmAddress,
@@ -221,7 +218,8 @@ impl Host for LevmHost<'_> {
         _skip_cold_load: bool,
     ) -> Result<StateLoad<RevmU256>, LoadError> {
         let levm_addr = revm_address_to_levm(&address);
-        let levm_key = ethrex_common::H256::from(revm_u256_to_levm(&key).to_big_endian());
+        let levm_key_u256 = revm_u256_to_levm(&key);
+        let levm_key = ethrex_common::H256::from(levm_key_u256.to_big_endian());
 
         let value =
             jit_get_storage_value(self.db, levm_addr, levm_key).map_err(|_| LoadError::DBError)?;
@@ -229,12 +227,15 @@ impl Host for LevmHost<'_> {
         // EIP-2929: track cold/warm storage slot access
         let is_cold = !self.substate.add_accessed_slot(levm_addr, levm_key);
 
+        // EIP-7928: record storage read to BAL.
+        // Gas checks already passed (revmc validates gas before calling host).
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_storage_read(levm_addr, levm_key_u256);
+        }
+
         Ok(StateLoad::new(levm_u256_to_revm(&value), is_cold))
     }
 
-    // TODO(JIT): EIP-7928 BAL recording not implemented for JIT execution path.
-    // LEVM's update_account_storage records BAL entries via bal_recorder. The JIT
-    // path bypasses this. Add BAL recording when JIT moves beyond PoC phase.
     fn sstore_skip_cold_load(
         &mut self,
         address: RevmAddress,
@@ -254,6 +255,12 @@ impl Host for LevmHost<'_> {
         let present =
             jit_get_storage_value(self.db, levm_addr, levm_key).map_err(|_| LoadError::DBError)?;
 
+        // EIP-7928: record the implicit storage read (SSTORE always reads current value first).
+        // Gas checks already passed (revmc validates gas before calling host).
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_storage_read(levm_addr, levm_key_u256);
+        }
+
         // Get or cache the pre-tx original value for SSTORE gas calculation
         let cache_key = (levm_addr, levm_key);
         let original = *self
@@ -267,6 +274,15 @@ impl Host for LevmHost<'_> {
         // Write new value directly into the account's cached storage
         jit_update_account_storage(self.db, levm_addr, levm_key, levm_value)
             .map_err(|_| LoadError::DBError)?;
+
+        // EIP-7928: record storage write if value actually changed.
+        // No-op SSTORE (new == current) is already recorded as a read above.
+        if let Some(recorder) = self.db.bal_recorder.as_mut()
+            && levm_value != present
+        {
+            recorder.capture_pre_storage(levm_addr, levm_key_u256, present);
+            recorder.record_storage_write(levm_addr, levm_key_u256, levm_value);
+        }
 
         Ok(StateLoad::new(
             SStoreResult {
@@ -358,9 +374,8 @@ impl Host for LevmHost<'_> {
 /// 3. Fall back to the underlying `Database::get_storage_value`.
 /// 4. Cache the result in both `current_accounts_state` and `initial_accounts_state`.
 ///
-// TODO(JIT): EIP-7928 BAL recording not implemented for JIT execution path.
-// LEVM's get_storage_value records BAL entries via bal_recorder. The JIT path
-// bypasses this. Add BAL recording when JIT moves beyond PoC phase.
+// Note: BAL recording is handled at the Host trait level (sload/sstore_skip_cold_load),
+// not in this low-level helper. This function only reads from cache/DB.
 fn jit_get_storage_value(
     db: &mut GeneralizedDatabase,
     address: ethrex_common::Address,
@@ -400,9 +415,8 @@ fn jit_get_storage_value(
 /// Write a storage value into the generalized database, replicating the
 /// essential logic of `VM::update_account_storage` without call frame backups.
 ///
-// TODO(JIT): EIP-7928 BAL recording not implemented for JIT execution path.
-// LEVM's update_account_storage records BAL entries via bal_recorder. The JIT
-// path bypasses this. Add BAL recording when JIT moves beyond PoC phase.
+// Note: BAL recording is handled at the Host trait level (sstore_skip_cold_load),
+// not in this low-level helper. This function only writes to cache.
 pub(crate) fn jit_update_account_storage(
     db: &mut GeneralizedDatabase,
     address: ethrex_common::Address,

@@ -34,8 +34,8 @@ mod tests {
     use crate::backend::RevmcBackend;
     use crate::execution::execute_jit;
     use crate::tests::test_helpers::{
-        make_contract_accounts, make_test_db, make_test_env, make_test_tx, INTRINSIC_GAS,
-        TEST_GAS_LIMIT,
+        INTRINSIC_GAS, TEST_GAS_LIMIT, make_contract_accounts, make_test_db, make_test_env,
+        make_test_tx,
     };
 
     /// Result of a gas alignment comparison between JIT and interpreter.
