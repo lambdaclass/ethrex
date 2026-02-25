@@ -63,6 +63,7 @@ const L1_FEE_PER_BLOB_GAS: u64 = 10_000;
 const SENDER: u64 = 0x1000;
 const RECIPIENT: u64 = 0x2000;
 const L1_FEE_VAULT: u64 = 0xAA00;
+const CONTRACT: u64 = 0x3000;
 const SENDER_BALANCE: u64 = 10_000_000_000;
 
 // ==================== Helpers ====================
@@ -73,6 +74,10 @@ fn sender_addr() -> Address {
 
 fn recipient_addr() -> Address {
     Address::from_low_u64_be(RECIPIENT)
+}
+
+fn contract_addr() -> Address {
+    Address::from_low_u64_be(CONTRACT)
 }
 
 fn l1_fee_vault_addr() -> Address {
@@ -91,13 +96,17 @@ fn fee_config() -> FeeConfig {
 }
 
 fn make_tx(gas_limit: u64) -> Transaction {
+    make_tx_to(gas_limit, recipient_addr())
+}
+
+fn make_tx_to(gas_limit: u64, to: Address) -> Transaction {
     Transaction::EIP1559Transaction(EIP1559Transaction {
         chain_id: 1,
         nonce: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: GAS_PRICE,
         gas_limit,
-        to: TxKind::Call(recipient_addr()),
+        to: TxKind::Call(to),
         value: U256::zero(),
         data: Bytes::new(),
         ..Default::default()
@@ -146,12 +155,23 @@ fn make_env(gas_limit: u64) -> Environment {
 }
 
 fn make_db(sender_balance: U256) -> GeneralizedDatabase {
-    let accounts: FxHashMap<Address, Account> = [(
+    make_db_with_accounts(sender_balance, vec![])
+}
+
+fn make_db_with_accounts(
+    sender_balance: U256,
+    extra_accounts: Vec<(Address, Account)>,
+) -> GeneralizedDatabase {
+    let mut accounts: FxHashMap<Address, Account> = [(
         sender_addr(),
         Account::new(sender_balance, Code::default(), 0, FxHashMap::default()),
     )]
     .into_iter()
     .collect();
+
+    for (addr, acc) in extra_accounts {
+        accounts.insert(addr, acc);
+    }
 
     GeneralizedDatabase::new_with_account_state(Arc::new(TestDatabase), accounts)
 }
@@ -285,5 +305,76 @@ fn test_l1_fee_vault_receives_full_payment() {
     assert_eq!(
         l1_vault_balance, expected_l1_fee,
         "L1 fee vault should receive exactly l1_gas * gas_price"
+    );
+}
+
+/// A transaction calling a contract that consumes execution gas should succeed
+/// and correctly separate execution gas from reserved l1_gas in finalize.
+/// The L1 fee vault must still receive the full l1_gas payment.
+#[test]
+fn test_contract_execution_with_l1_gas_reservation() {
+    // Contract bytecode: runs a loop burning ~5000 gas, then STOPs.
+    // PUSH1 20 (loop count)  -- 60 14
+    // JUMPDEST              -- 5b        (offset 2)
+    // PUSH1 1               -- 60 01
+    // SWAP1                 -- 90
+    // SUB                   -- 03
+    // DUP1                  -- 80
+    // PUSH1 2               -- 60 02
+    // JUMPI                 -- 57
+    // STOP                  -- 00
+    let bytecode = Bytes::from(vec![
+        0x60, 0x14, // PUSH1 20
+        0x5b, // JUMPDEST
+        0x60, 0x01, // PUSH1 1
+        0x90, // SWAP1
+        0x03, // SUB
+        0x80, // DUP1
+        0x60, 0x02, // PUSH1 2 (JUMPDEST offset)
+        0x57, // JUMPI
+        0x00, // STOP
+    ]);
+    let contract_account = Account::new(
+        U256::zero(),
+        Code::from_bytecode(bytecode),
+        1,
+        FxHashMap::default(),
+    );
+
+    let gas_limit = 100_000;
+    let tx = make_tx_to(gas_limit, contract_addr());
+    let l1_gas = compute_l1_gas(&tx);
+    assert!(l1_gas > 0, "l1_gas should be positive for this test");
+
+    let env = make_env(gas_limit);
+    let mut db = make_db_with_accounts(
+        U256::from(SENDER_BALANCE),
+        vec![(contract_addr(), contract_account)],
+    );
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config()),
+    )
+    .unwrap();
+
+    let report = vm.execute().expect("Execution should succeed");
+    assert!(report.is_success(), "Contract call should succeed");
+
+    // gas_used should be > intrinsic_gas + l1_gas (contract consumed execution gas)
+    assert!(
+        report.gas_used > 21_000 + l1_gas,
+        "Contract should have consumed execution gas beyond intrinsic + l1"
+    );
+
+    // L1 fee vault must still receive the full l1_gas payment
+    let l1_vault_balance = vm.db.get_account(l1_fee_vault_addr()).unwrap().info.balance;
+    let expected_l1_fee = U256::from(l1_gas) * U256::from(GAS_PRICE);
+    assert_eq!(
+        l1_vault_balance, expected_l1_fee,
+        "L1 fee vault should receive full l1_gas * gas_price even with contract execution"
     );
 }
