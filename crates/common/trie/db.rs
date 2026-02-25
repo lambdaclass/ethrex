@@ -31,9 +31,6 @@ pub trait TrieDB: Send + Sync {
         Ok(())
     }
 
-    fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
-        false
-    }
 }
 
 // TODO: we should replace this with BackendTrieDB

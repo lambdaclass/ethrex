@@ -2105,9 +2105,7 @@ impl Store {
             .read()
             .map_err(|_| StoreError::LockError)?
             .clone();
-        let last_written = self.last_written()?;
-        let use_fkv = self.fkv_is_complete()
-            || Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+        let use_fkv = self.fkv_is_complete();
 
         let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
@@ -2117,7 +2115,6 @@ impl Store {
                 state_root,
                 read_view.clone(),
                 cache.clone(),
-                last_written.clone(),
             )?;
             let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
@@ -2131,7 +2128,6 @@ impl Store {
             storage_root,
             read_view,
             cache,
-            last_written,
         )?;
 
         let hashed_key = hash_key_fixed(&storage_key);
@@ -2466,8 +2462,6 @@ impl Store {
                 .clone(),
             Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
-                self.last_written()?,
-                self.fkv_is_complete(),
             )?),
             None,
         );
@@ -2481,8 +2475,6 @@ impl Store {
         Ok(Trie::open(
             Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
-                self.last_written()?,
-                self.fkv_is_complete(),
             )?),
             state_root,
         ))
@@ -2500,8 +2492,6 @@ impl Store {
                 .clone(),
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
-                self.last_written()?,
-                self.fkv_is_complete(),
             )?),
             None,
         );
@@ -2524,8 +2514,6 @@ impl Store {
                 .clone(),
             Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
-                self.last_written()?,
-                self.fkv_is_complete(),
             )?),
             Some(account_hash),
         );
@@ -2540,7 +2528,6 @@ impl Store {
         state_root: H256,
         read_view: Arc<dyn StorageReadView>,
         cache: Arc<TrieLayerCache>,
-        last_written: Vec<u8>,
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
@@ -2548,8 +2535,6 @@ impl Store {
             Box::new(BackendTrieDB::new_for_accounts_with_view(
                 self.backend.clone(),
                 read_view,
-                last_written,
-                self.fkv_is_complete(),
             )?),
             None,
         );
@@ -2564,7 +2549,6 @@ impl Store {
         storage_root: H256,
         read_view: Arc<dyn StorageReadView>,
         cache: Arc<TrieLayerCache>,
-        last_written: Vec<u8>,
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
@@ -2572,8 +2556,6 @@ impl Store {
             Box::new(BackendTrieDB::new_for_storages_with_view(
                 self.backend.clone(),
                 read_view,
-                last_written,
-                self.fkv_is_complete(),
             )?),
             Some(account_hash),
         );
@@ -2591,8 +2573,6 @@ impl Store {
             Box::new(BackendTrieDB::new_for_account_storage(
                 self.backend.clone(),
                 account_hash,
-                self.last_written()?,
-                self.fkv_is_complete(),
             )?),
             storage_root,
         ))
@@ -2614,8 +2594,6 @@ impl Store {
                 .clone(),
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
-                self.last_written()?,
-                self.fkv_is_complete(),
             )?),
             Some(account_hash),
         );
@@ -2728,22 +2706,10 @@ impl Store {
         Ok(header)
     }
 
-    fn last_written(&self) -> Result<Vec<u8>, StoreError> {
-        let last_computed_flatkeyvalue = self
-            .last_computed_flatkeyvalue
-            .read()
-            .map_err(|_| StoreError::LockError)?;
-        Ok(last_computed_flatkeyvalue.clone())
-    }
-
     fn fkv_is_complete(&self) -> bool {
         self.fkv_complete.load(Ordering::Acquire)
     }
 
-    fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
-        let account_nibbles = Nibbles::from_bytes(account.as_bytes());
-        &last_written[0..64] > account_nibbles.as_ref()
-    }
 }
 
 type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
@@ -2913,8 +2879,6 @@ fn flatkeyvalue_generator(
             Box::new(BackendTrieDB::new_for_accounts_with_view(
                 backend.clone(),
                 read_tx.clone(),
-                last_written.clone(),
-                false,
             )?),
             state_root,
         )
@@ -2945,8 +2909,6 @@ fn flatkeyvalue_generator(
                     backend.clone(),
                     read_tx.clone(),
                     account_hash,
-                    path.as_ref().to_vec(),
-                    false,
                 )?),
                 account_state.storage_root,
             )
@@ -3025,11 +2987,9 @@ fn fkv_check_for_stop_msg(
 
 fn state_trie_locked_backend(
     backend: &dyn StorageBackend,
-    last_written: Vec<u8>,
-    fkv_complete: bool,
 ) -> Result<BackendTrieDBLocked, StoreError> {
     // No address prefix for state trie
-    BackendTrieDBLocked::new(backend, last_written, fkv_complete)
+    BackendTrieDBLocked::new(backend)
 }
 
 pub struct AccountProof {

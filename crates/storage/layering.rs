@@ -226,16 +226,6 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
 }
 
 impl TrieDB for TrieWrapper {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        // NOTE: we apply the prefix here, since the underlying TrieDB should
-        // always be for the state trie.
-        let key = match &self.prefix_nibbles {
-            Some(prefix) => prefix.concat(&key),
-            None => key,
-        };
-        self.db.flatkeyvalue_computed(key)
-    }
-
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = match &self.prefix_nibbles {
             Some(prefix) => prefix.concat(&key),
