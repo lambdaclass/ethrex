@@ -120,6 +120,7 @@ pub struct SequencerOptions {
 #[derive(Parser, Debug)]
 pub struct NativeRollupOptions {
     #[arg(
+        id = "native_rollups",
         long = "native-rollups",
         default_value = "false",
         value_name = "BOOLEAN",
@@ -482,6 +483,10 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options",
         required_unless_present = "dev"
     )]
+    #[cfg_attr(
+        feature = "native-rollups",
+        arg(required_unless_present = "native_rollups")
+    )]
     pub bridge_address: Option<Address>,
     #[arg(
         long = "watcher.watch-interval",
@@ -582,6 +587,10 @@ pub struct BlockProducerOptions {
         help_heading = "Block producer options",
         required_unless_present = "dev"
     )]
+    #[cfg_attr(
+        feature = "native-rollups",
+        arg(required_unless_present = "native_rollups")
+    )]
     pub coinbase_address: Option<Address>,
     #[arg(
         long = "block-producer.base-fee-vault-address",
@@ -671,6 +680,10 @@ pub struct CommitterOptions {
         required_unless_present = "committer_remote_signer_url",
         required_unless_present = "dev"
     )]
+    #[cfg_attr(
+        feature = "native-rollups",
+        arg(required_unless_present = "native_rollups")
+    )]
     pub committer_l1_private_key: Option<SecretKey>,
     #[arg(
         long = "committer.remote-signer-url",
@@ -681,6 +694,10 @@ pub struct CommitterOptions {
         requires = "committer_remote_signer_public_key",
         required_unless_present = "committer_l1_private_key",
         required_unless_present = "dev"
+    )]
+    #[cfg_attr(
+        feature = "native-rollups",
+        arg(required_unless_present = "native_rollups")
     )]
     pub committer_remote_signer_url: Option<Url>,
     #[arg(
@@ -699,6 +716,10 @@ pub struct CommitterOptions {
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
         help_heading = "L1 Committer options",
         required_unless_present = "dev"
+    )]
+    #[cfg_attr(
+        feature = "native-rollups",
+        arg(required_unless_present = "native_rollups")
     )]
     pub on_chain_proposer_address: Option<Address>,
     #[arg(
@@ -800,6 +821,10 @@ pub struct ProofCoordinatorOptions {
         required_unless_present = "remote_signer_url",
         required_unless_present = "dev"
     )]
+    #[cfg_attr(
+        feature = "native-rollups",
+        arg(required_unless_present = "native_rollups")
+    )]
     pub proof_coordinator_l1_private_key: Option<SecretKey>,
     #[arg(
         long = "proof-coordinator.tdx-private-key",
@@ -829,6 +854,10 @@ pub struct ProofCoordinatorOptions {
         requires = "remote_signer_public_key",
         required_unless_present = "proof_coordinator_l1_private_key",
         required_unless_present = "dev"
+    )]
+    #[cfg_attr(
+        feature = "native-rollups",
+        arg(required_unless_present = "native_rollups")
     )]
     pub remote_signer_url: Option<Url>,
     #[arg(
