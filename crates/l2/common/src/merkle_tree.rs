@@ -41,25 +41,22 @@ impl IsMerkleTreeBackend for TreeData {
     }
 }
 
+fn build_tree(hashes: &[H256]) -> Option<MerkleTree<TreeData>> {
+    let data: Vec<TreeData> = hashes.iter().copied().map(TreeData).collect();
+    // MerkleTree::build returns None only when input is empty
+    MerkleTree::<TreeData>::build(&data)
+}
+
 pub fn compute_merkle_root(hashes: &[H256]) -> H256 {
-    let hashes = hashes
-        .iter()
-        .map(|hash| TreeData(*hash))
-        .collect::<Vec<_>>();
-    // Merkle tree build only returns None when hashes is empty
-    let Some(tree) = MerkleTree::<TreeData>::build(&hashes) else {
+    let Some(tree) = build_tree(hashes) else {
         return H256::zero();
     };
     H256::from(tree.root)
 }
 
 pub fn compute_merkle_proof(hashes: &[H256], index: usize) -> Option<Vec<H256>> {
-    let hashes = hashes
-        .iter()
-        .map(|hash| TreeData(*hash))
-        .collect::<Vec<_>>();
     Some(
-        MerkleTree::<TreeData>::build(&hashes)?
+        build_tree(hashes)?
             .get_proof_by_pos(index)?
             .merkle_path
             .iter()
