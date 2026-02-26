@@ -67,6 +67,7 @@
 pub mod api;
 pub mod backend;
 pub mod error;
+pub mod flat_keys;
 mod layering;
 pub mod metrics;
 pub mod rlp;
@@ -81,7 +82,7 @@ pub use store::{AccountUpdatesList, EngineType, Store, UpdateBatch, hash_address
 ///
 /// An upgrade to a newer schema version invalidates currently stored data,
 /// requiring a re-sync from genesis or a snapshot.
-pub const STORE_SCHEMA_VERSION: u64 = 1;
+pub const STORE_SCHEMA_VERSION: u64 = 2;
 
 /// Name of the file storing the metadata about the database.
 ///

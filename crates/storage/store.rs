@@ -15,6 +15,7 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
+    flat_keys,
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
@@ -2857,8 +2858,23 @@ fn apply_trie_updates(
             &STORAGE_TRIE_NODES
         };
 
+        // For leaf nodes going to FKV tables, use compact key encoding.
+        // For trie nodes, keep the nibble path as-is.
+        let db_key: Vec<u8> = if is_leaf {
+            if is_account {
+                let addr_hash = flat_keys::nibbles_to_h256(&key[..64]);
+                flat_keys::flat_account_key(&addr_hash).to_vec()
+            } else {
+                let addr_hash = flat_keys::nibbles_to_h256(&key[..64]);
+                let slot_hash = flat_keys::nibbles_to_h256(&key[65..129]);
+                flat_keys::flat_storage_key(&addr_hash, &slot_hash).to_vec()
+            }
+        } else {
+            key
+        };
+
         if value.is_empty() {
-            result = write_tx.delete(table, &key);
+            result = write_tx.delete(table, &db_key);
             // Dual-write: also delete from legacy CF for top nodes
             if result.is_ok() && is_top_node {
                 let legacy_table = if is_account {
@@ -2866,10 +2882,10 @@ fn apply_trie_updates(
                 } else {
                     &STORAGE_TRIE_NODES
                 };
-                result = write_tx.delete(legacy_table, &key);
+                result = write_tx.delete(legacy_table, &db_key);
             }
         } else {
-            result = write_tx.put(table, &key, &value);
+            result = write_tx.put(table, &db_key, &value);
             // Dual-write: also write to legacy CF for top nodes (rollback safety)
             if result.is_ok() && is_top_node {
                 let legacy_table = if is_account {
@@ -2877,7 +2893,7 @@ fn apply_trie_updates(
                 } else {
                     &STORAGE_TRIE_NODES
                 };
-                result = write_tx.put(legacy_table, &key, &value);
+                result = write_tx.put(legacy_table, &db_key, &value);
             }
         }
         if result.is_err() {
@@ -2963,7 +2979,8 @@ fn flatkeyvalue_generator(
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
             write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-            write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
+            let compact_key = flat_keys::flat_account_key(&account_hash);
+            write_txn.put(ACCOUNT_FLATKEYVALUE, &compact_key, &node.value)?;
             ctr += 1;
             if ctr > 10_000 {
                 write_txn.commit()?;
@@ -2992,9 +3009,11 @@ fn flatkeyvalue_generator(
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
+                let slot_hash = H256::from_slice(&path.to_bytes());
                 let key = apply_prefix(Some(account_hash), path);
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                let compact_key = flat_keys::flat_storage_key(&account_hash, &slot_hash);
+                write_txn.put(STORAGE_FLATKEYVALUE, &compact_key, &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;

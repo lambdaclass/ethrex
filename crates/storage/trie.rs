@@ -4,6 +4,7 @@ use crate::api::tables::{
 };
 use crate::api::{StorageBackend, StorageLockedView, StorageReadView};
 use crate::error::StoreError;
+use crate::flat_keys;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
@@ -150,7 +151,32 @@ impl BackendTrieDB {
         let is_leaf = key.len() == 65 || key.len() == 131;
         !is_leaf && self.logical_trie_depth(key) <= TOP_NODE_DEPTH_THRESHOLD
     }
+
+    /// Convert a nibble-encoded leaf key to compact binary FKV key.
+    /// Account leaves (65 nibbles): → 32-byte address hash
+    /// Storage leaves (131 nibbles): → 52-byte split-address key
+    fn to_compact_fkv_key(prefixed_key: &[u8]) -> Option<Vec<u8>> {
+        match prefixed_key.len() {
+            65 => {
+                // Account leaf: 64 nibbles (address hash) + leaf flag
+                let nibbles = &prefixed_key[..64];
+                let addr_hash = nibbles_to_h256(nibbles);
+                Some(flat_keys::flat_account_key(&addr_hash).to_vec())
+            }
+            131 => {
+                // Storage leaf: 64 addr nibbles + separator(17) + 64 slot nibbles + leaf flag
+                let addr_nibbles = &prefixed_key[..64];
+                let slot_nibbles = &prefixed_key[65..129]; // skip separator at [64]
+                let addr_hash = nibbles_to_h256(addr_nibbles);
+                let slot_hash = nibbles_to_h256(slot_nibbles);
+                Some(flat_keys::flat_storage_key(&addr_hash, &slot_hash).to_vec())
+            }
+            _ => None,
+        }
+    }
 }
+
+use crate::flat_keys::nibbles_to_h256;
 
 impl TrieDB for BackendTrieDB {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
@@ -167,6 +193,15 @@ impl TrieDB for BackendTrieDB {
             crate::metrics::STORAGE_METRICS
                 .flat_hits
                 .fetch_add(1, Relaxed);
+            // FKV lookup: use compact binary key encoding
+            if let Some(compact_key) = Self::to_compact_fkv_key(&prefixed_key) {
+                return self
+                    .read_view
+                    .get(table, &compact_key)
+                    .map_err(|e| {
+                        TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+                    });
+            }
         } else {
             crate::metrics::STORAGE_METRICS
                 .trie_node_reads
@@ -179,8 +214,7 @@ impl TrieDB for BackendTrieDB {
                 TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
             })?;
         // Dual-read fallback: if the primary table (top-node CF) returned None,
-        // fall back to the legacy nodes CF. This handles pre-existing data that
-        // was written before CF isolation was enabled.
+        // fall back to the legacy nodes CF.
         if result.is_none() && self.is_top_node(&prefixed_key) {
             return self
                 .read_view
@@ -199,6 +233,7 @@ impl TrieDB for BackendTrieDB {
         for (key, value) in key_values {
             let prefixed_key = self.make_key(key);
             let table = self.table_for_key(&prefixed_key);
+            let is_fkv = table == self.fkv_table;
             // Dual-write: top-depth nodes go to both top-node CF and legacy CF.
             // This ensures rollback safety (reverting to legacy-only loses no data).
             if self.is_top_node(&prefixed_key) {
@@ -207,7 +242,13 @@ impl TrieDB for BackendTrieDB {
                         TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e))
                     })?;
             }
-            tx.put_batch(table, vec![(prefixed_key, value)])
+            // For FKV entries, convert nibble path to compact binary key
+            let db_key = if is_fkv {
+                Self::to_compact_fkv_key(&prefixed_key).unwrap_or(prefixed_key)
+            } else {
+                prefixed_key
+            };
+            tx.put_batch(table, vec![(db_key, value)])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
         tx.commit()
@@ -313,6 +354,13 @@ impl TrieDB for BackendTrieDBLocked {
             crate::metrics::STORAGE_METRICS
                 .flat_hits
                 .fetch_add(1, Relaxed);
+            // FKV lookup: use compact binary key encoding
+            let tx = self.tx_for_key(&key);
+            if let Some(compact_key) = BackendTrieDB::to_compact_fkv_key(key.as_ref()) {
+                return tx.get(&compact_key).map_err(|e| {
+                    TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+                });
+            }
         } else {
             crate::metrics::STORAGE_METRICS
                 .trie_node_reads
