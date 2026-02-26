@@ -2666,28 +2666,7 @@ fn handle_account_subtrie(
     let mut storage_workers_tx = Some(storage_workers_tx);
     let mut pending_storage_accounts: usize = 0;
     let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
-    let mut pre_collected_state: Vec<TrieNode> = vec![];
-    let mut dirty = false;
-
-    loop {
-        let msg = if dirty {
-            match rx.try_recv() {
-                Ok(msg) => msg,
-                Err(_) => {
-                    let mut nodes = state_trie.commit_without_storing();
-                    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-                    pre_collected_state.extend(nodes);
-                    dirty = false;
-                    continue;
-                }
-            }
-        } else {
-            match rx.recv() {
-                Ok(msg) => msg,
-                Err(_) => break,
-            }
-        };
-
+    for msg in rx {
         match msg {
             AccountRequest::ProcessAccount {
                 prefix,
@@ -2740,7 +2719,6 @@ fn handle_account_subtrie(
                         pending_storage_accounts += 1;
                     }
                     if removed {
-                        dirty = true;
                         continue;
                     }
                 }
@@ -2769,7 +2747,6 @@ fn handle_account_subtrie(
                         pending_storage_accounts += 1;
                     }
                 }
-                dirty = true;
             }
             AccountRequest::FinishRouting { tx } => {
                 tx.send(())
@@ -2827,18 +2804,12 @@ fn handle_account_subtrie(
                         state_trie.remove(path)?;
                     }
 
-                    dirty = true;
                     pending_storage_accounts -= 1;
                     if pending_storage_accounts == 0
                         && let Some(tx) = pending_collect_tx.take()
                     {
-                        let (subroot, mut state_nodes) =
+                        let (subroot, state_nodes) =
                             collect_trie(index, std::mem::take(&mut state_trie))?;
-                        if !pre_collected_state.is_empty() {
-                            let mut pre = std::mem::take(&mut pre_collected_state);
-                            pre.extend(state_nodes);
-                            state_nodes = pre;
-                        }
                         tx.send(CollectedStateMsg {
                             index,
                             subroot,
@@ -2859,13 +2830,8 @@ fn handle_account_subtrie(
             AccountRequest::CollectState { tx } => {
                 if pending_storage_accounts == 0 {
                     // All storage accounts already resolved — respond immediately
-                    let (subroot, mut state_nodes) =
+                    let (subroot, state_nodes) =
                         collect_trie(index, std::mem::take(&mut state_trie))?;
-                    if !pre_collected_state.is_empty() {
-                        let mut pre = std::mem::take(&mut pre_collected_state);
-                        pre.extend(state_nodes);
-                        state_nodes = pre;
-                    }
                     tx.send(CollectedStateMsg {
                         index,
                         subroot,
