@@ -134,10 +134,6 @@ run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output $(SIM_BUILDARG_FLAG)
 
-# eth_simulateV1 tests use HEAD of execution-apis (no branch pin needed - tests don't depend on chain state)
-run-hive-simulate: build-image setup-hive ## 🧪 Run eth_simulateV1 hive rpc-compat tests
-	cd hive && ./hive --sim ethereum/rpc-compat --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim.loglevel 4 --sim.limit "/eth_simulateV1" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
-
 # EELS Hive
 TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
 run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
