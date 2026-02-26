@@ -182,9 +182,11 @@ pub fn refund_sender(
 
     // EIP-7778: Separate block vs user gas accounting for Amsterdam+
     if vm.env.config.fork >= Fork::Amsterdam {
-        // Block accounting uses pre-refund gas
-        ctx_result.gas_used = gas_used_pre_refund;
-        // User pays post-refund gas
+        // Block accounting uses max(pre-refund gas, calldata floor)
+        // This prevents gas smuggling via refunds (EIP-7778)
+        let floor = vm.get_min_gas_used()?;
+        ctx_result.gas_used = gas_used_pre_refund.max(floor);
+        // User pays post-refund gas (with floor)
         ctx_result.gas_spent = gas_spent;
     } else {
         // Pre-Amsterdam: both use post-refund value
@@ -246,7 +248,19 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
+    // even if the priority fee is zero. System contract calls have gas_price = 0,
+    // so we use this to distinguish them from user transactions.
+    if !vm.env.gas_price.is_zero()
+        && let Some(recorder) = vm.db.bal_recorder.as_mut()
+    {
+        recorder.record_touched_address(vm.env.coinbase);
+    }
+
+    // Only pay coinbase if there's actually a fee to pay.
+    if !coinbase_fee.is_zero() {
+        vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    }
 
     Ok(())
 }
@@ -288,6 +302,11 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         *account_to_remove = LevmAccount::default();
         account_to_remove.mark_destroyed();
+
+        // EIP-7928: Clean up BAL for selfdestructed account
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.track_selfdestruct(*address);
+        }
     }
 
     Ok(())
@@ -469,6 +488,10 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> 
 }
 
 pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<(), VMError> {
+    if vm.env.disable_balance_check {
+        return Ok(());
+    }
+
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
@@ -504,6 +527,10 @@ pub fn deduct_caller(
     gas_limit_price_product: U256,
     sender_address: Address,
 ) -> Result<(), VMError> {
+    if vm.env.disable_balance_check {
+        return Ok(());
+    }
+
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
@@ -563,8 +590,19 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;
-        let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
+
+        // Record tx.to as touched in BAL (the target of message call transaction)
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(to);
+        }
+
+        let (is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, to)?;
+
+        // If EIP-7702 delegation, also record the delegation target (code source) in BAL
+        if is_delegation && let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(code_address);
+        }
 
         (bytecode, code_address)
     };

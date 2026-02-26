@@ -127,7 +127,7 @@ pub fn get_vm_env_for_test(
         timestamp: test_env.current_timestamp,
         prev_randao: test_env.current_random,
         difficulty: test_env.current_difficulty,
-        slot_number: U256::zero(),
+        slot_number: test_env.slot_number.unwrap_or_default(),
         chain_id: U256::from(1),
         base_fee_per_gas: test_env.current_base_fee.unwrap_or_default(),
         base_blob_fee_per_gas,
@@ -142,6 +142,7 @@ pub fn get_vm_env_for_test(
         block_gas_limit: test_env.current_gas_limit,
         is_privileged: false,
         fee_token: None,
+        disable_balance_check: false,
     })
 }
 
