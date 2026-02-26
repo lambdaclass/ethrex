@@ -22,7 +22,7 @@ mod tests {
     use ethrex_levm::vm::{VM, VMType};
     use rustc_hash::FxHashMap;
 
-    use crate::tests::test_helpers::{make_test_env, make_test_tx, CONTRACT_ADDR, SENDER_ADDR};
+    use crate::tests::test_helpers::{CONTRACT_ADDR, SENDER_ADDR, make_test_env, make_test_tx};
 
     /// Target address for SELFDESTRUCT beneficiary.
     const TARGET_ADDR: u64 = 0x200;

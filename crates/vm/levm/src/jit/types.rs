@@ -24,6 +24,12 @@ pub struct JitConfig {
     /// Number of JIT executions to validate per (bytecode, fork) pair.
     /// After this many validations succeed, the bytecode is considered trusted.
     pub max_validation_runs: u64,
+    /// Number of functions per arena (default 64).
+    pub arena_capacity: u16,
+    /// Maximum number of concurrent arenas (default 32, i.e. 2048 functions).
+    pub max_arenas: usize,
+    /// Maximum JIT memory usage in megabytes (RSS ceiling, default 512).
+    pub max_memory_mb: usize,
 }
 
 impl JitConfig {
@@ -41,6 +47,9 @@ impl Default for JitConfig {
             max_bytecode_size: 24576,
             max_cache_entries: 1024,
             max_validation_runs: 3,
+            arena_capacity: 64,
+            max_arenas: 32,
+            max_memory_mb: 512,
         }
     }
 }
@@ -162,6 +171,12 @@ pub struct JitMetrics {
     pub validation_successes: AtomicU64,
     /// Number of dual-execution validation mismatches (JIT diverged from interpreter).
     pub validation_mismatches: AtomicU64,
+    /// Number of arenas created (G-1 arena lifecycle).
+    pub arenas_created: AtomicU64,
+    /// Number of arenas freed (G-1 arena lifecycle).
+    pub arenas_freed: AtomicU64,
+    /// Number of compiled functions evicted from the cache.
+    pub functions_evicted: AtomicU64,
 }
 
 impl JitMetrics {
@@ -174,6 +189,9 @@ impl JitMetrics {
             compilation_skips: AtomicU64::new(0),
             validation_successes: AtomicU64::new(0),
             validation_mismatches: AtomicU64::new(0),
+            arenas_created: AtomicU64::new(0),
+            arenas_freed: AtomicU64::new(0),
+            functions_evicted: AtomicU64::new(0),
         }
     }
 
@@ -189,6 +207,9 @@ impl JitMetrics {
         self.compilation_skips.store(0, Ordering::Relaxed);
         self.validation_successes.store(0, Ordering::Relaxed);
         self.validation_mismatches.store(0, Ordering::Relaxed);
+        self.arenas_created.store(0, Ordering::Relaxed);
+        self.arenas_freed.store(0, Ordering::Relaxed);
+        self.functions_evicted.store(0, Ordering::Relaxed);
     }
 
     /// Get a snapshot of all metrics.

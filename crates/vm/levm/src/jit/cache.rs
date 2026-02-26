@@ -9,6 +9,8 @@ use ethrex_common::types::Fork;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 
+use super::arena::FuncSlot;
+
 /// Cache key combining bytecode hash and fork.
 ///
 /// The same bytecode compiled at different forks produces different native code
@@ -34,9 +36,9 @@ pub struct CompiledCode {
     pub bytecode_size: usize,
     /// Number of basic blocks in the compiled code.
     pub basic_block_count: usize,
-    /// LLVM function ID for memory management on eviction.
+    /// Arena slot for memory management on eviction.
     /// None if the backend doesn't support function-level freeing.
-    pub func_id: Option<u32>,
+    pub arena_slot: Option<FuncSlot>,
     /// Whether the original bytecode contains CALL/CALLCODE/DELEGATECALL/STATICCALL/CREATE/CREATE2.
     /// Cached from `AnalyzedBytecode::has_external_calls` to avoid re-scanning bytecode on each dispatch.
     pub has_external_calls: bool,
@@ -55,14 +57,14 @@ impl CompiledCode {
         ptr: *const (),
         bytecode_size: usize,
         basic_block_count: usize,
-        func_id: Option<u32>,
+        arena_slot: Option<FuncSlot>,
         has_external_calls: bool,
     ) -> Self {
         Self {
             ptr,
             bytecode_size,
             basic_block_count,
-            func_id,
+            arena_slot,
             has_external_calls,
         }
     }
@@ -87,7 +89,7 @@ impl std::fmt::Debug for CompiledCode {
             .field("ptr", &self.ptr)
             .field("bytecode_size", &self.bytecode_size)
             .field("basic_block_count", &self.basic_block_count)
-            .field("func_id", &self.func_id)
+            .field("arena_slot", &self.arena_slot)
             .field("has_external_calls", &self.has_external_calls)
             .finish()
     }
@@ -105,8 +107,9 @@ struct CodeCacheInner {
 ///
 /// When the cache reaches `max_entries`, the oldest entry (by insertion time)
 /// is evicted. `get()` does not update access order, so this is FIFO, not LRU.
-/// Note: LLVM JIT memory is NOT freed on eviction (revmc limitation).
-/// The eviction only prevents HashMap metadata growth.
+/// Evicted entries return their `arena_slot` so the caller can decrement
+/// the arena's live count via `ArenaManager::mark_evicted`. When an arena
+/// reaches zero live functions, its LLVM resources are freed.
 #[derive(Debug, Clone)]
 pub struct CodeCache {
     inner: Arc<RwLock<CodeCacheInner>>,
@@ -138,9 +141,9 @@ impl CodeCache {
 
     /// Insert compiled code into the cache, evicting the oldest entry if at capacity.
     ///
-    /// Returns the evicted entry's `func_id` if an eviction occurred and the evicted
-    /// entry had a function ID, so the caller can free the LLVM memory.
-    pub fn insert(&self, key: CacheKey, code: CompiledCode) -> Option<u32> {
+    /// Returns the evicted entry's `arena_slot` if an eviction occurred and the evicted
+    /// entry had an arena slot, so the caller can free the LLVM memory.
+    pub fn insert(&self, key: CacheKey, code: CompiledCode) -> Option<FuncSlot> {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut inner = self.inner.write().unwrap();
 
@@ -151,18 +154,18 @@ impl CodeCache {
         }
 
         // Evict oldest if at capacity
-        let mut evicted_func_id = None;
+        let mut evicted_slot = None;
         if inner.max_entries > 0
             && inner.entries.len() >= inner.max_entries
             && let Some(oldest) = inner.insertion_order.pop_front()
             && let Some(evicted) = inner.entries.remove(&oldest)
         {
-            evicted_func_id = evicted.func_id;
+            evicted_slot = evicted.arena_slot;
         }
 
         inner.entries.insert(key, Arc::new(code));
         inner.insertion_order.push_back(key);
-        evicted_func_id
+        evicted_slot
     }
 
     /// Remove compiled code from the cache (e.g., on validation mismatch).

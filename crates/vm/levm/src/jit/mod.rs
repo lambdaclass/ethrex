@@ -8,6 +8,7 @@
 //! `tokamak-jit` crate to keep LEVM free of heavy dependencies.
 
 pub mod analyzer;
+pub mod arena;
 pub mod cache;
 pub mod compiler_thread;
 pub mod counter;

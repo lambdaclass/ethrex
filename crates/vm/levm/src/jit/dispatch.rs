@@ -10,6 +10,7 @@ use ethrex_common::types::Fork;
 use ethrex_common::{H256, U256};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::arena::{ArenaId, ArenaManager, FuncSlot};
 use super::cache::{CacheKey, CodeCache, CompiledCode};
 use super::compiler_thread::{CompilationRequest, CompilerThread};
 use super::counter::ExecutionCounter;
@@ -90,6 +91,8 @@ pub struct JitState {
     /// Bytecodes known to exceed `max_bytecode_size` — negative cache to
     /// avoid repeated size checks and compilation attempts.
     oversized_hashes: RwLock<FxHashSet<H256>>,
+    /// Arena lifecycle manager for JIT-compiled function memory.
+    pub arena_manager: ArenaManager,
 }
 
 impl JitState {
@@ -97,6 +100,7 @@ impl JitState {
     pub fn new() -> Self {
         let config = JitConfig::default();
         let cache = CodeCache::with_max_entries(config.max_cache_entries);
+        let arena_manager = ArenaManager::new(config.arena_capacity);
         Self {
             cache,
             counter: ExecutionCounter::new(),
@@ -106,12 +110,14 @@ impl JitState {
             compiler_thread: RwLock::new(None),
             validation_counts: RwLock::new(FxHashMap::default()),
             oversized_hashes: RwLock::new(FxHashSet::default()),
+            arena_manager,
         }
     }
 
     /// Create a new JIT state with a specific configuration.
     pub fn with_config(config: JitConfig) -> Self {
         let cache = CodeCache::with_max_entries(config.max_cache_entries);
+        let arena_manager = ArenaManager::new(config.arena_capacity);
         Self {
             cache,
             counter: ExecutionCounter::new(),
@@ -121,6 +127,7 @@ impl JitState {
             compiler_thread: RwLock::new(None),
             validation_counts: RwLock::new(FxHashMap::default()),
             oversized_hashes: RwLock::new(FxHashSet::default()),
+            arena_manager,
         }
     }
 
@@ -154,6 +161,7 @@ impl JitState {
         {
             self.oversized_hashes.write().unwrap().clear();
         }
+        self.arena_manager.reset();
     }
 
     /// Register a JIT execution backend.
@@ -186,6 +194,32 @@ impl JitState {
         let guard = self.compiler_thread.read().unwrap();
         match guard.as_ref() {
             Some(thread) => thread.send(CompilationRequest { code, fork }),
+            None => false,
+        }
+    }
+
+    /// Send a free request for an evicted function's arena slot.
+    ///
+    /// Returns `true` if the request was queued, `false` if no compiler
+    /// thread is registered or the channel is disconnected.
+    pub fn send_free(&self, slot: FuncSlot) -> bool {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let guard = self.compiler_thread.read().unwrap();
+        match guard.as_ref() {
+            Some(thread) => thread.send_free(slot),
+            None => false,
+        }
+    }
+
+    /// Send a request to free an entire arena's LLVM resources.
+    ///
+    /// Returns `true` if the request was queued, `false` if no compiler
+    /// thread is registered or the channel is disconnected.
+    pub fn send_free_arena(&self, arena_id: ArenaId) -> bool {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let guard = self.compiler_thread.read().unwrap();
+        match guard.as_ref() {
+            Some(thread) => thread.send_free_arena(arena_id),
             None => false,
         }
     }

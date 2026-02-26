@@ -10,6 +10,8 @@ use std::thread;
 
 use ethrex_common::types::{Code, Fork};
 
+use super::arena::{ArenaId, FuncSlot};
+
 /// A request to compile bytecode in the background.
 #[derive(Clone)]
 pub struct CompilationRequest {
@@ -24,8 +26,10 @@ pub struct CompilationRequest {
 pub enum CompilerRequest {
     /// Compile bytecode into native code and insert into cache.
     Compile(CompilationRequest),
-    /// Free a previously compiled function's machine code.
-    Free { func_id: u32 },
+    /// Free a previously compiled function's arena slot.
+    Free { slot: FuncSlot },
+    /// Free an entire arena (all its LLVM resources).
+    FreeArena { arena_id: ArenaId },
 }
 
 /// Handle to the background compiler thread.
@@ -83,13 +87,23 @@ impl CompilerThread {
             .unwrap_or(false)
     }
 
-    /// Send a free request for an evicted function's machine code.
+    /// Send a free request for an evicted function's arena slot.
     ///
     /// Returns `true` if the request was sent, `false` if disconnected.
-    pub fn send_free(&self, func_id: u32) -> bool {
+    pub fn send_free(&self, slot: FuncSlot) -> bool {
         self.sender
             .as_ref()
-            .map(|s| s.send(CompilerRequest::Free { func_id }).is_ok())
+            .map(|s| s.send(CompilerRequest::Free { slot }).is_ok())
+            .unwrap_or(false)
+    }
+
+    /// Send a request to free an entire arena's LLVM resources.
+    ///
+    /// Returns `true` if the request was sent, `false` if disconnected.
+    pub fn send_free_arena(&self, arena_id: ArenaId) -> bool {
+        self.sender
+            .as_ref()
+            .map(|s| s.send(CompilerRequest::FreeArena { arena_id }).is_ok())
             .unwrap_or(false)
     }
 }
