@@ -43,11 +43,11 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
 | P0 | ~~Verify ID-signature on handshake receipt~~ | [#5832](https://github.com/lambdaclass/ethrex/issues/5832), [#6055](https://github.com/lambdaclass/ethrex/pull/6055) | **Merged** (Jan 30) |
-| P0 | Store validated ENR from handshake | [#6109](https://github.com/lambdaclass/ethrex/pull/6109) | Open (#6124 closed) |
+| P0 | ~~Store validated ENR from handshake~~ | [#6109](https://github.com/lambdaclass/ethrex/pull/6109) | **Merged** (Feb 23) |
 | — | ~~DiscV5 codec encoder~~ | — | **NOT A BUG** - Encoding handled via `Packet::encode()` directly, codec only for receiving |
 | P1 | ~~Request updated ENR when PONG enr_seq differs~~ | [#5910](https://github.com/lambdaclass/ethrex/pull/5910), [#5850](https://github.com/lambdaclass/ethrex/issues/5850) | **Merged** (Feb 11) |
 | P1 | ~~Update existing contact ENR on NODES response~~ | [#6172](https://github.com/lambdaclass/ethrex/pull/6172) | **Merged** (Feb 19) |
-| P1 | Detect external IP via PONG recipient_addr voting | [#5914](https://github.com/lambdaclass/ethrex/pull/5914), [#5851](https://github.com/lambdaclass/ethrex/issues/5851) | Open |
+| P1 | ~~Detect external IP via PONG recipient_addr voting~~ | [#5914](https://github.com/lambdaclass/ethrex/pull/5914), [#5851](https://github.com/lambdaclass/ethrex/issues/5851) | **Merged** (Feb 24) |
 
 **Branches:** `discv5-server-external-ip-detection`
 
@@ -82,7 +82,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
-| P1 | Avoid extra allocations in RLPx handshake | [#5531](https://github.com/lambdaclass/ethrex/pull/5531) | Open |
+| P1 | ~~Avoid extra allocations in RLPx handshake~~ | [#5531](https://github.com/lambdaclass/ethrex/pull/5531) | **Merged** (Feb 23) |
 | P1 | Avoid double authdata allocation in discv5 header | [#5811](https://github.com/lambdaclass/ethrex/pull/5811) | Open |
 | P1 | Compute RLPx capability message ID dynamically | [#4545](https://github.com/lambdaclass/ethrex/issues/4545) | Open issue |
 | P2 | Remove magic numbers in rlpx/connection | [#4123](https://github.com/lambdaclass/ethrex/issues/4123) | Open issue |
@@ -142,7 +142,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
 | P0 | ~~Merge parallel storage trie merkelization~~ | [#6079](https://github.com/lambdaclass/ethrex/pull/6079) | **Merged** (Feb 5) |
-| P1 | Parallel account range requests with adaptive chunking | [#6101](https://github.com/lambdaclass/ethrex/pull/6101) | Draft (4-phase impl) |
+| P1 | ~~Parallel account range requests with adaptive chunking~~ | [#6101](https://github.com/lambdaclass/ethrex/pull/6101) | **Closed** |
 | P1 | Parallelize header download with state download | [#6059](https://github.com/lambdaclass/ethrex/pull/6059) | Open |
 | P1 | Parallelize merkelization of storage slots | [#5482](https://github.com/lambdaclass/ethrex/issues/5482) | Open issue |
 | P2 | Reduce allocations in account range verification | [#6072](https://github.com/lambdaclass/ethrex/pull/6072) | Open |
@@ -202,7 +202,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 1. Complete Phase 1 of P2P (dual discovery [#5962](https://github.com/lambdaclass/ethrex/pull/5962), remove feature flag [#6015](https://github.com/lambdaclass/ethrex/pull/6015))
 2. Complete remaining Concurrency Phase 1 (async disk I/O [#6113](https://github.com/lambdaclass/ethrex/pull/6113))
 3. Address LRU cache for rate limiting [#6125](https://github.com/lambdaclass/ethrex/issues/6125)
-4. Complete remaining discv5 security (ENR from handshake [#6109](https://github.com/lambdaclass/ethrex/pull/6109), external IP [#5914](https://github.com/lambdaclass/ethrex/pull/5914))
+4. ~~Complete remaining discv5 security (ENR from handshake [#6109](https://github.com/lambdaclass/ethrex/pull/6109), external IP [#5914](https://github.com/lambdaclass/ethrex/pull/5914))~~ **Merged**
 
 ### Medium-term (1-2 months)
 1. Kademlia table reimplementation [#4245](https://github.com/lambdaclass/ethrex/issues/4245)
@@ -238,15 +238,15 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | Category | Open Issues | Open PRs | Draft PRs | Merged |
 |----------|-------------|----------|-----------|--------|
 | Discovery Protocol | 8 | 5 | 1 | 1 (#5909) |
-| Discovery Security | 4 | 2 | 0 | 3 (#6055, #5910, #6172) |
+| Discovery Security | 2 | 0 | 0 | 5 (#6055, #5910, #6172, #6109, #5914) |
 | Peer Management | 5 | 2 | 1 | 0 |
-| RLPx/Protocol | 4 | 2 | 0 | 0 |
+| RLPx/Protocol | 4 | 1 | 0 | 1 (#5531) |
 | Network Config | 3 | 0 | 0 | 0 |
 | Snap Sync | 2 | 4 | 1 | 1 (#5975) |
-| Parallel Operations | 2 | 5 | 1 | 1 (#6079) |
+| Parallel Operations | 2 | 4 | 1 | 1 (#6079) |
 | GenServer Migration | 5 | 1 | 0 | 0 |
 | Blocking/Performance | 3 | 1 | 1 | 0 |
-| **Total** | **36** | **22** | **5** | **6** |
+| **Total** | **34** | **18** | **5** | **9** |
 
 ---
 
@@ -337,7 +337,7 @@ New messages needed:
 
 | Protocol | Compliance | Critical Gaps | Priority |
 |----------|------------|---------------|----------|
-| **DiscV5** | 97% | ENR from handshake ([#6109](https://github.com/lambdaclass/ethrex/pull/6109)), Neighbors validation, external IP detection | **HIGH** - Deadline passed, hardening ongoing |
+| **DiscV5** | 99% | Neighbors validation | **HIGH** - Deadline passed, hardening ongoing |
 | **DiscV4** | 95% | ENRResponse validation | **LOW** - Sunset at Glamsterdam |
 | **RLPx** | 98% | Size limit verification | MEDIUM |
 | **eth/68** | 100% | None | — |
@@ -348,7 +348,7 @@ New messages needed:
 
 **Overall Assessment:** ethrex is substantially compliant with current Ethereum P2P specifications. The main gaps are:
 1. **eth/70 support** - Needed for history expiry (upcoming requirement)
-2. **DiscV5 remaining TODOs** - ENR from handshake, Neighbors request validation, external IP detection
+2. **DiscV5 remaining TODOs** - Neighbors request validation (only remaining security item)
 3. **DNS-based discovery** - Operational resilience (nice-to-have)
 
 **DiscV4 gaps are deprioritized** due to Glamsterdam hard fork sunset.
