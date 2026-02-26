@@ -74,10 +74,7 @@ pub mod trie;
 pub mod utils;
 
 pub use layering::apply_prefix;
-pub use store::{
-    AccountUpdatesList, EngineType, FKV_COMPLETION_MARKER_LEN, Store, UpdateBatch, hash_address,
-    hash_key,
-};
+pub use store::{AccountUpdatesList, EngineType, Store, UpdateBatch, hash_address, hash_key};
 
 /// Store Schema Version, must be updated on any breaking change.
 ///

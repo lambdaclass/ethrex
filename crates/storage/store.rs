@@ -21,11 +21,6 @@ use crate::{
 };
 
 use bytes::Bytes;
-
-/// Length of the FKV completion marker in bytes.
-/// Structure: account_path (64) + separator (2) + storage_path (64) + end (1) = 131
-pub const FKV_COMPLETION_MARKER_LEN: usize = 131;
-
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -1448,7 +1443,7 @@ impl Store {
                 .get(MISC_VALUES, "last_written".as_bytes())?
                 .unwrap_or_else(|| vec![0u8; 64]);
             if last_written == [0xff] {
-                vec![0xff; FKV_COMPLETION_MARKER_LEN]
+                vec![0xff; 64]
             } else {
                 last_written
             }
@@ -2792,7 +2787,7 @@ fn flatkeyvalue_generator(
         // First time generating the FKV. Remove all FKV entries just in case
         backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
         backend.clear_table(STORAGE_FLATKEYVALUE)?;
-    } else if last_written == [0xff; FKV_COMPLETION_MARKER_LEN] {
+    } else if last_written == [0xff] {
         // FKV was already generated
         info!("FlatKeyValue already generated. Skipping.");
         return Ok(());
@@ -2901,15 +2896,11 @@ fn flatkeyvalue_generator(
             }
             Err(err) => return Err(err),
             Ok(()) => {
-                write_txn.put(
-                    MISC_VALUES,
-                    "last_written".as_bytes(),
-                    &[0xff; FKV_COMPLETION_MARKER_LEN],
-                )?;
+                write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
                 write_txn.commit()?;
                 *last_computed_fkv
                     .lock()
-                    .map_err(|_| StoreError::LockError)? = vec![0xff; FKV_COMPLETION_MARKER_LEN];
+                    .map_err(|_| StoreError::LockError)? = vec![0xff; 131];
                 info!("FlatKeyValue generation finished.");
                 return Ok(());
             }
