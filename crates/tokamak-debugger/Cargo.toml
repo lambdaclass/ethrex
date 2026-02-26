@@ -20,6 +20,7 @@ cli = [
 ethrex-levm = { workspace = true, features = ["tokamak-debugger"] }
 ethrex-common = { workspace = true, default-features = false }
 bytes.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 
 # CLI-only (optional)
@@ -36,6 +37,7 @@ ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-vm.workspace = true
 rustc-hash.workspace = true
+serde_json.workspace = true
 
 [[bin]]
 name = "tokamak-debugger"

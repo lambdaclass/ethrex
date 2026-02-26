@@ -10,6 +10,29 @@ use ethrex_vm::{Evm, EvmError};
 use crate::{Blockchain, error::ChainError, vm::StoreVmDatabase};
 
 impl Blockchain {
+    /// Prepare EVM state at the point just before a specific transaction executes.
+    /// Returns the Evm (with accumulated state from preceding TXs), the block, and the TX index.
+    pub async fn prepare_state_for_tx(
+        &self,
+        tx_hash: H256,
+        reexec: u32,
+    ) -> Result<(Evm, Block, usize), ChainError> {
+        let Some((_, block_hash, tx_index)) =
+            self.storage.get_transaction_location(tx_hash).await?
+        else {
+            return Err(ChainError::Custom("Transaction not Found".to_string()));
+        };
+        let tx_index = tx_index as usize;
+        let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
+            return Err(ChainError::Custom("Block not Found".to_string()));
+        };
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, Some(tx_index))?;
+        Ok((vm, block, tx_index))
+    }
+
     /// Outputs the call trace for the given transaction
     /// May need to re-execute blocks in order to rebuild the transaction's prestate, up to the amount given by `reexec`
     pub async fn trace_transaction_calls(
@@ -20,23 +43,7 @@ impl Blockchain {
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, ChainError> {
-        // Fetch the transaction's location and the block it is contained in
-        let Some((_, block_hash, tx_index)) =
-            self.storage.get_transaction_location(tx_hash).await?
-        else {
-            return Err(ChainError::Custom("Transaction not Found".to_string()));
-        };
-        let tx_index = tx_index as usize;
-        let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
-            return Err(ChainError::Custom("Block not Found".to_string()));
-        };
-        // Obtain the block's parent state
-        let mut vm = self
-            .rebuild_parent_state(block.header.parent_hash, reexec)
-            .await?;
-        // Run the block until the transaction we want to trace
-        vm.rerun_block(&block, Some(tx_index))?;
-        // Trace the transaction
+        let (mut vm, block, tx_index) = self.prepare_state_for_tx(tx_hash, reexec).await?;
         timeout_trace_operation(timeout, move || {
             vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
         })

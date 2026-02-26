@@ -2,9 +2,11 @@
 
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
+use ethrex_levm::opcodes::Opcode;
+use serde::Serialize;
 
 /// Configuration for replay trace capture.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ReplayConfig {
     /// Number of stack top items to capture per step (default: 8).
     pub stack_top_capture: usize,
@@ -19,7 +21,7 @@ impl Default for ReplayConfig {
 }
 
 /// A single opcode execution step captured during replay.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StepRecord {
     /// Sequential step index (0-based).
     pub step_index: usize,
@@ -41,8 +43,15 @@ pub struct StepRecord {
     pub code_address: Address,
 }
 
+impl StepRecord {
+    /// Return the human-readable opcode name (e.g. "ADD", "PUSH1").
+    pub fn opcode_name(&self) -> String {
+        format!("{:?}", Opcode::from(self.opcode))
+    }
+}
+
 /// Complete execution trace from a transaction replay.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ReplayTrace {
     /// All recorded steps.
     pub steps: Vec<StepRecord>,

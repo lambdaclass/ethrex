@@ -440,7 +440,7 @@ impl LEVM {
         Ok(())
     }
 
-    fn setup_env(
+    pub(crate) fn setup_env(
         tx: &Transaction,
         tx_sender: Address,
         block_header: &BlockHeader,

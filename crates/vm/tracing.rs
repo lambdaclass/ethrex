@@ -1,10 +1,24 @@
 use crate::backends::levm::LEVM;
 use ethrex_common::tracing::CallTrace;
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, BlockHeader, Transaction};
+use ethrex_levm::environment::Environment;
 
 use crate::{Evm, EvmError};
 
 impl Evm {
+    /// Build the execution environment for a transaction.
+    /// Useful for replaying transactions outside the standard execution path.
+    pub fn setup_env_for_tx(
+        &self,
+        tx: &Transaction,
+        block_header: &BlockHeader,
+    ) -> Result<Environment, EvmError> {
+        let sender = tx
+            .sender()
+            .map_err(|e| EvmError::Transaction(e.to_string()))?;
+        LEVM::setup_env(tx, sender, block_header, &self.db, self.vm_type)
+    }
+
     /// Runs a single tx with the call tracer and outputs its trace.
     /// Assumes that the received state already contains changes from previous blocks and other
     /// transactions within its block.
