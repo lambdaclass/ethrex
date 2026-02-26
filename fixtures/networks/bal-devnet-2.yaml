@@ -36,7 +36,7 @@ snooper_enabled: true
 ethereum_genesis_generator_params:
   image: ethpandaops/ethereum-genesis-generator:master
 dora_params:
-  image: ethpandaops/dora:gloas-support
+  image: ethpandaops/dora:eip7928-support
 additional_services:
   - dora
   - spamoor
