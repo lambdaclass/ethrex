@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-26
-**Context**: Overall ~65% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE.
+**Context**: Overall ~65% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE.
 
 ---
 
@@ -177,12 +177,13 @@
 - **Dependency**: None (uses test-constructed bytecodes, not synced state)
 - **Completed**: Session — LEVM hook + tokamak-debugger engine + 14 tests
 
-### E-2. Debugger CLI [P2]
-- Interactive CLI: `step`, `step-back`, `break <pc>`, `inspect <slot>`, `continue`
-- Print: opcode, stack top 4, gas remaining, storage reads/writes
-- **Verification**: Demo video showing stepping through a real TX
-- **Dependency**: E-1
-- **Estimate**: 10-15h
+### E-2. Debugger CLI [P2] ✅ DONE
+- GDB-style interactive REPL with 13 commands: step, step-back, continue, reverse-continue, break, delete, goto, info, stack, list, breakpoints, help, quit ✅
+- rustyline REPL with auto-history, `--bytecode <hex>` input mode ✅
+- Feature-gated `cli` module (clap, rustyline, hex, ethrex-storage/blockchain/vm) ✅
+- **Verification**: 27 CLI tests (12 parsing + 6 formatter + 9 execution) — total 41 tests with base 14 ✅
+- **Dependency**: E-1 ✅
+- **Completed**: Session b6f304de1
 
 ### E-3. debug_timeTravel RPC Endpoint [P2]
 - JSON-RPC method: `debug_timeTravel(txHash, { stepIndex, breakpoints })`
@@ -234,7 +235,7 @@ Week 1:  [P0] A-1 ✅ + A-2 ✅ → A-3 ✅ → A-4 ✅ (9/9 ALL PASS)
 Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
 Week 3:  [P1] C-1 ✅ + C-2 ✅ + B-3 ✅
 Week 4:  [P2] D-1 decision ✅ + D-2 ✅ + D-3 ✅ → E-1 ✅
-Week 5+: [P2] E-2 + E-3
+Week 5+: [P2] E-2 ✅ + E-3
 Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
 ```
 
