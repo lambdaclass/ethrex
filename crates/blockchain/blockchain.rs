@@ -92,6 +92,7 @@ use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::LazyLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
@@ -109,6 +110,17 @@ use ethrex_metrics::blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
+
+/// Background thread for dropping large tree structures off the critical path.
+/// Avoids ~500us of recursive deallocation on hot paths (state/storage trie roots).
+static DROP_SENDER: LazyLock<Sender<Box<dyn Send>>> = LazyLock::new(|| {
+    let (tx, rx) = channel::<Box<dyn Send>>();
+    std::thread::Builder::new()
+        .name("drop_thread".to_string())
+        .spawn(move || for _ in rx {})
+        .expect("failed to spawn drop thread");
+    tx
+});
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
@@ -731,6 +743,7 @@ impl Blockchain {
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
                 let hash = root.commit(Nibbles::default(), &mut state_updates);
+                let _ = DROP_SENDER.send(Box::new(root));
                 hash.finalize()
             } else {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
@@ -1046,6 +1059,7 @@ impl Blockchain {
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
                 let hash = root.commit(Nibbles::default(), &mut state_updates);
+                let _ = DROP_SENDER.send(Box::new(root));
                 hash.finalize()
             } else {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
@@ -2818,6 +2832,7 @@ fn handle_account_subtrie(
                         {
                             let mut root = NodeRef::from(root);
                             let hash = root.commit(Nibbles::default(), &mut state.nodes);
+                            let _ = DROP_SENDER.send(Box::new(root));
                             new_storage_root = Some(hash.finalize());
                         } else {
                             state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
