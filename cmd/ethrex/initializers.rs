@@ -150,7 +150,7 @@ pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<S
 
 /// Initializes a pre-existing Store
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
-    let store = open_store(datadir)?;
+    let mut store = open_store(datadir)?;
     store.load_initial_state().await?;
     Ok(store)
 }

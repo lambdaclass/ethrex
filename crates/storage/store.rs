@@ -9,6 +9,7 @@ use crate::{
             BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
             FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
             SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            TRIE_UNDO_LOG,
         },
     },
     apply_prefix,
@@ -2256,8 +2257,17 @@ impl Store {
         Ok(())
     }
 
-    pub async fn load_initial_state(&self) -> Result<(), StoreError> {
+    pub async fn load_initial_state(&mut self) -> Result<(), StoreError> {
         info!("Loading initial state from DB");
+        // Load chain config
+        let key = chain_data_key(ChainDataIndex::ChainConfig);
+        if let Some(bytes) = self.read_async(CHAIN_DATA, key).await? {
+            let config: ChainConfig = serde_json::from_slice(&bytes).map_err(|e| {
+                StoreError::Custom(format!("Failed to deserialize chain config: {e}"))
+            })?;
+            self.chain_config = config;
+        }
+        // Load latest block header
         let Some(number) = self.load_latest_block_number().await? else {
             return Err(StoreError::MissingLatestBlockNumber);
         };
@@ -2909,6 +2919,91 @@ impl Store {
         Ok(header)
     }
 
+    /// Rolls back trie commits by replaying undo log entries backward until the
+    /// on-disk trie state matches `target_state_root`.
+    ///
+    /// This clears the in-memory trie cache and restores disk trie tables to
+    /// an earlier state, so that `regenerate_head_state` only needs to re-execute
+    /// at most ~128 blocks on the next startup.
+    pub fn undo_trie_commits(&self, target_state_root: H256) -> Result<(), StoreError> {
+        // Clear the in-memory trie cache — it holds layers for blocks we just removed.
+        *self
+            .trie_cache
+            .write()
+            .map_err(|_| StoreError::LockError)? =
+            Arc::new(TrieLayerCache::new(DB_COMMIT_THRESHOLD));
+
+        // Read latest commit sequence.
+        let read_tx = self.backend.begin_read()?;
+        let latest_seq = read_tx
+            .get(MISC_VALUES, TRIE_COMMIT_SEQ_KEY)?
+            .map(|bytes| {
+                u64::from_be_bytes(bytes.as_slice().try_into().unwrap_or([0u8; 8]))
+            })
+            .unwrap_or(0);
+        drop(read_tx);
+
+        if latest_seq == 0 {
+            info!("No trie undo log entries available");
+            return Ok(());
+        }
+
+        let mut seq = latest_seq;
+        loop {
+            if seq == 0 {
+                info!("Exhausted all trie undo entries without finding target state root");
+                break;
+            }
+
+            let read_tx = self.backend.begin_read()?;
+            let undo_data = read_tx.get(TRIE_UNDO_LOG, &seq.to_be_bytes())?;
+            drop(read_tx);
+
+            let Some(undo_data) = undo_data else {
+                info!(
+                    seq = seq,
+                    "No undo entry at sequence; stopping undo replay"
+                );
+                break;
+            };
+
+            let entries = deserialize_undo_entries(&undo_data)?;
+            let mut write_tx = self.backend.begin_write()?;
+
+            for entry in &entries {
+                let Some(table) = table_id_to_name(entry.table_id) else {
+                    continue;
+                };
+                match &entry.old_value {
+                    Some(v) => write_tx.put(table, &entry.key, v)?,
+                    None => {
+                        let _ = write_tx.delete(table, &entry.key);
+                    }
+                }
+            }
+
+            write_tx.delete(TRIE_UNDO_LOG, &seq.to_be_bytes())?;
+            let new_latest = seq - 1;
+            write_tx.put(
+                MISC_VALUES,
+                TRIE_COMMIT_SEQ_KEY,
+                &new_latest.to_be_bytes(),
+            )?;
+            write_tx.commit()?;
+
+            seq -= 1;
+
+            // Check if the disk state now has the target root.
+            if self.has_state_root(target_state_root)? {
+                info!("Trie state successfully rolled back to target state root");
+                return Ok(());
+            }
+        }
+
+        info!("Trie undo replay finished; startup re-execution will handle remaining state");
+        Ok(())
+    }
+
     fn last_written(&self) -> Result<Vec<u8>, StoreError> {
         let last_computed_flatkeyvalue = self
             .last_computed_flatkeyvalue
@@ -2921,6 +3016,121 @@ impl Store {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         &last_written[0..64] > account_nibbles.as_ref()
     }
+}
+
+/// Maximum number of undo entries to retain. Older entries are pruned during each commit.
+const TRIE_UNDO_RETENTION: u64 = 50_000;
+
+const TRIE_COMMIT_SEQ_KEY: &[u8] = b"trie_commit_seq";
+
+/// Table ID constants for undo entry serialization.
+const TABLE_ID_ACCOUNT_TRIE_NODES: u8 = 0;
+const TABLE_ID_STORAGE_TRIE_NODES: u8 = 1;
+const TABLE_ID_ACCOUNT_FLATKEYVALUE: u8 = 2;
+const TABLE_ID_STORAGE_FLATKEYVALUE: u8 = 3;
+
+fn table_id_to_name(id: u8) -> Option<&'static str> {
+    match id {
+        TABLE_ID_ACCOUNT_TRIE_NODES => Some(ACCOUNT_TRIE_NODES),
+        TABLE_ID_STORAGE_TRIE_NODES => Some(STORAGE_TRIE_NODES),
+        TABLE_ID_ACCOUNT_FLATKEYVALUE => Some(ACCOUNT_FLATKEYVALUE),
+        TABLE_ID_STORAGE_FLATKEYVALUE => Some(STORAGE_FLATKEYVALUE),
+        _ => None,
+    }
+}
+
+fn table_name_to_id(name: &str) -> u8 {
+    match name {
+        ACCOUNT_TRIE_NODES => TABLE_ID_ACCOUNT_TRIE_NODES,
+        STORAGE_TRIE_NODES => TABLE_ID_STORAGE_TRIE_NODES,
+        ACCOUNT_FLATKEYVALUE => TABLE_ID_ACCOUNT_FLATKEYVALUE,
+        STORAGE_FLATKEYVALUE => TABLE_ID_STORAGE_FLATKEYVALUE,
+        _ => unreachable!("unexpected trie table name: {name}"),
+    }
+}
+
+struct UndoEntry {
+    table_id: u8,
+    key: Vec<u8>,
+    old_value: Option<Vec<u8>>,
+}
+
+fn serialize_undo_entries(entries: &[UndoEntry]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+    for entry in entries {
+        buf.push(entry.table_id);
+        buf.extend_from_slice(&(entry.key.len() as u32).to_be_bytes());
+        buf.extend_from_slice(&entry.key);
+        match &entry.old_value {
+            Some(v) => {
+                buf.push(1);
+                buf.extend_from_slice(&(v.len() as u32).to_be_bytes());
+                buf.extend_from_slice(v);
+            }
+            None => {
+                buf.push(0);
+            }
+        }
+    }
+    buf
+}
+
+fn deserialize_undo_entries(data: &[u8]) -> Result<Vec<UndoEntry>, StoreError> {
+    let mut pos = 0;
+
+    let read_u32 = |pos: &mut usize| -> Result<u32, StoreError> {
+        if *pos + 4 > data.len() {
+            return Err(StoreError::Custom("undo entry truncated".into()));
+        }
+        let val = u32::from_be_bytes(data[*pos..*pos + 4].try_into().unwrap());
+        *pos += 4;
+        Ok(val)
+    };
+
+    let entry_count = read_u32(&mut pos)? as usize;
+    let mut entries = Vec::with_capacity(entry_count);
+
+    for _ in 0..entry_count {
+        if pos >= data.len() {
+            return Err(StoreError::Custom("undo entry truncated".into()));
+        }
+        let table_id = data[pos];
+        pos += 1;
+
+        let key_len = read_u32(&mut pos)? as usize;
+        if pos + key_len > data.len() {
+            return Err(StoreError::Custom("undo entry truncated".into()));
+        }
+        let key = data[pos..pos + key_len].to_vec();
+        pos += key_len;
+
+        if pos >= data.len() {
+            return Err(StoreError::Custom("undo entry truncated".into()));
+        }
+        let has_old_value = data[pos];
+        pos += 1;
+
+        let old_value = if has_old_value == 1 {
+            let val_len = read_u32(&mut pos)? as usize;
+            if pos + val_len > data.len() {
+                return Err(StoreError::Custom("undo entry truncated".into()));
+            }
+            let val = data[pos..pos + val_len].to_vec();
+            pos += val_len;
+            Some(val)
+        } else {
+            None
+        };
+
+        entries.push(UndoEntry {
+            table_id,
+            key,
+            old_value,
+        });
+    }
+
+    Ok(entries)
 }
 
 type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
@@ -2985,19 +3195,20 @@ fn apply_trie_updates(
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
     let mut trie_mut = (*trie).clone();
 
-    let last_written = backend
-        .begin_read()?
+    let read_tx = backend.begin_read()?;
+    let last_written = read_tx
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
-
-    let mut write_tx = backend.begin_write()?;
 
     // Before encoding, accounts have only the account address as their path, while storage keys have
     // the account address (32 bytes) + storage path (up to 32 bytes).
 
     // Commit removes the bottom layer and returns it, this is the mutation step.
     let nodes = trie_mut.commit(root).unwrap_or_default();
-    let mut result = Ok(());
+
+    // Collect undo entries by reading old values before overwriting.
+    let mut undo_entries = Vec::new();
+    let mut filtered_nodes = Vec::new();
     for (key, value) in nodes {
         let is_leaf = key.len() == 65 || key.len() == 131;
         let is_account = key.len() <= 65;
@@ -3007,15 +3218,60 @@ fn apply_trie_updates(
         }
         let table = if is_leaf {
             if is_account {
-                &ACCOUNT_FLATKEYVALUE
+                ACCOUNT_FLATKEYVALUE
             } else {
-                &STORAGE_FLATKEYVALUE
+                STORAGE_FLATKEYVALUE
             }
         } else if is_account {
-            &ACCOUNT_TRIE_NODES
+            ACCOUNT_TRIE_NODES
         } else {
-            &STORAGE_TRIE_NODES
+            STORAGE_TRIE_NODES
         };
+
+        let key_bytes: &[u8] = key.as_ref();
+        let old_value = read_tx.get(table, key_bytes)?;
+        undo_entries.push(UndoEntry {
+            table_id: table_name_to_id(table),
+            key: key_bytes.to_vec(),
+            old_value,
+        });
+        filtered_nodes.push((key, value, table));
+    }
+
+    // Read commit sequence before dropping the read transaction.
+    let current_seq = read_tx
+        .get(MISC_VALUES, TRIE_COMMIT_SEQ_KEY)?
+        .map(|bytes| {
+            u64::from_be_bytes(
+                bytes
+                    .as_slice()
+                    .try_into()
+                    .unwrap_or([0u8; 8]),
+            )
+        })
+        .unwrap_or(0);
+    drop(read_tx);
+
+    let mut write_tx = backend.begin_write()?;
+
+    // Write the undo entry and update commit sequence.
+    let new_seq = current_seq + 1;
+
+    if !undo_entries.is_empty() {
+        let undo_blob = serialize_undo_entries(&undo_entries);
+        write_tx.put(TRIE_UNDO_LOG, &new_seq.to_be_bytes(), &undo_blob)?;
+    }
+    write_tx.put(MISC_VALUES, TRIE_COMMIT_SEQ_KEY, &new_seq.to_be_bytes())?;
+
+    // Prune old undo entries beyond the retention window.
+    if new_seq > TRIE_UNDO_RETENTION {
+        let old_seq = new_seq - TRIE_UNDO_RETENTION;
+        // Best-effort delete; ignore if the entry doesn't exist.
+        let _ = write_tx.delete(TRIE_UNDO_LOG, &old_seq.to_be_bytes());
+    }
+
+    let mut result = Ok(());
+    for (key, value, table) in filtered_nodes {
         if value.is_empty() {
             result = write_tx.delete(table, &key);
         } else {

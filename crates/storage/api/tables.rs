@@ -92,6 +92,11 @@ pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";
 
+/// Trie undo log column family: [`u8; 8`] => [`Vec<u8>`]
+/// - [`u8; 8`] = commit sequence number (u64 big-endian)
+/// - [`Vec<u8>`] = serialized undo entries (old values before trie commit)
+pub const TRIE_UNDO_LOG: &str = "trie_undo_log";
+
 /// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///    ```rust,no_run
@@ -102,7 +107,7 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+pub const TABLES: [&str; 20] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -121,5 +126,6 @@ pub const TABLES: [&str; 19] = [
     ACCOUNT_FLATKEYVALUE,
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
+    TRIE_UNDO_LOG,
     EXECUTION_WITNESSES,
 ];

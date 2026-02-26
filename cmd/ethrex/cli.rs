@@ -1102,6 +1102,16 @@ pub async fn truncate_blocks(
         "Truncation complete"
     );
 
+    // Roll back the on-disk trie state to match the new head so the node
+    // doesn't need lengthy re-execution on the next startup.
+    if removed > 0 {
+        let new_head_header = store
+            .get_block_header(from_block - 1)?
+            .ok_or_else(|| eyre::eyre!("New head header not found"))?;
+        store.undo_trie_commits(new_head_header.state_root)?;
+        info!("Trie state rolled back to match new head");
+    }
+
     Ok(())
 }
 
