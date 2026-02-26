@@ -1,4 +1,5 @@
 pub mod levm;
+pub use levm::get_max_allowed_gas_limit;
 use levm::LEVM;
 
 use crate::db::{DynVmDatabase, VmDatabase};

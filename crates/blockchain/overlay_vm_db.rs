@@ -173,6 +173,10 @@ impl VmDatabase for OverlayVmDatabase {
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         if let Some(overrides) = self.account_overrides.get(&address) {
+            // Deleted accounts have no storage.
+            if overrides.deleted {
+                return Ok(Some(U256::zero()));
+            }
             // Full storage replacement: only look here.
             if let Some(full) = &overrides.full_storage {
                 return Ok(Some(*full.get(&key).unwrap_or(&U256::zero())));

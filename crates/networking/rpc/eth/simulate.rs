@@ -17,8 +17,9 @@ use ethrex_common::{
     constants::{DEFAULT_REQUESTS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB},
     types::{
         AccessListEntry, Block, BlockBody, BlockHeader, GenericTransaction, Log, Receipt, TxKind,
-        TxType, bloom_from_logs, calc_excess_blob_gas, compute_receipts_root,
-        compute_transactions_root, compute_withdrawals_root,
+        TxType, ELASTICITY_MULTIPLIER, bloom_from_logs, calc_excess_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
         transaction::{
             EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction,
             LegacyTransaction, Transaction,
@@ -222,13 +223,13 @@ impl RpcHandler for SimulateV1Request {
                         .db
                         .get_account(generic_tx.from)
                         .map(|acc| acc.info.nonce)
-                        .unwrap_or(0);
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
                     tx_with_nonce.nonce = Some(sender_nonce);
                 }
 
                 // Compute the gas limit this tx will use (replicating VM logic).
                 // In validation mode, gas is capped by remaining block gas.
-                let max_gas = ethrex_vm::backends::levm::get_max_allowed_gas_limit(
+                let max_gas = ethrex_vm::backends::get_max_allowed_gas_limit(
                     sim_header.gas_limit,
                     fork,
                 );
@@ -242,6 +243,22 @@ impl RpcHandler for SimulateV1Request {
                         max_gas
                     }
                 };
+
+                // In validation mode, reject if this tx would exceed remaining block gas.
+                if self.payload.validation
+                    && block_gas_used.checked_add(tx_gas_limit).unwrap_or(u64::MAX) > max_gas
+                {
+                    return Err(RpcErr::SimulateError {
+                        code: -38015,
+                        message: format!(
+                            "gas limit exceeded: block gas used {} + tx gas {} > max {}",
+                            block_gas_used, tx_gas_limit, max_gas
+                        ),
+                    });
+                }
+
+                // Ensure EVM uses the same gas limit as the response/hash.
+                tx_with_nonce.gas = Some(tx_gas_limit);
 
                 let exec_result = evm.simulate_tx_from_generic_with_validation(
                     &tx_with_nonce,
@@ -481,9 +498,10 @@ impl RpcHandler for SimulateV1Request {
                             s: U256::zero(),
                             y_parity: 0,
                         };
-                        serde_json::to_value(&sim_tx).unwrap_or(Value::Null)
+                        serde_json::to_value(&sim_tx)
+                            .map_err(|e| RpcErr::Internal(e.to_string()))
                     })
-                    .collect()
+                    .collect::<Result<Vec<Value>, RpcErr>>()?
             } else {
                 tx_infos
                     .iter()
@@ -845,6 +863,20 @@ fn build_simulated_header(
         }
         // blobBaseFee override is applied directly to the EVM environment
         // in the simulation loop, bypassing the excess_blob_gas derivation.
+    }
+
+    // Derive next EIP-1559 base fee from parent when not explicitly overridden.
+    let has_base_fee_override = overrides.and_then(|o| o.base_fee_per_gas).is_some();
+    if !has_base_fee_override {
+        if let Some(parent_base_fee) = prev.base_fee_per_gas {
+            header.base_fee_per_gas = calculate_base_fee_per_gas(
+                header.gas_limit,
+                prev.gas_limit,
+                prev.gas_used,
+                parent_base_fee,
+                ELASTICITY_MULTIPLIER,
+            );
+        }
     }
 
     // Set Cancun+ fields to defaults if missing.
