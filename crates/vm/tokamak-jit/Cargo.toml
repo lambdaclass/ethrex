@@ -32,6 +32,7 @@ ethrex-crypto.workspace = true
 ethrex-levm = { workspace = true, features = ["test-utils"] }
 rustc-hash.workspace = true
 serial_test.workspace = true
+proptest = "1.4"
 
 [features]
 default = []

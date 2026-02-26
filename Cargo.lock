@@ -4377,6 +4377,7 @@ dependencies = [
  "spawned-concurrency",
  "spawned-rt",
  "thiserror 2.0.18",
+ "tokamak-debugger",
  "tokio",
  "tokio-util",
  "tower-http 0.6.8",
@@ -13480,11 +13481,14 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "hex",
+ "reqwest",
  "rustc-hash 2.1.1",
  "serde",
  "serde_json",
  "serial_test",
  "tokamak-jit",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -13501,6 +13505,8 @@ dependencies = [
  "hex",
  "rustc-hash 2.1.1",
  "rustyline",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -13516,6 +13522,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "hex",
+ "proptest",
  "revm-bytecode",
  "revm-context-interface",
  "revm-interpreter",

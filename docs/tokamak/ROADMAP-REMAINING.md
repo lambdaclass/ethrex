@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-26
-**Context**: Overall ~65% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE.
+**Context**: Overall ~75% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-4 ✅ DONE.
 
 ---
 
@@ -185,22 +185,29 @@
 - **Dependency**: E-1 ✅
 - **Completed**: Session b6f304de1
 
-### E-3. debug_timeTravel RPC Endpoint [P2]
-- JSON-RPC method: `debug_timeTravel(txHash, { stepIndex, breakpoints })`
-- Returns: opcode, stack, memory slice, storage diff
-- **Verification**: curl to local node returns correct step data
-- **Dependency**: E-1, E-2
-- **Estimate**: 8-12h
+### E-3. debug_timeTravel RPC Endpoint [P2] ✅ DONE
+- JSON-RPC method: `debug_timeTravel(txHash, { stepIndex, count, reexec })` ✅
+- Returns: trace summary (totalSteps, gasUsed, success, output) + step window (opcode, stack, memory, code address) ✅
+- Refactored `blockchain/tracing.rs` — extracted `prepare_state_for_tx()` reused by both `trace_transaction_calls` and time travel ✅
+- Added `Evm::setup_env_for_tx()` wrapper in `vm/tracing.rs` ✅
+- Added `Serialize` derives to `tokamak-debugger` types (StepRecord, ReplayTrace, ReplayConfig) ✅
+- Feature-gated `tokamak-debugger` feature in ethrex-rpc ✅
+- **Verification**: 6 RPC handler tests + 4 serde tests passing ✅
+- **Dependency**: E-1 ✅, E-2 ✅
+- **Completed**: Phase E fully complete
 
 ---
 
 ## Phase F: Ecosystem & Launch (P3)
 
-### F-1. Cross-Client Benchmarking [P3]
-- Run same scenarios on Geth and Reth via JSON-RPC
-- Compare TX execution time, state root computation, sync speed
+### F-1. Cross-Client Benchmarking [P3] ✅ DONE
+- `cross-client` CLI subcommand in tokamak-bench ✅
+- ethrex runs in-process (no RPC overhead), Geth/Reth via `eth_call` with state overrides ✅
+- Comparison table with ethrex as 1.00x baseline (JSON + markdown output) ✅
+- Feature-gated `cross-client` (reqwest, tokio, url deps) ✅
+- **Verification**: 61 tests passing (including 18 cross-client tests) ✅
 - **Dependency**: A-2, C-1
-- **Estimate**: 16-24h
+- **Completed**: Cross-client benchmarking module with types, async runner, and report generation
 
 ### F-2. Public Dashboard [P3]
 - clients.tokamak.network
@@ -214,11 +221,14 @@
 - **Dependency**: A-1 (L1 must work first)
 - **Estimate**: 40-80h (high uncertainty, depends on L2 spec)
 
-### F-4. Security Audit Prep [P3]
-- JIT fuzzing (bytecode generation + differential testing)
-- unsafe code audit (transmute in execution.rs, mem::forget in compiler.rs)
+### F-4. Security Audit Prep [P3] ✅ DONE
+- `cargo-fuzz` harnesses: fuzz_analyzer, fuzz_optimizer, fuzz_differential ✅
+- Property-based tests (proptest): analyzer_never_panics, basic_blocks_within_bounds, optimizer_preserves_length, optimizer_converges ✅
+- SAFETY_AUDIT.md: catalog of all 9 unsafe blocks with risk assessment + mitigations ✅
+- Found real optimizer limitation: not single-pass idempotent (folding creates new patterns) — documented ✅
+- **Verification**: 31 tests passing (including 4 proptest) ✅
 - **Dependency**: B-1, D-1
-- **Estimate**: 40h
+- **Completed**: Fuzzing harnesses + proptest + safety audit documentation
 
 ### F-5. Mainnet Full Sync [P3]
 - Full mainnet state sync as Tokamak client
@@ -235,8 +245,9 @@ Week 1:  [P0] A-1 ✅ + A-2 ✅ → A-3 ✅ → A-4 ✅ (9/9 ALL PASS)
 Week 2:  [P1] B-2 ✅ + C-2 + C-3 ✅ (parallel) → B-1 ✅
 Week 3:  [P1] C-1 ✅ + C-2 ✅ + B-3 ✅
 Week 4:  [P2] D-1 decision ✅ + D-2 ✅ + D-3 ✅ → E-1 ✅
-Week 5+: [P2] E-2 ✅ + E-3
-Later:   [P3] F-1 → F-2 → F-3 → F-4 → F-5
+Week 5+: [P2] E-2 ✅ + E-3 ✅
+Week 6:  [P3] F-1 ✅ + F-4 ✅ (parallel)
+Later:   [P3] F-2 → F-3 → F-5
 ```
 
 ---

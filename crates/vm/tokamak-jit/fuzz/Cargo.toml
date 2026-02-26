@@ -1,0 +1,35 @@
+[package]
+name = "tokamak-jit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1"
+ethrex-common = { path = "../../../common", default-features = false }
+ethrex-levm = { path = "../../levm", features = ["tokamak-jit"] }
+
+[features]
+revmc-backend = []
+
+[[bin]]
+name = "fuzz_analyzer"
+path = "fuzz_targets/fuzz_analyzer.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_optimizer"
+path = "fuzz_targets/fuzz_optimizer.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_differential"
+path = "fuzz_targets/fuzz_differential.rs"
+doc = false
+
+[workspace]
+members = ["."]

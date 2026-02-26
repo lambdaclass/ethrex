@@ -43,7 +43,6 @@
 **Remaining:**
 - Recursive CALL performance (suspend/resume is slow — accepted for v1.0)
 - Tiered optimization (profile-guided optimization)
-- Fuzzing + security audit
 - Production deployment
 
 ### Feature #10: Continuous Benchmarking (~60%)
@@ -58,12 +57,11 @@
 - JIT speedup regression detection with PR comments
 
 **Remaining:**
-- Geth/Reth comparison via JSON-RPC
 - State root differential testing
 - Public dashboard (clients.tokamak.network)
 - Precompile timing export
 
-### Feature #21: Time-Travel Debugger (~50%)
+### Feature #21: Time-Travel Debugger (~85%)
 
 **Completed:**
 - `tokamak-debugger` crate with replay engine (E-1)
@@ -73,10 +71,11 @@
 - Stack `peek()` for non-destructive stack inspection
 - GDB-style interactive CLI (E-2) — 13 commands: step, step-back, continue, reverse-continue, break, delete, goto, info, stack, list, breakpoints, help, quit
 - rustyline REPL with auto-history, `--bytecode <hex>` input mode
-- 41 tests: basic replay (4), navigation (5), gas tracking (3), nested calls (2), CLI parsing (12), formatter (6), execution (9)
+- `debug_timeTravel` JSON-RPC endpoint (E-3) — full TX replay over RPC with step windowing
+- Serde serialization for all debugger types (StepRecord, ReplayTrace, ReplayConfig)
+- 51 tests: basic replay (4), navigation (5), gas tracking (3), nested calls (2), serde (4), CLI parsing (12), formatter (6), execution (9), RPC handler (6)
 
 **Remaining:**
-- `debug_timeTravel` RPC endpoint — E-3
 - Web UI (optional)
 
 ---
@@ -104,7 +103,7 @@ Measured after Volkov R21-R23 fixes (corrected measurement order).
 |-----------|----------|-------|
 | LEVM JIT infra | `crates/vm/levm/src/jit/` (9 files) | ~2,700 |
 | tokamak-jit crate | `crates/vm/tokamak-jit/src/` (14 files) | ~5,650 |
-| tokamak-bench crate | `crates/tokamak-bench/src/` (7 files) | ~1,305 |
+| tokamak-bench crate | `crates/tokamak-bench/src/` (11 files) | ~1,700 |
 | tokamak-debugger | `crates/tokamak-debugger/src/` (14 files) | ~1,310 |
 | LEVM debugger hook | `crates/vm/levm/src/debugger_hook.rs` | ~27 |
 | **Total** | | **~10,990** |
@@ -153,6 +152,7 @@ R23(5.0) -> R24(8.0)
 ### Recently Completed (Phase E)
 - TX Replay Engine (E-1) — LEVM OpcodeRecorder hook, DebugRecorder, ReplayEngine with forward/backward/goto navigation, 14 tests
 - Debugger CLI (E-2) — GDB-style REPL with 13 commands, rustyline, cli feature gate, 27 CLI tests (b6f304de1)
+- debug_timeTravel RPC (E-3) — JSON-RPC endpoint, prepare_state_for_tx refactor, Evm::setup_env_for_tx, serde derives, feature-gated tokamak-debugger in ethrex-rpc, 10 tests (6 RPC + 4 serde)
 
 ### CI Verified (PR #6260, run 22379067904)
 - Hive 6/6 suites PASS (tokamak-jit build) — RPC, Devp2p, Auth, Cancun, Paris, Withdrawals
@@ -165,17 +165,19 @@ R23(5.0) -> R24(8.0)
 - assertoor `synced-check`: EL + CL both synced
 - Ran on `ubuntu-latest` with Kurtosis + Lighthouse v8.0.1
 
+### Recently Completed (Phase F)
+- Cross-client benchmarking (F-1) — `cross-client` CLI subcommand, ethrex in-process + Geth/Reth via eth_call state overrides, comparison table with ethrex as 1.00x baseline, 18 tests
+- Security audit prep (F-4) — cargo-fuzz harnesses (analyzer, optimizer, differential), 4 proptest property tests, SAFETY_AUDIT.md cataloging all 9 unsafe blocks with risk assessment
+
 ### Not Started
 - Mainnet full sync as Tokamak client
 - L2 integration (`tokamak-l2` flag declared, no implementation)
-- Time-Travel Debugger RPC endpoint (E-3)
-- Cross-client benchmark (Geth/Reth comparison)
 - Public benchmark dashboard
 - EF grant application
 - External node operator adoption
 
 ### In Progress
-- (none — Phase A ALL COMPLETE, Phase B/C/D complete, E-1/E-2 complete; next: E-3 debug_timeTravel RPC)
+- (none — Phase A-E ALL COMPLETE, F-1 ✅ F-4 ✅; next: F-2 dashboard, F-3 L2, F-5 mainnet sync)
 
 ---
 
