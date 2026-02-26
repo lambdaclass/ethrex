@@ -1,0 +1,66 @@
+participants:
+  - cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:bal-devnet-2
+    el_type: ethrex
+    el_image: ethrex:local
+    el_extra_params:
+      - "--syncmode=full"
+    el_extra_env_vars:
+      RUST_LOG: "debug,ethrex_p2p::tx_broadcaster=info,ethrex_blockchain::payload=info,ethrex_rpc::eth::account=info,ethrex_rpc::eth::transaction=info"
+  - cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:bal-devnet-2
+    el_type: ethrex
+    el_image: ethrex:main
+    el_extra_params:
+      - "--syncmode=full"
+    el_extra_env_vars:
+      RUST_LOG: "debug,ethrex_p2p::tx_broadcaster=info,ethrex_blockchain::payload=info,ethrex_rpc::eth::account=info,ethrex_rpc::eth::transaction=info"
+global_log_level: 'debug'
+network_params:
+  genesis_delay: 20
+  fulu_fork_epoch: 0
+  gloas_fork_epoch: 1
+  seconds_per_slot: 6
+snooper_enabled: true
+ethereum_genesis_generator_params:
+  image: ethpandaops/ethereum-genesis-generator:master
+dora_params:
+  image: ethpandaops/dora:eip7928-support
+additional_services:
+  - dora
+  - spamoor
+port_publisher:
+  additional_services:
+    enabled: true
+    public_port_start: 64400
+spamoor_params:
+  image: ethpandaops/spamoor:master
+  spammers:
+    # Mainnet-like workload mix (~700 tx/s target)
+    # ~40% ERC20 transfers (hot storage: balances, allowances)
+    - scenario: erc20tx
+      config:
+        throughput: 280
+        max_wallets: 500
+    # ~25% DEX swaps (complex contract calls, hot pool state)
+    - scenario: uniswap-swaps
+      config:
+        throughput: 175
+        max_wallets: 300
+    # ~15% simple ETH transfers
+    - scenario: eoatx
+      config:
+        throughput: 105
+    # ~10% contract calls (storage-heavy)
+    - scenario: storagespam
+      config:
+        throughput: 70
+    # ~5% ERC721 mints/transfers (NFTs)
+    - scenario: erc721tx
+      config:
+        throughput: 35
+    # ~5% blob txs (L2 sequencer-like)
+    - scenario: blobs
+      config:
+        throughput: 35
+        max_pending: 16

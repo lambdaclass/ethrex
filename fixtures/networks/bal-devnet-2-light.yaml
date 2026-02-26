@@ -1,27 +1,23 @@
 participants:
-  - cl_type: lodestar
-    cl_image: ethpandaops/lodestar:bal-devnet-2
-    el_type: nimbus
-    el_image: ethpandaops/nimbus-eth1:bal-devnet-2
-  # - cl_type: lighthouse
-  #   supernode: true
-  #   cl_image: ethpandaops/lighthouse:bal-devnet-2
-  #   el_type: nethermind
-  #   el_image: ethpandaops/nethermind:bal-devnet-2
   - cl_type: lighthouse
-    cl_image: ethpandaops/lighthouse:bal-devnet-2
     supernode: true
+    cl_image: ethpandaops/lighthouse:bal-devnet-2
     el_type: geth
     el_image: ethpandaops/geth:bal-devnet-2
   - cl_type: lighthouse
+    supernode: true
+    cl_image: ethpandaops/lighthouse:bal-devnet-2
+    el_type: geth
+    el_image: ethpandaops/geth:bal-devnet-2
+  - cl_type: lighthouse
+    supernode: true
     cl_image: ethpandaops/lighthouse:bal-devnet-2
     el_type: ethrex
     el_image: ethrex:local
-    validator_count: 160
     el_extra_params:
       - "--syncmode=full"
     el_extra_env_vars:
-      RUST_LOG: "debug,ethrex_p2p::tx_broadcaster=info,ethrex_blockchain::payload=info,ethrex_rpc::eth::account=info"
+      RUST_LOG: "debug,ethrex_p2p::tx_broadcaster=info,ethrex_blockchain::payload=info"
 global_log_level: 'debug'
 network_params:
   genesis_delay: 20
