@@ -9,4 +9,12 @@ pub enum DebuggerError {
 
     #[error("Step {index} out of range (max {max})")]
     StepOutOfRange { index: usize, max: usize },
+
+    #[cfg(feature = "cli")]
+    #[error("CLI error: {0}")]
+    Cli(String),
+
+    #[cfg(feature = "cli")]
+    #[error("Invalid bytecode: {0}")]
+    InvalidBytecode(String),
 }

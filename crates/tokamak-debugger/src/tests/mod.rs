@@ -4,3 +4,6 @@ mod basic_replay;
 mod gas_tracking;
 mod navigation;
 mod nested_calls;
+
+#[cfg(feature = "cli")]
+mod cli_tests;

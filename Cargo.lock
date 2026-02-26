@@ -13492,12 +13492,15 @@ name = "tokamak-debugger"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "clap",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-levm",
  "ethrex-storage",
  "ethrex-vm",
+ "hex",
  "rustc-hash 2.1.1",
+ "rustyline",
  "thiserror 2.0.18",
 ]
 

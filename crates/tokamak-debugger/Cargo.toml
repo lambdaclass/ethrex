@@ -4,17 +4,43 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+cli = [
+    "dep:clap",
+    "dep:rustyline",
+    "dep:hex",
+    "dep:ethrex-storage",
+    "dep:ethrex-blockchain",
+    "dep:ethrex-vm",
+    "dep:rustc-hash",
+]
+
 [dependencies]
 ethrex-levm = { workspace = true, features = ["tokamak-debugger"] }
 ethrex-common = { workspace = true, default-features = false }
 bytes.workspace = true
 thiserror.workspace = true
 
+# CLI-only (optional)
+clap = { workspace = true, optional = true }
+rustyline = { version = "15", optional = true }
+hex = { workspace = true, optional = true }
+ethrex-storage = { workspace = true, optional = true }
+ethrex-blockchain = { workspace = true, optional = true }
+ethrex-vm = { workspace = true, optional = true }
+rustc-hash = { workspace = true, optional = true }
+
 [dev-dependencies]
 ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-vm.workspace = true
 rustc-hash.workspace = true
+
+[[bin]]
+name = "tokamak-debugger"
+path = "src/bin/debugger.rs"
+required-features = ["cli"]
 
 [lints]
 workspace = true

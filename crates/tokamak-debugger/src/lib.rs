@@ -9,5 +9,8 @@ pub mod error;
 pub mod recorder;
 pub mod types;
 
+#[cfg(feature = "cli")]
+pub mod cli;
+
 #[cfg(test)]
 mod tests;
