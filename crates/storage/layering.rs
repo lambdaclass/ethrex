@@ -70,17 +70,29 @@ impl TrieLayerCache {
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
+        use crate::metrics::STORAGE_METRICS;
+        use std::sync::atomic::Ordering::Relaxed;
+
         // Fast check to know if any layer may contain the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or may not exist (false positive).
+        STORAGE_METRICS.bloom_checks.fetch_add(1, Relaxed);
         if !self.bloom.contains(key) {
-            // TrieWrapper goes to db when returning None.
+            // Bloom negative — definitely not in any layer, go to DB.
+            STORAGE_METRICS.layer_cache_misses.fetch_add(1, Relaxed);
             return None;
         }
 
         let mut current_state_root = state_root;
+        let mut depth: u64 = 0;
 
         while let Some(layer) = self.layers.get(&current_state_root) {
+            depth += 1;
             if let Some(value) = layer.nodes.get(key) {
+                STORAGE_METRICS.layer_cache_hits.fetch_add(1, Relaxed);
+                if depth > 0 {
+                    STORAGE_METRICS.layer_depth_total.fetch_add(depth, Relaxed);
+                    STORAGE_METRICS.layer_depth_count.fetch_add(1, Relaxed);
+                }
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
@@ -93,6 +105,14 @@ impl TrieLayerCache {
                 // state with a privileged tx and later reverts it (since it doesn't update nonce).
                 panic!("State cycle found");
             }
+        }
+
+        // Bloom said yes but no layer had it — false positive.
+        STORAGE_METRICS.bloom_false_positives.fetch_add(1, Relaxed);
+        STORAGE_METRICS.layer_cache_misses.fetch_add(1, Relaxed);
+        if depth > 0 {
+            STORAGE_METRICS.layer_depth_total.fetch_add(depth, Relaxed);
+            STORAGE_METRICS.layer_depth_count.fetch_add(1, Relaxed);
         }
         None
     }

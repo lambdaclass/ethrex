@@ -131,6 +131,16 @@ impl TrieDB for BackendTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let prefixed_key = self.make_key(key);
         let table = self.table_for_key(&prefixed_key);
+        let is_flat = table == self.fkv_table;
+        if is_flat {
+            crate::metrics::STORAGE_METRICS
+                .flat_hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            crate::metrics::STORAGE_METRICS
+                .trie_node_reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         self.read_view
             .get(table, prefixed_key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
@@ -201,6 +211,16 @@ impl TrieDB for BackendTrieDBLocked {
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let is_leaf = key.len() == 65 || key.len() == 131;
+        if is_leaf {
+            crate::metrics::STORAGE_METRICS
+                .flat_hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            crate::metrics::STORAGE_METRICS
+                .trie_node_reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         let tx = self.tx_for_key(&key);
         tx.get(key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))

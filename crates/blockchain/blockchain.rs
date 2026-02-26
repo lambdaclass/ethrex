@@ -2226,6 +2226,12 @@ impl Blockchain {
             METRICS_BLOCKS.set_warmer_ms(warmer_ms as i64);
             METRICS_BLOCKS.set_warmer_early_ms(warmer_early_ms);
         );
+
+        // Storage layer instrumentation (Phase 0)
+        if block_number % 100 == 0 {
+            let sm = ethrex_storage::metrics::STORAGE_METRICS.snapshot();
+            info!("[STORAGE_METRIC] {sm}");
+        }
     }
 
     /// Adds multiple blocks in a batch.
