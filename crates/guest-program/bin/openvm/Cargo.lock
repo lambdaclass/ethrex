@@ -1029,6 +1029,7 @@ dependencies = [
  "ethrex-rlp",
  "hex",
  "lazy_static",
+ "rayon",
  "rkyv",
  "rustc-hash",
  "serde",
