@@ -164,9 +164,9 @@ impl BackendTrieDB {
                 Some(flat_keys::flat_account_key(&addr_hash).to_vec())
             }
             131 => {
-                // Storage leaf: 64 addr nibbles + separator(17) + 64 slot nibbles + leaf flag
+                // Storage leaf: 64 addr nibbles + leaf(16) + separator(17) + 64 slot nibbles + leaf(16)
                 let addr_nibbles = &prefixed_key[..64];
-                let slot_nibbles = &prefixed_key[65..129]; // skip separator at [64]
+                let slot_nibbles = &prefixed_key[66..130]; // skip leaf flag at [64] and separator at [65]
                 let addr_hash = nibbles_to_h256(addr_nibbles);
                 let slot_hash = nibbles_to_h256(slot_nibbles);
                 Some(flat_keys::flat_storage_key(&addr_hash, &slot_hash).to_vec())
@@ -384,5 +384,56 @@ impl TrieDB for BackendTrieDBLocked {
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // Read-only locked storage, should not be used for puts
         Err(TrieError::DbError(anyhow::anyhow!("trie is read-only")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flat_keys;
+    use crate::layering::apply_prefix;
+
+    /// Regression test: to_compact_fkv_key must produce the same compact key
+    /// as the FKV generator for storage leaves. The storage leaf key structure
+    /// produced by apply_prefix is:
+    ///   [64 addr nibbles | 16 (leaf) | 17 (sep) | 64 slot nibbles | 16 (leaf)]
+    /// Total = 131 elements.
+    /// The slot nibbles start at index 66, NOT 65.
+    #[test]
+    fn compact_fkv_key_matches_fkv_generator_for_storage() {
+        let addr_hash = H256::random();
+        let slot_hash = H256::random();
+
+        // Build the 131-byte key the same way apply_prefix + from_bytes does
+        let slot_path = Nibbles::from_bytes(slot_hash.as_bytes()); // 64 nibbles + leaf flag = 65
+        let prefixed = apply_prefix(Some(addr_hash), slot_path);
+        assert_eq!(prefixed.len(), 131);
+
+        let prefixed_key = prefixed.into_vec();
+
+        // The compact key from to_compact_fkv_key
+        let compact = BackendTrieDB::to_compact_fkv_key(&prefixed_key)
+            .expect("131-byte key should produce compact key");
+
+        // The compact key the FKV generator would produce
+        let expected = flat_keys::flat_storage_key(&addr_hash, &slot_hash).to_vec();
+
+        assert_eq!(compact, expected, "compact key must match FKV generator output");
+    }
+
+    #[test]
+    fn compact_fkv_key_matches_fkv_generator_for_accounts() {
+        let addr_hash = H256::random();
+
+        // Account leaf: 64 nibbles + leaf flag = 65
+        let path = Nibbles::from_bytes(addr_hash.as_bytes());
+        assert_eq!(path.len(), 65);
+
+        let key = path.into_vec();
+        let compact = BackendTrieDB::to_compact_fkv_key(&key)
+            .expect("65-byte key should produce compact key");
+
+        let expected = flat_keys::flat_account_key(&addr_hash).to_vec();
+        assert_eq!(compact, expected, "compact key must match FKV generator output");
     }
 }

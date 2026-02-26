@@ -2866,7 +2866,7 @@ fn apply_trie_updates(
                 flat_keys::flat_account_key(&addr_hash).to_vec()
             } else {
                 let addr_hash = flat_keys::nibbles_to_h256(&key[..64]);
-                let slot_hash = flat_keys::nibbles_to_h256(&key[65..129]);
+                let slot_hash = flat_keys::nibbles_to_h256(&key[66..130]);
                 flat_keys::flat_storage_key(&addr_hash, &slot_hash).to_vec()
             }
         } else {
