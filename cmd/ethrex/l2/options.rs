@@ -169,15 +169,15 @@ pub struct NativeRollupOptions {
     )]
     pub block_time_ms: u64,
     #[arg(
-        long = "native-rollups.commit-interval",
-        id = "native_rollups_commit_interval_ms",
+        long = "native-rollups.advance-interval",
+        id = "native_rollups_advance_interval_ms",
         default_value = "3000",
         value_name = "UINT64",
-        env = "ETHREX_NATIVE_ROLLUPS_COMMIT_INTERVAL",
+        env = "ETHREX_NATIVE_ROLLUPS_ADVANCE_INTERVAL",
         help_heading = "Native rollups options",
-        help = "L1 commit interval in milliseconds."
+        help = "L1 advance interval in milliseconds."
     )]
-    pub commit_interval_ms: u64,
+    pub advance_interval_ms: u64,
 }
 
 #[cfg(feature = "native-rollups")]
@@ -195,7 +195,7 @@ impl Default for NativeRollupOptions {
             )
             .expect("Valid default L1 key"),
             block_time_ms: 10000,
-            commit_interval_ms: 3000,
+            advance_interval_ms: 3000,
         }
     }
 }
@@ -1268,7 +1268,7 @@ impl NativeRollupOptions {
             contract_address,
             block_time_ms: self.block_time_ms,
             watch_interval_ms: 2000,
-            commit_interval_ms: self.commit_interval_ms,
+            advance_interval_ms: self.advance_interval_ms,
             max_block_step: 5000,
             coinbase: relayer_signer.address(),
             block_gas_limit: 30_000_000,

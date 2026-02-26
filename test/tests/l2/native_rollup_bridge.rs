@@ -193,7 +193,7 @@ async fn native_rollup_bridge_roundtrip() {
     let block_number_calldata =
         Bytes::from(encode_calldata("blockNumber()", &[]).expect("encode blockNumber failed"));
 
-    let mut committed = false;
+    let mut advanced = false;
     for i in 0..180 {
         tokio::time::sleep(Duration::from_secs(2)).await;
         let result = l1_client
@@ -205,22 +205,22 @@ async fn native_rollup_bridge_roundtrip() {
             .await
             .unwrap();
         let result_bytes = hex::decode(result.trim_start_matches("0x")).unwrap();
-        let committed_block = U256::from_big_endian(&result_bytes);
-        if committed_block >= U256::from(withdraw_l2_block) {
+        let advanced_block = U256::from_big_endian(&result_bytes);
+        if advanced_block >= U256::from(withdraw_l2_block) {
             println!(
-                "L2 block {withdraw_l2_block} committed to L1 after ~{}s (L1 reports block {committed_block})",
+                "L2 block {withdraw_l2_block} advanced on L1 after ~{}s (L1 reports block {advanced_block})",
                 (i + 1) * 2
             );
-            committed = true;
+            advanced = true;
             break;
         }
         if i % 15 == 0 {
             println!(
-                "Waiting for L2 block {withdraw_l2_block} to be committed... ({i}/180), L1 at block {committed_block}"
+                "Waiting for L2 block {withdraw_l2_block} to be advanced... ({i}/180), L1 at block {advanced_block}"
             );
         }
     }
-    assert!(committed, "L2 block was not committed to L1 within timeout");
+    assert!(advanced, "L2 block was not advanced on L1 within timeout");
 
     // ── Phase 4: Get withdrawal proof from L2 RPC ───────────────────────
 

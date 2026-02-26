@@ -1,4 +1,4 @@
-//! NativeL1Committer GenServer — reads produced L2 blocks from the Store,
+//! NativeL1Advancer GenServer — reads produced L2 blocks from the Store,
 //! generates an execution witness, and submits them to the NativeRollup.sol
 //! contract via advance().
 //!
@@ -39,11 +39,11 @@ const BLOCK_NUMBER_SLOT: u64 = 1;
 
 #[derive(Clone)]
 pub enum CastMsg {
-    Commit,
+    Advance,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum NativeL1CommitterError {
+pub enum NativeL1AdvancerError {
     #[error("EthClient error: {0}")]
     EthClient(#[from] ethrex_rpc::clients::eth::errors::EthClientError),
     #[error("Encoding error: {0}")]
@@ -58,17 +58,17 @@ pub enum NativeL1CommitterError {
     Chain(#[from] ethrex_blockchain::error::ChainError),
 }
 
-pub struct NativeL1Committer {
+pub struct NativeL1Advancer {
     eth_client: EthClient,
     contract_address: Address,
     signer: Signer,
     store: Store,
     blockchain: Arc<Blockchain>,
     relayer_address: Address,
-    commit_interval_ms: u64,
+    advance_interval_ms: u64,
 }
 
-impl NativeL1Committer {
+impl NativeL1Advancer {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         eth_client: EthClient,
@@ -77,7 +77,7 @@ impl NativeL1Committer {
         store: Store,
         blockchain: Arc<Blockchain>,
         relayer_address: Address,
-        commit_interval_ms: u64,
+        advance_interval_ms: u64,
     ) -> Self {
         Self {
             eth_client,
@@ -86,12 +86,12 @@ impl NativeL1Committer {
             store,
             blockchain,
             relayer_address,
-            commit_interval_ms,
+            advance_interval_ms,
         }
     }
 
-    /// Determine the next block to commit and submit it to L1.
-    async fn commit_next_block(&mut self) -> Result<(), NativeL1CommitterError> {
+    /// Determine the next block to advance and submit it to L1.
+    async fn advance_next_block(&mut self) -> Result<(), NativeL1AdvancerError> {
         // 1. Query the on-chain block number from NativeRollup contract storage slot 1
         let on_chain_block_number = self
             .eth_client
@@ -104,14 +104,14 @@ impl NativeL1Committer {
 
         let next_block: u64 = (on_chain_block_number + 1)
             .try_into()
-            .map_err(|_| NativeL1CommitterError::Encoding("block number overflow".into()))?;
+            .map_err(|_| NativeL1AdvancerError::Encoding("block number overflow".into()))?;
 
         // 2. Fetch block from Store
         let block_header = match self.store.get_block_header(next_block)? {
             Some(h) => h,
             None => {
                 debug!(
-                    "NativeL1Committer: block {} not produced yet, skipping",
+                    "NativeL1Advancer: block {} not produced yet, skipping",
                     next_block
                 );
                 return Ok(());
@@ -122,7 +122,7 @@ impl NativeL1Committer {
             Some(b) => b,
             None => {
                 debug!(
-                    "NativeL1Committer: block {} body not found, skipping",
+                    "NativeL1Advancer: block {} body not found, skipping",
                     next_block
                 );
                 return Ok(());
@@ -152,7 +152,7 @@ impl NativeL1Committer {
             .await?;
 
         let witness_json = serde_json::to_vec(&witness)
-            .map_err(|e| NativeL1CommitterError::Encoding(e.to_string()))?;
+            .map_err(|e| NativeL1AdvancerError::Encoding(e.to_string()))?;
 
         // 4. Count L1 messages by counting relayer txs in the block
         let l1_messages_count: u64 = block_body
@@ -161,7 +161,7 @@ impl NativeL1Committer {
             .filter(|tx| tx.sender().ok() == Some(self.relayer_address))
             .count()
             .try_into()
-            .map_err(|_| NativeL1CommitterError::Encoding("l1 messages count overflow".into()))?;
+            .map_err(|_| NativeL1AdvancerError::Encoding("l1 messages count overflow".into()))?;
 
         // 5. Build and send advance() tx
         let transactions_rlp = block_body.transactions.encode_to_vec();
@@ -175,7 +175,7 @@ impl NativeL1Committer {
             .await?;
 
         info!(
-            "NativeL1Committer: committed block {} to L1 (state_root={:?}, l1_msgs={}, tx={:?})",
+            "NativeL1Advancer: advanced block {} on L1 (state_root={:?}, l1_msgs={}, tx={:?})",
             next_block, block_header.state_root, l1_messages_count, tx_hash
         );
 
@@ -189,7 +189,7 @@ impl NativeL1Committer {
         transactions_rlp: &[u8],
         witness_json: &[u8],
         l1_messages_count: u64,
-    ) -> Result<H256, NativeL1CommitterError> {
+    ) -> Result<H256, NativeL1AdvancerError> {
         // BlockParams struct: (postStateRoot, postReceiptsRoot, coinbase, prevRandao, timestamp)
         let block_params = Value::Tuple(vec![
             Value::FixedBytes(Bytes::from(header.state_root.as_bytes().to_vec())),
@@ -208,7 +208,7 @@ impl NativeL1Committer {
                 Value::Bytes(Bytes::from(witness_json.to_vec())),
             ],
         )
-        .map_err(|e| NativeL1CommitterError::Encoding(e.to_string()))?;
+        .map_err(|e| NativeL1AdvancerError::Encoding(e.to_string()))?;
 
         let gas_price = self
             .eth_client
@@ -231,28 +231,28 @@ impl NativeL1Committer {
             },
         )
         .await
-        .map_err(NativeL1CommitterError::EthClient)?;
+        .map_err(NativeL1AdvancerError::EthClient)?;
 
         let tx_hash = send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer)
             .await
-            .map_err(NativeL1CommitterError::EthClient)?;
+            .map_err(NativeL1AdvancerError::EthClient)?;
 
         Ok(tx_hash)
     }
 }
 
-impl GenServer for NativeL1Committer {
+impl GenServer for NativeL1Advancer {
     type CallMsg = ();
     type CastMsg = CastMsg;
     type OutMsg = ();
-    type Error = NativeL1CommitterError;
+    type Error = NativeL1AdvancerError;
 
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         handle
             .clone()
-            .cast(CastMsg::Commit)
+            .cast(CastMsg::Advance)
             .await
-            .map_err(NativeL1CommitterError::Internal)?;
+            .map_err(NativeL1AdvancerError::Internal)?;
         Ok(Success(self))
     }
 
@@ -262,16 +262,16 @@ impl GenServer for NativeL1Committer {
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            CastMsg::Commit => {
+            CastMsg::Advance => {
                 let _ = self
-                    .commit_next_block()
+                    .advance_next_block()
                     .await
-                    .inspect_err(|e| error!("NativeL1Committer error: {e}"));
+                    .inspect_err(|e| error!("NativeL1Advancer error: {e}"));
 
                 send_after(
-                    Duration::from_millis(self.commit_interval_ms),
+                    Duration::from_millis(self.advance_interval_ms),
                     handle.clone(),
-                    CastMsg::Commit,
+                    CastMsg::Advance,
                 );
                 CastResponse::NoReply
             }

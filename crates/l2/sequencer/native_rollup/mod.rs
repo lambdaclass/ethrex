@@ -8,11 +8,11 @@
 //!   them into a shared queue
 //! - **NativeBlockProducer**: drains L1 messages, builds relayer txs, adds them
 //!   to the mempool, then uses the standard payload builder flow to produce blocks
-//! - **NativeL1Committer**: reads produced blocks from the Store, generates an
+//! - **NativeL1Advancer**: reads produced blocks from the Store, generates an
 //!   execution witness, and submits via advance()
 
 pub mod block_producer;
-pub mod l1_committer;
+pub mod l1_advancer;
 pub mod l1_watcher;
 pub mod types;
 
@@ -28,7 +28,7 @@ use spawned_concurrency::tasks::{GenServer, GenServerHandle};
 use tracing::info;
 
 use block_producer::{NativeBlockProducer, NativeBlockProducerConfig};
-use l1_committer::NativeL1Committer;
+use l1_advancer::NativeL1Advancer;
 use l1_watcher::NativeL1Watcher;
 use types::PendingL1Messages;
 
@@ -45,8 +45,8 @@ pub struct NativeRollupConfig {
     pub block_time_ms: u64,
     /// L1 watcher polling interval in milliseconds.
     pub watch_interval_ms: u64,
-    /// L1 committer interval in milliseconds.
-    pub commit_interval_ms: u64,
+    /// L1 advancer interval in milliseconds.
+    pub advance_interval_ms: u64,
     /// Maximum number of L1 blocks to scan per poll.
     pub max_block_step: u64,
     /// Coinbase address for produced L2 blocks.
@@ -66,7 +66,7 @@ pub struct NativeRollupConfig {
 /// Spawns three GenServers:
 /// 1. NativeL1Watcher — polls L1 for L1MessageRecorded events
 /// 2. NativeBlockProducer — drains L1 messages, builds relayer txs, produces blocks
-/// 3. NativeL1Committer — reads blocks from Store, generates witness, submits to L1
+/// 3. NativeL1Advancer — reads blocks from Store, generates witness, submits to L1
 ///
 /// Returns handles to the spawned actors.
 #[allow(clippy::type_complexity)]
@@ -78,7 +78,7 @@ pub fn start_native_rollup_l2(
     (
         GenServerHandle<NativeL1Watcher>,
         GenServerHandle<NativeBlockProducer>,
-        GenServerHandle<NativeL1Committer>,
+        GenServerHandle<NativeL1Advancer>,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -122,18 +122,18 @@ pub fn start_native_rollup_l2(
     let producer_handle = producer.start();
     info!("  NativeBlockProducer started");
 
-    // 3. Spawn NativeL1Committer
-    let committer = NativeL1Committer::new(
+    // 3. Spawn NativeL1Advancer
+    let advancer = NativeL1Advancer::new(
         eth_client,
         config.contract_address,
         config.l1_signer,
         store,
         blockchain,
         relayer_address,
-        config.commit_interval_ms,
+        config.advance_interval_ms,
     );
-    let committer_handle = committer.start();
-    info!("  NativeL1Committer started");
+    let advancer_handle = advancer.start();
+    info!("  NativeL1Advancer started");
 
-    Ok((watcher_handle, producer_handle, committer_handle))
+    Ok((watcher_handle, producer_handle, advancer_handle))
 }

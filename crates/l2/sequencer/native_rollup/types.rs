@@ -21,7 +21,7 @@ pub struct L1Message {
     /// Full calldata bytes forwarded to the L2 target contract.
     pub data: Bytes,
     /// Precomputed keccak256(_data) — computed by the watcher at parse time
-    /// so the block producer and committer don't need to recompute it.
+    /// so the block producer and advancer don't need to recompute it.
     pub data_hash: H256,
 }
 

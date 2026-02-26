@@ -447,7 +447,7 @@ pub async fn init_native_rollup_l2(
         contract_address,
         block_time_ms: native_opts.block_time_ms,
         watch_interval_ms: 5000,
-        commit_interval_ms: native_opts.commit_interval_ms,
+        advance_interval_ms: native_opts.advance_interval_ms,
         max_block_step: 5000,
         coinbase: relayer_signer.address(),
         block_gas_limit: 30_000_000,
@@ -456,7 +456,7 @@ pub async fn init_native_rollup_l2(
         l1_signer,
     };
 
-    let (_watcher_handle, _producer_handle, _committer_handle) =
+    let (_watcher_handle, _producer_handle, _advancer_handle) =
         ethrex_l2::start_native_rollup_l2(store, blockchain, config)
             .map_err(|e| eyre::eyre!("Failed to start native rollup L2: {e}"))?;
 

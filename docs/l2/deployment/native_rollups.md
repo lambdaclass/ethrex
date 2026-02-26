@@ -7,7 +7,7 @@ This guide covers how to deploy a native rollup L2 using ethrex. Native rollups 
 
 ## Components
 
-The native rollup L2 integration wires together the EXECUTE precompile (EVM-level block re-execution) and the L2 GenServer actors (block producer, L1 watcher, L1 committer) into a working end-to-end system. The key components are:
+The native rollup L2 integration wires together the EXECUTE precompile (EVM-level block re-execution) and the L2 GenServer actors (block producer, L1 watcher, L1 advancer) into a working end-to-end system. The key components are:
 
 **Build system** (`cmd/ethrex/build_l2.rs`):
 - Compiles `NativeRollup.sol` (creation bytecode), `L2Bridge.sol` and `L1Anchor.sol` (runtime bytecodes) via solc during the build.
@@ -23,7 +23,7 @@ The native rollup L2 integration wires together the EXECUTE precompile (EVM-leve
 The L2Bridge is preminted with an effectively infinite ETH balance (`U256::MAX / 2`) so it can cover any number of L1-to-L2 deposits without running out.
 
 **CLI options** (`cmd/ethrex/l2/options.rs`):
-- `NativeRollupOptions` struct with flags: `--native-rollups`, `--native-rollups.contract-address`, `--native-rollups.relayer-pk`, `--native-rollups.l1-pk`, `--native-rollups.block-time`, `--native-rollups.commit-interval`.
+- `NativeRollupOptions` struct with flags: `--native-rollups`, `--native-rollups.contract-address`, `--native-rollups.relayer-pk`, `--native-rollups.l1-pk`, `--native-rollups.block-time`, `--native-rollups.advance-interval`.
 
 **L2 initializer** (`cmd/ethrex/l2/initializers.rs`):
 - `init_native_rollup_l2()` boots the L2 node with `BlockchainType::L1`. This is intentional: native rollups run L2 blocks through an unmodified L1 execution environment (the EXECUTE precompile re-executes them on L1). The L2 must produce blocks compatible with L1's precompile set and execution rules, so it uses the same `BlockchainType` as L1.
@@ -63,7 +63,7 @@ The L2Bridge is preminted with an effectively infinite ETH balance (`U256::MAX /
 │    │  L1Anchor predeploy         │
 │    └─ produces L2 blocks         │
 │                                  │
-│  NativeL1Committer               │
+│  NativeL1Advancer               │
 │    ├─ generates execution witness│
 │    └─ calls advance() on L1      │
 │                                  │
@@ -81,9 +81,6 @@ The L2Bridge is preminted with an effectively infinite ETH balance (`U256::MAX /
 
 > [!NOTE]
 > **Rex CLI syntax quirks:**
-> - `rex balance` and `rex block-number` take `[RPC_URL]` as a **positional** argument (e.g., `rex balance 0x... http://localhost:1729`), not `--rpc-url`.
-> - `rex send` and `rex call` use `--rpc-url` as a named option and `-k` for the private key.
-> - `rex deploy` takes `[PRIVATE_KEY]` as a **positional** argument.
 > - `--value` is always in **wei** (e.g., `1000000000000000000` for 1 ETH).
 > - `bytes` arguments should be passed as hex **without** the `0x` prefix (e.g., `d09de08a`), or as `""` for empty bytes.
 
@@ -165,7 +162,7 @@ Once the L2 is running, you should see log lines like:
 
 ```
 NativeBlockProducer: produced block N
-NativeL1Committer: committed block N to L1 (state_root=..., l1_msgs=0, tx=...)
+NativeL1Advancer: advanced block N on L1 (state_root=..., l1_msgs=0, tx=...)
 ```
 
 Query the L1 contract to verify:
@@ -175,10 +172,10 @@ Query the L1 contract to verify:
 rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockNumber()" --rpc-url http://localhost:8545
 
 # L2 block number from the L2 RPC directly
-rex block-number http://localhost:1729
+rex block-number --rpc-url http://localhost:1729
 ```
 
-The L1 value should trail the L2 value by a few blocks (the committer runs on a configurable interval).
+The L1 value should trail the L2 value by a few blocks (the advancer runs on a configurable interval).
 
 ### Step 2: Query contract state
 
@@ -208,7 +205,7 @@ Send ETH from L1 to a fresh account on L2.
 DEPOSIT_TO=0x6f4c950442e1af093bcff730381e63ae9171b87a
 
 # Check L2 balance is 0
-rex balance $DEPOSIT_TO http://localhost:1729
+rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
 
 # Deposit 1 ETH via sendL1Message(to, gasLimit, data)
 # Uses the L1 deployer key (pre-funded with 1M ETH)
@@ -224,7 +221,7 @@ rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
 # the block producer includes a relayer tx for it.
 
 # After ~10 seconds, check the L2 balance:
-rex balance $DEPOSIT_TO http://localhost:1729
+rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
 # Should show 1000000000000000000 (1 ETH in wei)
 ```
 
@@ -238,7 +235,7 @@ This step demonstrates that L1→L2 messages can carry arbitrary calldata, not j
 rex deploy --contract-path crates/l2/contracts/src/example/Counter.sol \
   --remappings "" \
   --rpc-url http://localhost:1729 \
-  0 0x0000000000000000000000000000000000000000000000000000000000000042
+  --private-key 0x0000000000000000000000000000000000000000000000000000000000000042
 # Note the deployed contract address from the output
 COUNTER=<deployed_address>
 
@@ -268,7 +265,7 @@ Send ETH from L2 back to an L1 address.
 L1_RECEIVER=0xE25583099BA105D9ec0A67f5Ae86D90e50036425
 
 # Record L1 balance before
-rex balance $L1_RECEIVER http://localhost:8545
+rex balance $L1_RECEIVER --rpc-url http://localhost:8545
 
 # Withdraw 0.5 ETH from L2 via L2Bridge.withdraw(receiver)
 # Uses the test account's private key (0x42)
@@ -280,26 +277,20 @@ rex send 0x000000000000000000000000000000000000fffd \
   -k 0x0000000000000000000000000000000000000000000000000000000000000042
 ```
 
-Wait for the L2 block containing the withdrawal to be committed to L1 (watch the committer logs in Terminal 3).
+Wait for the L2 block containing the withdrawal to be advanced on L1 (watch the advancer logs in Terminal 2).
 
-Then fetch the withdrawal proof and claim on L1:
+Then claim the withdrawal on L1 (replace `TX_HASH` with the L2 withdrawal tx hash from the output above):
 
 ```shell
-# Get the withdrawal proof (replace TX_HASH with the L2 withdrawal tx hash)
-curl -s -X POST http://localhost:1729 \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"ethrex_getNativeWithdrawalProof","params":["TX_HASH"],"id":1}' | jq '.result'
-
-# The response contains: from, receiver, amount, messageId, blockNumber, accountProof, storageProof
-# Use these fields to call claimWithdrawal on L1:
-rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
-  "claimWithdrawal(address,address,uint256,uint256,uint256,bytes[],bytes[])" \
-  FROM RECEIVER AMOUNT MESSAGE_ID BLOCK_NUMBER '[ACCOUNT_PROOF]' '[STORAGE_PROOF]' \
-  --rpc-url http://localhost:8545 \
-  -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+# Fetches the proof from L2 and claims the withdrawal on L1 in one step
+rex l2 claim-native-withdraw TX_HASH \
+  0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  http://localhost:8545 \
+  http://localhost:1729
 
 # Verify the L1 balance increased
-rex balance $L1_RECEIVER http://localhost:8545
+rex balance $L1_RECEIVER --rpc-url http://localhost:8545
 ```
 
 > [!TIP]
