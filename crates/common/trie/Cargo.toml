@@ -22,6 +22,7 @@ smallvec = { version = "1.10.0", features = ["const_generics", "union"] }
 digest = "0.10.6"
 lazy_static.workspace = true
 crossbeam.workspace = true
+rayon.workspace = true
 rustc-hash.workspace = true
 rkyv.workspace = true
 
