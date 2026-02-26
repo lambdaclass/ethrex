@@ -38,7 +38,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
@@ -392,18 +392,18 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 1: Prefetch all account states in parallel.
-        // This warms the CachingDatabase account cache and the TrieLayerCache
-        // with state trie nodes, so Phase 2 storage reads benefit from cached lookups.
-        accounts.par_iter().for_each(|ac| {
-            let _ = store.get_account_state(ac.address);
-        });
+        // Phase 1: Batch-warm all account states.
+        // Uses bulk lock optimization: one read lock to check cache, sequential inner
+        // gets without holding any lock, one write lock to populate all at once.
+        // This reduces lock contention with the executor thread compared to N
+        // individual par_iter calls each acquiring read+write locks.
+        let addresses: Vec<ethrex_common::Address> =
+            accounts.iter().map(|ac| ac.address).collect();
+        store.warm_accounts(&addresses);
 
-        // Phase 2: Prefetch storage slots and contract code in parallel.
-        // Storage is flattened to (address, slot) pairs so rayon can distribute
-        // work across threads regardless of how many slots each account has.
-        // Without flattening, a hot contract with hundreds of slots (e.g. a DEX
-        // pool) would monopolize a single thread while others go idle.
+        // Phase 2: Batch-warm all storage slots.
+        // Flattened to (address, slot) pairs. Processed in chunks of 256 to keep
+        // lock hold time bounded while still reducing total lock acquisitions.
         let slots: Vec<(ethrex_common::Address, ethrex_common::H256)> = accounts
             .iter()
             .flat_map(|ac| {
@@ -411,18 +411,21 @@ impl LEVM {
                     .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
             })
             .collect();
-        slots.par_iter().for_each(|(addr, key)| {
-            let _ = store.get_storage_value(*addr, *key);
-        });
+        store.warm_storage(&slots);
 
-        // Code prefetch: get_account_state is a cache hit from Phase 1
-        accounts.par_iter().for_each(|ac| {
-            if let Ok(acct) = store.get_account_state(ac.address)
-                && acct.code_hash != *EMPTY_KECCACK_HASH
-            {
-                let _ = store.get_account_code(acct.code_hash);
-            }
-        });
+        // Phase 3: Batch-warm contract code.
+        // Account states are cache hits from Phase 1.
+        let code_hashes: Vec<ethrex_common::H256> = accounts
+            .iter()
+            .filter_map(|ac| {
+                store
+                    .get_account_state(ac.address)
+                    .ok()
+                    .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
+                    .map(|s| s.code_hash)
+            })
+            .collect();
+        store.warm_code(&code_hashes);
 
         Ok(())
     }

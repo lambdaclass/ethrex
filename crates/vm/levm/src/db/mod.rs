@@ -24,6 +24,29 @@ pub trait Database: Send + Sync {
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
         None
     }
+
+    /// Batch-warm account states into the cache layer. The default implementation
+    /// performs sequential gets; CachingDatabase overrides this with bulk lock
+    /// optimization to reduce contention with the executor thread.
+    fn warm_accounts(&self, addresses: &[Address]) {
+        for &addr in addresses {
+            let _ = self.get_account_state(addr);
+        }
+    }
+
+    /// Batch-warm storage values into the cache layer. Same bulk-lock strategy.
+    fn warm_storage(&self, slots: &[(Address, H256)]) {
+        for &(addr, key) in slots {
+            let _ = self.get_storage_value(addr, key);
+        }
+    }
+
+    /// Batch-warm contract code into the cache layer.
+    fn warm_code(&self, code_hashes: &[H256]) {
+        for &hash in code_hashes {
+            let _ = self.get_account_code(hash);
+        }
+    }
 }
 
 /// A database wrapper that caches state lookups for parallel pre-warming.
@@ -158,5 +181,105 @@ impl Database for CachingDatabase {
 
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
         Some(&self.precompile_cache)
+    }
+
+    fn warm_accounts(&self, addresses: &[Address]) {
+        // One read lock: find all cache misses
+        let misses: Vec<Address> = match self.read_accounts() {
+            Ok(cache) => addresses
+                .iter()
+                .copied()
+                .filter(|a| !cache.contains_key(a))
+                .collect(),
+            Err(_) => return,
+        };
+
+        if misses.is_empty() {
+            return;
+        }
+
+        // Fetch misses without holding any lock (executor is unblocked)
+        let fetched: Vec<_> = misses
+            .iter()
+            .filter_map(|&addr| {
+                self.inner
+                    .get_account_state(addr)
+                    .ok()
+                    .map(|s| (addr, s))
+            })
+            .collect();
+
+        // One write lock: populate all at once
+        if let Ok(mut cache) = self.write_accounts() {
+            for (addr, state) in fetched {
+                cache.insert(addr, state);
+            }
+        }
+    }
+
+    fn warm_storage(&self, slots: &[(Address, H256)]) {
+        // Process in chunks to keep lock hold time bounded
+        const CHUNK_SIZE: usize = 256;
+        for chunk in slots.chunks(CHUNK_SIZE) {
+            let misses: Vec<(Address, H256)> = match self.read_storage() {
+                Ok(cache) => chunk
+                    .iter()
+                    .copied()
+                    .filter(|k| !cache.contains_key(k))
+                    .collect(),
+                Err(_) => return,
+            };
+
+            if misses.is_empty() {
+                continue;
+            }
+
+            let fetched: Vec<_> = misses
+                .iter()
+                .filter_map(|&(addr, key)| {
+                    self.inner
+                        .get_storage_value(addr, key)
+                        .ok()
+                        .map(|v| ((addr, key), v))
+                })
+                .collect();
+
+            if let Ok(mut cache) = self.write_storage() {
+                for ((addr, key), value) in fetched {
+                    cache.insert((addr, key), value);
+                }
+            }
+        }
+    }
+
+    fn warm_code(&self, code_hashes: &[H256]) {
+        let misses: Vec<H256> = match self.read_code() {
+            Ok(cache) => code_hashes
+                .iter()
+                .copied()
+                .filter(|h| !cache.contains_key(h))
+                .collect(),
+            Err(_) => return,
+        };
+
+        if misses.is_empty() {
+            return;
+        }
+
+        let fetched: Vec<_> = misses
+            .iter()
+            .filter_map(|&hash| {
+                self.inner
+                    .get_account_code(hash)
+                    .ok()
+                    .map(|c| (hash, c))
+            })
+            .collect();
+
+        if let Ok(mut cache) = self.write_code() {
+            for (hash, code) in fetched {
+                cache.insert(hash, code);
+            }
+        }
     }
 }
