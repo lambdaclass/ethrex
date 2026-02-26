@@ -694,6 +694,7 @@ impl LEVM {
                     &mut tx_db,
                     vm_type,
                     &mut stack_pool,
+                    false,
                 )?;
 
                 // Validate execution results against BAL claims (per-tx).
