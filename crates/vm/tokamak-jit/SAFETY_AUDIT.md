@@ -228,7 +228,9 @@ catches output mismatches before trusting JIT results.
    to gracefully fall back to the interpreter on crashes.
 
 4. **Fuzzing**: Run `cargo fuzz` targets continuously in CI to detect
-   analyzer/optimizer panics and invariant violations.
+   analyzer/optimizer panics and invariant violations. The `fuzz_differential`
+   target performs real JIT-vs-interpreter comparison (gas alignment, execution
+   status, output equivalence) on randomly generated EVM bytecode.
 
 5. **Address space isolation**: Consider running JIT code in a separate
    process or using seccomp/landlock to restrict syscalls.
