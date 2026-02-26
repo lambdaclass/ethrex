@@ -290,29 +290,32 @@ impl RpcHandler for SimulateV1Request {
                 });
 
                 // Inject traceTransfers synthetic log for top-level ETH value transfer.
-                if self.payload.trace_transfers && succeeded && !generic_tx.value.is_zero() {
-                    if let TxKind::Call(to_addr) = generic_tx.to {
-                        if generic_tx.from != to_addr {
-                            let last = call_results.last_mut().unwrap();
-                            let transfer_log = create_trace_transfer_log(
-                                generic_tx.from,
-                                to_addr,
-                                generic_tx.value,
-                                cumulative_log_count - last.logs.len() as u64,
-                                sim_header.number,
-                                sim_header.timestamp,
-                                H256::zero(), // block_hash placeholder
-                                tx_hash,
-                                tx_idx as u64,
-                            );
-                            last.logs.insert(0, transfer_log);
-                            cumulative_log_count += 1;
-                            // Re-index the existing logs after the inserted one.
-                            let base_idx = cumulative_log_count - last.logs.len() as u64;
-                            for (i, log) in last.logs.iter_mut().enumerate() {
-                                log.log_index = base_idx + i as u64;
-                            }
-                        }
+                if self.payload.trace_transfers
+                    && succeeded
+                    && !generic_tx.value.is_zero()
+                    && let TxKind::Call(to_addr) = generic_tx.to
+                    && generic_tx.from != to_addr
+                {
+                    let last = call_results
+                        .last_mut()
+                        .expect("call_results should have at least one entry");
+                    let transfer_log = create_trace_transfer_log(
+                        generic_tx.from,
+                        to_addr,
+                        generic_tx.value,
+                        cumulative_log_count - last.logs.len() as u64,
+                        sim_header.number,
+                        sim_header.timestamp,
+                        H256::zero(), // block_hash placeholder
+                        tx_hash,
+                        tx_idx as u64,
+                    );
+                    last.logs.insert(0, transfer_log);
+                    cumulative_log_count += 1;
+                    // Re-index the existing logs after the inserted one.
+                    let base_idx = cumulative_log_count - last.logs.len() as u64;
+                    for (i, log) in last.logs.iter_mut().enumerate() {
+                        log.log_index = base_idx + i as u64;
                     }
                 }
             }
@@ -347,8 +350,7 @@ impl RpcHandler for SimulateV1Request {
             let receipts: Vec<Receipt> = call_results
                 .iter()
                 .zip(block_state_call.calls.iter())
-                .enumerate()
-                .map(|(_i, (cr, generic_tx))| {
+                .map(|(cr, generic_tx)| {
                     cumulative_gas += cr.gas_used;
                     // Filter out synthetic traceTransfers logs (address == 0xee...ee).
                     let real_logs: Vec<Log> = cr
@@ -393,7 +395,7 @@ impl RpcHandler for SimulateV1Request {
                     .map_err(|e| RpcErr::Internal(e.to_string()))?
                     .ok_or_else(|| RpcErr::Internal("State trie not found".to_owned()))?;
                 state_trie = Some(initial_trie);
-                state_trie.as_mut().unwrap()
+                state_trie.as_mut().expect("state_trie was just set above")
             };
             store
                 .apply_account_updates_from_trie_batch(trie, &account_updates)
@@ -623,6 +625,7 @@ fn compute_effective_gas_price(tx: &GenericTransaction, base_fee: u64) -> u64 {
 
 /// Extract EIP-1559 specific fields from a Transaction for the SimulatedTransaction response.
 /// Returns (to, access_list, max_fee_per_gas, max_priority_fee_per_gas, chain_id).
+#[allow(clippy::type_complexity)]
 fn extract_tx_eip1559_fields(
     tx: &Transaction,
     generic: &GenericTransaction,
