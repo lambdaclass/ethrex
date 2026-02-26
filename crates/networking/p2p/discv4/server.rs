@@ -92,6 +92,9 @@ pub struct DiscoveryServer {
     /// signatures being expensive.
     find_node_message: BytesMut,
     initial_lookup_interval: f64,
+    /// Triggers an immediate lookup on the first bootnode pong, instead of
+    /// waiting for the next scheduled lookup tick. Cleared after use.
+    pending_initial_lookup: bool,
 }
 
 impl DiscoveryServer {
@@ -123,6 +126,7 @@ impl DiscoveryServer {
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
+            pending_initial_lookup: true,
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -441,6 +445,10 @@ impl DiscoveryServer {
             self.send_enr_request(&contact.node).await?;
         }
 
+        // On cold start, trigger a lookup as soon as the first bootnode responds.
+        // Without this, the first real lookup waits for the next scheduled tick.
+        self.pending_initial_lookup = false;
+
         Ok(())
     }
 
@@ -721,10 +729,15 @@ impl GenServer for DiscoveryServer {
     ) -> CastResponse {
         match message {
             Self::CastMsg::Message(message) => {
+                let had_pending_lookup = self.pending_initial_lookup;
                 let _ = self
                     .handle_message(*message)
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Handling Discovery message"));
+                // First bootnode pong triggers an immediate lookup
+                if had_pending_lookup && !self.pending_initial_lookup {
+                    let _ = handle.clone().cast(InMessage::Lookup).await;
+                }
             }
             Self::CastMsg::Revalidate => {
                 trace!(received = "Revalidate");

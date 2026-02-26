@@ -415,6 +415,9 @@ impl Blockchain {
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
+                        let _ = thread_priority::set_current_thread_priority(
+                            thread_priority::ThreadPriority::Max,
+                        );
                         // Warming uses the same caching store, sharing cached state with execution.
                         // Precompile cache lives inside CachingDatabase, shared automatically.
                         let start = Instant::now();
@@ -435,6 +438,9 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        let _ = thread_priority::set_current_thread_priority(
+                            thread_priority::ThreadPriority::Max,
+                        );
                         let (execution_result, bal) =
                             vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
@@ -465,6 +471,9 @@ impl Blockchain {
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, StoreError> {
+                        let _ = thread_priority::set_current_thread_priority(
+                            thread_priority::ThreadPriority::Max,
+                        );
                         let (account_updates_list, accumulated_updates) = if bal.is_some() {
                             self.handle_merkleization_bal(
                                 rx,

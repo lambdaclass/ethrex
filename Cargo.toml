@@ -134,6 +134,7 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
   "lz4",
 ] }
+thread-priority = "3.0.0"
 
 [workspace.lints.clippy]
 redundant_clone = "warn"

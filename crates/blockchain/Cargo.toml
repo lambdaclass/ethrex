@@ -22,6 +22,7 @@ tracing.workspace = true
 bytes.workspace = true
 hex.workspace = true
 rustc-hash.workspace = true
+thread-priority.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "sync", "macros"] }
 tokio-util.workspace = true
 

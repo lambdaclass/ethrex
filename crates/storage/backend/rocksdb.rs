@@ -11,8 +11,8 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
-    WriteBatch,
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MultiThreaded, Options,
+    SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -84,6 +84,19 @@ impl RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
+        // Per-CF-group block caches to prevent hot flat reads from evicting trie nodes and vice versa.
+        // Configurable via env vars; defaults are conservative (512MB flat, 256MB trie).
+        let flat_cache_mb: usize = std::env::var("ETHREX_FLAT_CACHE_MB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(512);
+        let trie_cache_mb: usize = std::env::var("ETHREX_TRIE_CACHE_MB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(256);
+        let flat_cache = Cache::new_lru_cache(flat_cache_mb * 1024 * 1024);
+        let trie_cache = Cache::new_lru_cache(trie_cache_mb * 1024 * 1024);
+
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
             let mut cf_opts = Options::default();
@@ -128,6 +141,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_block_cache(&trie_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -140,6 +154,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_block_cache(&flat_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {

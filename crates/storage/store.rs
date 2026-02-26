@@ -1465,6 +1465,9 @@ impl Store {
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
         background_threads.push(std::thread::spawn(move || {
+            let _ = thread_priority::set_current_thread_priority(
+                thread_priority::ThreadPriority::Min,
+            );
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
             loop {
@@ -1505,6 +1508,9 @@ impl Store {
             - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
         */
         background_threads.push(std::thread::spawn(move || {
+            let _ = thread_priority::set_current_thread_priority(
+                thread_priority::ThreadPriority::Min,
+            );
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
