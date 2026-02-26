@@ -407,4 +407,91 @@ mod tests {
         assert!(md.contains("Stddev"));
         assert!(md.contains("95% CI"));
     }
+
+    #[test]
+    fn test_suite_stats_markdown_no_stats_fallback() {
+        // When stats is None, the fallback path computes mean from total/runs.
+        // This tests the `else` branch in suite_stats_to_markdown.
+        let suite = BenchSuite {
+            timestamp: "0".to_string(),
+            commit: "test".to_string(),
+            results: vec![BenchResult {
+                scenario: "NoStats".to_string(),
+                total_duration_ns: 10_000_000,
+                runs: 5,
+                opcode_timings: vec![],
+                stats: None,
+            }],
+        };
+        let md = suite_stats_to_markdown(&suite);
+        assert!(md.contains("NoStats"));
+        assert!(md.contains("N/A"), "should show N/A for missing stats");
+        // Verify the computed mean: 10_000_000 / 5 / 1_000_000 = 2.000 ms
+        assert!(md.contains("2.000"), "mean should be 2.000 ms");
+    }
+
+    #[test]
+    fn test_suite_stats_markdown_zero_runs() {
+        // Edge case: runs=0 in the fallback path would cause division by zero.
+        // This test verifies the output doesn't panic.
+        let suite = BenchSuite {
+            timestamp: "0".to_string(),
+            commit: "test".to_string(),
+            results: vec![BenchResult {
+                scenario: "ZeroRuns".to_string(),
+                total_duration_ns: 0,
+                runs: 0,
+                opcode_timings: vec![],
+                stats: None,
+            }],
+        };
+        // This may produce NaN or inf in the markdown — that's acceptable.
+        // The key requirement is that it doesn't panic.
+        let md = suite_stats_to_markdown(&suite);
+        assert!(md.contains("ZeroRuns"), "scenario name should appear");
+    }
+
+    #[test]
+    fn test_suite_stats_markdown_empty_results() {
+        let suite = BenchSuite {
+            timestamp: "0".to_string(),
+            commit: "test".to_string(),
+            results: vec![],
+        };
+        let md = suite_stats_to_markdown(&suite);
+        assert!(md.contains("Scenario Statistics"));
+        // Should produce header + empty table body
+        assert!(!md.contains("Fibonacci"));
+    }
+
+    #[test]
+    fn test_markdown_regression_with_entries() {
+        // Test the markdown output with actual regression entries
+        let report = RegressionReport {
+            status: RegressionStatus::Regression,
+            thresholds: Thresholds::default(),
+            regressions: vec![crate::types::Regression {
+                scenario: "BubbleSort".to_string(),
+                opcode: "MSTORE".to_string(),
+                baseline_avg_ns: 100,
+                current_avg_ns: 200,
+                change_percent: 100.0,
+            }],
+            improvements: vec![crate::types::Regression {
+                scenario: "Fibonacci".to_string(),
+                opcode: "ADD".to_string(),
+                baseline_avg_ns: 200,
+                current_avg_ns: 100,
+                change_percent: -50.0,
+            }],
+        };
+        let md = to_markdown(&report);
+        assert!(md.contains("Regressions"));
+        assert!(md.contains("Improvements"));
+        assert!(md.contains("BubbleSort"));
+        assert!(md.contains("MSTORE"));
+        assert!(md.contains("REGRESSION"));
+        assert!(md.contains("Fibonacci"));
+        assert!(md.contains("-50.0%"));
+    }
 }

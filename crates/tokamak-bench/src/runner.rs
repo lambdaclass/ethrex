@@ -342,4 +342,58 @@ mod tests {
         let dir = contracts_bin_dir();
         assert!(dir.contains("revm_comparison/contracts/bin"));
     }
+
+    #[test]
+    fn test_load_contract_bytecode_valid() {
+        // "Fibonacci" is a known benchmark contract that should exist
+        let result = load_contract_bytecode("Fibonacci");
+        assert!(
+            result.is_ok(),
+            "Fibonacci bytecode should load successfully: {:?}",
+            result.err()
+        );
+        let hex = result.unwrap();
+        assert!(!hex.is_empty(), "bytecode should not be empty");
+        // Verify it's valid hex
+        assert!(
+            hex::decode(hex.trim()).is_ok(),
+            "bytecode file should contain valid hex"
+        );
+    }
+
+    #[test]
+    fn test_load_contract_bytecode_missing_file() {
+        let result = load_contract_bytecode("NonExistentContract_xyz_12345");
+        assert!(result.is_err(), "missing file should return Err");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Failed to load"),
+            "error should mention load failure: {err}"
+        );
+    }
+
+    #[test]
+    fn test_init_db_accounts_populated() {
+        let bytecode = Bytes::from(vec![0x60, 0x00, 0xf3]); // PUSH1 0 RETURN
+        let db = init_db(bytecode);
+
+        let contract = db
+            .current_accounts_state
+            .get(&Address::from_low_u64_be(CONTRACT_ADDRESS));
+        assert!(contract.is_some(), "contract account should exist in cache");
+
+        let sender = db
+            .current_accounts_state
+            .get(&Address::from_low_u64_be(SENDER_ADDRESS));
+        assert!(sender.is_some(), "sender account should exist in cache");
+    }
+
+    #[test]
+    fn test_init_vm_gas_limit() {
+        let bytecode = Bytes::from(vec![0x00]); // STOP
+        let mut db = init_db(bytecode);
+        let vm = init_vm(&mut db, Bytes::new());
+        // The VM should have been created successfully with the configured gas limit
+        assert_eq!(vm.env.gas_limit, (i64::MAX - 1) as u64);
+    }
 }

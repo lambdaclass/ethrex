@@ -336,4 +336,67 @@ mod tests {
         assert_eq!(report.status, RegressionStatus::Stable);
         assert!(report.regressions.is_empty());
     }
+
+    #[test]
+    fn test_compare_empty_baseline() {
+        let baseline = BenchSuite {
+            timestamp: "0".to_string(),
+            commit: "base".to_string(),
+            results: vec![], // empty
+        };
+        let current = make_suite("Fibonacci", "ADD", 100);
+        let report = compare(&baseline, &current, &Thresholds::default());
+        // With empty baseline, no scenarios can be matched → stable
+        assert_eq!(report.status, RegressionStatus::Stable);
+        assert!(report.regressions.is_empty());
+        assert!(report.improvements.is_empty());
+    }
+
+    #[test]
+    fn test_compare_empty_current() {
+        let baseline = make_suite("Fibonacci", "ADD", 100);
+        let current = BenchSuite {
+            timestamp: "0".to_string(),
+            commit: "curr".to_string(),
+            results: vec![], // empty
+        };
+        let report = compare(&baseline, &current, &Thresholds::default());
+        assert_eq!(report.status, RegressionStatus::Stable);
+        assert!(report.regressions.is_empty());
+    }
+
+    #[test]
+    fn test_compare_both_empty() {
+        let empty = BenchSuite {
+            timestamp: "0".to_string(),
+            commit: "empty".to_string(),
+            results: vec![],
+        };
+        let report = compare(&empty, &empty, &Thresholds::default());
+        assert_eq!(report.status, RegressionStatus::Stable);
+    }
+
+    #[test]
+    fn test_compare_baseline_zero_avg_ns_skipped() {
+        // Baseline has avg_ns=0 → should be skipped (division protection)
+        let baseline = make_suite("Fibonacci", "ADD", 0);
+        let current = make_suite("Fibonacci", "ADD", 100);
+        let report = compare(&baseline, &current, &Thresholds::default());
+        // avg_ns=0 is skipped in the comparison loop (line 37-39)
+        assert_eq!(report.status, RegressionStatus::Stable);
+        assert!(report.regressions.is_empty());
+    }
+
+    #[test]
+    fn test_compare_jit_empty_baseline() {
+        let baseline = JitBenchSuite {
+            timestamp: "0".to_string(),
+            commit: "base".to_string(),
+            results: vec![],
+        };
+        let current = make_jit_suite(&[("Fibonacci", 2.5)]);
+        let report = compare_jit(&baseline, &current, 20.0);
+        assert_eq!(report.status, RegressionStatus::Stable);
+        assert!(report.regressions.is_empty());
+    }
 }

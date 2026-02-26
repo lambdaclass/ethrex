@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-26
 **Branch**: `feat/tokamak-proven-execution`
-**Overall Completion**: ~60-65%
+**Overall Completion**: ~90%
 
 ---
 
@@ -172,14 +172,15 @@ R23(5.0) -> R24(8.0)
 
 ### Recently Completed (Phase F continued)
 - L2 integration scaffolding (F-3) — `TokamakFeeConfig` + `JitPolicy` types, `VMType::TokamakL2` variant, `TokamakL2Hook` (wraps L2Hook via composition), hook dispatch + Evm constructors, `BlockchainType::TokamakL2` + 5 match arm updates, `--tokamak-l2` CLI flag, feature propagation across 6 Cargo.toml files, 7 tests
+- Mainnet full sync CI (F-5) — Added `mainnet` option to `tokamak-sync.yaml`, `ethrex-sync` self-hosted runner for 48h timeout, Docker cleanup step, conditional Kurtosis install
 
 ### Not Started
-- Mainnet full sync as Tokamak client
 - EF grant application
 - External node operator adoption
 
 ### In Progress
-- (none — Phase A-F ALL COMPLETE except F-5 mainnet sync; F-3 scaffolding done, Tokamak-specific fee logic awaits L2 spec)
+- Mainnet full sync (F-5) — CI configured (`tokamak-sync.yaml` with mainnet option, `ethrex-sync` self-hosted runner, 48h timeout), awaiting manual dispatch
+- F-3 scaffolding done, Tokamak-specific fee logic awaits L2 spec
 
 ---
 

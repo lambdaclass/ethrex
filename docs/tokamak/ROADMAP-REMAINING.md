@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-26
-**Context**: Overall ~85% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE.
+**Context**: Overall ~90% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run).
 
 ---
 
@@ -245,11 +245,14 @@
 - **Completed**: Fuzzing harnesses + proptest + safety audit documentation (0e585ca07)
 - **Enhanced**: 2026-02-26 — real differential fuzzing harness (b2def75e8)
 
-### F-5. Mainnet Full Sync [P3]
+### F-5. Mainnet Full Sync [P3] — CI CONFIGURED
 - Full mainnet state sync as Tokamak client
 - Verify state root matches at head
-- **Dependency**: A-2, A-3
+- **CI**: `tokamak-sync.yaml` — mainnet option with 48h timeout, `ethrex-sync` self-hosted runner, Docker cleanup
+- **How to run**: `gh workflow run tokamak-sync.yaml -f network=mainnet` (manual dispatch)
+- **Dependency**: A-2 ✅, A-3 ✅
 - **Estimate**: 24-48h (mostly wait time)
+- **Status**: Workflow configured — awaiting manual dispatch and sync completion
 
 ---
 
