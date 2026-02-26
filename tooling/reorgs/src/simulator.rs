@@ -295,9 +295,18 @@ impl Node {
             .unwrap();
 
         let requests_hash = compute_requests_hash(&payload_response.execution_requests.unwrap());
+        let block_access_list_hash = payload_response
+            .execution_payload
+            .block_access_list
+            .as_ref()
+            .map(|bal| bal.compute_hash());
         let block = payload_response
             .execution_payload
-            .into_block(parent_beacon_block_root, Some(requests_hash))
+            .into_block(
+                parent_beacon_block_root,
+                Some(requests_hash),
+                block_access_list_hash,
+            )
             .unwrap();
 
         info!(
@@ -322,7 +331,7 @@ impl Node {
 
     pub async fn notify_new_payload(&self, chain: &Chain) {
         let head = chain.blocks.last().unwrap();
-        let execution_payload = ExecutionPayload::from_block(head.clone());
+        let execution_payload = ExecutionPayload::from_block(head.clone(), None);
         // Support blobs
         // let commitments = execution_payload_response
         //     .blobs_bundle

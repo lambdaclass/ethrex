@@ -5,7 +5,7 @@ The network crate handles the ethereum networking protocols. This involves:
 - [Discovery protocol](#discovery-protocol): built on top of udp and it is how we discover new nodes.
 - devP2P: sits on top of tcp and is where the actual blockchain information exchange happens.
 
-Implementation follows the official spec which can be found [here](https://github.com/ethereum/devp2p/tree/master). Also, we've inspired in some [geth code](https://github.com/ethereum/go-ethereum/tree/master/p2p/discover).
+Implementation follows the official spec which can be found [here](https://github.com/ethereum/devp2p/tree/master). Also, we've been inspired by some [geth code](https://github.com/ethereum/go-ethereum/tree/master/p2p/discover).
 
 ## Discovery protocol
 
@@ -19,7 +19,7 @@ At startup, the discovery server launches three concurrent tokio tasks:
 
 Before starting these tasks, we run a [startup](#startup) process to connect to an array of initial nodes.
 
-Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a [Kademlia table](https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/kademlia.rs#L25-L28), though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more [here](https://en.wikipedia.org/wiki/Kademlia). This table holds:
+Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a [Kademlia table](https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/discv4/peer_table.rs), though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more [here](https://en.wikipedia.org/wiki/Kademlia). This table holds:
 
 - Our `node_id`: The node's unique identifier computed by obtaining the keccak hash of the 64 bytes starting from index 1 of the encoded pub key.
 - A vector of 256 `bucket`s which holds:
@@ -50,7 +50,7 @@ This startup is far from being completed. The current state allows us to do basi
 
 The listen loop handles messages sent to our socket. The spec defines 6 types of messages:
 
-- **Ping**: Responds with a `pong` message. If the peer is not in our table we add it, if the corresponding bucket is already filled then we add it as a replacement for that bucket. If it was inserted we send a `ping from our end to get an endpoint proof.
+- **Ping**: Responds with a `pong` message. If the peer is not in our table we add it, if the corresponding bucket is already filled then we add it as a replacement for that bucket. If it was inserted we send a `ping` from our end to get an endpoint proof.
 - **Pong**: Verifies that the `pong` corresponds to a previously sent `ping`, if so we mark the peer as proven.
 - **FindNodes**: Responds with a `neighbors` message that contains as many as the 16 closest nodes from the given target. A target is a pubkey provided by the peer in the message. The response can't be sent in one packet as it might exceed the discv4 max packet size. So we split it into different packets.
 - **Neighbors**: First we verify that we have sent the corresponding `find_node` message. If so, we receive the peers, store them, and ping them. Also, every [`find_node` request](https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/discv4.rs#L305-L314) may have a [tokio `Sender`](https://docs.rs/tokio/latest/tokio/sync/mpsc/struct.Sender.html) attached, if that is the case, we forward the nodes from the message through the channel. This becomes useful when waiting for a `find_node` response, [something we do in the lookups](https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/net.rs#L517-L570).
@@ -59,7 +59,7 @@ The listen loop handles messages sent to our socket. The spec defines 6 types of
 
 ### Re-validations
 
-Re-validations are tasks that are implemented as intervals, that is: they run an action every `x` wherever unit of time (currently configured to run every 30 seconds). The current flow of re-validation is as follows
+Re-validations are tasks that are implemented as intervals, that is: they run an action every `x` whichever unit of time (currently configured to run every 30 seconds). The current flow of re-validation is as follows
 
 1. Every 30 seconds (by default) we ping the three least recently pinged peers: this may be fine now to keep simplicity, but we might prefer to choose three random peers instead to avoid the search which might become expensive as our buckets start to fill with more peers.
 2. In the next iteration we check if they have answered
@@ -83,7 +83,7 @@ This improvement follows somewhat what geth does, see [here](https://github.com/
 
 Recursive lookups are as with re-validations implemented as intervals. Their current flow is as follows:
 
-1. Every 30min we spawn three concurrent lookups: one closest to our pubkey and three others closest to randomly generated pubkeys.
+1. Every 30min we spawn three concurrent lookups: one closest to our pubkey and two others closest to randomly generated pubkeys.
 2. Every lookup starts with the closest nodes from our table. Each lookup keeps track of:
    - Peers that have already been asked for nodes
    - Peers that have been already seen
@@ -92,11 +92,11 @@ Recursive lookups are as with re-validations implemented as intervals. Their cur
 4. We wait for the neighbors' response and push or replace those who are closer to the potential peers.
 5. We select three other nodes from the potential peers vector and do the same until one lookup has no node to ask.
 
-The way to do lookups aren't part of the spec. Our implementation aligns with geth approach, see [here](https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/v4_udp.go#L282-L310).
+The way to do lookups isn't part of the spec. Our implementation aligns with geth approach, see [here](https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/v4_udp.go#L282-L310).
 
 ### An example of how you might build a network
 
-Finally, here is an example of how you could build a network and see how they connect each other:
+Finally, here is an example of how you could build a network and see how they connect to each other:
 
 We'll have three nodes: `a`, `b`, and `c`, we'll start `a`, then `b` setting `a` as a bootnode, and finally we'll start `c` with `b` as bootnode we should see that `c` connects to both `a` and `b` and so all the network should be connected.
 

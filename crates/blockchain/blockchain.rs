@@ -50,7 +50,7 @@ pub mod payload;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info, instrument, trace, warn};
+use ::tracing::{debug, info, instrument, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -59,19 +59,20 @@ use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 // Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
-    AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-    Receipt, Transaction, WrappedEIP4844Transaction,
+    AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H160, H256, TrieLogger};
+use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
-    get_total_blob_gas, validate_block, validate_gas_used, validate_receipts_root,
-    validate_requests_hash,
+    get_total_blob_gas, validate_block, validate_block_access_list_hash, validate_gas_used,
+    validate_receipts_root, validate_requests_hash,
 };
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
@@ -80,8 +81,8 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::node::{BranchNode, ExtensionNode};
-use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
+use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
 use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -91,6 +92,7 @@ use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -110,8 +112,6 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
-
-type StoreUpdatesMap = FxHashMap<H256, (Result<Trie, StoreError>, FxHashMap<Nibbles, Vec<u8>>)>;
 
 // Result type for execute_block_pipeline
 type BlockExecutionPipelineResult = (
@@ -219,12 +219,6 @@ impl Default for BlockchainOptions {
     }
 }
 
-struct PartialMerkleizationResults {
-    state_updates: FxHashMap<Nibbles, Vec<u8>>,
-    storage_updates: StoreUpdatesMap,
-    code_updates: FxHashMap<H256, Code>,
-}
-
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
@@ -241,6 +235,56 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
             }
         });
     }
+}
+
+enum MerklizationRequest {
+    LoadAccount(H256),
+    Delete(H256),
+    MerklizeStorage {
+        prefix: H256,
+        key: H256,
+        value: U256,
+    },
+    MerklizeAccount {
+        hashed_account: H256,
+        state: PreMerkelizedAccountState,
+    },
+    CollectStorages {
+        tx: Sender<CollectedStorageMsg>,
+    },
+    CollectState {
+        tx: Sender<CollectedStateMsg>,
+    },
+}
+
+struct CollectedStateMsg {
+    index: u8,
+    subroot: Box<BranchNode>,
+    state_nodes: Vec<TrieNode>,
+    storage_nodes: Vec<(H256, Vec<TrieNode>)>,
+}
+
+struct CollectedStorageMsg {
+    index: u8,
+    prefix: H256,
+    subroot: Box<BranchNode>,
+    nodes: Vec<TrieNode>,
+}
+
+#[derive(Default)]
+struct PreMerkelizedAccountState {
+    info: Option<AccountInfo>,
+    storage_root: Option<Box<BranchNode>>,
+    nodes: Vec<TrieNode>,
+}
+
+/// Work item for BAL state trie shard workers.
+struct BalStateWorkItem {
+    hashed_address: H256,
+    info: Option<AccountInfo>,
+    removed: bool,
+    /// Pre-computed storage root from Stage B, or None to keep existing.
+    storage_root: Option<H256>,
 }
 
 impl Blockchain {
@@ -284,15 +328,49 @@ impl Blockchain {
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
-        let execution_result = vm.execute_block(block)?;
+        let (execution_result, bal) = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        if let Some(bal) = &bal {
+            validate_block_access_list_hash(
+                &block.header,
+                &chain_config,
+                bal,
+                block.body.transactions.len(),
+            )?;
+        }
 
         Ok((execution_result, account_updates))
+    }
+
+    /// Generates Block Access List by re-executing a block.
+    /// Returns None for pre-Amsterdam blocks.
+    /// This is used by engine_getPayloadBodiesByHashV2 and engine_getPayloadBodiesByRangeV2.
+    pub fn generate_bal_for_block(
+        &self,
+        block: &Block,
+    ) -> Result<Option<BlockAccessList>, ChainError> {
+        let chain_config = self.storage.get_chain_config();
+
+        // Pre-Amsterdam blocks don't have BAL
+        if !chain_config.is_amsterdam_activated(block.header.timestamp) {
+            return Ok(None);
+        }
+
+        // Find parent header
+        let parent_header = find_parent_header(&block.header, &self.storage)?;
+
+        // Create VM and execute block with BAL recording
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let mut vm = self.new_evm(vm_db)?;
+
+        let (_execution_result, bal) = vm.execute_block(block)?;
+
+        Ok(bal)
     }
 
     /// Executes a block withing a new vm instance and state
@@ -307,6 +385,7 @@ impl Blockchain {
         block: &Block,
         parent_header: &BlockHeader,
         vm: &mut Evm,
+        bal: Option<&BlockAccessList>,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -330,74 +409,105 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
-        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(|s| {
-            let vm_type = vm.vm_type;
-            let warm_handle = std::thread::Builder::new()
-                .name("block_executor_warmer".to_string())
-                .spawn_scoped(s, move || {
-                    // Warming uses the same caching store, sharing cached state with execution
-                    let start = Instant::now();
-                    let _ = LEVM::warm_block(block, caching_store, vm_type);
-                    start.elapsed()
-                })
-                .expect("Failed to spawn block_executor warmer thread");
-            let max_queue_length_ref = &mut max_queue_length;
-            let (tx, rx) = channel();
-            let execution_handle = std::thread::Builder::new()
-                .name("block_executor_execution".to_string())
-                .spawn_scoped(s, move || -> Result<_, ChainError> {
-                    let execution_result =
-                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+        let (execution_result, merkleization_result, warmer_duration) =
+            std::thread::scope(|s| -> Result<_, ChainError> {
+                let vm_type = vm.vm_type;
+                let warm_handle = std::thread::Builder::new()
+                    .name("block_executor_warmer".to_string())
+                    .spawn_scoped(s, move || {
+                        // Warming uses the same caching store, sharing cached state with execution.
+                        // Precompile cache lives inside CachingDatabase, shared automatically.
+                        let start = Instant::now();
+                        if let Some(bal) = bal {
+                            // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
+                            let _ = LEVM::warm_block_from_bal(bal, caching_store);
+                        } else {
+                            // Pre-Amsterdam / P2P sync: speculative tx re-execution
+                            let _ = LEVM::warm_block(block, caching_store, vm_type);
+                        }
+                        start.elapsed()
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
+                    })?;
+                let max_queue_length_ref = &mut max_queue_length;
+                let (tx, rx) = channel();
+                let execution_handle = std::thread::Builder::new()
+                    .name("block_executor_execution".to_string())
+                    .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        let (execution_result, bal) =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
-                    // Validate execution went alright
-                    validate_gas_used(&execution_result.receipts, &block.header)?;
-                    validate_receipts_root(&block.header, &execution_result.receipts)?;
-                    validate_requests_hash(
-                        &block.header,
-                        &chain_config,
-                        &execution_result.requests,
-                    )?;
+                        // Validate execution went alright
+                        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+                        validate_receipts_root(&block.header, &execution_result.receipts)?;
+                        validate_requests_hash(
+                            &block.header,
+                            &chain_config,
+                            &execution_result.requests,
+                        )?;
+                        if let Some(bal) = &bal {
+                            validate_block_access_list_hash(
+                                &block.header,
+                                &chain_config,
+                                bal,
+                                block.body.transactions.len(),
+                            )?;
+                        }
 
-                    let exec_end_instant = Instant::now();
-                    Ok((execution_result, exec_end_instant))
-                })
-                .expect("Failed to spawn block_executor exec thread");
-            let parent_header_ref = &parent_header; // Avoid moving to thread
-            let merkleize_handle = std::thread::Builder::new()
-                .name("block_executor_merkleizer".to_string())
-                .spawn_scoped(s, move || -> Result<_, StoreError> {
-                    let (account_updates_list, accumulated_updates) = self.handle_merkleization(
-                        s,
-                        rx,
-                        parent_header_ref,
-                        queue_length_ref,
-                        max_queue_length_ref,
-                    )?;
-                    let merkle_end_instant = Instant::now();
-                    Ok((
-                        account_updates_list,
-                        accumulated_updates,
-                        merkle_end_instant,
-                    ))
-                })
-                .expect("Failed to spawn block_executor merkleizer thread");
-            let warmer_duration = warm_handle
-                .join()
-                .inspect_err(|e| warn!("Warming thread error: {e:?}"))
-                .ok()
-                .unwrap_or(Duration::ZERO);
-            (
-                execution_handle.join().unwrap_or_else(|_| {
-                    Err(ChainError::Custom("execution thread panicked".to_string()))
-                }),
-                merkleize_handle.join().unwrap_or_else(|_| {
-                    Err(StoreError::Custom(
-                        "merklization thread panicked".to_string(),
-                    ))
-                }),
-                warmer_duration,
-            )
-        });
+                        let exec_end_instant = Instant::now();
+                        Ok((execution_result, exec_end_instant))
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
+                    })?;
+                let parent_header_ref = &parent_header; // Avoid moving to thread
+                let merkleize_handle = std::thread::Builder::new()
+                    .name("block_executor_merkleizer".to_string())
+                    .spawn_scoped(s, move || -> Result<_, StoreError> {
+                        let (account_updates_list, accumulated_updates) = if bal.is_some() {
+                            self.handle_merkleization_bal(
+                                rx,
+                                parent_header_ref,
+                                queue_length_ref,
+                                max_queue_length_ref,
+                            )?
+                        } else {
+                            self.handle_merkleization(
+                                s,
+                                rx,
+                                parent_header_ref,
+                                queue_length_ref,
+                                max_queue_length_ref,
+                            )?
+                        };
+                        let merkle_end_instant = Instant::now();
+                        Ok((
+                            account_updates_list,
+                            accumulated_updates,
+                            merkle_end_instant,
+                        ))
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
+                    })?;
+                let warmer_duration = warm_handle
+                    .join()
+                    .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                    .ok()
+                    .unwrap_or(Duration::ZERO);
+                Ok((
+                    execution_handle.join().unwrap_or_else(|_| {
+                        Err(ChainError::Custom("execution thread panicked".to_string()))
+                    }),
+                    merkleize_handle.join().unwrap_or_else(|_| {
+                        Err(StoreError::Custom(
+                            "merklization thread panicked".to_string(),
+                        ))
+                    }),
+                    warmer_duration,
+                ))
+            })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
 
@@ -420,39 +530,6 @@ impl Blockchain {
         ))
     }
 
-    fn handle_merkleization_subtrie(
-        &self,
-        rx: Receiver<Vec<(H256, AccountUpdate)>>,
-        parent_header: &BlockHeader,
-    ) -> Result<PartialMerkleizationResults, StoreError> {
-        let mut state_trie = self
-            .storage
-            .state_trie(parent_header.hash())?
-            .ok_or(StoreError::MissingStore)?;
-        let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
-        let mut storage_updates_map: StoreUpdatesMap = Default::default();
-        let mut code_updates: FxHashMap<H256, Code> = Default::default();
-        let mut account_states: FxHashMap<H256, AccountState> = Default::default();
-        for updates in rx {
-            Self::process_incoming_update_message(
-                &self.storage,
-                &mut state_trie,
-                updates,
-                &mut storage_updates_map,
-                parent_header,
-                &mut state_updates_map,
-                &mut code_updates,
-                &mut account_states,
-            )?;
-        }
-
-        Ok(PartialMerkleizationResults {
-            state_updates: state_updates_map,
-            storage_updates: storage_updates_map,
-            code_updates,
-        })
-    }
-
     #[instrument(
         level = "trace",
         name = "Trie update",
@@ -471,35 +548,6 @@ impl Blockchain {
         'a: 's,
         'b: 's,
     {
-        // Fetch the old root from the DB and decode it
-        let old_root_opt = self
-            .storage
-            .state_trie(parent_header.hash())?
-            .ok_or(StoreError::MissingStore)?
-            .db()
-            .get(Nibbles::default())?
-            .map(|v| Node::decode(&v))
-            .transpose()?;
-
-        // If there's no root, or it's not a branch node, we fallback to sequential processing.
-        let Some(Node::Branch(old_root)) = old_root_opt else {
-            return self.handle_merkleization_sequential(
-                rx,
-                parent_header,
-                queue_length,
-                max_queue_length,
-            );
-        };
-        // If there are less than 3 subtries, we fallback to sequential processing.
-        // This simplifies the handling of shard results.
-        if old_root.choices.iter().filter(|c| c.is_valid()).count() < 3 {
-            return self.handle_merkleization_sequential(
-                rx,
-                parent_header,
-                queue_length,
-                max_queue_length,
-            );
-        }
         let mut workers_tx = Vec::with_capacity(16);
         let mut workers_handles = Vec::with_capacity(16);
         for i in 0..16 {
@@ -507,16 +555,16 @@ impl Blockchain {
             let handle = std::thread::Builder::new()
                 .name(format!("block_executor_merkleization_shard_worker_{i}"))
                 .spawn_scoped(scope, move || {
-                    self.handle_merkleization_subtrie(rx, parent_header)
+                    self.handle_merkleization_subtrie(rx, parent_header, i)
                 })
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}",)))?;
             workers_handles.push(handle);
             workers_tx.push(tx);
         }
-        let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
-        let mut storage_updates_map: StoreUpdatesMap = Default::default();
-        let mut code_updates: FxHashMap<H256, Code> = Default::default();
-        let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
+
+        let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
+        let mut code_updates: Vec<(H256, Code)> = vec![];
+        let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
 
         // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
@@ -529,9 +577,7 @@ impl Blockchain {
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
-
             // Accumulate updates for witness generation if enabled
-            // We clone here only when witness generation is needed
             if let Some(acc) = &mut accumulator {
                 for update in updates.clone() {
                     match acc.entry(update.address) {
@@ -545,79 +591,129 @@ impl Blockchain {
                 }
             }
 
-            let mut hashed_updates: Vec<_> = updates
-                .into_iter()
-                .map(|u| {
-                    let hashed_address = hashed_address_cache
-                        .entry(u.address)
-                        .or_insert_with(|| keccak(u.address));
-                    (*hashed_address, u)
+            for update in updates {
+                let hashed_address = *hashed_address_cache
+                    .entry(update.address)
+                    .or_insert_with(|| keccak(update.address));
+                let account_bucket = hashed_address.as_fixed_bytes()[0] >> 4;
+                workers_tx[account_bucket as usize]
+                    .send(MerklizationRequest::LoadAccount(hashed_address))
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                if update.removed {
+                    // Match old behavior: remove account, skip added_storage processing.
+                    // Send Delete to clear any existing storage in workers so the
+                    // storage root becomes EMPTY_TRIE_HASH during collection.
+                    for tx in &workers_tx {
+                        tx.send(MerklizationRequest::Delete(hashed_address))
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    }
+                    let state = account_state.entry(hashed_address).or_default();
+                    *state = PreMerkelizedAccountState {
+                        info: Some(Default::default()),
+                        ..Default::default()
+                    };
+                    continue;
+                }
+
+                if update.removed_storage {
+                    for tx in &workers_tx {
+                        tx.send(MerklizationRequest::Delete(hashed_address))
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    }
+                }
+                for (key, value) in update.added_storage {
+                    let hashed_key = keccak(key);
+                    let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
+                    workers_tx[bucket as usize]
+                        .send(MerklizationRequest::MerklizeStorage {
+                            prefix: hashed_address,
+                            key: hashed_key,
+                            value,
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                }
+                let state = account_state.entry(hashed_address).or_default();
+                if let Some(info) = update.info {
+                    if let Some(code) = update.code {
+                        code_updates.push((info.code_hash, code));
+                    }
+                    state.info = Some(info);
+                }
+            }
+        }
+
+        let (gatherer_tx, gatherer_rx) = channel();
+        for tx in &workers_tx {
+            tx.send(MerklizationRequest::CollectStorages {
+                tx: gatherer_tx.clone(),
+            })
+            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+        }
+        drop(gatherer_tx);
+
+        for CollectedStorageMsg {
+            index,
+            prefix,
+            mut subroot,
+            nodes,
+        } in gatherer_rx
+        {
+            let state = account_state.entry(prefix).or_default();
+            match &mut state.storage_root {
+                Some(root) => {
+                    root.choices[index as usize] =
+                        std::mem::take(&mut subroot.choices[index as usize]);
+                }
+                rootptr => {
+                    *rootptr = Some(subroot);
+                }
+            }
+            state.nodes.extend(nodes);
+        }
+
+        let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
+
+        for (hashed_account, state) in account_state {
+            let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
+            workers_tx[bucket as usize]
+                .send(MerklizationRequest::MerklizeAccount {
+                    hashed_account,
+                    state,
                 })
-                .collect();
-            hashed_updates.sort_by_key(|(h, _)| h.0[0]);
-            for sharded_update in hashed_updates.chunk_by(|l, r| l.0.0[0] & 0xf0 == r.0.0[0] & 0xf0)
-            {
-                let shard_message = sharded_update.to_vec();
-                workers_tx[(shard_message[0].0.0[0] >> 4) as usize]
-                    .send(shard_message)
-                    .map_err(|e| StoreError::Custom(format!("send failed: {e}")))?;
-            }
-        }
-        drop(workers_tx);
-        let mut real_root = old_root;
-        for (choice, worker) in workers_handles.into_iter().enumerate() {
-            let worker_result = worker
-                .join()
-                .map_err(|e| StoreError::Custom(format!("join failed: {e:?}",)))??;
-            let Some(root_node) = worker_result.state_updates.get(&Nibbles::default()) else {
-                continue;
-            };
-            let root_node = Node::decode(root_node)?;
-            let Node::Branch(mut subtrie_branch) = root_node else {
-                unreachable!("the result can only remove one of the >2 subtries we had")
-            };
-            real_root.choices[choice] = std::mem::take(&mut subtrie_branch.choices[choice]);
-
-            code_updates.extend(worker_result.code_updates);
-            storage_updates_map.extend(worker_result.storage_updates);
-            state_updates_map.extend(worker_result.state_updates);
+                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
 
-        // Turn the root back into an extension or leaf if applicable
-        let root_node_opt = {
-            let children = real_root
-                .choices
-                .iter()
-                .filter(|child| child.is_valid())
-                // No need to check all of them
-                .take(2)
-                .count();
+        let (gatherer_tx, gatherer_rx) = channel();
+        for tx in &workers_tx {
+            tx.send(MerklizationRequest::CollectState {
+                tx: gatherer_tx.clone(),
+            })
+            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+        }
+        drop(gatherer_tx);
 
-            match children {
-                0 | 1 => collapse_root_node(
-                    real_root,
-                    &mut state_updates_map,
-                    &self.storage,
-                    parent_header,
-                )?,
-                // More than one child. Keep as branch
-                _ => Some(Node::Branch(real_root)),
-            }
-        };
-
-        let (state_trie_hash, root_node) = if let Some(root_node) = &root_node_opt {
-            let encoded_root_node = root_node.encode_to_vec();
-            (keccak(&encoded_root_node), encoded_root_node)
-        } else {
-            (*EMPTY_TRIE_HASH, vec![RLP_NULL])
-        };
-        state_updates_map.insert(Nibbles::default(), root_node);
-        let state_updates = state_updates_map.into_iter().collect();
-        let storage_updates = storage_updates_map
-            .into_iter()
-            .map(|(a, (_, s))| (a, s.into_iter().collect()))
-            .collect();
-        let code_updates = code_updates.into_iter().collect();
+        let mut root = BranchNode::default();
+        let mut state_updates = Vec::new();
+        for CollectedStateMsg {
+            index,
+            subroot,
+            state_nodes,
+            storage_nodes,
+        } in gatherer_rx
+        {
+            storage_updates.extend(storage_nodes);
+            state_updates.extend(state_nodes);
+            root.choices[index as usize] = subroot.choices[index as usize].clone();
+        }
+        let state_trie_hash =
+            if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
+                let mut root = NodeRef::from(root);
+                let hash = root.commit(Nibbles::default(), &mut state_updates);
+                hash.finalize()
+            } else {
+                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+                *EMPTY_TRIE_HASH
+            };
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
@@ -632,80 +728,300 @@ impl Blockchain {
         ))
     }
 
-    fn handle_merkleization_sequential(
+    /// BAL-specific merkleization handler.
+    ///
+    /// When the Block Access List is available (Amsterdam+), all dirty accounts
+    /// and storage slots are known upfront. This enables computing storage roots
+    /// in parallel across accounts before feeding final results into state trie
+    /// shards.
+    #[instrument(
+        level = "trace",
+        name = "Trie update (BAL)",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    fn handle_merkleization_bal(
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
-        let mut state_trie = self
-            .storage
-            .state_trie(parent_header.hash())?
-            .ok_or(StoreError::MissingStore)?;
-        let mut state_trie_hash = H256::default();
-        let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
-        let mut storage_updates_map: StoreUpdatesMap = Default::default();
-        let mut code_updates: FxHashMap<H256, Code> = Default::default();
-        let mut account_states: FxHashMap<H256, AccountState> = Default::default();
+        const NUM_WORKERS: usize = 16;
+        let parent_state_root = parent_header.state_root;
 
-        let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
-
-        // Accumulator for witness generation (only used if precompute_witnesses is true)
-        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-            if self.options.precompute_witnesses {
-                Some(FxHashMap::default())
-            } else {
-                None
-            };
-
+        // === Stage A: Drain + accumulate all AccountUpdates ===
+        // BAL guarantees completeness, so we block until execution finishes.
+        let mut all_updates: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
-
-            // Accumulate updates for witness generation if enabled
-            // We clone here only when witness generation is needed
-            if let Some(acc) = &mut accumulator {
-                for update in updates.clone() {
-                    match acc.entry(update.address) {
-                        Entry::Vacant(e) => {
-                            e.insert(update);
-                        }
-                        Entry::Occupied(mut e) => {
-                            e.get_mut().merge(update);
-                        }
+            for update in updates {
+                match all_updates.entry(update.address) {
+                    Entry::Vacant(e) => {
+                        e.insert(update);
+                    }
+                    Entry::Occupied(mut e) => {
+                        e.get_mut().merge(update);
                     }
                 }
             }
-
-            let hashed_updates: Vec<_> = updates
-                .into_iter()
-                .map(|u| {
-                    let hashed_address = hashed_address_cache
-                        .entry(u.address)
-                        .or_insert_with(|| keccak(u.address));
-                    (*hashed_address, u)
-                })
-                .collect();
-            state_trie_hash = Self::process_incoming_update_message(
-                &self.storage,
-                &mut state_trie,
-                hashed_updates,
-                &mut storage_updates_map,
-                parent_header,
-                &mut state_updates_map,
-                &mut code_updates,
-                &mut account_states,
-            )?;
         }
-        let state_updates = state_updates_map.into_iter().collect();
-        let storage_updates = storage_updates_map
-            .into_iter()
-            .map(|(a, (_, s))| (a, s.into_iter().collect()))
-            .collect();
-        let code_updates = code_updates.into_iter().collect();
 
-        let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+        // Extract witness accumulator before consuming updates
+        let accumulated_updates = if self.options.precompute_witnesses {
+            Some(all_updates.values().cloned().collect::<Vec<_>>())
+        } else {
+            None
+        };
+
+        // Extract code updates and build work items with pre-hashed addresses
+        let mut code_updates: Vec<(H256, Code)> = Vec::new();
+        let mut accounts: Vec<(H256, AccountUpdate)> = Vec::with_capacity(all_updates.len());
+        for (addr, update) in all_updates {
+            let hashed = keccak(addr);
+            if let Some(info) = &update.info
+                && let Some(code) = &update.code
+            {
+                code_updates.push((info.code_hash, code.clone()));
+            }
+            accounts.push((hashed, update));
+        }
+
+        // === Stage B: Parallel per-account storage root computation ===
+
+        // Sort by storage weight (descending) for greedy bin packing.
+        // Every item with real Stage B work MUST have weight >= 1: the greedy
+        // algorithm does `bin_weights[min] += weight`, so weight-0 items never
+        // change the bin weight and `min_by_key` keeps returning the same bin,
+        // piling ALL of them into a single worker. Removed accounts are cheap
+        // individually (just push EMPTY_TRIE_HASH) but must still be distributed.
+        let mut work_indices: Vec<(usize, usize)> = accounts
+            .iter()
+            .enumerate()
+            .map(|(i, (_, update))| {
+                let weight =
+                    if update.removed || update.removed_storage || !update.added_storage.is_empty()
+                    {
+                        1.max(update.added_storage.len())
+                    } else {
+                        0
+                    };
+                (i, weight)
+            })
+            .collect();
+        work_indices.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+
+        // Greedy bin packing into NUM_WORKERS bins
+        let mut bins: Vec<Vec<usize>> = (0..NUM_WORKERS).map(|_| Vec::new()).collect();
+        let mut bin_weights: Vec<usize> = vec![0; NUM_WORKERS];
+        for (idx, weight) in work_indices {
+            let min_bin = bin_weights
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, w)| **w)
+                .expect("bin_weights is non-empty")
+                .0;
+            bins[min_bin].push(idx);
+            bin_weights[min_bin] += weight;
+        }
+
+        // Compute storage roots in parallel
+        let mut storage_roots: Vec<Option<H256>> = vec![None; accounts.len()];
+        let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Vec::new();
+
+        std::thread::scope(|s| -> Result<(), StoreError> {
+            let accounts_ref = &accounts;
+            let handles: Vec<_> = bins
+                .into_iter()
+                .enumerate()
+                .filter_map(|(worker_id, bin)| {
+                    if bin.is_empty() {
+                        return None;
+                    }
+                    Some(
+                        std::thread::Builder::new()
+                            .name(format!("bal_storage_worker_{worker_id}"))
+                            .spawn_scoped(
+                                s,
+                                move || -> Result<Vec<(usize, H256, Vec<TrieNode>)>, StoreError> {
+                                    let mut results: Vec<(usize, H256, Vec<TrieNode>)> = Vec::new();
+                                    // Open one state trie per worker for storage root lookups
+                                    let state_trie =
+                                        self.storage.open_state_trie(parent_state_root)?;
+                                    for idx in bin {
+                                        let (hashed_address, update) = &accounts_ref[idx];
+                                        let has_storage_changes = update.removed
+                                            || update.removed_storage
+                                            || !update.added_storage.is_empty();
+                                        if !has_storage_changes {
+                                            continue;
+                                        }
+
+                                        if update.removed {
+                                            results.push((
+                                                idx,
+                                                *EMPTY_TRIE_HASH,
+                                                vec![(Nibbles::default(), vec![RLP_NULL])],
+                                            ));
+                                            continue;
+                                        }
+
+                                        let mut trie = if update.removed_storage {
+                                            Trie::new_temp()
+                                        } else {
+                                            let storage_root =
+                                                match state_trie.get(hashed_address.as_bytes())? {
+                                                    Some(rlp) => {
+                                                        AccountState::decode(&rlp)?.storage_root
+                                                    }
+                                                    None => *EMPTY_TRIE_HASH,
+                                                };
+                                            self.storage.open_storage_trie(
+                                                *hashed_address,
+                                                parent_state_root,
+                                                storage_root,
+                                            )?
+                                        };
+
+                                        for (key, value) in &update.added_storage {
+                                            let hashed_key = keccak(key);
+                                            if value.is_zero() {
+                                                trie.remove(hashed_key.as_bytes())?;
+                                            } else {
+                                                trie.insert(
+                                                    hashed_key.as_bytes().to_vec(),
+                                                    value.encode_to_vec(),
+                                                )?;
+                                            }
+                                        }
+
+                                        let (root_hash, nodes) =
+                                            trie.collect_changes_since_last_hash();
+                                        results.push((idx, root_hash, nodes));
+                                    }
+                                    Ok(results)
+                                },
+                            )
+                            .map_err(|e| StoreError::Custom(format!("spawn failed: {e}"))),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            for handle in handles {
+                let results = handle
+                    .join()
+                    .map_err(|_| StoreError::Custom("storage worker panicked".to_string()))??;
+                for (idx, root_hash, nodes) in results {
+                    storage_roots[idx] = Some(root_hash);
+                    storage_updates.push((accounts_ref[idx].0, nodes));
+                }
+            }
+            Ok(())
+        })?;
+
+        // === Stage C: State trie update via 16 shard workers ===
+
+        // Build per-shard work items
+        let mut shards: Vec<Vec<BalStateWorkItem>> = (0..NUM_WORKERS).map(|_| Vec::new()).collect();
+        for (idx, (hashed_address, update)) in accounts.iter().enumerate() {
+            let bucket = (hashed_address.as_fixed_bytes()[0] >> 4) as usize;
+            shards[bucket].push(BalStateWorkItem {
+                hashed_address: *hashed_address,
+                info: update.info.clone(),
+                removed: update.removed,
+                storage_root: storage_roots[idx],
+            });
+        }
+
+        let mut root = BranchNode::default();
+        let mut state_updates = Vec::new();
+
+        // All 16 shard threads must run, even for empty shards: each worker
+        // opens the parent state trie and returns its existing subtree so the
+        // root can be correctly assembled via `collect_trie`. Skipping unchanged
+        // shards (unlike Stage B's filter_map) would leave holes in the root.
+        std::thread::scope(|s| -> Result<(), StoreError> {
+            let handles: Vec<_> = shards
+                .into_iter()
+                .enumerate()
+                .map(|(index, shard_items)| {
+                    std::thread::Builder::new()
+                        .name(format!("bal_state_shard_{index}"))
+                        .spawn_scoped(
+                            s,
+                            move || -> Result<(Box<BranchNode>, Vec<TrieNode>), StoreError> {
+                                let mut state_trie =
+                                    self.storage.open_state_trie(parent_state_root)?;
+
+                                for item in &shard_items {
+                                    let path = item.hashed_address.as_bytes();
+
+                                    // Load existing account state
+                                    let mut account_state = match state_trie.get(path)? {
+                                        Some(rlp) => {
+                                            let state = AccountState::decode(&rlp)?;
+                                            // Re-insert to materialize the trie path so
+                                            // collect_changes_since_last_hash includes this
+                                            // node in the diff (needed for both updates and
+                                            // removals via collect_trie).
+                                            state_trie.insert(path.to_vec(), rlp)?;
+                                            state
+                                        }
+                                        None => AccountState::default(),
+                                    };
+
+                                    if item.removed {
+                                        account_state = AccountState::default();
+                                    } else {
+                                        if let Some(ref info) = item.info {
+                                            account_state.nonce = info.nonce;
+                                            account_state.balance = info.balance;
+                                            account_state.code_hash = info.code_hash;
+                                        }
+                                        if let Some(storage_root) = item.storage_root {
+                                            account_state.storage_root = storage_root;
+                                        }
+                                    }
+
+                                    // EIP-161: remove empty accounts (zero nonce, zero balance,
+                                    // empty code, empty storage) from the state trie.
+                                    if account_state != AccountState::default() {
+                                        state_trie
+                                            .insert(path.to_vec(), account_state.encode_to_vec())?;
+                                    } else {
+                                        state_trie.remove(path)?;
+                                    }
+                                }
+
+                                collect_trie(index as u8, state_trie)
+                                    .map_err(|e| StoreError::Custom(format!("{e}")))
+                            },
+                        )
+                        .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            for (i, handle) in handles.into_iter().enumerate() {
+                let (subroot, state_nodes) = handle
+                    .join()
+                    .map_err(|_| StoreError::Custom("state shard worker panicked".to_string()))??;
+                state_updates.extend(state_nodes);
+                root.choices[i] = subroot.choices[i].clone();
+            }
+            Ok(())
+        })?;
+
+        // === Stage D: Finalize root ===
+        let state_trie_hash =
+            if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
+                let mut root = NodeRef::from(root);
+                let hash = root.commit(Nibbles::default(), &mut state_updates);
+                hash.finalize()
+            } else {
+                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+                *EMPTY_TRIE_HASH
+            };
 
         Ok((
             AccountUpdatesList {
@@ -718,133 +1034,199 @@ impl Blockchain {
         ))
     }
 
-    /// Processes a batch of account updates, applying them to the state trie and storage tries,
-    /// and returns the new state root.
-    #[allow(clippy::too_many_arguments)]
-    fn process_incoming_update_message(
-        storage: &Store,
-        state_trie: &mut Trie,
-        updates: Vec<(H256, AccountUpdate)>,
-        storage_updates_map: &mut StoreUpdatesMap,
+    fn load_trie(
+        &self,
         parent_header: &BlockHeader,
-        state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
-        code_updates: &mut FxHashMap<H256, Code>,
-        account_states: &mut FxHashMap<H256, AccountState>,
-    ) -> Result<H256, StoreError> {
-        trace!("Execute block pipeline: Received {} updates", updates.len());
-        // Apply the account updates over the last block's state and compute the new state root
-        for (hashed_address_h256, update) in updates {
-            let hashed_address = hashed_address_h256.0.to_vec();
-            trace!(
-                "Execute block pipeline: Update cycle for {}",
-                hex::encode(&hashed_address)
-            );
-            if update.removed {
-                // Remove account from trie
-                state_trie.remove(&hashed_address)?;
-                account_states.remove(&hashed_address_h256);
-                continue;
+        prefix: Option<H256>,
+    ) -> Result<Trie, StoreError> {
+        Ok(match prefix {
+            Some(account_hash) => {
+                let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
+                let storage_root = match state_trie.get(account_hash.as_bytes())? {
+                    Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                    None => *EMPTY_TRIE_HASH,
+                };
+                self.storage.open_storage_trie(
+                    account_hash,
+                    parent_header.state_root,
+                    storage_root,
+                )?
             }
-            // Add or update AccountState in the trie
-            // Fetch current state or create a new state to be inserted
-            let account_state = match account_states.entry(hashed_address_h256) {
-                Entry::Occupied(occupied_entry) => {
-                    trace!(
-                        "Found account state in cache for {}",
-                        hex::encode(&hashed_address)
-                    );
-                    occupied_entry.into_mut()
+            None => self.storage.open_state_trie(parent_header.state_root)?,
+        })
+    }
+
+    /// Collapses a root branch node into an extension or leaf node if it has only one valid child.
+    /// Returns None if there are no valid children.
+    fn collapse_root_node(
+        &self,
+        parent_header: &BlockHeader,
+        prefix: Option<H256>,
+        mut root: BranchNode,
+    ) -> Result<Option<Node>, StoreError> {
+        // Ensures the children are included in the final commit
+        root.choices.iter_mut().for_each(NodeRef::clear_hash);
+        let children: Vec<(usize, &NodeRef)> = root
+            .choices
+            .iter()
+            .enumerate()
+            .filter(|(_, choice)| choice.is_valid())
+            .take(2)
+            .collect();
+        if children.len() > 1 {
+            return Ok(Some(Node::Branch(Box::from(root))));
+        }
+        let Some((choice, only_child)) = children.first() else {
+            return Ok(None);
+        };
+        let only_child = Arc::unwrap_or_clone(match only_child {
+            NodeRef::Node(node, _) => node.clone(),
+            noderef @ NodeRef::Hash(_) => {
+                let trie = self.load_trie(parent_header, prefix)?;
+                let Some(node) =
+                    noderef.get_node(trie.db(), Nibbles::from_hex(vec![*choice as u8]))?
+                else {
+                    return Ok(None);
+                };
+                node
+            }
+        });
+        Ok(Some(match only_child {
+            Node::Branch(_) => {
+                ExtensionNode::new(Nibbles::from_hex(vec![*choice as u8]), only_child.into()).into()
+            }
+            Node::Extension(mut extension_node) => {
+                extension_node.prefix.prepend(*choice as u8);
+                extension_node.into()
+            }
+            Node::Leaf(mut leaf) => {
+                leaf.partial.prepend(*choice as u8);
+                leaf.into()
+            }
+        }))
+    }
+
+    fn handle_merkleization_subtrie(
+        &self,
+        rx: Receiver<MerklizationRequest>,
+        parent_header: &BlockHeader,
+        index: u8,
+    ) -> Result<(), StoreError> {
+        let mut tree: FxHashMap<H256, Trie> = Default::default();
+        let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
+        let mut storage_nodes = vec![];
+        let mut accounts: FxHashMap<H256, AccountState> = Default::default();
+        for msg in rx {
+            match msg {
+                MerklizationRequest::LoadAccount(prefix) => match accounts.entry(prefix) {
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(vacant_entry) => {
+                        let account_state = match state_trie.get(prefix.as_bytes())? {
+                            Some(rlp) => {
+                                let state = AccountState::decode(&rlp)?;
+                                state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
+                                state
+                            }
+                            None => AccountState::default(),
+                        };
+                        vacant_entry.insert(account_state);
+                    }
+                },
+                MerklizationRequest::Delete(prefix) => {
+                    tree.insert(prefix, Trie::new_temp());
                 }
-                Entry::Vacant(vacant_entry) => {
-                    let account_state = match state_trie.get(&hashed_address)? {
-                        Some(encoded_state) => {
-                            trace!(
-                                "Found account state in trie for {}",
-                                hex::encode(&hashed_address)
-                            );
-                            AccountState::decode(&encoded_state)?
-                        }
-                        None => {
-                            trace!(
-                                "Created account state in trie for {}",
-                                hex::encode(&hashed_address)
-                            );
-                            AccountState::default()
+                MerklizationRequest::MerklizeStorage { prefix, key, value } => {
+                    let trie = match tree.entry(prefix) {
+                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+                        Entry::Vacant(vacant_entry) => {
+                            let storage_root = match state_trie.get(prefix.as_bytes())? {
+                                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                                None => *EMPTY_TRIE_HASH,
+                            };
+                            vacant_entry.insert(self.storage.open_storage_trie(
+                                prefix,
+                                parent_header.state_root,
+                                storage_root,
+                            )?)
                         }
                     };
-                    vacant_entry.insert(account_state)
-                }
-            };
-            if update.removed_storage {
-                account_state.storage_root = *EMPTY_TRIE_HASH;
-                storage_updates_map.remove(&hashed_address_h256);
-            }
-            if let Some(info) = &update.info {
-                trace!(
-                    nonce = info.nonce,
-                    balance = hex::encode(info.balance.to_big_endian()),
-                    code_hash = hex::encode(info.code_hash),
-                    "With info"
-                );
-                account_state.nonce = info.nonce;
-                account_state.balance = info.balance;
-                account_state.code_hash = info.code_hash;
-                // Store updated code in DB
-                if let Some(code) = &update.code {
-                    trace!("Updated code");
-                    code_updates.insert(info.code_hash, code.clone());
-                }
-            }
-            // Store the added storage in the account's storage trie and compute its new root
-            if !update.added_storage.is_empty() {
-                trace!(count = update.added_storage.len(), "Update storages");
-                let (storage_trie, storage_updates_map) = storage_updates_map
-                    .entry(hashed_address_h256)
-                    .or_insert_with(|| {
-                        (
-                            storage.open_storage_trie(
-                                hashed_address_h256,
-                                parent_header.state_root,
-                                account_state.storage_root,
-                            ),
-                            Default::default(),
-                        )
-                    });
-                let Ok(storage_trie) = storage_trie else {
-                    debug!(
-                        "Failed to open storage trie for account {}",
-                        hex::encode(&hashed_address)
-                    );
-                    return Err(StoreError::Custom("Error opening storage trie".to_string()));
-                };
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
-                    if storage_value.is_zero() {
-                        trace!(slot = hex::encode(&hashed_key), "Removing");
-                        storage_trie.remove(&hashed_key)?;
+                    if value.is_zero() {
+                        trie.remove(key.as_bytes())?;
                     } else {
-                        trace!(slot = hex::encode(&hashed_key), "Inserting");
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
                     }
                 }
-                trace!(
-                    "Collecting storage changes for account {}",
-                    hex::encode(&hashed_address)
-                );
-                let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
-                trace!(
-                    "Storage changes collected for account {}",
-                    hex::encode(&hashed_address)
-                );
-                storage_updates_map.extend(storage_updates);
-                account_state.storage_root = storage_hash;
+                MerklizationRequest::MerklizeAccount {
+                    hashed_account,
+                    mut state,
+                } => {
+                    let mut storage_root = None;
+                    if let Some(root) = state.storage_root {
+                        if let Some(root) =
+                            self.collapse_root_node(parent_header, Some(hashed_account), *root)?
+                        {
+                            let mut root = NodeRef::from(root);
+                            let hash = root.commit(Nibbles::default(), &mut state.nodes);
+                            storage_root = Some(hash.finalize());
+                        } else {
+                            state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
+                            storage_root = Some(*EMPTY_TRIE_HASH);
+                        }
+                    }
+                    storage_nodes.push((hashed_account, state.nodes));
+
+                    let path = hashed_account.as_bytes();
+                    let old_state = match accounts.entry(hashed_account) {
+                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+                        Entry::Vacant(vacant_entry) => {
+                            let account_state = match state_trie.get(path)? {
+                                Some(rlp) => AccountState::decode(&rlp)?,
+                                None => AccountState::default(),
+                            };
+                            vacant_entry.insert(account_state)
+                        }
+                    };
+
+                    if let Some(storage_root) = storage_root {
+                        old_state.storage_root = storage_root;
+                    }
+                    if let Some(info) = state.info {
+                        old_state.nonce = info.nonce;
+                        old_state.balance = info.balance;
+                        old_state.code_hash = info.code_hash;
+                    }
+                    if *old_state != AccountState::default() {
+                        state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
+                    } else {
+                        state_trie.remove(path)?;
+                    }
+                }
+                MerklizationRequest::CollectStorages { tx } => {
+                    for (prefix, trie) in tree.drain() {
+                        let (root, nodes) = collect_trie(index, trie)?;
+                        tx.send(CollectedStorageMsg {
+                            index,
+                            prefix,
+                            subroot: root,
+                            nodes,
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    }
+                }
+                MerklizationRequest::CollectState { tx } => {
+                    let (subroot, state_nodes) =
+                        collect_trie(index, std::mem::take(&mut state_trie))?;
+                    tx.send(CollectedStateMsg {
+                        index,
+                        subroot,
+                        state_nodes,
+                        storage_nodes: std::mem::take(&mut storage_nodes),
+                    })
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                }
             }
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
-        state_updates_map.extend(state_updates);
-        Ok(state_trie_hash)
+        Ok(())
     }
 
     /// Executes a block from a given vm instance an does not clear its state
@@ -857,11 +1239,19 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-        let execution_result = vm.execute_block(block)?;
+        let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        if let Some(bal) = &bal {
+            validate_block_access_list_hash(
+                &block.header,
+                chain_config,
+                bal,
+                block.body.transactions.len(),
+            )?;
+        }
 
         Ok(execution_result)
     }
@@ -954,7 +1344,7 @@ impl Blockchain {
             };
 
             // Re-execute block with logger
-            let execution_result = vm.execute_block(block)?;
+            let (execution_result, _bal) = vm.execute_block(block)?;
 
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
@@ -1515,7 +1905,11 @@ impl Blockchain {
         result
     }
 
-    pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+    pub fn add_block_pipeline(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<(), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1557,7 +1951,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm)?;
+        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -2006,10 +2400,11 @@ impl Blockchain {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
-        // Add transaction and blobs bundle to storage
+        // Add blobs bundle before the transaction so that when add_transaction
+        // notifies payload builders the blob data is already available.
+        self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         self.mempool
             .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
-        self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         Ok(hash)
     }
 
@@ -2319,54 +2714,44 @@ pub async fn is_canonical(
     }
 }
 
-/// Collapses a root branch node into an extension or leaf node if it has only one valid child.
-/// Returns None if there are no valid children.
-///
-/// NOTE: this assumes the branch has 0 or 1 children. If there are more than 1,
-/// it will discard all but the first valid child found.
-#[cold]
-fn collapse_root_node(
-    real_root: Box<BranchNode>,
-    state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
-    storage: &Store,
-    parent_header: &BlockHeader,
-) -> Result<Option<Node>, StoreError> {
-    // Collapse the branch into an extension or leaf
-    let Some((choice, only_child)) = real_root
-        .choices
-        .into_iter()
-        .enumerate()
-        .find(|(_, c)| c.is_valid())
-    else {
-        return Ok(None);
-    };
-    let path = Nibbles::from_hex(vec![choice as u8]);
-    let child_bytes = match state_updates_map.get(&path) {
-        Some(v) => v.clone(),
-        None => storage
-            .state_trie(parent_header.hash())?
-            .ok_or(StoreError::MissingStore)?
-            .db()
-            .get(path)?
-            .ok_or_else(|| StoreError::Custom("Missing child node during root collapse".into()))?,
-    };
-    // Same match as in [`BranchNode::remove`]
-    let child = match Node::decode(&child_bytes)? {
-        // Replace root with an extension node leading to the child
-        Node::Branch(_) => {
-            ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child).into()
+fn branchify(node: Node) -> Box<BranchNode> {
+    match node {
+        Node::Branch(branch_node) => branch_node,
+        Node::Extension(extension_node) => {
+            let index = extension_node.prefix.as_ref()[0];
+            let noderef = if extension_node.prefix.len() == 1 {
+                extension_node.child
+            } else {
+                let prefix = extension_node.prefix.offset(1);
+                let node = ExtensionNode::new(prefix, extension_node.child);
+                NodeRef::from(Arc::new(node.into()))
+            };
+            let mut choices = BranchNode::EMPTY_CHOICES;
+            choices[index as usize] = noderef;
+            Box::new(BranchNode::new(choices))
         }
-        // Replace root with the child extension node, updating its path in the process
-        Node::Extension(mut extension_node) => {
-            let mut extension_node = extension_node.take();
-            extension_node.prefix.prepend(choice as u8);
-            extension_node.into()
+        Node::Leaf(leaf_node) => {
+            let index = leaf_node.partial.as_ref()[0];
+            let node = LeafNode::new(leaf_node.partial.offset(1), leaf_node.value);
+            let mut choices = BranchNode::EMPTY_CHOICES;
+            choices[index as usize] = NodeRef::from(Arc::new(node.into()));
+            Box::new(BranchNode::new(choices))
         }
-        Node::Leaf(mut leaf) => {
-            let mut leaf = leaf.take();
-            leaf.partial.prepend(choice as u8);
-            leaf.into()
-        }
+    }
+}
+
+fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
+    let root = branchify(
+        trie.root_node()?
+            .map(Arc::unwrap_or_clone)
+            .unwrap_or_else(|| Node::Branch(Box::default())),
+    );
+    trie.root = Node::Branch(root).into();
+    let (_, mut nodes) = trie.collect_changes_since_last_hash();
+    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+
+    let Some(Node::Branch(root)) = trie.root_node()?.map(Arc::unwrap_or_clone) else {
+        return Err(TrieError::InvalidInput);
     };
-    Ok(Some(child))
+    Ok((root, nodes))
 }

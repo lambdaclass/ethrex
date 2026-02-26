@@ -17,7 +17,7 @@ use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
 use crate::{
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
     rkyv_utils,
 };
 
@@ -51,6 +51,10 @@ pub struct Genesis {
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
+    // Amsterdam fork fields (EIP-7928)
+    pub block_access_list_hash: Option<H256>,
+    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    pub slot_number: Option<u64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -253,7 +257,6 @@ pub struct ChainConfig {
     pub bpo3_time: Option<u64>,
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
-
     pub amsterdam_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
@@ -460,15 +463,32 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_amsterdam_activated(block_timestamp) {
-            Some(self.blob_schedule.amsterdam.unwrap_or_default())
-        } else if self.is_bpo5_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo5.unwrap_or_default())
-        } else if self.is_bpo4_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo4.unwrap_or_default())
-        } else if self.is_bpo3_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo3.unwrap_or_default())
-        } else if self.is_bpo2_activated(block_timestamp) {
+        // Amsterdam (and BPO3-5) don't independently define blob params in Hive;
+        // they inherit from the highest activated BPO fork. If the fork-specific
+        // entry is None, fall through to find the right BPO schedule.
+        if self.is_amsterdam_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.amsterdam
+        {
+            return Some(schedule);
+        }
+        // Fall through to BPO chain
+        if self.is_bpo5_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.bpo5
+        {
+            return Some(schedule);
+        }
+        if self.is_bpo4_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.bpo4
+        {
+            return Some(schedule);
+        }
+        if self.is_bpo3_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.bpo3
+        {
+            return Some(schedule);
+        }
+        // Amsterdam implies BPO2 blob params when no explicit schedule is set.
+        if self.is_bpo2_activated(block_timestamp) || self.is_amsterdam_activated(block_timestamp) {
             Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
@@ -692,6 +712,15 @@ impl Genesis {
             .is_prague_activated(self.timestamp)
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
 
+        let block_access_list_hash = self
+            .config
+            .is_amsterdam_activated(self.timestamp)
+            .then_some(
+                self.block_access_list_hash
+                    .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH),
+            );
+        let slot_number = self.slot_number;
+
         BlockHeader {
             parent_hash: H256::zero(),
             ommers_hash: *DEFAULT_OMMERS_HASH,
@@ -714,6 +743,8 @@ impl Genesis {
             excess_blob_gas,
             parent_beacon_block_root,
             requests_hash,
+            block_access_list_hash,
+            slot_number,
             ..Default::default()
         }
     }

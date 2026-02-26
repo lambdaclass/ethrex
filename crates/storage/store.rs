@@ -3,12 +3,12 @@ use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
-        StorageBackend,
+        StorageBackend, StorageReadView,
         tables::{
-            ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-            CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
-            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE,
-            STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
+            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
+            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
+            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -25,8 +25,9 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
-        Transaction, block_execution_witness::ExecutionWitness,
+        BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
+        Receipt, Transaction,
+        block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
     },
     utils::keccak,
 };
@@ -46,7 +47,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
@@ -156,7 +157,7 @@ pub struct Store {
     /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
     /// Cache for trie nodes from recent blocks.
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     /// Channel for sending trie updates to the background worker.
@@ -170,13 +171,17 @@ pub struct Store {
     /// - Sync operations (must be idempotent anyway)
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
-    last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
+
+    /// Cache for code metadata (code length), keyed by the bytecode hash.
+    /// Uses FxHashMap for efficient lookups, much smaller than code cache.
+    code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -705,11 +710,116 @@ impl Store {
         Ok(Some(code))
     }
 
+    /// Check if account code exists by its hash, without constructing the full `Code` struct.
+    /// More efficient than `get_account_code` for existence checks since it skips
+    /// RLP decoding and `Code` struct construction (no `jump_targets` deserialization).
+    /// Note: The underlying `get()` still reads the value from RocksDB (including blob files).
+    pub fn code_exists(&self, code_hash: H256) -> Result<bool, StoreError> {
+        // Check cache first
+        if self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        // Check DB without reading the full value
+        Ok(self
+            .backend
+            .begin_read()?
+            .get(ACCOUNT_CODES, code_hash.as_bytes())?
+            .is_some())
+    }
+
+    /// Get code metadata (length) by its hash.
+    ///
+    /// Checks cache first, falls back to database. If metadata is missing,
+    /// falls back to loading full code and extracts length (auto-migration).
+    pub fn get_code_metadata(&self, code_hash: H256) -> Result<Option<CodeMetadata>, StoreError> {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        // Empty code special case
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Some(CodeMetadata { length: 0 }));
+        }
+
+        // Check cache first
+        if let Some(metadata) = self
+            .code_metadata_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)
+            .copied()
+        {
+            return Ok(Some(metadata));
+        }
+
+        // Try reading from metadata table
+        let metadata = if let Some(bytes) = self
+            .backend
+            .begin_read()?
+            .get(ACCOUNT_CODE_METADATA, code_hash.as_bytes())?
+        {
+            let length =
+                u64::from_be_bytes(bytes.try_into().map_err(|_| {
+                    StoreError::Custom("Invalid metadata length encoding".to_string())
+                })?);
+            CodeMetadata { length }
+        } else {
+            // Fallback: load full code and extract length (auto-migration)
+            let Some(code) = self.get_account_code(code_hash)? else {
+                return Ok(None);
+            };
+            let metadata = CodeMetadata {
+                length: code.bytecode.len() as u64,
+            };
+
+            // Write metadata for future use (async, fire and forget)
+            let metadata_buf = metadata.length.to_be_bytes().to_vec();
+            let hash_key = code_hash.0.to_vec();
+            let backend = self.backend.clone();
+            tokio::task::spawn(async move {
+                if let Err(e) = async {
+                    let mut tx = backend.begin_write()?;
+                    tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+                    tx.commit()
+                }
+                .await
+                {
+                    tracing::warn!("Failed to write code metadata during auto-migration: {}", e);
+                }
+            });
+
+            metadata
+        };
+
+        // Update cache
+        self.code_metadata_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(code_hash, metadata);
+
+        Ok(Some(metadata))
+    }
+
     /// Add account code
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
-        self.write_async(ACCOUNT_CODES, hash_key, buf).await
+        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+
+        // Write both code and metadata atomically
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut tx = backend.begin_write()?;
+            tx.put(ACCOUNT_CODES, &hash_key, &buf)?;
+            tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+            tx.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Clears all checkpoint data created during the last snap sync
@@ -1074,13 +1184,21 @@ impl Store {
         &self,
         account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
-        let mut batch_items = Vec::new();
+        let mut code_batch_items = Vec::new();
+        let mut metadata_batch_items = Vec::new();
+
         for (code_hash, code) in account_codes {
             let buf = encode_code(&code);
-            batch_items.push((code_hash.as_bytes().to_vec(), buf));
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+            code_batch_items.push((code_hash.as_bytes().to_vec(), buf));
+            metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
         }
 
-        self.write_batch_async(ACCOUNT_CODES, batch_items).await
+        // Write both batches
+        self.write_batch_async(ACCOUNT_CODES, code_batch_items)
+            .await?;
+        self.write_batch_async(ACCOUNT_CODE_METADATA, metadata_batch_items)
+            .await
     }
 
     // Helper methods for async operations with spawn_blocking
@@ -1295,7 +1413,9 @@ impl Store {
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
@@ -1357,11 +1477,12 @@ impl Store {
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
-            last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1441,8 +1562,8 @@ impl Store {
         let file = std::fs::File::open(genesis_path)
             .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
         let reader = std::io::BufReader::new(file);
-        let genesis: Genesis =
-            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+        let genesis: Genesis = serde_json::from_reader(reader)
+            .map_err(|e| StoreError::Custom(format!("Failed to deserialize genesis file: {e}")))?;
         let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
@@ -1792,14 +1913,21 @@ impl Store {
         composite_key
     }
 
+    /// Stores a pre-serialized execution witness for a block.
+    ///
+    /// The witness is converted to RPC format (RpcExecutionWitness) before storage
+    /// to avoid expensive `encode_subtrie` traversal on every read. This pre-computes
+    /// the serialization at write time instead of read time.
     pub fn store_witness(
         &self,
         block_hash: BlockHash,
         block_number: u64,
         witness: ExecutionWitness,
     ) -> Result<(), StoreError> {
+        // Convert to RPC format once at storage time
+        let rpc_witness = RpcExecutionWitness::try_from(witness)?;
         let key = Self::make_witness_key(block_number, &block_hash);
-        let value = serde_json::to_vec(&witness)?;
+        let value = serde_json::to_vec(&rpc_witness)?;
         self.write(EXECUTION_WITNESSES, key, value)?;
         // Clean up old witnesses (keep only last 128)
         self.cleanup_old_witnesses(block_number)
@@ -1864,15 +1992,33 @@ impl Store {
         Ok(Some(u64::from_le_bytes(array)))
     }
 
+    /// Returns the raw JSON bytes of a cached witness for a block.
+    ///
+    /// This is the most efficient method for the RPC handler since it avoids
+    /// deserialization and re-serialization. The bytes can be parsed directly
+    /// as a JSON Value for the RPC response.
+    pub fn get_witness_json_bytes(
+        &self,
+        block_number: u64,
+        block_hash: BlockHash,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        self.read(EXECUTION_WITNESSES, key)
+    }
+
+    /// Returns the deserialized RpcExecutionWitness for a block.
+    ///
+    /// Prefer `get_witness_json_bytes` when you need to return the witness
+    /// as JSON (e.g., for RPC responses) to avoid re-serialization.
     pub fn get_witness_by_number_and_hash(
         &self,
         block_number: u64,
         block_hash: BlockHash,
-    ) -> Result<Option<ExecutionWitness>, StoreError> {
+    ) -> Result<Option<RpcExecutionWitness>, StoreError> {
         let key = Self::make_witness_key(block_number, &block_hash);
         match self.read(EXECUTION_WITNESSES, key)? {
             Some(value) => {
-                let witness: ExecutionWitness = serde_json::from_slice(&value)?;
+                let witness: RpcExecutionWitness = serde_json::from_slice(&value)?;
                 Ok(Some(witness))
             }
             None => Ok(None),
@@ -1962,18 +2108,41 @@ impl Store {
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
         let account_hash = hash_address_fixed(&address);
-        let storage_root = if self.flatkeyvalue_computed(account_hash)? {
+
+        // Pre-acquire shared resources once for both trie opens
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+
+        let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
-            let state_trie = self.open_state_trie(state_root)?;
+            let state_trie = self.open_state_trie_shared(
+                state_root,
+                read_view.clone(),
+                cache.clone(),
+                last_written.clone(),
+            )?;
             let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
             };
             let account = AccountState::decode(&encoded_account)?;
             account.storage_root
         };
-        let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
 
         let hashed_key = hash_key_fixed(&storage_key);
         storage_trie
@@ -2299,19 +2468,18 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_accounts(
+            Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -2332,19 +2500,18 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
+            Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -2356,19 +2523,64 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_storages(
+            Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
+        Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
+    /// Open a state trie using pre-acquired shared resources.
+    /// Avoids redundant RwLock acquisitions when multiple tries are opened
+    /// in the same operation (e.g., state trie + storage trie in get_storage_at_root).
+    fn open_state_trie_shared(
+        &self,
+        state_root: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper::new(
+            state_root,
+            cache,
+            Box::new(BackendTrieDB::new_for_accounts_with_view(
+                self.backend.clone(),
+                read_view,
+                last_written,
+            )?),
+            None,
+        );
+        Ok(Trie::open(Box::new(trie_db), state_root))
+    }
+
+    /// Open a storage trie using pre-acquired shared resources.
+    fn open_storage_trie_shared(
+        &self,
+        account_hash: H256,
+        state_root: H256,
+        storage_root: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper::new(
+            state_root,
+            cache,
+            Box::new(BackendTrieDB::new_for_storages_with_view(
+                self.backend.clone(),
+                read_view,
+                last_written,
+            )?),
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
@@ -2397,19 +2609,18 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
+            Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
@@ -2522,15 +2733,14 @@ impl Store {
     fn last_written(&self) -> Result<Vec<u8>, StoreError> {
         let last_computed_flatkeyvalue = self
             .last_computed_flatkeyvalue
-            .lock()
+            .read()
             .map_err(|_| StoreError::LockError)?;
         Ok(last_computed_flatkeyvalue.clone())
     }
 
-    fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
+    fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
-        let last_computed_flatkeyvalue = self.last_written()?;
-        Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+        &last_written[0..64] > account_nibbles.as_ref()
     }
 }
 
@@ -2549,7 +2759,7 @@ struct TrieUpdate {
 fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
-    trie_cache: &Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2572,13 +2782,13 @@ fn apply_trie_updates(
         .collect();
     // Read-Copy-Update the trie cache with a new layer.
     let trie = trie_cache
-        .lock()
+        .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
     let mut trie_mut = (*trie).clone();
     trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
     let trie = Arc::new(trie_mut);
-    *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
+    *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
     // Update finished, signal block processing.
     result_sender
         .send(Ok(()))
@@ -2643,7 +2853,7 @@ fn apply_trie_updates(
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
     // Phase 3: update diff layers with the removal of bottom layer.
-    *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+    *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
     Ok(())
 }
 
@@ -2651,26 +2861,29 @@ fn apply_trie_updates(
 // with the other end of `control_rx`
 fn flatkeyvalue_generator(
     backend: &Arc<dyn StorageBackend>,
-    last_computed_fkv: &Mutex<Vec<u8>>,
+    last_computed_fkv: &RwLock<Vec<u8>>,
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     info!("Generation of FlatKeyValue started.");
-    let read_tx = backend.begin_read()?;
-    let last_written = read_tx
+    let initial_last_written = backend
+        .begin_read()?
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
 
-    if last_written.is_empty() {
+    if initial_last_written.is_empty() {
         // First time generating the FKV. Remove all FKV entries just in case
         backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
         backend.clear_table(STORAGE_FLATKEYVALUE)?;
-    } else if last_written == [0xff] {
+    } else if initial_last_written == [0xff] {
         // FKV was already generated
         info!("FlatKeyValue already generated. Skipping.");
         return Ok(());
     }
 
     loop {
+        // Acquire a fresh read view per iteration so updates performed while the
+        // generator is paused are visible after a Continue signal.
+        let read_tx = backend.begin_read()?;
         let root = read_tx
             .get(ACCOUNT_TRIE_NODES, &[])?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
@@ -2694,8 +2907,9 @@ fn flatkeyvalue_generator(
         let mut ctr = 0;
         let mut write_txn = backend.begin_write()?;
         let mut iter = Trie::open(
-            Box::new(BackendTrieDB::new_for_accounts(
+            Box::new(BackendTrieDB::new_for_accounts_with_view(
                 backend.clone(),
+                read_tx.clone(),
                 last_written.clone(),
             )?),
             state_root,
@@ -2717,14 +2931,15 @@ fn flatkeyvalue_generator(
                 write_txn.commit()?;
                 write_txn = backend.begin_write()?;
                 *last_computed_fkv
-                    .lock()
+                    .write()
                     .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
                 ctr = 0;
             }
 
             let mut iter_inner = Trie::open(
-                Box::new(BackendTrieDB::new_for_account_storage(
+                Box::new(BackendTrieDB::new_for_account_storage_with_view(
                     backend.clone(),
+                    read_tx.clone(),
                     account_hash,
                     path.as_ref().to_vec(),
                 )?),
@@ -2747,7 +2962,7 @@ fn flatkeyvalue_generator(
                     write_txn.commit()?;
                     write_txn = backend.begin_write()?;
                     *last_computed_fkv
-                        .lock()
+                        .write()
                         .map_err(|_| StoreError::LockError)? = key.into_vec();
                     ctr = 0;
                 }
@@ -2776,7 +2991,7 @@ fn flatkeyvalue_generator(
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
                 write_txn.commit()?;
                 *last_computed_fkv
-                    .lock()
+                    .write()
                     .map_err(|_| StoreError::LockError)? = vec![0xff; 131];
                 info!("FlatKeyValue generation finished.");
                 return Ok(());

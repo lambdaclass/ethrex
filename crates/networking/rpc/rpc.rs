@@ -1,15 +1,19 @@
 use crate::authentication::authenticate;
+use crate::debug::block_access_list::BlockAccessListRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
-use crate::engine::payload::GetPayloadV5Request;
+use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
-    fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
+    fork_choice::{
+        ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3, ForkChoiceUpdatedV4,
+    },
     payload::{
-        GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
+        GetPayloadBodiesByHashV1Request, GetPayloadBodiesByHashV2Request,
+        GetPayloadBodiesByRangeV1Request, GetPayloadBodiesByRangeV2Request, GetPayloadV1Request,
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
@@ -56,6 +60,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -169,8 +174,13 @@ pub enum RpcRequestWrapper {
     Multiple(Vec<RpcRequest>),
 }
 
-/// Shared context passed to all RPC request handlers.
-///
+/// Channel message type for the block executor worker thread.
+type BlockWorkerMessage = (
+    oneshot::Sender<Result<(), ChainError>>,
+    Block,
+    Option<BlockAccessList>,
+);
+
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
@@ -196,7 +206,7 @@ pub struct RpcApiContext {
     /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
-    pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
+    pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
 }
 
 /// Client version information used for identification in the Engine API and P2P.
@@ -352,7 +362,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::MissingParam(_) => "MissingParam",
         RpcErr::TooLargeRequest => "TooLargeRequest",
         RpcErr::BadHexFormat(_) => "BadHexFormat",
-        RpcErr::UnsuportedFork(_) => "UnsuportedFork",
+        RpcErr::UnsupportedFork(_) => "UnsupportedFork",
         RpcErr::Internal(_) => "Internal",
         RpcErr::Vm(_) => "Vm",
         RpcErr::Revert { .. } => "Revert",
@@ -392,17 +402,14 @@ pub const FILTER_DURATION: Duration = {
 /// # Panics
 ///
 /// Panics if the worker thread cannot be spawned.
-pub fn start_block_executor(
-    blockchain: Arc<Blockchain>,
-) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
-    let (block_worker_channel, mut block_receiver) =
-        unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
+pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<BlockWorkerMessage> {
+    let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal)) = block_receiver.blocking_recv() {
                 let _ = notify
-                    .send(blockchain.add_block_pipeline(block))
+                    .send(blockchain.add_block_pipeline(block, bal.as_ref()))
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
             }
         })
@@ -770,6 +777,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
+        "debug_getBlockAccessList" => BlockAccessListRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
@@ -797,6 +805,8 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
+        "engine_newPayloadV5" => NewPayloadV5Request::call(req, context).await,
         "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
@@ -804,6 +814,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
+        "engine_getPayloadV6" => GetPayloadV6Request::call(req, context).await,
         "engine_getPayloadV5" => GetPayloadV5Request::call(req, context).await,
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
@@ -814,6 +825,12 @@ pub async fn map_engine_requests(
         }
         "engine_getPayloadBodiesByRangeV1" => {
             GetPayloadBodiesByRangeV1Request::call(req, context).await
+        }
+        "engine_getPayloadBodiesByHashV2" => {
+            GetPayloadBodiesByHashV2Request::call(req, context).await
+        }
+        "engine_getPayloadBodiesByRangeV2" => {
+            GetPayloadBodiesByRangeV2Request::call(req, context).await
         }
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,

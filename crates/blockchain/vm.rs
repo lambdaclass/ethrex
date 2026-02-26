@@ -1,7 +1,7 @@
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code},
+    types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
@@ -164,6 +164,27 @@ impl VmDatabase for StoreVmDatabase {
             Ok(Some(code)) => Ok(code),
             Ok(None) => Err(EvmError::DB(format!(
                 "Code not found for hash: {code_hash:?}",
+            ))),
+            Err(e) => Err(EvmError::DB(e.to_string())),
+        }
+    }
+
+    #[instrument(
+        level = "trace",
+        name = "Code metadata read",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, EvmError> {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(CodeMetadata { length: 0 });
+        }
+        match self.store.get_code_metadata(code_hash) {
+            Ok(Some(metadata)) => Ok(metadata),
+            Ok(None) => Err(EvmError::DB(format!(
+                "Code metadata not found for hash: {code_hash:?}",
             ))),
             Err(e) => Err(EvmError::DB(e.to_string())),
         }

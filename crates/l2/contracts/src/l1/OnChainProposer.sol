@@ -46,6 +46,10 @@ contract OnChainProposer is
     uint8 internal constant SP1_VERIFIER_ID = 1;
     uint8 internal constant RISC0_VERIFIER_ID = 2;
 
+    /// @notice Aligned Layer proving system ID for SP1 in isProofVerified calls.
+    /// @dev Currently only SP1 is supported by Aligned in aggregation mode.
+    uint16 internal constant ALIGNED_SP1_PROVING_SYSTEM_ID = 1;
+
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
     /// @dev If a batch was not committed yet, it won't be here.
@@ -147,8 +151,10 @@ contract OnChainProposer is
             "OnChainProposer: missing RISC0 verifier address"
         );
         RISC0_VERIFIER_ADDRESS = r0verifier;
+        // In Aligned mode, SP1 proofs are verified through the AlignedProofAggregator,
+        // not through a direct SP1 verifier contract, so we don't require sp1verifier.
         require(
-            !REQUIRE_SP1_PROOF || sp1verifier != address(0),
+            !REQUIRE_SP1_PROOF || aligned || sp1verifier != address(0),
             "OnChainProposer: missing SP1 verifier address"
         );
         SP1_VERIFIER_ADDRESS = sp1verifier;
@@ -160,6 +166,17 @@ contract OnChainProposer is
 
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
+
+        // Aligned mode requires SP1 proofs to be enabled
+        require(
+            !aligned || requireSp1Proof,
+            "OnChainProposer: Aligned mode requires SP1 proof"
+        );
+        // Aligned mode does not support RISC0 proofs (not yet available in aggregation mode)
+        require(
+            !aligned || !requireRisc0Proof,
+            "OnChainProposer: Aligned mode does not support RISC0 proof"
+        );
 
         require(
             commitHash != bytes32(0),
@@ -337,26 +354,13 @@ contract OnChainProposer is
         lastCommittedBatch = batchNumber;
     }
 
-    /// @inheritdoc IOnChainProposer
-    /// @notice The first `require` checks that the batch number is the subsequent block.
-    /// @notice The second `require` checks if the batch has been committed.
-    /// @notice The order of these `require` statements is important.
-    /// Ordering Reason: After the verification process, we delete the `batchCommitments` for `batchNumber - 1`. This means that when checking the batch,
-    /// we might get an error indicating that the batch hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
-    function verifyBatch(
+    /// @notice Internal batch verification logic used by verifyBatches.
+    function _verifyBatchInternal(
         uint256 batchNumber,
-        //risc0
-        bytes memory risc0BlockProof,
-        //sp1
-        bytes memory sp1ProofBytes,
-        //tdx
-        bytes memory tdxSignature
-    ) external override onlyOwner whenNotPaused {
-        require(
-            !ALIGNED_MODE,
-            "008" // Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.
-        );
-
+        bytes calldata risc0BlockProof,
+        bytes calldata sp1ProofBytes,
+        bytes calldata tdxSignature
+    ) internal {
         require(
             batchNumber == lastVerifiedBatch + 1,
             "009" // OnChainProposer: batch already verified
@@ -400,6 +404,7 @@ contract OnChainProposer is
         }
 
         // Reconstruct public inputs from commitments
+        // MUST be BEFORE updating lastVerifiedBatch
         bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
 
         if (REQUIRE_RISC0_PROOF) {
@@ -454,12 +459,40 @@ contract OnChainProposer is
             batchCommitments[batchNumber].balanceDiffs
         );
 
+        // MUST be AFTER _getPublicInputsFromCommitment
         lastVerifiedBatch = batchNumber;
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
 
         emit BatchVerified(lastVerifiedBatch);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
+    ) external override onlyOwner whenNotPaused {
+        require(
+            !ALIGNED_MODE,
+            "008" // Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.
+        );
+        uint256 batchCount = risc0BlockProofs.length;
+        require(batchCount > 0, "OnChainProposer: empty batch array");
+        require(
+            sp1ProofsBytes.length == batchCount && tdxSignatures.length == batchCount,
+            "OnChainProposer: array length mismatch"
+        );
+        for (uint256 i = 0; i < batchCount; i++) {
+            _verifyBatchInternal(
+                firstBatchNumber + i,
+                risc0BlockProofs[i],
+                sp1ProofsBytes[i],
+                tdxSignatures[i]
+            );
+        }
     }
 
     /// @inheritdoc IOnChainProposer
@@ -471,7 +504,7 @@ contract OnChainProposer is
     ) external override onlyOwner whenNotPaused {
         require(
             ALIGNED_MODE,
-            "00h" // Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.
+            "00h" // Batch verification should be done via smart contract verifiers. Call verifyBatches() instead.
         );
         require(
             firstBatchNumber == lastVerifiedBatch + 1,
@@ -539,6 +572,7 @@ contract OnChainProposer is
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
+                    ALIGNED_SP1_PROVING_SYSTEM_ID,
                     verificationKeys[batchCommitments[batchNumber].commitHash][
                         SP1_VERIFIER_ID
                     ],
@@ -546,9 +580,13 @@ contract OnChainProposer is
                 );
             }
 
+            // NOTE: This block is currently unreachable because initialize() prevents
+            // aligned mode with RISC0 enabled. It is kept for future compatibility when
+            // Aligned re-enables RISC0 support - at that point, update the proving system ID.
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
+                    0, // Placeholder - RISC0 proving system ID TBD
                     verificationKeys[batchCommitments[batchNumber].commitHash][
                         RISC0_VERIFIER_ID
                     ],
@@ -572,12 +610,14 @@ contract OnChainProposer is
 
     function _verifyProofInclusionAligned(
         bytes32[] calldata merkleProofsList,
+        uint16 provingSystemId,
         bytes32 verificationKey,
         bytes memory publicInputsList
     ) internal view {
         bytes memory callData = abi.encodeWithSignature(
-            "verifyProofInclusion(bytes32[],bytes32,bytes)",
+            "isProofVerified(bytes32[],uint16,bytes32,bytes)",
             merkleProofsList,
+            provingSystemId,
             verificationKey,
             publicInputsList
         );

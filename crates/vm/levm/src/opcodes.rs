@@ -71,6 +71,7 @@ pub enum Opcode {
     BASEFEE = 0x48,
     BLOBHASH = 0x49,
     BLOBBASEFEE = 0x4A,
+    SLOTNUM = 0x4B,
 
     // Stack, Memory, Storage, and Flow Operations
     POP = 0x50,
@@ -244,6 +245,7 @@ impl From<u8> for Opcode {
             table[0x48] = Opcode::BASEFEE;
             table[0x49] = Opcode::BLOBHASH;
             table[0x4A] = Opcode::BLOBBASEFEE;
+            table[0x4B] = Opcode::SLOTNUM;
             table[0x50] = Opcode::POP;
             table[0x56] = Opcode::JUMP;
             table[0x57] = Opcode::JUMPI;
@@ -590,9 +592,12 @@ impl<'a> VM<'a> {
     const fn build_opcode_table_amsterdam() -> [OpCodeFn<'a>; 256] {
         let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_osaka();
 
+        // EIP-8024 opcodes
         opcode_table[Opcode::DUPN as usize] = OpCodeFn(VM::op_dupn);
         opcode_table[Opcode::SWAPN as usize] = OpCodeFn(VM::op_swapn);
         opcode_table[Opcode::EXCHANGE as usize] = OpCodeFn(VM::op_exchange);
+        // EIP-7843 opcode
+        opcode_table[Opcode::SLOTNUM as usize] = OpCodeFn(VM::op_slotnum);
         opcode_table
     }
 
@@ -601,6 +606,7 @@ impl<'a> VM<'a> {
         Err(ExceptionalHalt::InvalidOpcode.into())
     }
 
+    #[inline]
     pub fn op_stop(&mut self) -> Result<OpcodeResult, VMError> {
         Ok(OpcodeResult::Halt)
     }

@@ -26,6 +26,7 @@ pub struct Environment {
     pub timestamp: U256,
     pub prev_randao: Option<H256>,
     pub difficulty: U256,
+    pub slot_number: U256,
     pub chain_id: U256,
     pub base_fee_per_gas: U256,
     pub base_blob_fee_per_gas: U256,
@@ -40,6 +41,9 @@ pub struct Environment {
     pub block_gas_limit: u64,
     pub is_privileged: bool,
     pub fee_token: Option<Address>,
+    /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
+    /// to avoid early reverts on insufficient balance so that warming touches more storage.
+    pub disable_balance_check: bool,
 }
 
 /// This struct holds special configuration variables specific to the
