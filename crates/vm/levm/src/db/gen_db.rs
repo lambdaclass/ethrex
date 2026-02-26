@@ -657,7 +657,11 @@ impl<'a> VM<'a> {
     ) -> Result<(U256, U256, bool), InternalError> {
         let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
         let current_value = self.get_storage_value(address, key)?;
-        let original_value = match self.storage_original_values.entry(address).or_default().entry(key)
+        let original_value = match self
+            .storage_original_values
+            .entry(address)
+            .or_default()
+            .entry(key)
         {
             Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(entry) => *entry.insert(current_value),
