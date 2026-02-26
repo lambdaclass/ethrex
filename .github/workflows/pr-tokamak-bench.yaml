@@ -146,6 +146,13 @@ jobs:
             --current results/bench-pr.json \
             --output comparison.json
 
+      - name: Upload comparison artifact
+        if: steps.compare.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-comparison
+          path: comparison.json
+
       - name: Generate report
         if: steps.download-main.outcome == 'success'
         run: |
@@ -340,3 +347,78 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body-path: jit-report.md
           edit-mode: replace
+
+  # ─── Dashboard Data Publishing ────────────────────────────────────
+  # Collects benchmark artifacts and publishes to gh-pages branch for
+  # the public dashboard at clients.tokamak.network.
+
+  publish-dashboard:
+    name: Publish Dashboard Data
+    runs-on: ubuntu-latest
+    needs: [compare-results, compare-jit-results]
+    if: always() && needs.compare-results.result == 'success' && github.event.pull_request.merged == true
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download PR bench results
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-pr
+          path: ./artifacts
+
+      - name: Download JIT bench results
+        id: dl-jit
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: jit-bench-pr
+          path: ./artifacts
+
+      - name: Download comparison results
+        id: dl-comparison
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-comparison
+          path: ./artifacts
+
+      - name: Prepare data directory
+        shell: bash
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          COMMIT="${{ github.event.pull_request.head.sha }}"
+          SHORT_COMMIT="${COMMIT:0:9}"
+          DATA_DIR="data/${DATE}"
+          mkdir -p "${DATA_DIR}"
+
+          cp artifacts/bench-pr.json "${DATA_DIR}/${SHORT_COMMIT}-bench.json"
+
+          if [ -f artifacts/jit-bench-pr.json ]; then
+            cp artifacts/jit-bench-pr.json "${DATA_DIR}/${SHORT_COMMIT}-jit-bench.json"
+          fi
+
+          if [ -f artifacts/comparison.json ]; then
+            cp artifacts/comparison.json "${DATA_DIR}/${SHORT_COMMIT}-regression.json"
+          fi
+
+          echo "DATA_DIR=${DATA_DIR}" >> "$GITHUB_ENV"
+          echo "SHORT_COMMIT=${SHORT_COMMIT}" >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Rebuild index
+        run: python3 dashboard/scripts/rebuild_index.py --data-dir data --output data/index.json
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./data
+          destination_dir: data
+          keep_files: true

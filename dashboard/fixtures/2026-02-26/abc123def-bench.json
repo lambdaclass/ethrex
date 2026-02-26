@@ -1,0 +1,41 @@
+{
+  "timestamp": "1740556800",
+  "commit": "abc123def",
+  "results": [
+    {
+      "scenario": "Fibonacci",
+      "total_duration_ns": 5000000000,
+      "runs": 10,
+      "opcode_timings": [
+        { "opcode": "ADD", "avg_ns": 150, "total_ns": 15000, "count": 100 },
+        { "opcode": "PUSH1", "avg_ns": 80, "total_ns": 24000, "count": 300 }
+      ],
+      "stats": {
+        "mean_ns": 500000000.0,
+        "stddev_ns": 25000000.0,
+        "ci_lower_ns": 484510000.0,
+        "ci_upper_ns": 515490000.0,
+        "min_ns": 460000000,
+        "max_ns": 540000000,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "BubbleSort",
+      "total_duration_ns": 8000000000,
+      "runs": 10,
+      "opcode_timings": [
+        { "opcode": "MLOAD", "avg_ns": 200, "total_ns": 40000, "count": 200 }
+      ],
+      "stats": {
+        "mean_ns": 800000000.0,
+        "stddev_ns": 40000000.0,
+        "ci_lower_ns": 775216000.0,
+        "ci_upper_ns": 824784000.0,
+        "min_ns": 720000000,
+        "max_ns": 880000000,
+        "samples": 10
+      }
+    }
+  ]
+}

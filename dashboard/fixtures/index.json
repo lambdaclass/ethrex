@@ -1,0 +1,11 @@
+{
+  "runs": [
+    {
+      "date": "2026-02-26",
+      "commit": "abc123def",
+      "bench": "2026-02-26/abc123def-bench.json",
+      "jit_bench": "2026-02-26/abc123def-jit-bench.json",
+      "regression": "2026-02-26/abc123def-regression.json"
+    }
+  ]
+}

@@ -135,3 +135,9 @@ core.*
 *.log
 
 __pycache__/
+
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.astro/
+dashboard/public/data/

@@ -1,0 +1,21 @@
+---
+import Base from "../layouts/Base.astro";
+import { Header } from "../components/Header";
+import { Footer } from "../components/Footer";
+import { TrendsView } from "../components/TrendsView";
+---
+
+<Base title="Tokamak Bench — Trends" currentPath="/trends">
+  <Header currentPath="/trends" slot="header" />
+
+  <h1 class="mb-6 text-3xl font-bold">
+    Historical Trends
+  </h1>
+  <p class="mb-8 text-slate-400">
+    Track performance changes over time across benchmark scenarios.
+  </p>
+
+  <TrendsView client:load />
+
+  <Footer slot="footer" />
+</Base>

@@ -209,11 +209,12 @@
 - **Dependency**: A-2, C-1
 - **Completed**: Cross-client benchmarking module with types, async runner, and report generation
 
-### F-2. Public Dashboard [P3]
+### F-2. Public Dashboard [P3] — DESIGN COMPLETE
 - clients.tokamak.network
 - Time-series benchmark results, Hive pass rates, sync times
-- **Dependency**: F-1, C-1
-- **Estimate**: 20-30h
+- **Design**: `docs/tokamak/DASHBOARD-SPEC.md` — no-backend architecture (static JSON + client-side fetch), 6 pages, 4-phase implementation plan ✅
+- **Dependency**: F-1 ✅, C-1 ✅
+- **Estimate**: 20-30h (implementation remaining)
 
 ### F-3. L2 Integration [P3]
 - Implement `tokamak-l2` feature: custom fee config, L2 hooks
@@ -226,9 +227,11 @@
 - Property-based tests (proptest): analyzer_never_panics, basic_blocks_within_bounds, optimizer_preserves_length, optimizer_converges ✅
 - SAFETY_AUDIT.md: catalog of all 9 unsafe blocks with risk assessment + mitigations ✅
 - Found real optimizer limitation: not single-pass idempotent (folding creates new patterns) — documented ✅
+- **Enhanced**: fuzz_differential rewritten for real dual-path execution (JIT vs interpreter), random EVM bytecode generation, 3-way comparison (status/gas/output), tokamak-jit optional dep with revmc-backend feature wiring ✅
 - **Verification**: 31 tests passing (including 4 proptest) ✅
 - **Dependency**: B-1, D-1
-- **Completed**: Fuzzing harnesses + proptest + safety audit documentation
+- **Completed**: Fuzzing harnesses + proptest + safety audit documentation (0e585ca07)
+- **Enhanced**: 2026-02-26 — real differential fuzzing harness (b2def75e8)
 
 ### F-5. Mainnet Full Sync [P3]
 - Full mainnet state sync as Tokamak client

@@ -167,7 +167,8 @@ R23(5.0) -> R24(8.0)
 
 ### Recently Completed (Phase F)
 - Cross-client benchmarking (F-1) — `cross-client` CLI subcommand, ethrex in-process + Geth/Reth via eth_call state overrides, comparison table with ethrex as 1.00x baseline, 18 tests
-- Security audit prep (F-4) — cargo-fuzz harnesses (analyzer, optimizer, differential), 4 proptest property tests, SAFETY_AUDIT.md cataloging all 9 unsafe blocks with risk assessment
+- Security audit prep (F-4) — cargo-fuzz harnesses (analyzer, optimizer, differential), 4 proptest property tests, SAFETY_AUDIT.md cataloging all 9 unsafe blocks with risk assessment; enhanced: real differential fuzzing (JIT vs interpreter dual-path, random bytecode gen, gas/status/output comparison) (b2def75e8)
+- F-2 Dashboard design — `DASHBOARD-SPEC.md`: no-backend architecture, 6 pages, 4-phase plan (2026-02-26)
 
 ### Not Started
 - Mainnet full sync as Tokamak client

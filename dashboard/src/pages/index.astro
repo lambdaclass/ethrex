@@ -1,0 +1,21 @@
+---
+import Base from "../layouts/Base.astro";
+import { Header } from "../components/Header";
+import { Footer } from "../components/Footer";
+import { LandingMetrics } from "../components/LandingMetrics";
+---
+
+<Base title="Tokamak Bench — Dashboard" currentPath="/">
+  <Header currentPath="/" slot="header" />
+
+  <h1 class="mb-6 text-3xl font-bold">
+    Performance Dashboard
+  </h1>
+  <p class="mb-8 text-slate-400">
+    Real-time EVM benchmark results for the Tokamak ethrex client.
+  </p>
+
+  <LandingMetrics client:load />
+
+  <Footer slot="footer" />
+</Base>
