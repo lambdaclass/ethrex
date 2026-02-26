@@ -235,6 +235,7 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                false,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -353,6 +354,7 @@ impl LEVM {
                         &mut group_db,
                         vm_type,
                         stack_pool,
+                        true,
                     );
                 }
             },
@@ -483,6 +485,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
+            disable_balance_check: false,
         };
 
         Ok(env)
@@ -515,8 +518,10 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        disable_balance_check: bool,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        env.disable_balance_check = disable_balance_check;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
@@ -1031,6 +1036,7 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
+        disable_balance_check: false,
     })
 }
 
