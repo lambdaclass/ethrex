@@ -56,6 +56,8 @@ pub enum RpcErr {
     InvalidPayloadAttributes(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
+    #[error("Simulate error: {message}")]
+    SimulateError { code: i32, message: String },
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -156,6 +158,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -38001,
                 data: None,
                 message: format!("Unknown payload: {context}"),
+            },
+            RpcErr::SimulateError { code, message } => RpcErrorMetadata {
+                code,
+                data: None,
+                message,
             },
         }
     }

@@ -543,11 +543,36 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionResult, EvmError> {
+        Self::simulate_tx_from_generic_with_validation(tx, block_header, db, vm_type, false, None)
+    }
+
+    /// Like `simulate_tx_from_generic` but with configurable validation.
+    ///
+    /// When `validate` is false, block gas limit and base fee checks are
+    /// disabled (matching `eth_call` behavior). When true, real gas limits
+    /// and fee checks apply (for `eth_simulateV1` with `validation: true`).
+    ///
+    /// `blob_base_fee_override` directly overrides the blob base fee used
+    /// for EIP-4844 transaction validation, bypassing the normal derivation
+    /// from `excess_blob_gas`.
+    pub fn simulate_tx_from_generic_with_validation(
+        tx: &GenericTransaction,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        validate: bool,
+        blob_base_fee_override: Option<U256>,
+    ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
-        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+        if !validate {
+            env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+            adjust_disabled_base_fee(&mut env);
+        }
 
-        adjust_disabled_base_fee(&mut env);
+        if let Some(blob_base_fee) = blob_base_fee_override {
+            env.base_blob_fee_per_gas = blob_base_fee;
+        }
 
         let mut vm = vm_from_generic(tx, env, db, vm_type)?;
 
