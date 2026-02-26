@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-26
-**Context**: Overall ~90% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run).
+**Context**: Overall ~92% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator).
 
 ---
 
@@ -256,6 +256,25 @@
 
 ---
 
+## Phase G: Memory & Stability (P1)
+
+> "Arena allocator eliminates the 1-5 MB/compilation LLVM memory leak."
+
+### G-1. LLVM Memory Lifecycle [P1] ✅ DONE
+- Arena allocator replacing `std::mem::forget(compiler)` with tracked lifecycle ✅
+- `ArenaManager`, `ArenaEntry`, `FuncSlot` types in `levm/jit/arena.rs` with CAS-based concurrent eviction tracking ✅
+- `ArenaCompiler` in `tokamak-jit/compiler.rs` stores compilers instead of leaking them ✅
+- `compile_in_arena()` alongside existing `compile()` for backward compat ✅
+- `thread_local! ArenaState` in `lib.rs` handler manages arena rotation + eviction-triggered freeing ✅
+- `CompilerRequest::Free{slot}` and `FreeArena{arena_id}` request variants ✅
+- `JitConfig` extended: `arena_capacity`, `max_arenas`, `max_memory_mb` ✅
+- `JitMetrics` extended: `arenas_created`, `arenas_freed`, `functions_evicted` ✅
+- **Verification**: 12 arena + 4 ArenaCompiler tests, all 178 tests pass (94 levm + 36 jit + 48 bench) ✅
+- **Dependency**: None
+- **Completed**: 2026-02-26 — Arena allocator replacing mem::forget, 178 tests pass (f8e9ba540)
+
+---
+
 ## Execution Order
 
 ```
@@ -267,6 +286,7 @@ Week 5+: [P2] E-2 ✅ + E-3 ✅
 Week 6:  [P3] F-1 ✅ + F-4 ✅ (parallel)
 Week 7:  [P3] F-2 ✅ (dashboard MVP)
 Week 8:  [P3] F-3 ✅ (L2 scaffolding)
+Week 9:  [P1] G-1 ✅ (arena allocator)
 Later:   [P3] F-5
 ```
 

@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn test_compiler_thread_send_after_drop_fails() {
         let thread = CompilerThread::start(|_req: CompilerRequest| {});
-        let code = Code::from_bytecode(Bytes::from_static(&[0x00]));
+        let _code = Code::from_bytecode(Bytes::from_static(&[0x00]));
 
         // Manually drop sender by dropping the whole thread
         // Can't test send-after-drop directly, but we can verify

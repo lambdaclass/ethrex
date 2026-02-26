@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-26
 **Branch**: `feat/tokamak-proven-execution`
-**Overall Completion**: ~90%
+**Overall Completion**: ~92%
 
 ---
 
@@ -39,6 +39,7 @@
 - Bytecode size limit graceful fallback (D-2) — negative cache + early size gate + interpreter-only bench results
 - Constant folding optimizer (D-3) — PUSH+PUSH+OP → single PUSH, 6 opcodes (ADD/MUL/SUB/AND/OR/XOR), 42 tests
 - 76 LEVM JIT tests + 27 tokamak-jit tests passing (104 total)
+- Arena-based LLVM memory lifecycle (G-1) — eliminates `mem::forget` memory leak, 178 tests pass
 
 **Remaining:**
 - Recursive CALL performance (suspend/resume is slow — accepted for v1.0)
@@ -174,6 +175,9 @@ R23(5.0) -> R24(8.0)
 - L2 integration scaffolding (F-3) — `TokamakFeeConfig` + `JitPolicy` types, `VMType::TokamakL2` variant, `TokamakL2Hook` (wraps L2Hook via composition), hook dispatch + Evm constructors, `BlockchainType::TokamakL2` + 5 match arm updates, `--tokamak-l2` CLI flag, feature propagation across 6 Cargo.toml files, 7 tests
 - Mainnet full sync CI (F-5) — Added `mainnet` option to `tokamak-sync.yaml`, `ethrex-sync` self-hosted runner for 48h timeout, Docker cleanup step, conditional Kurtosis install
 
+### Recently Completed (Phase G)
+- LLVM Memory Lifecycle (G-1) — Arena allocator replacing `mem::forget`, ArenaManager + ArenaCompiler + thread_local ArenaState, 12+4 arena tests, all 178 tests pass (f8e9ba540) (2026-02-26)
+
 ### Not Started
 - EF grant application
 - External node operator adoption
@@ -193,4 +197,4 @@ R23(5.0) -> R24(8.0)
 | Cache key | `(H256, Fork)` | Fork-specific compiled code |
 | Compilation | Background thread (mpsc) | Non-blocking hot path |
 | Validation | State-swap dual execution | JIT runs first, interpreter re-runs to verify |
-| Memory | `mem::forget(compiler)` | Leak LLVM context to keep fn ptrs alive |
+| Memory | Arena allocator (G-1) | Groups compiled fns into arenas; free LLVM resources when all evicted |
