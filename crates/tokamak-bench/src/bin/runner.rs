@@ -2,6 +2,10 @@ use std::fs;
 use std::process;
 
 use clap::{Parser, Subcommand};
+#[cfg(feature = "cross-client")]
+use tokamak_bench::cross_client::{
+    report as cross_report, runner as cross_runner, types as cross_types,
+};
 #[cfg(feature = "jit-bench")]
 use tokamak_bench::report::{jit_suite_to_json, jit_to_markdown};
 use tokamak_bench::{
@@ -101,6 +105,38 @@ enum Command {
         /// Output JSON instead of markdown
         #[arg(long)]
         json: bool,
+    },
+
+    /// Run cross-client benchmark comparison via eth_call (requires cross-client feature)
+    #[cfg(feature = "cross-client")]
+    CrossClient {
+        /// Endpoints string: "geth=http://localhost:8546,reth=http://localhost:8547"
+        #[arg(long)]
+        endpoints: String,
+
+        /// Comma-separated list of scenario names (default: all)
+        #[arg(long)]
+        scenarios: Option<String>,
+
+        /// Number of runs per scenario
+        #[arg(long, default_value = "10")]
+        runs: u64,
+
+        /// Number of warmup runs to discard before measurement
+        #[arg(long, default_value = "2")]
+        warmup: u64,
+
+        /// Git commit hash for metadata
+        #[arg(long, default_value = "unknown")]
+        commit: String,
+
+        /// Output file path (default: stdout)
+        #[arg(long)]
+        output: Option<String>,
+
+        /// Output markdown instead of JSON
+        #[arg(long)]
+        markdown: bool,
     },
 
     /// Run JIT vs interpreter benchmark comparison (requires jit-bench feature)
@@ -259,6 +295,70 @@ fn main() {
 
             if report.status == tokamak_bench::types::RegressionStatus::Regression {
                 process::exit(1);
+            }
+        }
+
+        #[cfg(feature = "cross-client")]
+        Command::CrossClient {
+            endpoints,
+            scenarios,
+            runs,
+            warmup,
+            commit,
+            output,
+            markdown,
+        } => {
+            let client_endpoints = match cross_types::parse_endpoints(&endpoints) {
+                Ok(eps) => eps,
+                Err(e) => {
+                    eprintln!("Invalid endpoints: {e}");
+                    process::exit(1);
+                }
+            };
+
+            let scenario_list: Vec<Scenario> = match &scenarios {
+                Some(names) => {
+                    let defaults = default_scenarios();
+                    names
+                        .split(',')
+                        .filter_map(|name| {
+                            let name = name.trim();
+                            defaults.iter().find(|s| s.name == name).map(|s| Scenario {
+                                name: s.name,
+                                iterations: s.iterations,
+                            })
+                        })
+                        .collect()
+                }
+                None => default_scenarios(),
+            };
+
+            if scenario_list.is_empty() {
+                eprintln!("No valid scenarios selected");
+                process::exit(1);
+            }
+
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            let suite = rt.block_on(cross_runner::run_cross_client_suite(
+                &scenario_list,
+                &client_endpoints,
+                runs,
+                warmup,
+                &commit,
+            ));
+
+            let content = if markdown {
+                cross_report::to_markdown(&suite)
+            } else {
+                cross_report::to_json(&suite)
+            };
+
+            match output {
+                Some(path) => {
+                    fs::write(&path, &content).expect("Failed to write output");
+                    eprintln!("Cross-client results written to {path}");
+                }
+                None => println!("{content}"),
             }
         }
 

@@ -20,6 +20,9 @@ bytes.workspace = true
 rustc-hash.workspace = true
 
 tokamak-jit = { path = "../vm/tokamak-jit", features = ["revmc-backend"], optional = true }
+reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt-multi-thread"], optional = true }
+url = { workspace = true, optional = true }
 
 [dev-dependencies]
 serial_test.workspace = true
@@ -28,6 +31,7 @@ ethrex-levm = { workspace = true, features = ["test-utils"] }
 [features]
 default = []
 jit-bench = ["dep:tokamak-jit"]
+cross-client = ["dep:reqwest", "dep:tokio", "dep:url"]
 
 [[bin]]
 name = "tokamak-bench"
