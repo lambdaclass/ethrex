@@ -2661,9 +2661,9 @@ fn handle_account_subtrie(
                 removed,
                 removed_storage,
             } => {
-                let senders = storage_workers_tx
-                    .as_ref()
-                    .expect("ProcessAccount after FinishRouting");
+                let senders = storage_workers_tx.as_ref().ok_or_else(|| {
+                    StoreError::Custom("ProcessAccount after FinishRouting".to_string())
+                })?;
 
                 // Always load account to warm state trie during execution overlap
                 match accounts.entry(prefix) {
@@ -2683,7 +2683,9 @@ fn handle_account_subtrie(
 
                 // Apply info immediately and insert into trie
                 if let Some(info) = info {
-                    let acct = accounts.get_mut(&prefix).expect("just loaded");
+                    let acct = accounts
+                        .get_mut(&prefix)
+                        .ok_or_else(|| StoreError::Custom("account not loaded".to_string()))?;
                     acct.nonce = info.nonce;
                     acct.balance = info.balance;
                     acct.code_hash = info.code_hash;
@@ -2700,7 +2702,10 @@ fn handle_account_subtrie(
                         tx.send(StorageRequest::Delete(prefix))
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
-                    accounts.get_mut(&prefix).expect("just loaded").storage_root = *EMPTY_TRIE_HASH;
+                    accounts
+                        .get_mut(&prefix)
+                        .ok_or_else(|| StoreError::Custom("account not loaded".to_string()))?
+                        .storage_root = *EMPTY_TRIE_HASH;
                     if expected_shards.insert(prefix, 0xFFFF).is_none() {
                         pending_storage_accounts += 1;
                     }
@@ -2761,7 +2766,9 @@ fn handle_account_subtrie(
                 *received |= 1 << shard_index;
                 if *received == expected_shards.get(&prefix).copied().unwrap_or(0) {
                     // All shards received — compute storage root and re-insert
-                    let mut state = storage_state.remove(&prefix).expect("shard without state");
+                    let mut state = storage_state
+                        .remove(&prefix)
+                        .ok_or_else(|| StoreError::Custom("shard without state".to_string()))?;
                     let mut new_storage_root = None;
                     if let Some(root) = state.storage_root {
                         if let Some(root) =
@@ -2778,7 +2785,9 @@ fn handle_account_subtrie(
                     storage_nodes.push((prefix, state.nodes));
 
                     // Info already applied in ProcessAccount — just update storage_root
-                    let old_state = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
+                    let old_state = accounts.get_mut(&prefix).ok_or_else(|| {
+                        StoreError::Custom("loaded in ProcessAccount".to_string())
+                    })?;
                     if let Some(storage_root) = new_storage_root {
                         old_state.storage_root = storage_root;
                     }
