@@ -92,6 +92,13 @@ pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";
 
+/// Dedicated CF for short-path account trie nodes (depth <= 10 nibbles).
+/// These nodes are accessed on every state read and benefit from a hot block cache.
+pub const ACCOUNT_TRIE_TOP_NODES: &str = "account_trie_top_nodes";
+
+/// Dedicated CF for short-path storage trie nodes (logical depth <= 10 nibbles).
+pub const STORAGE_TRIE_TOP_NODES: &str = "storage_trie_top_nodes";
+
 /// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///    ```rust,no_run
@@ -102,7 +109,7 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+pub const TABLES: [&str; 21] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -117,6 +124,8 @@ pub const TABLES: [&str; 19] = [
     INVALID_CHAINS,
     ACCOUNT_TRIE_NODES,
     STORAGE_TRIE_NODES,
+    ACCOUNT_TRIE_TOP_NODES,
+    STORAGE_TRIE_TOP_NODES,
     FULLSYNC_HEADERS,
     ACCOUNT_FLATKEYVALUE,
     STORAGE_FLATKEYVALUE,

@@ -6,9 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            ACCOUNT_TRIE_TOP_NODES, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            STORAGE_TRIE_TOP_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -1142,10 +1143,19 @@ impl Store {
             for (address_hash, nodes) in storage_trie_nodes {
                 for (node_path, node_data) in nodes {
                     let key = apply_prefix(Some(address_hash), node_path);
+                    let is_leaf = key.len() == 131;
+                    let logical_depth = key.len().saturating_sub(65);
+                    let is_top_node = !is_leaf && logical_depth <= 10;
                     if node_data.is_empty() {
                         txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
+                        if is_top_node {
+                            txn.delete(STORAGE_TRIE_TOP_NODES, key.as_ref())?;
+                        }
                     } else {
                         txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node_data)?;
+                        if is_top_node {
+                            txn.put(STORAGE_TRIE_TOP_NODES, key.as_ref(), &node_data)?;
+                        }
                     }
                 }
             }
@@ -1881,7 +1891,18 @@ impl Store {
             .collect::<Vec<_>>();
 
         let mut tx = self.backend.begin_write()?;
+        // Dual-write: top-depth nodes go to both top-node CF and legacy CF
+        let mut account_top_nodes = Vec::new();
+        for (key, value) in &account_trie_nodes {
+            let is_leaf = key.len() == 65;
+            if !is_leaf && key.len() <= 10 {
+                account_top_nodes.push((key.clone(), value.clone()));
+            }
+        }
         tx.put_batch(ACCOUNT_TRIE_NODES, account_trie_nodes)?;
+        if !account_top_nodes.is_empty() {
+            tx.put_batch(ACCOUNT_TRIE_TOP_NODES, account_top_nodes)?;
+        }
         tx.put_batch(STORAGE_TRIE_NODES, storage_trie_nodes)?;
         tx.commit()?;
 
@@ -2809,21 +2830,55 @@ fn apply_trie_updates(
         if is_leaf && key > last_written {
             continue;
         }
+
+        // Compute logical depth: storage keys have a 65-nibble prefix
+        let logical_depth = if is_account {
+            key.len()
+        } else {
+            key.len().saturating_sub(65)
+        };
+        let is_top_node = !is_leaf && logical_depth <= 10;
+
         let table = if is_leaf {
             if is_account {
                 &ACCOUNT_FLATKEYVALUE
             } else {
                 &STORAGE_FLATKEYVALUE
             }
+        } else if is_top_node {
+            if is_account {
+                &ACCOUNT_TRIE_TOP_NODES
+            } else {
+                &STORAGE_TRIE_TOP_NODES
+            }
         } else if is_account {
             &ACCOUNT_TRIE_NODES
         } else {
             &STORAGE_TRIE_NODES
         };
+
         if value.is_empty() {
             result = write_tx.delete(table, &key);
+            // Dual-write: also delete from legacy CF for top nodes
+            if result.is_ok() && is_top_node {
+                let legacy_table = if is_account {
+                    &ACCOUNT_TRIE_NODES
+                } else {
+                    &STORAGE_TRIE_NODES
+                };
+                result = write_tx.delete(legacy_table, &key);
+            }
         } else {
             result = write_tx.put(table, &key, &value);
+            // Dual-write: also write to legacy CF for top nodes (rollback safety)
+            if result.is_ok() && is_top_node {
+                let legacy_table = if is_account {
+                    &ACCOUNT_TRIE_NODES
+                } else {
+                    &STORAGE_TRIE_NODES
+                };
+                result = write_tx.put(legacy_table, &key, &value);
+            }
         }
         if result.is_err() {
             break;

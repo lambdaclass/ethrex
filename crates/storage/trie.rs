@@ -1,5 +1,6 @@
 use crate::api::tables::{
-    ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+    ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, ACCOUNT_TRIE_TOP_NODES, STORAGE_FLATKEYVALUE,
+    STORAGE_TRIE_NODES, STORAGE_TRIE_TOP_NODES,
 };
 use crate::api::{StorageBackend, StorageLockedView, StorageReadView};
 use crate::error::StoreError;
@@ -10,6 +11,10 @@ use std::sync::Arc;
 
 /// TrieDB implementation that holds a pre-acquired read view for the entire
 /// trie traversal, avoiding per-node-lookup allocation and lock acquisition.
+/// Depth threshold for routing trie nodes to the dedicated top-node CFs.
+/// Nodes with logical depth <= this value go to top-node CFs.
+const TOP_NODE_DEPTH_THRESHOLD: usize = 10;
+
 pub struct BackendTrieDB {
     /// Reference to the storage backend (used only for writes)
     db: Arc<dyn StorageBackend>,
@@ -20,6 +25,7 @@ pub struct BackendTrieDB {
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
     nodes_table: &'static str,
+    top_nodes_table: &'static str,
     fkv_table: &'static str,
     /// Storage trie address prefix (for storage tries)
     /// None for state tries, Some(address) for storage tries
@@ -48,6 +54,7 @@ impl BackendTrieDB {
             read_view,
             last_computed_flatkeyvalue,
             nodes_table: ACCOUNT_TRIE_NODES,
+            top_nodes_table: ACCOUNT_TRIE_TOP_NODES,
             fkv_table: ACCOUNT_FLATKEYVALUE,
             address_prefix: None,
         })
@@ -74,6 +81,7 @@ impl BackendTrieDB {
             read_view,
             last_computed_flatkeyvalue,
             nodes_table: STORAGE_TRIE_NODES,
+            top_nodes_table: STORAGE_TRIE_TOP_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: None,
         })
@@ -102,6 +110,7 @@ impl BackendTrieDB {
             read_view,
             last_computed_flatkeyvalue,
             nodes_table: STORAGE_TRIE_NODES,
+            top_nodes_table: STORAGE_TRIE_TOP_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: Some(address_prefix),
         })
@@ -111,14 +120,35 @@ impl BackendTrieDB {
         apply_prefix(self.address_prefix, path).into_vec()
     }
 
-    /// Key might be for an account or storage slot
+    /// Compute the logical depth of a key, accounting for the 65-nibble storage prefix.
+    /// For account keys (no prefix): depth = key.len()
+    /// For storage keys (65-nibble prefix): depth = key.len() - 65
+    fn logical_trie_depth(&self, key: &[u8]) -> usize {
+        if self.address_prefix.is_some() {
+            key.len().saturating_sub(65)
+        } else {
+            key.len()
+        }
+    }
+
+    /// Key might be for an account or storage slot.
+    /// Returns (primary_table, is_top_node) where is_top_node indicates the key
+    /// should be dual-written to both top-node and legacy CFs.
     fn table_for_key(&self, key: &[u8]) -> &'static str {
         let is_leaf = key.len() == 65 || key.len() == 131;
         if is_leaf {
             self.fkv_table
+        } else if self.logical_trie_depth(key) <= TOP_NODE_DEPTH_THRESHOLD {
+            self.top_nodes_table
         } else {
             self.nodes_table
         }
+    }
+
+    /// Returns true if this key is a top-depth trie node that should be dual-written.
+    fn is_top_node(&self, key: &[u8]) -> bool {
+        let is_leaf = key.len() == 65 || key.len() == 131;
+        !is_leaf && self.logical_trie_depth(key) <= TOP_NODE_DEPTH_THRESHOLD
     }
 }
 
@@ -129,21 +159,37 @@ impl TrieDB for BackendTrieDB {
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        use std::sync::atomic::Ordering::Relaxed;
         let prefixed_key = self.make_key(key);
         let table = self.table_for_key(&prefixed_key);
         let is_flat = table == self.fkv_table;
         if is_flat {
             crate::metrics::STORAGE_METRICS
                 .flat_hits
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                .fetch_add(1, Relaxed);
         } else {
             crate::metrics::STORAGE_METRICS
                 .trie_node_reads
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                .fetch_add(1, Relaxed);
         }
-        self.read_view
+        let result = self
+            .read_view
             .get(table, prefixed_key.as_ref())
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+            .map_err(|e| {
+                TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+            })?;
+        // Dual-read fallback: if the primary table (top-node CF) returned None,
+        // fall back to the legacy nodes CF. This handles pre-existing data that
+        // was written before CF isolation was enabled.
+        if result.is_none() && self.is_top_node(&prefixed_key) {
+            return self
+                .read_view
+                .get(self.nodes_table, prefixed_key.as_ref())
+                .map_err(|e| {
+                    TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+                });
+        }
+        Ok(result)
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
@@ -153,6 +199,14 @@ impl TrieDB for BackendTrieDB {
         for (key, value) in key_values {
             let prefixed_key = self.make_key(key);
             let table = self.table_for_key(&prefixed_key);
+            // Dual-write: top-depth nodes go to both top-node CF and legacy CF.
+            // This ensures rollback safety (reverting to legacy-only loses no data).
+            if self.is_top_node(&prefixed_key) {
+                tx.put_batch(self.nodes_table, vec![(prefixed_key.clone(), value.clone())])
+                    .map_err(|e| {
+                        TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e))
+                    })?;
+            }
             tx.put_batch(table, vec![(prefixed_key, value)])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
@@ -165,6 +219,8 @@ impl TrieDB for BackendTrieDB {
 pub struct BackendTrieDBLocked {
     account_trie_tx: Box<dyn StorageLockedView>,
     storage_trie_tx: Box<dyn StorageLockedView>,
+    account_top_nodes_tx: Box<dyn StorageLockedView>,
+    storage_top_nodes_tx: Box<dyn StorageLockedView>,
     account_fkv_tx: Box<dyn StorageLockedView>,
     storage_fkv_tx: Box<dyn StorageLockedView>,
     /// Last flatkeyvalue path already generated
@@ -176,18 +232,33 @@ impl BackendTrieDBLocked {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         let account_trie_tx = engine.begin_locked(ACCOUNT_TRIE_NODES)?;
         let storage_trie_tx = engine.begin_locked(STORAGE_TRIE_NODES)?;
+        let account_top_nodes_tx = engine.begin_locked(ACCOUNT_TRIE_TOP_NODES)?;
+        let storage_top_nodes_tx = engine.begin_locked(STORAGE_TRIE_TOP_NODES)?;
         let account_fkv_tx = engine.begin_locked(ACCOUNT_FLATKEYVALUE)?;
         let storage_fkv_tx = engine.begin_locked(STORAGE_FLATKEYVALUE)?;
         Ok(Self {
             account_trie_tx,
             storage_trie_tx,
+            account_top_nodes_tx,
+            storage_top_nodes_tx,
             account_fkv_tx,
             storage_fkv_tx,
             last_computed_flatkeyvalue,
         })
     }
 
-    /// Key is already prefixed
+    /// Compute logical depth for a prefixed key.
+    /// Account keys: len <= 65 → depth = len
+    /// Storage keys: len > 65 → depth = len - 65
+    fn logical_depth(key: &Nibbles) -> usize {
+        if key.len() > 65 {
+            key.len().saturating_sub(65)
+        } else {
+            key.len()
+        }
+    }
+
+    /// Key is already prefixed. Returns the primary locked view for reads.
     fn tx_for_key(&self, key: &Nibbles) -> &dyn StorageLockedView {
         let is_leaf = key.len() == 65 || key.len() == 131;
         let is_account = key.len() <= 65;
@@ -197,10 +268,35 @@ impl BackendTrieDBLocked {
             } else {
                 &*self.storage_fkv_tx
             }
+        } else if Self::logical_depth(key) <= TOP_NODE_DEPTH_THRESHOLD {
+            // Short-path trie node → top-node CF
+            if is_account {
+                &*self.account_top_nodes_tx
+            } else {
+                &*self.storage_top_nodes_tx
+            }
         } else if is_account {
             &*self.account_trie_tx
         } else {
             &*self.storage_trie_tx
+        }
+    }
+
+    /// Fallback locked view for dual-read (legacy CF for top nodes).
+    fn fallback_tx_for_key(&self, key: &Nibbles) -> Option<&dyn StorageLockedView> {
+        let is_leaf = key.len() == 65 || key.len() == 131;
+        if is_leaf {
+            return None;
+        }
+        if Self::logical_depth(key) <= TOP_NODE_DEPTH_THRESHOLD {
+            let is_account = key.len() <= 65;
+            Some(if is_account {
+                &*self.account_trie_tx
+            } else {
+                &*self.storage_trie_tx
+            })
+        } else {
+            None
         }
     }
 }
@@ -211,19 +307,30 @@ impl TrieDB for BackendTrieDBLocked {
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        use std::sync::atomic::Ordering::Relaxed;
         let is_leaf = key.len() == 65 || key.len() == 131;
         if is_leaf {
             crate::metrics::STORAGE_METRICS
                 .flat_hits
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                .fetch_add(1, Relaxed);
         } else {
             crate::metrics::STORAGE_METRICS
                 .trie_node_reads
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                .fetch_add(1, Relaxed);
         }
         let tx = self.tx_for_key(&key);
-        tx.get(key.as_ref())
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+        let result = tx
+            .get(key.as_ref())
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))?;
+        // Dual-read fallback for top nodes
+        if result.is_none()
+            && let Some(fallback) = self.fallback_tx_for_key(&key)
+        {
+            return fallback.get(key.as_ref()).map_err(|e| {
+                TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+            });
+        }
+        Ok(result)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {

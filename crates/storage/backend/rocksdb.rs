@@ -1,7 +1,7 @@
 use crate::api::tables::{
-    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE,
-    STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, ACCOUNT_TRIE_TOP_NODES,
+    BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS,
+    STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, STORAGE_TRIE_TOP_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
     PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
@@ -96,6 +96,7 @@ impl RocksDBBackend {
             .unwrap_or(256);
         let flat_cache = Cache::new_lru_cache(flat_cache_mb * 1024 * 1024);
         let trie_cache = Cache::new_lru_cache(trie_cache_mb * 1024 * 1024);
+        let top_nodes_cache = Cache::new_lru_cache(128 * 1024 * 1024); // 128MB for hot top nodes
 
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
@@ -129,6 +130,17 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                ACCOUNT_TRIE_TOP_NODES | STORAGE_TRIE_TOP_NODES => {
+                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(8 * 1024); // 8KB — smaller blocks for point lookups
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_block_cache(&top_nodes_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
