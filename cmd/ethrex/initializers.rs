@@ -1,8 +1,8 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
-        read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_client_version, get_client_version_string, init_datadir,
+        is_memory_datadir, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -14,9 +14,10 @@ use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_process
 use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
+    DiscoveryConfig,
     network::P2PContext,
     peer_handler::PeerHandler,
+    peer_table::PeerTable,
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -37,7 +38,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{Level, debug, error, info, warn};
+#[cfg(not(feature = "l2"))]
+use tracing::error;
+use tracing::{Level, debug, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -48,7 +51,12 @@ const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
-pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
+pub fn init_tracing(
+    opts: &Options,
+) -> (
+    reload::Handle<EnvFilter, Registry>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
@@ -66,19 +74,58 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let fmt_layer = fmt::layer()
         .with_target(include_target)
-        .with_ansi(use_color)
-        .with_filter(filter);
+        .with_ansi(use_color);
+
+    let (file_layer, guard) = if let Some(log_dir) = &opts.log_dir {
+        if !log_dir.exists() {
+            std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
+        }
+
+        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let log_file = log_dir.join(format!("ethrex_{}_{}.log", branch, timestamp));
+
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(log_file)
+            .expect("Failed to open log file");
+
+        let (non_blocking, guard) = tracing_appender::non_blocking(file);
+        let file_layer = fmt::layer()
+            .with_target(include_target)
+            .with_ansi(false)
+            .with_writer(non_blocking);
+        (Some(file_layer), Some(guard))
+    } else {
+        (None, None)
+    };
 
     let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
 
-    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
+    let subscriber = Registry::default()
+        .with(fmt_layer.and_then(file_layer).with_filter(filter))
+        .with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    filter_handle
+    (filter_handle, guard)
 }
 
-pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+        &network.to_string(),
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -111,7 +158,7 @@ pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
 
 /// Opens a pre-existing Store or creates a new one
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
-    if datadir.ends_with("memory") {
+    if is_memory_datadir(datadir) {
         Store::new(datadir, EngineType::InMemory)
     } else {
         #[cfg(feature = "rocksdb")]
@@ -139,7 +186,9 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
-    init_datadir(&opts.datadir);
+    if !is_memory_datadir(&opts.datadir) {
+        init_datadir(&opts.datadir);
+    }
 
     let syncmode = if opts.dev {
         &SyncMode::Full
@@ -194,6 +243,7 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
 ) {
+    #[cfg(not(feature = "l2"))]
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
         panic!(
@@ -203,7 +253,12 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
-    ethrex_p2p::start_network(context, bootnodes)
+    let discovery_config = DiscoveryConfig {
+        discv4_enabled: opts.discv4_enabled,
+        discv5_enabled: opts.discv5_enabled,
+    };
+
+    ethrex_p2p::start_network(context, bootnodes, discovery_config)
         .await
         .expect("Network starts");
 
@@ -274,6 +329,10 @@ pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<N
 }
 
 pub fn get_signer(datadir: &Path) -> SecretKey {
+    if is_memory_datadir(datadir) {
+        return SecretKey::new(&mut OsRng);
+    }
+
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = datadir.join("node.key");
     match fs::read(key_path.clone()) {
@@ -378,12 +437,16 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
-        &opts.datadir.join("dev")
-    } else {
-        &opts.datadir
-    };
-    init_datadir(datadir);
+    let datadir: &PathBuf =
+        if opts.dev && cfg!(feature = "dev") && !is_memory_datadir(&opts.datadir) {
+            &opts.datadir.join("dev")
+        } else {
+            &opts.datadir
+        };
+
+    if !is_memory_datadir(datadir) {
+        init_datadir(datadir);
+    }
 
     let network = get_network(&opts);
 
@@ -418,6 +481,8 @@ pub async fn init_l1(
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
+            max_blobs_per_block: opts.max_blobs_per_block,
+            precompute_witnesses: opts.precompute_witnesses,
         },
     );
 
@@ -429,7 +494,7 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.target_peers);
+    let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -443,7 +508,7 @@ pub async fn init_l1(
         peer_table.clone(),
         store.clone(),
         blockchain.clone(),
-        get_client_version(),
+        get_client_version_string(),
         None,
         opts.tx_broadcasting_time_interval,
         opts.lookup_interval,
@@ -468,7 +533,7 @@ pub async fn init_l1(
     .await;
 
     if opts.metrics_enabled {
-        init_metrics(&opts, tracker.clone());
+        init_metrics(&opts, &network, tracker.clone());
     }
 
     if opts.dev {
@@ -561,7 +626,7 @@ pub async fn regenerate_head_state(
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block_pipeline(block)?;
+        blockchain.add_block_pipeline(block, None)?;
     }
 
     info!("Finished regenerating state");

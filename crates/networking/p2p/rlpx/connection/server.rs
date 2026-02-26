@@ -6,15 +6,15 @@ use crate::rlpx::l2::{
     },
 };
 use crate::{
-    discv4::peer_table::PeerTable,
+    backend,
     metrics::METRICS,
     network::P2PContext,
+    peer_table::PeerTable,
     rlpx::{
         Message,
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
-            backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts68, Receipts69},
             status::{StatusMessage68, StatusMessage69},
@@ -397,10 +397,14 @@ impl GenServer for PeerConnectionServer {
                     );
                     match msg {
                         L2Cast::BatchBroadcast => {
-                            l2_connection::send_sealed_batch(established_state).await
+                            let res = l2_connection::send_sealed_batch(established_state).await;
+                            res.and(
+                                l2_connection::process_batches_on_queue(established_state).await,
+                            )
                         }
                         L2Cast::BlockBroadcast => {
-                            l2_connection::send_new_block(established_state).await
+                            let res = l2_connection::send_new_block(established_state).await;
+                            res.and(l2_connection::process_blocks_on_queue(established_state).await)
                         }
                     }
                 }
@@ -941,34 +945,41 @@ async fn handle_incoming_message(
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
+                let tx_hashes: Vec<_> = txs.transactions.iter().map(|tx| tx.hash()).collect();
+
+                // Offload pool insertion to a background task so we don't block
+                // the ConnectionServer (validation + signature recovery are expensive).
+                let blockchain = state.blockchain.clone();
+                let peer = state.node.to_string();
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
-                for tx in &txs.transactions {
-                    // Reject blob transactions in L2 mode
-                    #[cfg(feature = "l2")]
-                    if (is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)))
-                        || tx.is_privileged()
-                    {
-                        let tx_type = tx.tx_type();
-                        debug!(peer=%state.node, "Rejecting transaction in L2 mode - {tx_type} transactions are not broadcasted in L2");
-                        continue;
-                    }
+                tokio::spawn(async move {
+                    for tx in txs.transactions {
+                        #[cfg(feature = "l2")]
+                        if (is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)))
+                            || tx.is_privileged()
+                        {
+                            let tx_type = tx.tx_type();
+                            debug!(peer=%peer, "Rejecting transaction in L2 mode - {tx_type} transactions are not broadcasted in L2");
+                            continue;
+                        }
 
-                    if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        debug!(
-                            peer=%state.node,
-                            error=%e,
-                            "Error adding transaction"
-                        );
-                        continue;
+                        if let Err(e) = blockchain.add_transaction_to_pool(tx).await {
+                            debug!(
+                                peer=%peer,
+                                error=%e,
+                                "Error adding transaction"
+                            );
+                        }
                     }
-                }
+                });
+
+                // Notify the broadcaster immediately — it only tracks hashes
+                // to avoid re-broadcasting to the sender. The actual broadcast
+                // happens on a periodic timer that queries the mempool directly.
                 state
                     .tx_broadcaster
-                    .cast(InMessage::AddTxs(
-                        txs.transactions.iter().map(|tx| tx.hash()).collect(),
-                        state.node.node_id(),
-                    ))
+                    .cast(InMessage::AddTxs(tx_hashes, state.node.node_id()))
                     .await
                     .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
             }
@@ -1081,8 +1092,24 @@ async fn handle_incoming_message(
 
                 #[cfg(not(feature = "l2"))]
                 let is_l2_mode = false;
-                msg.handle(&state.node, &state.blockchain, is_l2_mode)
-                    .await?;
+                if let Err(error) = msg.handle(&state.node, &state.blockchain, is_l2_mode).await {
+                    if matches!(
+                        error,
+                        ethrex_blockchain::error::MempoolError::BlobsBundleError(_)
+                    ) {
+                        warn!(
+                            peer=%state.node,
+                            reason=%error,
+                            "disconnected from peer",
+                        );
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
+                        return Err(PeerConnectionError::DisconnectSent(
+                            DisconnectReason::SubprotocolError,
+                        ));
+                    }
+                    return Err(error.into());
+                }
             }
         }
         Message::GetStorageRanges(req) => {
@@ -1091,11 +1118,13 @@ async fn handle_incoming_message(
         }
         Message::GetByteCodes(req) => {
             let storage_clone = state.storage.clone();
-            let response = process_byte_codes_request(req, storage_clone).map_err(|_| {
-                PeerConnectionError::InternalError(
-                    "Failed to execute bytecode retrieval task".to_string(),
-                )
-            })?;
+            let response = process_byte_codes_request(req, storage_clone)
+                .await
+                .map_err(|_| {
+                    PeerConnectionError::InternalError(
+                        "Failed to execute bytecode retrieval task".to_string(),
+                    )
+                })?;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {

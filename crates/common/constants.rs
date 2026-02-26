@@ -1,7 +1,14 @@
-use crate::H256;
+use crate::{H160, H256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
 use std::{str::FromStr, sync::LazyLock};
+
+/// SYSTEM_ADDRESS used for system contract calls and BAL filtering.
+/// 0xfffffffffffffffffffffffffffffffffffffffe
+pub const SYSTEM_ADDRESS: H160 = H160([
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFE,
+]);
 
 // = Keccak256(RLP([])) as of EIP-3675
 pub static DEFAULT_OMMERS_HASH: LazyLock<H256> = LazyLock::new(|| {
@@ -43,6 +50,14 @@ pub static DEPOSIT_TOPIC: LazyLock<H256> = LazyLock::new(|| {
         .expect("Failed to decode hex from string")
 });
 
+// = Keccak256(RLP([])) as of EIP-7928
+pub static EMPTY_BLOCK_ACCESS_LIST_HASH: LazyLock<H256> = LazyLock::new(|| {
+    H256::from_slice(
+        &hex::decode("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
+            .expect("Failed to decode hex from string"),
+    )
+});
+
 // === EIP-4844 constants ===
 
 /// Gas consumption of a single data blob (== blob byte size).
@@ -58,3 +73,7 @@ pub const RLP_BLOCK_SIZE_SAFETY_MARGIN: u64 = 2_097_152;
 pub const MAX_RLP_BLOCK_SIZE: u64 = MAX_BLOCK_SIZE - RLP_BLOCK_SIZE_SAFETY_MARGIN;
 // Blob base cost defined in EIP-7918
 pub const BLOB_BASE_COST: u64 = 8192;
+
+// === EIP-7825 constants ===
+// https://eips.ethereum.org/EIPS/eip-7825
+pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;

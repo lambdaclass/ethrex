@@ -7,7 +7,7 @@ This section covers the fundamentals of "based" rollups in the context of L2s bu
 A based rollup is a type of Layer 2 (L2) rollup that relies on the Ethereum mainnet (L1) for sequencing and ordering transactions, instead of using its own independent sequencer. This design leverages Ethereum's security and neutrality for transaction ordering, making the rollup more trust-minimized and censorship-resistant.
 
 > [!IMPORTANT]
-> This documentation is about the current state of the `based` feature development and not about the final implementation. It is subject to change as the feature evolves and their still could be unmitigated issues.
+> This documentation is about the current state of the `based` feature development and not about the final implementation. It is subject to change as the feature evolves and there still could be unmitigated issues.
 
 > [!NOTE]
 > This is an extension of the [ethrex-L2-Sequencer documentation](../architecture/sequencer.md) and is intended to be merged with it in the future.
@@ -78,9 +78,9 @@ The `OnChainProposer` contract, which handles batch proposals and management on 
 - **Event Modification:**
   The `BatchCommitted` event has been updated to include the batch number of the committed batch. This addition enhances traceability and allows external systems to monitor batch progression more effectively.
 - **Batch Verification:**
-  The `verifyBatch` method has been made more flexible and decentralized:
-  - The `onlySequencer` modifier has been removed, allowing anyone—not just the lead Sequencer—to verify batches.
-  - The restriction preventing multiple verifications of the same batch has been lifted. While multiple verifications are now permitted, only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.
+  The `verifyBatches` method has been made more flexible and decentralized:
+  - The method has no access control modifier, allowing anyone—not just the lead Sequencer—to verify batches.
+  - It supports verifying one or more consecutive batches in a single transaction. Only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.
 
 ### SequencerRegistry (New Contract)
 
@@ -334,7 +334,7 @@ A list of all the configurable parameters of the network.
 ### Batch commitment/proposal
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md) as this only details the diff with what we already have.
 
 - Only lead Sequencer can post batches.
 - Lead Sequencer batches are accepted during their sequencing period and rejected outside this period.
@@ -343,7 +343,7 @@ A list of all the configurable parameters of the network.
 ### Batch verification
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md) as this only details the diff with what we already have.
 
 - Anyone can verify batches.
 - Only one valid verification is required to advance the network.
@@ -428,7 +428,7 @@ The following links, repos, and projects have been important in the development 
 ### Based rollups + extra steps
 
 - [Based Ticketing Rollup by George Spasov](https://hackmd.io/@Perseverance/Syk2oQU36)
-- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/contestable-rollup)
+- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://taiko.mirror.xyz/Z4I5ZhreGkyfdaL5I9P0Rj0DNX4zaWFmcws-0CVMJ2A)
 - [Native Based Rollup by Taiko (Taiko Gwyneth)](https://docs.taiko.xyz/taiko-gwyneth-protocol/what-is-taiko-gwyneth/)
 
 ### Misc

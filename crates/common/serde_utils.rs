@@ -233,10 +233,16 @@ pub mod u64 {
         where
             D: Deserializer<'de>,
         {
-            let value = Option::<String>::deserialize(d)?;
+            let value: Option<serde_json::Value> = Option::deserialize(d)?;
             match value {
-                Some(s) if !s.is_empty() => u64::from_str_radix(s.trim_start_matches("0x"), 16)
-                    .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
+                Some(serde_json::Value::String(s)) if !s.is_empty() => {
+                    u64::from_str_radix(s.trim_start_matches("0x"), 16)
+                        .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
+                        .map(Some)
+                }
+                Some(serde_json::Value::Number(n)) => n
+                    .as_u64()
+                    .ok_or_else(|| D::Error::custom("Failed to deserialize u64 value"))
                     .map(Some),
                 _ => Ok(None),
             }
@@ -322,7 +328,7 @@ pub mod vec_u8 {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        let bytes = hex::decode(value.trim_start_matches("0x"))
+        let bytes = hex_simd::decode_to_vec(value.trim_start_matches("0x"))
             .map_err(|e| D::Error::custom(e.to_string()))?;
         Ok(bytes)
     }
@@ -346,7 +352,7 @@ pub mod bytes {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        let bytes = hex::decode(value.trim_start_matches("0x"))
+        let bytes = hex_simd::decode_to_vec(value.trim_start_matches("0x"))
             .map_err(|e| D::Error::custom(e.to_string()))?;
         Ok(Bytes::from(bytes))
     }
@@ -368,7 +374,7 @@ pub mod bytes {
             let value = Vec::<String>::deserialize(d)?;
             let mut output = Vec::new();
             for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))?
                     .into();
                 output.push(bytes);
@@ -434,7 +440,7 @@ pub mod bytes48 {
             let value = Vec::<String>::deserialize(d)?;
             let mut output = Vec::new();
             for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))?;
                 if bytes.len() != 48 {
                     return Err(D::Error::custom(format!(
@@ -482,7 +488,7 @@ pub mod blob {
             let value = Vec::<String>::deserialize(deserializer)?;
             let mut output = Vec::new();
             for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))?;
                 if bytes.len() != BYTES_PER_BLOB {
                     return Err(D::Error::custom(format!(
@@ -549,7 +555,7 @@ pub mod duration {
 /// For example, a duration such as "1h30m" or "1.6m" will be accepted but "-1s" or "30mh" will not
 /// Some imprecision can be expected when using milliseconds/microseconds/nanoseconds with significant decimal components
 /// If the format is incorrect this function will return None
-fn parse_duration(input: String) -> Option<Duration> {
+pub fn parse_duration(input: String) -> Option<Duration> {
     let mut res = Duration::ZERO;
     let mut integer_buffer = String::new();
     let mut chars = input.chars().peekable();
@@ -605,104 +611,73 @@ fn parse_duration(input: String) -> Option<Duration> {
     Some(res)
 }
 
-#[cfg(test)]
-mod tests {
+pub mod block_access_list {
+
     use super::*;
+    use ethrex_rlp::decode::RLPDecode;
+    use ethrex_rlp::encode::RLPEncode;
 
-    #[test]
-    fn parse_duration_simple_integers() {
-        assert_eq!(
-            parse_duration("24h".to_string()),
-            Some(Duration::from_secs(60 * 60 * 24))
-        );
-        assert_eq!(
-            parse_duration("20m".to_string()),
-            Some(Duration::from_secs(60 * 20))
-        );
-        assert_eq!(
-            parse_duration("13s".to_string()),
-            Some(Duration::from_secs(13))
-        );
-        assert_eq!(
-            parse_duration("500ms".to_string()),
-            Some(Duration::from_millis(500))
-        );
-        assert_eq!(
-            parse_duration("900µs".to_string()),
-            Some(Duration::from_micros(900))
-        );
-        assert_eq!(
-            parse_duration("900us".to_string()),
-            Some(Duration::from_micros(900))
-        );
-        assert_eq!(
-            parse_duration("40ns".to_string()),
-            Some(Duration::from_nanos(40))
-        );
+    pub mod rlp_str {
+
+        use crate::types::block_access_list::BlockAccessList;
+
+        use super::*;
+        pub fn deserialize<'de, D>(d: D) -> Result<BlockAccessList, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = String::deserialize(d)?;
+            let bytes = hex::decode(value.trim_start_matches("0x"))
+                .map_err(|e| D::Error::custom(e.to_string()))?;
+            BlockAccessList::decode(&bytes)
+                .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
+        }
+
+        pub fn serialize<S>(value: &BlockAccessList, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let buf = value.encode_to_vec();
+            serializer.serialize_str(&format!("0x{}", hex::encode(buf)))
+        }
     }
 
-    #[test]
-    fn parse_duration_mixed_integers() {
-        assert_eq!(
-            parse_duration("24h30m".to_string()),
-            Some(Duration::from_secs(60 * 60 * 24 + 30 * 60))
-        );
-        assert_eq!(
-            parse_duration("20m15s".to_string()),
-            Some(Duration::from_secs(60 * 20 + 15))
-        );
-        assert_eq!(
-            parse_duration("13s4ms".to_string()),
-            Some(Duration::from_secs(13) + Duration::from_millis(4))
-        );
-        assert_eq!(
-            parse_duration("500ms60µs".to_string()),
-            Some(Duration::from_millis(500) + Duration::from_micros(60))
-        );
-        assert_eq!(
-            parse_duration("900us21ns".to_string()),
-            Some(Duration::from_micros(900) + Duration::from_nanos(21))
-        );
-    }
+    pub mod rlp_str_opt {
 
-    #[test]
-    fn parse_duration_simple_with_decimals() {
-        assert_eq!(
-            parse_duration("1.5h".to_string()),
-            Some(Duration::from_secs(60 * 90))
-        );
-        assert_eq!(
-            parse_duration("0.5m".to_string()),
-            Some(Duration::from_secs(30))
-        );
-        assert_eq!(
-            parse_duration("4.5s".to_string()),
-            Some(Duration::from_secs_f32(4.5))
-        );
-        assert_eq!(
-            parse_duration("0.8ms".to_string()),
-            Some(Duration::from_micros(800))
-        );
-        assert_eq!(
-            parse_duration("0.95us".to_string()),
-            Some(Duration::from_nanos(950))
-        );
-        // Rounded Up
-        assert_eq!(
-            parse_duration("0.75ns".to_string()),
-            Some(Duration::from_nanos(1))
-        );
-    }
+        use serde::Serialize;
 
-    #[test]
-    fn parse_duration_mixed_decimals() {
-        assert_eq!(
-            parse_duration("1.5h0.5m10s".to_string()),
-            Some(Duration::from_secs(60 * 90 + 30 + 10))
-        );
-        assert_eq!(
-            parse_duration("0.5m15s".to_string()),
-            Some(Duration::from_secs(30 + 15))
-        );
+        use crate::types::block_access_list::BlockAccessList;
+
+        use super::*;
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<BlockAccessList>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = Option::<String>::deserialize(d)?;
+            match value {
+                Some(s) if !s.is_empty() => hex::decode(s.trim_start_matches("0x"))
+                    .map_err(|e| D::Error::custom(e.to_string()))
+                    .and_then(|b| {
+                        BlockAccessList::decode(&b)
+                            .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
+                    })
+                    .map(Some),
+                _ => Ok(None),
+            }
+        }
+
+        pub fn serialize<S>(
+            value: &Option<BlockAccessList>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let bal = value
+                .as_ref()
+                .map(|bal| bal.encode_to_vec())
+                .map(|bytes| format!("0x{}", hex::encode(bytes)));
+            Option::<String>::serialize(&bal, serializer)
+        }
     }
 }

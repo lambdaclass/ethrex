@@ -14,6 +14,11 @@ permissions:
   contents: read
   actions: write
 
+env:
+  # Work around frequent libgit2/submodule fetch clakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
@@ -60,10 +65,10 @@ jobs:
               limit: ".*fork_Prague.*",
             }
           - {
-              name: "Consume Engine tests (Osaka)",
-              file_name: consume-engine-osaka,
+              name: "Consume Engine tests (Amsterdam)",
+              file_name: consume-engine-amsterdam,
               simulation: ethereum/eels/consume-engine,
-              limit: ".*fork_Osaka.*",
+              limit: ".*fork_Amsterdam.*",
             }
           - {
               name: "Consume RLP tests (Rest)",
@@ -77,11 +82,14 @@ jobs:
               simulation: ethereum/eels/consume-rlp,
               limit: ".*fork_Prague.*",
             }
+          # Lower parallelism to avoid OOM on CI (runner gets SIGTERM'd at ~68min
+          # with parallelism 4, likely due to larger BAL fixture set + bigger block bodies)
           - {
-              name: "Consume RLP tests (Osaka)",
-              file_name: consume-rlp-osaka,
+              name: "Consume RLP tests (Amsterdam)",
+              file_name: consume-rlp-amsterdam,
               simulation: ethereum/eels/consume-rlp,
-              limit: ".*fork_Osaka.*",
+              limit: ".*fork_Amsterdam.*",
+              parallelism: 2,
             }
           - {
               name: "Execute Blobs tests",
@@ -109,12 +117,26 @@ jobs:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
         run: |
-          FLAGS='--sim.parallelism 4 --sim.loglevel 1'
+          FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
-            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
-            FLAGS+=" --sim.buildarg branch=forks/osaka"
+            # Use fork-specific fixtures to ensure comprehensive test coverage
+            if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
+              # Amsterdam tests use fixtures_bal which includes BAL-specific tests
+              FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz"
+              FLAGS+=" --sim.buildarg branch=devnets/bal/2"
+            else
+              # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use fixtures_develop
+              # which includes comprehensive test coverage including static tests
+              FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
+              FLAGS+=" --sim.buildarg branch=forks/osaka"
+            fi
             FLAGS+=" --client.checktimelimit=180s"
           fi
+
+          if [[ "$SIMULATION" == "ethereum/rpc-compat" ]]; then
+            FLAGS+=" --sim.buildarg branch=d08382ae5c808680e976fce4b73f4ba91647199b"
+          fi
+
           if [[ -n "$SIM_LIMIT" ]]; then
             FLAGS+=" --sim.limit \"$SIM_LIMIT\""
           fi

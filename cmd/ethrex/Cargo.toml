@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -19,6 +20,7 @@ ethrex-l2-common = { workspace = true, optional = true }
 ethrex-l2-rpc = { workspace = true, optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 ethrex-p2p.workspace = true
+ethrex-repl.workspace = true
 ethrex-prover = { workspace = true, optional = true, features = ["l2"] }
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
@@ -52,6 +54,8 @@ reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
+tracing-appender = "0.2"
+pprof = { version = "0.15", features = ["cpp", "prost-codec", "frame-pointer"], optional = true }
 
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
@@ -101,6 +105,8 @@ jemalloc_profiling = [
   "ethrex-rpc/jemalloc_profiling",
 ]
 sync-test = ["ethrex-p2p/sync-test"]
+# discv5 is currently experimental and should only be enabled for development purposes
+experimental-discv5 = ["ethrex-p2p/experimental-discv5"]
 
 l2 = [
   "ethrex-l2",
@@ -120,6 +126,9 @@ l2-sql = ["ethrex-storage-rollup/sql"]
 sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
+
+perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
+cpu_profiling = ["dep:pprof"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }

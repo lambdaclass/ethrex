@@ -8,10 +8,12 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
-    Address, U256,
+    Address, BigEndianHash, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
         GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
@@ -23,8 +25,11 @@ use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
 };
+use ethrex_levm::db::Database;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
+#[cfg(feature = "perf_opcode_timings")]
+use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
@@ -33,7 +38,10 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rustc_hash::FxHashMap;
 use std::cmp::min;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -45,31 +53,81 @@ use std::sync::mpsc::Sender;
 #[derive(Debug)]
 pub struct LEVM;
 
+/// Checks that adding `tx_gas_limit` to `block_gas_used` doesn't exceed `block_gas_limit`.
+/// NOTE: Message must contain "Gas allowance exceeded" and "Block gas used overflow"
+/// as literal substrings for the EELS exception mapper (see execution-specs ethrex.py).
+/// Can be simplified once we update the mapper regexes.
+fn check_gas_limit(
+    block_gas_used: u64,
+    tx_gas_limit: u64,
+    block_gas_limit: u64,
+) -> Result<(), EvmError> {
+    if block_gas_used + tx_gas_limit > block_gas_limit {
+        return Err(EvmError::Transaction(format!(
+            "Gas allowance exceeded: Block gas used overflow: \
+             used {block_gas_used} + tx limit {tx_gas_limit} > block limit {block_gas_limit}"
+        )));
+    }
+    Ok(())
+}
+
 impl LEVM {
+    /// Execute a block and return the execution result.
+    ///
+    /// Also records and returns the Block Access List (EIP-7928) for Amsterdam+ forks.
+    /// The BAL will be `None` for pre-Amsterdam forks.
     pub fn execute_block(
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-    ) -> Result<BlockExecutionResult, EvmError> {
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
+        let chain_config = db.store.get_chain_config()?;
+        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
+
+        // Enable BAL recording for Amsterdam+ forks
+        if record_bal {
+            db.enable_bal_recording();
+            // Set index 0 for pre-execution phase (system contracts)
+            db.set_bal_index(0);
+        }
+
         Self::prepare_block(block, db, vm_type)?;
 
         let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0;
+        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
+        let mut cumulative_gas_used = 0_u64;
+        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
+        let mut block_gas_used = 0_u64;
+        let transactions_with_sender =
+            block.body.get_transactions_with_sender().map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
-            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })? {
-            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
-                return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
-                    block.header.gas_limit,
-                    tx.gas_limit()
-                )));
+        for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+            check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+
+            // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
+            if record_bal {
+                #[allow(clippy::cast_possible_truncation)]
+                db.set_bal_index((tx_idx + 1) as u16);
+
+                // Record tx sender and recipient for BAL
+                if let Some(recorder) = db.bal_recorder_mut() {
+                    recorder.record_touched_address(tx_sender);
+                    if let TxKind::Call(to) = tx.to() {
+                        recorder.record_touched_address(to);
+                    }
+                }
             }
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
-            cumulative_gas_used += report.gas_used;
+            // EIP-7778: Separate gas tracking
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            cumulative_gas_used += report.gas_spent;
+            block_gas_used += report.gas_used;
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -80,7 +138,20 @@ impl LEVM {
             receipts.push(receipt);
         }
 
+        // Set BAL index for post-execution phase (withdrawals, uint16)
+        if record_bal {
+            #[allow(clippy::cast_possible_truncation)]
+            let withdrawal_index = (block.body.transactions.len() + 1) as u16;
+            db.set_bal_index(withdrawal_index);
+        }
+
         if let Some(withdrawals) = &block.body.withdrawals {
+            // Record ALL withdrawal recipients for BAL per EIP-7928:
+            // "Withdrawal recipients regardless of amount"
+            // The amount filter only applies to balance_changes, not touched_addresses
+            if record_bal && let Some(recorder) = db.bal_recorder_mut() {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
             Self::process_withdrawals(db, withdrawals)?;
         }
 
@@ -92,7 +163,17 @@ impl LEVM {
             VMType::L2(_) => Default::default(),
         };
 
-        Ok(BlockExecutionResult { receipts, requests })
+        // Extract BAL if recording was enabled
+        let bal = db.take_bal();
+
+        Ok((
+            BlockExecutionResult {
+                receipts,
+                requests,
+                block_gas_used,
+            },
+            bal,
+        ))
     }
 
     pub fn execute_block_pipeline(
@@ -101,27 +182,50 @@ impl LEVM {
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
-    ) -> Result<BlockExecutionResult, EvmError> {
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
+        let chain_config = db.store.get_chain_config()?;
+        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
+
+        // Enable BAL recording for Amsterdam+ forks
+        if record_bal {
+            db.enable_bal_recording();
+            // Set index 0 for pre-execution phase (system contracts)
+            db.set_bal_index(0);
+        }
+
         Self::prepare_block(block, db, vm_type)?;
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0;
-
+        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
+        let mut cumulative_gas_used = 0_u64;
+        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
+        let mut block_gas_used = 0_u64;
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
-            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })? {
-            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
-                return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
-                    block.header.gas_limit,
-                    tx.gas_limit()
-                )));
+        let transactions_with_sender =
+            block.body.get_transactions_with_sender().map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
+
+        for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+            check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+
+            // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
+            if record_bal {
+                #[allow(clippy::cast_possible_truncation)]
+                db.set_bal_index((tx_idx + 1) as u16);
+
+                // Record tx sender and recipient for BAL
+                if let Some(recorder) = db.bal_recorder_mut() {
+                    recorder.record_touched_address(tx_sender);
+                    if let TxKind::Call(to) = tx.to() {
+                        recorder.record_touched_address(to);
+                    }
+                }
             }
 
             let report = Self::execute_tx_in_block(
@@ -131,6 +235,7 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                false,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -139,7 +244,12 @@ impl LEVM {
                 tx_since_last_flush += 1;
             }
 
-            cumulative_gas_used += report.gas_used;
+            // EIP-7778: Separate gas tracking
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            cumulative_gas_used += report.gas_spent;
+            block_gas_used += report.gas_used;
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -149,23 +259,34 @@ impl LEVM {
 
             receipts.push(receipt);
         }
+
+        #[cfg(feature = "perf_opcode_timings")]
+        {
+            let mut timings = OPCODE_TIMINGS.lock().expect("poison");
+            timings.inc_tx_count(receipts.len());
+            timings.inc_block_count();
+            ::tracing::info!("{}", timings.info_pretty());
+            let precompiles_timings = PRECOMPILES_TIMINGS.lock().expect("poison");
+            ::tracing::info!("{}", precompiles_timings.info_pretty());
+        }
+
         if queue_length.load(Ordering::Relaxed) == 0 {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
-        for (address, increment) in block
-            .body
-            .withdrawals
-            .iter()
-            .flatten()
-            .filter(|withdrawal| withdrawal.amount > 0)
-            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-        {
-            let account = db
-                .get_account_mut(address)
-                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
+        // Set BAL index for post-execution phase (withdrawals, uint16)
+        if record_bal {
+            #[allow(clippy::cast_possible_truncation)]
+            let withdrawal_index = (block.body.transactions.len() + 1) as u16;
+            db.set_bal_index(withdrawal_index);
+        }
 
-            account.info.balance += increment.into();
+        if let Some(withdrawals) = &block.body.withdrawals {
+            // Record ALL withdrawal recipients for BAL per EIP-7928
+            if record_bal && let Some(recorder) = db.bal_recorder_mut() {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
+            Self::process_withdrawals(db, withdrawals)?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
@@ -177,7 +298,135 @@ impl LEVM {
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
-        Ok(BlockExecutionResult { receipts, requests })
+        // Extract BAL if recording was enabled
+        let bal = db.take_bal();
+
+        Ok((
+            BlockExecutionResult {
+                receipts,
+                requests,
+                block_gas_used,
+            },
+            bal,
+        ))
+    }
+
+    /// Pre-warms state by executing all transactions in parallel, grouped by sender.
+    ///
+    /// Transactions from the same sender are executed sequentially within their group
+    /// to ensure correct nonce and balance propagation. Different sender groups run
+    /// in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
+    /// improves warmup accuracy by avoiding nonce mismatches within sender groups.
+    ///
+    /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
+    /// parallel workers can benefit from shared caching. The same cache should
+    /// be used by the sequential execution phase.
+    pub fn warm_block(
+        block: &Block,
+        store: Arc<dyn Database>,
+        vm_type: VMType,
+    ) -> Result<(), EvmError> {
+        let mut db = GeneralizedDatabase::new(store.clone());
+
+        let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })?;
+
+        // Group transactions by sender for sequential execution within groups
+        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
+        for (tx, sender) in &txs_with_sender {
+            sender_groups.entry(*sender).or_default().push(tx);
+        }
+
+        // Parallel across sender groups, sequential within each group
+        sender_groups.into_par_iter().for_each_with(
+            Vec::with_capacity(STACK_LIMIT),
+            |stack_pool, (sender, txs)| {
+                // Each sender group gets its own db instance for state propagation
+                let mut group_db = GeneralizedDatabase::new(store.clone());
+                // Execute transactions sequentially within sender group
+                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
+                for tx in txs {
+                    let _ = Self::execute_tx_in_block(
+                        tx,
+                        sender,
+                        &block.header,
+                        &mut group_db,
+                        vm_type,
+                        stack_pool,
+                        true,
+                    );
+                }
+            },
+        );
+
+        for withdrawal in block
+            .body
+            .withdrawals
+            .iter()
+            .flatten()
+            .filter(|withdrawal| withdrawal.amount > 0)
+        {
+            db.get_account_mut(withdrawal.address).map_err(|_| {
+                EvmError::DB(format!(
+                    "Withdrawal account {} not found",
+                    withdrawal.address
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Pre-warms state by loading all accounts and storage slots listed in the
+    /// Block Access List directly, without speculative re-execution.
+    ///
+    /// Two-phase approach:
+    /// - Phase 1: Load all account states (parallel via rayon) -> warms CachingDatabase
+    ///   account cache AND trie layer cache nodes
+    /// - Phase 2: Load all storage slots (parallel via rayon, per-slot) + contract code
+    ///   (parallel via rayon, per-account) -> benefits from trie nodes cached in Phase 1
+    pub fn warm_block_from_bal(
+        bal: &BlockAccessList,
+        store: Arc<dyn Database>,
+    ) -> Result<(), EvmError> {
+        let accounts = bal.accounts();
+        if accounts.is_empty() {
+            return Ok(());
+        }
+
+        // Phase 1: Prefetch all account states in parallel.
+        // This warms the CachingDatabase account cache and the TrieLayerCache
+        // with state trie nodes, so Phase 2 storage reads benefit from cached lookups.
+        accounts.par_iter().for_each(|ac| {
+            let _ = store.get_account_state(ac.address);
+        });
+
+        // Phase 2: Prefetch storage slots and contract code in parallel.
+        // Storage is flattened to (address, slot) pairs so rayon can distribute
+        // work across threads regardless of how many slots each account has.
+        // Without flattening, a hot contract with hundreds of slots (e.g. a DEX
+        // pool) would monopolize a single thread while others go idle.
+        let slots: Vec<(ethrex_common::Address, ethrex_common::H256)> = accounts
+            .iter()
+            .flat_map(|ac| {
+                ac.all_storage_slots()
+                    .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
+            })
+            .collect();
+        slots.par_iter().for_each(|(addr, key)| {
+            let _ = store.get_storage_value(*addr, *key);
+        });
+
+        // Code prefetch: get_account_state is a cache hit from Phase 1
+        accounts.par_iter().for_each(|ac| {
+            if let Ok(acct) = store.get_account_state(ac.address)
+                && acct.code_hash != *EMPTY_KECCACK_HASH
+            {
+                let _ = store.get_account_code(acct.code_hash);
+            }
+        });
+
+        Ok(())
     }
 
     fn send_state_transitions_tx(
@@ -217,6 +466,10 @@ impl LEVM {
             coinbase: block_header.coinbase,
             timestamp: block_header.timestamp.into(),
             prev_randao: Some(block_header.prev_randao),
+            slot_number: block_header
+                .slot_number
+                .map(U256::from)
+                .unwrap_or(U256::zero()),
             chain_id: chain_config.chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
@@ -232,6 +485,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
+            disable_balance_check: false,
         };
 
         Ok(env)
@@ -264,8 +518,10 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        disable_balance_check: bool,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        env.disable_balance_check = disable_balance_check;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
@@ -287,7 +543,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionResult, EvmError> {
-        let mut env = env_from_generic(tx, block_header, db)?;
+        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
         env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
@@ -326,7 +582,15 @@ impl LEVM {
                 .get_account_mut(address)
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
+            let initial_balance = account.info.balance;
             account.info.balance += increment.into();
+            let new_balance = account.info.balance;
+
+            // Record balance change for BAL (EIP-7928)
+            if let Some(recorder) = db.bal_recorder_mut() {
+                recorder.set_initial_balance(address, initial_balance);
+                recorder.record_balance_change(address, new_balance);
+            }
         }
         Ok(())
     }
@@ -443,7 +707,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
-        let mut env = env_from_generic(&tx, header, db)?;
+        let mut env = env_from_generic(&tx, header, db, vm_type)?;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -546,10 +810,21 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm =
-        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
+    // EIP-7928: Mark BAL recorder as in system call mode to filter SYSTEM_ADDRESS changes
+    if let Some(recorder) = db.bal_recorder.as_mut() {
+        recorder.enter_system_call();
+    }
 
-    let report = vm.execute().map_err(EvmError::from)?;
+    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)
+        .and_then(|mut vm| vm.execute())
+        .map_err(EvmError::from);
+
+    // EIP-7928: Exit system call mode before restoring accounts (must run even on error)
+    if let Some(recorder) = db.bal_recorder.as_mut() {
+        recorder.exit_system_call();
+    }
+
+    let report = result?;
 
     if let Some(system_account) = system_account_backup {
         db.current_accounts_state
@@ -685,12 +960,31 @@ fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
+    vm_type: VMType,
 ) -> Result<Environment, VMError> {
     let chain_config = db.store.get_chain_config()?;
     let gas_price =
         calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     let block_excess_blob_gas = header.excess_blob_gas.map(U256::from);
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
+
+    // Validate slot_number for Amsterdam+ blocks
+    // For L2 chains, slot_number is always 0
+    let slot_number = if let VMType::L2(_) = vm_type {
+        U256::zero()
+    } else if config.fork >= Fork::Amsterdam {
+        header
+            .slot_number
+            .map(U256::from)
+            .ok_or(VMError::Internal(InternalError::Custom(
+                "slot_number must be present in Amsterdam+ blocks".to_string(),
+            )))?
+    } else {
+        // Pre-Amsterdam: slot_number should be None, default to zero
+        // This value should never be used since SLOTNUM opcode doesn't exist pre-Amsterdam
+        header.slot_number.map(U256::from).unwrap_or(U256::zero())
+    };
+
     Ok(Environment {
         origin: tx.from.0.into(),
         gas_limit: tx
@@ -701,6 +995,7 @@ fn env_from_generic(
         coinbase: header.coinbase,
         timestamp: header.timestamp.into(),
         prev_randao: Some(header.prev_randao),
+        slot_number,
         chain_id: chain_config.chain_id.into(),
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
         base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
@@ -716,6 +1011,7 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
+        disable_balance_check: false,
     })
 }
 

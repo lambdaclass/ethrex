@@ -72,7 +72,7 @@ impl L2Command {
 
         let matches = app.try_get_matches_from(args_with_program)?;
         let init_options = Options::from_arg_matches(&matches)?;
-        let log_filter_handler = l2::init_tracing(&init_options);
+        let (log_filter_handler, _guard) = l2::init_tracing(&init_options);
         let mut l2_options = init_options;
 
         if l2_options.node_opts.dev {
@@ -95,6 +95,8 @@ impl L2Command {
                 .sequencer_opts
                 .committer_opts
                 .on_chain_proposer_address = Some(contract_addresses.on_chain_proposer_address);
+            l2_options.sequencer_opts.committer_opts.timelock_address =
+                contract_addresses.timelock_address;
             l2_options.sequencer_opts.watcher_opts.bridge_address =
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");
@@ -153,7 +155,7 @@ pub enum Command {
     },
     #[command(about = "Reverts unverified batches.")]
     RevertBatch {
-        #[arg(help = "ID of the batch to revert to")]
+        #[arg(help = "ID of the batch to revert. This and all following batches will be removed.")]
         batch: u64,
         #[arg(
             long = "datadir",
@@ -475,7 +477,7 @@ impl Command {
                         }
 
                         // Execute block
-                        blockchain.add_block_pipeline(block.clone())?;
+                        blockchain.add_block_pipeline(block.clone(), None)?;
 
                         // Add fee config to rollup store
                         rollup_store
@@ -583,7 +585,7 @@ impl Command {
                     contract_opts
                         .call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
                         .await?;
-                    info!("Reverted to batch {batch} on OnChainProposer")
+                    info!("Reverted batch {batch} on OnChainProposer")
                 } else {
                     info!("Private key not given, not updating contract.");
                 }

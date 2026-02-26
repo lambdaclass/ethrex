@@ -1,11 +1,10 @@
 use crate::based::block_fetcher::BlockFetcherError;
-use crate::based::state_updater::StateUpdaterError;
 use crate::sequencer::admin_server::AdminError;
+use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
-use aligned_sdk::common::errors::SubmitError;
+use aligned_sdk::gateway::provider::GatewayError;
 use ethereum_types::FromStrRadixErr;
-use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
-use ethrex_common::Address;
+use ethrex_blockchain::error::{ChainError, InvalidBlockError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
@@ -141,23 +140,23 @@ pub enum ProofSenderError {
     InternalError(#[from] GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
     RollUpStoreError(#[from] RollupStoreError),
-    #[error("Proof Sender failed to estimate Aligned fee: {0}")]
-    AlignedFeeEstimateError(String),
-    #[error("Proof Sender failed to get nonce from batcher: {0}")]
+    #[error("Proof Sender failed to get nonce from gateway: {0}")]
     AlignedGetNonceError(String),
-    #[error("Proof Sender failed to submit proof(s): {0}")]
-    AlignedSubmitProofError(Box<SubmitError>),
+    #[error("Proof Sender failed to submit proof(s): {0:?}")]
+    AlignedSubmitProofError(GatewayError),
     #[error("Wrong batch proof format; should be compressed but found groth16 instead")]
     AlignedWrongProofFormat,
+    #[error("Aligned mode only supports SP1 proofs, got {0}")]
+    AlignedUnsupportedProverType(String),
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
     #[error("Failed to convert integer")]
     TryIntoError(#[from] std::num::TryFromIntError),
 }
 
-impl From<SubmitError> for ProofSenderError {
-    fn from(value: SubmitError) -> Self {
-        ProofSenderError::AlignedSubmitProofError(value.into())
+impl From<GatewayError> for ProofSenderError {
+    fn from(value: GatewayError) -> Self {
+        ProofSenderError::AlignedSubmitProofError(value)
     }
 }
 
@@ -228,6 +227,12 @@ pub enum BlockProducerError {
     EthClientError(#[from] EthClientError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+}
+
+impl From<InvalidBlockError> for BlockProducerError {
+    fn from(err: InvalidBlockError) -> Self {
+        BlockProducerError::ChainError(ChainError::from(err))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -336,62 +341,4 @@ pub enum ConnectionHandlerError {
     InternalError(#[from] GenServerError),
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum MonitorError {
-    #[error("Failed because of io error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Failed to fetch {0:?} logs from {1}, {2}")]
-    LogsSignatures(Vec<String>, Address, #[source] EthClientError),
-    #[error("Failed to get batch by number {0}: {1}")]
-    GetBatchByNumber(u64, #[source] RollupStoreError),
-    #[error("Failed to get blocks by batch number {0}: {1}")]
-    GetBlocksByBatch(u64, #[source] RollupStoreError),
-    #[error("Batch {0} not found in the rollup store")]
-    BatchNotFound(u64),
-    #[error("Failed to get block by number {0}, {1}")]
-    GetBlockByNumber(u64, #[source] StoreError),
-    #[error("Block {0} not found in the store")]
-    BlockNotFound(u64),
-    #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
-    #[error("Failed to get logs topics {0}")]
-    LogsTopics(usize),
-    #[error("Failed to get logs data from {0}")]
-    LogsData(usize),
-    #[error("Failed to get area chunks")]
-    Chunks,
-    #[error("Failed to get latest block")]
-    GetLatestBlock,
-    #[error("Failed to get latest batch")]
-    GetLatestBatch,
-    #[error("Failed to get latest verified batch")]
-    GetLatestVerifiedBatch,
-    #[error("Failed to get commited batch")]
-    GetLatestCommittedBatch,
-    #[error("Failed to get last L1 block fetched")]
-    GetLastFetchedL1,
-    #[error("Failed to get pending privileged transactions")]
-    GetPendingPrivilegedTx,
-    #[error("Failed to get transaction pool")]
-    TxPoolError,
-    #[error("Failed to encode calldata: {0}")]
-    CalldataEncodeError(#[from] CalldataEncodeError),
-    #[error("Failed to parse privileged transaction")]
-    PrivilegedTxParseError,
-    #[error("Failure in rpc call: {0}")]
-    EthClientError(#[from] EthClientError),
-    #[error("Failed to get receipt for transaction")]
-    ReceiptError,
-    #[error("Expected transaction to have logs")]
-    NoLogs,
-    #[error("Expected items in the table")]
-    NoItemsInTable,
-    #[error("RPC List can't be empty")]
-    RPCListEmpty,
-    #[error("Error converting batch window")]
-    BatchWindow,
-    #[error("Error while parsing private key")]
-    DecodingError(String),
-    #[error("Error parsing secret key")]
-    FromHexError(#[from] hex::FromHexError),
-}
+pub use ethrex_monitor::MonitorError;

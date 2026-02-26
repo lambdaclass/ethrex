@@ -30,10 +30,8 @@ use spawned_concurrency::tasks::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    BlockProducerConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-};
+use crate::{BlockProducerConfig, SequencerConfig};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use std::str::FromStr;
 
 use super::errors::BlockProducerError;
@@ -183,6 +181,7 @@ impl BlockProducer {
             random: H256::zero(),
             withdrawals: Default::default(),
             beacon_root: Some(head_beacon_block_root),
+            slot_number: None,
             version,
             elasticity_multiplier: self.elasticity_multiplier,
             gas_ceil: self.block_gas_limit,
@@ -221,6 +220,8 @@ impl BlockProducer {
         let execution_result = BlockExecutionResult {
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
+            // Use the block header's gas_used which was set during payload building
+            block_gas_used: block.header.gas_used,
         };
 
         let account_updates_list = self
@@ -332,7 +333,7 @@ impl GenServer for BlockProducer {
     ) -> CastResponse {
         match message {
             InMessage::Produce => {
-                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
                     let _ = self
                         .produce_block()
                         .await
@@ -360,7 +361,7 @@ impl GenServer for BlockProducer {
     ) -> CallResponse<Self> {
         match message {
             CallMessage::Health => CallResponse::Reply(OutMessage::Health(BlockProducerHealth {
-                sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+                sequencer_state: format!("{:?}", self.sequencer_state.status()),
                 block_time_ms: self.block_time_ms,
                 coinbase_address: self.coinbase_address,
                 elasticity_multiplier: self.elasticity_multiplier,

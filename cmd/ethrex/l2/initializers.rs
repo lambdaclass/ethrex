@@ -5,19 +5,19 @@ use crate::initializers::{
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
-    NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
+    NodeConfigFile, get_client_version, get_client_version_string, init_datadir,
+    read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::sequencer::block_producer;
-use ethrex_l2::sequencer::l1_committer;
-use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
+use ethrex_l2::sequencer::l1_committer::{self, regenerate_state};
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
+    peer_table::PeerTable,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -105,7 +105,17 @@ pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
     rollup_store
 }
 
-fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
+fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+        network,
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -118,7 +128,12 @@ fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Registry>> {
+pub fn init_tracing(
+    opts: &L2Options,
+) -> (
+    Option<reload::Handle<EnvFilter, Registry>>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
@@ -130,9 +145,10 @@ pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Regist
         tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
 
         // Monitor already registers all log levels
-        None
+        (None, None)
     } else {
-        Some(initializers::init_tracing(&opts.node_opts))
+        let (handle, guard) = initializers::init_tracing(&opts.node_opts);
+        (Some(handle), guard)
     }
 }
 
@@ -199,11 +215,13 @@ pub async fn init_l2(
         max_mempool_size: opts.node_opts.mempool_max_size,
         r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
+        max_blobs_per_block: None, // L2 doesn't support blob transactions
+        precompute_witnesses: opts.node_opts.precompute_witnesses,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
-    regenerate_head_state(&store, &rollup_store, &blockchain).await?;
+    regenerate_state(&store, &rollup_store, &blockchain, None).await?;
 
     let signer = get_signer(&datadir);
 
@@ -217,10 +235,11 @@ pub async fn init_l2(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    let based = opts.sequencer_opts.based;
-
-    let (peer_handler, syncer) = if based {
-        let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
+    let (peer_handler, syncer) = if !opts.node_opts.p2p_disabled {
+        if !opts.sequencer_opts.based {
+            blockchain.set_synced();
+        }
+        let peer_table = PeerTable::spawn(opts.node_opts.target_peers, store.clone());
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
             tracker.clone(),
@@ -228,7 +247,7 @@ pub async fn init_l2(
             peer_table.clone(),
             store.clone(),
             blockchain.clone(),
-            get_client_version(),
+            get_client_version_string(),
             #[cfg(feature = "l2")]
             Some(P2PBasedContext {
                 store_rollup: rollup_store.clone(),
@@ -300,7 +319,7 @@ pub async fn init_l2(
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
-        init_metrics(&opts.node_opts, tracker);
+        init_metrics(&opts.node_opts, &network.to_string(), tracker);
     }
 
     let sequencer_cancellation_token = CancellationToken::new();
@@ -338,7 +357,7 @@ pub async fn init_l2(
     let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    if based {
+    if !opts.node_opts.p2p_disabled {
         let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
         let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
         store_node_config_file(node_config, node_config_path);

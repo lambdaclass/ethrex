@@ -16,17 +16,19 @@ use ethrex_common::{
         InvalidBlockHeaderError,
     },
 };
-use ethrex_prover_lib::backend::Backend;
+use ethrex_guest_program::input::ProgramInput;
+#[cfg(feature = "sp1")]
+use ethrex_prover_lib::Sp1Backend;
+use ethrex_prover_lib::{BackendType, ExecBackend, ProverBackend};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
-use guest_program::input::ProgramInput;
 use regex::Regex;
 
 pub fn parse_and_execute(
     path: &Path,
     skipped_tests: Option<&[&str]>,
-    stateless_backend: Option<Backend>,
+    stateless_backend: Option<BackendType>,
 ) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_tests(path);
@@ -62,13 +64,18 @@ pub fn parse_and_execute(
 pub async fn run_ef_test(
     test_key: &str,
     test: &TestUnit,
-    stateless_backend: Option<Backend>,
+    stateless_backend: Option<BackendType>,
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
-    let decoded_block = CoreBlock::decode(&genesis_rlp).unwrap();
+    let decoded_block = match CoreBlock::decode(&genesis_rlp) {
+        Ok(block) => block,
+        Err(e) => return Err(format!("Failed to decode genesis RLP: {e}")),
+    };
     let genesis_block_header = CoreBlockHeader::from(test.genesis_block_header.clone());
-    assert_eq!(decoded_block.header, genesis_block_header);
+    if decoded_block.header != genesis_block_header {
+        return Err("Decoded genesis header does not match expected header".to_string());
+    }
 
     let store = build_store_for_test(test).await;
 
@@ -112,7 +119,7 @@ async fn run(
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block);
+        let chain_result = blockchain.add_block_pipeline(block, None);
 
         match chain_result {
             Err(error) => {
@@ -385,7 +392,7 @@ async fn re_run_stateless(
     blockchain: Blockchain,
     test: &TestUnit,
     test_key: &str,
-    backend: Backend,
+    backend_type: BackendType,
 ) -> Result<(), String> {
     let blocks = test
         .blocks
@@ -396,10 +403,11 @@ async fn re_run_stateless(
     let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
 
     let witness = blockchain.generate_witness_for_blocks(&blocks).await;
-    if test_should_fail && witness.is_err() {
-        // We can't generate witness for a test that should fail.
+    if test_should_fail {
+        // The normal run() already verified this test fails correctly.
+        // The stateless prover proves valid block execution, not invalid block rejection.
         return Ok(());
-    } else if !test_should_fail && let Err(err) = witness {
+    } else if let Err(err) = witness {
         return Err(format!(
             "Failed to create witness for a test that should not fail: {err}"
         ));
@@ -407,14 +415,15 @@ async fn re_run_stateless(
     // At this point witness is guaranteed to be Ok
     let execution_witness = witness.unwrap();
 
-    let program_input = ProgramInput {
-        blocks,
-        execution_witness,
-        elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
-        ..Default::default()
+    let program_input = ProgramInput::new(blocks, execution_witness);
+
+    let execute_result = match backend_type {
+        BackendType::Exec => ExecBackend::new().execute(program_input),
+        #[cfg(feature = "sp1")]
+        BackendType::SP1 => Sp1Backend::new().execute(program_input),
     };
 
-    if let Err(e) = ethrex_prover_lib::execute(backend, program_input) {
+    if let Err(e) = execute_result {
         if !test_should_fail {
             return Err(format!(
                 "Expected test: {test_key} to succeed but failed with {e}"

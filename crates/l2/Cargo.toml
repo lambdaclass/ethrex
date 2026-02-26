@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -30,6 +31,7 @@ ethrex-l2-rpc.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
 ethrex-sdk = { path = "./sdk" }
+ethrex-monitor.workspace = true
 ethrex-p2p.workspace = true
 hex.workspace = true
 bytes.workspace = true
@@ -46,7 +48,8 @@ bincode = "1.3.3"
 serde_with.workspace = true
 lazy_static.workspace = true
 aligned-sdk.workspace = true
-ethers = "2.0"
+alloy = { version = "1.1.1", default-features = false, features = ["signer-local"] }
+sp1-sdk = { version = "=5.0.8", optional = true }
 chrono = "0.4.41"
 clap.workspace = true
 crossterm = { version = "0.29.0", features = ["event-stream"] }
@@ -58,7 +61,7 @@ tabwriter = "1.4.1"
 color-eyre = "0.6.5"
 axum.workspace = true
 
-guest_program = { path = "./prover/src/guest_program/" }
+ethrex-guest-program = { path = "../guest-program" }
 
 
 [build-dependencies]
@@ -82,11 +85,11 @@ redundant_clone = "warn"
 [features]
 default = ["l2"]
 
-sp1 = ["guest_program/sp1"]
-risc0 = ["guest_program/risc0"]
+sp1 = ["ethrex-guest-program/sp1", "dep:sp1-sdk"]
+risc0 = ["ethrex-guest-program/risc0"]
 
 rocksdb = []
 
 metrics = ["ethrex-blockchain/metrics"]
 
-l2 = ["guest_program/l2"]
+l2 = ["ethrex-guest-program/l2"]

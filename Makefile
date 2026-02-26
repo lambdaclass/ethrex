@@ -1,12 +1,20 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io run-hive-eels-blobs
+		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
+		run-hive-eels-bal-quick
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
+# Frame pointers for profiling (default off, set FRAME_POINTERS=1 to enable)
+FRAME_POINTERS ?= 0
+
+ifeq ($(FRAME_POINTERS),1)
+PROFILING_CFG := --config .cargo/profiling.toml
+endif
+
 build: ## 🔨 Build the client
-	cargo build --workspace
+	cargo build $(PROFILING_CFG) --workspace
 
 lint-l1:
 	cargo clippy --lib --bins -F debug,sync-test \
@@ -14,12 +22,12 @@ lint-l1:
 
 lint-l2:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
-		--workspace --exclude ethrex-prover --exclude guest_program \
+		--workspace --exclude ethrex-prover --exclude ethrex-guest-program \
 		--release -- -D warnings
 
 lint-gpu:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
-		--workspace --exclude ethrex-prover --exclude guest_program \
+		--workspace --exclude ethrex-prover --exclude ethrex-guest-program \
 		--release -- -D warnings
 
 lint: lint-l1 lint-l2 ## 🧹 Linter check
@@ -28,7 +36,7 @@ CRATE ?= *
 # CAUTION: It is important that the ethrex-l2 crate remains excluded here,
 # as its tests depend on external setup that is not handled by this Makefile.
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-l2
+	cargo test $(PROFILING_CFG) -p '$(CRATE)' --workspace --exclude ethrex-l2
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
@@ -45,15 +53,11 @@ run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
-	cargo run --bin ethrex -- \
-			--network ./fixtures/genesis/l1.json \
-			--http.port 8545 \
-			--http.addr 0.0.0.0 \
-			--authrpc.port 8551 \
-			--dev \
-			--datadir memory
+	cargo run $(PROFILING_CFG) --release -- \
+		--dev \
+		--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 82e5a7178138d892c0c31c3839c89d53ffd42d9a
+ETHEREUM_PACKAGE_REVISION := 234fb54662a42734b77720bc95e9ef45ba4115f9
 ETHEREUM_PACKAGE_DIR := ethereum-package
 
 checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
@@ -144,6 +148,14 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
+AMSTERDAM_FIXTURES_URL ?= https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz
+AMSTERDAM_FIXTURES_BRANCH ?= devnets/bal/2
+run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*fork_Amsterdam.*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
+
+run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS BAL quick tests (~850 tests for EIPs 7708,7778,7843,7928,8024)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(8024|7708|7778|7843|7928).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
+
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
@@ -162,16 +174,16 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--datadir test_ethrex
 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t eth-transfers
+	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t eth-transfers
 
 load-test-erc20:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t erc20
+	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t erc20
 
 load-test-fibonacci:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t fibonacci
+	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t fibonacci
 
 load-test-io:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t io-heavy
+	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
@@ -191,7 +203,7 @@ mermaid-init.js mermaid.min.js &:
 
 docs-deps: ## 📦 Install dependencies for generating the documentation
 	cargo install --version 0.9.4 mdbook-katex
-	cargo install --version 0.7.7 mdbook-linkcheck
+	cargo install --version 0.9.1 mdbook-linkcheck2
 	cargo install --version 0.8.0 mdbook-alerts
 	cargo install --version 0.15.0 mdbook-mermaid
 
@@ -203,8 +215,24 @@ docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the docume
 
 update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree
-	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml
-	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml
-	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml
-	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/bin/sp1/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/bin/risc0/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/bin/zisk/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
+	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
+	cargo tree --manifest-path tooling/Cargo.toml
+	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
+
+check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
+	cargo metadata --locked > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/bin/sp1/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/bin/risc0/Cargo.toml > /dev/null
+	# We use metadata so we don't need to have the ZisK toolchain installed and verify compilation
+	# if changes made to the source code CI will run with the toolchain
+	cargo metadata --locked --manifest-path crates/guest-program/bin/zisk/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/bin/openvm/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path tooling/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path tooling/ef_tests/state/Cargo.toml > /dev/null

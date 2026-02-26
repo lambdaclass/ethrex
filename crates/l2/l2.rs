@@ -1,10 +1,10 @@
 pub mod based;
 pub mod errors;
-pub mod monitor;
+pub use ethrex_monitor as monitor;
 pub mod sequencer;
 pub mod utils;
 
-pub use based::{block_fetcher::BlockFetcher, state_updater::StateUpdater};
+pub use based::block_fetcher::BlockFetcher;
 pub use sequencer::configs::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,

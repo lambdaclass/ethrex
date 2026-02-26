@@ -139,6 +139,8 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         excess_blob_gas,
         parent_beacon_block_root,
         requests_hash,
+        block_access_list_hash: None,
+        slot_number: None,
     };
     let block = Block::new(header, body);
 
@@ -146,7 +148,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     let blockchain = Blockchain::new(store, ethrex_blockchain::BlockchainOptions::default());
 
-    let result = blockchain.add_block_pipeline(block);
+    let result = blockchain.add_block_pipeline(block, None);
 
     if result.is_err() && test_case.post.expected_exceptions.is_none() {
         return Err(RunnerError::Custom(
