@@ -17,6 +17,8 @@ use crate::{
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
+#[cfg(feature = "tokamak-l2")]
+use ethrex_common::types::l2::tokamak_fee_config::TokamakFeeConfig;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
@@ -64,6 +66,9 @@ pub enum VMType {
     L1,
     /// L2 rollup execution with additional fee handling.
     L2(FeeConfig),
+    /// Tokamak L2 execution with proven execution metadata and JIT policy.
+    #[cfg(feature = "tokamak-l2")]
+    TokamakL2(TokamakFeeConfig),
 }
 
 /// Execution substate that tracks changes during transaction execution.

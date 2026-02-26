@@ -68,7 +68,7 @@ perf_opcode_timings = []
 tokamak-jit = []       # JIT compilation tier
 test-utils = []        # Exposes reset_for_testing() and related test helpers
 tokamak-debugger = []  # Time-travel debugger
-tokamak-l2 = []        # Tokamak L2 hooks
+tokamak-l2 = ["ethrex-common/tokamak-l2"]  # Tokamak L2 hooks
 tokamak = ["tokamak-jit", "tokamak-debugger", "tokamak-l2"]  # Umbrella
 
 [lints.rust]

@@ -134,6 +134,9 @@ pub enum BlockchainType {
     L1,
     /// Layer 2 rollup with additional fee configuration.
     L2(L2Config),
+    /// Tokamak L2 with proven execution and JIT policy.
+    #[cfg(feature = "tokamak-l2")]
+    TokamakL2(TokamakL2Config),
 }
 
 /// Configuration for L2 rollup operation.
@@ -143,6 +146,18 @@ pub struct L2Config {
     ///
     /// Uses `RwLock` because the Watcher updates L1 fee config periodically.
     pub fee_config: Arc<RwLock<FeeConfig>>,
+}
+
+/// Configuration for Tokamak L2 rollup operation.
+#[cfg(feature = "tokamak-l2")]
+#[derive(Debug, Clone)]
+pub struct TokamakL2Config {
+    /// Standard L2 configuration (fee config with RwLock).
+    pub l2_config: L2Config,
+    /// Whether proven execution metadata should be recorded.
+    pub proven_execution: bool,
+    /// JIT compilation policy.
+    pub jit_policy: ethrex_common::types::l2::tokamak_fee_config::JitPolicy,
 }
 
 /// Core blockchain implementation for block validation and execution.
@@ -1341,6 +1356,28 @@ impl Blockchain {
                     };
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config)
                 }
+                #[cfg(feature = "tokamak-l2")]
+                BlockchainType::TokamakL2(ref config) => {
+                    use ethrex_common::types::l2::tokamak_fee_config::TokamakFeeConfig;
+                    let fee_config = match fee_configs {
+                        Some(fee_configs) => {
+                            fee_configs.get(i).ok_or(ChainError::WitnessGeneration(
+                                "FeeConfig not found for witness generation".to_string(),
+                            ))?
+                        }
+                        None => Err(ChainError::WitnessGeneration(
+                            "L2Config not found for witness generation".to_string(),
+                        ))?,
+                    };
+                    Evm::new_from_db_for_tokamak_l2(
+                        logger.clone(),
+                        TokamakFeeConfig {
+                            base: *fee_config,
+                            proven_execution: config.proven_execution,
+                            jit_policy: config.jit_policy,
+                        },
+                    )
+                }
             };
 
             // Re-execute block with logger
@@ -1936,6 +1973,21 @@ impl Blockchain {
                         EvmError::Custom("Fee config lock was poisoned".to_string())
                     })?,
                 ),
+                #[cfg(feature = "tokamak-l2")]
+                BlockchainType::TokamakL2(config) => {
+                    use ethrex_common::types::l2::tokamak_fee_config::TokamakFeeConfig;
+                    let fee_config = *config.l2_config.fee_config.read().map_err(|_| {
+                        EvmError::Custom("Fee config lock was poisoned".to_string())
+                    })?;
+                    Evm::new_from_db_for_tokamak_l2(
+                        logger.clone(),
+                        TokamakFeeConfig {
+                            base: fee_config,
+                            proven_execution: config.proven_execution,
+                            jit_policy: config.jit_policy,
+                        },
+                    )
+                }
             };
             (vm, Some(logger))
         } else {
@@ -2659,6 +2711,23 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
                 .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
 
             Evm::new_for_l2(vm_db, fee_config)?
+        }
+        #[cfg(feature = "tokamak-l2")]
+        BlockchainType::TokamakL2(config) => {
+            use ethrex_common::types::l2::tokamak_fee_config::TokamakFeeConfig;
+            let fee_config = *config
+                .l2_config
+                .fee_config
+                .read()
+                .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
+            Evm::new_for_tokamak_l2(
+                vm_db,
+                TokamakFeeConfig {
+                    base: fee_config,
+                    proven_execution: config.proven_execution,
+                    jit_policy: config.jit_policy,
+                },
+            )?
         }
     };
     Ok(evm)

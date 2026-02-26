@@ -38,6 +38,7 @@ default = ["secp256k1"]
 secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
+tokamak-l2 = ["ethrex-vm/tokamak-l2", "ethrex-common/tokamak-l2"]
 
 [lints.clippy]
 unwrap_used = "deny"

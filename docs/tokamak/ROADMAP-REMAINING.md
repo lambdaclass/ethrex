@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-26
-**Context**: Overall ~80% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-4 ✅ DONE.
+**Context**: Overall ~85% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE.
 
 ---
 
@@ -221,11 +221,18 @@
 - **Dependency**: F-1 ✅, C-1 ✅
 - **Completed**: Session 3294bdf97 — Full dashboard MVP with 71 total tests
 
-### F-3. L2 Integration [P3]
-- Implement `tokamak-l2` feature: custom fee config, L2 hooks
-- Currently: zero code behind the feature flag
-- **Dependency**: A-1 (L1 must work first)
-- **Estimate**: 40-80h (high uncertainty, depends on L2 spec)
+### F-3. L2 Integration [P3] ✅ DONE (scaffolding)
+- `TokamakFeeConfig` struct with `JitPolicy` enum (composition over `FeeConfig`) ✅
+- `VMType::TokamakL2` variant with feature-gated exhaustive match handling ✅
+- `TokamakL2Hook` wrapping `L2Hook` via composition + proven execution metadata ✅
+- Hook dispatch, Evm constructors, P256Verify precompile support ✅
+- `BlockchainType::TokamakL2` + `TokamakL2Config` with all 5 match arm updates ✅
+- `--tokamak-l2` CLI flag routing to `BlockchainType::TokamakL2` ✅
+- Feature flag propagation: levm → common, vm → levm + common, blockchain → vm + common, cmd → vm + blockchain ✅
+- **Verification**: 7 tests (4 TokamakFeeConfig serde + 3 TokamakL2Hook unit), clippy clean both states ✅
+- **Dependency**: A-1 ✅
+- **Remaining**: Tokamak-specific fee logic when L2 spec arrives (~24-64h)
+- **Completed**: L2 scaffolding with composition pattern
 
 ### F-4. Security Audit Prep [P3] ✅ DONE
 - `cargo-fuzz` harnesses: fuzz_analyzer, fuzz_optimizer, fuzz_differential ✅
@@ -256,7 +263,8 @@ Week 4:  [P2] D-1 decision ✅ + D-2 ✅ + D-3 ✅ → E-1 ✅
 Week 5+: [P2] E-2 ✅ + E-3 ✅
 Week 6:  [P3] F-1 ✅ + F-4 ✅ (parallel)
 Week 7:  [P3] F-2 ✅ (dashboard MVP)
-Later:   [P3] F-3 → F-5
+Week 8:  [P3] F-3 ✅ (L2 scaffolding)
+Later:   [P3] F-5
 ```
 
 ---

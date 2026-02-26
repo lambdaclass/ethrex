@@ -5,6 +5,8 @@ use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use ethrex_common::types::block_access_list::BlockAccessList;
+#[cfg(feature = "tokamak-l2")]
+use ethrex_common::types::l2::tokamak_fee_config::TokamakFeeConfig;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
@@ -65,6 +67,26 @@ impl Evm {
         fee_config: FeeConfig,
     ) -> Self {
         Self::_new_from_db(store, VMType::L2(fee_config))
+    }
+
+    #[cfg(feature = "tokamak-l2")]
+    pub fn new_for_tokamak_l2(
+        db: impl VmDatabase + 'static,
+        config: TokamakFeeConfig,
+    ) -> Result<Self, EvmError> {
+        let wrapped_db: DynVmDatabase = Box::new(db);
+        Ok(Evm {
+            db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
+            vm_type: VMType::TokamakL2(config),
+        })
+    }
+
+    #[cfg(feature = "tokamak-l2")]
+    pub fn new_from_db_for_tokamak_l2(
+        store: Arc<impl LevmDatabase + 'static>,
+        config: TokamakFeeConfig,
+    ) -> Self {
+        Self::_new_from_db(store, VMType::TokamakL2(config))
     }
 
     fn _new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {

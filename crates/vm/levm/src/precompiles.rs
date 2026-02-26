@@ -285,8 +285,18 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
+    (is_l2_type(&vm_type) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
+}
+
+/// Returns true if the VM type is any L2 variant (standard or Tokamak).
+fn is_l2_type(vm_type: &VMType) -> bool {
+    match vm_type {
+        VMType::L2(_) => true,
+        #[cfg(feature = "tokamak-l2")]
+        VMType::TokamakL2(_) => true,
+        _ => false,
+    }
 }
 
 /// Per-block cache for precompile results shared between warmer and executor.

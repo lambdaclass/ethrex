@@ -44,7 +44,7 @@ openvm = ["ethrex-levm/openvm", "ethrex-common/openvm"]
 perf_opcode_timings = ["ethrex-levm/perf_opcode_timings"]
 tokamak-jit = ["ethrex-levm/tokamak-jit"]
 tokamak-debugger = ["ethrex-levm/tokamak-debugger"]
-tokamak-l2 = ["ethrex-levm/tokamak-l2"]
+tokamak-l2 = ["ethrex-levm/tokamak-l2", "ethrex-common/tokamak-l2"]
 tokamak = ["ethrex-levm/tokamak"]
 
 debug = ["ethrex-levm/debug"]

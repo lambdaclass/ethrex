@@ -48,6 +48,7 @@ risc0 = ["ethrex-crypto/risc0"]
 sp1 = []
 zisk = []
 openvm = ["ethrex-crypto/openvm"]
+tokamak-l2 = []
 
 [lib]
 path = "./common.rs"

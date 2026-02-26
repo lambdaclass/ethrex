@@ -316,6 +316,16 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[cfg(feature = "tokamak-l2")]
+    #[arg(
+        long = "tokamak-l2",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Run as Tokamak L2 node with proven execution and JIT-by-default policy",
+        help_heading = "Node options",
+        env = "ETHREX_TOKAMAK_L2"
+    )]
+    pub tokamak_l2: bool,
 }
 
 impl Options {

@@ -469,12 +469,27 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
+    #[cfg(feature = "tokamak-l2")]
+    let blockchain_type = if opts.tokamak_l2 {
+        use ethrex_blockchain::TokamakL2Config;
+        use ethrex_common::types::l2::tokamak_fee_config::JitPolicy;
+        BlockchainType::TokamakL2(TokamakL2Config {
+            l2_config: ethrex_blockchain::L2Config::default(),
+            proven_execution: true,
+            jit_policy: JitPolicy::EnabledByDefault,
+        })
+    } else {
+        BlockchainType::L1
+    };
+    #[cfg(not(feature = "tokamak-l2"))]
+    let blockchain_type = BlockchainType::L1;
+
     let blockchain = init_blockchain(
         store.clone(),
         BlockchainOptions {
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
-            r#type: BlockchainType::L1,
+            r#type: blockchain_type,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
         },

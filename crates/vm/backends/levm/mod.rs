@@ -161,6 +161,8 @@ impl LEVM {
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2(_) => Default::default(),
+            #[cfg(feature = "tokamak-l2")]
+            VMType::TokamakL2(_) => Default::default(),
         };
 
         // Extract BAL if recording was enabled
@@ -294,6 +296,8 @@ impl LEVM {
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2(_) => Default::default(),
+            #[cfg(feature = "tokamak-l2")]
+            VMType::TokamakL2(_) => Default::default(),
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 

@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-26
 **Branch**: `feat/tokamak-proven-execution`
-**Overall Completion**: ~55-60%
+**Overall Completion**: ~60-65%
 
 ---
 
@@ -170,14 +170,16 @@ R23(5.0) -> R24(8.0)
 - Security audit prep (F-4) — cargo-fuzz harnesses (analyzer, optimizer, differential), 4 proptest property tests, SAFETY_AUDIT.md cataloging all 9 unsafe blocks with risk assessment; enhanced: real differential fuzzing (JIT vs interpreter dual-path, random bytecode gen, gas/status/output comparison) (b2def75e8)
 - Public dashboard MVP (F-2) — Astro + React islands + Recharts + Tailwind at `dashboard/`, 16 TS interfaces + Zod schemas, TrendChart with CI bands, BenchTable, landing + trends pages, rebuild_index.py, publish-dashboard CI job, path traversal protection, 62 JS/TS + 9 Python tests (3294bdf97)
 
+### Recently Completed (Phase F continued)
+- L2 integration scaffolding (F-3) — `TokamakFeeConfig` + `JitPolicy` types, `VMType::TokamakL2` variant, `TokamakL2Hook` (wraps L2Hook via composition), hook dispatch + Evm constructors, `BlockchainType::TokamakL2` + 5 match arm updates, `--tokamak-l2` CLI flag, feature propagation across 6 Cargo.toml files, 7 tests
+
 ### Not Started
 - Mainnet full sync as Tokamak client
-- L2 integration (`tokamak-l2` flag declared, no implementation)
 - EF grant application
 - External node operator adoption
 
 ### In Progress
-- (none — Phase A-E ALL COMPLETE, F-1 ✅ F-4 ✅; next: F-2 dashboard, F-3 L2, F-5 mainnet sync)
+- (none — Phase A-F ALL COMPLETE except F-5 mainnet sync; F-3 scaffolding done, Tokamak-specific fee logic awaits L2 spec)
 
 ---
 
