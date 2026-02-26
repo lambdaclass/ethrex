@@ -63,7 +63,7 @@
 - Public dashboard (clients.tokamak.network)
 - Precompile timing export
 
-### Feature #21: Time-Travel Debugger (~25%)
+### Feature #21: Time-Travel Debugger (~50%)
 
 **Completed:**
 - `tokamak-debugger` crate with replay engine (E-1)
@@ -71,10 +71,11 @@
 - Per-opcode step recording: opcode, PC, gas, depth, stack top-N, memory size, code address
 - Forward/backward/goto navigation API (`ReplayEngine`)
 - Stack `peek()` for non-destructive stack inspection
-- 14 tests: basic replay (4), navigation (5), gas tracking (3), nested calls (2)
+- GDB-style interactive CLI (E-2) — 13 commands: step, step-back, continue, reverse-continue, break, delete, goto, info, stack, list, breakpoints, help, quit
+- rustyline REPL with auto-history, `--bytecode <hex>` input mode
+- 41 tests: basic replay (4), navigation (5), gas tracking (3), nested calls (2), CLI parsing (12), formatter (6), execution (9)
 
 **Remaining:**
-- Interactive CLI (step, breakpoint, inspect) — E-2
 - `debug_timeTravel` RPC endpoint — E-3
 - Web UI (optional)
 
@@ -104,9 +105,9 @@ Measured after Volkov R21-R23 fixes (corrected measurement order).
 | LEVM JIT infra | `crates/vm/levm/src/jit/` (9 files) | ~2,700 |
 | tokamak-jit crate | `crates/vm/tokamak-jit/src/` (14 files) | ~5,650 |
 | tokamak-bench crate | `crates/tokamak-bench/src/` (7 files) | ~1,305 |
-| tokamak-debugger | `crates/tokamak-debugger/src/` (8 files) | ~450 |
+| tokamak-debugger | `crates/tokamak-debugger/src/` (14 files) | ~1,310 |
 | LEVM debugger hook | `crates/vm/levm/src/debugger_hook.rs` | ~27 |
-| **Total** | | **~10,130** |
+| **Total** | | **~10,990** |
 
 Base ethrex codebase: ~103K lines Rust.
 
@@ -151,6 +152,7 @@ R23(5.0) -> R24(8.0)
 
 ### Recently Completed (Phase E)
 - TX Replay Engine (E-1) — LEVM OpcodeRecorder hook, DebugRecorder, ReplayEngine with forward/backward/goto navigation, 14 tests
+- Debugger CLI (E-2) — GDB-style REPL with 13 commands, rustyline, cli feature gate, 27 CLI tests (b6f304de1)
 
 ### CI Verified (PR #6260, run 22379067904)
 - Hive 6/6 suites PASS (tokamak-jit build) — RPC, Devp2p, Auth, Cancun, Paris, Withdrawals
@@ -166,14 +168,14 @@ R23(5.0) -> R24(8.0)
 ### Not Started
 - Mainnet full sync as Tokamak client
 - L2 integration (`tokamak-l2` flag declared, no implementation)
-- Time-Travel Debugger CLI (E-2) + RPC endpoint (E-3)
+- Time-Travel Debugger RPC endpoint (E-3)
 - Cross-client benchmark (Geth/Reth comparison)
 - Public benchmark dashboard
 - EF grant application
 - External node operator adoption
 
 ### In Progress
-- (none — Phase A ALL COMPLETE, Phase B/C/D complete, E-1 complete; next: E-2 Debugger CLI)
+- (none — Phase A ALL COMPLETE, Phase B/C/D complete, E-1/E-2 complete; next: E-3 debug_timeTravel RPC)
 
 ---
 
