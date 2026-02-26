@@ -1,0 +1,17 @@
+{
+  "status": "Warning",
+  "thresholds": {
+    "warning_percent": 20.0,
+    "regression_percent": 50.0
+  },
+  "regressions": [
+    {
+      "scenario": "ManyHashes",
+      "opcode": "SHA3",
+      "baseline_avg_ns": 350,
+      "current_avg_ns": 425,
+      "change_percent": 21.4
+    }
+  ],
+  "improvements": []
+}

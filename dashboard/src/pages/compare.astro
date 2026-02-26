@@ -1,0 +1,21 @@
+---
+import Base from "../layouts/Base.astro";
+import { Header } from "../components/Header";
+import { Footer } from "../components/Footer";
+import { CompareView } from "../components/CompareView";
+---
+
+<Base title="Tokamak Bench — Compare" currentPath="/compare">
+  <Header currentPath="/compare" slot="header" />
+
+  <h1 class="mb-6 text-3xl font-bold">
+    Performance Comparison
+  </h1>
+  <p class="mb-8 text-slate-400">
+    Compare JIT vs interpreter speedups and cross-client performance.
+  </p>
+
+  <CompareView client:load />
+
+  <Footer slot="footer" />
+</Base>

@@ -1,0 +1,17 @@
+{
+  "status": "Stable",
+  "thresholds": {
+    "warning_percent": 20.0,
+    "regression_percent": 50.0
+  },
+  "regressions": [],
+  "improvements": [
+    {
+      "scenario": "Fibonacci",
+      "opcode": "ADD",
+      "baseline_avg_ns": 150,
+      "current_avg_ns": 138,
+      "change_percent": -8.0
+    }
+  ]
+}

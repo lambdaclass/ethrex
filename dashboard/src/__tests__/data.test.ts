@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fetchIndex, fetchBenchSuite, fetchJitBenchSuite, buildTrendData } from "@/lib/data";
+import { fetchIndex, fetchBenchSuite, fetchJitBenchSuite, fetchCrossClientSuite, buildTrendData } from "@/lib/data";
 import type { BenchSuite, DashboardIndex, JitBenchSuite } from "@/types";
 
 import indexFixture from "../../fixtures/index.json";
-import benchFixture from "../../fixtures/2026-02-26/abc123def-bench.json";
-import jitBenchFixture from "../../fixtures/2026-02-26/abc123def-jit-bench.json";
+import benchFixture from "../../fixtures/2026-02-26/68a325fcf-bench.json";
+import jitBenchFixture from "../../fixtures/2026-02-26/68a325fcf-jit-bench.json";
+import crossClientFixture from "../../fixtures/2026-02-26/68a325fcf-cross-client.json";
 
 const mockFetch = vi.fn();
 
@@ -25,8 +26,8 @@ describe("fetchIndex", () => {
   it("fetches and validates index", async () => {
     mockFetch.mockResolvedValueOnce(mockJsonResponse(indexFixture));
     const result = await fetchIndex("http://localhost/data");
-    expect(result.runs).toHaveLength(1);
-    expect(result.runs[0].commit).toBe("abc123def");
+    expect(result.runs).toHaveLength(7);
+    expect(result.runs[6].commit).toBe("68a325fcf");
     expect(mockFetch).toHaveBeenCalledWith("http://localhost/data/index.json");
   });
 
@@ -44,14 +45,14 @@ describe("fetchIndex", () => {
 describe("fetchBenchSuite", () => {
   it("fetches and validates bench suite", async () => {
     mockFetch.mockResolvedValueOnce(mockJsonResponse(benchFixture));
-    const result = await fetchBenchSuite("http://localhost/data", "2026-02-26/abc123def-bench.json");
-    expect(result.commit).toBe("abc123def");
-    expect(result.results).toHaveLength(2);
+    const result = await fetchBenchSuite("http://localhost/data", "2026-02-26/68a325fcf-bench.json");
+    expect(result.commit).toBe("68a325fcf");
+    expect(result.results.length).toBeGreaterThan(0);
   });
 
   it("preserves stats when present", async () => {
     mockFetch.mockResolvedValueOnce(mockJsonResponse(benchFixture));
-    const result = await fetchBenchSuite("http://localhost/data", "2026-02-26/abc123def-bench.json");
+    const result = await fetchBenchSuite("http://localhost/data", "2026-02-26/68a325fcf-bench.json");
     expect(result.results[0].stats).toBeDefined();
     expect(result.results[0].stats?.samples).toBe(10);
   });
@@ -80,8 +81,41 @@ describe("fetchJitBenchSuite", () => {
   it("fetches and validates jit bench suite", async () => {
     mockFetch.mockResolvedValueOnce(mockJsonResponse(jitBenchFixture));
     const result = await fetchJitBenchSuite("http://localhost/data", "path.json");
-    expect(result.results).toHaveLength(2);
-    expect(result.results[0].speedup).toBe(2.5);
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(result.results[0].speedup).toBe(2.76);
+  });
+});
+
+describe("fetchCrossClientSuite", () => {
+  it("fetches and validates cross-client suite", async () => {
+    mockFetch.mockResolvedValueOnce(mockJsonResponse(crossClientFixture));
+    const result = await fetchCrossClientSuite("http://localhost/data", "path.json");
+    expect(result.scenarios).toHaveLength(4);
+    expect(result.scenarios[0].scenario).toBe("Fibonacci");
+    expect(result.scenarios[0].results).toHaveLength(3);
+  });
+
+  it("validates client names in results", async () => {
+    mockFetch.mockResolvedValueOnce(mockJsonResponse(crossClientFixture));
+    const result = await fetchCrossClientSuite("http://localhost/data", "path.json");
+    const clients = result.scenarios[0].results.map((r) => r.client_name);
+    expect(clients).toContain("ethrex");
+    expect(clients).toContain("geth");
+    expect(clients).toContain("reth");
+  });
+
+  it("rejects path traversal", async () => {
+    await expect(
+      fetchCrossClientSuite("http://localhost/data", "../secret.json")
+    ).rejects.toThrow("traversal not allowed");
+  });
+
+  it("includes ethrex_mean_ns per scenario", async () => {
+    mockFetch.mockResolvedValueOnce(mockJsonResponse(crossClientFixture));
+    const result = await fetchCrossClientSuite("http://localhost/data", "path.json");
+    for (const sc of result.scenarios) {
+      expect(sc.ethrex_mean_ns).toBeGreaterThan(0);
+    }
   });
 });
 

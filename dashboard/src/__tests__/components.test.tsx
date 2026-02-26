@@ -6,7 +6,9 @@ import { BenchTable } from "@/components/BenchTable";
 import { ScenarioSelector } from "@/components/ScenarioSelector";
 import { DateRangePicker, type DateRange } from "@/components/DateRangePicker";
 import { JitToggle } from "@/components/JitToggle";
-import type { BenchResult, RegressionStatus } from "@/types";
+import { JitSpeedupTable } from "@/components/JitSpeedupTable";
+import { CrossClientTable } from "@/components/CrossClientTable";
+import type { BenchResult, JitBenchResult, CrossClientScenario, RegressionStatus } from "@/types";
 
 afterEach(cleanup);
 
@@ -131,5 +133,119 @@ describe("JitToggle", () => {
     let enabled = true;
     render(<JitToggle enabled={enabled} onToggle={(v) => { enabled = v; }} />);
     fireEvent.click(screen.getByRole("button"));
+  });
+});
+
+describe("JitSpeedupTable", () => {
+  const results: JitBenchResult[] = [
+    {
+      scenario: "Fibonacci",
+      interpreter_ns: 34476485,
+      jit_ns: 12508651,
+      speedup: 2.76,
+      runs: 10,
+    },
+    {
+      scenario: "BubbleSort",
+      interpreter_ns: 3473772981,
+      jit_ns: 1428130625,
+      speedup: 2.43,
+      runs: 10,
+    },
+    {
+      scenario: "Push",
+      interpreter_ns: 8254933,
+      jit_ns: null,
+      speedup: null,
+      runs: 10,
+    },
+  ];
+
+  it("renders column headers", () => {
+    render(<JitSpeedupTable results={results} />);
+    expect(screen.getByText("Scenario")).toBeInTheDocument();
+    expect(screen.getByText("Interpreter")).toBeInTheDocument();
+    expect(screen.getByText("JIT")).toBeInTheDocument();
+    expect(screen.getByText("Speedup")).toBeInTheDocument();
+  });
+
+  it("renders scenario names", () => {
+    render(<JitSpeedupTable results={results} />);
+    expect(screen.getByText("Fibonacci")).toBeInTheDocument();
+    expect(screen.getByText("BubbleSort")).toBeInTheDocument();
+    expect(screen.getByText("Push")).toBeInTheDocument();
+  });
+
+  it("displays speedup values", () => {
+    render(<JitSpeedupTable results={results} />);
+    expect(screen.getByText("2.76x")).toBeInTheDocument();
+    expect(screen.getByText("2.43x")).toBeInTheDocument();
+  });
+
+  it("shows N/A for null speedup", () => {
+    render(<JitSpeedupTable results={results} />);
+    expect(screen.getByText("N/A")).toBeInTheDocument();
+  });
+
+  it("shows interpreter only status for non-JIT scenarios", () => {
+    render(<JitSpeedupTable results={results} />);
+    expect(screen.getByText("Interpreter only")).toBeInTheDocument();
+  });
+
+  it("shows JIT compiled status for JIT scenarios", () => {
+    render(<JitSpeedupTable results={results} />);
+    const jitCompiled = screen.getAllByText("JIT compiled");
+    expect(jitCompiled).toHaveLength(2);
+  });
+});
+
+describe("CrossClientTable", () => {
+  const scenarios: CrossClientScenario[] = [
+    {
+      scenario: "Fibonacci",
+      results: [
+        { client_name: "ethrex", scenario: "Fibonacci", mean_ns: 3447648 },
+        { client_name: "geth", scenario: "Fibonacci", mean_ns: 5689620 },
+        { client_name: "reth", scenario: "Fibonacci", mean_ns: 4412989 },
+      ],
+      ethrex_mean_ns: 3447648,
+    },
+    {
+      scenario: "BubbleSort",
+      results: [
+        { client_name: "ethrex", scenario: "BubbleSort", mean_ns: 347377298 },
+        { client_name: "geth", scenario: "BubbleSort", mean_ns: 493275762 },
+        { client_name: "reth", scenario: "BubbleSort", mean_ns: 409905211 },
+      ],
+      ethrex_mean_ns: 347377298,
+    },
+  ];
+
+  it("renders column headers", () => {
+    render(<CrossClientTable scenarios={scenarios} />);
+    expect(screen.getByText("Scenario")).toBeInTheDocument();
+    expect(screen.getByText("ethrex")).toBeInTheDocument();
+    expect(screen.getByText("Geth")).toBeInTheDocument();
+    expect(screen.getByText("Reth")).toBeInTheDocument();
+    expect(screen.getByText("vs Geth")).toBeInTheDocument();
+    expect(screen.getByText("vs Reth")).toBeInTheDocument();
+  });
+
+  it("renders scenario names", () => {
+    render(<CrossClientTable scenarios={scenarios} />);
+    expect(screen.getByText("Fibonacci")).toBeInTheDocument();
+    expect(screen.getByText("BubbleSort")).toBeInTheDocument();
+  });
+
+  it("displays ratio values", () => {
+    render(<CrossClientTable scenarios={scenarios} />);
+    // geth / ethrex = 5689620 / 3447648 = 1.65x
+    expect(screen.getByText("1.65x")).toBeInTheDocument();
+  });
+
+  it("renders all 3 client mean times", () => {
+    render(<CrossClientTable scenarios={scenarios} />);
+    // ethrex Fibonacci = 3.45 ms
+    expect(screen.getByText("3.45 ms")).toBeInTheDocument();
   });
 });

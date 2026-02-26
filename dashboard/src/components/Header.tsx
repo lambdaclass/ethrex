@@ -5,6 +5,7 @@ interface Props {
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/" },
   { label: "Trends", href: "/trends" },
+  { label: "Compare", href: "/compare" },
 ] as const;
 
 export function Header({ currentPath = "/" }: Props) {

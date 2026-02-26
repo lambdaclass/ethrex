@@ -1,0 +1,198 @@
+{
+  "timestamp": "1740787200",
+  "commit": "cafb6cb18",
+  "scenarios": [
+    {
+      "scenario": "Fibonacci",
+      "results": [
+        {
+          "client_name": "ethrex",
+          "scenario": "Fibonacci",
+          "mean_ns": 3501950.0,
+          "stats": {
+            "mean_ns": 3501950.0,
+            "stddev_ns": 197922.0,
+            "ci_lower_ns": 3379276.0,
+            "ci_upper_ns": 3624623.0,
+            "min_ns": 3221794,
+            "max_ns": 3782106,
+            "samples": 10
+          }
+        },
+        {
+          "client_name": "geth",
+          "scenario": "Fibonacci",
+          "mean_ns": 5787319.0,
+          "stats": {
+            "mean_ns": 5787319.0,
+            "stddev_ns": 173785.0,
+            "ci_lower_ns": 5679605.0,
+            "ci_upper_ns": 5895032.0,
+            "min_ns": 5324333,
+            "max_ns": 6250304,
+            "samples": 10
+          }
+        },
+        {
+          "client_name": "reth",
+          "scenario": "Fibonacci",
+          "mean_ns": 4532453.0,
+          "stats": {
+            "mean_ns": 4532453.0,
+            "stddev_ns": 209434.0,
+            "ci_lower_ns": 4402644.0,
+            "ci_upper_ns": 4662261.0,
+            "min_ns": 4169856,
+            "max_ns": 4895049,
+            "samples": 10
+          }
+        }
+      ],
+      "ethrex_mean_ns": 3501950.0
+    },
+    {
+      "scenario": "BubbleSort",
+      "results": [
+        {
+          "client_name": "ethrex",
+          "scenario": "BubbleSort",
+          "mean_ns": 337361925.0,
+          "stats": {
+            "mean_ns": 337361925.0,
+            "stddev_ns": 24149471.0,
+            "ci_lower_ns": 322393927.0,
+            "ci_upper_ns": 352329922.0,
+            "min_ns": 310372971,
+            "max_ns": 364350879,
+            "samples": 10
+          }
+        },
+        {
+          "client_name": "geth",
+          "scenario": "BubbleSort",
+          "mean_ns": 487276388.0,
+          "stats": {
+            "mean_ns": 487276388.0,
+            "stddev_ns": 22110510.0,
+            "ci_lower_ns": 473572151.0,
+            "ci_upper_ns": 500980624.0,
+            "min_ns": 448294276,
+            "max_ns": 526258499,
+            "samples": 10
+          }
+        },
+        {
+          "client_name": "reth",
+          "scenario": "BubbleSort",
+          "mean_ns": 404117642.0,
+          "stats": {
+            "mean_ns": 404117642.0,
+            "stddev_ns": 13293958.0,
+            "ci_lower_ns": 395877961.0,
+            "ci_upper_ns": 412357322.0,
+            "min_ns": 371788230,
+            "max_ns": 436447053,
+            "samples": 10
+          }
+        }
+      ],
+      "ethrex_mean_ns": 337361925.0
+    },
+    {
+      "scenario": "Factorial",
+      "results": [
+        {
+          "client_name": "ethrex",
+          "scenario": "Factorial",
+          "mean_ns": 2343939.0,
+          "stats": {
+            "mean_ns": 2343939.0,
+            "stddev_ns": 127274.0,
+            "ci_lower_ns": 2265053.0,
+            "ci_upper_ns": 2422824.0,
+            "min_ns": 2156423,
+            "max_ns": 2531454,
+            "samples": 10
+          }
+        },
+        {
+          "client_name": "geth",
+          "scenario": "Factorial",
+          "mean_ns": 4246802.0,
+          "stats": {
+            "mean_ns": 4246802.0,
+            "stddev_ns": 142100.0,
+            "ci_lower_ns": 4158727.0,
+            "ci_upper_ns": 4334876.0,
+            "min_ns": 3907057,
+            "max_ns": 4586546,
+            "samples": 10
+          }
+        },
+        {
+          "client_name": "reth",
+          "scenario": "Factorial",
+          "mean_ns": 3111872.0,
+          "stats": {
+            "mean_ns": 3111872.0,
+            "stddev_ns": 211700.0,
+            "ci_lower_ns": 2980658.0,
+            "ci_upper_ns": 3243085.0,
+            "min_ns": 2862922,
+            "max_ns": 3360821,
+            "samples": 10
+          }
+        }
+      ],
+      "ethrex_mean_ns": 2343939.0
+    },
+    {
+      "scenario": "ManyHashes",
+      "results": [
+        {
+          "client_name": "ethrex",
+          "scenario": "ManyHashes",
+          "mean_ns": 2229848.0,
+          "stats": {
+            "mean_ns": 2229848.0,
+            "stddev_ns": 128194.0,
+            "ci_lower_ns": 2150392.0,
+            "ci_upper_ns": 2309303.0,
+            "min_ns": 2051460,
+            "max_ns": 2408235,
+            "samples": 10
+          }
+        },
+        {
+          "client_name": "geth",
+          "scenario": "ManyHashes",
+          "mean_ns": 2965548.0,
+          "stats": {
+            "mean_ns": 2965548.0,
+            "stddev_ns": 128268.0,
+            "ci_lower_ns": 2886046.0,
+            "ci_upper_ns": 3045049.0,
+            "min_ns": 2728304,
+            "max_ns": 3202791,
+            "samples": 10
+          }
+        },
+        {
+          "client_name": "reth",
+          "scenario": "ManyHashes",
+          "mean_ns": 2494960.0,
+          "stats": {
+            "mean_ns": 2494960.0,
+            "stddev_ns": 183683.0,
+            "ci_lower_ns": 2381112.0,
+            "ci_upper_ns": 2608807.0,
+            "min_ns": 2295363,
+            "max_ns": 2694556,
+            "samples": 10
+          }
+        }
+      ],
+      "ethrex_mean_ns": 2229848.0
+    }
+  ]
+}

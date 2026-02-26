@@ -1,5 +1,5 @@
-import { DashboardIndexSchema, BenchSuiteSchema, JitBenchSuiteSchema } from "@/types/schemas";
-import type { BenchSuite, DashboardIndex, JitBenchSuite } from "@/types";
+import { DashboardIndexSchema, BenchSuiteSchema, JitBenchSuiteSchema, CrossClientSuiteSchema } from "@/types/schemas";
+import type { BenchSuite, CrossClientSuite, DashboardIndex, JitBenchSuite } from "@/types";
 
 /** Validate that a relative path stays within bounds (no traversal). */
 function validatePath(path: string): void {
@@ -34,6 +34,13 @@ export async function fetchJitBenchSuite(baseUrl: string, path: string): Promise
   validatePath(path);
   const data = await fetchJson(`${baseUrl}/${path}`);
   return JitBenchSuiteSchema.parse(data);
+}
+
+/** Fetch and validate a cross-client benchmark suite JSON file. */
+export async function fetchCrossClientSuite(baseUrl: string, path: string): Promise<CrossClientSuite> {
+  validatePath(path);
+  const data = await fetchJson(`${baseUrl}/${path}`);
+  return CrossClientSuiteSchema.parse(data);
 }
 
 /** A single data point in a trend time series. */

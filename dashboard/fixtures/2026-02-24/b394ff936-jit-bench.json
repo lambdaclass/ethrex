@@ -1,0 +1,162 @@
+{
+  "timestamp": "1740355200",
+  "commit": "b394ff936",
+  "results": [
+    {
+      "scenario": "Fibonacci",
+      "interpreter_ns": 35285723,
+      "jit_ns": 12802256,
+      "speedup": 2.76,
+      "runs": 10,
+      "interp_stats": {
+        "mean_ns": 3528572.3,
+        "stddev_ns": 180537.9,
+        "ci_lower_ns": 3416673.8,
+        "ci_upper_ns": 3640470.9,
+        "min_ns": 3257765,
+        "max_ns": 3799379,
+        "samples": 10
+      },
+      "jit_stats": {
+        "mean_ns": 1280225.7,
+        "stddev_ns": 75702.8,
+        "ci_lower_ns": 1233304.6,
+        "ci_upper_ns": 1327146.7,
+        "min_ns": 1166671,
+        "max_ns": 1393779,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "BubbleSort",
+      "interpreter_ns": 3555309940,
+      "jit_ns": 1461651937,
+      "speedup": 2.43,
+      "runs": 10,
+      "interp_stats": {
+        "mean_ns": 355530994.0,
+        "stddev_ns": 22907284.3,
+        "ci_lower_ns": 341332912.1,
+        "ci_upper_ns": 369729075.9,
+        "min_ns": 321170067,
+        "max_ns": 389891920,
+        "samples": 10
+      },
+      "jit_stats": {
+        "mean_ns": 146165193.8,
+        "stddev_ns": 4435299.6,
+        "ci_lower_ns": 143416166.6,
+        "ci_upper_ns": 148914220.9,
+        "min_ns": 139512244,
+        "max_ns": 152818143,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "Factorial",
+      "interpreter_ns": 23457551,
+      "jit_ns": 12893701,
+      "speedup": 1.82,
+      "runs": 10,
+      "interp_stats": {
+        "mean_ns": 2345755.1,
+        "stddev_ns": 137998.1,
+        "ci_lower_ns": 2260223.0,
+        "ci_upper_ns": 2431287.2,
+        "min_ns": 2138757,
+        "max_ns": 2552752,
+        "samples": 10
+      },
+      "jit_stats": {
+        "mean_ns": 1289370.1,
+        "stddev_ns": 65050.4,
+        "ci_lower_ns": 1249051.5,
+        "ci_upper_ns": 1329688.8,
+        "min_ns": 1191794,
+        "max_ns": 1386945,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "ManyHashes",
+      "interpreter_ns": 22463587,
+      "jit_ns": 14173927,
+      "speedup": 1.58,
+      "runs": 10,
+      "interp_stats": {
+        "mean_ns": 2246358.7,
+        "stddev_ns": 115639.9,
+        "ci_lower_ns": 2174684.4,
+        "ci_upper_ns": 2318033.0,
+        "min_ns": 2072898,
+        "max_ns": 2419818,
+        "samples": 10
+      },
+      "jit_stats": {
+        "mean_ns": 1417392.7,
+        "stddev_ns": 53867.7,
+        "ci_lower_ns": 1384005.2,
+        "ci_upper_ns": 1450780.2,
+        "min_ns": 1336591,
+        "max_ns": 1498194,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "Push",
+      "interpreter_ns": 8448694,
+      "jit_ns": null,
+      "speedup": null,
+      "runs": 10
+    },
+    {
+      "scenario": "MstoreBench",
+      "interpreter_ns": 11132397,
+      "jit_ns": null,
+      "speedup": null,
+      "runs": 10
+    },
+    {
+      "scenario": "SstoreBench_no_opt",
+      "interpreter_ns": 47511480,
+      "jit_ns": null,
+      "speedup": null,
+      "runs": 10
+    },
+    {
+      "scenario": "FibonacciRecursive",
+      "interpreter_ns": 183883345,
+      "jit_ns": null,
+      "speedup": null,
+      "runs": 10
+    },
+    {
+      "scenario": "FactorialRecursive",
+      "interpreter_ns": 122257575,
+      "jit_ns": null,
+      "speedup": null,
+      "runs": 10
+    },
+    {
+      "scenario": "ERC20Approval",
+      "interpreter_ns": 83989960,
+      "jit_ns": null,
+      "speedup": null,
+      "runs": 10
+    },
+    {
+      "scenario": "ERC20Transfer",
+      "interpreter_ns": 90649519,
+      "jit_ns": null,
+      "speedup": null,
+      "runs": 10
+    },
+    {
+      "scenario": "ERC20Mint",
+      "interpreter_ns": 78423761,
+      "jit_ns": null,
+      "speedup": null,
+      "runs": 10
+    }
+  ]
+}

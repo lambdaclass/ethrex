@@ -1,0 +1,498 @@
+{
+  "timestamp": "1740096000",
+  "commit": "705f74ba5",
+  "results": [
+    {
+      "scenario": "Fibonacci",
+      "total_duration_ns": 35922036,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "ADD",
+          "avg_ns": 151,
+          "total_ns": 15100,
+          "count": 100
+        },
+        {
+          "opcode": "PUSH1",
+          "avg_ns": 80,
+          "total_ns": 24000,
+          "count": 300
+        },
+        {
+          "opcode": "JUMPI",
+          "avg_ns": 121,
+          "total_ns": 6897,
+          "count": 57
+        },
+        {
+          "opcode": "JUMPDEST",
+          "avg_ns": 60,
+          "total_ns": 3420,
+          "count": 57
+        },
+        {
+          "opcode": "DUP2",
+          "avg_ns": 70,
+          "total_ns": 3990,
+          "count": 57
+        },
+        {
+          "opcode": "LT",
+          "avg_ns": 91,
+          "total_ns": 5187,
+          "count": 57
+        }
+      ],
+      "stats": {
+        "mean_ns": 3592203.7,
+        "stddev_ns": 168878.6,
+        "ci_lower_ns": 3487531.7,
+        "ci_upper_ns": 3696875.7,
+        "min_ns": 3338885,
+        "max_ns": 3845521,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "BubbleSort",
+      "total_duration_ns": 3619423488,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "MLOAD",
+          "avg_ns": 202,
+          "total_ns": 1616000,
+          "count": 8000
+        },
+        {
+          "opcode": "MSTORE",
+          "avg_ns": 212,
+          "total_ns": 848000,
+          "count": 4000
+        },
+        {
+          "opcode": "LT",
+          "avg_ns": 91,
+          "total_ns": 364000,
+          "count": 4000
+        },
+        {
+          "opcode": "SWAP1",
+          "avg_ns": 50,
+          "total_ns": 200000,
+          "count": 4000
+        },
+        {
+          "opcode": "JUMPI",
+          "avg_ns": 121,
+          "total_ns": 484000,
+          "count": 4000
+        }
+      ],
+      "stats": {
+        "mean_ns": 361942348.8,
+        "stddev_ns": 13672001.2,
+        "ci_lower_ns": 353468354.7,
+        "ci_upper_ns": 370416343.0,
+        "min_ns": 341434346,
+        "max_ns": 382450350,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "Factorial",
+      "total_duration_ns": 23880565,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "MUL",
+          "avg_ns": 161,
+          "total_ns": 9177,
+          "count": 57
+        },
+        {
+          "opcode": "PUSH1",
+          "avg_ns": 80,
+          "total_ns": 9120,
+          "count": 114
+        },
+        {
+          "opcode": "SUB",
+          "avg_ns": 101,
+          "total_ns": 5757,
+          "count": 57
+        },
+        {
+          "opcode": "ISZERO",
+          "avg_ns": 70,
+          "total_ns": 3990,
+          "count": 57
+        },
+        {
+          "opcode": "JUMPI",
+          "avg_ns": 121,
+          "total_ns": 6897,
+          "count": 57
+        }
+      ],
+      "stats": {
+        "mean_ns": 2388056.5,
+        "stddev_ns": 185935.6,
+        "ci_lower_ns": 2272812.4,
+        "ci_upper_ns": 2503300.6,
+        "min_ns": 2109153,
+        "max_ns": 2666960,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "ManyHashes",
+      "total_duration_ns": 22868677,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "SHA3",
+          "avg_ns": 354,
+          "total_ns": 20178,
+          "count": 57
+        },
+        {
+          "opcode": "MSTORE",
+          "avg_ns": 212,
+          "total_ns": 12084,
+          "count": 57
+        },
+        {
+          "opcode": "PUSH1",
+          "avg_ns": 80,
+          "total_ns": 9120,
+          "count": 114
+        },
+        {
+          "opcode": "PUSH32",
+          "avg_ns": 91,
+          "total_ns": 5187,
+          "count": 57
+        }
+      ],
+      "stats": {
+        "mean_ns": 2286867.7,
+        "stddev_ns": 107093.4,
+        "ci_lower_ns": 2220490.5,
+        "ci_upper_ns": 2353244.9,
+        "min_ns": 2126227,
+        "max_ns": 2447507,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "Push",
+      "total_duration_ns": 8601051,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "PUSH1",
+          "avg_ns": 80,
+          "total_ns": 800000,
+          "count": 10000
+        },
+        {
+          "opcode": "PUSH32",
+          "avg_ns": 91,
+          "total_ns": 455000,
+          "count": 5000
+        },
+        {
+          "opcode": "POP",
+          "avg_ns": 40,
+          "total_ns": 600000,
+          "count": 15000
+        }
+      ],
+      "stats": {
+        "mean_ns": 860105.1,
+        "stddev_ns": 29791.7,
+        "ci_lower_ns": 841640.0,
+        "ci_upper_ns": 878570.2,
+        "min_ns": 815417,
+        "max_ns": 904792,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "MstoreBench",
+      "total_duration_ns": 11333149,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "MSTORE",
+          "avg_ns": 212,
+          "total_ns": 1696000,
+          "count": 8000
+        },
+        {
+          "opcode": "PUSH1",
+          "avg_ns": 80,
+          "total_ns": 640000,
+          "count": 8000
+        },
+        {
+          "opcode": "ADD",
+          "avg_ns": 151,
+          "total_ns": 604000,
+          "count": 4000
+        }
+      ],
+      "stats": {
+        "mean_ns": 1133315.0,
+        "stddev_ns": 39480.0,
+        "ci_lower_ns": 1108845.0,
+        "ci_upper_ns": 1157784.9,
+        "min_ns": 1074095,
+        "max_ns": 1192534,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "SstoreBench_no_opt",
+      "total_duration_ns": 48368263,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "SSTORE",
+          "avg_ns": 1214,
+          "total_ns": 607000,
+          "count": 500
+        },
+        {
+          "opcode": "SLOAD",
+          "avg_ns": 809,
+          "total_ns": 404500,
+          "count": 500
+        },
+        {
+          "opcode": "PUSH1",
+          "avg_ns": 80,
+          "total_ns": 80000,
+          "count": 1000
+        }
+      ],
+      "stats": {
+        "mean_ns": 4836826.4,
+        "stddev_ns": 350063.9,
+        "ci_lower_ns": 4619854.5,
+        "ci_upper_ns": 5053798.3,
+        "min_ns": 4311730,
+        "max_ns": 5361922,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "FibonacciRecursive",
+      "total_duration_ns": 187199347,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "CALL",
+          "avg_ns": 2529,
+          "total_ns": 37935,
+          "count": 15
+        },
+        {
+          "opcode": "ADD",
+          "avg_ns": 151,
+          "total_ns": 15100,
+          "count": 100
+        },
+        {
+          "opcode": "PUSH1",
+          "avg_ns": 80,
+          "total_ns": 16000,
+          "count": 200
+        },
+        {
+          "opcode": "JUMPI",
+          "avg_ns": 121,
+          "total_ns": 12100,
+          "count": 100
+        }
+      ],
+      "stats": {
+        "mean_ns": 18719934.7,
+        "stddev_ns": 1126683.6,
+        "ci_lower_ns": 18021609.0,
+        "ci_upper_ns": 19418260.5,
+        "min_ns": 17029909,
+        "max_ns": 20409960,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "FactorialRecursive",
+      "total_duration_ns": 124462268,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "CALL",
+          "avg_ns": 2529,
+          "total_ns": 144153,
+          "count": 57
+        },
+        {
+          "opcode": "MUL",
+          "avg_ns": 161,
+          "total_ns": 9177,
+          "count": 57
+        },
+        {
+          "opcode": "PUSH1",
+          "avg_ns": 80,
+          "total_ns": 16000,
+          "count": 200
+        }
+      ],
+      "stats": {
+        "mean_ns": 12446226.9,
+        "stddev_ns": 875671.9,
+        "ci_lower_ns": 11903479.8,
+        "ci_upper_ns": 12988973.9,
+        "min_ns": 11132719,
+        "max_ns": 13759734,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "ERC20Approval",
+      "total_duration_ns": 85504566,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "SSTORE",
+          "avg_ns": 1214,
+          "total_ns": 3642,
+          "count": 3
+        },
+        {
+          "opcode": "SHA3",
+          "avg_ns": 354,
+          "total_ns": 708,
+          "count": 2
+        },
+        {
+          "opcode": "CALLER",
+          "avg_ns": 60,
+          "total_ns": 60,
+          "count": 1
+        },
+        {
+          "opcode": "PUSH32",
+          "avg_ns": 91,
+          "total_ns": 364,
+          "count": 4
+        }
+      ],
+      "stats": {
+        "mean_ns": 8550456.7,
+        "stddev_ns": 568490.7,
+        "ci_lower_ns": 8198102.5,
+        "ci_upper_ns": 8902810.9,
+        "min_ns": 7697720,
+        "max_ns": 9403192,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "ERC20Transfer",
+      "total_duration_ns": 92284218,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "SSTORE",
+          "avg_ns": 1214,
+          "total_ns": 4856,
+          "count": 4
+        },
+        {
+          "opcode": "SLOAD",
+          "avg_ns": 809,
+          "total_ns": 2427,
+          "count": 3
+        },
+        {
+          "opcode": "SHA3",
+          "avg_ns": 354,
+          "total_ns": 1062,
+          "count": 3
+        },
+        {
+          "opcode": "CALLER",
+          "avg_ns": 60,
+          "total_ns": 60,
+          "count": 1
+        },
+        {
+          "opcode": "SUB",
+          "avg_ns": 101,
+          "total_ns": 101,
+          "count": 1
+        },
+        {
+          "opcode": "ADD",
+          "avg_ns": 151,
+          "total_ns": 151,
+          "count": 1
+        }
+      ],
+      "stats": {
+        "mean_ns": 9228421.9,
+        "stddev_ns": 524279.6,
+        "ci_lower_ns": 8903470.0,
+        "ci_upper_ns": 9553373.7,
+        "min_ns": 8442002,
+        "max_ns": 10014841,
+        "samples": 10
+      }
+    },
+    {
+      "scenario": "ERC20Mint",
+      "total_duration_ns": 79837991,
+      "runs": 10,
+      "opcode_timings": [
+        {
+          "opcode": "SSTORE",
+          "avg_ns": 1214,
+          "total_ns": 3642,
+          "count": 3
+        },
+        {
+          "opcode": "SLOAD",
+          "avg_ns": 809,
+          "total_ns": 1618,
+          "count": 2
+        },
+        {
+          "opcode": "SHA3",
+          "avg_ns": 354,
+          "total_ns": 708,
+          "count": 2
+        },
+        {
+          "opcode": "ADD",
+          "avg_ns": 151,
+          "total_ns": 151,
+          "count": 1
+        }
+      ],
+      "stats": {
+        "mean_ns": 7983799.2,
+        "stddev_ns": 627972.0,
+        "ci_lower_ns": 7594578.1,
+        "ci_upper_ns": 8373020.3,
+        "min_ns": 7041841,
+        "max_ns": 8925757,
+        "samples": 10
+      }
+    }
+  ]
+}

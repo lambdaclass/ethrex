@@ -1,0 +1,9 @@
+{
+  "status": "Stable",
+  "thresholds": {
+    "warning_percent": 20.0,
+    "regression_percent": 50.0
+  },
+  "regressions": [],
+  "improvements": []
+}
