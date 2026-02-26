@@ -19,7 +19,7 @@
 | Phase 6 | CALL/CREATE Resume | **100%** | Suspend/resume + LLVM memory mgmt |
 | Phase 7 | Dual-Execution Validation | **100%** | State-swap validation, Volkov R20 PROCEED |
 | Phase 8 | JIT Benchmarking | **100%** | Infrastructure + benchmark execution |
-| Phase 9 | Benchmark CI & Dashboard | **~75%** | C-1 ✅ C-2 ✅ C-3 ✅ — All Phase C tasks complete. Dashboard remaining (F-2). |
+| Phase 9 | Benchmark CI & Dashboard | **100%** | C-1 ✅ C-2 ✅ C-3 ✅ — All Phase C tasks complete. F-2 Dashboard ✅ DONE. |
 
 ---
 
@@ -45,7 +45,7 @@
 - Tiered optimization (profile-guided optimization)
 - Production deployment
 
-### Feature #10: Continuous Benchmarking (~60%)
+### Feature #10: Continuous Benchmarking (~80%)
 
 **Completed:**
 - `tokamak-bench` crate with 12 scenarios
@@ -55,10 +55,10 @@
 - JIT benchmark infrastructure
 - JSON output + markdown report generation
 - JIT speedup regression detection with PR comments
+- Public dashboard (F-2) — Astro + React islands + Recharts + Tailwind at `dashboard/`, 62 JS/TS + 9 Python tests, `publish-dashboard` CI job
 
 **Remaining:**
 - State root differential testing
-- Public dashboard (clients.tokamak.network)
 - Precompile timing export
 
 ### Feature #21: Time-Travel Debugger (~85%)
@@ -168,12 +168,11 @@ R23(5.0) -> R24(8.0)
 ### Recently Completed (Phase F)
 - Cross-client benchmarking (F-1) — `cross-client` CLI subcommand, ethrex in-process + Geth/Reth via eth_call state overrides, comparison table with ethrex as 1.00x baseline, 18 tests
 - Security audit prep (F-4) — cargo-fuzz harnesses (analyzer, optimizer, differential), 4 proptest property tests, SAFETY_AUDIT.md cataloging all 9 unsafe blocks with risk assessment; enhanced: real differential fuzzing (JIT vs interpreter dual-path, random bytecode gen, gas/status/output comparison) (b2def75e8)
-- F-2 Dashboard design — `DASHBOARD-SPEC.md`: no-backend architecture, 6 pages, 4-phase plan (2026-02-26)
+- Public dashboard MVP (F-2) — Astro + React islands + Recharts + Tailwind at `dashboard/`, 16 TS interfaces + Zod schemas, TrendChart with CI bands, BenchTable, landing + trends pages, rebuild_index.py, publish-dashboard CI job, path traversal protection, 62 JS/TS + 9 Python tests (3294bdf97)
 
 ### Not Started
 - Mainnet full sync as Tokamak client
 - L2 integration (`tokamak-l2` flag declared, no implementation)
-- Public benchmark dashboard
 - EF grant application
 - External node operator adoption
 
