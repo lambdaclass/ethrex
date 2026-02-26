@@ -13,11 +13,12 @@ use crate::{
 };
 use ethrex_blockchain::{overlay_vm_db::OverlayVmDatabase, vm::StoreVmDatabase};
 use ethrex_common::{
-    Address, Bytes, H256, U256,
-    constants::{DEFAULT_REQUESTS_HASH, EMPTY_WITHDRAWALS_HASH},
+    Address, Bytes, H160, H256, U256,
+    constants::{DEFAULT_REQUESTS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB},
     types::{
         AccessListEntry, Block, BlockBody, BlockHeader, GenericTransaction, Log, Receipt, TxKind,
-        TxType, bloom_from_logs, compute_receipts_root, compute_transactions_root,
+        TxType, bloom_from_logs, calc_excess_blob_gas, compute_receipts_root,
+        compute_transactions_root, compute_withdrawals_root,
         transaction::{
             EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction,
             LegacyTransaction, Transaction,
@@ -34,9 +35,7 @@ const MAX_BLOCK_STATE_CALLS: usize = 256;
 
 /// The special address used for synthetic traceTransfers logs.
 /// 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-fn trace_transfer_address() -> Address {
-    Address::from([0xee_u8; 20])
-}
+const TRACE_TRANSFER_ADDRESS: Address = H160([0xee_u8; 20]);
 
 /// ERC-20 Transfer event topic:
 /// keccak256("Transfer(address,address,uint256)")
@@ -130,10 +129,11 @@ impl RpcHandler for SimulateV1Request {
             // 4b'. Gap filling: emit empty intermediate blocks if block number jumps.
             let gap = sim_header.number - prev_header.number - 1;
             if gap > 0 {
+                let base_number = prev_header.number;
+                let base_timestamp = prev_header.timestamp;
                 for i in 1..=gap {
-                    let intermediate_number = prev_header.number + i;
-                    let intermediate_timestamp = prev_header
-                        .timestamp
+                    let intermediate_number = base_number + i;
+                    let intermediate_timestamp = base_timestamp
                         .checked_add(i)
                         .ok_or_else(|| RpcErr::BadParams("Timestamp overflow".to_owned()))?;
 
@@ -250,11 +250,18 @@ impl RpcHandler for SimulateV1Request {
                     blob_base_fee_override,
                 );
 
-                // When validation is enabled, VM errors are top-level errors.
-                if self.payload.validation
-                    && let Err(ref err) = exec_result
-                {
-                    return Err(map_vm_error_to_simulate_error(err));
+                // When validation is enabled, VM errors and reverts are top-level errors.
+                if self.payload.validation {
+                    match &exec_result {
+                        Err(err) => return Err(map_vm_error_to_simulate_error(err)),
+                        Ok(ExecutionResult::Revert { output, .. }) => {
+                            return Err(RpcErr::SimulateError {
+                                code: -32015,
+                                message: format!("execution reverted: 0x{output:x}"),
+                            });
+                        }
+                        _ => {}
+                    }
                 }
 
                 let succeeded = matches!(exec_result, Ok(ExecutionResult::Success { .. }));
@@ -343,6 +350,23 @@ impl RpcHandler for SimulateV1Request {
             // Compute transactionsRoot from unsigned transactions.
             let transactions: Vec<Transaction> = tx_infos.iter().map(|ti| ti.tx.clone()).collect();
             final_header.transactions_root = compute_transactions_root(&transactions);
+            final_header.withdrawals_root = Some(compute_withdrawals_root(&withdrawals));
+
+            // Compute blob_gas_used from EIP-4844 transactions and update excess_blob_gas.
+            let blob_gas_used: u64 = tx_infos
+                .iter()
+                .map(|ti| match &ti.tx {
+                    Transaction::EIP4844Transaction(t) => {
+                        t.blob_versioned_hashes.len() as u64 * u64::from(GAS_PER_BLOB)
+                    }
+                    _ => 0,
+                })
+                .sum();
+            final_header.blob_gas_used = Some(blob_gas_used);
+            if let Some(schedule) = chain_config.get_fork_blob_schedule(final_header.timestamp) {
+                final_header.excess_blob_gas =
+                    Some(calc_excess_blob_gas(&prev_header, schedule, fork));
+            }
 
             // Compute receiptsRoot using EVM-only logs (not synthetic traceTransfers).
             // The receipts use the "real" logs only.
@@ -356,7 +380,7 @@ impl RpcHandler for SimulateV1Request {
                     let real_logs: Vec<Log> = cr
                         .logs
                         .iter()
-                        .filter(|l| l.address != trace_transfer_address())
+                        .filter(|l| l.address != TRACE_TRANSFER_ADDRESS)
                         .map(|sl| Log {
                             address: sl.address,
                             topics: sl.topics.clone(),
@@ -374,7 +398,7 @@ impl RpcHandler for SimulateV1Request {
                 .flat_map(|cr| {
                     cr.logs
                         .iter()
-                        .filter(|l| l.address != trace_transfer_address())
+                        .filter(|l| l.address != TRACE_TRANSFER_ADDRESS)
                         .map(|sl| Log {
                             address: sl.address,
                             topics: sl.topics.clone(),
@@ -695,7 +719,7 @@ fn create_trace_transfer_log(
     let data = Bytes::from(value_buf.to_vec());
 
     SimulatedLog {
-        address: trace_transfer_address(),
+        address: TRACE_TRANSFER_ADDRESS,
         topics: vec![
             TRANSFER_EVENT_SIGNATURE,
             H256::from(from_topic),
