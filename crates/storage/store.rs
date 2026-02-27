@@ -116,6 +116,65 @@ impl CodeCache {
     }
 }
 
+/// Cache of recently executed blocks not yet flushed to disk.
+/// Inserted synchronously in `apply_updates` and drained by the background
+/// persistence thread after a successful RocksDB commit.
+#[derive(Debug, Default)]
+struct PendingBlocksCache {
+    headers: HashMap<BlockHash, BlockHeader>,
+    bodies: HashMap<BlockHash, BlockBody>,
+    block_numbers: HashMap<BlockHash, BlockNumber>,
+    receipts: HashMap<BlockHash, Vec<Receipt>>,
+}
+
+impl PendingBlocksCache {
+    fn insert(
+        &mut self,
+        blocks: &[Block],
+        receipts: &[(H256, Vec<Receipt>)],
+    ) {
+        for block in blocks {
+            let hash = block.hash();
+            self.headers.insert(hash, block.header.clone());
+            self.bodies.insert(hash, block.body.clone());
+            self.block_numbers.insert(hash, block.header.number);
+        }
+        for (hash, block_receipts) in receipts {
+            self.receipts.insert(*hash, block_receipts.clone());
+        }
+    }
+
+    fn remove_block(&mut self, block_hash: &BlockHash) {
+        self.headers.remove(block_hash);
+        self.bodies.remove(block_hash);
+        self.block_numbers.remove(block_hash);
+        self.receipts.remove(block_hash);
+    }
+
+    fn get_header(&self, hash: &BlockHash) -> Option<&BlockHeader> {
+        self.headers.get(hash)
+    }
+
+    fn get_body(&self, hash: &BlockHash) -> Option<&BlockBody> {
+        self.bodies.get(hash)
+    }
+
+    fn get_block_number(&self, hash: &BlockHash) -> Option<BlockNumber> {
+        self.block_numbers.get(hash).copied()
+    }
+
+    fn get_receipts(&self, hash: &BlockHash) -> Option<&Vec<Receipt>> {
+        self.receipts.get(hash)
+    }
+}
+
+/// Data sent to the background persistence thread for writing to RocksDB.
+struct PersistenceBatch {
+    blocks: Vec<Block>,
+    receipts: Vec<(H256, Vec<Receipt>)>,
+    code_updates: Vec<(H256, Code)>,
+}
+
 /// Main storage interface for the ethrex client.
 ///
 /// The `Store` provides a high-level API for all blockchain data operations:
@@ -182,6 +241,12 @@ pub struct Store {
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+
+    /// Cache of recently executed blocks not yet flushed to disk.
+    /// Read methods check this cache before hitting RocksDB.
+    pending_blocks_cache: Arc<Mutex<PendingBlocksCache>>,
+    /// Channel for sending block data to the background persistence thread.
+    persistence_tx: SyncSender<PersistenceBatch>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -463,6 +528,15 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
+        // Check pending blocks cache first
+        if let Some(body) = self
+            .pending_blocks_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get_body(&block_hash)
+        {
+            return Ok(Some(body.clone()));
+        }
         self.read_async(BODIES, block_hash.encode_to_vec())
             .await?
             .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
@@ -477,6 +551,15 @@ impl Store {
         let latest = self.latest_block_header.get();
         if block_hash == latest.hash() {
             return Ok(Some((*latest).clone()));
+        }
+        // Check pending blocks cache (blocks executed but not yet flushed to disk)
+        if let Some(header) = self
+            .pending_blocks_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get_header(&block_hash)
+        {
+            return Ok(Some(header.clone()));
         }
         self.load_block_header_by_hash(block_hash)
     }
@@ -514,6 +597,15 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
+        // Check pending blocks cache first
+        if let Some(number) = self
+            .pending_blocks_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get_block_number(&block_hash)
+        {
+            return Ok(Some(number));
+        }
         self.read_async(BLOCK_NUMBERS, block_hash.encode_to_vec())
             .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -1049,6 +1141,16 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
+        // Check pending blocks cache first
+        if let Some(cached_receipts) = self
+            .pending_blocks_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get_receipts(block_hash)
+        {
+            return Ok(cached_receipts.clone());
+        }
+
         let mut receipts = Vec::new();
         let mut index = 0u64;
 
@@ -1124,6 +1226,15 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
+        // Check pending blocks cache first
+        if let Some(number) = self
+            .pending_blocks_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get_block_number(&block_hash)
+        {
+            return Ok(Some(number));
+        }
         let txn = self.backend.begin_read()?;
         txn.get(BLOCK_NUMBERS, &block_hash.encode_to_vec())?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -1338,7 +1449,6 @@ impl Store {
     }
 
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let db = self.backend.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
                 update_batch
@@ -1364,9 +1474,8 @@ impl Store {
             ..
         } = update_batch;
 
-        // Capacity one ensures sender just notifies and goes on
+        // 1. Send trie update to the background trie worker
         let (notify_tx, notify_rx) = sync_channel(1);
-        let wait_for_new_layer = notify_rx;
         let trie_update = TrieUpdate {
             parent_state_root,
             account_updates,
@@ -1375,56 +1484,49 @@ impl Store {
             child_state_root: last_state_root,
         };
         trie_upd_worker_tx.send(trie_update).map_err(|e| {
-            StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+            StoreError::Custom(format!("failed to send trie update: {e}"))
         })?;
-        let mut tx = db.begin_write()?;
 
-        for block in update_batch.blocks {
-            let block_number = block.header.number;
-            let block_hash = block.hash();
-            let hash_key = block_hash.encode_to_vec();
-
-            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            tx.put(BODIES, &hash_key, body_value.bytes())?;
-
-            tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
-
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
-            }
-        }
-
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
-                tx.put(RECEIPTS, &key, &value)?;
-            }
-        }
-
-        for (code_hash, code) in update_batch.code_updates {
-            let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
-            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
-            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
-        }
-
-        // Wait for an updated top layer so every caller afterwards sees a consistent view.
-        // Specifically, the next block produced MUST see this upper layer.
-        wait_for_new_layer
+        // 2. Wait for the trie layer cache update (synchronous, fast, required for next block)
+        notify_rx
             .recv()
             .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
-        // After top-level is added, we can make the rest of the changes visible.
-        tx.commit()?;
+
+        // 3. Insert block data into the in-memory pending cache so that
+        //    subsequent reads (e.g. FCU) can find the block before it hits disk
+        self.pending_blocks_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(&update_batch.blocks, &update_batch.receipts);
+
+        // Also populate the code cache eagerly so get_account_code hits in-memory
+        {
+            let mut code_cache = self
+                .account_code_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            let mut metadata_cache = self
+                .code_metadata_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            for (code_hash, code) in &update_batch.code_updates {
+                let _ = code_cache.insert(code);
+                metadata_cache.insert(*code_hash, CodeMetadata {
+                    length: code.bytecode.len() as u64,
+                });
+            }
+        }
+
+        // 4. Send block data to the background persistence thread (non-blocking
+        //    unless the channel is full, which provides natural backpressure)
+        let persistence_batch = PersistenceBatch {
+            blocks: update_batch.blocks,
+            receipts: update_batch.receipts,
+            code_updates: update_batch.code_updates,
+        };
+        self.persistence_tx.send(persistence_batch).map_err(|e| {
+            StoreError::Custom(format!("failed to send persistence batch: {e}"))
+        })?;
 
         Ok(())
     }
@@ -1459,6 +1561,11 @@ impl Store {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
+        // Bounded channel for background block persistence. Capacity 16 provides
+        // natural backpressure: if the persistence thread falls behind, the sender
+        // blocks (safe because we process one block per ~30-100ms and writes take ~5-20ms).
+        let (persistence_tx, persistence_rx) = std::sync::mpsc::sync_channel::<PersistenceBatch>(16);
+        let pending_blocks_cache = Arc::new(Mutex::new(PendingBlocksCache::default()));
 
         let last_written = {
             let tx = backend.begin_read()?;
@@ -1483,6 +1590,8 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            pending_blocks_cache: pending_blocks_cache.clone(),
+            persistence_tx,
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1543,6 +1652,35 @@ impl Store {
                     }
                     Err(err) => {
                         debug!("Trie update sender disconnected: {err}");
+                        return;
+                    }
+                }
+            }
+        }));
+        // Background thread that drains the persistence channel and writes block data
+        // (headers, bodies, receipts, code) to RocksDB. After a successful commit,
+        // evicts the blocks from the PendingBlocksCache.
+        let persist_backend = store.backend.clone();
+        let persist_cache = pending_blocks_cache;
+        let persist_code_cache = store.account_code_cache.clone();
+        let persist_metadata_cache = store.code_metadata_cache.clone();
+        background_threads.push(std::thread::spawn(move || {
+            let rx = persistence_rx;
+            loop {
+                match rx.recv() {
+                    Ok(batch) => {
+                        if let Err(e) = persist_block_batch(
+                            persist_backend.as_ref(),
+                            &persist_cache,
+                            &persist_code_cache,
+                            &persist_metadata_cache,
+                            batch,
+                        ) {
+                            error!("Background block persistence failed: {e}");
+                        }
+                    }
+                    Err(_) => {
+                        debug!("Persistence channel disconnected, shutting down persistence thread");
                         return;
                     }
                 }
@@ -2172,8 +2310,10 @@ impl Store {
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
         // Updates first the latest_block_header to avoid nonce inconsistencies #3927.
+        // Uses get_block_header_by_hash (which checks PendingBlocksCache) instead of
+        // load_block_header_by_hash, so FCU finds blocks not yet flushed to disk.
         let new_head = self
-            .load_block_header_by_hash(head_hash)?
+            .get_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.latest_block_header.update(new_head);
         self.forkchoice_update_inner(
@@ -3090,6 +3230,80 @@ fn encode_code(code: &Code) -> Vec<u8> {
     code.bytecode.encode(&mut buf);
     code.jump_targets.encode(&mut buf);
     buf
+}
+
+/// Writes a batch of blocks, receipts, and code to RocksDB, then evicts
+/// the blocks from the pending cache. Called by the background persistence thread.
+fn persist_block_batch(
+    backend: &dyn StorageBackend,
+    pending_cache: &Mutex<PendingBlocksCache>,
+    code_cache: &Mutex<CodeCache>,
+    metadata_cache: &Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>,
+    batch: PersistenceBatch,
+) -> Result<(), StoreError> {
+    let mut tx = backend.begin_write()?;
+
+    let mut block_hashes = Vec::with_capacity(batch.blocks.len());
+
+    for block in &batch.blocks {
+        let block_number = block.header.number;
+        let block_hash = block.hash();
+        block_hashes.push(block_hash);
+        let hash_key = block_hash.encode_to_vec();
+
+        let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+        tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
+
+        let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+        tx.put(BODIES, &hash_key, body_value.bytes())?;
+
+        tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
+
+        for (index, transaction) in block.body.transactions.iter().enumerate() {
+            let tx_hash = transaction.hash();
+            let mut composite_key = Vec::with_capacity(64);
+            composite_key.extend_from_slice(tx_hash.as_bytes());
+            composite_key.extend_from_slice(block_hash.as_bytes());
+            let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+            tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+        }
+    }
+
+    for (block_hash, receipts) in &batch.receipts {
+        for (index, receipt) in receipts.iter().enumerate() {
+            let key = (*block_hash, index as u64).encode_to_vec();
+            let value = receipt.encode_to_vec();
+            tx.put(RECEIPTS, &key, &value)?;
+        }
+    }
+
+    for (code_hash, code) in &batch.code_updates {
+        let buf = encode_code(code);
+        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+        tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+        tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
+
+        // Populate the code and metadata caches so reads don't need to hit disk
+        if let Ok(mut cache) = code_cache.lock() {
+            let _ = cache.insert(code);
+        }
+        if let Ok(mut cache) = metadata_cache.lock() {
+            cache.insert(*code_hash, CodeMetadata {
+                length: code.bytecode.len() as u64,
+            });
+        }
+    }
+
+    tx.commit()?;
+
+    // Evict persisted blocks from the pending cache
+    if let Ok(mut cache) = pending_cache.lock() {
+        for hash in &block_hashes {
+            cache.remove_block(hash);
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Default, Clone)]
