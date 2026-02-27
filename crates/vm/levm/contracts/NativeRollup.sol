@@ -53,10 +53,6 @@ contract NativeRollup {
     /// @notice Storage slot of sentMessages mapping in L2Bridge (slot 3).
     uint256 constant L2_BRIDGE_SENT_MESSAGES_SLOT = 3;
 
-    /// @notice Default gas limit for L1 messages sent via receive().
-    /// Matches CommonBridge's deposit gas limit (21000 * 5).
-    uint256 constant DEFAULT_GAS_LIMIT = 21_000 * 5;
-
     uint64 public immutable CHAIN_ID;
     uint256 public immutable FINALITY_DELAY;
 
@@ -86,7 +82,7 @@ contract NativeRollup {
         stateRoot = _initialStateRoot;
         blockGasLimit = _blockGasLimit;
         lastBaseFeePerGas = _initialBaseFee;
-        lastGasUsed = _blockGasLimit / 2;
+        lastGasUsed = 0;
         CHAIN_ID = _chainId;
         FINALITY_DELAY = _finalityDelay;
     }
