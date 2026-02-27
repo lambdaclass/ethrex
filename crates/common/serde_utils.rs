@@ -335,15 +335,11 @@ pub mod u128 {
         {
             let value: Option<serde_json::Value> = Option::deserialize(d)?;
             match value {
-                Some(serde_json::Value::Number(n)) => {
-                    if let Some(n) = n.as_u64() {
-                        Ok(Some(n as u128))
-                    } else if let Some(f) = n.as_f64() {
-                        Ok(Some(f as u128))
-                    } else {
-                        Err(D::Error::custom("Failed to deserialize u128 number"))
-                    }
-                }
+                Some(serde_json::Value::Number(n)) => n
+                    .to_string()
+                    .parse::<u128>()
+                    .map(Some)
+                    .map_err(|_| D::Error::custom("Failed to deserialize u128 number")),
                 Some(serde_json::Value::String(s)) if !s.is_empty() => {
                     u128::from_str_radix(s.trim_start_matches("0x"), 16)
                         .map_err(|_| D::Error::custom("Failed to deserialize u128 value"))
