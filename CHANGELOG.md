@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-02-27
+
+- Use nested storage originals, FxHashMap call frame backup, and sstore-specific storage access helper [#6265](https://github.com/lambdaclass/ethrex/pull/6265)
+
 ### 2026-02-25
 
 - Speed up snap sync validation with parallelism and deduplication [#6191](https://github.com/lambdaclass/ethrex/pull/6191)
