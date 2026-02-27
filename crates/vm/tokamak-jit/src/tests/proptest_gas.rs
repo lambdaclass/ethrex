@@ -86,7 +86,7 @@ proptest! {
                 "pass {} changed bytecode length",
                 pass
             );
-            if stats.patterns_folded == 0 {
+            if stats.patterns_folded == 0 && stats.unary_patterns_folded == 0 {
                 // Reached fixed point — verify truly stable
                 let (final_check, final_stats) = optimize(next.clone());
                 prop_assert_eq!(
@@ -96,6 +96,7 @@ proptest! {
                     pass
                 );
                 prop_assert_eq!(final_stats.patterns_folded, 0);
+                prop_assert_eq!(final_stats.unary_patterns_folded, 0);
                 return Ok(());
             }
             current = next;

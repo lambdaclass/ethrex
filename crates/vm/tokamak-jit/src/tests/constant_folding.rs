@@ -152,6 +152,109 @@ fn test_optimizer_no_patterns() {
     assert_eq!(optimized.bytecode, bytecode);
 }
 
+/// Test that DIV/MOD constant folding executes correctly.
+///
+/// Bytecode: PUSH1 3, PUSH1 21, DIV → 7, then PUSH1 4, PUSH1 21, MOD → 1, ADD → 8
+#[test]
+fn test_optimized_execution_div_mod() {
+    let bytecode = vec![
+        0x60, 0x03, // PUSH1 3 (divisor)
+        0x60, 0x15, // PUSH1 21 (dividend)
+        0x04, // DIV → 7
+        0x60, 0x04, // PUSH1 4 (divisor)
+        0x60, 0x15, // PUSH1 21 (dividend)
+        0x06, // MOD → 1
+        0x01, // ADD → 7 + 1 = 8
+        0x60, 0x00, // PUSH1 0
+        0x52, // MSTORE
+        0x60, 0x20, // PUSH1 32
+        0x60, 0x00, // PUSH1 0
+        0xf3, // RETURN
+    ];
+    let code = Code::from_bytecode(Bytes::from(bytecode));
+
+    let (contract_addr, sender_addr, accounts) = make_contract_accounts(code, FxHashMap::default());
+    let mut db = make_test_db(accounts);
+    let env = make_test_env(sender_addr);
+    let tx = make_test_tx(contract_addr, Bytes::new());
+
+    let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+        .expect("VM::new should succeed");
+    let report = vm.stateless_execute().expect("execution should succeed");
+
+    assert!(report.is_success(), "should succeed");
+    let result = U256::from_big_endian(&report.output);
+    assert_eq!(result, U256::from(8), "21/3 + 21%4 = 7 + 1 = 8");
+}
+
+/// Test that comparison constant folding executes correctly.
+///
+/// Bytecode: PUSH1 5, PUSH1 3, LT → 1, PUSH1 3, PUSH1 3, EQ → 1, ADD → 2
+#[test]
+fn test_optimized_execution_comparison() {
+    let bytecode = vec![
+        0x60, 0x05, // PUSH1 5
+        0x60, 0x03, // PUSH1 3
+        0x10, // LT → 3 < 5 = 1
+        0x60, 0x03, // PUSH1 3
+        0x60, 0x03, // PUSH1 3
+        0x14, // EQ → 3 == 3 = 1
+        0x01, // ADD → 1 + 1 = 2
+        0x60, 0x00, // PUSH1 0
+        0x52, // MSTORE
+        0x60, 0x20, // PUSH1 32
+        0x60, 0x00, // PUSH1 0
+        0xf3, // RETURN
+    ];
+    let code = Code::from_bytecode(Bytes::from(bytecode));
+
+    let (contract_addr, sender_addr, accounts) = make_contract_accounts(code, FxHashMap::default());
+    let mut db = make_test_db(accounts);
+    let env = make_test_env(sender_addr);
+    let tx = make_test_tx(contract_addr, Bytes::new());
+
+    let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+        .expect("VM::new should succeed");
+    let report = vm.stateless_execute().expect("execution should succeed");
+
+    assert!(report.is_success(), "should succeed");
+    let result = U256::from_big_endian(&report.output);
+    assert_eq!(result, U256::from(2), "(3<5) + (3==3) = 1 + 1 = 2");
+}
+
+/// Test that shift constant folding executes correctly.
+///
+/// Bytecode: PUSH1 1, PUSH1 8, SHL → 256, PUSH1 8, SHR → 1 (round-trip)
+/// The result of SHL is on stack, but to test with SHR we'd need a separate fold.
+/// Instead: PUSH1 1, PUSH1 8, SHL → 256, store and return.
+#[test]
+fn test_optimized_execution_shift() {
+    let bytecode = vec![
+        0x60, 0x01, // PUSH1 1 (value)
+        0x60, 0x08, // PUSH1 8 (shift amount)
+        0x1B, // SHL → 1 << 8 = 256
+        0x60, 0x00, // PUSH1 0
+        0x52, // MSTORE
+        0x60, 0x20, // PUSH1 32
+        0x60, 0x00, // PUSH1 0
+        0xf3, // RETURN
+    ];
+    let code = Code::from_bytecode(Bytes::from(bytecode));
+
+    let (contract_addr, sender_addr, accounts) = make_contract_accounts(code, FxHashMap::default());
+    let mut db = make_test_db(accounts);
+    let env = make_test_env(sender_addr);
+    let tx = make_test_tx(contract_addr, Bytes::new());
+
+    let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+        .expect("VM::new should succeed");
+    let report = vm.stateless_execute().expect("execution should succeed");
+
+    assert!(report.is_success(), "should succeed");
+    let result = U256::from_big_endian(&report.output);
+    assert_eq!(result, U256::from(256), "1 << 8 = 256");
+}
+
 /// Test that bitwise constant folding executes correctly.
 ///
 /// Bytecode: PUSH1 0xFF, PUSH1 0x0F, AND → 0x0F

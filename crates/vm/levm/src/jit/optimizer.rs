@@ -21,9 +21,25 @@ use super::types::AnalyzedBytecode;
 const ADD: u8 = 0x01;
 const MUL: u8 = 0x02;
 const SUB: u8 = 0x03;
+const DIV: u8 = 0x04;
+const SDIV: u8 = 0x05;
+const MOD: u8 = 0x06;
+const SMOD: u8 = 0x07;
+const EXP: u8 = 0x0A;
+const SIGNEXTEND: u8 = 0x0B;
+const LT: u8 = 0x10;
+const GT: u8 = 0x11;
+const SLT: u8 = 0x12;
+const SGT: u8 = 0x13;
+const EQ: u8 = 0x14;
+const ISZERO: u8 = 0x15;
 const AND: u8 = 0x16;
 const OR: u8 = 0x17;
 const XOR: u8 = 0x18;
+const NOT: u8 = 0x19;
+const SHL: u8 = 0x1B;
+const SHR: u8 = 0x1C;
+const SAR: u8 = 0x1D;
 
 // ─── Public types ────────────────────────────────────────────────────
 
@@ -38,7 +54,20 @@ pub struct FoldablePattern {
     pub first_val: U256,
     /// Value pushed by the second PUSH (ends up as `μ_s[0]` — stack top).
     pub second_val: U256,
-    /// The arithmetic opcode (ADD, SUB, MUL, AND, OR, XOR).
+    /// The arithmetic opcode (ADD, SUB, MUL, AND, OR, XOR, DIV, etc.).
+    pub op: u8,
+}
+
+/// A constant-foldable `PUSH+UNARY_OP` pattern (NOT, ISZERO).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnaryPattern {
+    /// Byte offset of the PUSH instruction.
+    pub offset: usize,
+    /// Total byte length of the two-instruction sequence (push_size + 1).
+    pub length: usize,
+    /// Value pushed by the PUSH instruction.
+    pub val: U256,
+    /// The unary opcode (NOT, ISZERO).
     pub op: u8,
 }
 
@@ -51,6 +80,8 @@ pub struct OptimizationStats {
     pub patterns_folded: usize,
     /// Number of opcodes eliminated (each fold removes 2: `3 → 1`).
     pub opcodes_eliminated: usize,
+    /// Number of unary patterns folded (each fold removes 1: `2 → 1`).
+    pub unary_patterns_folded: usize,
 }
 
 // ─── Helper functions ────────────────────────────────────────────────
@@ -107,6 +138,132 @@ fn bytes_needed(value: U256) -> usize {
     0
 }
 
+// ─── Signed arithmetic helpers (replicating LEVM semantics) ─────────
+
+/// Check if bit 255 is set (two's complement negative).
+fn is_negative(value: U256) -> bool {
+    value.bit(255)
+}
+
+/// Two's complement negation: `!x + 1`.
+fn negate(value: U256) -> U256 {
+    (!value).overflowing_add(U256::one()).0
+}
+
+/// Absolute value in two's complement.
+fn abs_val(value: U256) -> U256 {
+    if is_negative(value) {
+        negate(value)
+    } else {
+        value
+    }
+}
+
+/// Convert a boolean to U256 (0 or 1).
+fn u256_from_bool(value: bool) -> U256 {
+    if value { U256::one() } else { U256::zero() }
+}
+
+/// Check if an opcode is a unary foldable operation (NOT, ISZERO).
+fn is_unary_foldable_op(opcode: u8) -> bool {
+    matches!(opcode, NOT | ISZERO)
+}
+
+/// Evaluate a unary operation following EVM semantics.
+fn eval_unary_op(op: u8, val: U256) -> Option<U256> {
+    match op {
+        NOT => Some(!val),
+        ISZERO => Some(u256_from_bool(val.is_zero())),
+        _ => None,
+    }
+}
+
+/// Signed division following EVM SDIV semantics.
+fn eval_sdiv(dividend: U256, divisor: U256) -> U256 {
+    if divisor.is_zero() || dividend.is_zero() {
+        return U256::zero();
+    }
+    let quotient = abs_val(dividend)
+        .checked_div(abs_val(divisor))
+        .unwrap_or_default();
+    if is_negative(dividend) ^ is_negative(divisor) {
+        negate(quotient)
+    } else {
+        quotient
+    }
+}
+
+/// Signed modulo following EVM SMOD semantics (result sign follows dividend).
+fn eval_smod(dividend: U256, divisor: U256) -> U256 {
+    if divisor.is_zero() || dividend.is_zero() {
+        return U256::zero();
+    }
+    let remainder = abs_val(dividend)
+        .checked_rem(abs_val(divisor))
+        .unwrap_or_default();
+    if is_negative(dividend) {
+        negate(remainder)
+    } else {
+        remainder
+    }
+}
+
+/// SIGNEXTEND: extend sign bit at byte boundary.
+#[allow(clippy::arithmetic_side_effects)]
+fn eval_signextend(byte_size_minus_one: U256, value: U256) -> U256 {
+    if byte_size_minus_one > U256::from(31) {
+        return value;
+    }
+    let sign_bit_index = byte_size_minus_one * 8 + 7;
+    let sign_bit = (value >> sign_bit_index) & U256::one();
+    let mask = (U256::one() << sign_bit_index) - U256::one();
+    if sign_bit.is_zero() {
+        value & mask
+    } else {
+        value | !mask
+    }
+}
+
+/// Signed comparison helper for SLT/SGT.
+fn signed_compare(a: U256, b: U256, less_than: bool) -> U256 {
+    let a_neg = is_negative(a);
+    let b_neg = is_negative(b);
+    let result = match (a_neg, b_neg) {
+        (true, false) => less_than,
+        (false, true) => !less_than,
+        _ if less_than => a < b,
+        _ => a > b,
+    };
+    u256_from_bool(result)
+}
+
+/// Arithmetic right shift following EVM SAR semantics.
+#[allow(clippy::arithmetic_side_effects)]
+fn eval_sar(shift: U256, value: U256) -> U256 {
+    let value_negative = is_negative(value);
+    if shift < U256::from(256) {
+        if !value_negative {
+            value >> shift
+        } else {
+            (value >> shift) | (U256::MAX << (U256::from(256) - shift))
+        }
+    } else if value_negative {
+        U256::MAX
+    } else {
+        U256::zero()
+    }
+}
+
+/// Shift (SHL/SHR): returns 0 if shift >= 256.
+#[allow(clippy::arithmetic_side_effects)]
+fn eval_shift(value: U256, shift: U256, left: bool) -> U256 {
+    if shift < U256::from(256) {
+        if left { value << shift } else { value >> shift }
+    } else {
+        U256::zero()
+    }
+}
+
 /// Evaluate a binary arithmetic operation following EVM stack semantics.
 ///
 /// `second_val` is `μ_s[0]` (top of stack), `first_val` is `μ_s[1]`.
@@ -115,6 +272,20 @@ fn eval_op(op: u8, first_val: U256, second_val: U256) -> Option<U256> {
         ADD => Some(second_val.overflowing_add(first_val).0),
         SUB => Some(second_val.overflowing_sub(first_val).0),
         MUL => Some(second_val.overflowing_mul(first_val).0),
+        DIV => Some(second_val.checked_div(first_val).unwrap_or_default()),
+        SDIV => Some(eval_sdiv(second_val, first_val)),
+        MOD => Some(second_val.checked_rem(first_val).unwrap_or_default()),
+        SMOD => Some(eval_smod(second_val, first_val)),
+        EXP => Some(second_val.overflowing_pow(first_val).0),
+        SIGNEXTEND => Some(eval_signextend(second_val, first_val)),
+        LT => Some(u256_from_bool(second_val < first_val)),
+        GT => Some(u256_from_bool(second_val > first_val)),
+        EQ => Some(u256_from_bool(second_val == first_val)),
+        SLT => Some(signed_compare(second_val, first_val, true)),
+        SGT => Some(signed_compare(second_val, first_val, false)),
+        SHL => Some(eval_shift(first_val, second_val, true)),
+        SHR => Some(eval_shift(first_val, second_val, false)),
+        SAR => Some(eval_sar(second_val, first_val)),
         AND => Some(second_val & first_val),
         OR => Some(second_val | first_val),
         XOR => Some(second_val ^ first_val),
@@ -122,9 +293,30 @@ fn eval_op(op: u8, first_val: U256, second_val: U256) -> Option<U256> {
     }
 }
 
-/// Check if an opcode is a foldable arithmetic operation.
+/// Check if an opcode is a foldable binary operation.
 fn is_foldable_op(opcode: u8) -> bool {
-    matches!(opcode, ADD | MUL | SUB | AND | OR | XOR)
+    matches!(
+        opcode,
+        ADD | MUL
+            | SUB
+            | DIV
+            | SDIV
+            | MOD
+            | SMOD
+            | EXP
+            | SIGNEXTEND
+            | LT
+            | GT
+            | SLT
+            | SGT
+            | EQ
+            | AND
+            | OR
+            | XOR
+            | SHL
+            | SHR
+            | SAR
+    )
 }
 
 // ─── Public API ──────────────────────────────────────────────────────
@@ -198,60 +390,123 @@ pub fn detect_patterns(bytecode: &[u8]) -> Vec<FoldablePattern> {
     patterns
 }
 
+/// Scan bytecode for constant-foldable `PUSH+UNARY_OP` patterns.
+///
+/// Does not modify bytecode — returns detected patterns for inspection.
+pub fn detect_unary_patterns(bytecode: &[u8]) -> Vec<UnaryPattern> {
+    let mut patterns = Vec::new();
+    let len = bytecode.len();
+    let mut i = 0;
+
+    while i < len {
+        #[expect(clippy::indexing_slicing, reason = "i < len checked in loop condition")]
+        let opcode_a = bytecode[i];
+
+        if !is_push(opcode_a) {
+            i = i.saturating_add(instruction_size(opcode_a));
+            continue;
+        }
+
+        let size_a = push_data_size(opcode_a);
+        let total_a = instruction_size(opcode_a);
+        let j = i.saturating_add(total_a);
+
+        if j >= len {
+            break;
+        }
+
+        #[expect(clippy::indexing_slicing, reason = "j < len checked above")]
+        let opcode_op = bytecode[j];
+
+        if !is_unary_foldable_op(opcode_op) {
+            i = i.saturating_add(total_a);
+            continue;
+        }
+
+        let val = extract_push_value(bytecode, i, size_a);
+        let pattern_length = total_a.saturating_add(1);
+
+        patterns.push(UnaryPattern {
+            offset: i,
+            length: pattern_length,
+            val,
+            op: opcode_op,
+        });
+
+        // Skip past the entire pattern
+        i = j.saturating_add(1);
+    }
+
+    patterns
+}
+
 /// Apply constant folding to analyzed bytecode.
 ///
 /// Replaces each foldable `PUSH+PUSH+OP` sequence with a single wider PUSH
-/// of the pre-computed result. Bytecode length is preserved (same offsets).
-pub fn optimize(analyzed: AnalyzedBytecode) -> (AnalyzedBytecode, OptimizationStats) {
-    let patterns = detect_patterns(&analyzed.bytecode);
+/// of the pre-computed result. Also folds `PUSH+UNARY_OP` patterns.
+/// Bytecode length is preserved (same offsets).
+/// Rewrite a bytecode region `[offset..offset+length]` as a single PUSH of `result`.
+///
+/// Returns `true` if the fold was applied, `false` if the result doesn't fit.
+/// `length` is the total pattern size; the replacement PUSH uses `length - 1` data bytes.
+fn write_folded_push(bytecode: &mut [u8], offset: usize, length: usize, result: U256) -> bool {
+    let data_size = length.saturating_sub(1);
+    if data_size > 32 || bytes_needed(result) > data_size {
+        return false;
+    }
+    let Some(data_size_u8) = u8::try_from(data_size).ok() else {
+        return false;
+    };
 
-    if patterns.is_empty() {
+    #[expect(clippy::indexing_slicing, reason = "offset within bytecode bounds")]
+    {
+        bytecode[offset] = 0x5f_u8.saturating_add(data_size_u8);
+    }
+
+    let buf = result.to_big_endian();
+    let pad_start = 32_usize.saturating_sub(data_size);
+    let dest_start = offset.saturating_add(1);
+    let dest_end = dest_start.saturating_add(data_size);
+    #[expect(clippy::indexing_slicing, reason = "dest range within pattern bounds")]
+    {
+        bytecode[dest_start..dest_end].copy_from_slice(&buf[pad_start..]);
+    }
+
+    true
+}
+
+pub fn optimize(analyzed: AnalyzedBytecode) -> (AnalyzedBytecode, OptimizationStats) {
+    let binary_patterns = detect_patterns(&analyzed.bytecode);
+    let unary_patterns = detect_unary_patterns(&analyzed.bytecode);
+
+    if binary_patterns.is_empty() && unary_patterns.is_empty() {
         return (analyzed, OptimizationStats::default());
     }
 
     let mut bytecode = analyzed.bytecode.to_vec();
     let mut stats = OptimizationStats {
-        patterns_detected: patterns.len(),
+        patterns_detected: binary_patterns.len(),
         ..Default::default()
     };
 
-    for pattern in &patterns {
+    for pattern in &binary_patterns {
         let Some(result) = eval_op(pattern.op, pattern.first_val, pattern.second_val) else {
             continue;
         };
-
-        let data_size = pattern.length.saturating_sub(1);
-
-        // data_size must be ≤ 32 (PUSH32 max) and result must fit
-        if data_size > 32 || bytes_needed(result) > data_size {
-            continue;
+        if write_folded_push(&mut bytecode, pattern.offset, pattern.length, result) {
+            stats.patterns_folded = stats.patterns_folded.saturating_add(1);
+            stats.opcodes_eliminated = stats.opcodes_eliminated.saturating_add(2);
         }
+    }
 
-        // Write replacement PUSH_{data_size}: opcode = 0x5F + data_size
-        // data_size ≤ 32 guaranteed by check above, so conversion to u8 is safe
-        let Some(data_size_u8) = u8::try_from(data_size).ok() else {
+    for pattern in &unary_patterns {
+        let Some(result) = eval_unary_op(pattern.op, pattern.val) else {
             continue;
         };
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "pattern.offset < bytecode.len() guaranteed by detect_patterns"
-        )]
-        {
-            bytecode[pattern.offset] = 0x5f_u8.saturating_add(data_size_u8);
+        if write_folded_push(&mut bytecode, pattern.offset, pattern.length, result) {
+            stats.unary_patterns_folded = stats.unary_patterns_folded.saturating_add(1);
+            stats.opcodes_eliminated = stats.opcodes_eliminated.saturating_add(1);
         }
-
-        // Write result value as big-endian, right-aligned in data_size bytes
-        let buf = result.to_big_endian();
-        let pad_start = 32_usize.saturating_sub(data_size);
-        let dest_start = pattern.offset.saturating_add(1);
-        let dest_end = dest_start.saturating_add(data_size);
-        #[expect(clippy::indexing_slicing, reason = "dest range within pattern bounds")]
-        {
-            bytecode[dest_start..dest_end].copy_from_slice(&buf[pad_start..]);
-        }
-
-        stats.patterns_folded = stats.patterns_folded.saturating_add(1);
-        stats.opcodes_eliminated = stats.opcodes_eliminated.saturating_add(2);
     }
 
     let optimized = AnalyzedBytecode {
@@ -477,9 +732,23 @@ mod tests {
             (0x01u8, "ADD"),
             (0x02, "MUL"),
             (0x03, "SUB"),
+            (0x04, "DIV"),
+            (0x05, "SDIV"),
+            (0x06, "MOD"),
+            (0x07, "SMOD"),
+            (0x0A, "EXP"),
+            (0x0B, "SIGNEXTEND"),
+            (0x10, "LT"),
+            (0x11, "GT"),
+            (0x12, "SLT"),
+            (0x13, "SGT"),
+            (0x14, "EQ"),
             (0x16, "AND"),
             (0x17, "OR"),
             (0x18, "XOR"),
+            (0x1B, "SHL"),
+            (0x1C, "SHR"),
+            (0x1D, "SAR"),
         ] {
             let bytecode = vec![0x60, 0x01, 0x60, 0x02, op, 0x00];
             let patterns = detect_patterns(&bytecode);
@@ -490,10 +759,10 @@ mod tests {
 
     #[test]
     fn test_detect_unsupported_ops_ignored() {
-        // PUSH1 1, PUSH1 2, DIV (0x04) — not in our foldable set
-        let bytecode = vec![0x60, 0x01, 0x60, 0x02, 0x04, 0x00];
+        // PUSH1 1, PUSH1 2, POP (0x50) — not in our foldable set
+        let bytecode = vec![0x60, 0x01, 0x60, 0x02, 0x50, 0x00];
         let patterns = detect_patterns(&bytecode);
-        assert!(patterns.is_empty(), "DIV should not be detected");
+        assert!(patterns.is_empty(), "POP should not be detected");
     }
 
     // ── Constant folding tests ───────────────────────────────────────
@@ -730,5 +999,418 @@ mod tests {
 
         assert_eq!(result.bytecode.as_ref(), &input);
         assert_eq!(stats, OptimizationStats::default());
+    }
+
+    // ── G-7: Expanded binary opcode folding tests ────────────────────
+
+    #[test]
+    fn test_fold_push1_push1_div() {
+        // PUSH1 5, PUSH1 20, DIV → EVM: 20 / 5 = 4
+        let analyzed = make_analyzed(vec![0x60, 0x05, 0x60, 0x14, 0x04, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x04, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_div_by_zero() {
+        // PUSH1 0, PUSH1 10, DIV → EVM: 10 / 0 = 0 (EVM spec: no exception)
+        let analyzed = make_analyzed(vec![0x60, 0x00, 0x60, 0x0A, 0x04, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        // Result is 0, which needs 0 bytes, fits in 4 bytes
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_mod() {
+        // PUSH1 3, PUSH1 10, MOD → EVM: 10 % 3 = 1
+        let analyzed = make_analyzed(vec![0x60, 0x03, 0x60, 0x0A, 0x06, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x01, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_mod_by_zero() {
+        // PUSH1 0, PUSH1 10, MOD → EVM: 10 % 0 = 0
+        let analyzed = make_analyzed(vec![0x60, 0x00, 0x60, 0x0A, 0x06, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_sdiv() {
+        // Signed: -6 / 3 = -2
+        // -6 in U256 = negate(6)
+        let neg_6 = (!U256::from(6)).overflowing_add(U256::one()).0;
+        // neg_6 is 32 bytes, won't fit in PUSH1 data_size=4, so use PUSH32
+        let mut bytecode = vec![0x60, 0x03]; // PUSH1 3 (divisor, first push)
+        bytecode.push(0x7f); // PUSH32 (32 bytes)
+        let neg_6_bytes = neg_6.to_big_endian();
+        bytecode.extend_from_slice(&neg_6_bytes);
+        bytecode.push(0x05); // SDIV
+        bytecode.push(0x00); // STOP
+
+        let analyzed = make_analyzed(bytecode, 4);
+        let (_result, stats) = optimize(analyzed);
+
+        // Pattern length = 2 + 33 + 1 = 36, data_size = 35 → exceeds PUSH32 limit (32)
+        // So this pattern cannot be folded.
+        assert_eq!(stats.patterns_folded, 0); // Too large to fold
+    }
+
+    #[test]
+    fn test_fold_push1_push1_sdiv_positive() {
+        // PUSH1 3, PUSH1 6, SDIV → 6 / 3 = 2
+        let analyzed = make_analyzed(vec![0x60, 0x03, 0x60, 0x06, 0x05, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x02, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_smod() {
+        // PUSH1 3, PUSH1 7, SMOD → 7 % 3 = 1 (positive case)
+        let analyzed = make_analyzed(vec![0x60, 0x03, 0x60, 0x07, 0x07, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x01, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_exp() {
+        // PUSH1 8, PUSH1 2, EXP → 2^8 = 256 (0x100)
+        let analyzed = make_analyzed(vec![0x60, 0x08, 0x60, 0x02, 0x0A, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        // 256 = 0x0100, fits in 4 bytes
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x01, 0x00, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_exp_overflow_skipped() {
+        // PUSH1 255, PUSH1 255, EXP → 255^255, huge result, won't fit in 4 bytes
+        let analyzed = make_analyzed(vec![0x60, 0xFF, 0x60, 0xFF, 0x0A, 0x00], 4);
+        let (_result, stats) = optimize(analyzed);
+
+        // Result is enormous (wraps mod 2^256) — may or may not fit depending on value
+        // Let's just verify detection works; fold may be skipped if too large
+        assert_eq!(stats.patterns_detected, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_signextend() {
+        // PUSH1 0xFF, PUSH1 0, SIGNEXTEND → sign-extend byte 0 of 0xFF
+        // EVM: SIGNEXTEND pops [byte_size_minus_one, value_to_extend]
+        // PUSH 0xFF (first), PUSH 0 (second=top=byte_size_minus_one)
+        // So second_val=0, first_val=0xFF → sign-extend byte 0 of 0xFF
+        // Bit 7 of 0xFF is 1 → extend with 1s → result is U256::MAX
+        // U256::MAX is 32 bytes — won't fit in 4 byte data_size
+        let analyzed = make_analyzed(vec![0x60, 0xFF, 0x60, 0x00, 0x0B, 0x00], 4);
+        let (_result, stats) = optimize(analyzed);
+
+        assert_eq!(stats.patterns_detected, 1);
+        assert_eq!(stats.patterns_folded, 0); // Result too large
+    }
+
+    #[test]
+    fn test_fold_push1_push1_signextend_zero_extend() {
+        // PUSH1 0x7F, PUSH1 0, SIGNEXTEND → sign-extend byte 0 of 0x7F
+        // Bit 7 of 0x7F is 0 → zero-extend → result is 0x7F & 0x7F = 0x7F
+        let analyzed = make_analyzed(vec![0x60, 0x7F, 0x60, 0x00, 0x0B, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x7F, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_lt() {
+        // PUSH1 5, PUSH1 3, LT → EVM: 3 < 5 = 1
+        let analyzed = make_analyzed(vec![0x60, 0x05, 0x60, 0x03, 0x10, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x01, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_gt() {
+        // PUSH1 3, PUSH1 5, GT → EVM: 5 > 3 = 1
+        let analyzed = make_analyzed(vec![0x60, 0x03, 0x60, 0x05, 0x11, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x01, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_eq() {
+        // PUSH1 3, PUSH1 3, EQ → EVM: 3 == 3 = 1
+        let analyzed = make_analyzed(vec![0x60, 0x03, 0x60, 0x03, 0x14, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x01, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_eq_false() {
+        // PUSH1 3, PUSH1 4, EQ → EVM: 4 == 3 = 0
+        let analyzed = make_analyzed(vec![0x60, 0x03, 0x60, 0x04, 0x14, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_slt() {
+        // SLT: unsigned 3 vs 5 with same sign → 3 < 5 = 1
+        // PUSH1 5, PUSH1 3, SLT → EVM: 3 < 5 (signed) = 1
+        let analyzed = make_analyzed(vec![0x60, 0x05, 0x60, 0x03, 0x12, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x01, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_sgt() {
+        // SGT: PUSH1 3, PUSH1 5, SGT → EVM: 5 > 3 (signed) = 1
+        let analyzed = make_analyzed(vec![0x60, 0x03, 0x60, 0x05, 0x13, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x00, 0x01, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_shl() {
+        // PUSH1 1, PUSH1 8, SHL → EVM: pops [shift=8, value=1] → 1 << 8 = 256
+        // Wait: PUSH1 1 (first), PUSH1 8 (second=top). SHL pops shift=top=8, value=1.
+        // In eval_op: second_val=8 (shift), first_val=1 (value) → 1 << 8 = 256
+        let analyzed = make_analyzed(vec![0x60, 0x01, 0x60, 0x08, 0x1B, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        // 256 = 0x0100
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x63, 0x00, 0x00, 0x01, 0x00, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_shr() {
+        // PUSH2 0x0100 (256), PUSH1 8, SHR → EVM: pops [shift=8, value=256] → 256 >> 8 = 1
+        // PUSH2 first (value), PUSH1 second (shift=top)
+        let analyzed = make_analyzed(vec![0x61, 0x01, 0x00, 0x60, 0x08, 0x1C, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        // 256 >> 8 = 1
+        // Pattern length = 3 + 2 + 1 = 6, data_size = 5
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x64, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_push1_sar() {
+        // SAR on positive: same as SHR
+        // PUSH2 0x0100 (256), PUSH1 8, SAR → 256 >> 8 = 1
+        let analyzed = make_analyzed(vec![0x61, 0x01, 0x00, 0x60, 0x08, 0x1D, 0x00], 4);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(
+            result.bytecode.as_ref(),
+            &[0x64, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00]
+        );
+        assert_eq!(stats.patterns_folded, 1);
+    }
+
+    // ── G-7: Unary opcode folding tests ──────────────────────────────
+
+    #[test]
+    fn test_fold_push1_not_skipped() {
+        // PUSH1 0, NOT → !0 = U256::MAX (32 bytes, won't fit in PUSH1's 1-byte data)
+        let analyzed = make_analyzed(vec![0x60, 0x00, 0x19, 0x00], 3);
+        let (_result, stats) = optimize(analyzed);
+
+        assert_eq!(stats.unary_patterns_folded, 0); // Too large for available space
+    }
+
+    #[test]
+    fn test_fold_push1_iszero_true() {
+        // PUSH1 0, ISZERO → ISZERO(0) = 1
+        let analyzed = make_analyzed(vec![0x60, 0x00, 0x15, 0x00], 3);
+        let (result, stats) = optimize(analyzed);
+
+        // Pattern length 3, data_size 2, PUSH2 = 0x61
+        assert_eq!(result.bytecode.as_ref(), &[0x61, 0x00, 0x01, 0x00]);
+        assert_eq!(stats.unary_patterns_folded, 1);
+        assert_eq!(stats.opcodes_eliminated, 1);
+    }
+
+    #[test]
+    fn test_fold_push1_iszero_false() {
+        // PUSH1 5, ISZERO → ISZERO(5) = 0
+        let analyzed = make_analyzed(vec![0x60, 0x05, 0x15, 0x00], 3);
+        let (result, stats) = optimize(analyzed);
+
+        assert_eq!(result.bytecode.as_ref(), &[0x61, 0x00, 0x00, 0x00]);
+        assert_eq!(stats.unary_patterns_folded, 1);
+    }
+
+    #[test]
+    fn test_detect_unary_pattern() {
+        // PUSH1 5, ISZERO, STOP
+        let bytecode = vec![0x60, 0x05, 0x15, 0x00];
+        let patterns = detect_unary_patterns(&bytecode);
+
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].offset, 0);
+        assert_eq!(patterns[0].length, 3);
+        assert_eq!(patterns[0].val, U256::from(5));
+        assert_eq!(patterns[0].op, ISZERO);
+    }
+
+    #[test]
+    fn test_detect_unary_pattern_not() {
+        // PUSH1 0xFF, NOT, STOP
+        let bytecode = vec![0x60, 0xFF, 0x19, 0x00];
+        let patterns = detect_unary_patterns(&bytecode);
+
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].op, NOT);
+        assert_eq!(patterns[0].val, U256::from(0xFF));
+    }
+
+    #[test]
+    fn test_eval_op_div() {
+        assert_eq!(
+            eval_op(DIV, U256::from(5), U256::from(20)),
+            Some(U256::from(4))
+        );
+        assert_eq!(
+            eval_op(DIV, U256::zero(), U256::from(10)),
+            Some(U256::zero())
+        );
+    }
+
+    #[test]
+    fn test_eval_op_mod() {
+        assert_eq!(
+            eval_op(MOD, U256::from(3), U256::from(10)),
+            Some(U256::from(1))
+        );
+        assert_eq!(
+            eval_op(MOD, U256::zero(), U256::from(10)),
+            Some(U256::zero())
+        );
+    }
+
+    #[test]
+    fn test_eval_op_comparisons() {
+        assert_eq!(eval_op(LT, U256::from(5), U256::from(3)), Some(U256::one()));
+        assert_eq!(eval_op(GT, U256::from(3), U256::from(5)), Some(U256::one()));
+        assert_eq!(eval_op(EQ, U256::from(3), U256::from(3)), Some(U256::one()));
+        assert_eq!(
+            eval_op(EQ, U256::from(3), U256::from(4)),
+            Some(U256::zero())
+        );
+    }
+
+    #[test]
+    fn test_eval_op_shifts() {
+        // SHL: second_val=shift, first_val=value → value << shift
+        assert_eq!(
+            eval_op(SHL, U256::from(1), U256::from(8)),
+            Some(U256::from(256))
+        );
+        // SHR: 256 >> 8 = 1
+        assert_eq!(
+            eval_op(SHR, U256::from(256), U256::from(8)),
+            Some(U256::from(1))
+        );
+        // Shift >= 256 → 0
+        assert_eq!(
+            eval_op(SHL, U256::from(1), U256::from(256)),
+            Some(U256::zero())
+        );
+    }
+
+    #[test]
+    fn test_eval_unary_ops() {
+        assert_eq!(eval_unary_op(ISZERO, U256::zero()), Some(U256::one()));
+        assert_eq!(eval_unary_op(ISZERO, U256::from(5)), Some(U256::zero()));
+        assert_eq!(eval_unary_op(NOT, U256::zero()), Some(U256::MAX));
+        assert_eq!(eval_unary_op(NOT, U256::MAX), Some(U256::zero()));
+    }
+
+    #[test]
+    fn test_signed_helpers() {
+        assert!(!is_negative(U256::zero()));
+        assert!(!is_negative(U256::from(1)));
+        assert!(is_negative(negate(U256::from(1)))); // -1 has bit 255 set
+
+        assert_eq!(abs_val(U256::from(5)), U256::from(5));
+        assert_eq!(abs_val(negate(U256::from(5))), U256::from(5));
+
+        assert_eq!(u256_from_bool(true), U256::one());
+        assert_eq!(u256_from_bool(false), U256::zero());
     }
 }
