@@ -435,20 +435,23 @@ impl BlockAccessList {
     /// Validates that the BAL has canonical ordering per EIP-7928.
     /// - Accounts must be in strictly ascending order by address.
     /// - Within each account: storage_changes by slot, storage_reads by slot value,
-    ///   slot_changes by block_access_index.
+    ///   slot_changes/balance_changes/nonce_changes/code_changes by block_access_index.
     ///
     /// Returns an error string describing the first violation found.
     pub fn validate_ordering(&self) -> Result<(), String> {
-        for window in self.inner.windows(2) {
-            if window[0].address >= window[1].address {
-                return Err(format!(
-                    "Block access list accounts not in strictly ascending order: \
-                     {:#x} >= {:#x}",
-                    window[0].address, window[1].address
-                ));
-            }
-        }
+        let mut prev_addr = None;
         for account in &self.inner {
+            if let Some(prev) = prev_addr {
+                if prev >= account.address {
+                    return Err(format!(
+                        "Block access list accounts not in strictly ascending order: \
+                         {:#x} >= {:#x}",
+                        prev, account.address
+                    ));
+                }
+            }
+            prev_addr = Some(account.address);
+
             for window in account.storage_changes.windows(2) {
                 if window[0].slot >= window[1].slot {
                     return Err(format!(
@@ -478,6 +481,39 @@ impl BlockAccessList {
                         "Block access list storage_reads not in strictly ascending order \
                          for account {:#x}: {:#x} >= {:#x}",
                         account.address, window[0], window[1]
+                    ));
+                }
+            }
+            for window in account.balance_changes.windows(2) {
+                if window[0].block_access_index >= window[1].block_access_index {
+                    return Err(format!(
+                        "Block access list balance_changes not in strictly ascending order \
+                         for account {:#x}: {} >= {}",
+                        account.address,
+                        window[0].block_access_index,
+                        window[1].block_access_index
+                    ));
+                }
+            }
+            for window in account.nonce_changes.windows(2) {
+                if window[0].block_access_index >= window[1].block_access_index {
+                    return Err(format!(
+                        "Block access list nonce_changes not in strictly ascending order \
+                         for account {:#x}: {} >= {}",
+                        account.address,
+                        window[0].block_access_index,
+                        window[1].block_access_index
+                    ));
+                }
+            }
+            for window in account.code_changes.windows(2) {
+                if window[0].block_access_index >= window[1].block_access_index {
+                    return Err(format!(
+                        "Block access list code_changes not in strictly ascending order \
+                         for account {:#x}: {} >= {}",
+                        account.address,
+                        window[0].block_access_index,
+                        window[1].block_access_index
                     ));
                 }
             }
