@@ -31,6 +31,14 @@ pub enum InvalidBlockError {
     BlockAccessListHashMismatch,
     #[error("Block access list contains index {index} exceeding max valid index {max}")]
     BlockAccessListIndexOutOfBounds { index: u16, max: u16 },
+    #[error(
+        "Block access list size exceeds maximum: {items} items cost {total_cost} > {max_allowed} allowed"
+    )]
+    BlockAccessListSizeExceeded {
+        items: u64,
+        total_cost: u64,
+        max_allowed: u64,
+    },
     #[error("World State Root does not match the one in the header after executing")]
     StateRootMismatch,
     #[error("Receipts Root does not match the one in the header after executing")]

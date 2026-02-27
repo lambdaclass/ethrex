@@ -5,9 +5,7 @@ use crate::{
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     precompiles,
-    utils::{
-        address_to_word, create_eth_transfer_log, create_selfdestruct_log, word_to_address, *,
-    },
+    utils::{address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;
@@ -692,9 +690,9 @@ impl<'a> VM<'a> {
                     let log = create_eth_transfer_log(to, beneficiary, balance);
                     self.substate.add_log(log);
                 } else if self.substate.is_account_created(&to) {
-                    // Selfdestruct-to-self: only emit log when created in same tx (burns ETH)
+                    // Selfdestruct-to-self: only emit burn log when created in same tx
                     // Pre-existing contracts selfdestructing to self emit NO log
-                    let log = create_selfdestruct_log(to, balance);
+                    let log = create_burn_log(to, balance);
                     self.substate.add_log(log);
                 }
             }
@@ -714,7 +712,7 @@ impl<'a> VM<'a> {
                 let log = if to != beneficiary {
                     create_eth_transfer_log(to, beneficiary, balance)
                 } else {
-                    create_selfdestruct_log(to, balance)
+                    create_burn_log(to, balance)
                 };
                 self.substate.add_log(log);
             }

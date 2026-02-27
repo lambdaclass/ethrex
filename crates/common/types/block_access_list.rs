@@ -432,6 +432,18 @@ impl BlockAccessList {
         &self.inner
     }
 
+    /// Computes the number of BAL items per EIP-7928 size cap.
+    /// bal_items = addresses + storage_slots (unique slots, not individual operations)
+    pub fn item_count(&self) -> u64 {
+        let mut count: u64 = 0;
+        for account in &self.inner {
+            count += 1; // address
+            count += account.storage_reads.len() as u64;
+            count += account.storage_changes.len() as u64;
+        }
+        count
+    }
+
     /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
     /// Use this when hashing a BAL constructed locally from execution.
     pub fn compute_hash(&self) -> H256 {
