@@ -199,13 +199,6 @@ impl NativeL1Advancer {
         )
         .map_err(|e| NativeL1AdvancerError::Encoding(e.to_string()))?;
 
-        let gas_price = self
-            .eth_client
-            .get_gas_price_with_extra(20)
-            .await?
-            .try_into()
-            .unwrap_or(20_000_000_000u64);
-
         let tx = build_generic_tx(
             &self.eth_client,
             TxType::EIP1559,
@@ -214,8 +207,6 @@ impl NativeL1Advancer {
             Bytes::from(calldata),
             Overrides {
                 from: Some(self.signer.address()),
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
                 ..Default::default()
             },
         )
