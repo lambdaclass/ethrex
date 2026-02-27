@@ -26,7 +26,6 @@ use tracing::Level;
 #[cfg(feature = "native-rollups")]
 use ethrex_l2::NativeRollupConfig;
 
-#[cfg(feature = "native-rollups")]
 use clap::ArgAction;
 
 pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
@@ -112,14 +111,6 @@ pub struct SequencerOptions {
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
-    #[cfg(feature = "native-rollups")]
-    #[command(flatten)]
-    pub native_rollup_opts: NativeRollupOptions,
-}
-
-#[cfg(feature = "native-rollups")]
-#[derive(Parser, Debug)]
-pub struct NativeRollupOptions {
     #[arg(
         id = "native_rollups",
         long = "native-rollups",
@@ -130,7 +121,15 @@ pub struct NativeRollupOptions {
         help_heading = "Native rollups options",
         help = "Enable native rollup L2 mode."
     )]
-    pub enabled: bool,
+    pub native_rollups: bool,
+    #[cfg(feature = "native-rollups")]
+    #[command(flatten)]
+    pub native_rollup_opts: NativeRollupOptions,
+}
+
+#[cfg(feature = "native-rollups")]
+#[derive(Parser, Debug)]
+pub struct NativeRollupOptions {
     #[arg(
         long = "native-rollups.contract-address",
         value_name = "ADDRESS",
@@ -185,7 +184,6 @@ pub struct NativeRollupOptions {
 impl Default for NativeRollupOptions {
     fn default() -> Self {
         Self {
-            enabled: false,
             contract_address: None,
             relayer_private_key: utils::parse_private_key(
                 "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
@@ -483,11 +481,9 @@ pub struct WatcherOptions {
         value_name = "ADDRESS",
         env = "ETHREX_WATCHER_BRIDGE_ADDRESS",
         help_heading = "L1 Watcher options",
-        required_unless_present = "dev"
-    )]
-    #[cfg_attr(
-        feature = "native-rollups",
-        arg(required_unless_present = "native_rollups")
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub bridge_address: Option<Address>,
     #[arg(
@@ -587,11 +583,9 @@ pub struct BlockProducerOptions {
         value_name = "ADDRESS",
         env = "ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS",
         help_heading = "Block producer options",
-        required_unless_present = "dev"
-    )]
-    #[cfg_attr(
-        feature = "native-rollups",
-        arg(required_unless_present = "native_rollups")
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub coinbase_address: Option<Address>,
     #[arg(
@@ -680,11 +674,9 @@ pub struct CommitterOptions {
         help = "Private key of a funded account that the sequencer will use to send commit txs to the L1.",
         conflicts_with_all = &["committer_remote_signer_url", "committer_remote_signer_public_key"],
         required_unless_present = "committer_remote_signer_url",
-        required_unless_present = "dev"
-    )]
-    #[cfg_attr(
-        feature = "native-rollups",
-        arg(required_unless_present = "native_rollups")
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub committer_l1_private_key: Option<SecretKey>,
     #[arg(
@@ -695,11 +687,9 @@ pub struct CommitterOptions {
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
         requires = "committer_remote_signer_public_key",
         required_unless_present = "committer_l1_private_key",
-        required_unless_present = "dev"
-    )]
-    #[cfg_attr(
-        feature = "native-rollups",
-        arg(required_unless_present = "native_rollups")
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub committer_remote_signer_url: Option<Url>,
     #[arg(
@@ -717,11 +707,9 @@ pub struct CommitterOptions {
         value_name = "ADDRESS",
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
         help_heading = "L1 Committer options",
-        required_unless_present = "dev"
-    )]
-    #[cfg_attr(
-        feature = "native-rollups",
-        arg(required_unless_present = "native_rollups")
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub on_chain_proposer_address: Option<Address>,
     #[arg(
@@ -821,11 +809,9 @@ pub struct ProofCoordinatorOptions {
         long_help = "Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.",
         conflicts_with_all = &["remote_signer_url", "remote_signer_public_key"],
         required_unless_present = "remote_signer_url",
-        required_unless_present = "dev"
-    )]
-    #[cfg_attr(
-        feature = "native-rollups",
-        arg(required_unless_present = "native_rollups")
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub proof_coordinator_l1_private_key: Option<SecretKey>,
     #[arg(
@@ -855,11 +841,9 @@ pub struct ProofCoordinatorOptions {
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
         requires = "remote_signer_public_key",
         required_unless_present = "proof_coordinator_l1_private_key",
-        required_unless_present = "dev"
-    )]
-    #[cfg_attr(
-        feature = "native-rollups",
-        arg(required_unless_present = "native_rollups")
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub remote_signer_url: Option<Url>,
     #[arg(
