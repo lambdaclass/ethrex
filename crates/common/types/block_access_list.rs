@@ -432,6 +432,58 @@ impl BlockAccessList {
         &self.inner
     }
 
+    /// Validates that the BAL has canonical ordering per EIP-7928.
+    /// - Accounts must be in strictly ascending order by address.
+    /// - Within each account: storage_changes by slot, storage_reads by slot value,
+    ///   slot_changes by block_access_index.
+    /// Returns an error string describing the first violation found.
+    pub fn validate_ordering(&self) -> Result<(), String> {
+        for window in self.inner.windows(2) {
+            if window[0].address >= window[1].address {
+                return Err(format!(
+                    "Block access list accounts not in strictly ascending order: \
+                     {:#x} >= {:#x}",
+                    window[0].address, window[1].address
+                ));
+            }
+        }
+        for account in &self.inner {
+            for window in account.storage_changes.windows(2) {
+                if window[0].slot >= window[1].slot {
+                    return Err(format!(
+                        "Block access list storage_changes not in strictly ascending order \
+                         for account {:#x}: {:#x} >= {:#x}",
+                        account.address, window[0].slot, window[1].slot
+                    ));
+                }
+            }
+            for slot_change in &account.storage_changes {
+                for window in slot_change.slot_changes.windows(2) {
+                    if window[0].block_access_index >= window[1].block_access_index {
+                        return Err(format!(
+                            "Block access list slot_changes not in strictly ascending order \
+                             for account {:#x} slot {:#x}: {} >= {}",
+                            account.address,
+                            slot_change.slot,
+                            window[0].block_access_index,
+                            window[1].block_access_index
+                        ));
+                    }
+                }
+            }
+            for window in account.storage_reads.windows(2) {
+                if window[0] >= window[1] {
+                    return Err(format!(
+                        "Block access list storage_reads not in strictly ascending order \
+                         for account {:#x}: {:#x} >= {:#x}",
+                        account.address, window[0], window[1]
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
     /// Use this when hashing a BAL constructed locally from execution.
     pub fn compute_hash(&self) -> H256 {
