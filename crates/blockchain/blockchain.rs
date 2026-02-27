@@ -563,6 +563,7 @@ impl Blockchain {
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+        let t_start = Instant::now();
         let parent_state_root = parent_header.state_root;
 
         // Create 16 worker channels
@@ -650,6 +651,8 @@ impl Blockchain {
             }
         }
 
+        let t_routed = Instant::now();
+
         // Barrier: send FinishRouting, then overlap early MerklizeAccounts
         // with the wait for workers to finish routing storage keys.
         let (flush_tx, flush_rx) = channel();
@@ -679,6 +682,7 @@ impl Blockchain {
 
         // Wait for all FinishRouting responses.
         for () in flush_rx {}
+        let t_barrier = Instant::now();
 
         // Trigger storage collection — workers finalize storage tries and send shards.
         for tx in &workers_tx {
@@ -701,6 +705,7 @@ impl Blockchain {
 
         let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
+        let mut n_gathered = 0u32;
         for CollectedStateMsg {
             index,
             subroot,
@@ -711,7 +716,9 @@ impl Blockchain {
             storage_updates.extend(storage_nodes);
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
+            n_gathered += 1;
         }
+        let t_gathered = Instant::now();
 
         let collapsed = self.collapse_root_node(parent_header, None, root)?;
         let state_trie_hash = if let Some(root) = collapsed {
@@ -723,6 +730,17 @@ impl Blockchain {
             state_updates.push((Nibbles::default(), vec![RLP_NULL]));
             *EMPTY_TRIE_HASH
         };
+
+        let t_root = Instant::now();
+
+        let route_us = t_routed.duration_since(t_start).as_micros();
+        let barrier_us = t_barrier.duration_since(t_routed).as_micros();
+        let gather_us = t_gathered.duration_since(t_barrier).as_micros();
+        let root_us = t_root.duration_since(t_gathered).as_micros();
+        let total_us = t_root.duration_since(t_start).as_micros();
+        info!(
+            "merkle[drain] route={route_us}us barrier={barrier_us}us gather={gather_us}us root={root_us}us total={total_us}us gathered={n_gathered}"
+        );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
@@ -2583,6 +2601,7 @@ fn handle_subtrie(
     index: u8,
     worker_senders: Vec<Sender<WorkerRequest>>,
 ) -> Result<(), StoreError> {
+    let t_start = Instant::now();
     let mut state_trie = storage.open_state_trie(parent_state_root)?;
     let mut storage_nodes: Vec<(H256, Vec<TrieNode>)> = vec![];
     let mut accounts: FxHashMap<H256, AccountState> = Default::default();
@@ -2594,6 +2613,20 @@ fn handle_subtrie(
     let mut pre_collected_state: Vec<TrieNode> = vec![];
     let mut storage_tries: FxHashMap<H256, Trie> = Default::default();
     let mut pre_collected_storage: FxHashMap<H256, Vec<TrieNode>> = Default::default();
+
+    // Instrumentation counters
+    let mut n_process = 0u32;
+    let mut n_merklize_storage = 0u32;
+    let mut n_shard_msgs = 0u32;
+    let mut n_resolutions = 0u32;
+    let mut max_resolve_nodes = 0usize;
+    let mut t_process = Duration::ZERO;
+    let mut t_shard = Duration::ZERO;
+    let mut t_resolve = Duration::ZERO;
+    let mut t_storage_collect = Duration::ZERO;
+    let mut n_storage_accounts = 0u32;
+    let mut n_pre_collected_storage = 0u32;
+    let mut n_pre_collected_state = 0u32;
 
     // Held until CollectStorages to keep cross-worker channels open.
     let mut worker_senders: Option<Vec<Sender<WorkerRequest>>> = Some(worker_senders);
@@ -2608,11 +2641,13 @@ fn handle_subtrie(
         // incoming StorageShard messages can be processed in between.
         if collecting_storages {
             if let Some((prefix, trie)) = storage_to_collect.pop() {
+                let t_sc = Instant::now();
                 let senders = worker_senders
                     .as_ref()
                     .expect("collecting after senders dropped");
                 let (root, mut nodes) = collect_trie(index, trie)?;
                 if let Some(mut pre_nodes) = pre_collected_storage.remove(&prefix) {
+                    n_pre_collected_storage += 1;
                     pre_nodes.extend(nodes);
                     nodes = pre_nodes;
                 }
@@ -2625,6 +2660,8 @@ fn handle_subtrie(
                         nodes,
                     })
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                n_storage_accounts += 1;
+                t_storage_collect += t_sc.elapsed();
             } else {
                 // All storage tries finalized
                 worker_senders = None;
@@ -2652,9 +2689,11 @@ fn handle_subtrie(
                 Ok(msg) => msg,
                 Err(_) => {
                     if dirty && !collecting_storages {
+                        let t_pre = Instant::now();
                         // Pre-collect state trie
                         let mut nodes = state_trie.commit_without_storing();
                         nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+                        n_pre_collected_state += nodes.len() as u32;
                         pre_collected_state.extend(nodes);
                         // Pre-collect storage tries
                         for (prefix, trie) in storage_tries.iter_mut() {
@@ -2668,6 +2707,7 @@ fn handle_subtrie(
                             }
                         }
                         dirty = false;
+                        t_process += t_pre.elapsed();
                     }
                     continue;
                 }
@@ -2687,6 +2727,8 @@ fn handle_subtrie(
                 removed,
                 removed_storage,
             } => {
+                let t_msg = Instant::now();
+                n_process += 1;
                 let senders = worker_senders
                     .as_ref()
                     .expect("ProcessAccount after CollectStorages");
@@ -2736,6 +2778,7 @@ fn handle_subtrie(
                         pending_storage_accounts += 1;
                     }
                     if removed {
+                        t_process += t_msg.elapsed();
                         dirty = true;
                         continue;
                     }
@@ -2781,6 +2824,7 @@ fn handle_subtrie(
                         pending_storage_accounts += 1;
                     }
                 }
+                t_process += t_msg.elapsed();
                 dirty = true;
             }
             WorkerRequest::MerklizeStorage {
@@ -2789,6 +2833,8 @@ fn handle_subtrie(
                 value,
                 storage_root,
             } => {
+                let t_msg = Instant::now();
+                n_merklize_storage += 1;
                 let trie = get_or_open_storage_trie(
                     &mut storage_tries,
                     &storage,
@@ -2801,6 +2847,7 @@ fn handle_subtrie(
                 } else {
                     trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
                 }
+                t_process += t_msg.elapsed();
                 dirty = true;
             }
             WorkerRequest::DeleteStorage(prefix) => {
@@ -2831,6 +2878,8 @@ fn handle_subtrie(
                 mut subroot,
                 nodes,
             } => {
+                let t_msg = Instant::now();
+                n_shard_msgs += 1;
                 let state = storage_state.entry(prefix).or_default();
                 match &mut state.storage_root {
                     Some(root) => {
@@ -2847,6 +2896,7 @@ fn handle_subtrie(
                 *received |= 1 << shard_index;
                 if *received == expected_shards.get(&prefix).copied().unwrap_or(0) {
                     // All shards received — resolve storage root
+                    let t_resolve_start = Instant::now();
                     let mut state = storage_state.remove(&prefix).expect("shard without state");
                     let new_storage_root = if let Some(mut root) = state.storage_root {
                         // Children from other shards need clear_hash to be re-committed.
@@ -2865,7 +2915,10 @@ fn handle_subtrie(
                     } else {
                         *EMPTY_TRIE_HASH
                     };
+                    max_resolve_nodes = max_resolve_nodes.max(state.nodes.len());
                     storage_nodes.push((prefix, state.nodes));
+                    n_resolutions += 1;
+                    t_resolve += t_resolve_start.elapsed();
 
                     // Update account's storage root and re-insert into state trie
                     let old_state = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
@@ -2879,6 +2932,7 @@ fn handle_subtrie(
 
                     dirty = true;
                     pending_storage_accounts -= 1;
+                    t_shard += t_msg.elapsed();
                     if pending_storage_accounts == 0
                         && !collecting_storages
                         && let Some(tx) = pending_collect_tx.take()
@@ -2892,6 +2946,8 @@ fn handle_subtrie(
                         )?;
                         break;
                     }
+                } else {
+                    t_shard += t_msg.elapsed();
                 }
             }
             WorkerRequest::CollectState { tx } => {
@@ -2910,6 +2966,19 @@ fn handle_subtrie(
             }
         }
     }
+
+    let total_us = t_start.elapsed().as_micros();
+    let process_us = t_process.as_micros();
+    let shard_us = t_shard.as_micros();
+    let resolve_us = t_resolve.as_micros();
+    let storage_collect_us = t_storage_collect.as_micros();
+    info!(
+        "worker[{index}] total={total_us}us process={process_us}us shard={shard_us}us resolve={resolve_us}us storage_collect={storage_collect_us}us \
+         n_process={n_process} n_merklize_storage={n_merklize_storage} n_shard_msgs={n_shard_msgs} \
+         n_resolutions={n_resolutions} max_resolve_nodes={max_resolve_nodes} \
+         n_storage_accounts={n_storage_accounts} n_pre_collected_storage={n_pre_collected_storage} n_pre_collected_state={n_pre_collected_state}"
+    );
+
     Ok(())
 }
 
