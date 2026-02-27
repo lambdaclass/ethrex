@@ -1,9 +1,22 @@
+//! Unified peer table for both discv4 and discv5 discovery protocols.
+//!
+//! This module provides a protocol-agnostic peer table that stores contact
+//! information discovered through either discv4 or discv5. The key abstraction
+//! is using `Bytes` for ping identifiers:
+//! - discv4: converts H256 ping hash to Bytes
+//! - discv5: already uses Bytes for req_id
+//!
+//! Each contact is tagged with the protocol that discovered it, allowing
+//! protocol-specific lookups to only query compatible contacts.
+
 use crate::{
-    discv4::server::MAX_NODES_IN_NEIGHBORS_PACKET,
+    backend,
     metrics::METRICS,
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
+    utils::distance,
 };
+use bytes::Bytes;
 use ethrex_common::{H256, U256};
 use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
@@ -35,16 +48,50 @@ const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 pub const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
 const TARGET_CONTACTS: usize = 100_000;
+/// Maximum number of ENRs to return in a FindNode response (discv4 compatible).
+pub(crate) const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
+/// Maximum number of ENRs to return in a discv5 FindNode response.
+const MAX_ENRS_PER_FINDNODE_RESPONSE: usize = 16;
+
+/// Identifies which discovery protocol was used to find a contact.
+/// This allows protocol-specific lookups to only query compatible contacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiscoveryProtocol {
+    /// Contact discovered via discv4 protocol
+    Discv4,
+    /// Contact discovered via discv5 protocol
+    Discv5,
+}
+
+/// Session information for discv5 protocol.
+/// Contains symmetric keys derived from ECDH for message encryption/decryption.
+/// When experimental-discv5 feature is enabled, this is the actual Session type
+/// from the discv5 module. Otherwise, it's a placeholder type.
+#[cfg(feature = "experimental-discv5")]
+pub use crate::discv5::session::Session;
+
+#[cfg(not(feature = "experimental-discv5"))]
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub outbound_key: [u8; 16],
+    pub inbound_key: [u8; 16],
+}
 
 #[derive(Debug, Clone)]
 pub struct Contact {
     pub node: Node,
+    /// Whether this contact is reachable via discv4 protocol.
+    pub is_discv4: bool,
+    /// Whether this contact is reachable via discv5 protocol.
+    pub is_discv5: bool,
     /// The timestamp when the contact was last sent a ping.
     /// If None, the contact has never been pinged.
     pub validation_timestamp: Option<Instant>,
-    /// The hash of the last unacknowledged ping sent to this contact, or
+    /// The identifier of the last unacknowledged ping sent to this contact, or
     /// None if no ping was sent yet or it was already acknowledged.
-    pub ping_hash: Option<H256>,
+    /// - discv4: H256 hash converted to Bytes
+    /// - discv5: request ID as Bytes
+    pub ping_id: Option<Bytes>,
 
     /// The hash of the last unacknowledged ENRRequest sent to this contact, or
     /// None if no request was sent yet or it was already acknowledged.
@@ -53,14 +100,16 @@ pub struct Contact {
     pub n_find_node_sent: u64,
     /// ENR associated with this contact, if it was provided by the peer.
     pub record: Option<NodeRecord>,
-    // This contact failed to respond our Ping.
+    /// This contact failed to respond our Ping.
     pub disposable: bool,
-    // Set to true after we send a successful ENRResponse to it.
+    /// Set to true after we send a successful ENRResponse to it.
     pub knows_us: bool,
-    // This is a known-bad peer (on another network, no matching capabilities, etc)
+    /// This is a known-bad peer (on another network, no matching capabilities, etc)
     pub unwanted: bool,
     /// Whether the last known fork ID is valid, None if unknown.
     pub is_fork_id_valid: Option<bool>,
+    /// Session information for discv5 (None for discv4 contacts)
+    session: Option<Session>,
 }
 
 impl Contact {
@@ -69,12 +118,12 @@ impl Contact {
     }
 
     pub fn has_pending_ping(&self) -> bool {
-        self.ping_hash.is_some()
+        self.ping_id.is_some()
     }
 
-    pub fn record_ping_sent(&mut self, ping_hash: H256) {
+    pub fn record_ping_sent(&mut self, ping_id: Bytes) {
         self.validation_timestamp = Some(Instant::now());
-        self.ping_hash = Some(ping_hash);
+        self.ping_id = Some(ping_id);
     }
 
     pub fn record_enr_request_sent(&mut self, request_hash: H256) {
@@ -97,12 +146,14 @@ impl Contact {
     }
 }
 
-impl From<Node> for Contact {
-    fn from(node: Node) -> Self {
+impl Contact {
+    pub fn new(node: Node, protocol: DiscoveryProtocol) -> Self {
         Self {
             node,
+            is_discv4: protocol == DiscoveryProtocol::Discv4,
+            is_discv5: protocol == DiscoveryProtocol::Discv5,
             validation_timestamp: None,
-            ping_hash: None,
+            ping_id: None,
             enr_request_hash: None,
             n_find_node_sent: 0,
             record: None,
@@ -110,6 +161,23 @@ impl From<Node> for Contact {
             knows_us: true,
             unwanted: false,
             is_fork_id_valid: None,
+            session: None,
+        }
+    }
+
+    /// Check if this contact supports the given protocol.
+    pub fn supports_protocol(&self, protocol: DiscoveryProtocol) -> bool {
+        match protocol {
+            DiscoveryProtocol::Discv4 => self.is_discv4,
+            DiscoveryProtocol::Discv5 => self.is_discv5,
+        }
+    }
+
+    /// Mark this contact as supporting the given protocol.
+    pub fn add_protocol(&mut self, protocol: DiscoveryProtocol) {
+        match protocol {
+            DiscoveryProtocol::Discv4 => self.is_discv4 = true,
+            DiscoveryProtocol::Discv5 => self.is_discv5 = true,
         }
     }
 }
@@ -155,22 +223,40 @@ pub struct PeerTable {
 }
 
 impl PeerTable {
-    // It receives the store to maintain concistency with discv5 PeerTable
-    pub fn spawn(target_peers: usize, _store: Store) -> PeerTable {
+    pub fn spawn(target_peers: usize, store: Store) -> PeerTable {
         PeerTable {
-            handle: PeerTableServer::new(target_peers).start(),
+            handle: PeerTableServer::new(target_peers, store).start(),
         }
     }
 
-    /// We received a list of Nodes to contact. No conection has been established yet.
+    /// We received a list of Nodes to contact. No connection has been established yet.
+    /// The protocol parameter indicates which discovery protocol found these contacts.
     pub async fn new_contacts(
         &mut self,
         nodes: Vec<Node>,
         local_node_id: H256,
+        protocol: DiscoveryProtocol,
     ) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::NewContacts {
                 nodes,
+                local_node_id,
+                protocol,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// We received a list of NodeRecords to contact. No connection has been established yet.
+    /// Used by discv5 which receives ENRs directly.
+    pub async fn new_contact_records(
+        &mut self,
+        node_records: Vec<NodeRecord>,
+        local_node_id: H256,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::NewContactRecords {
+                node_records,
                 local_node_id,
             })
             .await?;
@@ -190,6 +276,18 @@ impl PeerTable {
                 connection,
                 capabilities,
             })
+            .await?;
+        Ok(())
+    }
+
+    /// Set or update discv5 Session info.
+    pub async fn set_session_info(
+        &mut self,
+        node_id: H256,
+        session: Session,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::SetSessionInfo { node_id, session })
             .await?;
         Ok(())
     }
@@ -265,31 +363,34 @@ impl PeerTable {
         Ok(())
     }
 
-    /// Record ping sent, store the ping hash for later check
+    /// Record ping sent, store the ping identifier for later check.
+    /// Protocol adaptation:
+    /// - discv4: convert H256 hash to Bytes via `Bytes::copy_from_slice(hash.as_bytes())`
+    /// - discv5: use Bytes request ID directly
     pub async fn record_ping_sent(
         &mut self,
         node_id: &H256,
-        hash: H256,
+        ping_id: Bytes,
     ) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordPingSent {
                 node_id: *node_id,
-                hash,
+                ping_id,
             })
             .await?;
         Ok(())
     }
 
-    /// Record a pong received. Check previously saved hash and reset it if it matches
+    /// Record a pong received. Check previously saved ping_id and reset it if it matches.
     pub async fn record_pong_received(
         &mut self,
         node_id: &H256,
-        ping_hash: H256,
+        ping_id: Bytes,
     ) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordPongReceived {
                 node_id: *node_id,
-                ping_hash,
+                ping_id,
             })
             .await?;
         Ok(())
@@ -415,16 +516,24 @@ impl PeerTable {
         }
     }
 
-    /// Provide a contact to perform Discovery lookup
-    pub async fn get_contact_for_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
-        match self.handle.call(CallMessage::GetContactForLookup).await? {
+    /// Provide a contact to perform Discovery lookup for a specific protocol.
+    /// Only returns contacts discovered via that protocol.
+    pub async fn get_contact_for_lookup(
+        &mut self,
+        protocol: DiscoveryProtocol,
+    ) -> Result<Option<Contact>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetContactForLookup { protocol })
+            .await?
+        {
             OutMessage::Contact(contact) => Ok(Some(*contact)),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
     }
 
-    /// Provide a contact to perform ENR lookup
+    /// Provide a contact to perform ENR lookup (discv4 only).
     pub async fn get_contact_for_enr_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self
             .handle
@@ -450,14 +559,34 @@ impl PeerTable {
         }
     }
 
-    /// Get all contacts available to revalidate
+    /// Get discv5 Session info.
+    pub async fn get_session_info(
+        &mut self,
+        node_id: H256,
+    ) -> Result<Option<Session>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetContact { node_id })
+            .await?
+        {
+            OutMessage::Contact(contact) => Ok(contact.session),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Get all contacts available to revalidate for a specific protocol.
     pub async fn get_contacts_to_revalidate(
         &mut self,
         revalidation_interval: Duration,
+        protocol: DiscoveryProtocol,
     ) -> Result<Vec<Contact>, PeerTableError> {
         match self
             .handle
-            .call(CallMessage::GetContactsToRevalidate(revalidation_interval))
+            .call(CallMessage::GetContactsToRevalidate {
+                revalidation_interval,
+                protocol,
+            })
             .await?
         {
             OutMessage::Contacts(contacts) => Ok(contacts),
@@ -523,7 +652,8 @@ impl PeerTable {
         }
     }
 
-    /// Get peer channels for communication
+    /// Get peer channels for communication. It returns a PeerConnection that implements
+    /// at least one of the required capabilities.
     pub async fn get_peer_connections(
         &mut self,
         capabilities: &[Capability],
@@ -541,10 +671,17 @@ impl PeerTable {
     }
 
     /// Insert new peer if it is new. Returns a boolean telling if it was new or not.
-    pub async fn insert_if_new(&mut self, node: &Node) -> Result<bool, PeerTableError> {
+    pub async fn insert_if_new(
+        &mut self,
+        node: &Node,
+        protocol: DiscoveryProtocol,
+    ) -> Result<bool, PeerTableError> {
         match self
             .handle
-            .call(CallMessage::InsertIfNew { node: node.clone() })
+            .call(CallMessage::InsertIfNew {
+                node: node.clone(),
+                protocol,
+            })
             .await?
         {
             OutMessage::IsNew(is_new) => Ok(is_new),
@@ -567,7 +704,7 @@ impl PeerTable {
             .map_err(PeerTableError::InternalError)
     }
 
-    /// Get closest nodes according to kademlia's distance
+    /// Get closest nodes according to kademlia's distance (discv4 compatible).
     pub async fn get_closest_nodes(&mut self, node_id: &H256) -> Result<Vec<Node>, PeerTableError> {
         match self
             .handle
@@ -575,6 +712,25 @@ impl PeerTable {
             .await?
         {
             OutMessage::Nodes(nodes) => Ok(nodes),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Get nodes at specified distances from local node (discv5).
+    pub async fn get_nodes_at_distances(
+        &mut self,
+        local_node_id: H256,
+        distances: Vec<u32>,
+    ) -> Result<Vec<NodeRecord>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetNodesAtDistances {
+                local_node_id,
+                distances,
+            })
+            .await?
+        {
+            OutMessage::NodeRecords(records) => Ok(records),
             _ => unreachable!(),
         }
     }
@@ -616,22 +772,22 @@ struct PeerTableServer {
     already_tried_peers: FxHashSet<H256>,
     discarded_contacts: FxHashSet<H256>,
     target_peers: usize,
+    store: Store,
 }
 
 impl PeerTableServer {
-    pub(crate) fn new(target_peers: usize) -> Self {
+    pub(crate) fn new(target_peers: usize, store: Store) -> Self {
         Self {
             contacts: Default::default(),
             peers: Default::default(),
             already_tried_peers: Default::default(),
             discarded_contacts: Default::default(),
             target_peers,
+            store,
         }
     }
-    // Internal functions //
 
     // Weighting function used to select best peer
-    // TODO: Review this formula and weight constants.
     fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
         score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
     }
@@ -646,10 +802,7 @@ impl PeerTableServer {
     fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
         self.peers
             .iter()
-            // We filter only to those peers which are useful to us
             .filter_map(|(id, peer_data)| {
-                // Skip the peer if it has too many ongoing requests or if it doesn't match
-                // the capabilities
                 if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
                     || !capabilities
                         .iter()
@@ -657,10 +810,7 @@ impl PeerTableServer {
                 {
                     None
                 } else {
-                    // if the peer doesn't have the channel open, we skip it.
                     let connection = peer_data.connection.clone()?;
-
-                    // We return the id, the score and the channel to connect with.
                     Some((*id, peer_data.score, peer_data.requests, connection))
                 }
             })
@@ -691,31 +841,35 @@ impl PeerTableServer {
                 && contact.is_fork_id_valid != Some(false)
             {
                 self.already_tried_peers.insert(node_id);
-
                 return Some(contact.clone());
             }
         }
-        // No untried contact found, resetting tried peers.
         tracing::trace!("Resetting list of tried peers.");
         self.already_tried_peers.clear();
         None
     }
 
-    fn get_contact_for_lookup(&self) -> Option<Contact> {
+    fn get_contact_for_lookup(&self, protocol: DiscoveryProtocol) -> Option<Contact> {
         self.contacts
             .values()
-            .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
+            .filter(|c| {
+                c.supports_protocol(protocol)
+                    && c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
+                    && !c.disposable
+            })
             .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
             .cloned()
             .cloned()
     }
 
+    /// Get contact for ENR lookup (discv4 only)
     fn get_contact_for_enr_lookup(&mut self) -> Option<Contact> {
         self.contacts
             .values()
             .filter(|c| {
-                c.was_validated()
+                c.is_discv4
+                    && c.was_validated()
                     && !c.has_pending_enr_request()
                     && c.record.is_none()
                     && !c.disposable
@@ -726,10 +880,17 @@ impl PeerTableServer {
             .cloned()
     }
 
-    fn get_contacts_to_revalidate(&self, revalidation_interval: Duration) -> Vec<Contact> {
+    fn get_contacts_to_revalidate(
+        &self,
+        revalidation_interval: Duration,
+        protocol: DiscoveryProtocol,
+    ) -> Vec<Contact> {
         self.contacts
             .values()
-            .filter(|c| Self::is_validation_needed(c, revalidation_interval))
+            .filter(|c| {
+                c.supports_protocol(protocol)
+                    && Self::is_validation_needed(c, revalidation_interval)
+            })
             .cloned()
             .collect()
     }
@@ -742,45 +903,127 @@ impl PeerTableServer {
             return OutMessage::InvalidContact;
         }
 
-        // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
-        // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
-        // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
-        // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
+        // Check that the IP address from which we receive the request matches the one we have stored
+        // to prevent amplification attacks.
         if sender_ip != contact.node.ip {
             return OutMessage::IpMismatch;
         }
         OutMessage::Contact(Box::new(contact.clone()))
     }
 
+    /// Get closest nodes for discv4 (returns Vec<Node>)
     fn get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
         let mut nodes: Vec<(Node, usize)> = vec![];
 
         for (contact_id, contact) in &self.contacts {
-            let distance = Self::distance(&node_id, contact_id);
+            let dist = Self::distance(&node_id, contact_id);
             if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
-                nodes.push((contact.node.clone(), distance));
+                nodes.push((contact.node.clone(), dist));
             } else {
-                for (i, (_, dis)) in &mut nodes.iter().enumerate() {
-                    if distance < *dis {
-                        nodes[i] = (contact.node.clone(), distance);
+                for (i, (_, d)) in &mut nodes.iter().enumerate() {
+                    if dist < *d {
+                        nodes[i] = (contact.node.clone(), dist);
                         break;
                     }
                 }
             }
         }
-        nodes.into_iter().map(|(node, _distance)| node).collect()
+        nodes.into_iter().map(|(node, _)| node).collect()
     }
 
-    async fn new_contacts(&mut self, nodes: Vec<Node>, local_node_id: H256) {
+    /// Get nodes at distances for discv5 (returns Vec<NodeRecord>)
+    fn get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
+        self.contacts
+            .iter()
+            .filter_map(|(contact_id, contact)| {
+                let d = distance(&local_node_id, contact_id) as u32;
+                if distances.contains(&d) {
+                    contact.record.clone()
+                } else {
+                    None
+                }
+            })
+            .take(MAX_ENRS_PER_FINDNODE_RESPONSE)
+            .collect()
+    }
+
+    async fn new_contacts(
+        &mut self,
+        nodes: Vec<Node>,
+        local_node_id: H256,
+        protocol: DiscoveryProtocol,
+    ) {
         for node in nodes {
             let node_id = node.node_id();
-            if let Entry::Vacant(vacant_entry) = self.contacts.entry(node_id)
-                && !self.discarded_contacts.contains(&node_id)
-                && node_id != local_node_id
-            {
-                vacant_entry.insert(Contact::from(node));
-                METRICS.record_new_discovery().await;
+            if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+                continue;
             }
+            match self.contacts.entry(node_id) {
+                Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(Contact::new(node, protocol));
+                    METRICS.record_new_discovery().await;
+                }
+                Entry::Occupied(mut occupied_entry) => {
+                    // Contact already exists, just add the protocol
+                    occupied_entry.get_mut().add_protocol(protocol);
+                }
+            }
+        }
+    }
+
+    async fn new_contact_records(&mut self, node_records: Vec<NodeRecord>, local_node_id: H256) {
+        for node_record in node_records {
+            if !node_record.verify_signature() {
+                continue;
+            }
+            if let Ok(node) = Node::from_enr(&node_record) {
+                let node_id = node.node_id();
+                if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+                    continue;
+                }
+                match self.contacts.entry(node_id) {
+                    Entry::Vacant(vacant_entry) => {
+                        let is_fork_id_valid =
+                            Self::evaluate_fork_id(&node_record, &self.store).await;
+                        let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
+                        contact.is_fork_id_valid = is_fork_id_valid;
+                        contact.record = Some(node_record);
+                        vacant_entry.insert(contact);
+                        METRICS.record_new_discovery().await;
+                    }
+                    Entry::Occupied(mut occupied_entry) => {
+                        let should_update = match occupied_entry.get().record.as_ref() {
+                            None => true,
+                            Some(r) => node_record.seq > r.seq,
+                        };
+                        let contact = occupied_entry.get_mut();
+                        contact.add_protocol(DiscoveryProtocol::Discv5);
+                        if should_update {
+                            let is_fork_id_valid =
+                                Self::evaluate_fork_id(&node_record, &self.store).await;
+                            if contact.node.ip != node.ip || contact.node.udp_port != node.udp_port
+                            {
+                                contact.validation_timestamp = None;
+                                contact.ping_id = None;
+                            }
+                            contact.node = node;
+                            contact.record = Some(node_record);
+                            contact.is_fork_id_valid = is_fork_id_valid;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
+        if let Some(remote_fork_id) = record.decode_pairs().eth {
+            backend::is_fork_id_valid(store, &remote_fork_id)
+                .await
+                .ok()
+                .or(Some(false))
+        } else {
+            Some(false)
         }
     }
 
@@ -788,7 +1031,6 @@ impl PeerTableServer {
         self.peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
-                // if the peer doesn't have any of the capabilities we need, we skip it
                 if !capabilities
                     .iter()
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
@@ -806,7 +1048,6 @@ impl PeerTableServer {
         self.peers
             .iter()
             .filter_map(|(peer_id, peer_data)| {
-                // if the peer doesn't have any of the capabilities we need, we skip it
                 if !capabilities
                     .iter()
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
@@ -826,7 +1067,6 @@ impl PeerTableServer {
             .peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
-                // if the peer doesn't have any of the capabilities we need, we skip it
                 if !capabilities
                     .iter()
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
@@ -844,8 +1084,8 @@ impl PeerTableServer {
 
     fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
         let xor = node_id_1 ^ node_id_2;
-        let distance = U256::from_big_endian(xor.as_bytes());
-        distance.bits().saturating_sub(1)
+        let dist = U256::from_big_endian(xor.as_bytes());
+        dist.bits().saturating_sub(1)
     }
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
@@ -862,7 +1102,7 @@ impl PeerTableServer {
             .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
             .unwrap_or(false);
 
-        !contact.disposable || validation_is_stale || sent_ping_is_stale
+        !contact.disposable && (validation_is_stale || sent_ping_is_stale)
     }
 }
 
@@ -871,11 +1111,20 @@ enum CastMessage {
     NewContacts {
         nodes: Vec<Node>,
         local_node_id: H256,
+        protocol: DiscoveryProtocol,
+    },
+    NewContactRecords {
+        node_records: Vec<NodeRecord>,
+        local_node_id: H256,
     },
     NewConnectedPeer {
         node: Node,
         connection: PeerConnection,
         capabilities: Vec<Capability>,
+    },
+    SetSessionInfo {
+        node_id: H256,
+        session: Session,
     },
     RemovePeer {
         node_id: H256,
@@ -904,11 +1153,11 @@ enum CastMessage {
     },
     RecordPingSent {
         node_id: H256,
-        hash: H256,
+        ping_id: Bytes,
     },
     RecordPongReceived {
         node_id: H256,
-        ping_hash: H256,
+        ping_id: Bytes,
     },
     RecordEnrRequestSent {
         node_id: H256,
@@ -935,25 +1184,54 @@ enum CastMessage {
 #[derive(Clone, Debug)]
 enum CallMessage {
     PeerCount,
-    PeerCountByCapabilities { capabilities: Vec<Capability> },
+    PeerCountByCapabilities {
+        capabilities: Vec<Capability>,
+    },
     TargetReached,
     TargetPeersReached,
     TargetPeersCompletion,
     GetContactToInitiate,
-    GetContactForLookup,
+    GetContactForLookup {
+        protocol: DiscoveryProtocol,
+    },
     GetContactForEnrLookup,
-    GetContact { node_id: H256 },
-    GetContactsToRevalidate(Duration),
-    GetBestPeer { capabilities: Vec<Capability> },
-    GetScore { node_id: H256 },
+    GetContact {
+        node_id: H256,
+    },
+    GetContactsToRevalidate {
+        revalidation_interval: Duration,
+        protocol: DiscoveryProtocol,
+    },
+    GetBestPeer {
+        capabilities: Vec<Capability>,
+    },
+    GetScore {
+        node_id: H256,
+    },
     GetConnectedNodes,
     GetPeersWithCapabilities,
-    GetPeerConnections { capabilities: Vec<Capability> },
-    InsertIfNew { node: Node },
-    ValidateContact { node_id: H256, sender_ip: IpAddr },
-    GetClosestNodes { node_id: H256 },
+    GetPeerConnections {
+        capabilities: Vec<Capability>,
+    },
+    InsertIfNew {
+        node: Node,
+        protocol: DiscoveryProtocol,
+    },
+    ValidateContact {
+        node_id: H256,
+        sender_ip: IpAddr,
+    },
+    GetClosestNodes {
+        node_id: H256,
+    },
+    GetNodesAtDistances {
+        local_node_id: H256,
+        distances: Vec<u32>,
+    },
     GetPeersData,
-    GetRandomPeer { capabilities: Vec<Capability> },
+    GetRandomPeer {
+        capabilities: Vec<Capability>,
+    },
 }
 
 #[derive(Debug)]
@@ -972,6 +1250,7 @@ pub enum OutMessage {
     TargetCompletion(f64),
     IsNew(bool),
     Nodes(Vec<Node>),
+    NodeRecords(Vec<NodeRecord>),
     Contact(Box<Contact>),
     InvalidContact,
     UnknownContact,
@@ -1026,8 +1305,8 @@ impl GenServer for PeerTableServer {
                     .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
-            CallMessage::GetContactForLookup => CallResponse::Reply(
-                self.get_contact_for_lookup()
+            CallMessage::GetContactForLookup { protocol } => CallResponse::Reply(
+                self.get_contact_for_lookup(protocol)
                     .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
@@ -1043,9 +1322,12 @@ impl GenServer for PeerTableServer {
                     .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
-            CallMessage::GetContactsToRevalidate(revalidation_interval) => CallResponse::Reply(
-                Self::OutMsg::Contacts(self.get_contacts_to_revalidate(revalidation_interval)),
-            ),
+            CallMessage::GetContactsToRevalidate {
+                revalidation_interval,
+                protocol,
+            } => CallResponse::Reply(Self::OutMsg::Contacts(
+                self.get_contacts_to_revalidate(revalidation_interval, protocol),
+            )),
             CallMessage::GetBestPeer { capabilities } => {
                 let channels = self.get_best_peer(&capabilities);
                 CallResponse::Reply(channels.map_or(
@@ -1087,22 +1369,28 @@ impl GenServer for PeerTableServer {
             CallMessage::GetPeerConnections { capabilities } => CallResponse::Reply(
                 OutMessage::PeerConnection(self.get_peer_connections(capabilities)),
             ),
-            CallMessage::InsertIfNew { node } => CallResponse::Reply(Self::OutMsg::IsNew(
-                match self.contacts.entry(node.node_id()) {
+            CallMessage::InsertIfNew { node, protocol } => CallResponse::Reply(
+                Self::OutMsg::IsNew(match self.contacts.entry(node.node_id()) {
                     Entry::Occupied(_) => false,
                     Entry::Vacant(entry) => {
                         METRICS.record_new_discovery().await;
-                        entry.insert(Contact::from(node));
+                        entry.insert(Contact::new(node, protocol));
                         true
                     }
-                },
-            )),
+                }),
+            ),
             CallMessage::ValidateContact { node_id, sender_ip } => {
                 CallResponse::Reply(self.validate_contact(node_id, sender_ip))
             }
             CallMessage::GetClosestNodes { node_id } => {
                 CallResponse::Reply(Self::OutMsg::Nodes(self.get_closest_nodes(node_id)))
             }
+            CallMessage::GetNodesAtDistances {
+                local_node_id,
+                distances,
+            } => CallResponse::Reply(Self::OutMsg::NodeRecords(
+                self.get_nodes_at_distances(local_node_id, &distances),
+            )),
             CallMessage::GetPeersData => CallResponse::Reply(OutMessage::PeersData(
                 self.peers.values().cloned().collect(),
             )),
@@ -1128,8 +1416,15 @@ impl GenServer for PeerTableServer {
             CastMessage::NewContacts {
                 nodes,
                 local_node_id,
+                protocol,
             } => {
-                self.new_contacts(nodes, local_node_id).await;
+                self.new_contacts(nodes, local_node_id, protocol).await;
+            }
+            CastMessage::NewContactRecords {
+                node_records,
+                local_node_id,
+            } => {
+                self.new_contact_records(node_records, local_node_id).await;
             }
             CastMessage::NewConnectedPeer {
                 node,
@@ -1139,6 +1434,11 @@ impl GenServer for PeerTableServer {
                 let new_peer_id = node.node_id();
                 let new_peer = PeerData::new(node, None, Some(connection), capabilities);
                 self.peers.insert(new_peer_id, new_peer);
+            }
+            CastMessage::SetSessionInfo { node_id, session } => {
+                self.contacts
+                    .entry(node_id)
+                    .and_modify(|contact| contact.session = Some(session));
             }
             CastMessage::RemovePeer { node_id } => {
                 self.peers.swap_remove(&node_id);
@@ -1178,21 +1478,20 @@ impl GenServer for PeerTableServer {
                     .entry(node_id)
                     .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
             }
-            CastMessage::RecordPingSent { node_id, hash } => {
+            CastMessage::RecordPingSent { node_id, ping_id } => {
                 self.contacts
                     .entry(node_id)
-                    .and_modify(|contact| contact.record_ping_sent(hash));
+                    .and_modify(|contact| contact.record_ping_sent(ping_id));
             }
-            CastMessage::RecordPongReceived { node_id, ping_hash } => {
-                // If entry does not exist or hash does not match, ignore pong record
-                // Otherwise, reset ping_hash
+            CastMessage::RecordPongReceived { node_id, ping_id } => {
                 self.contacts.entry(node_id).and_modify(|contact| {
                     if contact
-                        .ping_hash
-                        .map(|value| value == ping_hash)
+                        .ping_id
+                        .as_ref()
+                        .map(|value| *value == ping_id)
                         .unwrap_or(false)
                     {
-                        contact.ping_hash = None
+                        contact.ping_id = None
                     }
                 });
             }
