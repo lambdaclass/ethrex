@@ -18,13 +18,13 @@ use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, send_tx_bump_gas_exponential_backoff,
+    build_generic_tx, calldata::encode_calldata, get_native_rollup_block_number,
+    send_tx_bump_gas_exponential_backoff,
 };
 use ethrex_levm::execute_precompile::L1_ANCHOR;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::Overrides;
 use ethrex_rpc::clients::eth::EthClient;
-use ethrex_rpc::types::block_identifier::BlockIdentifier;
 use ethrex_storage::Store;
 use spawned_concurrency::tasks::{
     CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
@@ -33,9 +33,6 @@ use tracing::{debug, error, info};
 
 const ADVANCE_FUNCTION_SIGNATURE: &str =
     "advance(uint256,(bytes32,bytes32,address,bytes32,uint256),bytes,bytes)";
-
-/// NativeRollup.sol storage slot 1 stores the current block number.
-const BLOCK_NUMBER_SLOT: u64 = 1;
 
 #[derive(Clone)]
 pub enum CastMsg {
@@ -92,19 +89,11 @@ impl NativeL1Advancer {
 
     /// Determine the next block to advance and submit it to L1.
     async fn advance_next_block(&mut self) -> Result<(), NativeL1AdvancerError> {
-        // 1. Query the on-chain block number from NativeRollup contract storage slot 1
-        let on_chain_block_number = self
-            .eth_client
-            .get_storage_at(
-                self.contract_address,
-                U256::from(BLOCK_NUMBER_SLOT),
-                BlockIdentifier::Tag(ethrex_rpc::types::block_identifier::BlockTag::Latest),
-            )
-            .await?;
+        // 1. Query the on-chain block number from NativeRollup.sol
+        let on_chain_block_number =
+            get_native_rollup_block_number(&self.eth_client, self.contract_address).await?;
 
-        let next_block: u64 = (on_chain_block_number + 1)
-            .try_into()
-            .map_err(|_| NativeL1AdvancerError::Encoding("block number overflow".into()))?;
+        let next_block = on_chain_block_number + 1;
 
         // 2. Fetch block from Store
         let block_header = match self.store.get_block_header(next_block)? {
