@@ -210,7 +210,7 @@ impl OpcodeHandler for OpCallCodeHandler {
         vm.tracer.enter(
             CallType::CALLCODE,
             vm.current_call_frame.to,
-            vm.current_call_frame.to,
+            code_address,
             value,
             gas_limit,
             &data,
@@ -296,10 +296,12 @@ impl OpcodeHandler for OpDelegateCallHandler {
 
         // Trace CALL operation.
         let data = vm.get_calldata(args_offset, args_len)?;
+        // In this trace the `from` is the current contract, we don't want the `from` to be,
+        // for example, the EOA that sent the transaction.
         vm.tracer.enter(
             CallType::DELEGATECALL,
-            vm.current_call_frame.msg_sender,
             vm.current_call_frame.to,
+            code_address,
             vm.current_call_frame.msg_value,
             gas_limit,
             &data,

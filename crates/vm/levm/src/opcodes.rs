@@ -440,7 +440,6 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::PUSH6 as usize] = OpCodeFn::new::<OpPushHandler<6>>();
         opcode_table[Opcode::PUSH7 as usize] = OpCodeFn::new::<OpPushHandler<7>>();
         opcode_table[Opcode::PUSH8 as usize] = OpCodeFn::new::<OpPushHandler<8>>();
-        opcode_table[Opcode::PUSH8 as usize] = OpCodeFn::new::<OpPushHandler<8>>();
         opcode_table[Opcode::PUSH9 as usize] = OpCodeFn::new::<OpPushHandler<9>>();
         opcode_table[Opcode::PUSH10 as usize] = OpCodeFn::new::<OpPushHandler<10>>();
         opcode_table[Opcode::PUSH11 as usize] = OpCodeFn::new::<OpPushHandler<11>>();
