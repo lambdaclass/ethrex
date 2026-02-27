@@ -35,7 +35,10 @@ use ethrex_trie::{Node, verify_range};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::Path,
-    sync::atomic::Ordering,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{Duration, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
@@ -80,27 +83,115 @@ struct StorageTask {
     end_hash: Option<H256>,
 }
 
-/// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
-/// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
-/// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
+/// Splits the [0, 2^256) address space into N equal, non-overlapping partitions.
+fn compute_partitions(num_partitions: usize) -> Vec<(H256, H256)> {
+    assert!(num_partitions > 0, "Must have at least one partition");
+    if num_partitions == 1 {
+        return vec![(H256::zero(), HASH_MAX)];
+    }
+
+    let partition_size = U256::MAX / num_partitions;
+    let mut partitions = Vec::with_capacity(num_partitions);
+
+    for i in 0..num_partitions {
+        let start = partition_size * i;
+        let end = if i == num_partitions - 1 {
+            U256::MAX
+        } else {
+            start + partition_size - 1
+        };
+        partitions.push((H256::from_uint(&start), H256::from_uint(&end)));
+    }
+
+    partitions
+}
+
+/// Downloads accounts across the full address space using concurrent partitions.
 ///
-/// # Returns
-///
-/// The account range or `None` if:
-///
-/// - There are no available peers (the node just started up or was rejected by all other nodes)
-/// - No peer returned a valid response in the given time and retry limits
+/// Splits the address space into `MAX_ACCOUNT_PARTITIONS` equal ranges and downloads
+/// each range concurrently using separate peers. All partitions write snapshot files
+/// to the same directory with unique file IDs via a shared atomic counter.
 pub async fn request_account_range(
     peers: &mut PeerHandler,
-    start: H256,
-    limit: H256,
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
 ) -> Result<(), SnapError> {
+    let num_partitions = MAX_ACCOUNT_PARTITIONS;
+    let partitions = compute_partitions(num_partitions);
+
     METRICS
         .current_step
         .set(CurrentStepValue::RequestingAccountRanges);
+    *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
+
+    let pivot = Arc::new(tokio::sync::RwLock::new(pivot_header.clone()));
+    let sync_state = Arc::new(tokio::sync::Mutex::new(block_sync_state.clone()));
+    let chunk_file_counter = Arc::new(AtomicU64::new(0));
+    let downloaded_counter = Arc::new(AtomicU64::new(0));
+
+    info!("Starting account range download with {num_partitions} concurrent partitions");
+
+    let mut join_set = tokio::task::JoinSet::new();
+
+    for (partition_id, (start, limit)) in partitions.into_iter().enumerate() {
+        let peers_clone = peers.clone();
+        let dir = account_state_snapshots_dir.to_path_buf();
+        let pivot_clone = Arc::clone(&pivot);
+        let sync_state_clone = Arc::clone(&sync_state);
+        let counter_clone = Arc::clone(&chunk_file_counter);
+        let downloaded_clone = Arc::clone(&downloaded_counter);
+
+        join_set.spawn(async move {
+            request_account_range_partition(
+                peers_clone,
+                start,
+                limit,
+                &dir,
+                pivot_clone,
+                sync_state_clone,
+                counter_clone,
+                downloaded_clone,
+                partition_id,
+            )
+            .await
+        });
+    }
+
+    // Wait for all partitions to complete
+    while let Some(result) = join_set.join_next().await {
+        result.map_err(|e| {
+            SnapError::InternalError(format!("Account partition task panicked: {e}"))
+        })??;
+    }
+
+    // Copy back the shared state
+    *pivot_header = pivot.read().await.clone();
+    *block_sync_state = sync_state.lock().await.clone();
+
+    METRICS
+        .downloaded_account_tries
+        .store(downloaded_counter.load(Ordering::Relaxed), Ordering::Relaxed);
+    *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
+
+    info!("All {num_partitions} partitions completed account range download");
+
+    Ok(())
+}
+
+/// Downloads a single partition of the account address space.
+#[allow(clippy::too_many_arguments)]
+async fn request_account_range_partition(
+    mut peers: PeerHandler,
+    start: H256,
+    limit: H256,
+    account_state_snapshots_dir: &Path,
+    pivot_header: Arc<tokio::sync::RwLock<BlockHeader>>,
+    block_sync_state: Arc<tokio::sync::Mutex<SnapBlockSyncState>>,
+    chunk_file_counter: Arc<AtomicU64>,
+    downloaded_counter: Arc<AtomicU64>,
+    partition_id: usize,
+) -> Result<(), SnapError> {
     // 1) split the range in chunks of same length
     let start_u256 = U256::from_big_endian(&start.0);
     let limit_u256 = U256::from_big_endian(&limit.0);
@@ -130,6 +221,7 @@ pub async fn request_account_range(
     // 2) request the chunks from peers
 
     let mut downloaded_count = 0_u64;
+    let mut last_reported_downloaded = 0_u64;
     let mut all_account_hashes = Vec::new();
     let mut all_accounts_state = Vec::new();
 
@@ -137,12 +229,9 @@ pub async fn request_account_range(
     let (task_sender, mut task_receiver) =
         tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
-    info!("Starting to download account ranges from peers");
-
-    *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
+    info!("Partition {partition_id}: starting account range download [{start:?}..{limit:?}]");
 
     let mut completed_tasks = 0;
-    let mut chunk_file = 0;
     let mut last_update: SystemTime = SystemTime::now();
     let mut write_set = tokio::task::JoinSet::new();
 
@@ -166,17 +255,16 @@ pub async fn request_account_range(
                 })?;
             }
 
+            let file_id = chunk_file_counter.fetch_add(1, Ordering::Relaxed);
             let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
             write_set.spawn(async move {
                 let path = get_account_state_snapshot_file(
                     &account_state_snapshots_dir_cloned,
-                    chunk_file,
+                    file_id,
                 );
                 // TODO: check the error type and handle it properly
                 dump_accounts_to_file(&path, account_state_chunk)
             });
-
-            chunk_file += 1;
         }
 
         if last_update
@@ -184,9 +272,14 @@ pub async fn request_account_range(
             .expect("Time shouldn't be in the past")
             >= Duration::from_secs(1)
         {
+            let delta = downloaded_count - last_reported_downloaded;
+            if delta > 0 {
+                downloaded_counter.fetch_add(delta, Ordering::Relaxed);
+                last_reported_downloaded = downloaded_count;
+            }
             METRICS
                 .downloaded_account_tries
-                .store(downloaded_count, Ordering::Relaxed);
+                .store(downloaded_counter.load(Ordering::Relaxed), Ordering::Relaxed);
             last_update = SystemTime::now();
         }
 
@@ -210,7 +303,7 @@ pub async fn request_account_range(
             downloaded_count += accounts.len() as u64;
 
             debug!(
-                "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
+                "Partition {partition_id}: downloaded {} accounts from peer {} (partition count: {downloaded_count})",
                 accounts.len(),
                 peer_id
             );
@@ -227,7 +320,7 @@ pub async fn request_account_range(
         else {
             // Log ~ once every 10 seconds
             if logged_no_free_peers_count == 0 {
-                trace!("We are missing peers in request_account_range");
+                trace!("Partition {partition_id}: waiting for peers");
                 logged_no_free_peers_count = 1000;
             }
             logged_no_free_peers_count -= 1;
@@ -238,7 +331,7 @@ pub async fn request_account_range(
 
         let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
             if completed_tasks >= chunk_count {
-                info!("All account ranges downloaded successfully");
+                info!("Partition {partition_id}: all account ranges downloaded");
                 break;
             }
             continue;
@@ -246,17 +339,24 @@ pub async fn request_account_range(
 
         let tx = task_sender.clone();
 
-        if block_is_stale(pivot_header) {
-            info!("request_account_range became stale, updating pivot");
-            *pivot_header = update_pivot(
-                pivot_header.number,
-                pivot_header.timestamp,
-                peers,
-                block_sync_state,
-            )
-            .await
-            .expect("Should be able to update pivot")
-        }
+        // Check pivot staleness with read lock first, then upgrade to write if needed
+        let state_root = {
+            let is_stale = block_is_stale(&*pivot_header.read().await);
+            if is_stale {
+                let mut ph = pivot_header.write().await;
+                // Double-check under write lock (another partition may have updated)
+                if block_is_stale(&ph) {
+                    info!("Partition {partition_id}: pivot is stale, updating");
+                    let mut bss = block_sync_state.lock().await;
+                    *ph = update_pivot(ph.number, ph.timestamp, &mut peers, &mut bss)
+                        .await
+                        .expect("Should be able to update pivot");
+                }
+                ph.state_root
+            } else {
+                pivot_header.read().await.state_root
+            }
+        };
 
         let peer_table = peers.peer_table.clone();
 
@@ -266,7 +366,7 @@ pub async fn request_account_range(
             peer_table,
             chunk_start,
             chunk_end,
-            pivot_header.state_root,
+            state_root,
             tx,
         ));
     }
@@ -278,7 +378,7 @@ pub async fn request_account_range(
         .collect::<Result<Vec<()>, DumpError>>()
         .map_err(SnapError::from)?;
 
-    // TODO: This is repeated code, consider refactoring
+    // Flush remaining accounts to disk
     {
         let current_account_hashes = std::mem::take(&mut all_account_hashes);
         let current_account_states = std::mem::take(&mut all_accounts_state);
@@ -296,26 +396,27 @@ pub async fn request_account_range(
             })?;
         }
 
-        let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
+        let file_id = chunk_file_counter.fetch_add(1, Ordering::Relaxed);
+        let path = get_account_state_snapshot_file(account_state_snapshots_dir, file_id);
         dump_accounts_to_file(&path, account_state_chunk)
             .inspect_err(|err| {
                 error!(
-                    "We had an error dumping the last accounts to disk {}",
+                    "Partition {partition_id}: error dumping last accounts to disk {}",
                     err.error
                 )
             })
             .map_err(|_| {
                 SnapError::SnapshotDir(format!(
-                    "Failed to write state snapshot chunk {}",
-                    chunk_file
+                    "Failed to write state snapshot chunk (partition {partition_id})"
                 ))
             })?;
     }
 
-    METRICS
-        .downloaded_account_tries
-        .store(downloaded_count, Ordering::Relaxed);
-    *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
+    // Report final download count
+    let delta = downloaded_count - last_reported_downloaded;
+    if delta > 0 {
+        downloaded_counter.fetch_add(delta, Ordering::Relaxed);
+    }
 
     Ok(())
 }
