@@ -2607,6 +2607,7 @@ fn handle_subtrie(
 
     // Instrumentation
     let mut t_collection_start: Option<Instant> = None;
+    let mut t_finish_routing: Option<Instant> = None;
     let mut n_storage_collected: usize = 0;
     let mut n_shards_received: usize = 0;
     let mut n_pre_collected_state: usize = 0;
@@ -2823,6 +2824,7 @@ fn handle_subtrie(
                 dirty = true;
             }
             WorkerRequest::FinishRouting => {
+                t_finish_routing = Some(Instant::now());
                 // Signal all workers that we're done routing MerklizeStorage.
                 let senders = worker_senders
                     .as_ref()
@@ -2950,8 +2952,11 @@ fn handle_subtrie(
         }
     }
     if let Some(t0) = t_collection_start {
+        let drain_wait_ms = t_finish_routing
+            .map(|t| (t0 - t).as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
         info!(
-            "worker[{index}] collection: {:.2}ms (storage_collected={n_storage_collected} shards_recv={n_shards_received} pre_state={n_pre_collected_state})",
+            "worker[{index}] collection: {:.2}ms drain_wait={drain_wait_ms:.2}ms (storage_collected={n_storage_collected} shards_recv={n_shards_received} pre_state={n_pre_collected_state})",
             t0.elapsed().as_secs_f64() * 1000.0
         );
     }
