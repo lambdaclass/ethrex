@@ -4,7 +4,7 @@ This document catalogs every `unsafe` block in the tokamak-jit crate and
 its supporting infrastructure in ethrex-levm's JIT modules. It is intended
 as a reference for security auditors evaluating the JIT compilation pipeline.
 
-Last updated: 2026-02-26
+Last updated: 2026-02-27
 
 ## Attack Surface
 
@@ -36,6 +36,27 @@ The analyzer and optimizer operate on byte slices using safe Rust. The
 critical trust boundary is `compiler.rs`, where user bytecode is handed to
 LLVM for compilation into native machine code, and `execution.rs`, where
 that native code is invoked via raw function pointers.
+
+### Optimizer Scope (G-7 Enhancement, 2026-02-27)
+
+The constant folding optimizer (`optimizer.rs`) rewrites `PUSH+PUSH+OP` and
+`PUSH+UNARY_OP` patterns into pre-computed single PUSH instructions. It now
+supports **22 opcodes** (expanded from 6 in D-3):
+
+- **Binary (20)**: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, EXP, SIGNEXTEND,
+  LT, GT, SLT, SGT, EQ, AND, OR, XOR, SHL, SHR, SAR
+- **Unary (2)**: NOT, ISZERO
+
+**Safety properties** of the new opcodes:
+- All arithmetic uses wrapping/checked operations — no undefined behavior
+- Division by zero returns `U256::zero()` per EVM spec (DIV, SDIV, MOD, SMOD)
+- EXP overflow handled via `overflowing_pow` (wraps, no panic)
+- Signed arithmetic (SDIV, SMOD, SLT, SGT, SAR, SIGNEXTEND) uses two's
+  complement via `!x + 1` negate — matches exact LEVM semantics
+- Same-length rewrite constraint preserved — results exceeding original byte
+  count are skipped (no bytecode offset corruption)
+- 68 unit tests + 8 integration tests + 4 proptest property tests verify
+  optimizer invariants (length preservation, convergence, no panics)
 
 ## Unsafe Block Inventory
 

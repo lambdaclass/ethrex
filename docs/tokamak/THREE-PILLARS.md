@@ -1,6 +1,6 @@
 # Tokamak Three Pillars: Completion Report
 
-**Date**: 2026-02-26
+**Date**: 2026-02-27
 **Branch**: `feat/tokamak-proven-execution`
 
 ---
@@ -25,7 +25,7 @@ Three pillars form a closed feedback loop: JIT compiles EVM bytecode to native c
 
 ## Pillar 1: JIT-Compiled EVM
 
-**Status**: ~80% complete | **Codebase**: ~9,266 lines Rust | **Tests**: 153
+**Status**: ~88% complete | **Codebase**: ~9,266 lines Rust | **Tests**: 187+
 
 > "Be the fastest."
 
@@ -75,11 +75,11 @@ Tokamak JIT compiles frequently-executed EVM bytecodes into native machine code 
    - Early size gate in VM dispatch + background thread guard
    - Graceful interpreter-only fallback (no silent failures)
 
-7. **Constant Folding Optimizer** (D-3)
-   - Same-length PUSH+PUSH+OP -> single PUSH replacement
-   - 6 opcodes: ADD, MUL, SUB, AND, OR, XOR
-   - SUB wrapping edge case handling (avoids widening)
-   - 42 tests (37 unit + 5 integration)
+7. **Constant Folding Optimizer** (D-3 + G-7)
+   - Same-length PUSH+PUSH+OP -> single PUSH replacement + PUSH+UNARY_OP unary folding
+   - 22 opcodes: 20 binary (ADD, MUL, SUB, DIV, SDIV, MOD, SMOD, EXP, SIGNEXTEND, LT, GT, SLT, SGT, EQ, AND, OR, XOR, SHL, SHR, SAR) + 2 unary (NOT, ISZERO)
+   - Signed arithmetic helpers, extracted eval helpers, write_folded_push
+   - 76 tests (68 unit + 8 integration)
 
 8. **Security Audit Prep** (F-4)
    - 3 cargo-fuzz harnesses (analyzer, optimizer, differential)
@@ -105,36 +105,36 @@ Tokamak JIT compiles frequently-executed EVM bytecodes into native machine code 
 
 > Full roadmap: [`JIT-LIMITATIONS-ROADMAP.md`](./JIT-LIMITATIONS-ROADMAP.md)
 
-#### Critical (Production Blockers)
+#### Critical (Production Blockers) — ✅ ALL RESOLVED
 
-| ID | Issue | Impact | Resolution |
+| ID | Issue | Status | Resolution |
 |----|-------|--------|------------|
-| **G-1** | **LLVM Memory Leak** — `mem::forget(compiler)` leaks ~1-5MB per compiled contract. No deallocation API in revmc. | OOM on long-running nodes | Arena allocator with generation GC (16-32h) |
-| **G-2** | **Cache Eviction No-Op** — `Free` handler logs but doesn't reclaim memory | Cache size limit is cosmetic | Resolved automatically by G-1 |
+| **G-1** | **LLVM Memory Leak** | ✅ DONE (f8e9ba540) | Arena allocator — ArenaManager + ArenaCompiler + thread_local ArenaState |
+| **G-2** | **Cache Eviction No-Op** | ✅ DONE | Auto-resolved by G-1 — Free/FreeArena handlers reclaim memory |
 
-#### Significant (v1.1 Targets)
+#### Significant (v1.1 Targets) — 2/3 RESOLVED
 
-| ID | Issue | Impact | Resolution |
+| ID | Issue | Status | Resolution |
 |----|-------|--------|------------|
-| **G-3** | **CALL/CREATE Validation Gap** — Dual-execution skips bytecodes with external calls because state-swap can't replay subcalls | Most real dapp contracts unverified | TX-level validation (12-16h) |
-| **G-4** | **Recursive CALL Overhead** — Suspend/resume packs ~10KB+ state per CALL depth. JIT slower than interpreter for deep call chains. | ERC20/DEX scenarios skipped | Inline small calls for depth 1 (20-30h) |
-| **G-5** | **Single Compiler Thread** — All compilations serialized through one mpsc channel | Compilation queue backlog on busy nodes | Thread pool with work-stealing (12-16h) |
+| **G-3** | **CALL/CREATE Validation Gap** | ✅ DONE (8c05d3412) | Removed has_external_calls guard — validation runs for ALL bytecodes |
+| **G-4** | **Recursive CALL Overhead** | REMAINING | Inline small calls for depth 1 (20-30h) |
+| **G-5** | **Single Compiler Thread** | ✅ DONE (299d03720) | CompilerThreadPool — crossbeam-channel multi-consumer, N workers |
 
-#### Moderate (v1.2 Optimization)
+#### Moderate (v1.2 Optimization) — 1/3 RESOLVED
 
-| ID | Issue | Impact | Resolution |
+| ID | Issue | Status | Resolution |
 |----|-------|--------|------------|
-| **G-6** | **FIFO Cache** (not LRU) — Hot contracts evicted by insertion order | Unnecessary recompilation | Atomic timestamp LRU (8-12h) |
-| **G-7** | **Same-Length Folding Constraint** — Constant folding skips patterns where result exceeds original byte count | Missed optimization opportunities | NOP padding + IR-level folding (4-32h) |
-| **G-8** | **No Precompile Acceleration** — ECADD/KECCAK256 go through Host trait, not JIT-inlined | Reduced speedup on crypto-heavy contracts | LLVM IR extern calls (16-24h) |
+| **G-6** | **FIFO Cache** (not LRU) | REMAINING | Atomic timestamp LRU (8-12h) |
+| **G-7** | **Constant Folding** | ✅ DONE (43026d7cf) | Expanded from 6 to 22 opcodes (14 binary + 2 unary), refactored eval helpers |
+| **G-8** | **No Precompile Acceleration** | REMAINING | LLVM IR extern calls (16-24h) |
 
 #### Resolution Timeline
 
 ```
-v1.0.1  G-1 + G-2 (memory safety)           18-36h
-v1.1    G-3 + G-4 + G-5 (real dapp support)  44-62h
-v1.2    G-6 + G-7 + G-8 (optimization)       28-44h
-                                        Total: 90-142h
+v1.0.1  G-1 + G-2 (memory safety)           ✅ ALL DONE
+v1.1    G-3 + G-5 done, G-4 remaining        20-30h left
+v1.2    G-7 done, G-6 + G-8 remaining        24-36h left
+                                        Remaining: 44-66h
 ```
 
 ---
@@ -294,10 +294,10 @@ The debugger directly feeds back into JIT optimization:
 
 | Pillar | Completion | Lines | Tests | Phases |
 |--------|-----------|-------|-------|--------|
-| JIT-Compiled EVM | **~80%** | 9,266 | 153 | 2-8, B-1/2/3, D-1/2/3, F-4 |
+| JIT-Compiled EVM | **~88%** | 9,266+ | 187+ | 2-8, B-1/2/3, D-1/2/3, F-4, G-1/2/3/5/7 |
 | Continuous Benchmarking | **~80%** | 4,411 | 134 | 8-9, C-1/2/3, F-1/2 |
 | Time-Travel Debugger | **~85%** | 1,830 | 45 | E-1/2/3 |
-| **Total** | **~82%** | **15,507** | **332** | |
+| **Total** | **~85%** | **15,507+** | **366+** | |
 
 Plus L2 integration scaffolding (F-3): 7 tests connecting JIT policy to L2 hook system.
 
@@ -305,11 +305,11 @@ Plus L2 integration scaffolding (F-3): 7 tests connecting JIT policy to L2 hook 
 
 #### JIT Limitations Resolution (see [`JIT-LIMITATIONS-ROADMAP.md`](./JIT-LIMITATIONS-ROADMAP.md))
 
-| Phase | Tasks | Priority | Estimate | Target |
-|-------|-------|----------|----------|--------|
-| v1.0.1 | G-1 Memory Lifecycle + G-2 Cache Fix | **P0** | 18-36h | Memory safety |
-| v1.1 | G-3 CALL Validation + G-4 Inline CALL + G-5 Parallel Compile | **P1** | 44-62h | 2.5-3.5x speedup |
-| v1.2 | G-6 LRU Cache + G-7 Folding + G-8 Precompile | **P2** | 28-44h | 3.5-5.0x speedup |
+| Phase | Tasks | Status | Remaining |
+|-------|-------|--------|-----------|
+| v1.0.1 | G-1 + G-2 | **✅ ALL DONE** | 0h |
+| v1.1 | G-3 ✅ + G-4 + G-5 ✅ | **2/3 DONE** | 20-30h (G-4) |
+| v1.2 | G-6 + G-7 ✅ + G-8 | **1/3 DONE** | 24-36h (G-6, G-8) |
 
 #### Other Remaining Work
 

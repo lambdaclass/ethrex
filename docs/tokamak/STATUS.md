@@ -1,6 +1,6 @@
 # Tokamak Client Status Report
 
-**Date**: 2026-02-26
+**Date**: 2026-02-27
 **Branch**: `feat/tokamak-proven-execution`
 **Overall Completion**: ~92%
 
@@ -37,11 +37,12 @@
 - Dual-execution validation (JIT vs interpreter)
 - Benchmarking infrastructure + initial results
 - Bytecode size limit graceful fallback (D-2) — negative cache + early size gate + interpreter-only bench results
-- Constant folding optimizer (D-3) — PUSH+PUSH+OP → single PUSH, 6 opcodes (ADD/MUL/SUB/AND/OR/XOR), 42 tests
+- Constant folding optimizer (D-3 + G-7) — PUSH+PUSH+OP → single PUSH, 22 opcodes (6 original + 14 binary + 2 unary), 76 tests
 - 76 LEVM JIT tests + 27 tokamak-jit tests passing (104 total)
 - Arena-based LLVM memory lifecycle (G-1) — eliminates `mem::forget` memory leak, 178 tests pass
 - CALL/CREATE dual-execution validation (G-3) — removed `has_external_calls` guard, validation runs for all bytecodes, 5 tests
 - Parallel compilation thread pool (G-5) — crossbeam-channel multi-consumer, N workers (default num_cpus/2), deduplication guard, 4 new tests
+- Constant folding enhancement (G-7) — expanded to 22 opcodes (DIV/SDIV/MOD/SMOD/EXP/SIGNEXTEND/LT/GT/SLT/SGT/EQ/SHL/SHR/SAR + NOT/ISZERO unary), refactored eval helpers, 68 unit + 8 integration tests
 
 **Remaining:**
 - Recursive CALL performance (suspend/resume is slow — accepted for v1.0)
@@ -181,6 +182,7 @@ R23(5.0) -> R24(8.0)
 - LLVM Memory Lifecycle (G-1) — Arena allocator replacing `mem::forget`, ArenaManager + ArenaCompiler + thread_local ArenaState, 12+4 arena tests, all 178 tests pass (f8e9ba540) (2026-02-26)
 - Cache Eviction Effectiveness (G-2) — Auto-resolved by G-1 arena system: Free/FreeArena handlers, cache eviction returns FuncSlot for arena cleanup (2026-02-27)
 - CALL/CREATE Dual-Execution Validation (G-3) — Removed `has_external_calls` guard, validation runs for ALL bytecodes (CALL/STATICCALL/DELEGATECALL), shared MismatchBackend + helpers, 5 tests (8c05d3412) (2026-02-27)
+- Constant Folding Enhancement (G-7) — Expanded optimizer from 6 to 22 opcodes (14 new binary + 2 unary), signed arithmetic helpers, extracted eval helpers + write_folded_push, 68 unit + 8 integration tests (43026d7cf) (2026-02-27)
 
 ### Not Started
 - EF grant application

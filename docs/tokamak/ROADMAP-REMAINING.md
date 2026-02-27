@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
-**Created**: 2026-02-24 | **Updated**: 2026-02-26
-**Context**: Overall ~93% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1), G-3 ✅ DONE (CALL/CREATE dual-execution validation), G-5 ✅ DONE (parallel compilation pool).
+**Created**: 2026-02-24 | **Updated**: 2026-02-27
+**Context**: Overall ~93% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1), G-3 ✅ DONE (CALL/CREATE dual-execution validation), G-5 ✅ DONE (parallel compilation pool), G-7 ✅ DONE (constant folding enhancement — 22 opcodes + unary patterns).
 
 ---
 
@@ -157,9 +157,10 @@
 - Supports ADD, SUB, MUL, AND, OR, XOR with SUB wrapping edge case handling ✅
 - optimizer.rs: detect_patterns() scan + optimize() constant folding ✅
 - Pipeline integration between analyze_bytecode() and TokamakCompiler::compile() ✅
-- **Verification**: 37 unit tests + 5 integration tests (42 total) ✅
+- **Enhanced by G-7**: expanded from 6 to 22 opcodes + unary pattern support (see G-7 below)
+- **Verification**: 68 unit tests + 8 integration tests (76 total, after G-7) ✅
 - **Dependency**: D-1 ✅, D-2 ✅
-- **Completed**: Session fec956fef
+- **Completed**: Session fec956fef (base), 43026d7cf (G-7 enhancement)
 
 ---
 
@@ -302,6 +303,19 @@
 - **Dependency**: G-1 ✅
 - **Completed**: 2026-02-27 — CompilerThreadPool + deduplication guard + 4 tests
 
+### G-7. Constant Folding Enhancement — Expanded Opcodes [P2] ✅ DONE
+- Expanded D-3 optimizer from 6 binary opcodes to 20 binary + 2 unary opcodes (22 total) ✅
+- **Binary opcodes added**: DIV, SDIV, MOD, SMOD, EXP, SIGNEXTEND, LT, GT, SLT, SGT, EQ, SHL, SHR, SAR ✅
+- **Unary opcodes added**: NOT, ISZERO (new `UnaryPattern` type + `detect_unary_patterns()` scanner) ✅
+- Signed arithmetic helpers: `is_negative`, `negate`, `abs_val`, `u256_from_bool` (exact LEVM semantics) ✅
+- Refactored eval_op into 6 extracted helpers (eval_sdiv, eval_smod, eval_signextend, signed_compare, eval_sar, eval_shift) ✅
+- Extracted shared `write_folded_push()` helper eliminating duplicate rewrite logic ✅
+- `OptimizationStats` extended with `unary_patterns_folded` field ✅
+- Proptest convergence check updated for unary patterns ✅
+- **Verification**: 68 unit tests + 8 integration tests (76 total), clippy clean both states ✅
+- **Dependency**: D-3 ✅
+- **Completed**: 2026-02-27 — 22 opcodes + unary patterns + refactored helpers (43026d7cf)
+
 ---
 
 ## Execution Order
@@ -315,7 +329,7 @@ Week 5+: [P2] E-2 ✅ + E-3 ✅
 Week 6:  [P3] F-1 ✅ + F-4 ✅ (parallel)
 Week 7:  [P3] F-2 ✅ (dashboard MVP)
 Week 8:  [P3] F-3 ✅ (L2 scaffolding)
-Week 9:  [P1] G-1 ✅ (arena allocator) + G-3 ✅ (CALL/CREATE validation) + G-5 ✅ (parallel compilation)
+Week 9:  [P1] G-1 ✅ (arena allocator) + G-3 ✅ (CALL/CREATE validation) + G-5 ✅ (parallel compilation) + G-7 ✅ (constant folding 22 opcodes)
 Later:   [P3] F-5
 ```
 
