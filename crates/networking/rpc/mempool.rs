@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use ethrex_common::Address;
+use ethrex_crypto::NativeCrypto;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -29,7 +30,7 @@ pub fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
     // Group transactions by sender and nonce and map them to rpc transactions
     let mut mempool_content = MempoolContentEntry::new();
     for tx in transactions {
-        let sender_entry = mempool_content.entry(tx.sender()?).or_default();
+        let sender_entry = mempool_content.entry(tx.sender(&NativeCrypto)?).or_default();
         sender_entry.insert(tx.nonce(), RpcTransaction::build(tx, None, None, None)?);
     }
     let response = MempoolContent {

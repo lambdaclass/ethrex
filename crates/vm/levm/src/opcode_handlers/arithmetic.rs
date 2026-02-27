@@ -190,34 +190,11 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        #[cfg(feature = "zisk")]
-        let product_mod = {
-            use ziskos::zisklib::mulmod256_c;
-            let mut product_mod = U256::zero();
-            unsafe {
-                mulmod256_c(
-                    multiplicand.0.as_ptr(),
-                    multiplier.0.as_ptr(),
-                    modulus.0.as_ptr(),
-                    product_mod.0.as_mut_ptr(),
-                );
-            }
-            product_mod
-        };
-
-        #[cfg(not(feature = "zisk"))]
-        let product_mod = {
-            let product = multiplicand.full_mul(multiplier);
-
-            #[allow(clippy::arithmetic_side_effects, reason = "modulus isn't zero")]
-            let product_mod = product % modulus;
-
-            #[allow(clippy::expect_used, reason = "modulus is a U256, so result fits")]
-            let product_mod: U256 = product_mod
-                .try_into()
-                .expect("can't fail because we applied % mod where mod is a U256 value");
-            product_mod
-        };
+        let a_bytes = multiplicand.to_big_endian();
+        let b_bytes = multiplier.to_big_endian();
+        let m_bytes = modulus.to_big_endian();
+        let result_bytes = self.crypto.mulmod256(&a_bytes, &b_bytes, &m_bytes);
+        let product_mod = U256::from_big_endian(&result_bytes);
 
         current_call_frame.stack.push(product_mod)?;
 

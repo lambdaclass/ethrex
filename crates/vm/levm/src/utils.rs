@@ -199,79 +199,9 @@ pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError
     }
 }
 
-#[cfg(any(
-    feature = "zisk",
-    feature = "risc0",
-    feature = "sp1",
-    not(feature = "secp256k1")
-))]
 pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
-) -> Result<Option<Address>, VMError> {
-    use ethrex_rlp::encode::RLPEncode;
-    use sha2::Digest;
-    use sha3::Keccak256;
-
-    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
-        return Ok(None);
-    }
-    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
-        return Ok(None);
-    }
-    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
-        return Ok(None);
-    }
-
-    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
-
-    let mut digest = Keccak256::new();
-    digest.update([MAGIC]);
-    digest.update(rlp_buf);
-
-    let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
-    ]
-    .concat();
-
-    let Ok(recovery_id) = k256::ecdsa::RecoveryId::try_from(
-        TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
-    ) else {
-        return Ok(None);
-    };
-
-    let Ok(signature) = k256::ecdsa::Signature::from_slice(&bytes) else {
-        return Ok(None);
-    };
-
-    let Ok(authority) =
-        k256::ecdsa::VerifyingKey::recover_from_digest(digest, &signature, recovery_id)
-    else {
-        return Ok(None);
-    };
-
-    let public_key = authority.to_encoded_point(false).to_bytes();
-    let mut hasher = Keccak256::new();
-    hasher.update(public_key.get(1..).ok_or(InternalError::Slicing)?);
-    let address_hash = hasher.finalize();
-
-    // Get the last 20 bytes of the hash -> Address
-    let authority_address_bytes: [u8; 20] = address_hash
-        .get(12..32)
-        .ok_or(InternalError::Slicing)?
-        .try_into()
-        .map_err(|_| InternalError::TypeConversion)?;
-    Ok(Some(Address::from_slice(&authority_address_bytes)))
-}
-
-#[cfg(all(
-    not(feature = "zisk"),
-    not(feature = "risc0"),
-    not(feature = "sp1"),
-    feature = "secp256k1"
-))]
-pub fn eip7702_recover_address(
-    auth_tuple: &AuthorizationTuple,
+    crypto: &dyn ethrex_crypto::Crypto,
 ) -> Result<Option<Address>, VMError> {
     use ethrex_crypto::keccak::keccak_hash;
     use ethrex_rlp::encode::RLPEncode;
@@ -289,40 +219,20 @@ pub fn eip7702_recover_address(
     let mut rlp_buf = Vec::with_capacity(128);
     rlp_buf.push(MAGIC);
     (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
-    let bytes = keccak_hash(&rlp_buf);
+    let msg = keccak_hash(&rlp_buf);
 
-    let message = secp256k1::Message::from_digest(bytes);
-
-    let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
-    ]
-    .concat();
-
-    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(
-        TryInto::<i32>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
-    ) else {
-        return Ok(None);
-    };
-
-    let Ok(signature) = secp256k1::ecdsa::RecoverableSignature::from_compact(&bytes, recovery_id)
-    else {
-        return Ok(None);
-    };
-
-    //recover
-    let Ok(authority) = signature.recover(&message) else {
-        return Ok(None);
-    };
-
-    let public_key = authority.serialize_uncompressed();
-    let address_hash = keccak_hash(&public_key[1..]);
-
-    // Get the last 20 bytes of the hash -> Address
-    let authority_address_bytes: [u8; 20] = address_hash[12..]
-        .try_into()
+    let y_parity: u8 = TryInto::<u8>::try_into(auth_tuple.y_parity)
         .map_err(|_| InternalError::TypeConversion)?;
-    Ok(Some(Address::from_slice(&authority_address_bytes)))
+
+    let mut sig = [0u8; 65];
+    sig[..32].copy_from_slice(&auth_tuple.r_signature.to_big_endian());
+    sig[32..64].copy_from_slice(&auth_tuple.s_signature.to_big_endian());
+    sig[64] = y_parity;
+
+    match crypto.recover_signer(&sig, &msg) {
+        Ok(address) => Ok(Some(address)),
+        Err(_) => Ok(None),
+    }
 }
 
 /// Gets code of an account, returning early if it's not a delegated account, otherwise
@@ -389,7 +299,7 @@ impl<'a> VM<'a> {
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
-            let Some(authority_address) = eip7702_recover_address(&auth_tuple)? else {
+            let Some(authority_address) = eip7702_recover_address(&auth_tuple, self.crypto)? else {
                 continue;
             };
 

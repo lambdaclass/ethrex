@@ -11,6 +11,7 @@
 //! - Correct log format (topics, data, address)
 
 use bytes::Bytes;
+use ethrex_crypto::NativeCrypto;
 use ethrex_common::{
     Address, H256, U256,
     constants::{EMPTY_TRIE_HASH, SYSTEM_ADDRESS},
@@ -213,7 +214,7 @@ impl TestBuilder {
             ..Default::default()
         });
 
-        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1).unwrap();
+        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1, &NativeCrypto).unwrap();
         vm.execute().unwrap()
     }
 }

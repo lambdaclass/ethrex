@@ -7,6 +7,7 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{Account, BlockHeader, Code, LegacyTransaction, Transaction},
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     EVMConfig, Environment,
     account::LevmAccount,
@@ -157,6 +158,7 @@ fn main() {
         &Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())),
         LevmCallTracer::disabled(),
         VMType::L1,
+        &NativeCrypto,
     )
     .expect("Failed to initialize VM");
 
