@@ -599,7 +599,15 @@ impl Blockchain {
                 None
             };
 
+        let mut t_route_work = Duration::ZERO;
+        let mut t_route_wait = Duration::ZERO;
+        let mut n_batches = 0u32;
+        let mut n_updates = 0u32;
+        let mut t_wait_start = Instant::now();
         for updates in rx {
+            t_route_wait += t_wait_start.elapsed();
+            let t_batch = Instant::now();
+            n_batches += 1;
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
             // Accumulate updates for witness generation if enabled
@@ -617,6 +625,7 @@ impl Blockchain {
             }
 
             for update in updates {
+                n_updates += 1;
                 let hashed_address = *hashed_address_cache
                     .entry(update.address)
                     .or_insert_with(|| keccak(update.address));
@@ -649,6 +658,8 @@ impl Blockchain {
                     })
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
             }
+            t_route_work += t_batch.elapsed();
+            t_wait_start = Instant::now();
         }
 
         let t_routed = Instant::now();
@@ -734,12 +745,16 @@ impl Blockchain {
         let t_root = Instant::now();
 
         let route_us = t_routed.duration_since(t_start).as_micros();
+        let route_wait_us = t_route_wait.as_micros();
+        let route_work_us = t_route_work.as_micros();
         let barrier_us = t_barrier.duration_since(t_routed).as_micros();
         let gather_us = t_gathered.duration_since(t_barrier).as_micros();
         let root_us = t_root.duration_since(t_gathered).as_micros();
         let total_us = t_root.duration_since(t_start).as_micros();
         info!(
-            "merkle[drain] route={route_us}us barrier={barrier_us}us gather={gather_us}us root={root_us}us total={total_us}us gathered={n_gathered}"
+            "merkle[drain] route={route_us}us(wait={route_wait_us}us work={route_work_us}us) \
+             barrier={barrier_us}us gather={gather_us}us root={root_us}us total={total_us}us \
+             batches={n_batches} updates={n_updates} gathered={n_gathered}"
         );
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
