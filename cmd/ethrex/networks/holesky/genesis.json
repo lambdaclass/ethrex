@@ -12,7 +12,7 @@
     "berlinBlock": 0,
     "londonBlock": 0,
     "mergeNetsplitBlock": 0,
-    "terminalTotalDifficulty": 0,
+    "terminalTotalDifficulty": "0x0",
     "terminalTotalDifficultyPassed": true,
     "shanghaiTime": 1696000704,
     "pragueTime": 1740434112,
