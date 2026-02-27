@@ -101,6 +101,11 @@ impl L2Command {
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");
         }
+        #[cfg(feature = "native-rollups")]
+        if l2_options.sequencer_opts.native_rollup_opts.enabled {
+            l2::initializers::init_native_rollup_l2(l2_options, log_filter_handler).await?;
+            return Ok(());
+        }
         l2::init_l2(l2_options, log_filter_handler).await?;
         Ok(())
     }
@@ -622,6 +627,11 @@ impl Command {
                     .inspect(|_| info!("Succesfully unpaused contract"))?;
             }
             Command::Deploy { options } => {
+                #[cfg(feature = "native-rollups")]
+                if options.native_rollups {
+                    l2::deployer::deploy_native_rollup_contracts(options).await?;
+                    return Ok(());
+                }
                 deploy_l1_contracts(options).await?;
             }
         }

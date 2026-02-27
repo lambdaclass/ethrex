@@ -28,14 +28,13 @@ impl GuestProgramStateDb {
 
 impl Database for GuestProgramStateDb {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-        self.state
+        Ok(self
+            .state
             .lock()
             .map_err(|e| DatabaseError::Custom(format!("Lock poisoned: {e}")))?
             .get_account_state(address)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
-            .ok_or(DatabaseError::Custom(format!(
-                "Account {address} not found in witness"
-            )))
+            .unwrap_or_default())
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {

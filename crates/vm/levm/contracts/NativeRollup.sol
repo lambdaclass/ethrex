@@ -72,7 +72,7 @@ contract NativeRollup {
     bool private _locked;
 
     event StateAdvanced(uint256 indexed newBlockNumber, bytes32 newStateRoot, uint256 burnedFees);
-    event L1MessageRecorded(address indexed sender, address indexed to, uint256 value, uint256 gasLimit, bytes32 dataHash, uint256 indexed nonce);
+    event L1MessageRecorded(address indexed sender, address indexed to, uint256 value, uint256 gasLimit, bytes data, uint256 indexed nonce);
     event WithdrawalClaimed(address indexed receiver, uint256 amount, uint256 indexed blockNumber, uint256 indexed messageId);
 
     modifier nonReentrant() {
@@ -94,14 +94,12 @@ contract NativeRollup {
     // ===== L1 Messaging =====
 
     function sendL1Message(address _to, uint256 _gasLimit, bytes calldata _data) external payable {
+        _burnGas(_gasLimit);
         _recordL1Message(msg.sender, _to, msg.value, _gasLimit, _data);
     }
 
-    receive() external payable {
-        require(msg.value > 0, "Must send ETH");
-        _burnGas(DEFAULT_GAS_LIMIT);
-        _recordL1Message(msg.sender, msg.sender, msg.value, DEFAULT_GAS_LIMIT, "");
-    }
+    /// @notice Accept ETH without creating an L1 message.
+    receive() external payable {}
 
     function _recordL1Message(
         address _from,
@@ -114,7 +112,7 @@ contract NativeRollup {
         bytes32 dataHash = keccak256(_data);
         bytes32 messageHash = keccak256(abi.encodePacked(_from, _to, _value, _gasLimit, dataHash, nonce));
         pendingL1Messages.push(messageHash);
-        emit L1MessageRecorded(_from, _to, _value, _gasLimit, dataHash, nonce);
+        emit L1MessageRecorded(_from, _to, _value, _gasLimit, _data, nonce);
     }
 
     /// @dev Consume gas in a tight loop so the L1 caller pays for the gas that

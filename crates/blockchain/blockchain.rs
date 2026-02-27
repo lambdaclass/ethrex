@@ -929,14 +929,34 @@ impl Blockchain {
         &self,
         blocks: &[Block],
     ) -> Result<ExecutionWitness, ChainError> {
-        self.generate_witness_for_blocks_with_fee_configs(blocks, None)
-            .await
+        self.generate_witness_inner(blocks, None, None).await
     }
 
     pub async fn generate_witness_for_blocks_with_fee_configs(
         &self,
         blocks: &[Block],
         fee_configs: Option<&[FeeConfig]>,
+    ) -> Result<ExecutionWitness, ChainError> {
+        self.generate_witness_inner(blocks, fee_configs, None).await
+    }
+
+    /// Generate a witness for the given blocks, applying optional pre-execution
+    /// storage writes before re-executing each block. Used by the native rollup
+    /// committer to inject L1Anchor values into the witness.
+    pub async fn generate_witness_for_blocks_with_pre_execution_writes(
+        &self,
+        blocks: &[Block],
+        pre_execution_writes: &[(Address, H256, U256)],
+    ) -> Result<ExecutionWitness, ChainError> {
+        self.generate_witness_inner(blocks, None, Some(pre_execution_writes))
+            .await
+    }
+
+    async fn generate_witness_inner(
+        &self,
+        blocks: &[Block],
+        fee_configs: Option<&[FeeConfig]>,
+        pre_execution_writes: Option<&[(Address, H256, U256)]>,
     ) -> Result<ExecutionWitness, ChainError> {
         let first_block_header = &blocks
             .first()
@@ -1011,6 +1031,25 @@ impl Blockchain {
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config)
                 }
             };
+
+            // Apply pre-execution storage writes (e.g. L1Anchor for native rollups).
+            // These are system-level writes that happen before block execution,
+            // mirroring what the EXECUTE precompile does on L1.
+            if let Some(writes) = pre_execution_writes {
+                for (address, key, value) in writes {
+                    let acc = vm.db.get_account_mut(*address).map_err(|e| {
+                        ChainError::WitnessGeneration(format!(
+                            "Failed to load account for pre-execution write: {e}"
+                        ))
+                    })?;
+                    acc.storage.insert(*key, *value);
+                    // Ensure the old value exists in initial_accounts_state so
+                    // get_state_transitions() can compute the storage diff.
+                    if let Some(initial) = vm.db.initial_accounts_state.get_mut(address) {
+                        initial.storage.entry(*key).or_insert(U256::zero());
+                    }
+                }
+            }
 
             // Re-execute block with logger
             let (execution_result, _bal) = vm.execute_block(block)?;
