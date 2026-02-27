@@ -986,6 +986,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "indexmap 2.13.0",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "lambdaworks-math",
  "lazy_static",

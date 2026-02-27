@@ -1158,6 +1158,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "indexmap",
  "k256",
  "lambdaworks-math",
  "lazy_static",
