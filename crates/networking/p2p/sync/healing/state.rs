@@ -202,63 +202,64 @@ async fn heal_state_trie(
             }
         }
 
-        if !is_stale {
+        while !is_stale && !paths.is_empty() {
             let batch: Vec<RequestMetadata> =
                 paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
-            if !batch.is_empty() {
-                longest_path_seen = usize::max(
-                    batch
-                        .iter()
-                        .map(|request_metadata| request_metadata.path.len())
-                        .max()
-                        .unwrap_or_default(),
-                    longest_path_seen,
-                );
-                let Some((peer_id, connection)) = peers
-                    .peer_table
-                    .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
-                    .await
-                    .inspect_err(
-                        |err| debug!(err=?err, "Error requesting a peer to perform state healing"),
-                    )
-                    .unwrap_or(None)
-                else {
-                    // If there are no peers available, re-add the batch to the paths vector, and continue
-                    paths.extend(batch);
-
-                    // Log ~ once every 10 seconds
-                    if logged_no_free_peers_count == 0 {
-                        trace!("We are missing peers in heal_state_trie");
-                        logged_no_free_peers_count = 1000;
-                    }
-                    logged_no_free_peers_count -= 1;
-
-                    // Sleep a bit to avoid busy polling
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    continue;
-                };
-
-                let tx = task_sender.clone();
-                inflight_tasks += 1;
-
-                let peer_table = peers.peer_table.clone();
-                tokio::spawn(async move {
-                    // TODO: check errors to determine whether the current block is stale
-                    let response = request_state_trienodes(
-                        peer_id,
-                        connection,
-                        peer_table,
-                        state_root,
-                        batch.clone(),
-                    )
-                    .await;
-                    // TODO: add error handling
-                    tx.send((peer_id, response, batch)).await.inspect_err(
-                        |err| debug!(error=?err, "Failed to send state trie nodes response"),
-                    )
-                });
-                tokio::task::yield_now().await;
+            if batch.is_empty() {
+                break;
             }
+            longest_path_seen = usize::max(
+                batch
+                    .iter()
+                    .map(|request_metadata| request_metadata.path.len())
+                    .max()
+                    .unwrap_or_default(),
+                longest_path_seen,
+            );
+            let Some((peer_id, connection)) = peers
+                .peer_table
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                .await
+                .inspect_err(
+                    |err| debug!(err=?err, "Error requesting a peer to perform state healing"),
+                )
+                .unwrap_or(None)
+            else {
+                // If there are no peers available, re-add the batch to the paths vector
+                paths.extend(batch);
+
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count == 0 {
+                    trace!("We are missing peers in heal_state_trie");
+                    logged_no_free_peers_count = 1000;
+                }
+                logged_no_free_peers_count -= 1;
+
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                break;
+            };
+
+            let tx = task_sender.clone();
+            inflight_tasks += 1;
+
+            let peer_table = peers.peer_table.clone();
+            tokio::spawn(async move {
+                // TODO: check errors to determine whether the current block is stale
+                let response = request_state_trienodes(
+                    peer_id,
+                    connection,
+                    peer_table,
+                    state_root,
+                    batch.clone(),
+                )
+                .await;
+                // TODO: add error handling
+                tx.send((peer_id, response, batch)).await.inspect_err(
+                    |err| debug!(error=?err, "Failed to send state trie nodes response"),
+                )
+            });
+            tokio::task::yield_now().await;
         }
 
         // If there is at least one "batch" of nodes to heal, heal it
