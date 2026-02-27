@@ -558,7 +558,7 @@ impl L1Committer {
                 *fee_config_guard = *fee_config;
             }
 
-            one_time_checkpoint_blockchain.add_block_pipeline(block.clone())?;
+            one_time_checkpoint_blockchain.add_block_pipeline(block.clone(), None)?;
         }
 
         Ok(())
@@ -855,7 +855,7 @@ impl L1Committer {
                     *fee_config_guard = fee_config;
                 }
 
-                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone())?
+                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone(), None)?
             };
 
             // Accumulate block data with the rest of the batch.
@@ -973,7 +973,7 @@ impl L1Committer {
             #[allow(clippy::as_conversions)]
             let blob_usage_percentage = blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
             let batch_gas_used = batch_gas_used.try_into()?;
-            let batch_size = (last_added_block_number - first_block_of_batch).try_into()?;
+            let batch_size = (last_added_block_number - first_block_of_batch + 1).try_into()?;
             let tx_count = tx_count.try_into()?;
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
             METRICS.set_batch_gas_used(batch_number, batch_gas_used)?;
@@ -1678,7 +1678,7 @@ pub async fn regenerate_state(
             *fee_config_guard = fee_config;
         }
 
-        if let Err(err) = blockchain.add_block_pipeline(block) {
+        if let Err(err) = blockchain.add_block_pipeline(block, None) {
             return Err(CommitterError::FailedToCreateCheckpoint(err.to_string()));
         }
     }

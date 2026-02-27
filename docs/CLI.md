@@ -15,6 +15,7 @@ Commands:
   import-bench        Import blocks to the database for benchmarking
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
+  repl                Interactive REPL for Ethereum JSON-RPC
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -40,6 +41,7 @@ Node options:
           Delete the database without confirmation.
 
       --metrics.addr <ADDRESS>
+          [env: ETHREX_METRICS_ADDR=]
           [default: 0.0.0.0]
 
       --metrics.port <PROMETHEUS_METRICS_PORT>
@@ -49,8 +51,12 @@ Node options:
       --metrics
           Enable metrics collection and exposition
 
+          [env: ETHREX_METRICS=]
+
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
+
+          [env: ETHREX_DEV=]
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
@@ -61,57 +67,85 @@ Node options:
       --log.color <LOG_COLOR>
           Possible values: auto, always, never
 
+          [env: ETHREX_LOG_COLOR=]
           [default: auto]
 
       --log.dir <LOG_DIR>
           Directory to store log files.
 
+          [env: ETHREX_LOG_DIR=]
+
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
+          [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 
+          [env: ETHREX_PRECOMPUTE_WITNESSES=]
+
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
           Comma separated enode URLs for P2P discovery bootstrap.
 
+          [env: ETHREX_BOOTNODES=]
+
       --syncmode <SYNC_MODE>
           Can be either "full" or "snap" with "snap" as default value.
 
+          [env: ETHREX_SYNCMODE=]
           [default: snap]
 
       --p2p.disabled
-
+          [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
           Listening address for the P2P protocol.
 
+          [env: ETHREX_P2P_ADDR=]
+
       --p2p.port <PORT>
           TCP port for the P2P protocol.
 
+          [env: ETHREX_P2P_PORT=]
           [default: 30303]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
 
+          [env: ETHREX_P2P_DISCOVERY_PORT=]
           [default: 30303]
+
+      --p2p.discv4 <DISCV4_ENABLED>
+          Enable discv4 discovery.
+
+          [default: true]
+          [possible values: true, false]
+
+      --p2p.discv5 <DISCV5_ENABLED>
+          Enable discv5 discovery (experimental).
+
+          [default: false]
+          [possible values: true, false]
 
       --p2p.tx-broadcasting-interval <INTERVAL_MS>
           Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
 
+          [env: ETHREX_P2P_TX_BROADCASTING_INTERVAL=]
           [default: 1000]
 
       --p2p.target-peers <MAX_PEERS>
           Max amount of connected peers.
 
+          [env: ETHREX_P2P_TARGET_PEERS=]
           [default: 100]
 
       --p2p.lookup-interval <INITIAL_LOOKUP_INTERVAL>
           Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
 
+          [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
 
 RPC options:
@@ -147,31 +181,38 @@ RPC options:
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
 
+          [env: ETHREX_AUTHRPC_ADDR=]
           [default: 127.0.0.1]
 
       --authrpc.port <PORT>
           Listening port for the authenticated rpc server.
 
+          [env: ETHREX_AUTHRPC_PORT=]
           [default: 8551]
 
       --authrpc.jwtsecret <JWTSECRET_PATH>
           Receives the jwt secret used for authenticated rpc requests.
 
+          [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
 
 Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
+          [env: ETHREX_BUILDER_EXTRA_DATA=]
           [default: "ethrex 9.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
+          [env: ETHREX_BUILDER_GAS_LIMIT=]
           [default: 60000000]
 
       --builder.max-blobs <MAX_BLOBS>
           EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.
+
+          [env: ETHREX_BUILDER_MAX_BLOBS=]
 ```
 
 <!-- END_CLI_HELP -->
@@ -226,6 +267,7 @@ Node options:
           Delete the database without confirmation.
 
       --metrics.addr <ADDRESS>
+          [env: ETHREX_METRICS_ADDR=]
           [default: 0.0.0.0]
 
       --metrics.port <PROMETHEUS_METRICS_PORT>
@@ -235,58 +277,74 @@ Node options:
       --metrics
           Enable metrics collection and exposition
 
+          [env: ETHREX_METRICS=]
+
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
+          [env: ETHREX_DEV=]
+
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-          
+
           [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
       --log.color <LOG_COLOR>
           Possible values: auto, always, never
 
+          [env: ETHREX_LOG_COLOR=]
           [default: auto]
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
+          [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
           Comma separated enode URLs for P2P discovery bootstrap.
 
+          [env: ETHREX_BOOTNODES=]
+
       --syncmode <SYNC_MODE>
           Can be either "full" or "snap" with "snap" as default value.
 
+          [env: ETHREX_SYNCMODE=]
           [default: snap]
 
       --p2p.disabled
 
+          [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
           Listening address for the P2P protocol.
 
+          [env: ETHREX_P2P_ADDR=]
+
       --p2p.port <PORT>
           TCP port for the P2P protocol.
 
+          [env: ETHREX_P2P_PORT=]
           [default: 30303]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
 
+          [env: ETHREX_P2P_DISCOVERY_PORT=]
           [default: 30303]
 
       --p2p.tx-broadcasting-interval <INTERVAL_MS>
           Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
 
+          [env: ETHREX_P2P_TX_BROADCASTING_INTERVAL=]
           [default: 1000]
 
       --target.peers <MAX_PEERS>
           Max amount of connected peers.
 
+          [env: ETHREX_P2P_TARGET_PEERS=]
           [default: 100]
 
 RPC options:
@@ -322,27 +380,32 @@ RPC options:
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
 
+          [env: ETHREX_AUTHRPC_ADDR=]
           [default: 127.0.0.1]
 
       --authrpc.port <PORT>
           Listening port for the authenticated rpc server.
 
+          [env: ETHREX_AUTHRPC_PORT=]
           [default: 8551]
 
       --authrpc.jwtsecret <JWTSECRET_PATH>
           Receives the jwt secret used for authenticated rpc requests.
 
+          [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
 
 Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
+          [env: ETHREX_BUILDER_EXTRA_DATA=]
           [default: "ethrex 9.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
+          [env: ETHREX_BUILDER_GAS_LIMIT=]
           [default: 60000000]
 
 Eth options:
@@ -583,6 +646,8 @@ L2 options:
       --sponsorable-addresses <SPONSORABLE_ADDRESSES_PATH>
           Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs
 
+          [env: ETHREX_SPONSORABLE_ADDRESSES_PATH=]
+
       --sponsor-private-key <SPONSOR_PRIVATE_KEY>
           The private key of ethrex L2 transactions sponsor.
 
@@ -625,6 +690,7 @@ Prover client options:
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
+          [env: PROVER_CLIENT_LOG_LEVEL=]
           [default: INFO]
 
       --sp1-server <URL>
