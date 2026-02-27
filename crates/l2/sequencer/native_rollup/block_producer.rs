@@ -101,6 +101,94 @@ impl NativeBlockProducer {
         }
     }
 
+    /// Produce a single L2 block following the payload_builder.rs pattern.
+    async fn produce_block(&mut self) -> Result<(), NativeBlockProducerError> {
+        // 1. Take L1 messages that fit within the block gas limit and build relayer txs
+        let l1_messages = self.take_l1_messages_for_block();
+        let relayer_txs = if !l1_messages.is_empty() {
+            debug!(
+                "NativeBlockProducer: building relayer txs for {} L1 messages",
+                l1_messages.len()
+            );
+            self.build_relayer_transactions(&l1_messages).await?
+        } else {
+            VecDeque::new()
+        };
+
+        // 2. Create initial payload (same as L2 block producer)
+        let head_header = {
+            let current_block_number = self.store.get_latest_block_number().await?;
+            self.store.get_block_header(current_block_number)?.ok_or(
+                NativeBlockProducerError::Vm("parent header not found".into()),
+            )?
+        };
+        let head_hash = head_header.hash();
+
+        let args = BuildPayloadArgs {
+            parent: head_hash,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            fee_recipient: self.config.coinbase,
+            random: H256::zero(),
+            withdrawals: Some(vec![]),
+            beacon_root: None,
+            slot_number: None,
+            version: 3,
+            elasticity_multiplier: 2, // EIP-1559 default
+            gas_ceil: self.config.block_gas_limit,
+        };
+        let payload = create_payload(&args, &self.store, Bytes::new())?;
+        let block_number = payload.header.number;
+
+        // 3. Build PayloadBuildContext with BlockchainType::L1 (VMType::L1)
+        let mut context =
+            PayloadBuildContext::new(payload, &self.store, &self.blockchain.options.r#type)?;
+
+        // 4. Anchor L1 messages Merkle root in L1Anchor predeploy before execution.
+        //    Always performed, even with no messages (anchors zero hash).
+        Self::anchor_l1_messages(&l1_messages, &mut context)?;
+
+        // 5. Fill transactions: relayer txs first, then mempool
+        self.fill_transactions(&mut context, relayer_txs).await?;
+
+        // 6. Finalize payload (compute state root, receipts root, etc.)
+        self.blockchain.finalize_payload(&mut context)?;
+
+        // 7. Store block
+        let block = context.payload;
+        let account_updates = context.account_updates;
+
+        let account_updates_list = self
+            .store
+            .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
+            .ok_or(NativeBlockProducerError::Chain(
+                ethrex_blockchain::error::ChainError::ParentStateNotFound,
+            ))?;
+
+        let execution_result = BlockExecutionResult {
+            receipts: context.receipts,
+            requests: Vec::new(),
+            block_gas_used: block.header.gas_used,
+        };
+
+        let transactions_count = block.body.transactions.len();
+        let block_hash = block.hash();
+
+        self.blockchain
+            .store_block(block, account_updates_list, execution_result)?;
+
+        // 8. Apply fork choice
+        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
+
+        info!(
+            "NativeBlockProducer: produced block {} ({:?}) with {} txs, gas_used={}",
+            block_number, block_hash, transactions_count, context.cumulative_gas_spent
+        );
+
+        Ok(())
+    }
+
+    // -- Helpers (in call order from produce_block) --
+
     /// Take L1 messages from the shared queue that fit within the block gas limit.
     ///
     /// Pops messages one by one, summing each message's gas limit. Once adding
@@ -136,46 +224,6 @@ impl NativeBlockProducer {
                 Vec::new()
             }
         }
-    }
-
-    /// Write the L1 messages Merkle root to the L1Anchor predeploy's storage
-    /// slot 0 in the VM cache, mirroring what the EXECUTE precompile does as a
-    /// system transaction before regular execution. This allows L2 contracts
-    /// (L2Bridge) to verify individual messages via Merkle proofs.
-    fn anchor_l1_messages(
-        messages: &[L1Message],
-        context: &mut PayloadBuildContext,
-    ) -> Result<(), NativeBlockProducerError> {
-        let message_hashes: Vec<H256> = messages.iter().map(L1Message::compute_hash).collect();
-        let merkle_root = compute_merkle_root(&message_hashes);
-
-        let anchor_account =
-            context.vm.db.get_account_mut(L1_ANCHOR).map_err(|e| {
-                NativeBlockProducerError::Vm(format!("failed to load L1Anchor: {e}"))
-            })?;
-        anchor_account
-            .storage
-            .insert(H256::zero(), U256::from_big_endian(merkle_root.as_bytes()));
-
-        // Also record the old value in initial_accounts_state so that
-        // get_state_transitions() can compute the storage diff. Since we
-        // write directly into the cache (this is a system action, not an EVM
-        // execution), we must manually ensure the key exists in the initial
-        // state — otherwise the diff will fail with "old value not found".
-        if let Some(initial_account) = context.vm.db.initial_accounts_state.get_mut(&L1_ANCHOR) {
-            initial_account
-                .storage
-                .entry(H256::zero())
-                .or_insert(U256::zero());
-        }
-
-        debug!(
-            "NativeBlockProducer: anchored L1 messages root {:?} ({} messages)",
-            merkle_root,
-            messages.len()
-        );
-
-        Ok(())
     }
 
     /// Build signed EIP-1559 relayer transactions for each L1 message.
@@ -265,87 +313,41 @@ impl NativeBlockProducer {
         Ok(relayer_txs)
     }
 
-    /// Produce a single L2 block following the payload_builder.rs pattern.
-    async fn produce_block(&mut self) -> Result<(), NativeBlockProducerError> {
-        // 1. Take L1 messages that fit within the block gas limit and build relayer txs
-        let l1_messages = self.take_l1_messages_for_block();
-        let relayer_txs = if !l1_messages.is_empty() {
-            debug!(
-                "NativeBlockProducer: building relayer txs for {} L1 messages",
-                l1_messages.len()
-            );
-            self.build_relayer_transactions(&l1_messages).await?
-        } else {
-            VecDeque::new()
-        };
+    /// Write the L1 messages Merkle root to the L1Anchor predeploy's storage
+    /// slot 0 in the VM cache, mirroring what the EXECUTE precompile does as a
+    /// system transaction before regular execution. This allows L2 contracts
+    /// (L2Bridge) to verify individual messages via Merkle proofs.
+    fn anchor_l1_messages(
+        messages: &[L1Message],
+        context: &mut PayloadBuildContext,
+    ) -> Result<(), NativeBlockProducerError> {
+        let message_hashes: Vec<H256> = messages.iter().map(L1Message::compute_hash).collect();
+        let merkle_root = compute_merkle_root(&message_hashes);
 
-        // 2. Create initial payload (same as L2 block producer)
-        let head_header = {
-            let current_block_number = self.store.get_latest_block_number().await?;
-            self.store.get_block_header(current_block_number)?.ok_or(
-                NativeBlockProducerError::Vm("parent header not found".into()),
-            )?
-        };
-        let head_hash = head_header.hash();
+        let anchor_account =
+            context.vm.db.get_account_mut(L1_ANCHOR).map_err(|e| {
+                NativeBlockProducerError::Vm(format!("failed to load L1Anchor: {e}"))
+            })?;
+        anchor_account
+            .storage
+            .insert(H256::zero(), U256::from_big_endian(merkle_root.as_bytes()));
 
-        let args = BuildPayloadArgs {
-            parent: head_hash,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            fee_recipient: self.config.coinbase,
-            random: H256::zero(),
-            withdrawals: Some(vec![]),
-            beacon_root: None,
-            slot_number: None,
-            version: 3,
-            elasticity_multiplier: 2, // EIP-1559 default
-            gas_ceil: self.config.block_gas_limit,
-        };
-        let payload = create_payload(&args, &self.store, Bytes::new())?;
-        let block_number = payload.header.number;
+        // Also record the old value in initial_accounts_state so that
+        // get_state_transitions() can compute the storage diff. Since we
+        // write directly into the cache (this is a system action, not an EVM
+        // execution), we must manually ensure the key exists in the initial
+        // state — otherwise the diff will fail with "old value not found".
+        if let Some(initial_account) = context.vm.db.initial_accounts_state.get_mut(&L1_ANCHOR) {
+            initial_account
+                .storage
+                .entry(H256::zero())
+                .or_insert(U256::zero());
+        }
 
-        // 3. Build PayloadBuildContext with BlockchainType::L1 (VMType::L1)
-        let mut context =
-            PayloadBuildContext::new(payload, &self.store, &self.blockchain.options.r#type)?;
-
-        // 4. Anchor L1 messages Merkle root in L1Anchor predeploy before execution.
-        //    Always performed, even with no messages (anchors zero hash).
-        Self::anchor_l1_messages(&l1_messages, &mut context)?;
-
-        // 5. Fill transactions: relayer txs first, then mempool
-        self.fill_transactions(&mut context, relayer_txs).await?;
-
-        // 6. Finalize payload (compute state root, receipts root, etc.)
-        self.blockchain.finalize_payload(&mut context)?;
-
-        // 7. Store block
-        let block = context.payload;
-        let account_updates = context.account_updates;
-
-        let account_updates_list = self
-            .store
-            .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
-            .ok_or(NativeBlockProducerError::Chain(
-                ethrex_blockchain::error::ChainError::ParentStateNotFound,
-            ))?;
-
-        let execution_result = BlockExecutionResult {
-            receipts: context.receipts,
-            requests: Vec::new(),
-            block_gas_used: block.header.gas_used,
-        };
-
-        let transactions_count = block.body.transactions.len();
-        let block_hash = block.hash();
-
-        self.blockchain
-            .store_block(block, account_updates_list, execution_result)?;
-
-        // 8. Apply fork choice
-        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
-
-        info!(
-            "NativeBlockProducer: produced block {} ({:?}) with {} txs, gas_used={}",
-            block_number, block_hash, transactions_count, context.cumulative_gas_spent
+        debug!(
+            "NativeBlockProducer: anchored L1 messages root {:?} ({} messages)",
+            merkle_root,
+            messages.len()
         );
 
         Ok(())
