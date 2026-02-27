@@ -259,13 +259,10 @@ enum WorkerRequest {
         removed: bool,
         removed_storage: bool,
     },
-    FinishRouting {
-        tx: Sender<()>,
-    },
+    FinishRouting,
     MerklizeAccounts {
         accounts: Vec<H256>,
     },
-    CollectStorages,
     CollectState {
         tx: Sender<CollectedStateMsg>,
     },
@@ -277,6 +274,10 @@ enum WorkerRequest {
         storage_root: H256,
     },
     DeleteStorage(H256),
+    // Cross-worker: signals this worker finished routing all MerklizeStorage
+    RoutingDone {
+        from: u8,
+    },
     // Cross-worker storage results (routed by account bucket)
     StorageShard {
         prefix: H256,
@@ -664,18 +665,13 @@ impl Blockchain {
 
         let t_routed = Instant::now();
 
-        // Barrier: send FinishRouting, then overlap early MerklizeAccounts
-        // with the wait for workers to finish routing storage keys.
-        let (flush_tx, flush_rx) = channel();
+        // Send FinishRouting — workers self-synchronize via RoutingDone exchange.
         for tx in &workers_tx {
-            tx.send(WorkerRequest::FinishRouting {
-                tx: flush_tx.clone(),
-            })
-            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            tx.send(WorkerRequest::FinishRouting)
+                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
-        drop(flush_tx);
 
-        // Compute + send early MerklizeAccounts while workers process FinishRouting.
+        // Send MerklizeAccounts for no-storage accounts.
         let mut early_batches: [Vec<H256>; 16] = Default::default();
         for hashed_account in hashed_address_cache.values() {
             if !has_storage.contains(hashed_account) {
@@ -691,19 +687,8 @@ impl Blockchain {
             }
         }
 
-        // Wait for all FinishRouting responses.
-        for () in flush_rx {}
-        let t_barrier = Instant::now();
-
-        // Trigger storage collection — workers finalize storage tries and send shards.
-        for tx in &workers_tx {
-            tx.send(WorkerRequest::CollectStorages)
-                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-        }
-
+        // Send CollectState immediately — workers defer until collection is done.
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
-
-        // Send CollectState immediately — workers defer until all shards arrive.
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &workers_tx {
             tx.send(WorkerRequest::CollectState {
@@ -713,6 +698,7 @@ impl Blockchain {
         }
         drop(gatherer_tx);
         drop(workers_tx);
+        let t_dispatch = Instant::now();
 
         let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
@@ -747,13 +733,13 @@ impl Blockchain {
         let route_us = t_routed.duration_since(t_start).as_micros();
         let route_wait_us = t_route_wait.as_micros();
         let route_work_us = t_route_work.as_micros();
-        let barrier_us = t_barrier.duration_since(t_routed).as_micros();
-        let gather_us = t_gathered.duration_since(t_barrier).as_micros();
+        let dispatch_us = t_dispatch.duration_since(t_routed).as_micros();
+        let gather_us = t_gathered.duration_since(t_dispatch).as_micros();
         let root_us = t_root.duration_since(t_gathered).as_micros();
         let total_us = t_root.duration_since(t_start).as_micros();
         info!(
             "merkle[drain] route={route_us}us(wait={route_wait_us}us work={route_work_us}us) \
-             barrier={barrier_us}us gather={gather_us}us root={root_us}us total={total_us}us \
+             dispatch={dispatch_us}us gather={gather_us}us root={root_us}us total={total_us}us \
              batches={n_batches} updates={n_updates} gathered={n_gathered}"
         );
 
@@ -2643,12 +2629,14 @@ fn handle_subtrie(
     let mut n_pre_collected_storage = 0u32;
     let mut n_pre_collected_state = 0u32;
 
-    // Held until CollectStorages to keep cross-worker channels open.
+    // Held until collection finishes to keep cross-worker channels open.
     let mut worker_senders: Option<Vec<Sender<WorkerRequest>>> = Some(worker_senders);
     let mut dirty = false;
     // When active, we finalize one storage trie per loop iteration,
     // interleaving with incoming StorageShard messages.
     let mut collecting_storages = false;
+    let mut routing_complete = false;
+    let mut routing_done_mask: u16 = 0;
     let mut storage_to_collect: Vec<(H256, Trie)> = vec![];
 
     loop {
@@ -2746,7 +2734,7 @@ fn handle_subtrie(
                 n_process += 1;
                 let senders = worker_senders
                     .as_ref()
-                    .expect("ProcessAccount after CollectStorages");
+                    .expect("ProcessAccount after collection started");
 
                 // Always load account to warm state trie during execution overlap
                 match accounts.entry(prefix) {
@@ -2870,22 +2858,31 @@ fn handle_subtrie(
                 storage_tries.insert(prefix, Trie::new_temp());
                 dirty = true;
             }
-            WorkerRequest::FinishRouting { tx } => {
-                tx.send(())
-                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                // Do NOT drop senders — still needed for CollectStorages.
+            WorkerRequest::FinishRouting => {
+                // Signal all workers that we're done routing MerklizeStorage.
+                let senders = worker_senders
+                    .as_ref()
+                    .expect("FinishRouting after senders dropped");
+                for i in 0..16u8 {
+                    senders[i as usize]
+                        .send(WorkerRequest::RoutingDone { from: index })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                }
+            }
+            WorkerRequest::RoutingDone { from } => {
+                routing_done_mask |= 1u16 << from;
+                if routing_done_mask == 0xFFFF && !collecting_storages && !routing_complete {
+                    // All workers finished routing — start collecting.
+                    collecting_storages = true;
+                    routing_complete = true;
+                    storage_to_collect = storage_tries.drain().collect();
+                }
             }
             WorkerRequest::MerklizeAccounts { accounts: batch } => {
                 // Info already applied in ProcessAccount — just record empty storage nodes
                 for hashed_account in batch {
                     storage_nodes.push((hashed_account, vec![]));
                 }
-            }
-            WorkerRequest::CollectStorages => {
-                // Drain storage tries into a vec; the loop top finalizes one per
-                // iteration, interleaving with incoming StorageShard messages.
-                collecting_storages = true;
-                storage_to_collect = storage_tries.drain().collect();
             }
             WorkerRequest::StorageShard {
                 prefix,
@@ -2950,6 +2947,7 @@ fn handle_subtrie(
                     t_shard += t_msg.elapsed();
                     if pending_storage_accounts == 0
                         && !collecting_storages
+                        && routing_complete
                         && let Some(tx) = pending_collect_tx.take()
                     {
                         collect_and_send(
@@ -2966,7 +2964,7 @@ fn handle_subtrie(
                 }
             }
             WorkerRequest::CollectState { tx } => {
-                if pending_storage_accounts == 0 && !collecting_storages {
+                if pending_storage_accounts == 0 && !collecting_storages && routing_complete {
                     collect_and_send(
                         index,
                         &mut state_trie,
@@ -2976,7 +2974,7 @@ fn handle_subtrie(
                     )?;
                     break;
                 }
-                // Defer until all StorageShards arrive
+                // Defer until collection is done and all StorageShards resolved
                 pending_collect_tx = Some(tx);
             }
         }
