@@ -531,6 +531,7 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(Vec<Log
             difficulty: block.header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
+            disable_balance_check: false,
         };
 
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), VMType::L1)?;
