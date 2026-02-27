@@ -259,7 +259,9 @@ enum WorkerRequest {
         removed: bool,
         removed_storage: bool,
     },
-    FinishRouting,
+    FinishRouting {
+        sent_at: Instant,
+    },
     MerklizeAccounts {
         accounts: Vec<H256>,
     },
@@ -654,8 +656,10 @@ impl Blockchain {
         // Send FinishRouting — workers self-synchronize via RoutingDone exchange.
         let t_dispatch = Instant::now();
         for tx in &workers_tx {
-            tx.send(WorkerRequest::FinishRouting)
-                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            tx.send(WorkerRequest::FinishRouting {
+                sent_at: t_dispatch,
+            })
+            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
 
         // Send MerklizeAccounts for no-storage accounts.
@@ -2823,7 +2827,9 @@ fn handle_subtrie(
                 storage_tries.insert(prefix, Trie::new_temp());
                 dirty = true;
             }
-            WorkerRequest::FinishRouting => {
+            WorkerRequest::FinishRouting { sent_at } => {
+                let queue_ms = sent_at.elapsed().as_secs_f64() * 1000.0;
+                info!("worker[{index}] finish_routing: queue={queue_ms:.2}ms");
                 t_finish_routing = Some(Instant::now());
                 // Signal all workers that we're done routing MerklizeStorage.
                 let senders = worker_senders
