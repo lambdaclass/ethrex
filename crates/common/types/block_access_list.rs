@@ -436,6 +436,7 @@ impl BlockAccessList {
     /// - Accounts must be in strictly ascending order by address.
     /// - Within each account: storage_changes by slot, storage_reads by slot value,
     ///   slot_changes by block_access_index.
+    ///
     /// Returns an error string describing the first violation found.
     pub fn validate_ordering(&self) -> Result<(), String> {
         for window in self.inner.windows(2) {

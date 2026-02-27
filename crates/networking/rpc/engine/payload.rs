@@ -958,10 +958,10 @@ async fn handle_new_payload_v4(
     expected_blob_versioned_hashes: Vec<H256>,
     bal: Option<BlockAccessList>,
 ) -> Result<PayloadStatus, RpcErr> {
-    if let Some(ref bal) = bal {
-        if let Err(err) = bal.validate_ordering() {
-            return Ok(PayloadStatus::invalid_with_err(&err));
-        }
+    if let Some(ref bal) = bal
+        && let Err(err) = bal.validate_ordering()
+    {
+        return Ok(PayloadStatus::invalid_with_err(&err));
     }
     handle_new_payload_v3(payload, context, block, expected_blob_versioned_hashes, bal).await
 }
