@@ -123,7 +123,7 @@ jobs:
             if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
               # Amsterdam tests use fixtures_bal which includes BAL-specific tests
               FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz"
-              FLAGS+=" --sim.buildarg branch=devnets/bal/2"
+              FLAGS+=" --sim.buildarg branch=devnets/bal/3"
             else
               # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use fixtures_develop
               # which includes comprehensive test coverage including static tests
