@@ -103,7 +103,7 @@ impl L2Command {
         }
         #[cfg(feature = "native-rollups")]
         if l2_options.sequencer_opts.native_rollup_opts.enabled {
-            l2::initializers::init_native_rollup_l2(l2_options, log_filter_handler).await?;
+            l2::init_native_rollup_l2(l2_options, log_filter_handler).await?;
             return Ok(());
         }
         l2::init_l2(l2_options, log_filter_handler).await?;
@@ -695,7 +695,7 @@ impl ContractCallOptions {
 
 async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &Path) -> eyre::Result<u64> {
     info!("Deleting batch from rollup store...");
-    let rollup_store = l2::initializers::init_rollup_store(rollup_store_dir).await;
+    let rollup_store = l2::init_rollup_store(rollup_store_dir).await;
     let last_kept_block = rollup_store
         .get_block_numbers_by_batch(batch)
         .await?
