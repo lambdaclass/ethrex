@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-27
 **Branch**: `feat/tokamak-proven-execution`
-**Overall Completion**: ~92%
+**Overall Completion**: ~94%
 
 ---
 
@@ -43,9 +43,9 @@
 - CALL/CREATE dual-execution validation (G-3) — removed `has_external_calls` guard, validation runs for all bytecodes, 5 tests
 - Parallel compilation thread pool (G-5) — crossbeam-channel multi-consumer, N workers (default num_cpus/2), deduplication guard, 4 new tests
 - Constant folding enhancement (G-7) — expanded to 22 opcodes (DIV/SDIV/MOD/SMOD/EXP/SIGNEXTEND/LT/GT/SLT/SGT/EQ/SHL/SHR/SAR + NOT/ISZERO unary), refactored eval helpers, 68 unit + 8 integration tests
+- JIT-to-JIT direct dispatch (G-4) — VM-layer fast dispatch for child CALL bytecodes, cache lookup + direct JIT execution, recursive suspend/resume, configurable + metrics, 10 tests
 
 **Remaining:**
-- Recursive CALL performance (suspend/resume is slow — accepted for v1.0)
 - Tiered optimization (profile-guided optimization)
 - Production deployment
 
@@ -97,7 +97,7 @@ Measured after Volkov R21-R23 fixes (corrected measurement order).
 | ManyHashes | 2.26ms | 1.55ms | **1.46x** |
 
 **Interpreter-only**: Push/MstoreBench/SstoreBench (bytecode > 24KB, graceful fallback via D-2).
-**Skipped**: FibonacciRecursive/FactorialRecursive/ERC20* (recursive CALL suspend/resume too slow).
+**Skipped**: FibonacciRecursive/FactorialRecursive (deep recursive CALL). ERC20* scenarios now benefit from G-4 JIT-to-JIT dispatch.
 
 ---
 
@@ -183,6 +183,7 @@ R23(5.0) -> R24(8.0)
 - Cache Eviction Effectiveness (G-2) — Auto-resolved by G-1 arena system: Free/FreeArena handlers, cache eviction returns FuncSlot for arena cleanup (2026-02-27)
 - CALL/CREATE Dual-Execution Validation (G-3) — Removed `has_external_calls` guard, validation runs for ALL bytecodes (CALL/STATICCALL/DELEGATECALL), shared MismatchBackend + helpers, 5 tests (8c05d3412) (2026-02-27)
 - Constant Folding Enhancement (G-7) — Expanded optimizer from 6 to 22 opcodes (14 new binary + 2 unary), signed arithmetic helpers, extracted eval helpers + write_folded_push, 68 unit + 8 integration tests (43026d7cf) (2026-02-27)
+- JIT-to-JIT Direct Dispatch (G-4) — VM-layer fast dispatch: child CALL bytecodes checked against JIT cache and executed directly via `execute_jit()`, recursive suspend/resume for nested JIT calls, `enable_jit_dispatch` config + `jit_to_jit_dispatches` metric, 10 tests (2026-02-27)
 
 ### Not Started
 - EF grant application

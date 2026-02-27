@@ -1249,8 +1249,9 @@ impl<'a> VM<'a> {
                     self.substate.add_log(log);
                 }
 
-                // Run the child frame to completion
-                let result = self.run_subcall()?;
+                // Run the child frame to completion.
+                // Try JIT dispatch first if child bytecode is in JIT cache.
+                let result = self.run_subcall_with_jit_dispatch()?;
 
                 Ok(SubCallResult {
                     success: result.is_success(),
@@ -1409,6 +1410,10 @@ impl<'a> VM<'a> {
                 // validate_contract_creation (called by handle_opcode_result inside
                 // interpreter_loop) already checks code size, EOF prefix, charges code
                 // deposit cost, and stores the deployed code — no redundant checks needed.
+                // Note: CREATE init code uses interpreter (not JIT dispatch) because
+                // init code produces deployment bytecode, and the interpreter's
+                // validate_contract_creation handles code storage. JIT dispatch for
+                // init code would require additional post-processing.
                 let result = self.run_subcall()?;
                 let success = result.is_success();
 
@@ -1419,6 +1424,148 @@ impl<'a> VM<'a> {
                     output: result.output,
                     created_address: if success { Some(deploy_address) } else { None },
                 })
+            }
+        }
+    }
+
+    /// Run a child call frame with JIT dispatch: if the child's bytecode is in
+    /// the JIT cache, execute it via JIT directly (avoiding the interpreter).
+    /// Falls back to `run_subcall()` on cache miss, JIT error, or when JIT
+    /// dispatch is disabled.
+    ///
+    /// This is the core of G-4: JIT-to-JIT Direct Dispatch. When a JIT-compiled
+    /// parent hits CALL, the child can also run JIT-compiled if available, cutting
+    /// the ~100μs interpreter overhead to ~5-15μs.
+    #[cfg(feature = "tokamak-jit")]
+    fn run_subcall_with_jit_dispatch(&mut self) -> Result<ContextResult, VMError> {
+        use std::sync::atomic::Ordering;
+
+        // Check if JIT dispatch is enabled
+        if !JIT_STATE.is_jit_dispatch_enabled() {
+            return self.run_subcall();
+        }
+
+        // Look up child bytecode in JIT cache
+        let child_hash = self.current_call_frame.bytecode.hash;
+        let fork = self.env.config.fork;
+
+        let compiled = match crate::jit::dispatch::try_jit_dispatch(&JIT_STATE, &child_hash, fork) {
+            Some(compiled) => compiled,
+            None => {
+                // Cache miss: use interpreter
+                return self.run_subcall();
+            }
+        };
+
+        // Check if child is a precompile (precompiles should NOT go through JIT)
+        if precompiles::is_precompile(
+            &self.current_call_frame.to,
+            self.env.config.fork,
+            self.vm_type,
+        ) {
+            return self.run_subcall();
+        }
+
+        // Execute child via JIT
+        match JIT_STATE.execute_jit(
+            &compiled,
+            &mut self.current_call_frame,
+            self.db,
+            &mut self.substate,
+            &self.env,
+            &mut self.storage_original_values,
+        ) {
+            Some(Ok(outcome)) => {
+                // Handle JIT-to-JIT suspend/resume loop (child may also CALL)
+                let mut outcome_result = Ok(outcome);
+                while let Ok(crate::jit::types::JitOutcome::Suspended {
+                    resume_state,
+                    sub_call,
+                }) = outcome_result
+                {
+                    match self.handle_jit_subcall(sub_call) {
+                        Ok(sub_result) => {
+                            outcome_result = JIT_STATE
+                                .execute_jit_resume(
+                                    resume_state,
+                                    sub_result,
+                                    &mut self.current_call_frame,
+                                    self.db,
+                                    &mut self.substate,
+                                    &self.env,
+                                    &mut self.storage_original_values,
+                                )
+                                .unwrap_or(Err("no JIT backend for resume".to_string()));
+                        }
+                        Err(e) => {
+                            outcome_result = Err(format!("JIT subcall error: {e:?}"));
+                            break;
+                        }
+                    }
+                }
+
+                match outcome_result {
+                    Ok(outcome) => {
+                        // Track the JIT-to-JIT dispatch
+                        JIT_STATE
+                            .metrics
+                            .jit_to_jit_dispatches
+                            .fetch_add(1, Ordering::Relaxed);
+
+                        let ctx_result = apply_jit_outcome(outcome, &self.current_call_frame)?;
+
+                        // Handle state backup (revert/commit) like run_subcall does
+                        self.handle_state_backup(&ctx_result)?;
+
+                        // Pop child frame and recycle stack
+                        let child = self.pop_call_frame()?;
+                        let mut child_stack = child.stack;
+                        child_stack.clear();
+                        self.stack_pool.push(child_stack);
+
+                        Ok(ctx_result)
+                    }
+                    Err(msg) => {
+                        // JIT execution failed — we can't simply fall back to interpreter
+                        // because JIT may have already partially mutated state. Pop the
+                        // child frame and report error through the subcall result.
+                        eprintln!(
+                            "[JIT-DISPATCH] child JIT failed for {child_hash}: {msg}, \
+                             reporting as failed subcall"
+                        );
+                        JIT_STATE
+                            .metrics
+                            .jit_fallbacks
+                            .fetch_add(1, Ordering::Relaxed);
+
+                        // Handle state backup (treat as revert)
+                        let revert_result = ContextResult {
+                            result: crate::errors::TxResult::Revert(VMError::RevertOpcode),
+                            gas_used: self.current_call_frame.gas_limit,
+                            gas_spent: self.current_call_frame.gas_limit,
+                            output: Bytes::new(),
+                        };
+                        self.handle_state_backup(&revert_result)?;
+
+                        // Pop child frame and recycle stack
+                        let child = self.pop_call_frame()?;
+                        let mut child_stack = child.stack;
+                        child_stack.clear();
+                        self.stack_pool.push(child_stack);
+
+                        Ok(revert_result)
+                    }
+                }
+            }
+            Some(Err(msg)) => {
+                // JIT execution returned error before any state mutation
+                eprintln!("[JIT-DISPATCH] child JIT error for {child_hash}: {msg}, falling back");
+                // Fall back to interpreter since JIT didn't start executing
+                self.run_subcall()
+            }
+            None => {
+                // No backend registered — use interpreter
+                self.run_subcall()
             }
         }
     }

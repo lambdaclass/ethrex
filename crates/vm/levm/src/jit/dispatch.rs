@@ -345,6 +345,11 @@ impl JitState {
         guard.insert(key)
     }
 
+    /// Check if JIT-to-JIT dispatch is enabled in the configuration.
+    pub fn is_jit_dispatch_enabled(&self) -> bool {
+        self.config.enable_jit_dispatch
+    }
+
     /// Mark a (hash, fork) pair as no longer being compiled.
     ///
     /// Called after compilation completes (success or failure) to allow

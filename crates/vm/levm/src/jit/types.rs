@@ -32,6 +32,10 @@ pub struct JitConfig {
     pub max_memory_mb: usize,
     /// Number of background compilation worker threads (default: num_cpus / 2, min 1).
     pub compile_workers: usize,
+    /// Enable JIT-to-JIT dispatch: when a child bytecode is in the JIT cache,
+    /// execute it via JIT directly instead of falling back to the interpreter.
+    /// Default: true.
+    pub enable_jit_dispatch: bool,
 }
 
 impl JitConfig {
@@ -53,6 +57,7 @@ impl Default for JitConfig {
             max_arenas: 32,
             max_memory_mb: 512,
             compile_workers: 1, // Default 1; tokamak-jit overrides with num_cpus/2
+            enable_jit_dispatch: true,
         }
     }
 }
@@ -180,6 +185,8 @@ pub struct JitMetrics {
     pub arenas_freed: AtomicU64,
     /// Number of compiled functions evicted from the cache.
     pub functions_evicted: AtomicU64,
+    /// Number of successful JIT-to-JIT child dispatches (child executed via JIT instead of interpreter).
+    pub jit_to_jit_dispatches: AtomicU64,
 }
 
 impl JitMetrics {
@@ -195,6 +202,7 @@ impl JitMetrics {
             arenas_created: AtomicU64::new(0),
             arenas_freed: AtomicU64::new(0),
             functions_evicted: AtomicU64::new(0),
+            jit_to_jit_dispatches: AtomicU64::new(0),
         }
     }
 
@@ -213,10 +221,11 @@ impl JitMetrics {
         self.arenas_created.store(0, Ordering::Relaxed);
         self.arenas_freed.store(0, Ordering::Relaxed);
         self.functions_evicted.store(0, Ordering::Relaxed);
+        self.jit_to_jit_dispatches.store(0, Ordering::Relaxed);
     }
 
     /// Get a snapshot of all metrics.
-    pub fn snapshot(&self) -> (u64, u64, u64, u64, u64, u64) {
+    pub fn snapshot(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
         (
             self.jit_executions.load(Ordering::Relaxed),
             self.jit_fallbacks.load(Ordering::Relaxed),
@@ -224,6 +233,7 @@ impl JitMetrics {
             self.compilation_skips.load(Ordering::Relaxed),
             self.validation_successes.load(Ordering::Relaxed),
             self.validation_mismatches.load(Ordering::Relaxed),
+            self.jit_to_jit_dispatches.load(Ordering::Relaxed),
         )
     }
 }
@@ -248,10 +258,10 @@ mod tests {
         metrics.validation_successes.store(7, Ordering::Relaxed);
         metrics.validation_mismatches.store(1, Ordering::Relaxed);
 
-        assert_eq!(metrics.snapshot(), (10, 5, 3, 2, 7, 1));
+        assert_eq!(metrics.snapshot(), (10, 5, 3, 2, 7, 1, 0));
 
         metrics.reset();
 
-        assert_eq!(metrics.snapshot(), (0, 0, 0, 0, 0, 0));
+        assert_eq!(metrics.snapshot(), (0, 0, 0, 0, 0, 0, 0));
     }
 }

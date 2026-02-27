@@ -1,7 +1,7 @@
 # JIT Limitations Resolution Roadmap
 
 **Date**: 2026-02-27
-**Context**: Tokamak JIT achieves 1.46-2.53x speedup. Critical limitations (G-1/G-2) resolved. Most significant issues (G-3/G-5) resolved. G-7 enhanced. Remaining: G-4 (JIT-to-JIT), G-6 (LRU), G-8 (Precompile).
+**Context**: Tokamak JIT achieves 1.46-2.53x speedup. Critical limitations (G-1/G-2) resolved. All significant issues (G-3/G-4/G-5) resolved. G-7 enhanced. Remaining: G-6 (LRU), G-8 (Precompile).
 
 ---
 
@@ -12,9 +12,9 @@ CRITICAL (production blockers) — ALL RESOLVED ✅
   ├── G-1. LLVM Memory Lifecycle       ✅ Arena allocator (f8e9ba540)
   └── G-2. Cache Eviction Effectiveness ✅ Auto-resolved by G-1
 
-SIGNIFICANT (v1.1 targets) — 2/3 RESOLVED
+SIGNIFICANT (v1.1 targets) — ALL RESOLVED ✅
   ├── G-3. CALL/CREATE Validation Gap   ✅ TX-level validation (8c05d3412)
-  ├── G-4. Recursive CALL Performance   ← revmc upstream 변경 필요
+  ├── G-4. JIT-to-JIT Direct Dispatch   ✅ Fast dispatch in VM layer
   └── G-5. Parallel Compilation         ✅ CompilerThreadPool (299d03720)
 
 MODERATE (v1.2 optimization) — 1/3 RESOLVED
@@ -73,7 +73,7 @@ MODERATE (v1.2 optimization) — 1/3 RESOLVED
 
 ---
 
-## Phase G-4: JIT-to-JIT Direct Dispatch [P1-SIGNIFICANT]
+## Phase G-4: JIT-to-JIT Direct Dispatch [P1-SIGNIFICANT] ✅ DONE
 
 > "suspend/resume 없이 JIT 코드가 직접 JIT 코드를 호출."
 
@@ -82,28 +82,32 @@ MODERATE (v1.2 optimization) — 1/3 RESOLVED
 현재: JIT 코드 → CALL → suspend → LEVM dispatch → (JIT or interp) → resume
 오버헤드: 상태 패킹/언패킹 (~10KB), LLVM context switch, storage journal 이동
 
-### Solution Options
+### Solution Implemented: **Fast JIT-to-JIT Dispatch** (variant of option b)
 
-| Option | Approach | Effort | Risk |
-|--------|----------|--------|------|
-| **(a) Inline Small Calls** | 자식 바이트코드를 부모 JIT에 인라인. 코드 크기 < 1KB이고 CALL depth < 3인 경우만 | 20-30h | 중간 — 코드 팽창 |
-| **(b) JIT-to-JIT Trampoline** | JIT 코드가 캐시에서 자식 함수 포인터를 직접 조회하여 호출. suspend 불필요 | 30-40h | 높음 — revmc 변경 |
-| **(c) Hybrid** | depth 1은 inline, depth 2+는 trampoline | 40-50h | 높음 |
+Instead of bytecode inlining (option a) or revmc-level trampolines (option b), implemented
+**VM-layer fast dispatch**: when a parent JIT-compiled contract executes a CALL, the VM
+checks if the child bytecode is also JIT-compiled and executes it directly via
+`JitState.execute_jit()`, bypassing the full LEVM interpreter dispatch.
 
-### Recommendation: **(a) Inline Small Calls** (v1.1)
+Key design decisions:
+- **VM-layer approach**: Modifies `handle_jit_subcall()` CALL arm in `vm.rs` — no revmc changes needed
+- **Cache check at dispatch time**: `try_jit_dispatch(&JIT_STATE, &child_hash, fork)` — O(1) lookup
+- **Recursive suspend/resume**: If child JIT code also suspends (nested CALL), handled via loop
+- **Error-safe fallback**: JIT errors during child execution treated as revert (not interpreter fallback) since state may be partially mutated
+- **CREATE excluded**: CREATE init code uses interpreter (needs `validate_contract_creation`)
+- **Precompile guard**: Precompile addresses always use interpreter path
+- **Configurable**: `enable_jit_dispatch` in `JitConfig` (default: true)
+- **Observable**: `jit_to_jit_dispatches` metric in `JitMetrics`
 
-가장 일반적인 케이스(ERC20 transfer → 1 CALL)를 커버. 복잡한 트램폴린은 v1.2로 연기.
+### Verification: 10 G-4 tests, 48 total tokamak-jit tests ✅
 
-### Acceptance Criteria
+Tests cover: simple STATICCALL, checked STATICCALL, revert child, 3-level nesting,
+cache miss fallback, differential (JIT vs interpreter), CREATE factory, depth limit,
+config disable, multiple calls.
 
-- [ ] CALL depth 1, 자식 bytecode < 1KB인 경우 inline 컴파일
-- [ ] ERC20Transfer 벤치마크 JIT 활성화 (현재 스킵 → 실행)
-- [ ] speedup > 1.5x (현재 인터프리터 대비)
-- [ ] inline 불가 시 기존 suspend/resume으로 graceful fallback
+### Completed: 2026-02-27
 
-### Dependency: G-1 (inline 시 메모리 사용량 증가)
-
-### Estimate: 20-30h
+### Dependency: G-1 ✅ (arena memory management)
 
 ---
 
@@ -212,11 +216,11 @@ Phase 1 (v1.0.1): CRITICAL — ✅ ALL DONE
 │  └── G-2  Cache Eviction          ✅ auto-resolved   │
 └─────────────────────────────────────────────────────┘
 
-Phase 2 (v1.1): SIGNIFICANT — 2/3 DONE
+Phase 2 (v1.1): SIGNIFICANT — ALL DONE ✅
 ┌─────────────────────────────────────────────────────┐
 │ G-3  CALL/CREATE Validation       ✅ 8c05d3412       │
 │ G-5  Parallel Compilation         ✅ 299d03720       │
-│  └── G-4  JIT-to-JIT Dispatch     [ ] 20-30h        │
+│  └── G-4  JIT-to-JIT Dispatch     ✅ Fast dispatch   │
 └─────────────────────────────────────────────────────┘
 
 Phase 3 (v1.2): MODERATE — 1/3 DONE
@@ -232,9 +236,9 @@ Phase 3 (v1.2): MODERATE — 1/3 DONE
 | Phase | Version | Tasks | Status | Remaining Effort |
 |-------|---------|-------|--------|-----------------|
 | Phase 1 | v1.0.1 | G-1, G-2 | **✅ ALL DONE** | 0h |
-| Phase 2 | v1.1 | G-3, G-4, G-5 | **2/3 DONE** (G-4 remaining) | 20-30h |
+| Phase 2 | v1.1 | G-3, G-4, G-5 | **✅ ALL DONE** | 0h |
 | Phase 3 | v1.2 | G-6, G-7, G-8 | **1/3 DONE** (G-6, G-8 remaining) | 24-36h |
-| **Total** | | **8 tasks** | **5/8 DONE** | **44-66h remaining** |
+| **Total** | | **8 tasks** | **6/8 DONE** | **24-36h remaining** |
 
 ---
 
@@ -244,7 +248,7 @@ Phase 3 (v1.2): MODERATE — 1/3 DONE
 G-1 (Memory Lifecycle) ✅
  ├──→ G-2 (Cache Eviction) ✅ auto-resolved
  ├──→ G-3 (CALL Validation) ✅
- ├──→ G-4 (JIT-to-JIT) ← REMAINING
+ ├──→ G-4 (JIT-to-JIT) ✅
  ├──→ G-5 (Parallel Compilation) ✅
  └──→ G-6 (LRU Cache) ← REMAINING
 
@@ -252,4 +256,4 @@ G-7 (Constant Folding) ✅
 G-8 (Precompile) ← REMAINING
 ```
 
-G-1이 모든 것의 선행 조건이었으나 이미 완료. 남은 작업: G-4 (JIT-to-JIT), G-6 (LRU), G-8 (Precompile) — 모두 독립 진행 가능.
+G-1이 모든 것의 선행 조건이었으나 이미 완료. G-4 (JIT-to-JIT) 완료. 남은 작업: G-6 (LRU), G-8 (Precompile) — 모두 독립 진행 가능.

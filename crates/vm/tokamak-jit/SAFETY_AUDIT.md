@@ -222,6 +222,40 @@ by default. Incorrect Send/Sync can cause data races.
 executable memory. Consider wrapping in a newtype that documents the
 Send/Sync invariants.
 
+### JIT-to-JIT Direct Dispatch (G-4, 2026-02-27)
+
+The JIT-to-JIT dispatch path (`run_subcall_with_jit_dispatch()` in `vm.rs`) introduces
+a new execution path where child CALL targets are executed directly via JIT if their
+bytecode is already in the JIT cache.
+
+**New trust boundary**: When the parent JIT code suspends on CALL, the VM now checks
+the child bytecode hash against the JIT cache and may execute the child via
+`JitState.execute_jit()` instead of the LEVM interpreter. This means:
+
+1. **Child JIT errors treated as reverts**: If child JIT execution fails after
+   potentially mutating state, the error is treated as a revert (gas consumed,
+   `CALL` returns 0), NOT as a fallback to interpreter. This prevents double-execution
+   of partially-mutated state.
+
+2. **Precompile guard**: Precompile addresses always bypass JIT dispatch to avoid
+   running JIT code against precompile semantics.
+
+3. **CREATE exclusion**: CREATE opcode init code always uses the interpreter because
+   `validate_contract_creation` (code size check, EOF prefix, code deposit cost)
+   is handled by the interpreter's `handle_opcode_result`.
+
+4. **Recursive nesting**: If a child JIT execution also suspends (nested CALL),
+   the dispatch re-enters `handle_jit_subcall()` recursively. Stack depth is bounded
+   by EVM's 1024 call depth limit.
+
+5. **Configuration**: `enable_jit_dispatch` defaults to `true`; operators can disable
+   it via `JitConfig` if correctness issues are discovered.
+
+**Risk assessment**: LOW — no new unsafe code introduced. The dispatch logic uses
+existing safe APIs (`try_jit_dispatch`, `execute_jit`, `execute_jit_resume`). The
+only new risk is incorrect VM state management during child dispatch, mitigated by
+dual-execution validation (G-3) and 10 dedicated tests.
+
 ## Summary
 
 | Risk Level | Count | Categories |

@@ -3,6 +3,7 @@ pub mod constant_folding;
 pub mod dual_execution;
 pub mod fibonacci;
 pub mod gas_alignment;
+pub mod jit_dispatch;
 pub mod oversized;
 pub mod parallel_compilation;
 pub mod proptest_gas;

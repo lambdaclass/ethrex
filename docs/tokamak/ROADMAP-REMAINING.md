@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-27
-**Context**: Overall ~93% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1), G-3 ✅ DONE (CALL/CREATE dual-execution validation), G-5 ✅ DONE (parallel compilation pool), G-7 ✅ DONE (constant folding enhancement — 22 opcodes + unary patterns).
+**Context**: Overall ~95% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1), G-3 ✅ DONE (CALL/CREATE dual-execution validation), G-4 ✅ DONE (JIT-to-JIT direct dispatch), G-5 ✅ DONE (parallel compilation pool), G-7 ✅ DONE (constant folding enhancement — 22 opcodes + unary patterns).
 
 ---
 
@@ -131,15 +131,12 @@
 
 > "From 2x to 3-5x target."
 
-### D-1. Recursive CALL Performance [P2] — DECISION: (c) Accept for v1.0
+### D-1. Recursive CALL Performance [P2] — DECISION: (c) Accept for v1.0 → G-4 RESOLVES
 - Current: JIT suspend -> LEVM dispatch -> JIT resume is extremely slow
 - **Decision**: (c) Accept limitation for v1.0 — non-recursive scenarios already 2-2.5x speedup
-- Impact: FibonacciRecursive, ERC20 scenarios remain skipped in benchmarks
-- Future options (v1.1+):
-  - (a) Inline small calls — inline child bytecode into parent JIT, ~20-30h
-  - (b) JIT-to-JIT direct dispatch — skip LEVM for JIT-compiled children, ~30-40h, may need revmc changes
+- **UPDATE**: G-4 (JIT-to-JIT Direct Dispatch) resolves this for JIT-compiled children — child bytecodes in JIT cache execute directly without full suspend/resume overhead. Deep recursive patterns (FibonacciRecursive) still use suspend/resume but shallow CALL patterns (ERC20) benefit from fast dispatch.
 - **Dependency**: B-1 ✅
-- **Rationale**: Most real-world ERC20 transfers use 1-2 CALL depth, not deep recursion. Invest effort in D-2 (bytecode fallback) first.
+- **Resolved by**: G-4 ✅
 
 ### D-2. Bytecode Size Limit — Graceful Interpreter Fallback [P2] ✅ DONE
 - revmc hard limit: 24576 bytes (EIP-170 MAX_CODE_SIZE)
@@ -292,6 +289,17 @@
 - **Dependency**: G-1 ✅, G-2 ✅
 - **Completed**: 2026-02-27 — removed has_external_calls guard, 5 tests, 751 lines (8c05d3412)
 
+### G-4. JIT-to-JIT Direct Dispatch [P1-SIGNIFICANT] ✅ DONE
+- VM-layer fast dispatch: child CALL bytecodes checked against JIT cache ✅
+- `run_subcall_with_jit_dispatch()` in vm.rs — direct JIT execution for cached children ✅
+- Recursive suspend/resume loop for nested JIT calls (child also suspends on CALL) ✅
+- Precompile guard + CREATE exclusion (init code needs validate_contract_creation) ✅
+- Error-safe: JIT failure in child treated as revert (state may be partially mutated) ✅
+- `enable_jit_dispatch` config toggle (default: true) + `jit_to_jit_dispatches` metric ✅
+- **Verification**: 10 G-4 tests (simple/checked/revert/nested/fallback/differential/CREATE/depth/config/multi), 48 total tokamak-jit tests ✅
+- **Dependency**: G-1 ✅
+- **Completed**: 2026-02-27 — Fast JIT dispatch in VM layer, 10 tests
+
 ### G-5. Parallel Compilation [P2] ✅ DONE
 - Replaced single `CompilerThread` (mpsc) with `CompilerThreadPool` (crossbeam-channel multi-consumer) ✅
 - Configurable N workers via `JitConfig.compile_workers` (default: `num_cpus / 2`, min 1) ✅
@@ -330,6 +338,7 @@ Week 6:  [P3] F-1 ✅ + F-4 ✅ (parallel)
 Week 7:  [P3] F-2 ✅ (dashboard MVP)
 Week 8:  [P3] F-3 ✅ (L2 scaffolding)
 Week 9:  [P1] G-1 ✅ (arena allocator) + G-3 ✅ (CALL/CREATE validation) + G-5 ✅ (parallel compilation) + G-7 ✅ (constant folding 22 opcodes)
+Week 10: [P1] G-4 ✅ (JIT-to-JIT direct dispatch)
 Later:   [P3] F-5
 ```
 
@@ -339,7 +348,7 @@ Later:   [P3] F-5
 
 | Decision | Options | Recommendation |
 |----------|---------|----------------|
-| Recursive CALL strategy | (a) Inline (b) JIT-to-JIT (c) Accept | **(c) Accept for v1.0** ✅ decided — revisit (a)/(b) for v1.1 |
+| Recursive CALL strategy | (a) Inline (b) JIT-to-JIT (c) Accept | **(c) Accept for v1.0** ✅ decided — **G-4 resolves** via VM-layer fast JIT dispatch |
 | Bytecode size limit | (a) Chunk (b) Fallback (c) Upstream fix | (b) Fallback -- least effort, already works |
 | L2 timeline | (a) Now (b) After mainnet (c) Skip | (b) After mainnet -- L1 correctness first |
 | Debugger scope | (a) Full Web UI (b) CLI only (c) Skip | (b) CLI MVP -- prove value, web UI in v1.1 |
