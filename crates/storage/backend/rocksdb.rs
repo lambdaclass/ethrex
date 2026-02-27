@@ -68,9 +68,6 @@ impl RocksDBBackend {
         // Without this, each CF gets a small default cache and we rely on OS page cache.
         let block_cache = Cache::new_lru_cache(512 * 1024 * 1024);
 
-        // Row cache for caching entire key-value pairs (128 MB).
-        let row_cache = Cache::new_lru_cache(128 * 1024 * 1024);
-        opts.set_row_cache(&row_cache);
 
         let compressible_tables = [
             BLOCK_NUMBERS,
