@@ -1,17 +1,7 @@
-//! Integration tests for the dual-execution validation system (Phase 7).
+//! Integration tests for the dual-execution validation system (Phase 7 + G-3).
 //!
-//! Test 1: Real JIT compilation (revmc) of a pure-computation counter contract,
-//! exercised through the full VM dispatch path. Verifies that JIT and interpreter
-//! produce identical results and that `validation_successes` metric increments.
-//!
-//! Test 2: Mock backend that returns deliberately wrong gas, exercised through
-//! the full VM dispatch path. Verifies that mismatch triggers cache invalidation
-//! and `validation_mismatches` metric increments.
-//!
-//! Test 3: Mock backend that succeeds, but interpreter replay fails with
-//! InternalError (FailingDatabase). Verifies the swap-back recovery path:
-//! VM restores JIT state and returns the JIT result, with no validation
-//! counters incremented.
+//! Tests 1-3: Original Phase 7 dual-execution tests.
+//! Tests G3-1..5: G-3 CALL/CREATE validation (guard removal).
 
 #[cfg(test)]
 mod tests {
@@ -28,8 +18,13 @@ mod tests {
 
     use crate::tests::storage::make_counter_bytecode;
     use crate::tests::test_helpers::{
-        make_contract_accounts, make_test_db, make_test_env, make_test_tx,
+        CONTRACT_ADDR, SENDER_ADDR, make_contract_accounts, make_test_db, make_test_env,
+        make_test_tx,
     };
+
+    // ---------------------------------------------------------------
+    // Shared helpers
+    // ---------------------------------------------------------------
 
     /// Helper: create the standard counter contract VM setup.
     ///
@@ -54,6 +49,101 @@ mod tests {
         let tx = make_test_tx(contract_addr, Bytes::new());
 
         (db, env, tx, counter_code)
+    }
+
+    /// Build bytecode that calls another contract via the given opcode, then returns.
+    ///
+    /// - `opcode = 0xF1` (CALL): pushes value arg (7 stack args)
+    /// - `opcode = 0xFA` (STATICCALL) / `0xF4` (DELEGATECALL): no value arg (6 stack args)
+    fn make_external_call_bytecode(target: Address, opcode: u8) -> Vec<u8> {
+        let has_value = opcode == 0xF1; // CALL has a value argument
+        let mut code = Vec::new();
+        // retSize=0, retOffset=0, argsSize=0, argsOffset=0
+        code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]);
+        if has_value {
+            code.extend_from_slice(&[0x60, 0x00]); // value = 0
+        }
+        code.push(0x73); // PUSH20 target
+        let addr_bytes: [u8; 20] = target.into();
+        code.extend_from_slice(&addr_bytes);
+        code.extend_from_slice(&[0x62, 0xFF, 0xFF, 0xFF]); // PUSH3 gas
+        code.push(opcode);
+        // Store result and return 32 bytes
+        code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
+        code
+    }
+
+    /// Helper: create a VM setup for a caller contract that does an external call.
+    ///
+    /// Returns `(db, env, tx, caller_code)`. The caller contract lives at CONTRACT_ADDR
+    /// and the target(s) are pre-seeded with STOP bytecode.
+    fn setup_call_vm(
+        caller_bytecode: Vec<u8>,
+        targets: &[(Address, Vec<u8>)],
+    ) -> (
+        GeneralizedDatabase,
+        ethrex_levm::Environment,
+        Transaction,
+        Code,
+    ) {
+        let contract_addr = Address::from_low_u64_be(CONTRACT_ADDR);
+        let sender_addr = Address::from_low_u64_be(SENDER_ADDR);
+        let caller_code = Code::from_bytecode(Bytes::from(caller_bytecode));
+
+        let mut cache = FxHashMap::default();
+        cache.insert(
+            contract_addr,
+            ethrex_common::types::Account::new(
+                U256::MAX,
+                caller_code.clone(),
+                0,
+                FxHashMap::default(),
+            ),
+        );
+        for (addr, bytecode) in targets {
+            cache.insert(
+                *addr,
+                ethrex_common::types::Account::new(
+                    U256::zero(),
+                    Code::from_bytecode(Bytes::from(bytecode.clone())),
+                    0,
+                    FxHashMap::default(),
+                ),
+            );
+        }
+        cache.insert(
+            sender_addr,
+            ethrex_common::types::Account::new(
+                U256::MAX,
+                Code::from_bytecode(Bytes::new()),
+                0,
+                FxHashMap::default(),
+            ),
+        );
+        cache.insert(
+            Address::zero(),
+            ethrex_common::types::Account::new(
+                U256::zero(),
+                Code::from_bytecode(Bytes::new()),
+                0,
+                FxHashMap::default(),
+            ),
+        );
+
+        let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
+            .expect("in-memory store");
+        let header = ethrex_common::types::BlockHeader {
+            state_root: *ethrex_common::constants::EMPTY_TRIE_HASH,
+            ..Default::default()
+        };
+        let vm_db: ethrex_vm::DynVmDatabase = Box::new(
+            ethrex_blockchain::vm::StoreVmDatabase::new(store, header).expect("StoreVmDatabase"),
+        );
+        let db = GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache);
+        let env = make_test_env(sender_addr);
+        let tx = make_test_tx(contract_addr, Bytes::new());
+
+        (db, env, tx, caller_code)
     }
 
     /// Integration test: dual execution produces Match for a pure-computation contract.
@@ -128,6 +218,56 @@ mod tests {
         );
     }
 
+    /// Mock backend that returns deliberately wrong gas (gas_used=1) to trigger mismatch.
+    /// Reused across test 2 and all G-3 tests.
+    struct MismatchBackend;
+
+    impl MismatchBackend {
+        fn register() {
+            use ethrex_levm::vm::JIT_STATE;
+            JIT_STATE.register_backend(Arc::new(Self));
+        }
+    }
+
+    impl ethrex_levm::jit::dispatch::JitBackend for MismatchBackend {
+        fn execute(
+            &self,
+            _compiled: &CompiledCode,
+            _call_frame: &mut ethrex_levm::call_frame::CallFrame,
+            _db: &mut GeneralizedDatabase,
+            _substate: &mut ethrex_levm::vm::Substate,
+            _env: &ethrex_levm::environment::Environment,
+            _storage_original_values: &mut ethrex_levm::jit::dispatch::StorageOriginalValues,
+        ) -> Result<ethrex_levm::jit::types::JitOutcome, String> {
+            Ok(ethrex_levm::jit::types::JitOutcome::Success {
+                gas_used: 1,
+                output: Bytes::from(vec![0u8; 32]),
+            })
+        }
+
+        fn execute_resume(
+            &self,
+            _resume_state: ethrex_levm::jit::types::JitResumeState,
+            _sub_result: ethrex_levm::jit::types::SubCallResult,
+            _call_frame: &mut ethrex_levm::call_frame::CallFrame,
+            _db: &mut GeneralizedDatabase,
+            _substate: &mut ethrex_levm::vm::Substate,
+            _env: &ethrex_levm::environment::Environment,
+            _storage_original_values: &mut ethrex_levm::jit::dispatch::StorageOriginalValues,
+        ) -> Result<ethrex_levm::jit::types::JitOutcome, String> {
+            Err("not implemented".to_string())
+        }
+
+        fn compile(
+            &self,
+            _code: &Code,
+            _fork: Fork,
+            _cache: &ethrex_levm::jit::cache::CodeCache,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     /// Integration test: mismatch triggers cache invalidation.
     ///
     /// Registers a mock backend that returns deliberately wrong gas_used,
@@ -137,62 +277,13 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_dual_execution_mismatch_invalidates_cache() {
-        use ethrex_levm::call_frame::CallFrame;
-        use ethrex_levm::environment::Environment;
-        use ethrex_levm::jit::dispatch::{JitBackend, StorageOriginalValues};
-        use ethrex_levm::jit::types::{JitOutcome, JitResumeState, SubCallResult};
-        use ethrex_levm::vm::{JIT_STATE, Substate};
-
-        /// Mock backend that returns deliberately wrong gas to trigger mismatch.
-        struct MismatchBackend;
-
-        impl JitBackend for MismatchBackend {
-            fn execute(
-                &self,
-                _compiled: &CompiledCode,
-                _call_frame: &mut CallFrame,
-                _db: &mut GeneralizedDatabase,
-                _substate: &mut Substate,
-                _env: &Environment,
-                _storage_original_values: &mut StorageOriginalValues,
-            ) -> Result<JitOutcome, String> {
-                // Return deliberately wrong gas_used to trigger mismatch
-                Ok(JitOutcome::Success {
-                    gas_used: 1,
-                    output: Bytes::from(vec![0u8; 32]),
-                })
-            }
-
-            fn execute_resume(
-                &self,
-                _resume_state: JitResumeState,
-                _sub_result: SubCallResult,
-                _call_frame: &mut CallFrame,
-                _db: &mut GeneralizedDatabase,
-                _substate: &mut Substate,
-                _env: &Environment,
-                _storage_original_values: &mut StorageOriginalValues,
-            ) -> Result<JitOutcome, String> {
-                Err("not implemented".to_string())
-            }
-
-            fn compile(
-                &self,
-                _code: &ethrex_common::types::Code,
-                _fork: Fork,
-                _cache: &ethrex_levm::jit::cache::CodeCache,
-            ) -> Result<(), String> {
-                Ok(())
-            }
-        }
+        use ethrex_levm::vm::JIT_STATE;
 
         let fork = Fork::Cancun;
 
         // Reset JIT state for test isolation
         JIT_STATE.reset_for_testing();
-
-        // Register mock backend that produces wrong results
-        JIT_STATE.register_backend(Arc::new(MismatchBackend));
+        MismatchBackend::register();
 
         let (mut db, env, tx, counter_code) = setup_counter_vm();
 
@@ -203,8 +294,7 @@ mod tests {
         JIT_STATE.cache.insert(cache_key, dummy_compiled);
         assert!(JIT_STATE.cache.get(&cache_key).is_some());
 
-        // Capture baseline metrics (non-serial tests may run concurrently and
-        // modify JIT_STATE, so we compare deltas instead of absolute values).
+        // Capture baseline metrics
         let (_, _, _, _, baseline_successes, baseline_mismatches) = JIT_STATE.metrics.snapshot();
 
         // Run VM — JIT dispatches to mock backend, validation detects mismatch
@@ -465,6 +555,197 @@ mod tests {
         assert!(
             JIT_STATE.cache.get(&cache_key).is_some(),
             "cache entry should remain after inconclusive validation"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // G-3: CALL/CREATE Dual-Execution Validation
+    //
+    // These tests verify that bytecodes with has_external_calls=true
+    // are still validated via dual-execution (the guard was removed).
+    // All G-3 tests reuse `MismatchBackend` and `setup_call_vm()`.
+    // ---------------------------------------------------------------
+
+    /// Helper: run a mismatch-backend test for a given opcode and assert validation ran.
+    ///
+    /// Builds bytecode with `make_external_call_bytecode(target, opcode)`,
+    /// inserts a dummy `CompiledCode` with `has_external_calls=true`,
+    /// runs `stateless_execute()`, and returns `(new_successes, new_mismatches)`.
+    fn run_g3_mismatch_test(opcode: u8) -> (u64, u64) {
+        use ethrex_levm::vm::JIT_STATE;
+
+        let fork = Fork::Cancun;
+        let target_addr = Address::from_low_u64_be(0xBEEF);
+
+        JIT_STATE.reset_for_testing();
+        MismatchBackend::register();
+
+        let bytecode = make_external_call_bytecode(target_addr, opcode);
+        let (mut db, env, tx, caller_code) = setup_call_vm(bytecode, &[(target_addr, vec![0x00])]);
+
+        let cache_key = (caller_code.hash, fork);
+        #[expect(unsafe_code)]
+        let dummy = unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, true) };
+        JIT_STATE.cache.insert(cache_key, dummy);
+
+        let (_, _, _, _, base_s, base_m) = JIT_STATE.metrics.snapshot();
+
+        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+            .expect("VM::new should succeed");
+        let _report = vm.stateless_execute().expect("execution should succeed");
+
+        let (_, _, _, _, final_s, final_m) = JIT_STATE.metrics.snapshot();
+        (
+            final_s.saturating_sub(base_s),
+            final_m.saturating_sub(base_m),
+        )
+    }
+
+    /// G-3 Test 1: Validation runs for CALL bytecodes (has_external_calls=true).
+    #[test]
+    #[serial_test::serial]
+    fn test_g3_validation_runs_for_call_bytecode() {
+        let (successes, mismatches) = run_g3_mismatch_test(0xF1); // CALL
+        assert!(
+            successes + mismatches > 0,
+            "G-3: validation must run for CALL bytecodes (s={successes}, m={mismatches})"
+        );
+    }
+
+    /// G-3 Test 2: STATICCALL mismatch invalidates cache.
+    #[test]
+    #[serial_test::serial]
+    fn test_g3_staticcall_mismatch_invalidates_cache() {
+        use ethrex_levm::vm::JIT_STATE;
+
+        let fork = Fork::Cancun;
+        let target_addr = Address::from_low_u64_be(0xCAFE);
+
+        JIT_STATE.reset_for_testing();
+        MismatchBackend::register();
+
+        let bytecode = make_external_call_bytecode(target_addr, 0xFA); // STATICCALL
+        let (mut db, env, tx, caller_code) = setup_call_vm(bytecode, &[(target_addr, vec![0x00])]);
+
+        let cache_key = (caller_code.hash, fork);
+        #[expect(unsafe_code)]
+        let dummy = unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, true) };
+        JIT_STATE.cache.insert(cache_key, dummy);
+
+        let (_, _, _, _, _, base_m) = JIT_STATE.metrics.snapshot();
+
+        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+            .expect("VM::new should succeed");
+        let _report = vm.stateless_execute().expect("execution should succeed");
+
+        let (_, _, _, _, _, final_m) = JIT_STATE.metrics.snapshot();
+        assert!(
+            final_m.saturating_sub(base_m) > 0,
+            "G-3: STATICCALL must trigger mismatch"
+        );
+        assert!(
+            JIT_STATE.cache.get(&cache_key).is_none(),
+            "cache should be invalidated after STATICCALL mismatch"
+        );
+    }
+
+    /// G-3 Test 3: Validation runs for DELEGATECALL bytecode.
+    #[test]
+    #[serial_test::serial]
+    fn test_g3_delegatecall_validation_runs() {
+        let (successes, mismatches) = run_g3_mismatch_test(0xF4); // DELEGATECALL
+        assert!(
+            successes + mismatches > 0,
+            "G-3: validation must run for DELEGATECALL bytecodes (s={successes}, m={mismatches})"
+        );
+    }
+
+    /// G-3 Test 4: Pure-computation validation still works (regression).
+    #[test]
+    #[serial_test::serial]
+    fn test_g3_regression_pure_computation_still_validates() {
+        use ethrex_levm::vm::JIT_STATE;
+
+        let fork = Fork::Cancun;
+
+        JIT_STATE.reset_for_testing();
+        MismatchBackend::register();
+
+        let (mut db, env, tx, counter_code) = setup_counter_vm();
+
+        let cache_key = (counter_code.hash, fork);
+        #[expect(unsafe_code)]
+        let dummy = unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, false) };
+        JIT_STATE.cache.insert(cache_key, dummy);
+
+        let (_, _, _, _, _, base_m) = JIT_STATE.metrics.snapshot();
+
+        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+            .expect("VM::new should succeed");
+        let report = vm
+            .stateless_execute()
+            .expect("execution should succeed (interpreter fallback)");
+
+        assert!(report.is_success(), "should succeed via interpreter");
+        assert_eq!(
+            U256::from_big_endian(&report.output),
+            U256::from(6u64),
+            "pure computation should produce 6"
+        );
+
+        let (_, _, _, _, _, final_m) = JIT_STATE.metrics.snapshot();
+        assert!(
+            final_m.saturating_sub(base_m) > 0,
+            "pure computation validation should still detect mismatch after G-3 changes"
+        );
+    }
+
+    /// G-3 Test 5: Both pure and CALL bytecodes are validated (total >= 2).
+    #[test]
+    #[serial_test::serial]
+    fn test_g3_both_pure_and_call_bytecodes_validated() {
+        use ethrex_levm::vm::JIT_STATE;
+
+        let fork = Fork::Cancun;
+
+        JIT_STATE.reset_for_testing();
+        MismatchBackend::register();
+
+        // --- Run 1: pure computation (has_external_calls=false) ---
+        {
+            let (mut db, env, tx, counter_code) = setup_counter_vm();
+            let cache_key = (counter_code.hash, fork);
+            #[expect(unsafe_code)]
+            let dummy = unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, false) };
+            JIT_STATE.cache.insert(cache_key, dummy);
+
+            let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+                .expect("VM::new");
+            let _ = vm.stateless_execute().expect("exec 1");
+        }
+
+        // --- Run 2: CALL bytecode (has_external_calls=true) ---
+        {
+            let target_addr = Address::from_low_u64_be(0xBEEF);
+            let bytecode = make_external_call_bytecode(target_addr, 0xF1);
+            let (mut db, env, tx, caller_code) =
+                setup_call_vm(bytecode, &[(target_addr, vec![0x00])]);
+
+            let cache_key = (caller_code.hash, fork);
+            #[expect(unsafe_code)]
+            let dummy = unsafe { CompiledCode::new(std::ptr::null(), 100, 5, None, true) };
+            JIT_STATE.cache.insert(cache_key, dummy);
+
+            let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
+                .expect("VM::new");
+            let _ = vm.stateless_execute().expect("exec 2");
+        }
+
+        let (_, _, _, _, final_s, final_m) = JIT_STATE.metrics.snapshot();
+        let total = final_s + final_m;
+        assert!(
+            total >= 2,
+            "G-3: both bytecodes must be validated, total={total} (s={final_s}, m={final_m})"
         );
     }
 }

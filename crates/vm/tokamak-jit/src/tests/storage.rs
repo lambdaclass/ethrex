@@ -51,8 +51,8 @@ pub fn make_counter_bytecode() -> Vec<u8> {
 mod tests {
     use super::*;
 
-    use ethrex_common::types::Code;
     use ethrex_common::U256;
+    use ethrex_common::types::Code;
     use ethrex_levm::tracing::LevmCallTracer;
     use ethrex_levm::vm::{VM, VMType};
     use rustc_hash::FxHashMap;

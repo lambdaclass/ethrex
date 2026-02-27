@@ -687,12 +687,12 @@ impl<'a> VM<'a> {
                     {
                         // Snapshot state before JIT execution for dual-execution validation.
                         // Only allocate when validation will actually run for this cache key.
-                        // Skip validation for bytecodes with CALL/CREATE — the state-swap
-                        // mechanism cannot correctly replay subcalls (see CRITICAL-1).
+                        // G-3: Validation now runs for ALL bytecodes, including those with
+                        // CALL/CREATE/DELEGATECALL/STATICCALL. The interpreter replay handles
+                        // sub-calls natively, so the state-swap mechanism works correctly.
                         let cache_key = (bytecode_hash, fork);
                         let needs_validation = JIT_STATE.config.validation_mode
-                            && JIT_STATE.should_validate(&cache_key)
-                            && !compiled.has_external_calls;
+                            && JIT_STATE.should_validate(&cache_key);
                         let pre_jit_snapshot = if needs_validation {
                             Some((
                                 self.db.clone(),

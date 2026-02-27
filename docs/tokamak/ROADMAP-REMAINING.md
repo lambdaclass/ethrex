@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-26
-**Context**: Overall ~92% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator).
+**Context**: Overall ~92% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1).
 
 ---
 
@@ -272,6 +272,14 @@
 - **Verification**: 12 arena + 4 ArenaCompiler tests, all 178 tests pass (94 levm + 36 jit + 48 bench) ✅
 - **Dependency**: None
 - **Completed**: 2026-02-26 — Arena allocator replacing mem::forget, 178 tests pass (f8e9ba540)
+
+### G-2. Cache Eviction Effectiveness [P0-CRITICAL] ✅ DONE
+- G-1 arena system already handles `Free{slot}` and `FreeArena{arena_id}` requests ✅
+- `cache.insert()` returns `Option<FuncSlot>` on eviction → `ArenaManager::mark_evicted()` → `free_arena()` when empty ✅
+- `CompilerRequest::Free` handler in `lib.rs` decrements arena live count and frees empty arenas ✅
+- No additional implementation needed — auto-resolved by G-1 ✅
+- **Dependency**: G-1 ✅
+- **Completed**: 2026-02-27 — G-1 arena system already handles Free/FreeArena — auto-resolved (f8e9ba540)
 
 ---
 

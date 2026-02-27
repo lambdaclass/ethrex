@@ -177,6 +177,7 @@ R23(5.0) -> R24(8.0)
 
 ### Recently Completed (Phase G)
 - LLVM Memory Lifecycle (G-1) — Arena allocator replacing `mem::forget`, ArenaManager + ArenaCompiler + thread_local ArenaState, 12+4 arena tests, all 178 tests pass (f8e9ba540) (2026-02-26)
+- Cache Eviction Effectiveness (G-2) — Auto-resolved by G-1 arena system: Free/FreeArena handlers, cache eviction returns FuncSlot for arena cleanup (2026-02-27)
 
 ### Not Started
 - EF grant application
