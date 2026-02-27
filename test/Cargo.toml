@@ -51,6 +51,7 @@ anyhow.workspace = true
 ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
+tokio-util.workspace = true
 
 [[test]]
 name = "ethrex_tests"

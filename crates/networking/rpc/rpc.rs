@@ -60,6 +60,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -173,8 +174,13 @@ pub enum RpcRequestWrapper {
     Multiple(Vec<RpcRequest>),
 }
 
-/// Shared context passed to all RPC request handlers.
-///
+/// Channel message type for the block executor worker thread.
+type BlockWorkerMessage = (
+    oneshot::Sender<Result<(), ChainError>>,
+    Block,
+    Option<BlockAccessList>,
+);
+
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
@@ -200,7 +206,7 @@ pub struct RpcApiContext {
     /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
-    pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
+    pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
 }
 
 /// Client version information used for identification in the Engine API and P2P.
@@ -396,17 +402,14 @@ pub const FILTER_DURATION: Duration = {
 /// # Panics
 ///
 /// Panics if the worker thread cannot be spawned.
-pub fn start_block_executor(
-    blockchain: Arc<Blockchain>,
-) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
-    let (block_worker_channel, mut block_receiver) =
-        unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
+pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<BlockWorkerMessage> {
+    let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal)) = block_receiver.blocking_recv() {
                 let _ = notify
-                    .send(blockchain.add_block_pipeline(block))
+                    .send(blockchain.add_block_pipeline(block, bal.as_ref()))
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
             }
         })
@@ -991,7 +994,7 @@ mod tests {
                         "bpo4Time": null,
                         "bpo5Time": null,
                         "amsterdamTime": null,
-                        "terminalTotalDifficulty": 0,
+                        "terminalTotalDifficulty": "0x0",
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
                         "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
@@ -1059,6 +1062,38 @@ mod tests {
                 .unwrap(),
             ..Default::default()
         }
+    }
+
+    /// Tests that admin_nodeInfo doesn't fail when terminal_total_difficulty
+    /// exceeds u64::MAX. Before the fix, serde_json::to_value() would return
+    /// "number out of range" because Value::Number can only hold u64/i64/f64.
+    #[tokio::test]
+    async fn admin_nodeinfo_large_terminal_total_difficulty() {
+        // Mainnet's terminal_total_difficulty: 58_750_000_000_000_000_000_000
+        // This exceeds u64::MAX (~1.8e19) and triggers the bug with serde_json::to_value().
+        let mainnet_ttd: u128 = 58_750_000_000_000_000_000_000;
+
+        let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let mut config = example_chain_config();
+        config.terminal_total_difficulty = Some(mainnet_ttd);
+        storage.set_chain_config(&config).await.unwrap();
+        let context = default_context_with_storage(storage).await;
+
+        let result = map_http_requests(&request, context).await;
+        assert!(
+            result.is_ok(),
+            "admin_nodeInfo should not fail with large terminal_total_difficulty"
+        );
+
+        let value = result.unwrap();
+        let ttd = value
+            .pointer("/protocols/eth/terminalTotalDifficulty")
+            .expect("terminalTotalDifficulty should be present in response");
+        // Serialized as a hex string to avoid serde_json Value::Number u64 limitation.
+        assert_eq!(ttd.as_str().unwrap(), "0xc70d808a128d7380000");
     }
 
     #[tokio::test]
