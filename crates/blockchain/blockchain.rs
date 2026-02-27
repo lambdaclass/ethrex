@@ -2801,26 +2801,6 @@ fn handle_subtrie(
                 dirty = true;
             }
             WorkerRequest::FinishRouting => {
-                // Pre-collect all tries before sending RoutingDone.
-                // Front-loads expensive hashing for the slow worker (which had
-                // no idle time to pre-collect during execution). Subsequent
-                // MerklizeStorage from other workers only dirty specific paths.
-                if dirty {
-                    let mut nodes = state_trie.commit_without_storing();
-                    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-                    pre_collected_state.extend(nodes);
-                    for (prefix, trie) in storage_tries.iter_mut() {
-                        let mut nodes = trie.commit_without_storing();
-                        nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-                        if !nodes.is_empty() {
-                            pre_collected_storage
-                                .entry(*prefix)
-                                .or_default()
-                                .extend(nodes);
-                        }
-                    }
-                    dirty = false;
-                }
                 // Signal all workers that we're done routing MerklizeStorage.
                 let senders = worker_senders
                     .as_ref()
@@ -2834,15 +2814,6 @@ fn handle_subtrie(
             WorkerRequest::RoutingDone { from } => {
                 routing_done_mask |= 1u16 << from;
                 if routing_done_mask == 0xFFFF && !collecting_storages && !routing_complete {
-                    // All workers finished routing — start collecting.
-                    // Pre-commit state trie before entering the busy storage
-                    // collection loop.
-                    if dirty {
-                        let mut nodes = state_trie.commit_without_storing();
-                        nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-                        pre_collected_state.extend(nodes);
-                        dirty = false;
-                    }
                     collecting_storages = true;
                     routing_complete = true;
                     storage_to_collect = storage_tries.drain().collect();
