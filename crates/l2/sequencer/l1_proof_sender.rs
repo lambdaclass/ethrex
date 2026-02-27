@@ -32,7 +32,10 @@ use tracing::{error, info, warn};
 
 use super::{
     configs::AlignedConfig,
-    utils::{random_duration, send_verify_tx},
+    utils::{
+        INVALID_RISC0_PROOF_SELECTOR, INVALID_SP1_PROOF_SELECTOR, INVALID_TDX_PROOF_SELECTOR,
+        random_duration, send_verify_tx,
+    },
 };
 
 use crate::{
@@ -485,29 +488,28 @@ impl L1ProofSender {
         send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await
     }
 
-    /// Returns the prover type whose proof is invalid based on the error message,
-    /// or `None` if the message doesn't indicate an invalid proof.
-    fn invalid_proof_type(message: &str) -> Option<ProverType> {
-        // Match both full error messages (based contract) and error codes (standard contract)
-        if message.contains("Invalid TDX proof") || message.contains("00g") {
+    /// Returns the prover type whose proof is invalid based on the RPC error data
+    /// (custom error selector), or `None` if the data doesn't indicate an invalid proof.
+    fn invalid_proof_type_from_data(data: &str) -> Option<ProverType> {
+        if data.starts_with(INVALID_TDX_PROOF_SELECTOR) {
             Some(ProverType::TDX)
-        } else if message.contains("Invalid RISC0 proof") || message.contains("00c") {
+        } else if data.starts_with(INVALID_RISC0_PROOF_SELECTOR) {
             Some(ProverType::RISC0)
-        } else if message.contains("Invalid SP1 proof") || message.contains("00e") {
+        } else if data.starts_with(INVALID_SP1_PROOF_SELECTOR) {
             Some(ProverType::SP1)
         } else {
             None
         }
     }
 
-    /// If the error message indicates an invalid proof, deletes the offending
-    /// proof from the store.
+    /// If the error data contains an invalid proof custom error selector,
+    /// deletes the offending proof from the store.
     async fn try_delete_invalid_proof(
         &self,
-        message: &str,
+        data: &str,
         batch_number: u64,
     ) -> Result<(), ProofSenderError> {
-        if let Some(proof_type) = Self::invalid_proof_type(message) {
+        if let Some(proof_type) = Self::invalid_proof_type_from_data(data) {
             warn!("Deleting invalid {proof_type:?} proof for batch {batch_number}");
             self.rollup_store
                 .delete_proof_by_batch_and_type(batch_number, proof_type)
@@ -549,10 +551,11 @@ impl L1ProofSender {
             .await;
 
         if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
-            ref message, ..
+            data: Some(ref data),
+            ..
         })) = result
         {
-            self.try_delete_invalid_proof(message, batch_number).await?;
+            self.try_delete_invalid_proof(data, batch_number).await?;
         }
         let verify_tx_hash = result?;
 
@@ -606,11 +609,13 @@ impl L1ProofSender {
                 }
                 return Ok(());
             }
-            if let EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. }) = err
+            if let EthClientError::RpcRequestError(RpcRequestError::RPCError {
+                data: Some(data),
+                ..
+            }) = err
                 && let Some((batch_number, _)) = batches.first()
             {
-                self.try_delete_invalid_proof(message, *batch_number)
-                    .await?;
+                self.try_delete_invalid_proof(data, *batch_number).await?;
             }
         }
 
