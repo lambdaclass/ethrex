@@ -187,7 +187,7 @@ impl NativeBlockProducer {
         Ok(())
     }
 
-    // -- Helpers (in call order from produce_block) --
+    // -- Helpers --
 
     /// Take L1 messages from the shared queue that fit within the block gas limit.
     ///
@@ -372,9 +372,6 @@ impl NativeBlockProducer {
             blob_txs.pop();
         }
 
-        let chain_config = self.store.get_chain_config();
-        let latest_block_number = self.store.get_latest_block_number().await?;
-
         loop {
             if context.remaining_gas < ethrex_blockchain::constants::TX_GAS_COST {
                 debug!("NativeBlockProducer: no more gas to run transactions");
@@ -410,7 +407,8 @@ impl NativeBlockProducer {
 
             let tx_hash = head_tx.tx.hash();
 
-            // Check replay protection
+            // Check whether the tx is replay-protected
+            let chain_config = self.store.get_chain_config();
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
                 if is_relayer_tx {
                     return Err(NativeBlockProducerError::Vm(format!(
@@ -426,25 +424,7 @@ impl NativeBlockProducer {
                 continue;
             }
 
-            // Check nonce
-            let maybe_sender_acc_info = self
-                .store
-                .get_account_info(latest_block_number, head_tx.tx.sender())
-                .await?;
-
-            if maybe_sender_acc_info.is_some_and(|acc_info| head_tx.nonce() < acc_info.nonce) {
-                if is_relayer_tx {
-                    return Err(NativeBlockProducerError::Vm(format!(
-                        "relayer tx {tx_hash} failed: nonce too low"
-                    )));
-                }
-                debug!("NativeBlockProducer: removing tx with nonce too low: {tx_hash:#x}");
-                txs.pop();
-                self.blockchain.remove_transaction_from_pool(&tx_hash)?;
-                continue;
-            }
-
-            // Execute tx
+            // Execute tx (the VM validates nonce, balance, etc.)
             let receipt = match apply_plain_transaction(&head_tx, context) {
                 Ok(receipt) => receipt,
                 Err(e) => {
