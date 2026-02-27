@@ -78,9 +78,9 @@ The `OnChainProposer` contract, which handles batch proposals and management on 
 - **Event Modification:**
   The `BatchCommitted` event has been updated to include the batch number of the committed batch. This addition enhances traceability and allows external systems to monitor batch progression more effectively.
 - **Batch Verification:**
-  The `verifyBatch` method has been made more flexible and decentralized:
-  - The `onlySequencer` modifier has been removed, allowing anyone—not just the lead Sequencer—to verify batches.
-  - The restriction preventing multiple verifications of the same batch has been lifted. While multiple verifications are now permitted, only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.
+  The `verifyBatches` method has been made more flexible and decentralized:
+  - The method has no access control modifier, allowing anyone—not just the lead Sequencer—to verify batches.
+  - It supports verifying one or more consecutive batches in a single transaction. Only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.
 
 ### SequencerRegistry (New Contract)
 
@@ -334,7 +334,7 @@ A list of all the configurable parameters of the network.
 ### Batch commitment/proposal
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md) as this only details the diff with what we already have.
 
 - Only lead Sequencer can post batches.
 - Lead Sequencer batches are accepted during their sequencing period and rejected outside this period.
@@ -343,7 +343,7 @@ A list of all the configurable parameters of the network.
 ### Batch verification
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md) as this only details the diff with what we already have.
 
 - Anyone can verify batches.
 - Only one valid verification is required to advance the network.
@@ -428,7 +428,7 @@ The following links, repos, and projects have been important in the development 
 ### Based rollups + extra steps
 
 - [Based Ticketing Rollup by George Spasov](https://hackmd.io/@Perseverance/Syk2oQU36)
-- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/contestable-rollup)
+- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://taiko.mirror.xyz/Z4I5ZhreGkyfdaL5I9P0Rj0DNX4zaWFmcws-0CVMJ2A)
 - [Native Based Rollup by Taiko (Taiko Gwyneth)](https://docs.taiko.xyz/taiko-gwyneth-protocol/what-is-taiko-gwyneth/)
 
 ### Misc

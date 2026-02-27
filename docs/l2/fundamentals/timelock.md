@@ -8,7 +8,7 @@ The Timelock contract gates access to the OnChainProposer (OCP) contract. Change
 - Governance: Can schedule and execute operations, respecting a delay. In practice this could be the role of a DAO, though it depends on the implementation.
 - Security Council: Can bypass the minimum delay for executing any operation that the Timelock can execute. It can also manage other roles in the Timelock.
 
-**Sequencers** will send `commitBatch`, `verifyBatch`, and `verifyBatchesAligned` to the Timelock, and this will execute the operations in the `OnChainProposer`. Eventually there will be Timelock logic, and there will be a time window between commitment and proof verification for security reasons.
+**Sequencers** will send `commitBatch`, `verifyBatches`, and `verifyBatchesAligned` to the Timelock, and this will execute the operations in the `OnChainProposer`. Eventually there will be Timelock logic, and there will be a time window between commitment and proof verification for security reasons.
 
 The **Governance** is able to schedule important operations like contract upgrades respecting the minimum time window for the L2 participants to exit in case of undesired updates. Not only can they make changes in the logic of the OnChainProposer, but they can also update the Timelock itself.
 

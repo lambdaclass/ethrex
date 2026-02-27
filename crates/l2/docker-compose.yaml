@@ -17,7 +17,7 @@ services:
   contract_deployer:
     container_name: contract_deployer
     image: "ethrex:main-l2"
-    restart: on-failure:10
+    restart: on-failure:20
     build:
       context: ../../
       args:

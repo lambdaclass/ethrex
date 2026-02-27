@@ -480,33 +480,66 @@ impl OpcodeHandler for OpSelfDestructHandler {
         }
 
         let beneficiary = word_to_address(vm.current_call_frame.stack.pop1()?);
-
-        let balance = vm.db.get_account(vm.current_call_frame.to)?.info.balance;
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::selfdestruct(
-                vm.substate.add_accessed_address(beneficiary),
-                vm.db.get_account(beneficiary)?.is_empty(),
-                balance,
-            )?)?;
-
         let to = vm.current_call_frame.to;
 
-        // Record beneficiary and destroyed account for BAL per EIP-7928
-        // Also record any previously-accessed storage slots as reads per EIP-7928:
-        // "SELFDESTRUCT: Include modified/read storage keys as storage_read"
-        let accessed_slots = vm.substate.get_accessed_storage_slots(&to);
-        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
-            recorder.record_touched_address(beneficiary);
-            // Also record the destroyed account (source) as touched
-            recorder.record_touched_address(to);
-            // Record initial balance for the destroyed account if it has balance
-            if balance > U256::zero() {
-                recorder.set_initial_balance(to, balance);
+        let target_account_is_cold = vm.substate.add_accessed_address(beneficiary);
+        let target_account_is_empty = vm.db.get_account(beneficiary)?.is_empty();
+        let balance = vm.db.get_account(to)?.info.balance;
+
+        // EIP-7928 (Amsterdam): Two-phase gas check for SELFDESTRUCT.
+        // First check base cost (SELFDESTRUCT + cold access) before state access,
+        // then record BAL tracking, then charge the full cost including NEW_ACCOUNT.
+        // This ensures the beneficiary is recorded in BAL even when the full
+        // selfdestruct cost (with NEW_ACCOUNT) would cause OOG.
+        if vm.env.config.fork >= Fork::Amsterdam {
+            let base_cost = gas_cost::selfdestruct_base(target_account_is_cold)?;
+            // Phase 1: Check base cost is available (without charging)
+            #[expect(clippy::as_conversions, reason = "base_cost fits in i64")]
+            if vm.current_call_frame.gas_remaining < (base_cost as i64) {
+                return Err(ExceptionalHalt::OutOfGas.into());
             }
-            // Record any previously-accessed storage slots as reads
-            for key in &accessed_slots {
-                let slot = U256::from_big_endian(key.as_bytes());
-                recorder.record_storage_read(to, slot);
+
+            // State access: record BAL tracking between the two gas phases
+            let accessed_slots = vm.substate.get_accessed_storage_slots(&to);
+            if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(beneficiary);
+                recorder.record_touched_address(to);
+                if balance > U256::zero() {
+                    recorder.set_initial_balance(to, balance);
+                }
+                for key in &accessed_slots {
+                    let slot = U256::from_big_endian(key.as_bytes());
+                    recorder.record_storage_read(to, slot);
+                }
+            }
+
+            // Phase 2: Charge the full cost (base + NEW_ACCOUNT if applicable)
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::selfdestruct(
+                    target_account_is_cold,
+                    target_account_is_empty,
+                    balance,
+                )?)?;
+        } else {
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::selfdestruct(
+                    target_account_is_cold,
+                    target_account_is_empty,
+                    balance,
+                )?)?;
+
+            // Record beneficiary and destroyed account for BAL per EIP-7928
+            let accessed_slots = vm.substate.get_accessed_storage_slots(&to);
+            if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(beneficiary);
+                recorder.record_touched_address(to);
+                if balance > U256::zero() {
+                    recorder.set_initial_balance(to, balance);
+                }
+                for key in &accessed_slots {
+                    let slot = U256::from_big_endian(key.as_bytes());
+                    recorder.record_storage_read(to, slot);
+                }
             }
         }
 
@@ -856,6 +889,7 @@ impl<'a> VM<'a> {
                 gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.db.store.precompile_cache(),
             )?;
 
             let call_frame = &mut self.current_call_frame;

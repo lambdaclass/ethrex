@@ -332,6 +332,15 @@ impl AccountChanges {
         self.code_changes.push(change);
     }
 
+    /// Returns an iterator over all storage slots that need prefetching
+    /// (both reads and writes need their pre-state loaded).
+    pub fn all_storage_slots(&self) -> impl Iterator<Item = U256> + '_ {
+        self.storage_reads
+            .iter()
+            .copied()
+            .chain(self.storage_changes.iter().map(|sc| sc.slot))
+    }
+
     /// Returns whether this account has any changes or reads.
     pub fn is_empty(&self) -> bool {
         self.storage_changes.is_empty()
@@ -423,7 +432,8 @@ impl BlockAccessList {
         &self.inner
     }
 
-    /// Computes the hash of the block access list.
+    /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
+    /// Use this when hashing a BAL constructed locally from execution.
     pub fn compute_hash(&self) -> H256 {
         if self.inner.is_empty() {
             return *EMPTY_BLOCK_ACCESS_LIST_HASH;
@@ -724,7 +734,10 @@ impl BlockAccessListRecorder {
             }
         }
 
-        // Get or create the changes vector for this slot
+        // Always push a new entry instead of updating in-place.
+        // This is necessary for correct checkpoint/restore semantics:
+        // restore() truncates the vector by length, so in-place updates
+        // would corrupt values that should be preserved after a revert.
         let changes = self
             .storage_writes
             .entry(address)
@@ -732,19 +745,6 @@ impl BlockAccessListRecorder {
             .entry(slot)
             .or_default();
 
-        // Check if there's already an entry with the same block_access_index
-        // If so, update it with the new value, keeping only the final write
-        if let Some(last) = changes.last_mut()
-            && last.0 == self.current_index
-        {
-            // Update the existing entry with the new value
-            last.1 = post_value;
-            // Mark address as touched
-            self.touched_addresses.insert(address);
-            return;
-        }
-
-        // No existing entry for this index, push new change
         changes.push((self.current_index, post_value));
         // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
         self.touched_addresses.insert(address);
@@ -889,11 +889,17 @@ impl BlockAccessListRecorder {
             let mut account_changes = AccountChanges::new(*address);
 
             // Add storage writes (slot changes)
+            // Deduplicate entries per block_access_index (keep last per idx),
+            // since record_storage_write always pushes for correct checkpoint/restore.
             if let Some(slots) = self.storage_writes.get(address) {
                 for (slot, changes) in slots {
                     let mut slot_change = SlotChange::new(*slot);
+                    let mut deduped: BTreeMap<u16, U256> = BTreeMap::new();
                     for (index, post_value) in changes {
-                        slot_change.add_change(StorageChange::new(*index, *post_value));
+                        deduped.insert(*index, *post_value);
+                    }
+                    for (index, post_value) in deduped {
+                        slot_change.add_change(StorageChange::new(index, post_value));
                     }
                     account_changes.add_storage_change(slot_change);
                 }

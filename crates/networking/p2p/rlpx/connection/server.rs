@@ -945,34 +945,41 @@ async fn handle_incoming_message(
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
+                let tx_hashes: Vec<_> = txs.transactions.iter().map(|tx| tx.hash()).collect();
+
+                // Offload pool insertion to a background task so we don't block
+                // the ConnectionServer (validation + signature recovery are expensive).
+                let blockchain = state.blockchain.clone();
+                let peer = state.node.to_string();
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
-                for tx in &txs.transactions {
-                    // Reject blob transactions in L2 mode
-                    #[cfg(feature = "l2")]
-                    if (is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)))
-                        || tx.is_privileged()
-                    {
-                        let tx_type = tx.tx_type();
-                        debug!(peer=%state.node, "Rejecting transaction in L2 mode - {tx_type} transactions are not broadcasted in L2");
-                        continue;
-                    }
+                tokio::spawn(async move {
+                    for tx in txs.transactions {
+                        #[cfg(feature = "l2")]
+                        if (is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)))
+                            || tx.is_privileged()
+                        {
+                            let tx_type = tx.tx_type();
+                            debug!(peer=%peer, "Rejecting transaction in L2 mode - {tx_type} transactions are not broadcasted in L2");
+                            continue;
+                        }
 
-                    if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        debug!(
-                            peer=%state.node,
-                            error=%e,
-                            "Error adding transaction"
-                        );
-                        continue;
+                        if let Err(e) = blockchain.add_transaction_to_pool(tx).await {
+                            debug!(
+                                peer=%peer,
+                                error=%e,
+                                "Error adding transaction"
+                            );
+                        }
                     }
-                }
+                });
+
+                // Notify the broadcaster immediately — it only tracks hashes
+                // to avoid re-broadcasting to the sender. The actual broadcast
+                // happens on a periodic timer that queries the mempool directly.
                 state
                     .tx_broadcaster
-                    .cast(InMessage::AddTxs(
-                        txs.transactions.iter().map(|tx| tx.hash()).collect(),
-                        state.node.node_id(),
-                    ))
+                    .cast(InMessage::AddTxs(tx_hashes, state.node.node_id()))
                     .await
                     .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
             }

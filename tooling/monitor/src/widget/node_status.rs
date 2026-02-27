@@ -1,3 +1,4 @@
+use ethrex_l2_common::sequencer_state::SequencerState;
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ratatui::{
@@ -8,7 +9,7 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::sequencer::{errors::MonitorError, sequencer_state::SequencerState};
+use crate::error::MonitorError;
 
 #[derive(Clone)]
 pub struct NodeStatusTable {
@@ -45,7 +46,7 @@ impl NodeStatusTable {
         is_based: bool,
     ) -> Result<[(String, String); 5], MonitorError> {
         let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let status = sequencer_state.status().await;
+        let status = sequencer_state.status();
         let last_known_batch = "NaN"; // TODO: Implement last known batch retrieval
         let last_known_block = store
             .get_latest_block_number()
