@@ -73,6 +73,14 @@ The L2Bridge is preminted with an effectively infinite ETH balance (`U256::MAX /
 └──────────────────────────────────┘
 ```
 
+The three L2 GenServer actors run as concurrent tasks:
+
+- **NativeL1Watcher** — Polls the L1 NativeRollup.sol contract at regular intervals for `L1MessageRecorded` events and pushes them into a shared `PendingL1Messages` queue. It scans L1 logs in configurable block ranges and parses the event data (sender, recipient, value, gas limit, calldata, nonce).
+
+- **NativeBlockProducer** — Produces L2 blocks every `block_time_ms` milliseconds. It first consumes pending L1 messages from the queue, builds signed relayer transactions to execute those messages via the L2Bridge contract, then fills remaining block gas with regular mempool transactions. It anchors the L1 messages Merkle root in the L1Anchor predeploy's storage before execution.
+
+- **NativeL1Advancer** — Reads produced L2 blocks from the Store and submits them to the NativeRollup.sol contract via the `advance()` function, passing the block parameters, transaction RLP, execution witness JSON, and the count of L1 messages in the block. It tracks the on-chain block number and advances one block per interval.
+
 ## Prerequisites
 
 - Rust toolchain (stable)
@@ -294,9 +302,9 @@ rex balance $L1_RECEIVER --rpc-url http://localhost:8545
 ```
 
 > [!TIP]
-> The integration test at `test/tests/l2/native_rollup_bridge.rs` automates the full deposit/withdraw/counter roundtrip including proof fetching and claim submission. Run it with:
+> The integration test at `test/tests/l2/native_rollup.rs` automates the full deposit/withdraw/counter roundtrip including proof fetching and claim submission. Run it with:
 > ```shell
-> cargo test -p ethrex-test --features native-rollups -- l2::native_rollup_bridge --nocapture
+> cargo test -p ethrex-test --features native-rollups -- l2::native_rollup --nocapture
 > ```
 
 ### Cleaning up
@@ -309,5 +317,4 @@ rm -rf /tmp/ethrex_l1 /tmp/ethrex_l2
 
 ## Further reading
 
-- [EXECUTE precompile architecture](../../vm/levm/native_rollups.md) — detailed specification of the precompile, contracts, and L1 message mechanism
-- [Native rollups gap analysis](../../vm/levm/native_rollups_gap_analysis.md) — comparison with the L2Beat native rollups spec
+- [EXECUTE precompile architecture](../../vm/levm/native_rollups.md) — detailed specification of the precompile, contracts, gap analysis vs the L2Beat native rollups spec, and L1 message mechanism
