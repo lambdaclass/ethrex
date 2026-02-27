@@ -21,8 +21,7 @@ use reqwest::Url;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{
-        CastResponse, GenServer, GenServerHandle, InitResult, Success, send_interval,
-        spawn_listener,
+        CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after, spawn_listener,
     },
 };
 use std::io;
@@ -71,6 +70,7 @@ pub struct EthrexMonitorWidget {
     pub overview_selected_widget: usize,
 
     pub osaka_activation_time: Option<u64>,
+    pub mouse_captured: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -115,8 +115,10 @@ impl GenServer for EthrexMonitor {
     type Error = MonitorError;
 
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        // Tick handling
-        send_interval(
+        // Tick handling: use send_after (not send_interval) so the next tick
+        // is only scheduled after the current one finishes. This prevents tick
+        // backlog from blocking keyboard events when on_tick() is slow.
+        send_after(
             Duration::from_millis(self.widget.tick_rate),
             handle.clone(),
             Self::CastMsg::Tick,
@@ -133,7 +135,7 @@ impl GenServer for EthrexMonitor {
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
+        handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
             // On event
@@ -153,6 +155,12 @@ impl GenServer for EthrexMonitor {
                     .on_tick()
                     .await
                     .inspect_err(|err| error!("Monitor error: {err}"));
+                // Schedule next tick only after this one finishes
+                send_after(
+                    Duration::from_millis(self.widget.tick_rate),
+                    handle.clone(),
+                    Self::CastMsg::Tick,
+                );
             }
         }
 
@@ -225,6 +233,7 @@ impl EthrexMonitorWidget {
             last_scroll: Instant::now(),
             overview_selected_widget: 0,
             osaka_activation_time: cfg.osaka_activation_time,
+            mouse_captured: true,
         };
         monitor_widget.selected_table().selected(true);
         monitor_widget.on_tick().await?;
@@ -293,6 +302,17 @@ impl EthrexMonitorWidget {
                 TabsState::Overview | TabsState::Logs | TabsState::RichAccounts,
                 KeyCode::Char('Q'),
             ) => self.should_quit = true,
+            (
+                TabsState::Overview | TabsState::Logs | TabsState::RichAccounts,
+                KeyCode::Char('m'),
+            ) => {
+                self.mouse_captured = !self.mouse_captured;
+                if self.mouse_captured {
+                    let _ = execute!(io::stdout(), EnableMouseCapture);
+                } else {
+                    let _ = execute!(io::stdout(), DisableMouseCapture);
+                }
+            }
             (TabsState::Overview | TabsState::Logs | TabsState::RichAccounts, KeyCode::Tab) => {
                 self.tabs.next()
             }
@@ -465,7 +485,7 @@ impl EthrexMonitorWidget {
                 );
 
                 let help =
-                    Line::raw("↑/↓: select table | w/s: scroll table | tab: switch tab | Q: quit")
+                    Line::raw("↑/↓: select table | w/s: scroll table | m: toggle mouse | tab: switch tab | Q: quit")
                         .centered();
 
                 help.render(*chunks.get(6).ok_or(MonitorError::Chunks)?, buf);
@@ -490,7 +510,7 @@ impl EthrexMonitorWidget {
 
                 log_widget.render(*chunks.first().ok_or(MonitorError::Chunks)?, buf);
 
-                let help = Line::raw("↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector | tab: switch tab | Q: quit").centered();
+                let help = Line::raw("↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector | m: toggle mouse | tab: switch tab | Q: quit").centered();
 
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
@@ -503,7 +523,9 @@ impl EthrexMonitorWidget {
                     buf,
                     &mut accounts,
                 );
-                let help = Line::raw("w/s: scroll table | tab: switch tab | Q: quit").centered();
+                let help =
+                    Line::raw("w/s: scroll table | m: toggle mouse | tab: switch tab | Q: quit")
+                        .centered();
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
         };
