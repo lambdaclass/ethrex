@@ -819,6 +819,17 @@ impl PeerTableServer {
             self.contacts.swap_remove(&contact_to_discard_id);
             self.discarded_contacts.insert(contact_to_discard_id);
         }
+
+        let (discv4, discv5) = self.contacts.values().fold((0, 0), |(v4, v5), c| {
+            (v4 + c.is_discv4 as usize, v5 + c.is_discv5 as usize)
+        });
+        tracing::info!(
+            peers = self.peers.len(),
+            contacts = self.contacts.len(),
+            discv4,
+            discv5,
+            "Peer table status"
+        );
     }
 
     fn get_contact_to_initiate(&mut self) -> Option<Contact> {
