@@ -135,8 +135,12 @@ pub fn init_tracing(
     Option<tracing_appender::non_blocking::WorkerGuard>,
 ) {
     if !opts.sequencer_opts.no_monitor {
-        let level_filter = EnvFilter::builder()
-            .parse_lossy("info,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
+        let default_filter = "info,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off";
+        let level_filter = EnvFilter::builder().parse_lossy(
+            std::env::var("RUST_LOG")
+                .as_deref()
+                .unwrap_or(default_filter),
+        );
         let subscriber = tracing_subscriber::registry()
             .with(TuiTracingSubscriberLayer)
             .with(level_filter);

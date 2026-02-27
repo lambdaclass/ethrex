@@ -306,11 +306,14 @@ impl EthrexMonitorWidget {
                 TabsState::Overview | TabsState::Logs | TabsState::RichAccounts,
                 KeyCode::Char('m'),
             ) => {
-                self.mouse_captured = !self.mouse_captured;
-                if self.mouse_captured {
-                    let _ = execute!(io::stdout(), EnableMouseCapture);
+                let new_state = !self.mouse_captured;
+                let result = if new_state {
+                    execute!(io::stdout(), EnableMouseCapture)
                 } else {
-                    let _ = execute!(io::stdout(), DisableMouseCapture);
+                    execute!(io::stdout(), DisableMouseCapture)
+                };
+                if result.is_ok() {
+                    self.mouse_captured = new_state;
                 }
             }
             (TabsState::Overview | TabsState::Logs | TabsState::RichAccounts, KeyCode::Tab) => {
@@ -370,6 +373,14 @@ impl EthrexMonitorWidget {
         self.rich_accounts.on_tick(&self.rollup_client).await?;
 
         Ok(())
+    }
+
+    fn mouse_label(&self) -> &str {
+        if self.mouse_captured {
+            "m: mouse [ON]"
+        } else {
+            "m: mouse [OFF]"
+        }
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer) -> Result<(), MonitorError>
@@ -484,9 +495,11 @@ impl EthrexMonitorWidget {
                     &mut l2_to_l1_messages_state,
                 );
 
-                let help =
-                    Line::raw("↑/↓: select table | w/s: scroll table | m: toggle mouse | tab: switch tab | Q: quit")
-                        .centered();
+                let help = Line::raw(format!(
+                    "↑/↓: select table | w/s: scroll table | {} | tab: switch tab | Q: quit",
+                    self.mouse_label()
+                ))
+                .centered();
 
                 help.render(*chunks.get(6).ok_or(MonitorError::Chunks)?, buf);
             }
@@ -510,7 +523,7 @@ impl EthrexMonitorWidget {
 
                 log_widget.render(*chunks.first().ok_or(MonitorError::Chunks)?, buf);
 
-                let help = Line::raw("↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector | m: toggle mouse | tab: switch tab | Q: quit").centered();
+                let help = Line::raw(format!("↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector | {} | tab: switch tab | Q: quit", self.mouse_label())).centered();
 
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
@@ -523,9 +536,11 @@ impl EthrexMonitorWidget {
                     buf,
                     &mut accounts,
                 );
-                let help =
-                    Line::raw("w/s: scroll table | m: toggle mouse | tab: switch tab | Q: quit")
-                        .centered();
+                let help = Line::raw(format!(
+                    "w/s: scroll table | {} | tab: switch tab | Q: quit",
+                    self.mouse_label()
+                ))
+                .centered();
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
         };
