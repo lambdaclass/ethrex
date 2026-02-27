@@ -11,8 +11,8 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
-    WriteBatch,
+    BlockBasedIndexType, BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options,
+    SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -84,6 +84,18 @@ impl RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
+        // Two-level index with partitioned filters: splits large index/filter blocks
+        // into smaller partitions with a top-level index, reducing block cache pressure
+        // and memory overhead for large datasets.
+        let set_partitioned_index = |block_opts: &mut BlockBasedOptions| {
+            block_opts.set_index_type(BlockBasedIndexType::TwoLevelIndexSearch);
+            block_opts.set_partition_filters(true);
+            block_opts.set_metadata_block_size(4096);
+            block_opts.set_cache_index_and_filter_blocks(true);
+            block_opts.set_pin_top_level_index_and_filter(true);
+            block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+        };
+
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
             let mut cf_opts = Options::default();
@@ -105,6 +117,7 @@ impl RocksDBBackend {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
+                    set_partitioned_index(&mut block_opts);
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -114,6 +127,7 @@ impl RocksDBBackend {
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
+                    set_partitioned_index(&mut block_opts);
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
@@ -126,6 +140,7 @@ impl RocksDBBackend {
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
+                    set_partitioned_index(&mut block_opts);
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
@@ -138,6 +153,7 @@ impl RocksDBBackend {
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
+                    set_partitioned_index(&mut block_opts);
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
@@ -153,6 +169,7 @@ impl RocksDBBackend {
                     cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
 
                     let mut block_opts = BlockBasedOptions::default();
+                    set_partitioned_index(&mut block_opts);
                     block_opts.set_block_size(32 * 1024); // 32KB
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -162,6 +179,7 @@ impl RocksDBBackend {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
+                    set_partitioned_index(&mut block_opts);
                     block_opts.set_block_size(32 * 1024); // 32KB
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -172,6 +190,7 @@ impl RocksDBBackend {
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
+                    set_partitioned_index(&mut block_opts);
                     block_opts.set_block_size(16 * 1024);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
