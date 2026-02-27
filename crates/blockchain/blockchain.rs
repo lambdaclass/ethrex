@@ -271,8 +271,9 @@ enum WorkerRequest {
     // Cross-worker storage messages (routed by storage key bucket)
     MerklizeStorage {
         prefix: H256,
+        key: H256,
+        value: U256,
         storage_root: H256,
-        keys: Vec<(H256, U256)>,
     },
     DeleteStorage(H256),
     // Cross-worker: signals this worker finished routing all MerklizeStorage
@@ -2766,8 +2767,6 @@ fn handle_subtrie(
                         .unwrap_or(*EMPTY_TRIE_HASH);
 
                     let is_new = !expected_shards.contains_key(&prefix);
-                    // Batch remote keys by target worker to reduce message count
-                    let mut remote_batches: [Vec<(H256, U256)>; 16] = Default::default();
                     for (key, value) in account_storage {
                         let hashed_key = keccak(key);
                         let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
@@ -2787,16 +2786,12 @@ fn handle_subtrie(
                                 trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
                             }
                         } else {
-                            remote_batches[bucket as usize].push((hashed_key, value));
-                        }
-                    }
-                    for (bucket, keys) in remote_batches.into_iter().enumerate() {
-                        if !keys.is_empty() {
-                            senders[bucket]
+                            senders[bucket as usize]
                                 .send(WorkerRequest::MerklizeStorage {
                                     prefix,
+                                    key: hashed_key,
+                                    value,
                                     storage_root,
-                                    keys,
                                 })
                                 .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                         }
@@ -2809,8 +2804,9 @@ fn handle_subtrie(
             }
             WorkerRequest::MerklizeStorage {
                 prefix,
+                key,
+                value,
                 storage_root,
-                keys,
             } => {
                 let trie = get_or_open_storage_trie(
                     &mut storage_tries,
@@ -2819,12 +2815,10 @@ fn handle_subtrie(
                     prefix,
                     storage_root,
                 )?;
-                for (key, value) in keys {
-                    if value.is_zero() {
-                        trie.remove(key.as_bytes())?;
-                    } else {
-                        trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
-                    }
+                if value.is_zero() {
+                    trie.remove(key.as_bytes())?;
+                } else {
+                    trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
                 }
                 dirty = true;
             }
@@ -2835,7 +2829,33 @@ fn handle_subtrie(
             }
             WorkerRequest::FinishRouting { sent_at } => {
                 let queue_ms = sent_at.elapsed().as_secs_f64() * 1000.0;
-                info!("worker[{index}] finish_routing: queue={queue_ms:.2}ms");
+                let t_pre = Instant::now();
+
+                // Pre-collect all storage tries BEFORE sending RoutingDone.
+                // This front-loads the expensive hashing for the slow worker
+                // (which had no idle time to pre-collect during execution).
+                // Subsequent MerklizeStorage from other workers only dirty
+                // specific paths; the majority of nodes stay committed.
+                if dirty {
+                    let mut nodes = state_trie.commit_without_storing();
+                    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+                    n_pre_collected_state += nodes.len();
+                    pre_collected_state.extend(nodes);
+                    for (prefix, trie) in storage_tries.iter_mut() {
+                        let mut nodes = trie.commit_without_storing();
+                        nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+                        if !nodes.is_empty() {
+                            pre_collected_storage
+                                .entry(*prefix)
+                                .or_default()
+                                .extend(nodes);
+                        }
+                    }
+                    dirty = false;
+                }
+
+                let pre_ms = t_pre.elapsed().as_secs_f64() * 1000.0;
+                info!("worker[{index}] finish_routing: queue={queue_ms:.2}ms pre={pre_ms:.2}ms");
                 t_finish_routing = Some(Instant::now());
                 // Signal all workers that we're done routing MerklizeStorage.
                 let senders = worker_senders
