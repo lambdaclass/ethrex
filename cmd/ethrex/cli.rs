@@ -61,7 +61,7 @@ pub struct Options {
         value_parser = clap::value_parser!(Network),
     )]
     pub network: Option<Network>,
-    #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
+    #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options", env = "ETHREX_BOOTNODES")]
     pub bootnodes: Vec<Node>,
     #[arg(
         long = "datadir",
@@ -82,13 +82,14 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
-    #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options")]
+    #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
         long = "metrics.addr",
         value_name = "ADDRESS",
         default_value = "0.0.0.0",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_METRICS_ADDR"
     )]
     pub metrics_addr: String,
     #[arg(
@@ -103,7 +104,8 @@ pub struct Options {
         long = "metrics",
         action = ArgAction::SetTrue,
         help = "Enable metrics collection and exposition",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_METRICS"
     )]
     pub metrics_enabled: bool,
     #[arg(
@@ -111,7 +113,8 @@ pub struct Options {
         action = ArgAction::SetTrue,
         help = "Used to create blocks without requiring a Consensus Client",
         long_help = "If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_DEV"
     )]
     pub dev: bool,
     #[arg(
@@ -128,14 +131,16 @@ pub struct Options {
         default_value_t = LogColor::Auto,
         help = "Output logs with ANSI color codes.",
         long_help = "Possible values: auto, always, never",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_LOG_COLOR"
     )]
     pub log_color: LogColor,
     #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
         help = "Directory to store log files.",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_LOG_DIR"
     )]
     pub log_dir: Option<PathBuf>,
     #[arg(
@@ -143,7 +148,8 @@ pub struct Options {
         long = "mempool.maxsize",
         default_value_t = 10_000,
         value_name = "MEMPOOL_MAX_SIZE",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
     #[arg(
@@ -197,7 +203,8 @@ pub struct Options {
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
         help = "Listening address for the authenticated rpc server.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_AUTHRPC_ADDR"
     )]
     pub authrpc_addr: String,
     #[arg(
@@ -205,7 +212,8 @@ pub struct Options {
         default_value = "8551",
         value_name = "PORT",
         help = "Listening port for the authenticated rpc server.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_AUTHRPC_PORT"
     )]
     pub authrpc_port: String,
     #[arg(
@@ -213,16 +221,18 @@ pub struct Options {
         default_value = "jwt.hex",
         value_name = "JWTSECRET_PATH",
         help = "Receives the jwt secret used for authenticated rpc requests.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_AUTHRPC_JWTSECRET_PATH"
     )]
     pub authrpc_jwtsecret: String,
-    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
+    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options", env = "ETHREX_P2P_DISABLED")]
     pub p2p_disabled: bool,
     #[arg(
         long = "p2p.addr",
         value_name = "ADDRESS",
         help = "Listening address for the P2P protocol.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_ADDR"
     )]
     pub p2p_addr: Option<String>,
     #[arg(
@@ -230,7 +240,8 @@ pub struct Options {
         default_value = "30303",
         value_name = "PORT",
         help = "TCP port for the P2P protocol.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_PORT"
     )]
     pub p2p_port: String,
     #[arg(
@@ -238,15 +249,33 @@ pub struct Options {
         default_value = "30303",
         value_name = "PORT",
         help = "UDP port for P2P discovery.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_DISCOVERY_PORT"
     )]
     pub discovery_port: String,
+    #[arg(
+        long = "p2p.discv4",
+        default_value_t = true,
+        action = ArgAction::Set,
+        help = "Enable discv4 discovery.",
+        help_heading = "P2P options"
+    )]
+    pub discv4_enabled: bool,
+    #[arg(
+        long = "p2p.discv5",
+        default_value_t = false,
+        action = ArgAction::Set,
+        help = "Enable discv5 discovery (experimental).",
+        help_heading = "P2P options"
+    )]
+    pub discv5_enabled: bool,
     #[arg(
         long = "p2p.tx-broadcasting-interval",
         default_value_t = BROADCAST_INTERVAL_MS,
         value_name = "INTERVAL_MS",
         help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_TX_BROADCASTING_INTERVAL"
     )]
     pub tx_broadcasting_time_interval: u64,
     #[arg(
@@ -254,7 +283,8 @@ pub struct Options {
         default_value_t = TARGET_PEERS,
         value_name = "MAX_PEERS",
         help = "Max amount of connected peers.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_TARGET_PEERS"
     )]
     pub target_peers: usize,
     #[arg(
@@ -262,7 +292,8 @@ pub struct Options {
         default_value_t = INITIAL_LOOKUP_INTERVAL_MS,
         value_name = "INITIAL_LOOKUP_INTERVAL",
         help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_LOOKUP_INTERVAL"
     )]
     pub lookup_interval: f64,
     #[arg(
@@ -270,7 +301,8 @@ pub struct Options {
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
         help = "Block extra data message.",
-        help_heading = "Block building options"
+        help_heading = "Block building options",
+        env = "ETHREX_BUILDER_EXTRA_DATA"
     )]
     pub extra_data: String,
     #[arg(
@@ -278,7 +310,8 @@ pub struct Options {
         default_value_t = DEFAULT_BUILDER_GAS_CEIL,
         value_name = "GAS_LIMIT",
         help = "Target block gas limit.",
-        help_heading = "Block building options"
+        help_heading = "Block building options",
+        env = "ETHREX_BUILDER_GAS_LIMIT"
     )]
     pub gas_limit: u64,
     #[arg(
@@ -286,6 +319,7 @@ pub struct Options {
         value_name = "MAX_BLOBS",
         help = "EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.",
         help_heading = "Block building options",
+        env = "ETHREX_BUILDER_MAX_BLOBS",
         value_parser = clap::value_parser!(u32).range(1..)
     )]
     pub max_blobs_per_block: Option<u32>,
@@ -294,7 +328,8 @@ pub struct Options {
         action = ArgAction::SetTrue,
         default_value = "false",
         help = "Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
 }
@@ -313,6 +348,8 @@ impl Options {
             authrpc_jwtsecret: "jwt.hex".to_string(),
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            discv4_enabled: true,
+            discv5_enabled: false,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -333,6 +370,8 @@ impl Options {
             authrpc_jwtsecret: "jwt.hex".into(),
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            discv4_enabled: true,
+            discv5_enabled: false,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -357,6 +396,8 @@ impl Default for Options {
             p2p_addr: None,
             p2p_port: Default::default(),
             discovery_port: Default::default(),
+            discv4_enabled: true,
+            discv5_enabled: false,
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
@@ -709,7 +750,7 @@ pub async fn import_blocks(
             } else {
                 // We need to have the state of the latest 128 blocks
                 blockchain
-                .add_block_pipeline(block)
+                .add_block_pipeline(block, None)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
@@ -817,7 +858,7 @@ pub async fn import_blocks_bench(
                 .map_err(InvalidBlockError::InvalidBody)?;
 
             blockchain
-                .add_block_pipeline(block)
+                .add_block_pipeline(block, None)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
