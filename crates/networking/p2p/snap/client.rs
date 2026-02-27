@@ -18,11 +18,15 @@ use crate::{
     },
     snap::{constants::*, encodable_to_proof, error::SnapError},
     sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
-    utils::{
-        AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
-        get_account_state_snapshot_file, get_account_storages_snapshot_file,
-    },
+    utils::{AccountFlushTarget, AccountsWithStorage, StorageFlushTarget},
 };
+#[cfg(not(feature = "rocksdb"))]
+use crate::utils::{
+    dump_accounts_to_file, dump_storages_to_file, get_account_state_snapshot_file,
+    get_account_storages_snapshot_file,
+};
+#[cfg(feature = "rocksdb")]
+use crate::utils::{write_accounts_to_rocksdb, write_storages_to_rocksdb};
 use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, H256, U256,
@@ -34,7 +38,6 @@ use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    path::Path,
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
@@ -94,7 +97,7 @@ pub async fn request_account_range(
     peers: &mut PeerHandler,
     start: H256,
     limit: H256,
-    account_state_snapshots_dir: &Path,
+    flush_target: AccountFlushTarget,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
 ) -> Result<(), SnapError> {
@@ -142,6 +145,7 @@ pub async fn request_account_range(
     *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
     let mut completed_tasks = 0;
+    #[cfg(not(feature = "rocksdb"))]
     let mut chunk_file = 0;
     let mut last_update: SystemTime = SystemTime::now();
     let mut write_set = tokio::task::JoinSet::new();
@@ -158,25 +162,34 @@ pub async fn request_account_range(
                 .zip(current_account_states)
                 .collect::<Vec<(H256, AccountState)>>();
 
-            if !std::fs::exists(account_state_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("State snapshots directory does not exist".to_string())
-            })? {
-                std::fs::create_dir_all(account_state_snapshots_dir).map_err(|_| {
-                    SnapError::SnapshotDir("Failed to create state snapshots directory".to_string())
-                })?;
+            #[cfg(feature = "rocksdb")]
+            {
+                let db = flush_target.clone();
+                write_set.spawn(async move { write_accounts_to_rocksdb(&db, account_state_chunk) });
             }
+            #[cfg(not(feature = "rocksdb"))]
+            {
+                if !std::fs::exists(flush_target.as_path()).map_err(|_| {
+                    SnapError::SnapshotDir(
+                        "State snapshots directory does not exist".to_string(),
+                    )
+                })? {
+                    std::fs::create_dir_all(flush_target.as_path()).map_err(|_| {
+                        SnapError::SnapshotDir(
+                            "Failed to create state snapshots directory".to_string(),
+                        )
+                    })?;
+                }
 
-            let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
-            write_set.spawn(async move {
-                let path = get_account_state_snapshot_file(
-                    &account_state_snapshots_dir_cloned,
-                    chunk_file,
-                );
-                // TODO: check the error type and handle it properly
-                dump_accounts_to_file(&path, account_state_chunk)
-            });
+                let flush_target_cloned = flush_target.clone();
+                write_set.spawn(async move {
+                    let path =
+                        get_account_state_snapshot_file(&flush_target_cloned, chunk_file);
+                    dump_accounts_to_file(&path, account_state_chunk)
+                });
 
-            chunk_file += 1;
+                chunk_file += 1;
+            }
         }
 
         if last_update
@@ -278,7 +291,7 @@ pub async fn request_account_range(
         .collect::<Result<Vec<()>, DumpError>>()
         .map_err(SnapError::from)?;
 
-    // TODO: This is repeated code, consider refactoring
+    // Final flush of remaining accounts
     {
         let current_account_hashes = std::mem::take(&mut all_account_hashes);
         let current_account_states = std::mem::take(&mut all_accounts_state);
@@ -288,28 +301,48 @@ pub async fn request_account_range(
             .zip(current_account_states)
             .collect::<Vec<(H256, AccountState)>>();
 
-        if !std::fs::exists(account_state_snapshots_dir).map_err(|_| {
-            SnapError::SnapshotDir("State snapshots directory does not exist".to_string())
-        })? {
-            std::fs::create_dir_all(account_state_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("Failed to create state snapshots directory".to_string())
-            })?;
+        #[cfg(feature = "rocksdb")]
+        {
+            write_accounts_to_rocksdb(&flush_target, account_state_chunk)
+                .inspect_err(|err| {
+                    error!(
+                        "We had an error dumping the last accounts to rocksdb: {}",
+                        err.error
+                    )
+                })
+                .map_err(|_| {
+                    SnapError::SnapshotDir(
+                        "Failed to write final account state chunk to rocksdb".to_string(),
+                    )
+                })?;
         }
+        #[cfg(not(feature = "rocksdb"))]
+        {
+            if !std::fs::exists(flush_target.as_path()).map_err(|_| {
+                SnapError::SnapshotDir("State snapshots directory does not exist".to_string())
+            })? {
+                std::fs::create_dir_all(flush_target.as_path()).map_err(|_| {
+                    SnapError::SnapshotDir(
+                        "Failed to create state snapshots directory".to_string(),
+                    )
+                })?;
+            }
 
-        let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
-        dump_accounts_to_file(&path, account_state_chunk)
-            .inspect_err(|err| {
-                error!(
-                    "We had an error dumping the last accounts to disk {}",
-                    err.error
-                )
-            })
-            .map_err(|_| {
-                SnapError::SnapshotDir(format!(
-                    "Failed to write state snapshot chunk {}",
-                    chunk_file
-                ))
-            })?;
+            let path = get_account_state_snapshot_file(&flush_target, chunk_file);
+            dump_accounts_to_file(&path, account_state_chunk)
+                .inspect_err(|err| {
+                    error!(
+                        "We had an error dumping the last accounts to disk {}",
+                        err.error
+                    )
+                })
+                .map_err(|_| {
+                    SnapError::SnapshotDir(format!(
+                        "Failed to write state snapshot chunk {}",
+                        chunk_file
+                    ))
+                })?;
+        }
     }
 
     METRICS
@@ -522,10 +555,11 @@ pub async fn request_bytecodes(
 /// Returns the list of hashed storage keys and values for each account's storage or None if:
 /// - There are no available peers (the node just started up or was rejected by all other nodes)
 /// - No peer returned a valid response in the given time and retry limits
+#[allow(unused_mut)]
 pub async fn request_storage_ranges(
     peers: &mut PeerHandler,
     account_storage_roots: &mut AccountStorageRoots,
-    account_storages_snapshots_dir: &Path,
+    flush_target: StorageFlushTarget,
     mut chunk_index: u64,
     pivot_header: &mut BlockHeader,
     store: Store,
@@ -611,17 +645,6 @@ pub async fn request_storage_ranges(
             let current_account_storages = std::mem::take(&mut current_account_storages);
             let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
-            if !std::fs::exists(account_storages_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string())
-            })? {
-                std::fs::create_dir_all(account_storages_snapshots_dir).map_err(|_| {
-                    SnapError::SnapshotDir(
-                        "Failed to create storage snapshots directory".to_string(),
-                    )
-                })?;
-            }
-            let account_storages_snapshots_dir_cloned =
-                account_storages_snapshots_dir.to_path_buf();
             if !disk_joinset.is_empty() {
                 debug!("Writing to disk");
                 disk_joinset
@@ -632,15 +655,57 @@ pub async fn request_storage_ranges(
                     .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
                     .map_err(SnapError::from)?;
             }
-            disk_joinset.spawn(async move {
-                let path = get_account_storages_snapshot_file(
-                    &account_storages_snapshots_dir_cloned,
-                    chunk_index,
-                );
-                dump_storages_to_file(&path, snapshot)
-            });
 
-            chunk_index += 1;
+            #[cfg(feature = "rocksdb")]
+            {
+                let db = flush_target.clone();
+                disk_joinset.spawn(async move {
+                    let flattened: Vec<(H256, H256, U256)> = snapshot
+                        .into_iter()
+                        .flat_map(|accounts_with_slots| {
+                            accounts_with_slots
+                                .accounts
+                                .into_iter()
+                                .flat_map({
+                                    let storages = &accounts_with_slots.storages;
+                                    move |hash| {
+                                        storages
+                                            .iter()
+                                            .map(move |(slot_hash, slot_value)| {
+                                                (hash, *slot_hash, *slot_value)
+                                            })
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect();
+                    write_storages_to_rocksdb(&db, flattened)
+                });
+            }
+            #[cfg(not(feature = "rocksdb"))]
+            {
+                if !std::fs::exists(flush_target.as_path()).map_err(|_| {
+                    SnapError::SnapshotDir(
+                        "Storage snapshots directory does not exist".to_string(),
+                    )
+                })? {
+                    std::fs::create_dir_all(flush_target.as_path()).map_err(|_| {
+                        SnapError::SnapshotDir(
+                            "Failed to create storage snapshots directory".to_string(),
+                        )
+                    })?;
+                }
+                let flush_target_cloned = flush_target.clone();
+                disk_joinset.spawn(async move {
+                    let path = get_account_storages_snapshot_file(
+                        &flush_target_cloned,
+                        chunk_index,
+                    );
+                    dump_storages_to_file(&path, snapshot)
+                });
+
+                chunk_index += 1;
+            }
         }
 
         if let Ok(result) = task_receiver.try_recv() {
@@ -1004,20 +1069,52 @@ pub async fn request_storage_ranges(
     {
         let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
-        if !std::fs::exists(account_storages_snapshots_dir).map_err(|_| {
-            SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string())
-        })? {
-            std::fs::create_dir_all(account_storages_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("Failed to create storage snapshots directory".to_string())
+        #[cfg(feature = "rocksdb")]
+        {
+            let flattened: Vec<(H256, H256, U256)> = snapshot
+                .into_iter()
+                .flat_map(|accounts_with_slots| {
+                    accounts_with_slots
+                        .accounts
+                        .into_iter()
+                        .flat_map({
+                            let storages = &accounts_with_slots.storages;
+                            move |hash| {
+                                storages
+                                    .iter()
+                                    .map(move |(slot_hash, slot_value)| {
+                                        (hash, *slot_hash, *slot_value)
+                                    })
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            write_storages_to_rocksdb(&flush_target, flattened).map_err(|_| {
+                SnapError::SnapshotDir(
+                    "Failed to write final storage chunk to rocksdb".to_string(),
+                )
             })?;
         }
-        let path = get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
-        dump_storages_to_file(&path, snapshot).map_err(|_| {
-            SnapError::SnapshotDir(format!(
-                "Failed to write storage snapshot chunk {}",
-                chunk_index
-            ))
-        })?;
+        #[cfg(not(feature = "rocksdb"))]
+        {
+            if !std::fs::exists(flush_target.as_path()).map_err(|_| {
+                SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string())
+            })? {
+                std::fs::create_dir_all(flush_target.as_path()).map_err(|_| {
+                    SnapError::SnapshotDir(
+                        "Failed to create storage snapshots directory".to_string(),
+                    )
+                })?;
+            }
+            let path = get_account_storages_snapshot_file(&flush_target, chunk_index);
+            dump_storages_to_file(&path, snapshot).map_err(|_| {
+                SnapError::SnapshotDir(format!(
+                    "Failed to write storage snapshot chunk {}",
+                    chunk_index
+                ))
+            })?;
+        }
     }
     disk_joinset
         .join_all()
