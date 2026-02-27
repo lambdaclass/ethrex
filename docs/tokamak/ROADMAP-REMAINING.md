@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-27
-**Context**: Overall ~95% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1), G-3 ✅ DONE (CALL/CREATE dual-execution validation), G-4 ✅ DONE (JIT-to-JIT direct dispatch), G-5 ✅ DONE (parallel compilation pool), G-7 ✅ DONE (constant folding enhancement — 22 opcodes + unary patterns).
+**Context**: Overall ~95% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1), G-3 ✅ DONE (CALL/CREATE dual-execution validation), G-4 ✅ DONE (JIT-to-JIT direct dispatch), G-5 ✅ DONE (parallel compilation pool), G-6 ✅ DONE (LRU cache eviction — AtomicU64 timestamps), G-7 ✅ DONE (constant folding enhancement — 22 opcodes + unary patterns).
 
 ---
 
@@ -311,6 +311,17 @@
 - **Dependency**: G-1 ✅
 - **Completed**: 2026-02-27 — CompilerThreadPool + deduplication guard + 4 tests
 
+### G-6. LRU Cache Eviction [P2] ✅ DONE
+- Replaced FIFO (`VecDeque`) with LRU eviction using per-entry `AtomicU64` timestamps ✅
+- `CacheEntry` wrapper: `Arc<CompiledCode>` + `AtomicU64` last_access timestamp ✅
+- `CodeCache.access_counter: Arc<AtomicU64>` — monotonic counter outside `RwLock` ✅
+- `get()`: atomic timestamp update under read lock (no write lock needed) ✅
+- `insert()`: O(n) min_by_key scan to find LRU entry (n ≤ max_cache_entries) ✅
+- Removed `insertion_order: VecDeque<CacheKey>` entirely ✅
+- **Verification**: 9 cache unit tests + 5 integration tests, 53 total tokamak-jit tests ✅
+- **Dependency**: G-1 ✅
+- **Completed**: 2026-02-27 — AtomicU64 LRU eviction replacing FIFO
+
 ### G-7. Constant Folding Enhancement — Expanded Opcodes [P2] ✅ DONE
 - Expanded D-3 optimizer from 6 binary opcodes to 20 binary + 2 unary opcodes (22 total) ✅
 - **Binary opcodes added**: DIV, SDIV, MOD, SMOD, EXP, SIGNEXTEND, LT, GT, SLT, SGT, EQ, SHL, SHR, SAR ✅
@@ -338,7 +349,7 @@ Week 6:  [P3] F-1 ✅ + F-4 ✅ (parallel)
 Week 7:  [P3] F-2 ✅ (dashboard MVP)
 Week 8:  [P3] F-3 ✅ (L2 scaffolding)
 Week 9:  [P1] G-1 ✅ (arena allocator) + G-3 ✅ (CALL/CREATE validation) + G-5 ✅ (parallel compilation) + G-7 ✅ (constant folding 22 opcodes)
-Week 10: [P1] G-4 ✅ (JIT-to-JIT direct dispatch)
+Week 10: [P1] G-4 ✅ (JIT-to-JIT direct dispatch) + G-6 ✅ (LRU cache eviction)
 Later:   [P3] F-5
 ```
 

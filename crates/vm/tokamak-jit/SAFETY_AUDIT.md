@@ -140,9 +140,10 @@ to the number of unique contracts compiled.
 - Oversized bytecodes (>24KB) are excluded from compilation
 - Acceptable for PoC; documented as requiring production fix
 
-**Recommendation**: Implement a persistent LLVM execution engine with explicit
-lifetime management, or use a bounded LRU eviction policy that frees LLVM
-memory via `free_function`.
+**Recommendation**: ✅ RESOLVED — Arena allocator (G-1) manages LLVM memory lifecycle,
+bounded LRU eviction policy (G-6) with per-entry AtomicU64 timestamps ensures
+frequently-accessed entries survive longer. Evicted entries return FuncSlot for
+arena memory reclamation.
 
 ### 4. Manual Send for JitResumeStateInner (execution.rs:73-74) -- LOW
 
@@ -273,8 +274,8 @@ catches output mismatches before trusting JIT results.
 
 ## Production Hardening Recommendations
 
-1. **Memory management**: Replace `mem::forget` with persistent LLVM context
-   or bounded LRU with explicit function freeing.
+1. **Memory management**: ✅ RESOLVED — Arena allocator (G-1) replaces `mem::forget`,
+   LRU cache eviction (G-6) ensures bounded memory with AtomicU64-based access tracking.
 
 2. **W^X enforcement**: Ensure JIT code pages are mapped as RX (read-execute)
    only, never RWX. Verify via `/proc/self/maps` audit on Linux.

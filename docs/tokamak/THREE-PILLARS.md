@@ -112,19 +112,19 @@ Tokamak JIT compiles frequently-executed EVM bytecodes into native machine code 
 | **G-1** | **LLVM Memory Leak** | ✅ DONE (f8e9ba540) | Arena allocator — ArenaManager + ArenaCompiler + thread_local ArenaState |
 | **G-2** | **Cache Eviction No-Op** | ✅ DONE | Auto-resolved by G-1 — Free/FreeArena handlers reclaim memory |
 
-#### Significant (v1.1 Targets) — 2/3 RESOLVED
+#### Significant (v1.1 Targets) — ALL RESOLVED ✅
 
 | ID | Issue | Status | Resolution |
 |----|-------|--------|------------|
 | **G-3** | **CALL/CREATE Validation Gap** | ✅ DONE (8c05d3412) | Removed has_external_calls guard — validation runs for ALL bytecodes |
-| **G-4** | **Recursive CALL Overhead** | REMAINING | Inline small calls for depth 1 (20-30h) |
+| **G-4** | **Recursive CALL Overhead** | ✅ DONE | VM-layer fast dispatch for child CALL bytecodes |
 | **G-5** | **Single Compiler Thread** | ✅ DONE (299d03720) | CompilerThreadPool — crossbeam-channel multi-consumer, N workers |
 
-#### Moderate (v1.2 Optimization) — 1/3 RESOLVED
+#### Moderate (v1.2 Optimization) — 2/3 RESOLVED
 
 | ID | Issue | Status | Resolution |
 |----|-------|--------|------------|
-| **G-6** | **FIFO Cache** (not LRU) | REMAINING | Atomic timestamp LRU (8-12h) |
+| **G-6** | **FIFO Cache** (not LRU) | ✅ DONE | AtomicU64 LRU eviction — lock-free get() hot path |
 | **G-7** | **Constant Folding** | ✅ DONE (43026d7cf) | Expanded from 6 to 22 opcodes (14 binary + 2 unary), refactored eval helpers |
 | **G-8** | **No Precompile Acceleration** | REMAINING | LLVM IR extern calls (16-24h) |
 
@@ -132,9 +132,9 @@ Tokamak JIT compiles frequently-executed EVM bytecodes into native machine code 
 
 ```
 v1.0.1  G-1 + G-2 (memory safety)           ✅ ALL DONE
-v1.1    G-3 + G-5 done, G-4 remaining        20-30h left
-v1.2    G-7 done, G-6 + G-8 remaining        24-36h left
-                                        Remaining: 44-66h
+v1.1    G-3 + G-4 + G-5                     ✅ ALL DONE
+v1.2    G-6 + G-7 done, G-8 remaining        16-24h left
+                                        Remaining: 16-24h
 ```
 
 ---
@@ -308,8 +308,8 @@ Plus L2 integration scaffolding (F-3): 7 tests connecting JIT policy to L2 hook 
 | Phase | Tasks | Status | Remaining |
 |-------|-------|--------|-----------|
 | v1.0.1 | G-1 + G-2 | **✅ ALL DONE** | 0h |
-| v1.1 | G-3 ✅ + G-4 + G-5 ✅ | **2/3 DONE** | 20-30h (G-4) |
-| v1.2 | G-6 + G-7 ✅ + G-8 | **1/3 DONE** | 24-36h (G-6, G-8) |
+| v1.1 | G-3 ✅ + G-4 ✅ + G-5 ✅ | **✅ ALL DONE** | 0h |
+| v1.2 | G-6 ✅ + G-7 ✅ + G-8 | **2/3 DONE** | 16-24h (G-8) |
 
 #### Other Remaining Work
 

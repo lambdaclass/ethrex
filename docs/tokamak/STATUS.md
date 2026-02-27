@@ -44,6 +44,7 @@
 - Parallel compilation thread pool (G-5) — crossbeam-channel multi-consumer, N workers (default num_cpus/2), deduplication guard, 4 new tests
 - Constant folding enhancement (G-7) — expanded to 22 opcodes (DIV/SDIV/MOD/SMOD/EXP/SIGNEXTEND/LT/GT/SLT/SGT/EQ/SHL/SHR/SAR + NOT/ISZERO unary), refactored eval helpers, 68 unit + 8 integration tests
 - JIT-to-JIT direct dispatch (G-4) — VM-layer fast dispatch for child CALL bytecodes, cache lookup + direct JIT execution, recursive suspend/resume, configurable + metrics, 10 tests
+- LRU cache eviction (G-6) — replaced FIFO with AtomicU64-based LRU timestamps, lock-free get() hot path, O(n) eviction scan on insert(), 9 cache unit + 5 integration tests
 
 **Remaining:**
 - Tiered optimization (profile-guided optimization)
@@ -184,6 +185,7 @@ R23(5.0) -> R24(8.0)
 - CALL/CREATE Dual-Execution Validation (G-3) — Removed `has_external_calls` guard, validation runs for ALL bytecodes (CALL/STATICCALL/DELEGATECALL), shared MismatchBackend + helpers, 5 tests (8c05d3412) (2026-02-27)
 - Constant Folding Enhancement (G-7) — Expanded optimizer from 6 to 22 opcodes (14 new binary + 2 unary), signed arithmetic helpers, extracted eval helpers + write_folded_push, 68 unit + 8 integration tests (43026d7cf) (2026-02-27)
 - JIT-to-JIT Direct Dispatch (G-4) — VM-layer fast dispatch: child CALL bytecodes checked against JIT cache and executed directly via `execute_jit()`, recursive suspend/resume for nested JIT calls, `enable_jit_dispatch` config + `jit_to_jit_dispatches` metric, 10 tests (2026-02-27)
+- LRU Cache Eviction (G-6) — Replaced FIFO (VecDeque) with LRU eviction: per-entry AtomicU64 timestamps, monotonic access_counter outside RwLock, atomic-only get() hot path, O(n) min_by_key eviction on insert(), 9+5 tests (2026-02-27)
 
 ### Not Started
 - EF grant application

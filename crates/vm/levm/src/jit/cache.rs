@@ -6,7 +6,8 @@
 
 use ethrex_common::H256;
 use ethrex_common::types::Fork;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use super::arena::FuncSlot;
@@ -95,24 +96,45 @@ impl std::fmt::Debug for CompiledCode {
     }
 }
 
+/// A cache entry wrapping compiled code with an LRU access timestamp.
+///
+/// The `last_access` field is an atomic counter updated on every `get()` call
+/// under a read lock, enabling lock-free LRU tracking on the hot path.
+struct CacheEntry {
+    code: Arc<CompiledCode>,
+    last_access: AtomicU64,
+}
+
+impl std::fmt::Debug for CacheEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CacheEntry")
+            .field("code", &self.code)
+            .field("last_access", &self.last_access.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
 /// Inner state for the code cache (behind RwLock).
 #[derive(Debug)]
 struct CodeCacheInner {
-    entries: HashMap<CacheKey, Arc<CompiledCode>>,
-    insertion_order: VecDeque<CacheKey>,
+    entries: HashMap<CacheKey, CacheEntry>,
     max_entries: usize,
 }
 
-/// Thread-safe cache of JIT-compiled bytecodes with FIFO eviction.
+/// Thread-safe cache of JIT-compiled bytecodes with LRU eviction.
 ///
-/// When the cache reaches `max_entries`, the oldest entry (by insertion time)
-/// is evicted. `get()` does not update access order, so this is FIFO, not LRU.
+/// When the cache reaches `max_entries`, the least recently used entry
+/// (by access timestamp) is evicted. `get()` atomically updates the
+/// entry's access timestamp under a read lock (no write lock needed).
 /// Evicted entries return their `arena_slot` so the caller can decrement
 /// the arena's live count via `ArenaManager::mark_evicted`. When an arena
 /// reaches zero live functions, its LLVM resources are freed.
 #[derive(Debug, Clone)]
 pub struct CodeCache {
     inner: Arc<RwLock<CodeCacheInner>>,
+    /// Monotonic counter for LRU timestamps. Shared across clones via Arc.
+    /// Incremented atomically on every `get()` and `insert()` — no lock needed.
+    access_counter: Arc<AtomicU64>,
 }
 
 impl CodeCache {
@@ -121,9 +143,9 @@ impl CodeCache {
         Self {
             inner: Arc::new(RwLock::new(CodeCacheInner {
                 entries: HashMap::new(),
-                insertion_order: VecDeque::new(),
                 max_entries,
             })),
+            access_counter: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -133,38 +155,63 @@ impl CodeCache {
     }
 
     /// Look up compiled code by (bytecode hash, fork).
+    ///
+    /// Atomically updates the entry's LRU timestamp under the read lock.
+    /// This is safe because `AtomicU64::store` only needs a `&` reference.
+    /// `Relaxed` ordering is sufficient: approximate LRU is fine for cache eviction,
+    /// and the eviction scan only runs under write lock (consistent view).
     pub fn get(&self, key: &CacheKey) -> Option<Arc<CompiledCode>> {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let inner = self.inner.read().unwrap();
-        inner.entries.get(key).cloned()
+        inner.entries.get(key).map(|entry| {
+            let tick = self.access_counter.fetch_add(1, Ordering::Relaxed);
+            entry.last_access.store(tick, Ordering::Relaxed);
+            Arc::clone(&entry.code)
+        })
     }
 
-    /// Insert compiled code into the cache, evicting the oldest entry if at capacity.
+    /// Insert compiled code into the cache, evicting the LRU entry if at capacity.
     ///
     /// Returns the evicted entry's `arena_slot` if an eviction occurred and the evicted
     /// entry had an arena slot, so the caller can free the LLVM memory.
     pub fn insert(&self, key: CacheKey, code: CompiledCode) -> Option<FuncSlot> {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut inner = self.inner.write().unwrap();
+        let tick = self.access_counter.fetch_add(1, Ordering::Relaxed);
 
         // If already present, just update the value (no eviction needed)
         if let std::collections::hash_map::Entry::Occupied(mut e) = inner.entries.entry(key) {
-            e.insert(Arc::new(code));
+            e.insert(CacheEntry {
+                code: Arc::new(code),
+                last_access: AtomicU64::new(tick),
+            });
             return None;
         }
 
-        // Evict oldest if at capacity
+        // Evict LRU entry if at capacity
         let mut evicted_slot = None;
-        if inner.max_entries > 0
-            && inner.entries.len() >= inner.max_entries
-            && let Some(oldest) = inner.insertion_order.pop_front()
-            && let Some(evicted) = inner.entries.remove(&oldest)
-        {
-            evicted_slot = evicted.arena_slot;
+        if inner.max_entries > 0 && inner.entries.len() >= inner.max_entries {
+            // Find the entry with the smallest last_access (least recently used)
+            let lru_key = inner
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_access.load(Ordering::Relaxed))
+                .map(|(k, _)| *k);
+
+            if let Some(lru_key) = lru_key
+                && let Some(evicted) = inner.entries.remove(&lru_key)
+            {
+                evicted_slot = evicted.code.arena_slot;
+            }
         }
 
-        inner.entries.insert(key, Arc::new(code));
-        inner.insertion_order.push_back(key);
+        inner.entries.insert(
+            key,
+            CacheEntry {
+                code: Arc::new(code),
+                last_access: AtomicU64::new(tick),
+            },
+        );
         evicted_slot
     }
 
@@ -173,7 +220,6 @@ impl CodeCache {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut inner = self.inner.write().unwrap();
         inner.entries.remove(key);
-        inner.insertion_order.retain(|k| k != key);
     }
 
     /// Number of entries in the cache.
@@ -197,7 +243,6 @@ impl CodeCache {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         let mut inner = self.inner.write().unwrap();
         inner.entries.clear();
-        inner.insertion_order.clear();
     }
 }
 
@@ -248,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_eviction() {
+    fn test_cache_eviction_lru() {
         let cache = CodeCache::with_max_entries(3);
 
         let k1 = (H256::from_low_u64_be(1), default_fork());
@@ -268,16 +313,119 @@ mod tests {
         cache.insert(k3, code3);
         assert_eq!(cache.len(), 3);
 
-        // Insert 4th entry → oldest (k1) should be evicted
+        // Access k1 to refresh its LRU timestamp — now k2 is least recently used
+        assert!(cache.get(&k1).is_some());
+
+        // Insert 4th entry → k2 (least recently used) should be evicted
         #[expect(unsafe_code)]
         let code4 = unsafe { CompiledCode::new(std::ptr::null(), 40, 4, None, false) };
         let evicted = cache.insert(k4, code4);
-        assert!(evicted.is_none(), "evicted entry had no func_id");
+        assert!(evicted.is_none(), "evicted entry had no arena_slot");
         assert_eq!(cache.len(), 3);
-        assert!(cache.get(&k1).is_none(), "oldest entry should be evicted");
-        assert!(cache.get(&k2).is_some());
+        assert!(
+            cache.get(&k1).is_some(),
+            "recently accessed k1 should survive"
+        );
+        assert!(cache.get(&k2).is_none(), "LRU entry k2 should be evicted");
         assert!(cache.get(&k3).is_some());
         assert!(cache.get(&k4).is_some());
+    }
+
+    #[test]
+    fn test_lru_access_refreshes_timestamp() {
+        let cache = CodeCache::with_max_entries(3);
+
+        let k1 = (H256::from_low_u64_be(1), default_fork());
+        let k2 = (H256::from_low_u64_be(2), default_fork());
+        let k3 = (H256::from_low_u64_be(3), default_fork());
+        let k4 = (H256::from_low_u64_be(4), default_fork());
+        let k5 = (H256::from_low_u64_be(5), default_fork());
+
+        #[expect(unsafe_code)]
+        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1, None, false) };
+        cache.insert(k1, code1);
+        #[expect(unsafe_code)]
+        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2, None, false) };
+        cache.insert(k2, code2);
+        #[expect(unsafe_code)]
+        let code3 = unsafe { CompiledCode::new(std::ptr::null(), 30, 3, None, false) };
+        cache.insert(k3, code3);
+
+        // Access k1 many times to make it most recently used
+        for _ in 0..10 {
+            cache.get(&k1);
+        }
+
+        // Insert k4 → k2 is LRU (last_access=1), should be evicted
+        #[expect(unsafe_code)]
+        let code4 = unsafe { CompiledCode::new(std::ptr::null(), 40, 4, None, false) };
+        cache.insert(k4, code4);
+        // Check k2 evicted without using get() on remaining entries (to avoid
+        // disturbing their timestamps)
+        assert_eq!(cache.len(), 3);
+
+        // Now cache has: k1 (last_access=12), k3 (last_access=2), k4 (last_access=13)
+        // Access k1 once more to keep it fresh
+        cache.get(&k1);
+        // k3 is LRU (last_access=2), k1 is most recent
+
+        // Insert k5 → k3 (least recently used) should be evicted
+        #[expect(unsafe_code)]
+        let code5 = unsafe { CompiledCode::new(std::ptr::null(), 50, 5, None, false) };
+        cache.insert(k5, code5);
+        assert_eq!(cache.len(), 3);
+        assert!(cache.get(&k3).is_none(), "k3 should be evicted as LRU");
+        assert!(cache.get(&k1).is_some(), "frequently accessed k1 survives");
+        assert!(cache.get(&k4).is_some());
+        assert!(cache.get(&k5).is_some());
+    }
+
+    #[test]
+    fn test_lru_eviction_returns_arena_slot() {
+        let cache = CodeCache::with_max_entries(2);
+
+        let k1 = (H256::from_low_u64_be(1), default_fork());
+        let k2 = (H256::from_low_u64_be(2), default_fork());
+        let k3 = (H256::from_low_u64_be(3), default_fork());
+
+        // Insert k1 with an arena slot
+        #[expect(unsafe_code)]
+        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1, Some((1, 0)), false) };
+        cache.insert(k1, code1);
+        // Insert k2 without arena slot
+        #[expect(unsafe_code)]
+        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2, None, false) };
+        cache.insert(k2, code2);
+
+        // Access k2 to make k1 the LRU entry
+        cache.get(&k2);
+
+        // Insert k3 → k1 (LRU, has arena slot) should be evicted
+        #[expect(unsafe_code)]
+        let code3 = unsafe { CompiledCode::new(std::ptr::null(), 30, 3, None, false) };
+        let evicted = cache.insert(k3, code3);
+        assert_eq!(evicted, Some((1, 0)), "should return evicted arena slot");
+        assert!(cache.get(&k1).is_none());
+    }
+
+    #[test]
+    fn test_lru_no_eviction_under_capacity() {
+        let cache = CodeCache::with_max_entries(5);
+
+        let k1 = (H256::from_low_u64_be(1), default_fork());
+        let k2 = (H256::from_low_u64_be(2), default_fork());
+
+        #[expect(unsafe_code)]
+        let code1 = unsafe { CompiledCode::new(std::ptr::null(), 10, 1, None, false) };
+        cache.insert(k1, code1);
+        #[expect(unsafe_code)]
+        let code2 = unsafe { CompiledCode::new(std::ptr::null(), 20, 2, None, false) };
+        let evicted = cache.insert(k2, code2);
+
+        assert!(evicted.is_none(), "no eviction when under capacity");
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(&k1).is_some());
+        assert!(cache.get(&k2).is_some());
     }
 
     #[test]
