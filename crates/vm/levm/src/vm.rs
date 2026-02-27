@@ -22,7 +22,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::{OnceCell, RefCell},
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -71,7 +71,7 @@ pub struct Substate {
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
     accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
-    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -85,7 +85,7 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         accessed_addresses: FxHashSet<Address>,
-        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
@@ -173,6 +173,10 @@ impl Substate {
 
     /// Mark an address as selfdestructed and return whether is was already marked.
     pub fn add_selfdestruct(&mut self, address: Address) -> bool {
+        if self.selfdestruct_set.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
@@ -222,6 +226,14 @@ impl Substate {
 
     /// Mark an address as accessed and return whether the slot was cold.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
+        if self
+            .accessed_storage_slots
+            .get(&address)
+            .is_some_and(|set| set.contains(&key))
+        {
+            return false;
+        }
+
         let is_present = self
             .parent
             .as_ref()
@@ -273,6 +285,10 @@ impl Substate {
 
     /// Mark an address as accessed and return whether the address was cold.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
+        if self.accessed_addresses.contains(&address) {
+            return false;
+        }
+
         let is_present = self
             .parent
             .as_ref()
@@ -297,6 +313,10 @@ impl Substate {
 
     /// Mark an address as a new account and return whether is was already marked.
     pub fn add_created_account(&mut self, address: Address) -> bool {
+        if self.created_accounts.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
@@ -407,7 +427,7 @@ pub struct VM<'a> {
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation).
-    pub storage_original_values: BTreeMap<(Address, H256), U256>,
+    pub storage_original_values: FxHashMap<(Address, H256), U256>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Debug mode for development diagnostics.
@@ -444,7 +464,7 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            storage_original_values: BTreeMap::new(),
+            storage_original_values: FxHashMap::default(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
@@ -674,7 +694,7 @@ impl Substate {
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = FxHashSet::default();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> = FxHashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
