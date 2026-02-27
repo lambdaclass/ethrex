@@ -8,9 +8,13 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
-use ethrex_common::{Address, U256};
-use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt, hint::assert_unchecked};
+use ethrex_common::{Address, H256, U256, types::Code};
+use std::{
+    collections::HashMap,
+    fmt,
+    hash::{Hash, Hasher},
+    hint::assert_unchecked,
+};
 
 /// [`u64`]s that make up a [`U256`]
 const U64_PER_U256: usize = U256::MAX.0.len();
@@ -219,6 +223,16 @@ impl fmt::Debug for Stack {
     }
 }
 
+impl Hash for Stack {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "offset is always within bounds of values"
+    )]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.values[self.offset..].hash(state);
+    }
+}
+
 #[derive(Debug)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
@@ -314,7 +328,10 @@ impl CallFrameBackup {
 }
 
 impl CallFrame {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "inlined constructor, many args needed for performance"
+    )]
     // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
     // because passing so much data is costly. Verified with samply.
     #[inline(always)]

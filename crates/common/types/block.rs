@@ -1072,7 +1072,7 @@ mod test {
     #[test]
     fn test_fake_exponential_overflow() {
         // With u64 this overflows
-        assert!(fake_exponential(U256::from(57532635), U256::from(3145728), 3338477).is_ok());
+        assert!(fake_exponential(57532635.into(), 3145728.into(), 3338477).is_ok());
     }
 
     #[test]

@@ -456,15 +456,15 @@ impl LEVM {
             &vm_type,
         )?;
 
-        let block_excess_blob_gas = block_header.excess_blob_gas.map(U256::from);
+        let block_excess_blob_gas = block_header.excess_blob_gas;
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
             config,
-            block_number: block_header.number.into(),
+            block_number: block_header.number,
             coinbase: block_header.coinbase,
-            timestamp: block_header.timestamp.into(),
+            timestamp: block_header.timestamp,
             prev_randao: Some(block_header.prev_randao),
             slot_number: block_header
                 .slot_number
@@ -475,7 +475,7 @@ impl LEVM {
             base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
             gas_price,
             block_excess_blob_gas,
-            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+            block_blob_gas_used: block_header.blob_gas_used,
             tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
@@ -776,14 +776,14 @@ pub fn generic_system_contract_levm(
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
         // So we add the base cost that will be taken in the execution.
         gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
-        block_number: block_header.number.into(),
+        block_number: block_header.number,
         coinbase: block_header.coinbase,
-        timestamp: block_header.timestamp.into(),
+        timestamp: block_header.timestamp,
         prev_randao: Some(block_header.prev_randao),
         base_fee_per_gas: U256::zero(),
         gas_price: U256::zero(),
-        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+        block_excess_blob_gas: block_header.excess_blob_gas,
+        block_blob_gas_used: block_header.blob_gas_used,
         block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
@@ -965,7 +965,7 @@ fn env_from_generic(
     let chain_config = db.store.get_chain_config()?;
     let gas_price =
         calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
-    let block_excess_blob_gas = header.excess_blob_gas.map(U256::from);
+    let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
     // Validate slot_number for Amsterdam+ blocks
@@ -991,9 +991,9 @@ fn env_from_generic(
             .gas
             .unwrap_or(get_max_allowed_gas_limit(header.gas_limit, config.fork)), // Ensure tx doesn't fail due to gas limit
         config,
-        block_number: header.number.into(),
+        block_number: header.number,
         coinbase: header.coinbase,
-        timestamp: header.timestamp.into(),
+        timestamp: header.timestamp,
         prev_randao: Some(header.prev_randao),
         slot_number,
         chain_id: chain_config.chain_id.into(),
@@ -1001,7 +1001,7 @@ fn env_from_generic(
         base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
         gas_price,
         block_excess_blob_gas,
-        block_blob_gas_used: header.blob_gas_used.map(U256::from),
+        block_blob_gas_used: header.blob_gas_used,
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
         tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),

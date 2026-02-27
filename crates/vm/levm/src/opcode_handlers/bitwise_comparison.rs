@@ -1,267 +1,284 @@
+//! # Bitwise and comparison operations
+//!
+//! Includes the following opcodes:
+//!   - `LT`
+//!   - `GT`
+//!   - `SLT`
+//!   - `SGT`
+//!   - `EQ`
+//!   - `ISZERO`
+//!   - `AND`
+//!   - `OR`
+//!   - `XOR`
+//!   - `NOT`
+//!   - `BYTE`
+//!   - `SHL`
+//!   - `SHR`
+//!   - `SAR`
+
 use crate::{
-    constants::WORD_SIZE,
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
+    opcode_handlers::OpcodeHandler,
     vm::VM,
 };
 use ethrex_common::U256;
 
-// Comparison and Bitwise Logic Operations (14)
-// Opcodes: LT, GT, SLT, SGT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR
+/// Implementation for the `LT` opcode.
+pub struct OpLtHandler;
+impl OpcodeHandler for OpLtHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::LT)?;
 
-impl<'a> VM<'a> {
-    // LT operation
-    #[inline]
-    pub fn op_lt(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::LT)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
-        let result = u256_from_bool(lho < rho);
-        current_call_frame.stack.push(result)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // GT operation
-    #[inline]
-    pub fn op_gt(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GT)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
-        let result = u256_from_bool(lho > rho);
-        current_call_frame.stack.push(result)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // SLT operation (signed less than)
-    pub fn op_slt(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
-        let lho_is_negative = lho.bit(255);
-        let rho_is_negative = rho.bit(255);
-        let result = if lho_is_negative == rho_is_negative {
-            // Compare magnitudes if signs are the same
-            u256_from_bool(lho < rho)
-        } else {
-            // Negative is smaller if signs differ
-            u256_from_bool(lho_is_negative)
-        };
-        current_call_frame.stack.push(result)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // SGT operation (signed greater than)
-    pub fn op_sgt(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
-        let lho_is_negative = lho.bit(255);
-        let rho_is_negative = rho.bit(255);
-        let result = if lho_is_negative == rho_is_negative {
-            // Compare magnitudes if signs are the same
-            u256_from_bool(lho > rho)
-        } else {
-            // Positive is bigger if signs differ
-            u256_from_bool(rho_is_negative)
-        };
-        current_call_frame.stack.push(result)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // EQ operation (equality check)
-    #[inline]
-    pub fn op_eq(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
-        let result = u256_from_bool(lho == rho);
-
-        current_call_frame.stack.push(result)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // ISZERO operation (check if zero)
-    #[inline]
-    pub fn op_iszero(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ISZERO)?;
-
-        let [operand] = current_call_frame.stack.pop()?;
-        let result = u256_from_bool(operand.is_zero());
-
-        current_call_frame.stack.push(result)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // AND operation
-    #[inline]
-    pub fn op_and(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::AND)?;
-        let [a, b] = *current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(a & b)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // OR operation
-    #[inline]
-    pub fn op_or(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::OR)?;
-        let [a, b] = *current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(a | b)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // XOR operation
-    pub fn op_xor(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
-        let [a, b] = *current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(a ^ b)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // NOT operation
-    pub fn op_not(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
-        let a = current_call_frame.stack.pop1()?;
-        current_call_frame.stack.push(!a)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // BYTE operation
-    pub fn op_byte(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::BYTE)?;
-        let [op1, op2] = *current_call_frame.stack.pop()?;
-        let byte_index = match op1.try_into() {
-            Ok(byte_index) => byte_index,
-            Err(_) => {
-                // Index is out of bounds, then push 0
-                current_call_frame.stack.push_zero()?;
-                return Ok(OpcodeResult::Continue);
-            }
-        };
-
-        if byte_index < WORD_SIZE {
-            let byte_to_push = WORD_SIZE
-                .checked_sub(byte_index)
-                .ok_or(InternalError::Underflow)?
-                .checked_sub(1)
-                .ok_or(InternalError::Underflow)?; // Same case as above
-            current_call_frame
-                .stack
-                .push(U256::from(op2.byte(byte_to_push)))?;
-        } else {
-            current_call_frame.stack.push_zero()?;
-        }
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    #[expect(clippy::arithmetic_side_effects)]
-    // SHL operation (shift left)
-    #[inline]
-    pub fn op_shl(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
-        let [shift, value] = *current_call_frame.stack.pop()?;
-
-        if shift < U256::from(256) {
-            current_call_frame.stack.push(value << shift)?;
-        } else {
-            current_call_frame.stack.push_zero()?;
-        }
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    #[expect(clippy::arithmetic_side_effects)]
-    // SHR operation (shift right)
-    #[inline]
-    pub fn op_shr(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
-        let [shift, value] = *current_call_frame.stack.pop()?;
-
-        if shift < U256::from(256) {
-            current_call_frame.stack.push(value >> shift)?;
-        } else {
-            current_call_frame.stack.push_zero()?;
-        }
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    #[allow(clippy::arithmetic_side_effects)]
-    // SAR operation (arithmetic shift right)
-    pub fn op_sar(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
-        let [shift, value] = *current_call_frame.stack.pop()?;
-
-        // In 2's complement arithmetic, the most significant bit being one means the number is negative
-        let is_negative = value.bit(255);
-
-        let res = if shift < U256::from(256) {
-            if !is_negative {
-                value >> shift
-            } else {
-                (value >> shift) | ((U256::MAX) << (U256::from(256) - shift))
-            }
-        } else if is_negative {
-            U256::MAX
-        } else {
-            U256::zero()
-        };
-        current_call_frame.stack.push(res)?;
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        #[expect(clippy::as_conversions, reason = "safe")]
+        vm.current_call_frame
+            .stack
+            .push(((lhs < rhs) as u64).into())?;
 
         Ok(OpcodeResult::Continue)
     }
 }
 
-/// Instead of using unsafe <<, uses checked_mul n times, replicating n shifts.
-/// Note: These (checked_shift_left and checked_shift_right) are done because
-/// are not available in U256
-pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
-    let mut result = value;
-    let mut shifts_left = shift;
+/// Implementation for the `GT` opcode.
+pub struct OpGtHandler;
+impl OpcodeHandler for OpGtHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::GT)?;
 
-    while !shifts_left.is_zero() {
-        result = match result.checked_mul(U256::from(2)) {
-            Some(num) => num,
-            None => {
-                let only_most_representative_bit_on = U256::from(2)
-                    .checked_pow(U256::from(255))
-                    .ok_or(InternalError::Overflow)?;
-                let partial_result = result
-                    .checked_sub(only_most_representative_bit_on)
-                    .ok_or(InternalError::Underflow)?; //Should not happen bc checked_mul overflows
-                partial_result
-                    .checked_mul(2.into())
-                    .ok_or(InternalError::Overflow)?
-            }
-        };
-        shifts_left = shifts_left
-            .checked_sub(U256::one())
-            .ok_or(InternalError::Underflow)?; // Should not reach negative values
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        #[expect(clippy::as_conversions, reason = "safe")]
+        vm.current_call_frame
+            .stack
+            .push(((lhs > rhs) as u64).into())?;
+
+        Ok(OpcodeResult::Continue)
     }
-
-    Ok(result)
 }
 
-const fn u256_from_bool(value: bool) -> U256 {
-    if value { U256::one() } else { U256::zero() }
+/// Implementation for the `SLT` opcode.
+pub struct OpSLtHandler;
+impl OpcodeHandler for OpSLtHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
+
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        let lhs_sign = lhs.bit(255);
+        let rhs_sign = rhs.bit(255);
+
+        vm.current_call_frame
+            .stack
+            .push(match (lhs_sign, rhs_sign) {
+                (false, true) => U256::zero(),
+                (true, false) => U256::one(),
+                #[expect(clippy::as_conversions, reason = "safe")]
+                _ => ((lhs < rhs) as u64).into(),
+            })?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SGT` opcode.
+pub struct OpSGtHandler;
+impl OpcodeHandler for OpSGtHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
+
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        let lhs_sign = lhs.bit(255);
+        let rhs_sign = rhs.bit(255);
+
+        vm.current_call_frame
+            .stack
+            .push(match (lhs_sign, rhs_sign) {
+                (false, true) => U256::one(),
+                (true, false) => U256::zero(),
+                #[expect(clippy::as_conversions, reason = "safe")]
+                _ => ((lhs > rhs) as u64).into(),
+            })?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `EQ` opcode.
+pub struct OpEqHandler;
+impl OpcodeHandler for OpEqHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
+
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        #[expect(clippy::as_conversions, reason = "safe")]
+        vm.current_call_frame
+            .stack
+            .push(((lhs == rhs) as u64).into())?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `ISZERO` opcode.
+pub struct OpIsZeroHandler;
+impl OpcodeHandler for OpIsZeroHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::ISZERO)?;
+
+        let value = vm.current_call_frame.stack.pop1()?;
+        #[expect(clippy::as_conversions, reason = "safe")]
+        vm.current_call_frame
+            .stack
+            .push((value.is_zero() as u64).into())?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `AND` opcode.
+pub struct OpAndHandler;
+impl OpcodeHandler for OpAndHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::AND)?;
+
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        vm.current_call_frame.stack.push(lhs & rhs)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `OR` opcode.
+pub struct OpOrHandler;
+impl OpcodeHandler for OpOrHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::OR)?;
+
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        vm.current_call_frame.stack.push(lhs | rhs)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `XOR` opcode.
+pub struct OpXorHandler;
+impl OpcodeHandler for OpXorHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
+
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        vm.current_call_frame.stack.push(lhs ^ rhs)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `NOT` opcode.
+pub struct OpNotHandler;
+impl OpcodeHandler for OpNotHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
+
+        let value = vm.current_call_frame.stack.pop1()?;
+        vm.current_call_frame.stack.push(!value)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `BYTE` opcode.
+pub struct OpByteHandler;
+impl OpcodeHandler for OpByteHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::BYTE)?;
+
+        let [index, value] = *vm.current_call_frame.stack.pop()?;
+        vm.current_call_frame
+            .stack
+            .push(match usize::try_from(index) {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "x < 32 guard prevents overflow"
+                )]
+                Ok(x) if x < 32 => value.byte(31 - x).into(),
+                _ => U256::zero(),
+            })?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SHL` opcode.
+pub struct OpShlHandler;
+impl OpcodeHandler for OpShlHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
+
+        let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
+        vm.current_call_frame
+            .stack
+            .push(match u8::try_from(shift_amount) {
+                #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
+                Ok(shift_amount) => value << shift_amount,
+                Err(_) => U256::zero(),
+            })?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SHR` opcode.
+pub struct OpShrHandler;
+impl OpcodeHandler for OpShrHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
+
+        let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
+        vm.current_call_frame
+            .stack
+            .push(match u8::try_from(shift_amount) {
+                #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
+                Ok(shift_amount) => value >> shift_amount,
+                Err(_) => U256::zero(),
+            })?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SAR` opcode.
+pub struct OpSarHandler;
+impl OpcodeHandler for OpSarHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
+
+        let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
+        #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
+        vm.current_call_frame
+            .stack
+            .push(match (u8::try_from(shift_amount), value.bit(255)) {
+                (Ok(shift_amount), false) => value >> shift_amount,
+                (Ok(shift_amount), true) => !(!value >> shift_amount),
+                (Err(_), false) => U256::zero(),
+                (Err(_), true) => U256::MAX,
+            })?;
+
+        Ok(OpcodeResult::Continue)
+    }
 }

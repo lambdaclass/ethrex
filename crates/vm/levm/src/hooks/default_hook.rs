@@ -353,6 +353,7 @@ pub fn validate_max_fee_per_blob_gas(
         }
         .into());
     }
+
     Ok(())
 }
 

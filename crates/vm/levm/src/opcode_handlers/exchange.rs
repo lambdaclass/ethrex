@@ -1,38 +1,44 @@
+//! # Stack exchange operations
+//!
+//! Includes the following opcodes:
+//!   - `SWAP1` to `SWAP16`
+
 use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
+    opcode_handlers::OpcodeHandler,
     vm::VM,
 };
 use std::mem;
 
-// Exchange Operations (16)
-// Opcodes: SWAP1 ... SWAP16
+/// Implementation for the `SWAPn` opcodes.
+pub struct OpSwapHandler<const N: usize>;
+impl<const N: usize> OpcodeHandler for OpSwapHandler<N> {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::SWAPN)?;
 
-impl<'a> VM<'a> {
-    // SWAP operation
-    #[inline]
-    pub fn op_swap<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SWAPN)?;
-
-        current_call_frame.stack.swap::<N>()?;
+        vm.current_call_frame.stack.swap::<N>()?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // SWAPN operation
-    #[inline]
-    pub fn op_swapn(&mut self) -> Result<OpcodeResult, VMError> {
-        // Increase the consumed gas.
-        self.current_call_frame
+/// Implementation for the `SWAPN` opcode.
+pub struct OpSwapNHandler;
+impl OpcodeHandler for OpSwapNHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::SWAPN)?;
 
-        let relative_offset = self
+        let relative_offset = vm
             .current_call_frame
             .bytecode
             .bytecode
-            .get(self.current_call_frame.pc)
+            .get(vm.current_call_frame.pc)
             .copied()
             .unwrap_or_default();
 
@@ -49,7 +55,7 @@ impl<'a> VM<'a> {
         // Stack grows downwards, so we add the offset to get deeper elements
         // SWAPN swaps top with the (n+1)th element where n = decoded relative_offset
         // The (n+1)th element (1-indexed) is at array index offset + n
-        let absolute_offset = self
+        let absolute_offset = vm
             .current_call_frame
             .stack
             .offset
@@ -61,11 +67,11 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::StackUnderflow.into());
         }
 
-        let top_offset = self.current_call_frame.stack.offset;
+        let top_offset = vm.current_call_frame.stack.offset;
 
         #[expect(unsafe_code, reason = "bound already checked")]
         unsafe {
-            let [x, y] = self
+            let [x, y] = vm
                 .current_call_frame
                 .stack
                 .values
@@ -73,22 +79,24 @@ impl<'a> VM<'a> {
             mem::swap(x, y);
         }
 
-        self.current_call_frame.pc = self.current_call_frame.pc.wrapping_add(1);
+        vm.current_call_frame.pc = vm.current_call_frame.pc.wrapping_add(1);
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // EXCHANGE operation
-    #[inline]
-    pub fn op_exchange(&mut self) -> Result<OpcodeResult, VMError> {
-        // Increase the consumed gas.
-        self.current_call_frame
+/// Implementation for the `EXCHANGE` opcode.
+pub struct OpExchangeHandler;
+impl OpcodeHandler for OpExchangeHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::EXCHANGE)?;
 
-        let relative_offset = self
+        let relative_offset = vm
             .current_call_frame
             .bytecode
             .bytecode
-            .get(self.current_call_frame.pc)
+            .get(vm.current_call_frame.pc)
             .copied()
             .unwrap_or_default();
 
@@ -123,7 +131,7 @@ impl<'a> VM<'a> {
 
         // Stack grows downwards, so we add the offsets to get deeper elements
         let absolute_offset = {
-            let stack_offset = self.current_call_frame.stack.offset;
+            let stack_offset = vm.current_call_frame.stack.offset;
 
             let q = stack_offset
                 .checked_add(usize::from(relative_offset.0))
@@ -142,7 +150,7 @@ impl<'a> VM<'a> {
 
         #[expect(unsafe_code, reason = "bound already checked")]
         unsafe {
-            let [x, y] = self
+            let [x, y] = vm
                 .current_call_frame
                 .stack
                 .values
@@ -150,7 +158,7 @@ impl<'a> VM<'a> {
             mem::swap(x, y);
         }
 
-        self.current_call_frame.pc = self.current_call_frame.pc.wrapping_add(1);
+        vm.current_call_frame.pc = vm.current_call_frame.pc.wrapping_add(1);
         Ok(OpcodeResult::Continue)
     }
 }

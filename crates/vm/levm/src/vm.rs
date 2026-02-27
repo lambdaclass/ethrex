@@ -24,7 +24,7 @@ use ethrex_common::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
-    cell::RefCell,
+    cell::{OnceCell, RefCell},
     collections::{BTreeMap, BTreeSet, HashMap},
     mem,
     rc::Rc,
@@ -181,7 +181,7 @@ impl Substate {
             .parent
             .as_ref()
             .map(|parent| parent.is_selfdestruct(&address))
-            .unwrap_or(false);
+            .unwrap_or_default();
 
         is_present || !self.selfdestruct_set.insert(address)
     }
@@ -224,30 +224,31 @@ impl Substate {
             .collect()
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Mark an address as accessed and return whether the slot was cold.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
-        // Check self first — short-circuits for re-accessed (warm) slots
         if self
             .accessed_storage_slots
             .get(&address)
-            .map(|set| set.contains(&key))
-            .unwrap_or(false)
+            .is_some_and(|set| set.contains(&key))
         {
-            return true;
+            return false;
         }
 
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or(false);
+            .unwrap_or_default();
 
-        is_present
+        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
+        //   expression if not necessary.
+        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
+        !(is_present
             || !self
                 .accessed_storage_slots
                 .entry(address)
                 .or_default()
-                .insert(key)
+                .insert(key))
     }
 
     /// Return whether an address has already been accessed.
@@ -282,20 +283,22 @@ impl Substate {
         slots
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Mark an address as accessed and return whether the address was cold.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
-        // Check self first — short-circuits for re-accessed (warm) addresses
         if self.accessed_addresses.contains(&address) {
-            return true;
+            return false;
         }
 
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or(false);
+            .unwrap_or_default();
 
-        is_present || !self.accessed_addresses.insert(address)
+        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
+        //   expression if not necessary.
+        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
+        !(is_present || !self.accessed_addresses.insert(address))
     }
 
     /// Return whether an address has already been accessed.
@@ -318,7 +321,7 @@ impl Substate {
             .parent
             .as_ref()
             .map(|parent| parent.is_account_created(&address))
-            .unwrap_or(false);
+            .unwrap_or_default();
 
         is_present || !self.created_accounts.insert(address)
     }
@@ -433,8 +436,10 @@ pub struct VM<'a> {
     pub stack_pool: Vec<Stack>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
-    /// Opcode dispatch table, built dynamically per fork.
-    pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+
+    /// The opcode table mapping opcodes to opcode handlers for fast lookup.
+    /// Build dynamically according to the given fork config.
+    pub(crate) opcode_table: [OpCodeFn; 256],
 }
 
 impl<'a> VM<'a> {
@@ -572,6 +577,8 @@ impl<'a> VM<'a> {
             return result;
         }
 
+        let mut error = OnceCell::<VMError>::new();
+
         #[cfg(feature = "perf_opcode_timings")]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
@@ -584,101 +591,7 @@ impl<'a> VM<'a> {
 
             // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = match opcode {
-                0x5d if self.env.config.fork >= Fork::Cancun => self.op_tstore(),
-                0x60 => self.op_push::<1>(),
-                0x61 => self.op_push::<2>(),
-                0x62 => self.op_push::<3>(),
-                0x63 => self.op_push::<4>(),
-                0x64 => self.op_push::<5>(),
-                0x65 => self.op_push::<6>(),
-                0x66 => self.op_push::<7>(),
-                0x67 => self.op_push::<8>(),
-                0x68 => self.op_push::<9>(),
-                0x69 => self.op_push::<10>(),
-                0x6a => self.op_push::<11>(),
-                0x6b => self.op_push::<12>(),
-                0x6c => self.op_push::<13>(),
-                0x6d => self.op_push::<14>(),
-                0x6e => self.op_push::<15>(),
-                0x6f => self.op_push::<16>(),
-                0x70 => self.op_push::<17>(),
-                0x71 => self.op_push::<18>(),
-                0x72 => self.op_push::<19>(),
-                0x73 => self.op_push::<20>(),
-                0x74 => self.op_push::<21>(),
-                0x75 => self.op_push::<22>(),
-                0x76 => self.op_push::<23>(),
-                0x77 => self.op_push::<24>(),
-                0x78 => self.op_push::<25>(),
-                0x79 => self.op_push::<26>(),
-                0x7a => self.op_push::<27>(),
-                0x7b => self.op_push::<28>(),
-                0x7c => self.op_push::<29>(),
-                0x7d => self.op_push::<30>(),
-                0x7e => self.op_push::<31>(),
-                0x7f => self.op_push::<32>(),
-                0x80 => self.op_dup::<0>(),
-                0x81 => self.op_dup::<1>(),
-                0x82 => self.op_dup::<2>(),
-                0x83 => self.op_dup::<3>(),
-                0x84 => self.op_dup::<4>(),
-                0x85 => self.op_dup::<5>(),
-                0x86 => self.op_dup::<6>(),
-                0x87 => self.op_dup::<7>(),
-                0x88 => self.op_dup::<8>(),
-                0x89 => self.op_dup::<9>(),
-                0x8a => self.op_dup::<10>(),
-                0x8b => self.op_dup::<11>(),
-                0x8c => self.op_dup::<12>(),
-                0x8d => self.op_dup::<13>(),
-                0x8e => self.op_dup::<14>(),
-                0x8f => self.op_dup::<15>(),
-                0x90 => self.op_swap::<1>(),
-                0x91 => self.op_swap::<2>(),
-                0x92 => self.op_swap::<3>(),
-                0x93 => self.op_swap::<4>(),
-                0x94 => self.op_swap::<5>(),
-                0x95 => self.op_swap::<6>(),
-                0x96 => self.op_swap::<7>(),
-                0x97 => self.op_swap::<8>(),
-                0x98 => self.op_swap::<9>(),
-                0x99 => self.op_swap::<10>(),
-                0x9a => self.op_swap::<11>(),
-                0x9b => self.op_swap::<12>(),
-                0x9c => self.op_swap::<13>(),
-                0x9d => self.op_swap::<14>(),
-                0x9e => self.op_swap::<15>(),
-                0x9f => self.op_swap::<16>(),
-                0x00 => self.op_stop(),
-                0x01 => self.op_add(),
-                0x02 => self.op_mul(),
-                0x03 => self.op_sub(),
-                0x10 => self.op_lt(),
-                0x11 => self.op_gt(),
-                0x14 => self.op_eq(),
-                0x15 => self.op_iszero(),
-                0x16 => self.op_and(),
-                0x17 => self.op_or(),
-                0x1b if self.env.config.fork >= Fork::Constantinople => self.op_shl(),
-                0x1c if self.env.config.fork >= Fork::Constantinople => self.op_shr(),
-                0x35 => self.op_calldataload(),
-                0x39 => self.op_codecopy(),
-                0x50 => self.op_pop(),
-                0x51 => self.op_mload(),
-                0x52 => self.op_mstore(),
-                0x54 => self.op_sload(),
-                0x56 => self.op_jump(),
-                0x57 => self.op_jumpi(),
-                0x5b => self.op_jumpdest(),
-                0x5f if self.env.config.fork >= Fork::Shanghai => self.op_push0(),
-                0xf3 => self.op_return(),
-                _ => {
-                    // Call the opcode, using the opcode function lookup table.
-                    // Indexing will not panic as all the opcode values fit within the table.
-                    self.opcode_table[opcode as usize].call(self)
-                }
-            };
+            let op_result = self.opcode_table[opcode as usize].call(self, &mut error);
 
             #[cfg(feature = "perf_opcode_timings")]
             {
@@ -687,9 +600,11 @@ impl<'a> VM<'a> {
             }
 
             let result = match op_result {
-                Ok(OpcodeResult::Continue) => continue,
-                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
-                Err(error) => self.handle_opcode_error(error)?,
+                OpcodeResult::Continue => continue,
+                OpcodeResult::Halt => match error.take() {
+                    None => self.handle_opcode_result()?,
+                    Some(error) => self.handle_opcode_error(error)?,
+                },
             };
 
             // Return the ExecutionReport if the executed callframe was the first one.

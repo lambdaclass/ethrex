@@ -1,8 +1,14 @@
 use crate::{
-    errors::{ExceptionalHalt, OpcodeResult, VMError},
+    errors::{OpcodeResult, VMError},
+    opcode_handlers::{
+        OpInvalidHandler, OpStopHandler, OpcodeHandler, arithmetic::*, bitwise_comparison::*,
+        block::*, dup::*, environment::*, exchange::*, keccak::*, logging::*, push::*,
+        stack_memory_storage_flow::*, system::*,
+    },
     vm::VM,
 };
 use ethrex_common::types::Fork;
+use std::cell::OnceCell;
 use strum::EnumString;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, EnumString, Hash)]
@@ -367,13 +373,30 @@ impl From<Opcode> for usize {
 
 /// Represents an opcode function handler.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct OpCodeFn<'a>(fn(&'_ mut VM<'a>) -> Result<OpcodeResult, VMError>);
+pub(crate) struct OpCodeFn(fn(&mut VM<'_>, &mut OnceCell<VMError>) -> OpcodeResult);
 
-impl<'a> OpCodeFn<'a> {
+impl OpCodeFn {
+    pub const fn new<T>() -> Self
+    where
+        T: OpcodeHandler,
+    {
+        Self(Self::wrap::<T>)
+    }
+
     /// Call the opcode handler.
     #[inline(always)]
-    pub fn call(self, vm: &mut VM<'a>) -> Result<OpcodeResult, VMError> {
-        (self.0)(vm)
+    pub fn call(self, vm: &mut VM<'_>, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        (self.0)(vm, error)
+    }
+
+    fn wrap<T>(vm: &mut VM<'_>, error: &mut OnceCell<VMError>) -> OpcodeResult
+    where
+        T: OpcodeHandler,
+    {
+        T::eval(vm).unwrap_or_else(|err| {
+            _ = error.set(err);
+            OpcodeResult::Halt
+        })
     }
 }
 
@@ -382,7 +405,7 @@ impl<'a> VM<'a> {
     ///
     /// This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn<'a>; 256] {
+    pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn; 256] {
         if fork >= Fork::Amsterdam {
             Self::build_opcode_table_amsterdam()
         } else if fork >= Fork::Osaka {
@@ -397,217 +420,209 @@ impl<'a> VM<'a> {
     }
 
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_pre_shanghai() -> [OpCodeFn<'a>; 256] {
-        let mut opcode_table: [OpCodeFn<'a>; 256] = [OpCodeFn(VM::on_invalid_opcode); 256];
+    const fn build_opcode_table_pre_shanghai() -> [OpCodeFn; 256] {
+        let mut opcode_table: [OpCodeFn; 256] = [OpCodeFn::new::<OpInvalidHandler>(); 256];
 
-        opcode_table[Opcode::STOP as usize] = OpCodeFn(VM::op_stop);
-        opcode_table[Opcode::MLOAD as usize] = OpCodeFn(VM::op_mload);
-        opcode_table[Opcode::MSTORE as usize] = OpCodeFn(VM::op_mstore);
-        opcode_table[Opcode::MSTORE8 as usize] = OpCodeFn(VM::op_mstore8);
-        opcode_table[Opcode::JUMP as usize] = OpCodeFn(VM::op_jump);
-        opcode_table[Opcode::SLOAD as usize] = OpCodeFn(VM::op_sload);
-        opcode_table[Opcode::SSTORE as usize] = OpCodeFn(VM::op_sstore);
-        opcode_table[Opcode::MSIZE as usize] = OpCodeFn(VM::op_msize);
-        opcode_table[Opcode::GAS as usize] = OpCodeFn(VM::op_gas);
-        opcode_table[Opcode::PUSH1 as usize] = OpCodeFn(VM::op_push::<1>);
-        opcode_table[Opcode::PUSH2 as usize] = OpCodeFn(VM::op_push::<2>);
-        opcode_table[Opcode::PUSH3 as usize] = OpCodeFn(VM::op_push::<3>);
-        opcode_table[Opcode::PUSH4 as usize] = OpCodeFn(VM::op_push::<4>);
-        opcode_table[Opcode::PUSH5 as usize] = OpCodeFn(VM::op_push::<5>);
-        opcode_table[Opcode::PUSH6 as usize] = OpCodeFn(VM::op_push::<6>);
-        opcode_table[Opcode::PUSH7 as usize] = OpCodeFn(VM::op_push::<7>);
-        opcode_table[Opcode::PUSH8 as usize] = OpCodeFn(VM::op_push::<8>);
-        opcode_table[Opcode::PUSH8 as usize] = OpCodeFn(VM::op_push::<8>);
-        opcode_table[Opcode::PUSH9 as usize] = OpCodeFn(VM::op_push::<9>);
-        opcode_table[Opcode::PUSH10 as usize] = OpCodeFn(VM::op_push::<10>);
-        opcode_table[Opcode::PUSH11 as usize] = OpCodeFn(VM::op_push::<11>);
-        opcode_table[Opcode::PUSH12 as usize] = OpCodeFn(VM::op_push::<12>);
-        opcode_table[Opcode::PUSH13 as usize] = OpCodeFn(VM::op_push::<13>);
-        opcode_table[Opcode::PUSH14 as usize] = OpCodeFn(VM::op_push::<14>);
-        opcode_table[Opcode::PUSH15 as usize] = OpCodeFn(VM::op_push::<15>);
-        opcode_table[Opcode::PUSH16 as usize] = OpCodeFn(VM::op_push::<16>);
-        opcode_table[Opcode::PUSH17 as usize] = OpCodeFn(VM::op_push::<17>);
-        opcode_table[Opcode::PUSH18 as usize] = OpCodeFn(VM::op_push::<18>);
-        opcode_table[Opcode::PUSH19 as usize] = OpCodeFn(VM::op_push::<19>);
-        opcode_table[Opcode::PUSH20 as usize] = OpCodeFn(VM::op_push::<20>);
-        opcode_table[Opcode::PUSH21 as usize] = OpCodeFn(VM::op_push::<21>);
-        opcode_table[Opcode::PUSH22 as usize] = OpCodeFn(VM::op_push::<22>);
-        opcode_table[Opcode::PUSH23 as usize] = OpCodeFn(VM::op_push::<23>);
-        opcode_table[Opcode::PUSH24 as usize] = OpCodeFn(VM::op_push::<24>);
-        opcode_table[Opcode::PUSH25 as usize] = OpCodeFn(VM::op_push::<25>);
-        opcode_table[Opcode::PUSH26 as usize] = OpCodeFn(VM::op_push::<26>);
-        opcode_table[Opcode::PUSH27 as usize] = OpCodeFn(VM::op_push::<27>);
-        opcode_table[Opcode::PUSH28 as usize] = OpCodeFn(VM::op_push::<28>);
-        opcode_table[Opcode::PUSH29 as usize] = OpCodeFn(VM::op_push::<29>);
-        opcode_table[Opcode::PUSH30 as usize] = OpCodeFn(VM::op_push::<30>);
-        opcode_table[Opcode::PUSH31 as usize] = OpCodeFn(VM::op_push::<31>);
-        opcode_table[Opcode::PUSH32 as usize] = OpCodeFn(VM::op_push::<32>);
+        opcode_table[Opcode::STOP as usize] = OpCodeFn::new::<OpStopHandler>();
+        opcode_table[Opcode::MLOAD as usize] = OpCodeFn::new::<OpMLoadHandler>();
+        opcode_table[Opcode::MSTORE as usize] = OpCodeFn::new::<OpMStoreHandler>();
+        opcode_table[Opcode::MSTORE8 as usize] = OpCodeFn::new::<OpMStore8Handler>();
+        opcode_table[Opcode::JUMP as usize] = OpCodeFn::new::<OpJumpHandler>();
+        opcode_table[Opcode::SLOAD as usize] = OpCodeFn::new::<OpSLoadHandler>();
+        opcode_table[Opcode::SSTORE as usize] = OpCodeFn::new::<OpSStoreHandler>();
+        opcode_table[Opcode::MSIZE as usize] = OpCodeFn::new::<OpMSizeHandler>();
+        opcode_table[Opcode::GAS as usize] = OpCodeFn::new::<OpGasHandler>();
+        opcode_table[Opcode::PUSH1 as usize] = OpCodeFn::new::<OpPushHandler<1>>();
+        opcode_table[Opcode::PUSH2 as usize] = OpCodeFn::new::<OpPushHandler<2>>();
+        opcode_table[Opcode::PUSH3 as usize] = OpCodeFn::new::<OpPushHandler<3>>();
+        opcode_table[Opcode::PUSH4 as usize] = OpCodeFn::new::<OpPushHandler<4>>();
+        opcode_table[Opcode::PUSH5 as usize] = OpCodeFn::new::<OpPushHandler<5>>();
+        opcode_table[Opcode::PUSH6 as usize] = OpCodeFn::new::<OpPushHandler<6>>();
+        opcode_table[Opcode::PUSH7 as usize] = OpCodeFn::new::<OpPushHandler<7>>();
+        opcode_table[Opcode::PUSH8 as usize] = OpCodeFn::new::<OpPushHandler<8>>();
+        opcode_table[Opcode::PUSH9 as usize] = OpCodeFn::new::<OpPushHandler<9>>();
+        opcode_table[Opcode::PUSH10 as usize] = OpCodeFn::new::<OpPushHandler<10>>();
+        opcode_table[Opcode::PUSH11 as usize] = OpCodeFn::new::<OpPushHandler<11>>();
+        opcode_table[Opcode::PUSH12 as usize] = OpCodeFn::new::<OpPushHandler<12>>();
+        opcode_table[Opcode::PUSH13 as usize] = OpCodeFn::new::<OpPushHandler<13>>();
+        opcode_table[Opcode::PUSH14 as usize] = OpCodeFn::new::<OpPushHandler<14>>();
+        opcode_table[Opcode::PUSH15 as usize] = OpCodeFn::new::<OpPushHandler<15>>();
+        opcode_table[Opcode::PUSH16 as usize] = OpCodeFn::new::<OpPushHandler<16>>();
+        opcode_table[Opcode::PUSH17 as usize] = OpCodeFn::new::<OpPushHandler<17>>();
+        opcode_table[Opcode::PUSH18 as usize] = OpCodeFn::new::<OpPushHandler<18>>();
+        opcode_table[Opcode::PUSH19 as usize] = OpCodeFn::new::<OpPushHandler<19>>();
+        opcode_table[Opcode::PUSH20 as usize] = OpCodeFn::new::<OpPushHandler<20>>();
+        opcode_table[Opcode::PUSH21 as usize] = OpCodeFn::new::<OpPushHandler<21>>();
+        opcode_table[Opcode::PUSH22 as usize] = OpCodeFn::new::<OpPushHandler<22>>();
+        opcode_table[Opcode::PUSH23 as usize] = OpCodeFn::new::<OpPushHandler<23>>();
+        opcode_table[Opcode::PUSH24 as usize] = OpCodeFn::new::<OpPushHandler<24>>();
+        opcode_table[Opcode::PUSH25 as usize] = OpCodeFn::new::<OpPushHandler<25>>();
+        opcode_table[Opcode::PUSH26 as usize] = OpCodeFn::new::<OpPushHandler<26>>();
+        opcode_table[Opcode::PUSH27 as usize] = OpCodeFn::new::<OpPushHandler<27>>();
+        opcode_table[Opcode::PUSH28 as usize] = OpCodeFn::new::<OpPushHandler<28>>();
+        opcode_table[Opcode::PUSH29 as usize] = OpCodeFn::new::<OpPushHandler<29>>();
+        opcode_table[Opcode::PUSH30 as usize] = OpCodeFn::new::<OpPushHandler<30>>();
+        opcode_table[Opcode::PUSH31 as usize] = OpCodeFn::new::<OpPushHandler<31>>();
+        opcode_table[Opcode::PUSH32 as usize] = OpCodeFn::new::<OpPushHandler<32>>();
 
-        opcode_table[Opcode::DUP1 as usize] = OpCodeFn(VM::op_dup::<0>);
-        opcode_table[Opcode::DUP2 as usize] = OpCodeFn(VM::op_dup::<1>);
-        opcode_table[Opcode::DUP3 as usize] = OpCodeFn(VM::op_dup::<2>);
-        opcode_table[Opcode::DUP4 as usize] = OpCodeFn(VM::op_dup::<3>);
-        opcode_table[Opcode::DUP5 as usize] = OpCodeFn(VM::op_dup::<4>);
-        opcode_table[Opcode::DUP6 as usize] = OpCodeFn(VM::op_dup::<5>);
-        opcode_table[Opcode::DUP7 as usize] = OpCodeFn(VM::op_dup::<6>);
-        opcode_table[Opcode::DUP8 as usize] = OpCodeFn(VM::op_dup::<7>);
-        opcode_table[Opcode::DUP9 as usize] = OpCodeFn(VM::op_dup::<8>);
-        opcode_table[Opcode::DUP10 as usize] = OpCodeFn(VM::op_dup::<9>);
-        opcode_table[Opcode::DUP11 as usize] = OpCodeFn(VM::op_dup::<10>);
-        opcode_table[Opcode::DUP12 as usize] = OpCodeFn(VM::op_dup::<11>);
-        opcode_table[Opcode::DUP13 as usize] = OpCodeFn(VM::op_dup::<12>);
-        opcode_table[Opcode::DUP14 as usize] = OpCodeFn(VM::op_dup::<13>);
-        opcode_table[Opcode::DUP15 as usize] = OpCodeFn(VM::op_dup::<14>);
-        opcode_table[Opcode::DUP16 as usize] = OpCodeFn(VM::op_dup::<15>);
+        opcode_table[Opcode::DUP1 as usize] = OpCodeFn::new::<OpDupHandler<0>>();
+        opcode_table[Opcode::DUP2 as usize] = OpCodeFn::new::<OpDupHandler<1>>();
+        opcode_table[Opcode::DUP3 as usize] = OpCodeFn::new::<OpDupHandler<2>>();
+        opcode_table[Opcode::DUP4 as usize] = OpCodeFn::new::<OpDupHandler<3>>();
+        opcode_table[Opcode::DUP5 as usize] = OpCodeFn::new::<OpDupHandler<4>>();
+        opcode_table[Opcode::DUP6 as usize] = OpCodeFn::new::<OpDupHandler<5>>();
+        opcode_table[Opcode::DUP7 as usize] = OpCodeFn::new::<OpDupHandler<6>>();
+        opcode_table[Opcode::DUP8 as usize] = OpCodeFn::new::<OpDupHandler<7>>();
+        opcode_table[Opcode::DUP9 as usize] = OpCodeFn::new::<OpDupHandler<8>>();
+        opcode_table[Opcode::DUP10 as usize] = OpCodeFn::new::<OpDupHandler<9>>();
+        opcode_table[Opcode::DUP11 as usize] = OpCodeFn::new::<OpDupHandler<10>>();
+        opcode_table[Opcode::DUP12 as usize] = OpCodeFn::new::<OpDupHandler<11>>();
+        opcode_table[Opcode::DUP13 as usize] = OpCodeFn::new::<OpDupHandler<12>>();
+        opcode_table[Opcode::DUP14 as usize] = OpCodeFn::new::<OpDupHandler<13>>();
+        opcode_table[Opcode::DUP15 as usize] = OpCodeFn::new::<OpDupHandler<14>>();
+        opcode_table[Opcode::DUP16 as usize] = OpCodeFn::new::<OpDupHandler<15>>();
 
-        opcode_table[Opcode::SWAP1 as usize] = OpCodeFn(VM::op_swap::<1>);
-        opcode_table[Opcode::SWAP2 as usize] = OpCodeFn(VM::op_swap::<2>);
-        opcode_table[Opcode::SWAP3 as usize] = OpCodeFn(VM::op_swap::<3>);
-        opcode_table[Opcode::SWAP4 as usize] = OpCodeFn(VM::op_swap::<4>);
-        opcode_table[Opcode::SWAP5 as usize] = OpCodeFn(VM::op_swap::<5>);
-        opcode_table[Opcode::SWAP6 as usize] = OpCodeFn(VM::op_swap::<6>);
-        opcode_table[Opcode::SWAP7 as usize] = OpCodeFn(VM::op_swap::<7>);
-        opcode_table[Opcode::SWAP8 as usize] = OpCodeFn(VM::op_swap::<8>);
-        opcode_table[Opcode::SWAP9 as usize] = OpCodeFn(VM::op_swap::<9>);
-        opcode_table[Opcode::SWAP10 as usize] = OpCodeFn(VM::op_swap::<10>);
-        opcode_table[Opcode::SWAP11 as usize] = OpCodeFn(VM::op_swap::<11>);
-        opcode_table[Opcode::SWAP12 as usize] = OpCodeFn(VM::op_swap::<12>);
-        opcode_table[Opcode::SWAP13 as usize] = OpCodeFn(VM::op_swap::<13>);
-        opcode_table[Opcode::SWAP14 as usize] = OpCodeFn(VM::op_swap::<14>);
-        opcode_table[Opcode::SWAP15 as usize] = OpCodeFn(VM::op_swap::<15>);
-        opcode_table[Opcode::SWAP16 as usize] = OpCodeFn(VM::op_swap::<16>);
-        opcode_table[Opcode::POP as usize] = OpCodeFn(VM::op_pop);
-        opcode_table[Opcode::ADD as usize] = OpCodeFn(VM::op_add);
-        opcode_table[Opcode::MUL as usize] = OpCodeFn(VM::op_mul);
-        opcode_table[Opcode::SUB as usize] = OpCodeFn(VM::op_sub);
-        opcode_table[Opcode::DIV as usize] = OpCodeFn(VM::op_div);
-        opcode_table[Opcode::SDIV as usize] = OpCodeFn(VM::op_sdiv);
-        opcode_table[Opcode::MOD as usize] = OpCodeFn(VM::op_mod);
-        opcode_table[Opcode::SMOD as usize] = OpCodeFn(VM::op_smod);
-        opcode_table[Opcode::ADDMOD as usize] = OpCodeFn(VM::op_addmod);
-        opcode_table[Opcode::MULMOD as usize] = OpCodeFn(VM::op_mulmod);
-        opcode_table[Opcode::EXP as usize] = OpCodeFn(VM::op_exp);
-        opcode_table[Opcode::CALL as usize] = OpCodeFn(VM::op_call);
-        opcode_table[Opcode::CALLCODE as usize] = OpCodeFn(VM::op_callcode);
-        opcode_table[Opcode::RETURN as usize] = OpCodeFn(VM::op_return);
-        opcode_table[Opcode::DELEGATECALL as usize] = OpCodeFn(VM::op_delegatecall);
-        opcode_table[Opcode::STATICCALL as usize] = OpCodeFn(VM::op_staticcall);
-        opcode_table[Opcode::CREATE as usize] = OpCodeFn(VM::op_create);
-        opcode_table[Opcode::CREATE2 as usize] = OpCodeFn(VM::op_create2);
-        opcode_table[Opcode::JUMPI as usize] = OpCodeFn(VM::op_jumpi);
-        opcode_table[Opcode::JUMPDEST as usize] = OpCodeFn(VM::op_jumpdest);
-        opcode_table[Opcode::ADDRESS as usize] = OpCodeFn(VM::op_address);
-        opcode_table[Opcode::ORIGIN as usize] = OpCodeFn(VM::op_origin);
-        opcode_table[Opcode::BALANCE as usize] = OpCodeFn(VM::op_balance);
-        opcode_table[Opcode::CALLER as usize] = OpCodeFn(VM::op_caller);
-        opcode_table[Opcode::CALLVALUE as usize] = OpCodeFn(VM::op_callvalue);
-        opcode_table[Opcode::CODECOPY as usize] = OpCodeFn(VM::op_codecopy);
-        opcode_table[Opcode::SIGNEXTEND as usize] = OpCodeFn(VM::op_signextend);
-        opcode_table[Opcode::LT as usize] = OpCodeFn(VM::op_lt);
-        opcode_table[Opcode::GT as usize] = OpCodeFn(VM::op_gt);
-        opcode_table[Opcode::SLT as usize] = OpCodeFn(VM::op_slt);
-        opcode_table[Opcode::SGT as usize] = OpCodeFn(VM::op_sgt);
-        opcode_table[Opcode::EQ as usize] = OpCodeFn(VM::op_eq);
-        opcode_table[Opcode::ISZERO as usize] = OpCodeFn(VM::op_iszero);
-        opcode_table[Opcode::KECCAK256 as usize] = OpCodeFn(VM::op_keccak256);
-        opcode_table[Opcode::CALLDATALOAD as usize] = OpCodeFn(VM::op_calldataload);
-        opcode_table[Opcode::CALLDATASIZE as usize] = OpCodeFn(VM::op_calldatasize);
-        opcode_table[Opcode::CALLDATACOPY as usize] = OpCodeFn(VM::op_calldatacopy);
-        opcode_table[Opcode::RETURNDATASIZE as usize] = OpCodeFn(VM::op_returndatasize);
-        opcode_table[Opcode::RETURNDATACOPY as usize] = OpCodeFn(VM::op_returndatacopy);
-        opcode_table[Opcode::PC as usize] = OpCodeFn(VM::op_pc);
-        opcode_table[Opcode::BLOCKHASH as usize] = OpCodeFn(VM::op_blockhash);
-        opcode_table[Opcode::COINBASE as usize] = OpCodeFn(VM::op_coinbase);
-        opcode_table[Opcode::TIMESTAMP as usize] = OpCodeFn(VM::op_timestamp);
-        opcode_table[Opcode::NUMBER as usize] = OpCodeFn(VM::op_number);
-        opcode_table[Opcode::PREVRANDAO as usize] = OpCodeFn(VM::op_prevrandao);
-        opcode_table[Opcode::GASLIMIT as usize] = OpCodeFn(VM::op_gaslimit);
-        opcode_table[Opcode::CHAINID as usize] = OpCodeFn(VM::op_chainid);
-        opcode_table[Opcode::BASEFEE as usize] = OpCodeFn(VM::op_basefee);
-        opcode_table[Opcode::AND as usize] = OpCodeFn(VM::op_and);
-        opcode_table[Opcode::OR as usize] = OpCodeFn(VM::op_or);
-        opcode_table[Opcode::XOR as usize] = OpCodeFn(VM::op_xor);
-        opcode_table[Opcode::NOT as usize] = OpCodeFn(VM::op_not);
-        opcode_table[Opcode::BYTE as usize] = OpCodeFn(VM::op_byte);
-        opcode_table[Opcode::SHL as usize] = OpCodeFn(VM::op_shl);
-        opcode_table[Opcode::SHR as usize] = OpCodeFn(VM::op_shr);
-        opcode_table[Opcode::SAR as usize] = OpCodeFn(VM::op_sar);
-        opcode_table[Opcode::SELFBALANCE as usize] = OpCodeFn(VM::op_selfbalance);
-        opcode_table[Opcode::CODESIZE as usize] = OpCodeFn(VM::op_codesize);
-        opcode_table[Opcode::GASPRICE as usize] = OpCodeFn(VM::op_gasprice);
-        opcode_table[Opcode::EXTCODESIZE as usize] = OpCodeFn(VM::op_extcodesize);
-        opcode_table[Opcode::EXTCODECOPY as usize] = OpCodeFn(VM::op_extcodecopy);
-        opcode_table[Opcode::EXTCODEHASH as usize] = OpCodeFn(VM::op_extcodehash);
-        opcode_table[Opcode::REVERT as usize] = OpCodeFn(VM::op_revert);
-        opcode_table[Opcode::INVALID as usize] = OpCodeFn(VM::op_invalid);
-        opcode_table[Opcode::SELFDESTRUCT as usize] = OpCodeFn(VM::op_selfdestruct);
+        opcode_table[Opcode::SWAP1 as usize] = OpCodeFn::new::<OpSwapHandler<1>>();
+        opcode_table[Opcode::SWAP2 as usize] = OpCodeFn::new::<OpSwapHandler<2>>();
+        opcode_table[Opcode::SWAP3 as usize] = OpCodeFn::new::<OpSwapHandler<3>>();
+        opcode_table[Opcode::SWAP4 as usize] = OpCodeFn::new::<OpSwapHandler<4>>();
+        opcode_table[Opcode::SWAP5 as usize] = OpCodeFn::new::<OpSwapHandler<5>>();
+        opcode_table[Opcode::SWAP6 as usize] = OpCodeFn::new::<OpSwapHandler<6>>();
+        opcode_table[Opcode::SWAP7 as usize] = OpCodeFn::new::<OpSwapHandler<7>>();
+        opcode_table[Opcode::SWAP8 as usize] = OpCodeFn::new::<OpSwapHandler<8>>();
+        opcode_table[Opcode::SWAP9 as usize] = OpCodeFn::new::<OpSwapHandler<9>>();
+        opcode_table[Opcode::SWAP10 as usize] = OpCodeFn::new::<OpSwapHandler<10>>();
+        opcode_table[Opcode::SWAP11 as usize] = OpCodeFn::new::<OpSwapHandler<11>>();
+        opcode_table[Opcode::SWAP12 as usize] = OpCodeFn::new::<OpSwapHandler<12>>();
+        opcode_table[Opcode::SWAP13 as usize] = OpCodeFn::new::<OpSwapHandler<13>>();
+        opcode_table[Opcode::SWAP14 as usize] = OpCodeFn::new::<OpSwapHandler<14>>();
+        opcode_table[Opcode::SWAP15 as usize] = OpCodeFn::new::<OpSwapHandler<15>>();
+        opcode_table[Opcode::SWAP16 as usize] = OpCodeFn::new::<OpSwapHandler<16>>();
+        opcode_table[Opcode::POP as usize] = OpCodeFn::new::<OpPopHandler>();
+        opcode_table[Opcode::ADD as usize] = OpCodeFn::new::<OpAddHandler>();
+        opcode_table[Opcode::MUL as usize] = OpCodeFn::new::<OpMulHandler>();
+        opcode_table[Opcode::SUB as usize] = OpCodeFn::new::<OpSubHandler>();
+        opcode_table[Opcode::DIV as usize] = OpCodeFn::new::<OpDivHandler>();
+        opcode_table[Opcode::SDIV as usize] = OpCodeFn::new::<OpSDivHandler>();
+        opcode_table[Opcode::MOD as usize] = OpCodeFn::new::<OpModHandler>();
+        opcode_table[Opcode::SMOD as usize] = OpCodeFn::new::<OpSModHandler>();
+        opcode_table[Opcode::ADDMOD as usize] = OpCodeFn::new::<OpAddModHandler>();
+        opcode_table[Opcode::MULMOD as usize] = OpCodeFn::new::<OpMulModHandler>();
+        opcode_table[Opcode::EXP as usize] = OpCodeFn::new::<OpExpHandler>();
+        opcode_table[Opcode::CALL as usize] = OpCodeFn::new::<OpCallHandler>();
+        opcode_table[Opcode::CALLCODE as usize] = OpCodeFn::new::<OpCallCodeHandler>();
+        opcode_table[Opcode::RETURN as usize] = OpCodeFn::new::<OpReturnHandler>();
+        opcode_table[Opcode::DELEGATECALL as usize] = OpCodeFn::new::<OpDelegateCallHandler>();
+        opcode_table[Opcode::STATICCALL as usize] = OpCodeFn::new::<OpStaticCallHandler>();
+        opcode_table[Opcode::CREATE as usize] = OpCodeFn::new::<OpCreateHandler>();
+        opcode_table[Opcode::CREATE2 as usize] = OpCodeFn::new::<OpCreate2Handler>();
+        opcode_table[Opcode::JUMPI as usize] = OpCodeFn::new::<OpJumpIHandler>();
+        opcode_table[Opcode::JUMPDEST as usize] = OpCodeFn::new::<OpJumpDestHandler>();
+        opcode_table[Opcode::ADDRESS as usize] = OpCodeFn::new::<OpAddressHandler>();
+        opcode_table[Opcode::ORIGIN as usize] = OpCodeFn::new::<OpOriginHandler>();
+        opcode_table[Opcode::BALANCE as usize] = OpCodeFn::new::<OpBalanceHandler>();
+        opcode_table[Opcode::CALLER as usize] = OpCodeFn::new::<OpCallerHandler>();
+        opcode_table[Opcode::CALLVALUE as usize] = OpCodeFn::new::<OpCallValueHandler>();
+        opcode_table[Opcode::CODECOPY as usize] = OpCodeFn::new::<OpCodeCopyHandler>();
+        opcode_table[Opcode::SIGNEXTEND as usize] = OpCodeFn::new::<OpSignExtendHandler>();
+        opcode_table[Opcode::LT as usize] = OpCodeFn::new::<OpLtHandler>();
+        opcode_table[Opcode::GT as usize] = OpCodeFn::new::<OpGtHandler>();
+        opcode_table[Opcode::SLT as usize] = OpCodeFn::new::<OpSLtHandler>();
+        opcode_table[Opcode::SGT as usize] = OpCodeFn::new::<OpSGtHandler>();
+        opcode_table[Opcode::EQ as usize] = OpCodeFn::new::<OpEqHandler>();
+        opcode_table[Opcode::ISZERO as usize] = OpCodeFn::new::<OpIsZeroHandler>();
+        opcode_table[Opcode::KECCAK256 as usize] = OpCodeFn::new::<OpKeccak256Handler>();
+        opcode_table[Opcode::CALLDATALOAD as usize] = OpCodeFn::new::<OpCallDataLoadHandler>();
+        opcode_table[Opcode::CALLDATASIZE as usize] = OpCodeFn::new::<OpCallDataSizeHandler>();
+        opcode_table[Opcode::CALLDATACOPY as usize] = OpCodeFn::new::<OpCallDataCopyHandler>();
+        opcode_table[Opcode::RETURNDATASIZE as usize] = OpCodeFn::new::<OpReturnDataSizeHandler>();
+        opcode_table[Opcode::RETURNDATACOPY as usize] = OpCodeFn::new::<OpReturnDataCopyHandler>();
+        opcode_table[Opcode::PC as usize] = OpCodeFn::new::<OpPcHandler>();
+        opcode_table[Opcode::BLOCKHASH as usize] = OpCodeFn::new::<OpBlockHashHandler>();
+        opcode_table[Opcode::COINBASE as usize] = OpCodeFn::new::<OpCoinbaseHandler>();
+        opcode_table[Opcode::TIMESTAMP as usize] = OpCodeFn::new::<OpTimestampHandler>();
+        opcode_table[Opcode::NUMBER as usize] = OpCodeFn::new::<OpNumberHandler>();
+        opcode_table[Opcode::PREVRANDAO as usize] = OpCodeFn::new::<OpPrevRandaoHandler>();
+        opcode_table[Opcode::GASLIMIT as usize] = OpCodeFn::new::<OpGasLimitHandler>();
+        opcode_table[Opcode::CHAINID as usize] = OpCodeFn::new::<OpChainIdHandler>();
+        opcode_table[Opcode::BASEFEE as usize] = OpCodeFn::new::<OpBaseFeeHandler>();
+        opcode_table[Opcode::AND as usize] = OpCodeFn::new::<OpAndHandler>();
+        opcode_table[Opcode::OR as usize] = OpCodeFn::new::<OpOrHandler>();
+        opcode_table[Opcode::XOR as usize] = OpCodeFn::new::<OpXorHandler>();
+        opcode_table[Opcode::NOT as usize] = OpCodeFn::new::<OpNotHandler>();
+        opcode_table[Opcode::BYTE as usize] = OpCodeFn::new::<OpByteHandler>();
+        opcode_table[Opcode::SHL as usize] = OpCodeFn::new::<OpShlHandler>();
+        opcode_table[Opcode::SHR as usize] = OpCodeFn::new::<OpShrHandler>();
+        opcode_table[Opcode::SAR as usize] = OpCodeFn::new::<OpSarHandler>();
+        opcode_table[Opcode::SELFBALANCE as usize] = OpCodeFn::new::<OpSelfBalanceHandler>();
+        opcode_table[Opcode::CODESIZE as usize] = OpCodeFn::new::<OpCodeSizeHandler>();
+        opcode_table[Opcode::GASPRICE as usize] = OpCodeFn::new::<OpGasPriceHandler>();
+        opcode_table[Opcode::EXTCODESIZE as usize] = OpCodeFn::new::<OpExtCodeSizeHandler>();
+        opcode_table[Opcode::EXTCODECOPY as usize] = OpCodeFn::new::<OpExtCodeCopyHandler>();
+        opcode_table[Opcode::EXTCODEHASH as usize] = OpCodeFn::new::<OpExtCodeHashHandler>();
+        opcode_table[Opcode::REVERT as usize] = OpCodeFn::new::<OpRevertHandler>();
+        opcode_table[Opcode::INVALID as usize] = OpCodeFn::new::<OpInvalidHandler>();
+        opcode_table[Opcode::SELFDESTRUCT as usize] = OpCodeFn::new::<OpSelfDestructHandler>();
 
-        opcode_table[Opcode::LOG0 as usize] = OpCodeFn(VM::op_log::<0>);
-        opcode_table[Opcode::LOG1 as usize] = OpCodeFn(VM::op_log::<1>);
-        opcode_table[Opcode::LOG2 as usize] = OpCodeFn(VM::op_log::<2>);
-        opcode_table[Opcode::LOG3 as usize] = OpCodeFn(VM::op_log::<3>);
-        opcode_table[Opcode::LOG4 as usize] = OpCodeFn(VM::op_log::<4>);
+        opcode_table[Opcode::LOG0 as usize] = OpCodeFn::new::<OpLogHandler<0>>();
+        opcode_table[Opcode::LOG1 as usize] = OpCodeFn::new::<OpLogHandler<1>>();
+        opcode_table[Opcode::LOG2 as usize] = OpCodeFn::new::<OpLogHandler<2>>();
+        opcode_table[Opcode::LOG3 as usize] = OpCodeFn::new::<OpLogHandler<3>>();
+        opcode_table[Opcode::LOG4 as usize] = OpCodeFn::new::<OpLogHandler<4>>();
 
         opcode_table
     }
 
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_pre_cancun() -> [OpCodeFn<'a>; 256] {
-        let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_pre_shanghai();
+    const fn build_opcode_table_pre_cancun() -> [OpCodeFn; 256] {
+        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_pre_shanghai();
 
         // [EIP-3855] - PUSH0 is only available from SHANGHAI
-        opcode_table[Opcode::PUSH0 as usize] = OpCodeFn(VM::op_push0);
+        opcode_table[Opcode::PUSH0 as usize] = OpCodeFn::new::<OpPush0Handler>();
+
         opcode_table
     }
 
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_pre_osaka() -> [OpCodeFn<'a>; 256] {
+    const fn build_opcode_table_pre_osaka() -> [OpCodeFn; 256] {
         const {
-            let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_pre_cancun();
+            let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_pre_cancun();
 
             // [EIP-5656] - MCOPY is only available from CANCUN
-            opcode_table[Opcode::MCOPY as usize] = OpCodeFn(VM::op_mcopy);
+            opcode_table[Opcode::MCOPY as usize] = OpCodeFn::new::<OpMCopyHandler>();
 
             // [EIP-1153] - TLOAD is only available from CANCUN
-            opcode_table[Opcode::TLOAD as usize] = OpCodeFn(VM::op_tload);
-            opcode_table[Opcode::TSTORE as usize] = OpCodeFn(VM::op_tstore);
+            opcode_table[Opcode::TLOAD as usize] = OpCodeFn::new::<OpTLoadHandler>();
+            opcode_table[Opcode::TSTORE as usize] = OpCodeFn::new::<OpTStoreHandler>();
 
             // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
-            opcode_table[Opcode::BLOBBASEFEE as usize] = OpCodeFn(VM::op_blobbasefee);
+            opcode_table[Opcode::BLOBBASEFEE as usize] = OpCodeFn::new::<OpBlobBaseFeeHandler>();
             // [EIP-4844] - BLOBHASH is only available from CANCUN
-            opcode_table[Opcode::BLOBHASH as usize] = OpCodeFn(VM::op_blobhash);
+            opcode_table[Opcode::BLOBHASH as usize] = OpCodeFn::new::<OpBlobHashHandler>();
+
             opcode_table
         }
     }
 
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_osaka() -> [OpCodeFn<'a>; 256] {
-        let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_pre_osaka();
+    const fn build_opcode_table_osaka() -> [OpCodeFn; 256] {
+        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_pre_osaka();
 
-        opcode_table[Opcode::CLZ as usize] = OpCodeFn(VM::op_clz);
+        opcode_table[Opcode::CLZ as usize] = OpCodeFn::new::<OpClzHandler>();
+
         opcode_table
     }
 
     #[expect(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_amsterdam() -> [OpCodeFn<'a>; 256] {
-        let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_osaka();
+    const fn build_opcode_table_amsterdam() -> [OpCodeFn; 256] {
+        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_osaka();
 
         // EIP-8024 opcodes
-        opcode_table[Opcode::DUPN as usize] = OpCodeFn(VM::op_dupn);
-        opcode_table[Opcode::SWAPN as usize] = OpCodeFn(VM::op_swapn);
-        opcode_table[Opcode::EXCHANGE as usize] = OpCodeFn(VM::op_exchange);
+        opcode_table[Opcode::DUPN as usize] = OpCodeFn::new::<OpDupNHandler>();
+        opcode_table[Opcode::SWAPN as usize] = OpCodeFn::new::<OpSwapNHandler>();
+        opcode_table[Opcode::EXCHANGE as usize] = OpCodeFn::new::<OpExchangeHandler>();
         // EIP-7843 opcode
-        opcode_table[Opcode::SLOTNUM as usize] = OpCodeFn(VM::op_slotnum);
+        opcode_table[Opcode::SLOTNUM as usize] = OpCodeFn::new::<OpSlotNumHandler>();
         opcode_table
-    }
-
-    /// Used within the opcode table for invalid opcodes.
-    pub fn on_invalid_opcode(&mut self) -> Result<OpcodeResult, VMError> {
-        Err(ExceptionalHalt::InvalidOpcode.into())
-    }
-
-    #[inline]
-    pub fn op_stop(&mut self) -> Result<OpcodeResult, VMError> {
-        Ok(OpcodeResult::Halt)
     }
 }

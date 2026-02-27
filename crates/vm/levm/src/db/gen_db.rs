@@ -631,7 +631,7 @@ impl<'a> VM<'a> {
         key: H256,
     ) -> Result<(U256, bool), InternalError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
-        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
+        let storage_slot_was_cold = self.substate.add_accessed_slot(address, key);
 
         let storage_slot = self.get_storage_value(address, key)?;
 
