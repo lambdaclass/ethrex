@@ -223,6 +223,26 @@ by default. Incorrect Send/Sync can cause data races.
 executable memory. Consider wrapping in a newtype that documents the
 Send/Sync invariants.
 
+### Precompile Fast Dispatch (G-8, 2026-02-27)
+
+The precompile fast dispatch path adds metric tracking when JIT-compiled parent contracts
+invoke precompile addresses via CALL. The `handle_jit_subcall()` precompile arm now
+increments `precompile_fast_dispatches` in `JitMetrics` and respects the
+`enable_precompile_fast_dispatch` config toggle.
+
+**Safety notes**:
+1. **No new unsafe code**: The precompile dispatch path uses existing safe precompile
+   execution APIs. No function pointer manipulation or FFI calls are added.
+2. **Metric atomicity**: `precompile_fast_dispatches` uses `AtomicU64` (same pattern as
+   other JitMetrics fields) — no data race risk.
+3. **Config toggle**: `enable_precompile_fast_dispatch` can be set to `false` via
+   `JitConfig` to disable the feature without code changes.
+4. **Correctness**: 5 interpreter correctness tests + 4 JIT differential tests verify
+   precompile results match between JIT and interpreter execution paths.
+
+**Risk assessment**: LOW — no new unsafe code, reuses existing precompile execution
+infrastructure and atomic metric tracking patterns.
+
 ### JIT-to-JIT Direct Dispatch (G-4, 2026-02-27)
 
 The JIT-to-JIT dispatch path (`run_subcall_with_jit_dispatch()` in `vm.rs`) introduces

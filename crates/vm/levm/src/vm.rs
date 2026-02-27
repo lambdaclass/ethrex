@@ -1103,6 +1103,7 @@ impl<'a> VM<'a> {
         sub_call: crate::jit::types::JitSubCall,
     ) -> Result<crate::jit::types::SubCallResult, VMError> {
         use crate::jit::types::{JitCallScheme, JitSubCall, SubCallResult};
+        use std::sync::atomic::Ordering;
 
         match sub_call {
             JitSubCall::Call {
@@ -1185,6 +1186,14 @@ impl<'a> VM<'a> {
                             let log = crate::utils::create_eth_transfer_log(caller, target, value);
                             self.substate.add_log(log);
                         }
+                    }
+
+                    // Track precompile fast dispatch metric (G-8)
+                    if JIT_STATE.is_precompile_fast_dispatch_enabled() {
+                        JIT_STATE
+                            .metrics
+                            .precompile_fast_dispatches
+                            .fetch_add(1, Ordering::Relaxed);
                     }
 
                     return Ok(SubCallResult {

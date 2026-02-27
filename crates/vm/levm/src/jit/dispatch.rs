@@ -350,6 +350,11 @@ impl JitState {
         self.config.enable_jit_dispatch
     }
 
+    /// Check if precompile fast dispatch is enabled in the configuration (G-8).
+    pub fn is_precompile_fast_dispatch_enabled(&self) -> bool {
+        self.config.enable_precompile_fast_dispatch
+    }
+
     /// Mark a (hash, fork) pair as no longer being compiled.
     ///
     /// Called after compilation completes (success or failure) to allow

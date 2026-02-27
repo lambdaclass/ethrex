@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-27
-**Context**: Overall ~95% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1), G-3 ✅ DONE (CALL/CREATE dual-execution validation), G-4 ✅ DONE (JIT-to-JIT direct dispatch), G-5 ✅ DONE (parallel compilation pool), G-6 ✅ DONE (LRU cache eviction — AtomicU64 timestamps), G-7 ✅ DONE (constant folding enhancement — 22 opcodes + unary patterns).
+**Context**: Overall ~95% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1), G-3 ✅ DONE (CALL/CREATE dual-execution validation), G-4 ✅ DONE (JIT-to-JIT direct dispatch), G-5 ✅ DONE (parallel compilation pool), G-6 ✅ DONE (LRU cache eviction — AtomicU64 timestamps), G-7 ✅ DONE (constant folding enhancement — 22 opcodes + unary patterns), G-8 ✅ DONE (precompile JIT acceleration — fast dispatch + metric tracking).
 
 ---
 
@@ -335,6 +335,15 @@
 - **Dependency**: D-3 ✅
 - **Completed**: 2026-02-27 — 22 opcodes + unary patterns + refactored helpers (43026d7cf)
 
+### G-8. Precompile JIT Acceleration [P2] ✅ DONE
+- `precompile_fast_dispatches` metric added to `JitMetrics` — tracks precompile calls from JIT code ✅
+- `enable_precompile_fast_dispatch` config toggle in `JitConfig` (default: true) ✅
+- `is_precompile_fast_dispatch_enabled()` method on `JitState` for runtime check ✅
+- Metric tracking in `handle_jit_subcall()` precompile path ✅
+- **Verification**: 9 tests (5 interpreter correctness + 4 JIT differential), 58 total tokamak-jit tests ✅
+- **Dependency**: None (independent)
+- **Completed**: 2026-02-27 — Precompile fast dispatch + metric tracking
+
 ---
 
 ## Execution Order
@@ -350,6 +359,7 @@ Week 7:  [P3] F-2 ✅ (dashboard MVP)
 Week 8:  [P3] F-3 ✅ (L2 scaffolding)
 Week 9:  [P1] G-1 ✅ (arena allocator) + G-3 ✅ (CALL/CREATE validation) + G-5 ✅ (parallel compilation) + G-7 ✅ (constant folding 22 opcodes)
 Week 10: [P1] G-4 ✅ (JIT-to-JIT direct dispatch) + G-6 ✅ (LRU cache eviction)
+Week 11: [P2] G-8 ✅ (precompile JIT acceleration — fast dispatch + metric tracking)
 Later:   [P3] F-5
 ```
 

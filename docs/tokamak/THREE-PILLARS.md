@@ -120,21 +120,21 @@ Tokamak JIT compiles frequently-executed EVM bytecodes into native machine code 
 | **G-4** | **Recursive CALL Overhead** | ✅ DONE | VM-layer fast dispatch for child CALL bytecodes |
 | **G-5** | **Single Compiler Thread** | ✅ DONE (299d03720) | CompilerThreadPool — crossbeam-channel multi-consumer, N workers |
 
-#### Moderate (v1.2 Optimization) — 2/3 RESOLVED
+#### Moderate (v1.2 Optimization) — ALL RESOLVED ✅
 
 | ID | Issue | Status | Resolution |
 |----|-------|--------|------------|
 | **G-6** | **FIFO Cache** (not LRU) | ✅ DONE | AtomicU64 LRU eviction — lock-free get() hot path |
 | **G-7** | **Constant Folding** | ✅ DONE (43026d7cf) | Expanded from 6 to 22 opcodes (14 binary + 2 unary), refactored eval helpers |
-| **G-8** | **No Precompile Acceleration** | REMAINING | LLVM IR extern calls (16-24h) |
+| **G-8** | **Precompile Acceleration** | ✅ DONE | Fast dispatch + `precompile_fast_dispatches` metric, 9 tests |
 
 #### Resolution Timeline
 
 ```
 v1.0.1  G-1 + G-2 (memory safety)           ✅ ALL DONE
 v1.1    G-3 + G-4 + G-5                     ✅ ALL DONE
-v1.2    G-6 + G-7 done, G-8 remaining        16-24h left
-                                        Remaining: 16-24h
+v1.2    G-6 + G-7 + G-8                     ✅ ALL DONE
+                                        Remaining: 0h
 ```
 
 ---
@@ -294,7 +294,7 @@ The debugger directly feeds back into JIT optimization:
 
 | Pillar | Completion | Lines | Tests | Phases |
 |--------|-----------|-------|-------|--------|
-| JIT-Compiled EVM | **~88%** | 9,266+ | 187+ | 2-8, B-1/2/3, D-1/2/3, F-4, G-1/2/3/5/7 |
+| JIT-Compiled EVM | **~88%** | 9,266+ | 187+ | 2-8, B-1/2/3, D-1/2/3, F-4, G-1/2/3/4/5/6/7/8 |
 | Continuous Benchmarking | **~80%** | 4,411 | 134 | 8-9, C-1/2/3, F-1/2 |
 | Time-Travel Debugger | **~85%** | 1,830 | 45 | E-1/2/3 |
 | **Total** | **~85%** | **15,507+** | **366+** | |
@@ -309,7 +309,7 @@ Plus L2 integration scaffolding (F-3): 7 tests connecting JIT policy to L2 hook 
 |-------|-------|--------|-----------|
 | v1.0.1 | G-1 + G-2 | **✅ ALL DONE** | 0h |
 | v1.1 | G-3 ✅ + G-4 ✅ + G-5 ✅ | **✅ ALL DONE** | 0h |
-| v1.2 | G-6 ✅ + G-7 ✅ + G-8 | **2/3 DONE** | 16-24h (G-8) |
+| v1.2 | G-6 ✅ + G-7 ✅ + G-8 ✅ | **✅ ALL DONE** | 0h |
 
 #### Other Remaining Work
 

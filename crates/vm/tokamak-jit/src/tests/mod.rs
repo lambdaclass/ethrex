@@ -7,6 +7,7 @@ pub mod jit_dispatch;
 pub mod lru_cache;
 pub mod oversized;
 pub mod parallel_compilation;
+pub mod precompile_fast_dispatch;
 pub mod proptest_gas;
 pub mod selfdestruct;
 pub mod storage;
