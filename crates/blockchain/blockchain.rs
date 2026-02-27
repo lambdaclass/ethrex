@@ -652,6 +652,7 @@ impl Blockchain {
         }
 
         // Send FinishRouting — workers self-synchronize via RoutingDone exchange.
+        let t_dispatch = Instant::now();
         for tx in &workers_tx {
             tx.send(WorkerRequest::FinishRouting)
                 .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
@@ -687,6 +688,7 @@ impl Blockchain {
 
         let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
+        let t_gather = Instant::now();
         for CollectedStateMsg {
             index,
             subroot,
@@ -698,7 +700,9 @@ impl Blockchain {
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
+        let gather_ms = t_gather.elapsed().as_secs_f64() * 1000.0;
 
+        let t_root = Instant::now();
         let collapsed = self.collapse_root_node(parent_header, None, root)?;
         let state_trie_hash = if let Some(root) = collapsed {
             let mut root = NodeRef::from(root);
@@ -709,6 +713,9 @@ impl Blockchain {
             state_updates.push((Nibbles::default(), vec![RLP_NULL]));
             *EMPTY_TRIE_HASH
         };
+        let root_ms = t_root.elapsed().as_secs_f64() * 1000.0;
+        let dispatch_ms = t_dispatch.elapsed().as_secs_f64() * 1000.0;
+        info!("drain: dispatch={dispatch_ms:.2}ms gather={gather_ms:.2}ms root={root_ms:.2}ms");
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
@@ -2530,7 +2537,10 @@ fn collect_and_send(
     storage_nodes: &mut Vec<(H256, Vec<TrieNode>)>,
     tx: Sender<CollectedStateMsg>,
 ) -> Result<(), StoreError> {
+    let t0 = Instant::now();
     let (subroot, mut state_nodes) = collect_trie(index, std::mem::take(state_trie))?;
+    let n_new = state_nodes.len();
+    let n_pre = pre_collected_state.len();
     if !pre_collected_state.is_empty() {
         let mut pre = std::mem::take(pre_collected_state);
         pre.extend(state_nodes);
@@ -2543,6 +2553,10 @@ fn collect_and_send(
         storage_nodes: std::mem::take(storage_nodes),
     })
     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+    info!(
+        "worker[{index}] collect_and_send: {:.2}ms (new={n_new} pre={n_pre})",
+        t0.elapsed().as_secs_f64() * 1000.0
+    );
     Ok(())
 }
 
@@ -2591,11 +2605,18 @@ fn handle_subtrie(
     let mut routing_done_mask: u16 = 0;
     let mut storage_to_collect: Vec<(H256, Trie)> = vec![];
 
+    // Instrumentation
+    let mut t_collection_start: Option<Instant> = None;
+    let mut n_storage_collected: usize = 0;
+    let mut n_shards_received: usize = 0;
+    let mut n_pre_collected_state: usize = 0;
+
     loop {
         // When collecting storages, finalize one trie per iteration so that
         // incoming StorageShard messages can be processed in between.
         if collecting_storages {
             if let Some((prefix, trie)) = storage_to_collect.pop() {
+                n_storage_collected += 1;
                 let senders = worker_senders
                     .as_ref()
                     .expect("collecting after senders dropped");
@@ -2639,20 +2660,25 @@ fn handle_subtrie(
             match rx.try_recv() {
                 Ok(msg) => msg,
                 Err(_) => {
-                    if dirty && !collecting_storages {
-                        // Pre-collect state trie
+                    if dirty {
+                        // Pre-collect state trie — safe during storage collection
+                        // too, since mutations from StorageShard resolution only
+                        // dirty specific paths that will be re-committed later.
                         let mut nodes = state_trie.commit_without_storing();
                         nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+                        n_pre_collected_state += nodes.len();
                         pre_collected_state.extend(nodes);
-                        // Pre-collect storage tries
-                        for (prefix, trie) in storage_tries.iter_mut() {
-                            let mut nodes = trie.commit_without_storing();
-                            nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-                            if !nodes.is_empty() {
-                                pre_collected_storage
-                                    .entry(*prefix)
-                                    .or_default()
-                                    .extend(nodes);
+                        if !collecting_storages {
+                            // Pre-collect storage tries (only when not draining)
+                            for (prefix, trie) in storage_tries.iter_mut() {
+                                let mut nodes = trie.commit_without_storing();
+                                nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+                                if !nodes.is_empty() {
+                                    pre_collected_storage
+                                        .entry(*prefix)
+                                        .or_default()
+                                        .extend(nodes);
+                                }
                             }
                         }
                         dirty = false;
@@ -2811,6 +2837,20 @@ fn handle_subtrie(
                 routing_done_mask |= 1u16 << from;
                 if routing_done_mask == 0xFFFF && !collecting_storages && !routing_complete {
                     // All workers finished routing — start collecting.
+                    t_collection_start = Some(Instant::now());
+
+                    // Pre-commit state trie before entering the busy storage
+                    // collection loop. This front-loads the expensive hashing so
+                    // collect_and_send at the end only processes the delta from
+                    // storage root updates.
+                    if dirty {
+                        let mut nodes = state_trie.commit_without_storing();
+                        nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+                        n_pre_collected_state += nodes.len();
+                        pre_collected_state.extend(nodes);
+                        dirty = false;
+                    }
+
                     collecting_storages = true;
                     routing_complete = true;
                     storage_to_collect = storage_tries.drain().collect();
@@ -2828,6 +2868,7 @@ fn handle_subtrie(
                 mut subroot,
                 nodes,
             } => {
+                n_shards_received += 1;
                 let state = storage_state.entry(prefix).or_default();
                 match &mut state.storage_root {
                     Some(root) => {
@@ -2907,6 +2948,12 @@ fn handle_subtrie(
                 pending_collect_tx = Some(tx);
             }
         }
+    }
+    if let Some(t0) = t_collection_start {
+        info!(
+            "worker[{index}] collection: {:.2}ms (storage_collected={n_storage_collected} shards_recv={n_shards_received} pre_state={n_pre_collected_state})",
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
     }
     Ok(())
 }
