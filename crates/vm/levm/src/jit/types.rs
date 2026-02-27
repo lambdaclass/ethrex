@@ -30,6 +30,8 @@ pub struct JitConfig {
     pub max_arenas: usize,
     /// Maximum JIT memory usage in megabytes (RSS ceiling, default 512).
     pub max_memory_mb: usize,
+    /// Number of background compilation worker threads (default: num_cpus / 2, min 1).
+    pub compile_workers: usize,
 }
 
 impl JitConfig {
@@ -50,6 +52,7 @@ impl Default for JitConfig {
             arena_capacity: 64,
             max_arenas: 32,
             max_memory_mb: 512,
+            compile_workers: 1, // Default 1; tokamak-jit overrides with num_cpus/2
         }
     }
 }

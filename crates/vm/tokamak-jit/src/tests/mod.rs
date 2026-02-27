@@ -4,6 +4,7 @@ pub mod dual_execution;
 pub mod fibonacci;
 pub mod gas_alignment;
 pub mod oversized;
+pub mod parallel_compilation;
 pub mod proptest_gas;
 pub mod selfdestruct;
 pub mod storage;

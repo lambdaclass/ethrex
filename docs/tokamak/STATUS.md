@@ -31,7 +31,7 @@
 - revmc/LLVM backend integration (Phases 2-8)
 - Tiered execution (counter threshold -> compile -> execute)
 - Multi-fork support (cache key includes Fork)
-- Background async compilation (CompilerThread)
+- Background async compilation (CompilerThreadPool — multi-worker, G-5)
 - LRU cache eviction
 - CALL/CREATE suspend/resume
 - Dual-execution validation (JIT vs interpreter)
@@ -40,6 +40,8 @@
 - Constant folding optimizer (D-3) — PUSH+PUSH+OP → single PUSH, 6 opcodes (ADD/MUL/SUB/AND/OR/XOR), 42 tests
 - 76 LEVM JIT tests + 27 tokamak-jit tests passing (104 total)
 - Arena-based LLVM memory lifecycle (G-1) — eliminates `mem::forget` memory leak, 178 tests pass
+- CALL/CREATE dual-execution validation (G-3) — removed `has_external_calls` guard, validation runs for all bytecodes, 5 tests
+- Parallel compilation thread pool (G-5) — crossbeam-channel multi-consumer, N workers (default num_cpus/2), deduplication guard, 4 new tests
 
 **Remaining:**
 - Recursive CALL performance (suspend/resume is slow — accepted for v1.0)
@@ -178,6 +180,7 @@ R23(5.0) -> R24(8.0)
 ### Recently Completed (Phase G)
 - LLVM Memory Lifecycle (G-1) — Arena allocator replacing `mem::forget`, ArenaManager + ArenaCompiler + thread_local ArenaState, 12+4 arena tests, all 178 tests pass (f8e9ba540) (2026-02-26)
 - Cache Eviction Effectiveness (G-2) — Auto-resolved by G-1 arena system: Free/FreeArena handlers, cache eviction returns FuncSlot for arena cleanup (2026-02-27)
+- CALL/CREATE Dual-Execution Validation (G-3) — Removed `has_external_calls` guard, validation runs for ALL bytecodes (CALL/STATICCALL/DELEGATECALL), shared MismatchBackend + helpers, 5 tests (8c05d3412) (2026-02-27)
 
 ### Not Started
 - EF grant application

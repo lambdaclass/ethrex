@@ -48,19 +48,20 @@ pub use ethrex_levm::jit::{
 };
 
 /// Register the revmc JIT backend with LEVM's global JIT state and
-/// start the background compiler thread.
+/// start the background compiler thread pool.
 ///
 /// Call this once at application startup to enable JIT execution.
 /// Without this registration, the JIT dispatch in `vm.rs` is a no-op
 /// (counter increments but compiled code is never executed).
 ///
-/// The compiler thread manages `ArenaCompiler` instances that group
-/// compiled functions. When all functions in an arena are evicted from
-/// the cache, the arena (and its LLVM resources) is freed.
+/// The compiler pool spawns `compile_workers` threads (default: `num_cpus / 2`),
+/// each with its own thread-local `ArenaState` for LLVM context safety.
+/// When all functions in an arena are evicted from the cache, the arena
+/// (and its LLVM resources) is freed on the worker thread that owns it.
 #[cfg(feature = "revmc-backend")]
 pub fn register_jit_backend() {
     use ethrex_levm::jit::analyzer::analyze_bytecode;
-    use ethrex_levm::jit::compiler_thread::{CompilerRequest, CompilerThread};
+    use ethrex_levm::jit::compiler_thread::{CompilerRequest, CompilerThreadPool};
     use ethrex_levm::jit::dispatch::JitBackend;
     use ethrex_levm::jit::optimizer;
     use std::collections::HashMap;
@@ -69,15 +70,16 @@ pub fn register_jit_backend() {
     let backend = Arc::new(backend::RevmcBackend::default());
     let cache = ethrex_levm::vm::JIT_STATE.cache.clone();
     let arena_capacity = ethrex_levm::vm::JIT_STATE.config.arena_capacity;
+    let num_workers = num_cpus::get().max(2) / 2;
 
     ethrex_levm::vm::JIT_STATE.register_backend(backend);
 
-    // Start background compiler thread with arena-managed compilation.
-    // ArenaCompilers live in this closure's captured state — they are only
-    // created and dropped on the compiler thread, satisfying the thread-local
-    // LLVM context safety invariant.
-    let compiler_thread = CompilerThread::start(move |request| {
-        // Thread-local arena state — persists across requests on this thread.
+    // Start background compiler pool with arena-managed compilation.
+    // Each worker has its own thread-local ArenaState — ArenaCompilers are
+    // only created and dropped on their owning worker thread, satisfying
+    // the LLVM context thread-affinity invariant.
+    let compiler_pool = CompilerThreadPool::start(num_workers, move |request| {
+        // Thread-local arena state — persists across requests on this worker.
         // Using thread_local! to avoid capturing mutable state in Fn closure.
         thread_local! {
             static ARENA_STATE: std::cell::RefCell<ArenaState> =
@@ -87,6 +89,8 @@ pub fn register_jit_backend() {
         match request {
             CompilerRequest::Compile(req) => {
                 use std::sync::atomic::Ordering;
+
+                let cache_key = (req.code.hash, req.fork);
 
                 // Early size check
                 if ethrex_levm::vm::JIT_STATE
@@ -105,6 +109,24 @@ pub fn register_jit_backend() {
                 if req.code.bytecode.is_empty() {
                     return;
                 }
+
+                // Deduplication guard: skip if another worker is already compiling this
+                if !ethrex_levm::vm::JIT_STATE.try_start_compilation(cache_key) {
+                    return;
+                }
+
+                // Drop guard ensures finish_compilation runs even if we panic
+                // during analyze/optimize/compile. Without this, a panic would
+                // permanently lock this key in compiling_in_progress.
+                struct CompilationGuard {
+                    key: ethrex_levm::jit::cache::CacheKey,
+                }
+                impl Drop for CompilationGuard {
+                    fn drop(&mut self) {
+                        ethrex_levm::vm::JIT_STATE.finish_compilation(&self.key);
+                    }
+                }
+                let _guard = CompilationGuard { key: cache_key };
 
                 // Analyze + optimize bytecode
                 let analyzed = analyze_bytecode(
@@ -142,7 +164,7 @@ pub fn register_jit_backend() {
                     match compiler::TokamakCompiler::compile_in_arena(arena, &analyzed, req.fork) {
                         Ok(compiled) => {
                             // Insert into cache — may trigger eviction
-                            let evicted_slot = cache.insert((req.code.hash, req.fork), compiled);
+                            let evicted_slot = cache.insert(cache_key, compiled);
 
                             // Handle eviction: mark slot in arena manager
                             if let Some(slot) = evicted_slot {
@@ -186,6 +208,8 @@ pub fn register_jit_backend() {
                         }
                     }
                 });
+
+                // _guard dropped here — finish_compilation called automatically
             }
             CompilerRequest::Free { slot } => {
                 // Mark the function as evicted in the arena manager
@@ -222,13 +246,14 @@ pub fn register_jit_backend() {
             }
         }
     });
-    ethrex_levm::vm::JIT_STATE.register_compiler_thread(compiler_thread);
+    ethrex_levm::vm::JIT_STATE.register_compiler_pool(compiler_pool);
 }
 
-/// Thread-local state for the background compiler thread.
+/// Thread-local state for each background compiler worker.
 ///
 /// Manages `ArenaCompiler` instances, rotating to a new arena when
-/// the current one is full.
+/// the current one is full. Each worker thread gets its own instance
+/// via `thread_local!`, ensuring LLVM context thread-affinity.
 #[cfg(feature = "revmc-backend")]
 struct ArenaState {
     /// Active arenas indexed by ID. Dropped arenas free LLVM resources.

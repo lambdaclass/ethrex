@@ -12,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::arena::{ArenaId, ArenaManager, FuncSlot};
 use super::cache::{CacheKey, CodeCache, CompiledCode};
-use super::compiler_thread::{CompilationRequest, CompilerThread};
+use super::compiler_thread::{CompilationRequest, CompilerThreadPool};
 use super::counter::ExecutionCounter;
 use super::types::{JitConfig, JitMetrics, JitOutcome, JitResumeState, SubCallResult};
 use crate::call_frame::CallFrame;
@@ -84,13 +84,16 @@ pub struct JitState {
     backend: RwLock<Option<Arc<dyn JitBackend>>>,
     /// Atomic metrics for monitoring JIT activity.
     pub metrics: JitMetrics,
-    /// Background compilation thread (set by `tokamak-jit` at startup).
-    compiler_thread: RwLock<Option<CompilerThread>>,
+    /// Background compilation thread pool (set by `tokamak-jit` at startup).
+    compiler_pool: RwLock<Option<CompilerThreadPool>>,
     /// Per-(hash, fork) validation run counter for output-only validation.
     validation_counts: RwLock<FxHashMap<CacheKey, u64>>,
     /// Bytecodes known to exceed `max_bytecode_size` — negative cache to
     /// avoid repeated size checks and compilation attempts.
     oversized_hashes: RwLock<FxHashSet<H256>>,
+    /// Set of (hash, fork) pairs currently being compiled.
+    /// Used to prevent duplicate compilations when multiple workers are active.
+    compiling_in_progress: RwLock<FxHashSet<CacheKey>>,
     /// Arena lifecycle manager for JIT-compiled function memory.
     pub arena_manager: ArenaManager,
 }
@@ -107,9 +110,10 @@ impl JitState {
             config,
             backend: RwLock::new(None),
             metrics: JitMetrics::new(),
-            compiler_thread: RwLock::new(None),
+            compiler_pool: RwLock::new(None),
             validation_counts: RwLock::new(FxHashMap::default()),
             oversized_hashes: RwLock::new(FxHashSet::default()),
+            compiling_in_progress: RwLock::new(FxHashSet::default()),
             arena_manager,
         }
     }
@@ -124,9 +128,10 @@ impl JitState {
             config,
             backend: RwLock::new(None),
             metrics: JitMetrics::new(),
-            compiler_thread: RwLock::new(None),
+            compiler_pool: RwLock::new(None),
             validation_counts: RwLock::new(FxHashMap::default()),
             oversized_hashes: RwLock::new(FxHashSet::default()),
+            compiling_in_progress: RwLock::new(FxHashSet::default()),
             arena_manager,
         }
     }
@@ -151,7 +156,7 @@ impl JitState {
         }
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         {
-            *self.compiler_thread.write().unwrap() = None;
+            *self.compiler_pool.write().unwrap() = None;
         }
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         {
@@ -160,6 +165,10 @@ impl JitState {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
         {
             self.oversized_hashes.write().unwrap().clear();
+        }
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        {
+            self.compiling_in_progress.write().unwrap().clear();
         }
         self.arena_manager.reset();
     }
@@ -174,26 +183,26 @@ impl JitState {
         *guard = Some(backend);
     }
 
-    /// Register the background compiler thread.
+    /// Register the background compiler thread pool.
     ///
     /// Call this once at application startup (from `tokamak-jit`) to enable
-    /// background compilation. Without a registered thread, compilation
+    /// background compilation. Without a registered pool, compilation
     /// happens synchronously on the VM thread.
-    pub fn register_compiler_thread(&self, thread: CompilerThread) {
+    pub fn register_compiler_pool(&self, pool: CompilerThreadPool) {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
-        let mut guard = self.compiler_thread.write().unwrap();
-        *guard = Some(thread);
+        let mut guard = self.compiler_pool.write().unwrap();
+        *guard = Some(pool);
     }
 
-    /// Send a compilation request to the background thread.
+    /// Send a compilation request to the background pool.
     ///
-    /// Returns `true` if the request was queued, `false` if no thread is
+    /// Returns `true` if the request was queued, `false` if no pool is
     /// registered or the channel is disconnected (falls through to sync compile).
     pub fn request_compilation(&self, code: ethrex_common::types::Code, fork: Fork) -> bool {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
-        let guard = self.compiler_thread.read().unwrap();
+        let guard = self.compiler_pool.read().unwrap();
         match guard.as_ref() {
-            Some(thread) => thread.send(CompilationRequest { code, fork }),
+            Some(pool) => pool.send(CompilationRequest { code, fork }),
             None => false,
         }
     }
@@ -201,12 +210,12 @@ impl JitState {
     /// Send a free request for an evicted function's arena slot.
     ///
     /// Returns `true` if the request was queued, `false` if no compiler
-    /// thread is registered or the channel is disconnected.
+    /// pool is registered or the channel is disconnected.
     pub fn send_free(&self, slot: FuncSlot) -> bool {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
-        let guard = self.compiler_thread.read().unwrap();
+        let guard = self.compiler_pool.read().unwrap();
         match guard.as_ref() {
-            Some(thread) => thread.send_free(slot),
+            Some(pool) => pool.send_free(slot),
             None => false,
         }
     }
@@ -214,12 +223,12 @@ impl JitState {
     /// Send a request to free an entire arena's LLVM resources.
     ///
     /// Returns `true` if the request was queued, `false` if no compiler
-    /// thread is registered or the channel is disconnected.
+    /// pool is registered or the channel is disconnected.
     pub fn send_free_arena(&self, arena_id: ArenaId) -> bool {
         #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
-        let guard = self.compiler_thread.read().unwrap();
+        let guard = self.compiler_pool.read().unwrap();
         match guard.as_ref() {
-            Some(thread) => thread.send_free_arena(arena_id),
+            Some(pool) => pool.send_free_arena(arena_id),
             None => false,
         }
     }
@@ -323,6 +332,27 @@ impl JitState {
         let mut counts = self.validation_counts.write().unwrap();
         let count = counts.entry(*key).or_insert(0);
         *count = count.saturating_add(1);
+    }
+
+    /// Try to mark a (hash, fork) pair as being compiled.
+    ///
+    /// Returns `true` if the key was not already being compiled (caller should
+    /// proceed with compilation). Returns `false` if another worker is already
+    /// compiling this key (caller should skip).
+    pub fn try_start_compilation(&self, key: CacheKey) -> bool {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let mut guard = self.compiling_in_progress.write().unwrap();
+        guard.insert(key)
+    }
+
+    /// Mark a (hash, fork) pair as no longer being compiled.
+    ///
+    /// Called after compilation completes (success or failure) to allow
+    /// future compilation attempts for this key.
+    pub fn finish_compilation(&self, key: &CacheKey) {
+        #[expect(clippy::unwrap_used, reason = "RwLock poisoning is unrecoverable")]
+        let mut guard = self.compiling_in_progress.write().unwrap();
+        guard.remove(key);
     }
 }
 

@@ -1,7 +1,7 @@
 # Tokamak Remaining Work Roadmap
 
 **Created**: 2026-02-24 | **Updated**: 2026-02-26
-**Context**: Overall ~92% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1).
+**Context**: Overall ~93% complete. JIT core done (Phases 2-8). Phase A: ALL P0 COMPLETE (A-1 ✅ A-2 ✅ A-3 ✅ A-4 ✅). Phase B: B-1 ✅ B-2 ✅ B-3 ✅ — ALL COMPLETE. Phase C: C-1 ✅ C-2 ✅ C-3 ✅ — ALL COMPLETE. Phase D: D-1 decided (accept), D-2 ✅ DONE, D-3 ✅ DONE. Phase E: E-1 ✅ DONE, E-2 ✅ DONE, E-3 ✅ DONE — ALL COMPLETE. Phase F: F-1 ✅ DONE, F-2 ✅ DONE, F-3 ✅ DONE (scaffolding), F-4 ✅ DONE, F-5 CI CONFIGURED (awaiting sync run). Phase G: G-1 ✅ DONE (arena allocator), G-2 ✅ DONE (auto-resolved by G-1), G-3 ✅ DONE (CALL/CREATE dual-execution validation), G-5 ✅ DONE (parallel compilation pool).
 
 ---
 
@@ -281,6 +281,27 @@
 - **Dependency**: G-1 ✅
 - **Completed**: 2026-02-27 — G-1 arena system already handles Free/FreeArena — auto-resolved (f8e9ba540)
 
+### G-3. CALL/CREATE Dual-Execution Validation [P1-SIGNIFICANT] ✅ DONE
+- Removed `!compiled.has_external_calls` guard from `vm.rs` validation path ✅
+- Dual-execution validation now runs for ALL bytecodes including CALL/CREATE/DELEGATECALL/STATICCALL ✅
+- Interpreter replay handles sub-calls natively via `handle_call_opcodes()` ✅
+- State-swap mechanism (`swap_validation_state`) works correctly for external-call bytecodes ✅
+- Refactored test infrastructure: shared `MismatchBackend`, `make_external_call_bytecode()`, `setup_call_vm()`, `run_g3_mismatch_test()` helpers ✅
+- **Verification**: 5 G-3 tests (CALL/STATICCALL/DELEGATECALL mismatch + pure regression + combined), 41 total tokamak-jit tests ✅
+- **Dependency**: G-1 ✅, G-2 ✅
+- **Completed**: 2026-02-27 — removed has_external_calls guard, 5 tests, 751 lines (8c05d3412)
+
+### G-5. Parallel Compilation [P2] ✅ DONE
+- Replaced single `CompilerThread` (mpsc) with `CompilerThreadPool` (crossbeam-channel multi-consumer) ✅
+- Configurable N workers via `JitConfig.compile_workers` (default: `num_cpus / 2`, min 1) ✅
+- Each worker has its own `thread_local! ArenaState` — LLVM context thread-affinity preserved ✅
+- Deduplication guard (`compiling_in_progress` set) prevents duplicate compilations across workers ✅
+- `crossbeam-channel` unbounded channel for fair work distribution ✅
+- `num_cpus` crate for automatic worker count selection ✅
+- **Verification**: 4 G-5 tests (concurrent compilation, single worker equiv, deduplication guard, different keys), 48 total tokamak-jit tests ✅
+- **Dependency**: G-1 ✅
+- **Completed**: 2026-02-27 — CompilerThreadPool + deduplication guard + 4 tests
+
 ---
 
 ## Execution Order
@@ -294,7 +315,7 @@ Week 5+: [P2] E-2 ✅ + E-3 ✅
 Week 6:  [P3] F-1 ✅ + F-4 ✅ (parallel)
 Week 7:  [P3] F-2 ✅ (dashboard MVP)
 Week 8:  [P3] F-3 ✅ (L2 scaffolding)
-Week 9:  [P1] G-1 ✅ (arena allocator)
+Week 9:  [P1] G-1 ✅ (arena allocator) + G-3 ✅ (CALL/CREATE validation) + G-5 ✅ (parallel compilation)
 Later:   [P3] F-5
 ```
 

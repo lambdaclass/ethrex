@@ -11,6 +11,7 @@ ethrex-common = { workspace = true, default-features = false }
 bytes.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+num_cpus = "1.16"
 
 # revmc (Paradigm) — LLVM-based EVM JIT compiler.
 # Gated behind `revmc-backend` feature since it requires LLVM 21 installed on the system.

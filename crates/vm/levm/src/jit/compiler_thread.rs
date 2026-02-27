@@ -1,13 +1,15 @@
-//! Background JIT compilation thread.
+//! Background JIT compilation thread pool.
 //!
-//! Provides a single background thread that processes compilation requests
-//! asynchronously. When the execution counter hits the threshold, `vm.rs`
+//! Provides a pool of background threads that process compilation requests
+//! concurrently. When the execution counter hits the threshold, `vm.rs`
 //! sends a non-blocking compilation request instead of blocking the VM thread.
-//! The next execution of the same bytecode will find the compiled code in cache.
+//! `crossbeam-channel` enables multi-consumer distribution — requests are
+//! fairly distributed across workers via work-stealing.
 
-use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 
+use crossbeam_channel::{Receiver, Sender};
 use ethrex_common::types::{Code, Fork};
 
 use super::arena::{ArenaId, FuncSlot};
@@ -21,7 +23,7 @@ pub struct CompilationRequest {
     pub fork: Fork,
 }
 
-/// Request types for the background compiler thread.
+/// Request types for the background compiler thread pool.
 #[derive(Clone)]
 pub enum CompilerRequest {
     /// Compile bytecode into native code and insert into cache.
@@ -32,53 +34,71 @@ pub enum CompilerRequest {
     FreeArena { arena_id: ArenaId },
 }
 
-/// Handle to the background compiler thread.
+/// Handle to the background compiler thread pool.
 ///
-/// Holds the sender half of an mpsc channel. Compilation requests are sent
-/// non-blocking; the background thread processes them sequentially.
+/// Holds the sender half of a crossbeam channel. Compilation requests are sent
+/// non-blocking; worker threads pull and process them concurrently.
 ///
-/// On `Drop`, the sender is closed (causing the background thread's `recv()`
-/// to return `Err`) and the thread is joined. If the background thread panicked,
-/// the panic is propagated.
-pub struct CompilerThread {
-    sender: Option<mpsc::Sender<CompilerRequest>>,
-    handle: Option<thread::JoinHandle<()>>,
+/// On `Drop`, the sender is closed (causing all workers' `recv()` to return
+/// `Err`) and all threads are joined. If any worker panicked, the panic is
+/// logged (not propagated, to avoid double-panic in drop).
+pub struct CompilerThreadPool {
+    sender: Option<Sender<CompilerRequest>>,
+    handles: Vec<thread::JoinHandle<()>>,
 }
 
-impl CompilerThread {
-    /// Start the background compiler thread.
+impl CompilerThreadPool {
+    /// Start the background compiler thread pool with `num_workers` threads.
     ///
-    /// The `handler_fn` closure is invoked for each request on the background
-    /// thread. It receives a `CompilerRequest` and should handle both `Compile`
-    /// and `Free` variants. Any errors are logged and silently dropped (graceful
-    /// degradation — the VM falls through to the interpreter).
-    pub fn start<F>(handler_fn: F) -> Self
+    /// The `handler_fn` closure is invoked for each request on a worker thread.
+    /// It receives a `CompilerRequest` and should handle `Compile`, `Free`,
+    /// and `FreeArena` variants. Any errors are logged and silently dropped
+    /// (graceful degradation — the VM falls through to the interpreter).
+    ///
+    /// Each worker gets its own clone of the `Receiver` (crossbeam channels
+    /// are multi-consumer) and processes requests independently. The handler
+    /// is wrapped in `Arc` for sharing across workers.
+    pub fn start<F>(num_workers: usize, handler_fn: F) -> Self
     where
-        F: Fn(CompilerRequest) + Send + 'static,
+        F: Fn(CompilerRequest) + Send + Sync + 'static,
     {
-        let (sender, receiver) = mpsc::channel::<CompilerRequest>();
+        debug_assert!(
+            num_workers > 0,
+            "CompilerThreadPool requires at least 1 worker"
+        );
+        let num_workers = num_workers.max(1);
+        let (sender, receiver) = crossbeam_channel::unbounded::<CompilerRequest>();
+        let handler = Arc::new(handler_fn);
+        let mut handles = Vec::with_capacity(num_workers);
 
-        #[expect(clippy::expect_used, reason = "thread spawn failure is unrecoverable")]
-        let handle = thread::Builder::new()
-            .name("jit-compiler".to_string())
-            .spawn(move || {
-                while let Ok(request) = receiver.recv() {
-                    handler_fn(request);
-                }
-                // Channel closed — thread exits cleanly
-            })
-            .expect("failed to spawn JIT compiler thread");
+        for i in 0..num_workers {
+            let rx = receiver.clone();
+            let handler = Arc::clone(&handler);
+            #[expect(clippy::expect_used, reason = "thread spawn failure is unrecoverable")]
+            let handle = thread::Builder::new()
+                .name(format!("jit-compiler-{i}"))
+                .spawn(move || {
+                    worker_loop(&rx, handler.as_ref());
+                })
+                .expect("failed to spawn JIT compiler worker");
+            handles.push(handle);
+        }
 
         Self {
             sender: Some(sender),
-            handle: Some(handle),
+            handles,
         }
     }
 
-    /// Send a compilation request to the background thread.
+    /// Number of worker threads in the pool.
+    pub fn num_workers(&self) -> usize {
+        self.handles.len()
+    }
+
+    /// Send a compilation request to the pool.
     ///
     /// Returns `true` if the request was sent successfully, `false` if the
-    /// channel is disconnected (thread panicked or shut down). Non-blocking —
+    /// channel is disconnected (all workers shut down). Non-blocking —
     /// does not wait for compilation to complete.
     pub fn send(&self, request: CompilationRequest) -> bool {
         self.sender
@@ -108,28 +128,39 @@ impl CompilerThread {
     }
 }
 
-impl Drop for CompilerThread {
+/// Worker loop: pull requests from the channel and dispatch to the handler.
+fn worker_loop<F>(rx: &Receiver<CompilerRequest>, handler: &F)
+where
+    F: Fn(CompilerRequest),
+{
+    while let Ok(request) = rx.recv() {
+        handler(request);
+    }
+    // Channel closed — worker exits cleanly
+}
+
+impl Drop for CompilerThreadPool {
     fn drop(&mut self) {
-        // Drop the sender first so the background thread's recv() returns Err
+        // Drop the sender first so all workers' recv() returns Err
         drop(self.sender.take());
 
-        // Join the background thread, propagating any panic
-        if let Some(handle) = self.handle.take()
-            && let Err(panic_payload) = handle.join()
-        {
-            // Log panic but don't re-panic during drop (double-panic = abort)
-            eprintln!(
-                "[JIT] compiler thread panicked: {:?}",
-                panic_payload.downcast_ref::<&str>()
-            );
+        // Join all worker threads, logging any panics
+        for handle in self.handles.drain(..) {
+            if let Err(panic_payload) = handle.join() {
+                eprintln!(
+                    "[JIT] compiler worker panicked: {:?}",
+                    panic_payload.downcast_ref::<&str>()
+                );
+            }
         }
     }
 }
 
-impl std::fmt::Debug for CompilerThread {
+impl std::fmt::Debug for CompilerThreadPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CompilerThread")
+        f.debug_struct("CompilerThreadPool")
             .field("active", &self.sender.is_some())
+            .field("num_workers", &self.handles.len())
             .finish()
     }
 }
@@ -139,15 +170,14 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use ethrex_common::types::Code;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
-    fn test_compiler_thread_sends_requests() {
+    fn test_pool_sends_requests() {
         let count = Arc::new(AtomicU64::new(0));
         let count_clone = Arc::clone(&count);
 
-        let thread = CompilerThread::start(move |req| {
+        let pool = CompilerThreadPool::start(2, move |req| {
             if matches!(req, CompilerRequest::Compile(_)) {
                 count_clone.fetch_add(1, Ordering::Relaxed);
             }
@@ -155,53 +185,152 @@ mod tests {
 
         let code = Code::from_bytecode(Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]));
 
-        assert!(thread.send(CompilationRequest {
+        assert!(pool.send(CompilationRequest {
             code: code.clone(),
             fork: Fork::Cancun,
         }));
-        assert!(thread.send(CompilationRequest {
+        assert!(pool.send(CompilationRequest {
             code,
             fork: Fork::Prague,
         }));
 
-        // Give the background thread time to process
+        // Give the workers time to process
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         assert_eq!(count.load(Ordering::Relaxed), 2);
     }
 
     #[test]
-    fn test_compiler_thread_graceful_on_drop() {
+    fn test_pool_distributes_across_workers() {
+        use std::collections::HashSet;
+        use std::sync::Mutex;
+
+        let thread_ids = Arc::new(Mutex::new(HashSet::new()));
+        let thread_ids_clone = Arc::clone(&thread_ids);
         let count = Arc::new(AtomicU64::new(0));
         let count_clone = Arc::clone(&count);
 
-        let thread = CompilerThread::start(move |req| {
+        let pool = CompilerThreadPool::start(2, move |req| {
+            if matches!(req, CompilerRequest::Compile(_)) {
+                // Record which thread processed this request
+                #[expect(clippy::unwrap_used)]
+                thread_ids_clone
+                    .lock()
+                    .unwrap()
+                    .insert(std::thread::current().id());
+                // Small sleep to ensure both workers get requests
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                count_clone.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        // Send 10 requests
+        for i in 0..10u64 {
+            let code = Code::from_bytecode(Bytes::from(vec![
+                0x60,
+                i.to_le_bytes()[0],
+                0x60,
+                0x00,
+                0xf3,
+            ]));
+            assert!(pool.send(CompilationRequest {
+                code,
+                fork: Fork::Cancun,
+            }));
+        }
+
+        // Wait for all to process
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        assert_eq!(count.load(Ordering::Relaxed), 10);
+        // With 10 requests and 20ms sleep, both workers should have participated
+        #[expect(clippy::unwrap_used)]
+        let unique_threads = thread_ids.lock().unwrap().len();
+        assert_eq!(unique_threads, 2, "both workers should process requests");
+    }
+
+    #[test]
+    fn test_pool_single_worker_backward_compat() {
+        let count = Arc::new(AtomicU64::new(0));
+        let count_clone = Arc::clone(&count);
+
+        let pool = CompilerThreadPool::start(1, move |req| {
+            if matches!(req, CompilerRequest::Compile(_)) {
+                count_clone.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        assert_eq!(pool.num_workers(), 1);
+
+        let code = Code::from_bytecode(Bytes::from_static(&[0x60, 0x00, 0xf3]));
+        for _ in 0..5 {
+            assert!(pool.send(CompilationRequest {
+                code: code.clone(),
+                fork: Fork::Cancun,
+            }));
+        }
+
+        // Drop joins all threads — requests are fully processed
+        drop(pool);
+
+        assert_eq!(count.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn test_pool_graceful_shutdown() {
+        let count = Arc::new(AtomicU64::new(0));
+        let count_clone = Arc::clone(&count);
+
+        let pool = CompilerThreadPool::start(3, move |req| {
             if matches!(req, CompilerRequest::Compile(_)) {
                 count_clone.fetch_add(1, Ordering::Relaxed);
             }
         });
 
         let code = Code::from_bytecode(Bytes::from_static(&[0x00]));
-        assert!(thread.send(CompilationRequest {
+        assert!(pool.send(CompilationRequest {
             code,
             fork: Fork::Cancun,
         }));
 
-        // Drop joins the thread — this must not hang or panic
-        drop(thread);
+        // Drop joins all threads — this must not hang or panic
+        drop(pool);
 
-        // Thread was joined, so the request was processed
         assert_eq!(count.load(Ordering::Relaxed), 1);
     }
 
     #[test]
-    fn test_compiler_thread_send_after_drop_fails() {
-        let thread = CompilerThread::start(|_req: CompilerRequest| {});
-        let _code = Code::from_bytecode(Bytes::from_static(&[0x00]));
+    fn test_pool_free_requests_processed() {
+        let free_count = Arc::new(AtomicU64::new(0));
+        let free_arena_count = Arc::new(AtomicU64::new(0));
+        let fc = Arc::clone(&free_count);
+        let fac = Arc::clone(&free_arena_count);
 
-        // Manually drop sender by dropping the whole thread
-        // Can't test send-after-drop directly, but we can verify
-        // the drop path doesn't panic
-        drop(thread);
+        let pool = CompilerThreadPool::start(2, move |req| match req {
+            CompilerRequest::Free { .. } => {
+                fc.fetch_add(1, Ordering::Relaxed);
+            }
+            CompilerRequest::FreeArena { .. } => {
+                fac.fetch_add(1, Ordering::Relaxed);
+            }
+            CompilerRequest::Compile(_) => {}
+        });
+
+        assert!(pool.send_free((0, 0)));
+        assert!(pool.send_free((0, 1)));
+        assert!(pool.send_free_arena(42));
+
+        // Drop joins — all processed
+        drop(pool);
+
+        assert_eq!(free_count.load(Ordering::Relaxed), 2);
+        assert_eq!(free_arena_count.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_pool_num_workers() {
+        let pool = CompilerThreadPool::start(4, |_req: CompilerRequest| {});
+        assert_eq!(pool.num_workers(), 4);
+        drop(pool);
     }
 }

@@ -33,7 +33,7 @@ use revmc_context::EvmCompilerFn;
 /// which provides a thread-local LLVM context. The context persists for the
 /// lifetime of the thread. `ArenaCompiler` must only be dropped on the same
 /// thread that created its compilers — specifically, the background compiler
-/// thread managed by `CompilerThread`.
+/// thread managed by `CompilerThreadPool`.
 ///
 /// The caller must ensure that no function pointers from this arena are in
 /// active use when the `ArenaCompiler` is dropped. The `ArenaManager` tracks
