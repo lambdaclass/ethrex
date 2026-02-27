@@ -280,7 +280,6 @@ lazy_static::lazy_static! {
         HashMap::from([
             (1, "mainnet"),
             (11155111, "sepolia"),
-            (17000, "holesky"),
             (560048, "hoodi"),
             (9, "L1 local devnet"),
             (65536999, "L2 local devnet"),
