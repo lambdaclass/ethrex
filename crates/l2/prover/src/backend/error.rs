@@ -1,6 +1,9 @@
 /// Error type for prover backend operations.
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
+    #[error("Initialization error: {0}")]
+    Initialization(String),
+
     #[error("Serialization error: {0}")]
     Serialization(String),
 
@@ -21,6 +24,10 @@ pub enum BackendError {
 }
 
 impl BackendError {
+    pub fn initialization(e: impl std::fmt::Display) -> Self {
+        Self::Initialization(e.to_string())
+    }
+
     pub fn serialization(e: impl std::fmt::Display) -> Self {
         Self::Serialization(e.to_string())
     }

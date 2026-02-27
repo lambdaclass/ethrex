@@ -63,13 +63,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: ./.github/actions/install-risc0
 
+      - name: Install protoc (required by SP1 v6)
+        if: matrix.backend == 'sp1'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
       - name: RISC-V SP1 toolchain install
         if: matrix.backend == 'sp1'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+          ~/.sp1/bin/sp1up --version 6.0.1
 
       - name: ZisK toolchain install
         if: matrix.backend == 'zisk'
