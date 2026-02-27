@@ -267,20 +267,22 @@ pub struct DeployerOptions {
         long,
         value_name = "ADDRESS",
         env = "ETHREX_ON_CHAIN_PROPOSER_OWNER",
-        default_value = "0x0000000000000000000000000000000000000000",
         help_heading = "Deployer options",
-        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract."
+        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract.",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
-    pub on_chain_proposer_owner: Address,
+    pub on_chain_proposer_owner: Option<Address>,
     #[arg(
         long,
         value_name = "ADDRESS",
         env = "ETHREX_BRIDGE_OWNER",
-        default_value = "0x0000000000000000000000000000000000000000",
         help_heading = "Deployer options",
-        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
+        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract.",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
-    pub bridge_owner: Address,
+    pub bridge_owner: Option<Address>,
     #[arg(
         long,
         value_name = "PRIVATE_KEY",
@@ -377,7 +379,6 @@ pub struct DeployerOptions {
         help = "This address will be registered as an initial fee token"
     )]
     pub initial_fee_token: Option<Address>,
-    #[cfg(feature = "native-rollups")]
     #[arg(
         long = "native-rollups",
         default_value = "false",
@@ -450,15 +451,15 @@ impl Default for DeployerOptions {
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
             // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
             // (also found on fixtures/keys/private_keys_l1.txt)
-            on_chain_proposer_owner: H160([
+            on_chain_proposer_owner: Some(H160([
                 0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
-            ]),
+            ])),
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
-            bridge_owner: H160([
+            bridge_owner: Some(H160([
                 0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
-            ]),
+            ])),
             // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
             bridge_owner_pk: Some(
                 SecretKey::from_slice(
@@ -480,7 +481,6 @@ impl Default for DeployerOptions {
             router: None,
             deploy_router: false,
             initial_fee_token: None,
-            #[cfg(feature = "native-rollups")]
             native_rollups: false,
             #[cfg(feature = "native-rollups")]
             native_rollups_relayer_pk: SecretKey::from_slice(
@@ -1167,6 +1167,14 @@ async fn initialize_contracts(
     initializer: &Signer,
 ) -> Result<Vec<H256>, DeployerError> {
     trace!("Initializing contracts");
+
+    let on_chain_proposer_owner = opts
+        .on_chain_proposer_owner
+        .ok_or(DeployerError::ConfigValueNotSet("on-chain-proposer-owner".to_owned()))?;
+    let bridge_owner = opts
+        .bridge_owner
+        .ok_or(DeployerError::ConfigValueNotSet("bridge-owner".to_owned()))?;
+
     let mut tx_hashes = vec![];
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
@@ -1204,8 +1212,8 @@ async fn initialize_contracts(
                     Value::Address(opts.committer_l1_address),
                     Value::Address(opts.proof_sender_l1_address),
                 ]),
-                Value::Address(opts.on_chain_proposer_owner), // owner
-                Value::Address(opts.on_chain_proposer_owner), // securityCouncil
+                Value::Address(on_chain_proposer_owner), // owner
+                Value::Address(on_chain_proposer_owner), // securityCouncil
                 Value::Address(contract_addresses.on_chain_proposer_address), // onChainProposer
             ];
             let timelock_initialization_calldata =
@@ -1238,7 +1246,7 @@ async fn initialize_contracts(
         // Initialize OnChainProposer with Based config and SequencerRegistry
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(opts.on_chain_proposer_owner),
+            Value::Address(on_chain_proposer_owner),
             Value::Bool(opts.risc0),
             Value::Bool(opts.sp1),
             Value::Bool(opts.tdx),
@@ -1457,7 +1465,7 @@ async fn initialize_contracts(
         tx_hashes.push(register_tx_hash);
     }
 
-    if opts.bridge_owner != initializer.address() {
+    if bridge_owner != initializer.address() {
         let initializer_nonce = eth_client
             .get_nonce(
                 initializer.address(),
@@ -1466,7 +1474,7 @@ async fn initialize_contracts(
             .await?;
         let transfer_calldata = encode_calldata(
             TRANSFER_OWNERSHIP_SIGNATURE,
-            &[Value::Address(opts.bridge_owner)],
+            &[Value::Address(bridge_owner)],
         )?;
         let transfer_tx_hash = initialize_contract_no_wait(
             contract_addresses.bridge_address,
@@ -1495,7 +1503,7 @@ async fn initialize_contracts(
                 eth_client,
                 TxType::EIP1559,
                 contract_addresses.bridge_address,
-                opts.bridge_owner,
+                bridge_owner,
                 accept_calldata.into(),
                 Overrides {
                     gas_limit: Some(TRANSACTION_GAS_LIMIT),

@@ -627,10 +627,16 @@ impl Command {
                     .inspect(|_| info!("Succesfully unpaused contract"))?;
             }
             Command::Deploy { options } => {
-                #[cfg(feature = "native-rollups")]
                 if options.native_rollups {
-                    l2::deployer::deploy_native_rollup_contracts(options).await?;
-                    return Ok(());
+                    #[cfg(feature = "native-rollups")]
+                    {
+                        l2::deployer::deploy_native_rollup_contracts(options).await?;
+                        return Ok(());
+                    }
+                    #[cfg(not(feature = "native-rollups"))]
+                    return Err(eyre::eyre!(
+                        "--native-rollups requires the native-rollups feature flag"
+                    ));
                 }
                 deploy_l1_contracts(options).await?;
             }
