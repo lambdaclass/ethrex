@@ -230,12 +230,12 @@ impl OpcodeHandler for OpMulModHandler {
                 use std::mem::MaybeUninit;
                 use ziskos::zisklib::mulmod256_c;
 
-                let res = MaybeUninit::<[u64; 4]>::uninit();
+                let mut res = MaybeUninit::<[u64; 4]>::uninit();
                 mulmod256_c(
                     lhs.0.as_ptr(),
                     rhs.0.as_ptr(),
                     r#mod.0.as_ptr(),
-                    res.as_mut_ptr(),
+                    res.as_mut_ptr().cast(),
                 );
                 U256(res.assume_init())
             };
