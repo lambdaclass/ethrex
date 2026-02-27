@@ -12,7 +12,7 @@
     "berlinBlock": 0,
     "londonBlock": 0,
     "mergeNetsplitBlock": 1735371,
-    "terminalTotalDifficulty": 17000000000000000,
+    "terminalTotalDifficulty": "0x3c6568f12e8000",
     "terminalTotalDifficultyPassed": true,
     "shanghaiTime": 1677557088,
     "cancunTime": 1706655072,
