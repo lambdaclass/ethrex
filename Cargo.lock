@@ -134,7 +134,7 @@ source = "git+https://github.com/yetanotherco/aligned_layer?rev=54ca247162470053
 dependencies = [
  "alloy",
  "bincode 1.3.3",
- "lambdaworks-crypto 0.12.0",
+ "lambdaworks-crypto",
  "reqwest",
  "serde",
  "serde_json",
@@ -3837,6 +3837,7 @@ dependencies = [
  "ethrex-l2",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
+ "ethrex-levm",
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-prover",
@@ -3861,6 +3862,7 @@ dependencies = [
  "serde_json",
  "spawned-concurrency",
  "spawned-rt",
+ "tempfile",
  "thiserror 2.0.18",
  "tikv-jemallocator",
  "tokio",
@@ -4025,6 +4027,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-config",
+ "ethrex-crypto",
  "ethrex-dev",
  "ethrex-guest-program",
  "ethrex-l2-common",
@@ -4043,10 +4046,12 @@ dependencies = [
  "futures",
  "hex",
  "jsonwebtoken",
+ "k256",
  "lazy_static",
  "rand 0.8.5",
  "ratatui",
  "reqwest",
+ "rustc-hash 2.1.1",
  "secp256k1",
  "serde",
  "serde_json",
@@ -4078,7 +4083,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "k256",
- "lambdaworks-crypto 0.13.0",
  "rkyv",
  "secp256k1",
  "serde",
@@ -4133,6 +4137,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "ethrex-trie",
  "hex",
  "k256",
  "lambdaworks-math 0.13.0",
@@ -4465,6 +4470,7 @@ dependencies = [
  "hasher",
  "hex",
  "hex-literal 0.4.1",
+ "k256",
  "lazy_static",
  "proptest",
  "rand 0.8.5",
@@ -6307,20 +6313,6 @@ version = "0.12.0"
 source = "git+https://github.com/lambdaclass/lambdaworks.git?rev=5f8f2cfcc8a1a22f77e8dff2d581f1166eefb80b#5f8f2cfcc8a1a22f77e8dff2d581f1166eefb80b"
 dependencies = [
  "lambdaworks-math 0.12.0",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "serde",
- "sha2",
- "sha3",
-]
-
-[[package]]
-name = "lambdaworks-crypto"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58b1a1c1102a5a7fbbda117b79fb3a01e033459c738a3c1642269603484fd1c1"
-dependencies = [
- "lambdaworks-math 0.13.0",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "serde",

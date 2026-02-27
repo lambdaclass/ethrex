@@ -101,6 +101,17 @@ impl L2Command {
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");
         }
+        if l2_options.sequencer_opts.native_rollups {
+            #[cfg(feature = "native-rollups")]
+            {
+                l2::init_native_rollup_l2(l2_options, log_filter_handler).await?;
+                return Ok(());
+            }
+            #[cfg(not(feature = "native-rollups"))]
+            return Err(eyre::eyre!(
+                "--native-rollups requires the native-rollups feature flag"
+            ));
+        }
         l2::init_l2(l2_options, log_filter_handler).await?;
         Ok(())
     }
@@ -622,6 +633,17 @@ impl Command {
                     .inspect(|_| info!("Succesfully unpaused contract"))?;
             }
             Command::Deploy { options } => {
+                if options.native_rollups {
+                    #[cfg(feature = "native-rollups")]
+                    {
+                        l2::deployer::deploy_native_rollup_contracts(options).await?;
+                        return Ok(());
+                    }
+                    #[cfg(not(feature = "native-rollups"))]
+                    return Err(eyre::eyre!(
+                        "--native-rollups requires the native-rollups feature flag"
+                    ));
+                }
                 deploy_l1_contracts(options).await?;
             }
         }
@@ -679,7 +701,7 @@ impl ContractCallOptions {
 
 async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &Path) -> eyre::Result<u64> {
     info!("Deleting batch from rollup store...");
-    let rollup_store = l2::initializers::init_rollup_store(rollup_store_dir).await;
+    let rollup_store = l2::init_rollup_store(rollup_store_dir).await;
     let last_kept_block = rollup_store
         .get_block_numbers_by_batch(batch)
         .await?

@@ -256,6 +256,18 @@ pub const P256VERIFY: Precompile = Precompile {
     active_since_fork: Osaka,
 };
 
+/// EXECUTE precompile address (0x0101) for Native Rollups (EIP-8079 PoC).
+/// Only available when the `native-rollups` feature is enabled.
+#[cfg(feature = "native-rollups")]
+pub const EXECUTE: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01, 0x01,
+    ]),
+    name: "EXECUTE",
+    active_since_fork: Paris, // Always active when feature is enabled
+};
+
 pub const PRECOMPILES: [Precompile; 19] = [
     ECRECOVER,
     SHA2_256,
@@ -285,6 +297,10 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
+    #[cfg(feature = "native-rollups")]
+    if *address == EXECUTE.address {
+        return true;
+    }
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
@@ -364,6 +380,12 @@ pub fn execute_precompile(
             Some(p_256_verify as PrecompileFn);
         precompiles
     };
+
+    // EXECUTE precompile is dispatched before the const table (feature-gated)
+    #[cfg(feature = "native-rollups")]
+    if address == EXECUTE.address {
+        return crate::execute_precompile::execute_precompile(calldata, gas_remaining, fork);
+    }
 
     if address[0..18] != [0u8; 18] {
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));

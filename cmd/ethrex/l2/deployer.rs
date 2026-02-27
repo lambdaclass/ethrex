@@ -42,6 +42,9 @@ use ethrex_config::networks::{
     LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, LOCAL_DEVNETL2_GENESIS_CONTENTS,
 };
 
+#[cfg(feature = "native-rollups")]
+use ethrex_common::types::{ChainConfig, GenesisAccount};
+
 #[derive(Parser)]
 pub struct DeployerOptions {
     #[arg(
@@ -265,17 +268,21 @@ pub struct DeployerOptions {
         value_name = "ADDRESS",
         env = "ETHREX_ON_CHAIN_PROPOSER_OWNER",
         help_heading = "Deployer options",
-        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract."
+        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract.",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
-    pub on_chain_proposer_owner: Address,
+    pub on_chain_proposer_owner: Option<Address>,
     #[arg(
         long,
         value_name = "ADDRESS",
         env = "ETHREX_BRIDGE_OWNER",
         help_heading = "Deployer options",
-        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
+        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract.",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
-    pub bridge_owner: Address,
+    pub bridge_owner: Option<Address>,
     #[arg(
         long,
         value_name = "PRIVATE_KEY",
@@ -372,6 +379,27 @@ pub struct DeployerOptions {
         help = "This address will be registered as an initial fee token"
     )]
     pub initial_fee_token: Option<Address>,
+    #[arg(
+        long = "native-rollups",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_NATIVE_ROLLUPS",
+        action = ArgAction::SetTrue,
+        help_heading = "Native rollups options",
+        help = "If set, deploy NativeRollup.sol instead of the standard L2 contracts."
+    )]
+    pub native_rollups: bool,
+    #[cfg(feature = "native-rollups")]
+    #[arg(
+        long = "native-rollups.relayer-pk",
+        value_name = "PRIVATE_KEY",
+        value_parser = parse_private_key,
+        env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
+        help_heading = "Native rollups options",
+        help = "Private key for the relayer account on L2 (signs processL1Message txs).",
+        default_value = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    )]
+    pub native_rollups_relayer_pk: SecretKey,
 }
 
 impl Default for DeployerOptions {
@@ -423,15 +451,15 @@ impl Default for DeployerOptions {
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
             // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
             // (also found on fixtures/keys/private_keys_l1.txt)
-            on_chain_proposer_owner: H160([
+            on_chain_proposer_owner: Some(H160([
                 0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
-            ]),
+            ])),
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
-            bridge_owner: H160([
+            bridge_owner: Some(H160([
                 0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
-            ]),
+            ])),
             // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
             bridge_owner_pk: Some(
                 SecretKey::from_slice(
@@ -453,6 +481,13 @@ impl Default for DeployerOptions {
             router: None,
             deploy_router: false,
             initial_fee_token: None,
+            native_rollups: false,
+            #[cfg(feature = "native-rollups")]
+            native_rollups_relayer_pk: SecretKey::from_slice(
+                &hex::decode("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+                    .expect("Valid hex"),
+            )
+            .expect("Valid key"),
         }
     }
 }
@@ -545,6 +580,27 @@ const TIMELOCK_BYTECODE: &[u8] = include_bytes!(concat!(
 const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/contracts/solc_out/SP1Verifier.bytecode"
+));
+
+/// Creation bytecode of the NativeRollup contract (for deployment to L1).
+#[cfg(feature = "native-rollups")]
+const NATIVE_ROLLUP_BYTECODE: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/contracts/solc_out/NativeRollup.bytecode"
+));
+
+/// Runtime bytecode of the L2Bridge contract (for L2 genesis predeploy).
+#[cfg(feature = "native-rollups")]
+const L2_BRIDGE_RUNTIME_BYTECODE: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/contracts/solc_out/L2Bridge.bytecode"
+));
+
+/// Runtime bytecode of the L1Anchor contract (for L2 genesis predeploy).
+#[cfg(feature = "native-rollups")]
+const L1_ANCHOR_RUNTIME_BYTECODE: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/contracts/solc_out/L1Anchor.bytecode"
 ));
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,bytes32,address,uint256,address)";
@@ -1111,6 +1167,14 @@ async fn initialize_contracts(
     initializer: &Signer,
 ) -> Result<Vec<H256>, DeployerError> {
     trace!("Initializing contracts");
+
+    let on_chain_proposer_owner = opts
+        .on_chain_proposer_owner
+        .ok_or(DeployerError::ConfigValueNotSet("on-chain-proposer-owner".to_owned()))?;
+    let bridge_owner = opts
+        .bridge_owner
+        .ok_or(DeployerError::ConfigValueNotSet("bridge-owner".to_owned()))?;
+
     let mut tx_hashes = vec![];
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
@@ -1148,8 +1212,8 @@ async fn initialize_contracts(
                     Value::Address(opts.committer_l1_address),
                     Value::Address(opts.proof_sender_l1_address),
                 ]),
-                Value::Address(opts.on_chain_proposer_owner), // owner
-                Value::Address(opts.on_chain_proposer_owner), // securityCouncil
+                Value::Address(on_chain_proposer_owner), // owner
+                Value::Address(on_chain_proposer_owner), // securityCouncil
                 Value::Address(contract_addresses.on_chain_proposer_address), // onChainProposer
             ];
             let timelock_initialization_calldata =
@@ -1182,7 +1246,7 @@ async fn initialize_contracts(
         // Initialize OnChainProposer with Based config and SequencerRegistry
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(opts.on_chain_proposer_owner),
+            Value::Address(on_chain_proposer_owner),
             Value::Bool(opts.risc0),
             Value::Bool(opts.sp1),
             Value::Bool(opts.tdx),
@@ -1401,7 +1465,7 @@ async fn initialize_contracts(
         tx_hashes.push(register_tx_hash);
     }
 
-    if opts.bridge_owner != initializer.address() {
+    if bridge_owner != initializer.address() {
         let initializer_nonce = eth_client
             .get_nonce(
                 initializer.address(),
@@ -1410,7 +1474,7 @@ async fn initialize_contracts(
             .await?;
         let transfer_calldata = encode_calldata(
             TRANSFER_OWNERSHIP_SIGNATURE,
-            &[Value::Address(opts.bridge_owner)],
+            &[Value::Address(bridge_owner)],
         )?;
         let transfer_tx_hash = initialize_contract_no_wait(
             contract_addresses.bridge_address,
@@ -1439,7 +1503,7 @@ async fn initialize_contracts(
                 eth_client,
                 TxType::EIP1559,
                 contract_addresses.bridge_address,
-                opts.bridge_owner,
+                bridge_owner,
                 accept_calldata.into(),
                 Overrides {
                     gas_limit: Some(TRANSACTION_GAS_LIMIT),
@@ -1685,4 +1749,312 @@ fn write_contract_addresses_to_env(
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
+}
+
+// =============================================================================
+// Native Rollups Deployment
+// =============================================================================
+
+#[cfg(feature = "native-rollups")]
+pub async fn deploy_native_rollup_contracts(
+    opts: DeployerOptions,
+) -> Result<Address, DeployerError> {
+    use ethrex_common::genesis_utils::write_genesis_as_json;
+    use ethrex_l2_common::utils::get_address_from_secret_key;
+    use ethrex_storage::EngineType;
+
+    info!("Starting native rollup deployment");
+
+    // Check that the contract bytecodes were compiled (empty when COMPILE_CONTRACTS isn't set).
+    #[allow(clippy::const_is_empty)]
+    if NATIVE_ROLLUP_BYTECODE.is_empty()
+        || L2_BRIDGE_RUNTIME_BYTECODE.is_empty()
+        || L1_ANCHOR_RUNTIME_BYTECODE.is_empty()
+    {
+        return Err(DeployerError::BytecodeNotFound);
+    }
+
+    let signer: Signer = LocalSigner::new(opts.private_key).into();
+    let eth_client = EthClient::new_with_config(
+        vec![opts.rpc_url.clone()],
+        opts.max_number_of_retries,
+        opts.backoff_factor,
+        opts.min_retry_delay,
+        opts.max_retry_delay,
+        Some(opts.maximum_allowed_max_fee_per_gas),
+        Some(opts.maximum_allowed_max_fee_per_blob_gas),
+    )?;
+
+    // 1. Derive relayer address from the relayer private key
+    let relayer_address =
+        get_address_from_secret_key(&opts.native_rollups_relayer_pk.secret_bytes())
+            .map_err(DeployerError::InternalError)?;
+    info!("Relayer address: {relayer_address:#x}");
+
+    // 2. Build the L2 genesis
+    let genesis = build_native_l2_genesis(relayer_address)?;
+
+    // 3. Write genesis to the path specified
+    let genesis_path = &opts.genesis_l2_path;
+    info!("Writing native L2 genesis to {}", genesis_path.display());
+    write_genesis_as_json(genesis.clone(), genesis_path)
+        .map_err(|e| DeployerError::InternalError(format!("Failed to write genesis: {e}")))?;
+
+    // 4. Compute L2 genesis state root by initializing a temp in-memory store
+    let temp_dir = tempfile::tempdir()
+        .map_err(|e| DeployerError::InternalError(format!("Failed to create temp dir: {e}")))?;
+    let store = ethrex_storage::Store::new_from_genesis(
+        temp_dir.path(),
+        EngineType::InMemory,
+        genesis_path
+            .to_str()
+            .ok_or(DeployerError::FailedToGetStringFromPath)?,
+    )
+    .await
+    .map_err(|e| DeployerError::InternalError(format!("Failed to init store from genesis: {e}")))?;
+    let genesis_header = store
+        .get_block_header(0)
+        .map_err(|e| DeployerError::InternalError(format!("Failed to get genesis header: {e}")))?
+        .ok_or_else(|| DeployerError::InternalError("Genesis header not found".to_string()))?;
+    let initial_state_root = genesis_header.state_root;
+    info!("L2 genesis state root: {initial_state_root:#x}");
+
+    // 5. Deploy NativeRollup.sol with constructor(initialStateRoot, blockGasLimit, initialBaseFee)
+    let block_gas_limit: u64 = 30_000_000;
+    let initial_base_fee: u64 = 1_000_000_000; // 1 gwei
+
+    let constructor_args = encode_calldata(
+        "constructor(bytes32,uint256,uint256)",
+        &[
+            Value::FixedBytes(initial_state_root.as_bytes().to_vec().into()),
+            Value::Uint(U256::from(block_gas_limit)),
+            Value::Uint(U256::from(initial_base_fee)),
+        ],
+    )?;
+    // Strip the 4-byte selector from the encoded constructor args
+    let constructor_args_bytes: Bytes = constructor_args
+        .get(4..)
+        .ok_or_else(|| DeployerError::InternalError("Constructor args too short".to_string()))?
+        .to_vec()
+        .into();
+
+    // Build creation bytecode: contract bytecode + constructor args
+    let mut deploy_bytecode = NATIVE_ROLLUP_BYTECODE.to_vec();
+    deploy_bytecode.extend_from_slice(&constructor_args_bytes);
+
+    let gas_price: u64 = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
+    info!("Deploying NativeRollup.sol...");
+    // Salt must be exactly 32 bytes for the deterministic deployment proxy.
+    let salt = H256::zero().as_bytes().to_vec();
+    let (deploy_tx_hash, contract_address) = create2_deploy_from_bytecode_no_wait(
+        &constructor_args_bytes,
+        NATIVE_ROLLUP_BYTECODE,
+        &signer,
+        &salt,
+        &eth_client,
+        Overrides {
+            gas_limit: Some(TRANSACTION_GAS_LIMIT),
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
+            ..Default::default()
+        },
+    )
+    .await?;
+    info!("NativeRollup.sol deployment tx: {deploy_tx_hash:#x}");
+
+    wait_for_transaction_receipt(deploy_tx_hash, &eth_client, 100).await?;
+
+    // Verify the contract was actually deployed (CREATE2 can fail silently)
+    let code = eth_client
+        .get_code(contract_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    if code.is_empty() {
+        return Err(DeployerError::InternalError(
+            "NativeRollup.sol deployment failed: no code at expected address".to_string(),
+        ));
+    }
+    info!("NativeRollup.sol deployed at: {contract_address:#x}");
+
+    // 6. Fund the contract with ETH to cover withdrawal claims.
+    //    The amount matches the relayer's L2 prefund (100 ETH) — the contract
+    //    only needs enough to pay out withdrawals, which are bounded by deposits.
+    let fund_nonce = eth_client
+        .get_nonce(signer.address(), BlockIdentifier::Tag(BlockTag::Pending))
+        .await?;
+    let fund_amount = U256::from(100) * U256::from(10).pow(U256::from(18)); // 100 ETH
+    let fund_tx = build_generic_tx(
+        &eth_client,
+        TxType::EIP1559,
+        contract_address,
+        signer.address(),
+        Bytes::new(),
+        Overrides {
+            nonce: Some(fund_nonce),
+            gas_limit: Some(30_000),
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
+            value: Some(fund_amount),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let fund_tx_hash = send_generic_transaction(&eth_client, fund_tx, &signer).await?;
+    let fund_receipt = wait_for_transaction_receipt(fund_tx_hash, &eth_client, 100).await?;
+    if !fund_receipt.receipt.status {
+        warn!("Failed to fund NativeRollup contract with ETH");
+    } else {
+        info!("Funded NativeRollup contract with 100 ETH");
+    }
+
+    // 7. Write contract address to .env
+    let env_file_path = opts
+        .env_file_path
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env"));
+    if !env_file_path.exists() {
+        File::create(&env_file_path).map_err(|err| {
+            DeployerError::InternalError(format!(
+                "Failed to create .env file at {}: {err}",
+                env_file_path.display()
+            ))
+        })?;
+    }
+    let env_file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&env_file_path)?;
+    let mut writer = BufWriter::new(env_file);
+    writeln!(
+        writer,
+        "ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS={contract_address:#x}"
+    )?;
+    info!("Contract address written to {}", env_file_path.display());
+
+    info!("Native rollup deployment complete");
+    Ok(contract_address)
+}
+
+/// Build a Genesis struct for the native rollup L2.
+///
+/// Pre-deploys L2Bridge and L1Anchor at their predeploy addresses, funds the
+/// relayer and test accounts, and configures a Shanghai-only chain (no Cancun/
+/// Prague — matches EXECUTE precompile semantics).
+#[cfg(feature = "native-rollups")]
+fn build_native_l2_genesis(relayer_address: Address) -> Result<Genesis, DeployerError> {
+    use ethrex_levm::execute_precompile::{L1_ANCHOR, L2_BRIDGE};
+    use std::collections::BTreeMap;
+
+    let one_eth = U256::from(10).pow(U256::from(18));
+
+    let config = ChainConfig {
+        chain_id: 1,
+        homestead_block: Some(0),
+        eip150_block: Some(0),
+        eip155_block: Some(0),
+        eip158_block: Some(0),
+        byzantium_block: Some(0),
+        constantinople_block: Some(0),
+        petersburg_block: Some(0),
+        istanbul_block: Some(0),
+        berlin_block: Some(0),
+        london_block: Some(0),
+        terminal_total_difficulty: Some(0),
+        terminal_total_difficulty_passed: true,
+        shanghai_time: Some(0),
+        ..Default::default()
+    };
+
+    let mut alloc = BTreeMap::new();
+
+    // L2Bridge predeploy at 0x...fffd
+    // Storage slot 0 = relayer address (the authorized relayer)
+    let mut l2_bridge_storage = BTreeMap::new();
+    l2_bridge_storage.insert(
+        U256::zero(),
+        U256::from_big_endian(relayer_address.as_bytes()),
+    );
+    alloc.insert(
+        L2_BRIDGE,
+        GenesisAccount {
+            code: Bytes::from(L2_BRIDGE_RUNTIME_BYTECODE.to_vec()),
+            storage: l2_bridge_storage,
+            balance: U256::MAX / 2, // Effectively infinite — the bridge sends ETH to deposit recipients
+            nonce: 1,
+        },
+    );
+
+    // L1Anchor predeploy at 0x...fffe
+    // Slot 0 stores the L1 messages Merkle root. It must be present in the
+    // genesis storage (even as zero) so the VM's state-diff tracking can find
+    // the "old value" when the block producer writes a new root.
+    let mut l1_anchor_storage = BTreeMap::new();
+    l1_anchor_storage.insert(U256::zero(), U256::zero());
+    alloc.insert(
+        L1_ANCHOR,
+        GenesisAccount {
+            code: Bytes::from(L1_ANCHOR_RUNTIME_BYTECODE.to_vec()),
+            storage: l1_anchor_storage,
+            balance: U256::zero(),
+            nonce: 1,
+        },
+    );
+
+    // Relayer account — gas for L2 transactions
+    alloc.insert(
+        relayer_address,
+        GenesisAccount {
+            code: Bytes::new(),
+            storage: BTreeMap::new(),
+            balance: U256::from(100) * one_eth, // 100 ETH
+            nonce: 0,
+        },
+    );
+
+    // Prefund test accounts from private_keys_l1.txt (first 10)
+    let test_private_keys = [
+        "0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e",
+        "0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31",
+        "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
+        "0x53321db7c1e331d93a11a41d16f004d7ff63972ec8ec7c25db329728ceeb1710",
+        "0xab63b23eb7941c1251757e24b3d2350d2bc05c3c388d06f8fe6feafefb1e8c70",
+    ];
+    for pk_hex in &test_private_keys {
+        if let Ok(sk) = parse_private_key(pk_hex)
+            && let Ok(addr) =
+                ethrex_l2_common::utils::get_address_from_secret_key(&sk.secret_bytes())
+        {
+            alloc.entry(addr).or_insert(GenesisAccount {
+                code: Bytes::new(),
+                storage: BTreeMap::new(),
+                balance: U256::from(10) * one_eth, // 10 ETH
+                nonce: 0,
+            });
+        }
+    }
+
+    let genesis = Genesis {
+        config,
+        alloc,
+        coinbase: Address::zero(),
+        difficulty: U256::zero(),
+        extra_data: Bytes::new(),
+        gas_limit: 30_000_000,
+        nonce: 0,
+        timestamp: 0,
+        mix_hash: H256::zero(),
+        base_fee_per_gas: Some(1_000_000_000), // 1 gwei
+        excess_blob_gas: None,
+        blob_gas_used: None,
+        requests_hash: None,
+        block_access_list_hash: None,
+        slot_number: None,
+    };
+
+    Ok(genesis)
 }

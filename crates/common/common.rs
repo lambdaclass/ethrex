@@ -10,6 +10,7 @@ pub mod errors;
 pub mod evm;
 pub mod fd_limit;
 pub mod genesis_utils;
+pub mod merkle_tree;
 pub mod rkyv_utils;
 pub mod tracing;
 pub mod utils;

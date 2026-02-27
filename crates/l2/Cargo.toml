@@ -60,6 +60,9 @@ tui-logger.workspace = true
 tabwriter = "1.4.1"
 color-eyre = "0.6.5"
 axum.workspace = true
+k256 = { workspace = true, optional = true }
+ethrex-crypto = { workspace = true, optional = true }
+rustc-hash = { workspace = true, optional = true }
 
 ethrex-guest-program = { path = "../guest-program" }
 
@@ -93,3 +96,5 @@ rocksdb = []
 metrics = ["ethrex-blockchain/metrics"]
 
 l2 = ["ethrex-guest-program/l2"]
+
+native-rollups = ["ethrex-vm/native-rollups", "dep:k256", "dep:ethrex-crypto", "dep:rustc-hash"]

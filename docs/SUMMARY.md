@@ -45,6 +45,7 @@
   - [Deploying a vanilla ethrex L2](./l2/deployment/vanilla.md)
   - [Deploying a validium ethrex L2](./l2/deployment/validium.md)
   - [Deploying a based ethrex L2](./l2/deployment/based.md)
+  - [Deploying a native rollups ethrex L2](./l2/deployment/native_rollups.md)
   - [Ethrex <> Aligned](./l2/deployment/aligned.md)
   - [Ethrex <> Aligned | Failure Recovery Guide](./l2/deployment/aligned_failure_recovery.md)
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)

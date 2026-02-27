@@ -53,6 +53,7 @@ bitvec = { version = "1.0.1", features = ["alloc"] }
 hex.workspace = true
 colored = "2.1.0"
 spinoff = "0.8.0"
+ethrex-trie = { workspace = true }
 
 [features]
 default = ["secp256k1"]
@@ -64,6 +65,7 @@ sp1 = ["dep:substrate-bn"]
 risc0 = ["dep:substrate-bn", "c-kzg"]
 zisk = ["dep:substrate-bn", "dep:ziskos"]
 openvm = ["ethrex-common/openvm"]
+native-rollups = []
 perf_opcode_timings = []
 
 [lints.rust]
