@@ -4008,12 +4008,14 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-vm",
  "hex",
+ "k256",
  "risc0-build",
  "rkyv",
  "serde",
  "serde_with",
  "sp1-build",
  "sp1-sdk",
+ "substrate-bn",
  "thiserror 2.0.18",
 ]
 
@@ -12835,6 +12837,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "substrate-bn"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b5bbfa79abbae15dd642ea8176a21a635ff3c00059961d1ea27ad04e5b441c"
+dependencies = [
+ "byteorder",
+ "crunchy",
+ "lazy_static",
+ "rand 0.8.5",
+ "rustc-hex",
 ]
 
 [[package]]

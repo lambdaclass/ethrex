@@ -1,128 +1,137 @@
 use ethereum_types::Address;
-use ethrex_crypto::{Crypto, CryptoError};
+use ethrex_crypto::{Crypto, CryptoError, NativeCrypto};
 
+use super::sp1::{k256_ecrecover, k256_recover_signer};
+
+/// OpenVM crypto provider.
+///
+/// Uses k256 for ECDSA (secp256k1).
+/// Delegates all other operations to [`NativeCrypto`].
+///
+/// When building actual OpenVM guest binaries, OpenVM's patched crate version
+/// of k256 is used transparently via Cargo patches.
 #[derive(Debug)]
 pub struct OpenVmCrypto;
 
 impl Crypto for OpenVmCrypto {
     fn secp256k1_ecrecover(
         &self,
-        _sig: &[u8; 64],
-        _recid: u8,
-        _msg: &[u8; 32],
+        sig: &[u8; 64],
+        recid: u8,
+        msg: &[u8; 32],
     ) -> Result<[u8; 32], CryptoError> {
-        todo!("OpenVM secp256k1_ecrecover implementation")
+        k256_ecrecover(sig, recid, msg)
     }
 
-    fn recover_signer(&self, _sig: &[u8; 65], _msg: &[u8; 32]) -> Result<Address, CryptoError> {
-        todo!("OpenVM recover_signer implementation")
+    fn recover_signer(&self, sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {
+        k256_recover_signer(sig, msg)
     }
 
-    fn sha256(&self, _input: &[u8]) -> [u8; 32] {
-        todo!("OpenVM sha256 implementation")
+    fn sha256(&self, input: &[u8]) -> [u8; 32] {
+        NativeCrypto.sha256(input)
     }
 
-    fn ripemd160(&self, _input: &[u8]) -> [u8; 32] {
-        todo!("OpenVM ripemd160 implementation")
+    fn ripemd160(&self, input: &[u8]) -> [u8; 32] {
+        NativeCrypto.ripemd160(input)
     }
 
-    fn bn254_g1_add(&self, _p1: &[u8], _p2: &[u8]) -> Result<[u8; 64], CryptoError> {
-        todo!("OpenVM bn254_g1_add implementation")
+    fn bn254_g1_add(&self, p1: &[u8], p2: &[u8]) -> Result<[u8; 64], CryptoError> {
+        NativeCrypto.bn254_g1_add(p1, p2)
     }
 
-    fn bn254_g1_mul(&self, _point: &[u8], _scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
-        todo!("OpenVM bn254_g1_mul implementation")
+    fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
+        NativeCrypto.bn254_g1_mul(point, scalar)
     }
 
-    fn bn254_pairing_check(&self, _pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
-        todo!("OpenVM bn254_pairing_check implementation")
+    fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
+        NativeCrypto.bn254_pairing_check(pairs)
     }
 
     fn modexp(
         &self,
-        _base: &[u8],
-        _exp: &[u8],
-        _modulus: &[u8],
+        base: &[u8],
+        exp: &[u8],
+        modulus: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
-        todo!("OpenVM modexp implementation")
+        NativeCrypto.modexp(base, exp, modulus)
     }
 
     fn blake2_compress(
         &self,
-        _rounds: u32,
-        _h: &mut [u64; 8],
-        _m: [u64; 16],
-        _t: [u64; 2],
-        _f: bool,
+        rounds: u32,
+        h: &mut [u64; 8],
+        m: [u64; 16],
+        t: [u64; 2],
+        f: bool,
     ) {
-        todo!("OpenVM blake2_compress implementation")
+        NativeCrypto.blake2_compress(rounds, h, m, t, f)
     }
 
-    fn secp256r1_verify(&self, _msg: &[u8; 32], _sig: &[u8; 64], _pk: &[u8; 64]) -> bool {
-        todo!("OpenVM secp256r1_verify implementation")
+    fn secp256r1_verify(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
+        NativeCrypto.secp256r1_verify(msg, sig, pk)
     }
 
     fn verify_kzg_proof(
         &self,
-        _z: &[u8; 32],
-        _y: &[u8; 32],
-        _commitment: &[u8; 48],
-        _proof: &[u8; 48],
+        z: &[u8; 32],
+        y: &[u8; 32],
+        commitment: &[u8; 48],
+        proof: &[u8; 48],
     ) -> Result<(), CryptoError> {
-        todo!("OpenVM verify_kzg_proof implementation")
+        NativeCrypto.verify_kzg_proof(z, y, commitment, proof)
     }
 
     fn verify_blob_kzg_proof(
         &self,
-        _blob: &[u8],
-        _commitment: &[u8; 48],
-        _proof: &[u8; 48],
+        blob: &[u8],
+        commitment: &[u8; 48],
+        proof: &[u8; 48],
     ) -> Result<bool, CryptoError> {
-        todo!("OpenVM verify_blob_kzg_proof implementation")
+        NativeCrypto.verify_blob_kzg_proof(blob, commitment, proof)
     }
 
     fn bls12_381_g1_add(
         &self,
-        _a: ([u8; 48], [u8; 48]),
-        _b: ([u8; 48], [u8; 48]),
+        a: ([u8; 48], [u8; 48]),
+        b: ([u8; 48], [u8; 48]),
     ) -> Result<[u8; 96], CryptoError> {
-        todo!("OpenVM bls12_381_g1_add implementation")
+        NativeCrypto.bls12_381_g1_add(a, b)
     }
 
     fn bls12_381_g1_msm(
         &self,
-        _pairs: &[(([u8; 48], [u8; 48]), [u8; 32])],
+        pairs: &[(([u8; 48], [u8; 48]), [u8; 32])],
     ) -> Result<[u8; 96], CryptoError> {
-        todo!("OpenVM bls12_381_g1_msm implementation")
+        NativeCrypto.bls12_381_g1_msm(pairs)
     }
 
     fn bls12_381_g2_add(
         &self,
-        _a: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
-        _b: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+        a: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+        b: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
     ) -> Result<[u8; 192], CryptoError> {
-        todo!("OpenVM bls12_381_g2_add implementation")
+        NativeCrypto.bls12_381_g2_add(a, b)
     }
 
     fn bls12_381_g2_msm(
         &self,
-        _pairs: &[(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])],
+        pairs: &[(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])],
     ) -> Result<[u8; 192], CryptoError> {
-        todo!("OpenVM bls12_381_g2_msm implementation")
+        NativeCrypto.bls12_381_g2_msm(pairs)
     }
 
     fn bls12_381_pairing_check(
         &self,
-        _pairs: &[(([u8; 48], [u8; 48]), ([u8; 48], [u8; 48], [u8; 48], [u8; 48]))],
+        pairs: &[(([u8; 48], [u8; 48]), ([u8; 48], [u8; 48], [u8; 48], [u8; 48]))],
     ) -> Result<bool, CryptoError> {
-        todo!("OpenVM bls12_381_pairing_check implementation")
+        NativeCrypto.bls12_381_pairing_check(pairs)
     }
 
-    fn bls12_381_fp_to_g1(&self, _fp: &[u8; 48]) -> Result<[u8; 96], CryptoError> {
-        todo!("OpenVM bls12_381_fp_to_g1 implementation")
+    fn bls12_381_fp_to_g1(&self, fp: &[u8; 48]) -> Result<[u8; 96], CryptoError> {
+        NativeCrypto.bls12_381_fp_to_g1(fp)
     }
 
-    fn bls12_381_fp2_to_g2(&self, _fp2: ([u8; 48], [u8; 48])) -> Result<[u8; 192], CryptoError> {
-        todo!("OpenVM bls12_381_fp2_to_g2 implementation")
+    fn bls12_381_fp2_to_g2(&self, fp2: ([u8; 48], [u8; 48])) -> Result<[u8; 192], CryptoError> {
+        NativeCrypto.bls12_381_fp2_to_g2(fp2)
     }
 }
