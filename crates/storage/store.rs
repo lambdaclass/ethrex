@@ -3123,9 +3123,11 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
     // If metadata file does not exist, try to create it
     if !metadata_path.exists() {
-        // If datadir exists but is not empty, this is probably a DB for an
-        // old ethrex version and we should return an error
-        if path.exists() && !dir_is_empty(path)? {
+        // If datadir exists and contains database files without metadata,
+        // this is probably a DB for an old ethrex version and we should return an error.
+        // We check for actual DB files instead of just checking if the directory is empty,
+        // because tools like EthDocker may place JWT and other files in the same directory.
+        if path.exists() && dir_contains_db_files(path)? {
             return Err(StoreError::NotFoundDBVersion {
                 expected: STORE_SCHEMA_VERSION,
             });
@@ -3162,7 +3164,15 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
-    let is_empty = std::fs::read_dir(path)?.next().is_none();
-    Ok(is_empty)
+fn dir_contains_db_files(path: &Path) -> Result<bool, StoreError> {
+    // RocksDB creates these marker files when initializing a database.
+    // If any of these exist, we likely have an old database without metadata.
+    const ROCKSDB_MARKER_FILES: &[&str] = &["CURRENT", "IDENTITY", "LOCK"];
+
+    for marker in ROCKSDB_MARKER_FILES {
+        if path.join(marker).exists() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
