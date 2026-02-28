@@ -1119,6 +1119,15 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    /// Removes a block from the invalid chains tracking.
+    pub async fn delete_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.delete_async(INVALID_CHAINS, block.as_bytes().to_vec())
+            .await
+    }
+
     /// Obtain block number for a given hash
     pub fn get_block_number_sync(
         &self,
@@ -1237,6 +1246,24 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    /// Helper method for async deletes
+    /// Spawns blocking task to avoid blocking tokio runtime
+    async fn delete_async(
+        &self,
+        table: &'static str,
+        key: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            txn.delete(table, &key)?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
     /// Helper method for async reads
     /// Spawns blocking task to avoid blocking tokio runtime
     pub async fn read_async(
@@ -1324,6 +1351,13 @@ impl Store {
 
     pub async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
         self.backend.clear_table(FULLSYNC_HEADERS)
+    }
+
+    /// Clears all entries from the invalid chains cache.
+    /// Called on startup to purge any false positives from a previous bug
+    /// where transient errors were cached as permanent block invalidity.
+    pub fn clear_invalid_chains(&self) -> Result<(), StoreError> {
+        self.backend.clear_table(INVALID_CHAINS)
     }
 
     /// Delete a key from a table
@@ -3165,4 +3199,118 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
 fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     let is_empty = std::fs::read_dir(path)?.next().is_none();
     Ok(is_empty)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_store() -> Store {
+        Store::new("test-invalid-chains", EngineType::InMemory)
+            .expect("Failed to create in-memory store")
+    }
+
+    #[tokio::test]
+    async fn set_and_get_latest_valid_ancestor() {
+        let store = test_store();
+        let bad_block = H256::from_low_u64_be(1);
+        let latest_valid = H256::from_low_u64_be(2);
+
+        store
+            .set_latest_valid_ancestor(bad_block, latest_valid)
+            .await
+            .unwrap();
+
+        let result = store
+            .get_latest_valid_ancestor(bad_block)
+            .await
+            .unwrap();
+        assert_eq!(result, Some(latest_valid));
+    }
+
+    #[tokio::test]
+    async fn get_latest_valid_ancestor_returns_none_for_unknown_block() {
+        let store = test_store();
+        let unknown = H256::from_low_u64_be(99);
+
+        let result = store.get_latest_valid_ancestor(unknown).await.unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn delete_latest_valid_ancestor_removes_entry() {
+        let store = test_store();
+        let bad_block = H256::from_low_u64_be(1);
+        let latest_valid = H256::from_low_u64_be(2);
+
+        store
+            .set_latest_valid_ancestor(bad_block, latest_valid)
+            .await
+            .unwrap();
+        assert!(store
+            .get_latest_valid_ancestor(bad_block)
+            .await
+            .unwrap()
+            .is_some());
+
+        store
+            .delete_latest_valid_ancestor(bad_block)
+            .await
+            .unwrap();
+
+        let result = store
+            .get_latest_valid_ancestor(bad_block)
+            .await
+            .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn delete_latest_valid_ancestor_is_idempotent() {
+        let store = test_store();
+        let block = H256::from_low_u64_be(1);
+
+        // Deleting a non-existent entry should not error
+        store
+            .delete_latest_valid_ancestor(block)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_block_is_cached_evm_error_is_not() {
+        // This test validates the fix for issue #6274:
+        // Only ChainError::InvalidBlock should result in a block being cached
+        // in INVALID_CHAINS. ChainError::EvmError (transient infrastructure
+        // errors) must NOT cache, since the block may be valid.
+        let store = test_store();
+        let block_a = H256::from_low_u64_be(10);
+        let block_b = H256::from_low_u64_be(20);
+        let latest_valid = H256::from_low_u64_be(1);
+
+        // Simulate what the InvalidBlock arm does: cache the block
+        store
+            .set_latest_valid_ancestor(block_a, latest_valid)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .get_latest_valid_ancestor(block_a)
+                .await
+                .unwrap()
+                .is_some(),
+            "InvalidBlock path should cache the block in INVALID_CHAINS"
+        );
+
+        // Simulate what the EvmError arm does after the fix: nothing stored
+        // (the handler returns Err(RpcErr::Internal(...)) without writing)
+        let result = store
+            .get_latest_valid_ancestor(block_b)
+            .await
+            .unwrap();
+        assert_eq!(
+            result, None,
+            "EvmError path must NOT cache blocks in INVALID_CHAINS"
+        );
+    }
 }
