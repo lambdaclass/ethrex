@@ -102,7 +102,7 @@ jobs:
 
       - name: Run cargo clippy
         run: |
-          cargo clippy --workspace --features l2,l2-sql -- -D warnings
+          make lint-l2
           make lint
 
       - name: Run cargo fmt
