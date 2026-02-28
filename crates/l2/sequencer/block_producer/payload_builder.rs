@@ -159,14 +159,14 @@ pub async fn fill_transactions(
         }
 
         // Check if we have enough blob space to add this transaction
-        let tx: Transaction = head_tx.clone().into();
-        let tx_size = tx.length();
+        let tx_ref: &Transaction = head_tx.tx.transaction();
+        let tx_size = tx_ref.length();
         if acc_encoded_size + fee_config_len + tx_size > SAFE_BYTES_PER_BLOB {
             debug!("No more blob space to run transactions");
             break;
         };
 
-        if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
+        if let Transaction::PrivilegedL2Transaction(privileged_tx) = tx_ref {
             if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
                 debug!("Ran out of space for privileged transactions");
                 txs.pop();
@@ -254,7 +254,7 @@ pub async fn fill_transactions(
             continue;
         }
 
-        if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
+        if let Transaction::PrivilegedL2Transaction(privileged_tx) = tx_ref {
             let id = head_tx.nonce();
             privileged_nonces.insert(privileged_tx.chain_id, Some(id));
 
@@ -269,7 +269,7 @@ pub async fn fill_transactions(
         blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
 
         // Add transaction to block
-        context.payload.body.transactions.push(tx);
+        context.payload.body.transactions.push(head_tx.into());
 
         // Save receipt for hash calculation
         context.receipts.push(receipt);
