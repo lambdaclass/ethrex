@@ -18,6 +18,7 @@ use ethrex_common::{
 pub struct Memory {
     pub buffer: Rc<RefCell<Vec<u8>>>,
     pub len: usize,
+    initialized_len: usize,
     current_base: usize,
 }
 
@@ -27,6 +28,7 @@ impl Memory {
         Self {
             buffer: Rc::new(RefCell::new(Vec::new())),
             len: 0,
+            initialized_len: 0,
             current_base: 0,
         }
     }
@@ -37,6 +39,7 @@ impl Memory {
         let mut mem = self.clone();
         mem.current_base = mem.buffer.borrow().len();
         mem.len = 0;
+        mem.initialized_len = 0;
         mem
     }
 
@@ -91,12 +94,45 @@ impl Memory {
         #[allow(clippy::arithmetic_side_effects)]
         let real_new_memory_size = new_memory_size + self.current_base;
 
+          #[expect(clippy::arithmetic_side_effects)]
         if real_new_memory_size > buffer.len() {
             // when resizing, avoid really small resizes.
             let new_size = real_new_memory_size.next_multiple_of(64);
-            buffer.resize(new_size, 0);
+            let old_len = buffer.len();
+            buffer.reserve(new_size - old_len);
+            // SAFETY: skip zero init for performance, caller must always call ensure_zeroed where needed
+            #[expect(unsafe_code)]
+            unsafe {
+                buffer.set_len(new_size);
+            }
         }
 
+        Ok(())
+    }
+
+    #[inline]
+    fn ensure_zeroed(&mut self, new_zeroed_len: usize) -> Result<(), VMError> {
+        if new_zeroed_len <= self.initialized_len {
+            return Ok(());
+        }
+
+        let start = self
+            .current_base
+            .checked_add(self.initialized_len)
+            .ok_or(OutOfBounds)?;
+        let end = self
+            .current_base
+            .checked_add(new_zeroed_len)
+            .ok_or(OutOfBounds)?;
+
+        let mut buffer = self.buffer.borrow_mut();
+        // resize ensures bounds are correct
+        #[expect(unsafe_code)]
+        unsafe {
+            buffer.get_unchecked_mut(start..end).fill(0);
+        }
+
+        self.initialized_len = new_zeroed_len;
         Ok(())
     }
 
@@ -109,6 +145,7 @@ impl Memory {
 
         let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
+        self.ensure_zeroed(new_size)?;
 
         let true_offset = offset.wrapping_add(self.current_base);
 
@@ -128,6 +165,7 @@ impl Memory {
     pub fn load_range_const<const N: usize>(&mut self, offset: usize) -> Result<[u8; N], VMError> {
         let new_size = offset.checked_add(N).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
+        self.ensure_zeroed(new_size)?;
 
         let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
 
@@ -188,7 +226,10 @@ impl Memory {
         }
         let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
-        self.store(data, offset, data.len())
+        self.ensure_zeroed(offset)?;
+        self.store(data, offset, data.len())?;
+        self.initialized_len = self.initialized_len.max(new_size);
+        Ok(())
     }
 
     /// Stores data and zero-pads up to total_size at the given offset.
@@ -240,7 +281,9 @@ impl Memory {
             .ok_or(OutOfBounds)?;
 
         self.resize(new_size)?;
+        self.ensure_zeroed(offset)?;
         self.store(&u256_to_big_endian(word), offset, WORD_SIZE_IN_BYTES_USIZE)?;
+        self.initialized_len = self.initialized_len.max(new_size);
         Ok(())
     }
 
@@ -264,6 +307,13 @@ impl Memory {
                 .ok_or(InternalError::Overflow)?,
         )?;
 
+        self.ensure_zeroed(
+            to_offset
+                .max(from_offset)
+                .checked_add(size)
+                .ok_or(OutOfBounds)?,
+        )?;
+
         let true_from_offset = from_offset
             .checked_add(self.current_base)
             .ok_or(OutOfBounds)?;
@@ -281,6 +331,9 @@ impl Memory {
             true_to_offset,
         );
 
+        self.initialized_len = self
+            .initialized_len
+            .max(to_offset.checked_add(size).ok_or(OutOfBounds)?);
         Ok(())
     }
 
@@ -292,6 +345,7 @@ impl Memory {
 
         let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
+        self.ensure_zeroed(offset)?;
 
         let real_offset = self.current_base.wrapping_add(offset);
         let mut buffer = self.buffer.borrow_mut();
@@ -304,6 +358,7 @@ impl Memory {
                 .fill(0);
         }
 
+        self.initialized_len = self.initialized_len.max(new_size);
         Ok(())
     }
 }
