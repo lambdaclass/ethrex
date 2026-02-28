@@ -568,9 +568,9 @@ impl DiscoveryServer {
         sender_public_key: H512,
         node_record: NodeRecord,
     ) -> Result<(), DiscoveryServerError> {
-        let pairs = node_record.decode_pairs();
+        let node_fork_id = node_record.get_fork_id().cloned();
 
-        let Some(remote_fork_id) = pairs.eth else {
+        let Some(remote_fork_id) = node_fork_id else {
             self.peer_table
                 .set_is_fork_id_valid(&node_id, false)
                 .await?;
