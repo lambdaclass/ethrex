@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{Address, U256, types::Block};
@@ -6,6 +6,7 @@ use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
+use serde::Serialize;
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, send_after},
@@ -44,11 +45,23 @@ pub enum InMessage {
 pub enum OutMessage {
     Done,
     Set,
+    Health(StateUpdaterHealth),
+}
+
+#[derive(Clone, Serialize, PartialEq)]
+pub struct StateUpdaterHealth {
+    pub eth_client_healthcheck: BTreeMap<String, serde_json::Value>,
+    pub on_chain_proposer_address: Address,
+    pub sequencer_registry_address: Address,
+    pub sequencer_address: Address,
+    pub check_interval_ms: u64,
+    pub sequencer_state: String,
 }
 
 #[derive(Clone)]
 pub enum CallMessage {
     StopAt(u64),
+    Health,
 }
 
 pub struct StateUpdater {
@@ -297,6 +310,19 @@ impl StateUpdater {
         self.stop_at = Some(block_number);
         CallResponse::Reply(OutMessage::Set)
     }
+
+    async fn health(&self) -> CallResponse<Self> {
+        let eth_client_healthcheck = self.eth_client.test_urls().await;
+
+        CallResponse::Reply(OutMessage::Health(StateUpdaterHealth {
+            eth_client_healthcheck,
+            on_chain_proposer_address: self.on_chain_proposer_address,
+            sequencer_registry_address: self.sequencer_registry_address,
+            sequencer_address: self.sequencer_address,
+            check_interval_ms: self.check_interval_ms,
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
+        }))
+    }
 }
 
 impl GenServer for StateUpdater {
@@ -329,6 +355,7 @@ impl GenServer for StateUpdater {
     ) -> spawned_concurrency::tasks::CallResponse<Self> {
         match message {
             CallMessage::StopAt(block_number) => self.set_stop_at(block_number),
+            CallMessage::Health => self.health().await,
         }
     }
 }
