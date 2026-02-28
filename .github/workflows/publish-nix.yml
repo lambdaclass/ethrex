@@ -1,0 +1,74 @@
+name: Publish Nix binaries on Cachix
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version to publish (e.g. 5.0.0). Leave empty to use latest."
+        required: false
+        default: ""
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  distribute-build:
+    if: ${{ github.event.release.prerelease == false }}
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            label: ubuntu-22.04-x86
+          - runner: ubuntu-22.04-arm
+            label: ubuntu-22.04-arm
+          - runner: macos-latest
+            label: macos-latest
+    steps:
+      - name: Determine tag to publish
+        id: determine_tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          input_tag="${{ github.event.inputs.tag }}"
+          if [ -n "$input_tag" ]; then
+            echo "Using workflow input tag: $input_tag"
+            echo "tag=$input_tag" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          set -euo pipefail
+          latest_tag=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name')
+          if [ -z "$latest_tag" ] || [ "$latest_tag" = "null" ]; then
+            echo "No non pre-release releases found to determine a tag."
+            exit 1
+          fi
+          echo "Using latest release tag: $latest_tag"
+          echo "tag=$latest_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'lambdaclass/ethrex'
+          ref: ${{ steps.determine_tag.outputs.tag }}
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31.8.1
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v16
+        with:
+          name: ethrex
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build with Nix
+        run: |
+          nix build
+
+      - name: Push build to Cachix
+        run: cachix push ethrex ./result
