@@ -62,6 +62,9 @@ impl Hook for L2Hook {
         // Different from L1:
         // Max fee per gas must be sufficient to cover base fee + operator fee
         validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
+        // Reserve L1 gas from the execution budget so execution can't consume it.
+        // If gas_limit < intrinsic_gas + l1_gas, this returns IntrinsicGasTooLow.
+        reserve_l1_gas(vm, &self.fee_config.l1_fee_config)?;
         Ok(())
     }
 
@@ -103,40 +106,29 @@ fn finalize_non_privileged_execution(
         default_hook::undo_value_transfer(vm)?;
     }
 
-    // Save pre-refund gas for EIP-7778 block accounting
-    let gas_used_pre_refund = ctx_result.gas_used;
-    let mut l1_gas = calculate_l1_fee_gas(vm, &fee_config.l1_fee_config)?;
+    let l1_gas = calculate_l1_fee_gas(vm, &fee_config.l1_fee_config)?;
 
-    // EIP-7778: Track pre-refund gas including L1 gas
-    let mut total_gas_pre_refund = gas_used_pre_refund
-        .checked_add(l1_gas)
-        .ok_or(InternalError::Overflow)?;
+    // ctx_result.gas_used includes l1_gas (reserved in prepare_execution).
+    // Separate execution gas for refund calculation — l1_gas is not refundable.
+    let execution_gas_pre_refund = ctx_result
+        .gas_used
+        .checked_sub(l1_gas)
+        .ok_or(InternalError::Underflow)?;
 
-    let gas_refunded: u64 = default_hook::compute_gas_refunded(vm, ctx_result)?;
+    // Refund cap based on execution gas only (EIP-3529)
+    let gas_refunded: u64 = vm
+        .substate
+        .refunded_gas
+        .min(execution_gas_pre_refund / default_hook::MAX_REFUND_QUOTIENT);
     let execution_gas =
-        default_hook::compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
-    let mut actual_gas_used = execution_gas
+        default_hook::compute_actual_gas_used(vm, gas_refunded, execution_gas_pre_refund)?;
+
+    let actual_gas_used = execution_gas
         .checked_add(l1_gas)
         .ok_or(InternalError::Overflow)?;
 
-    if actual_gas_used > vm.current_call_frame.gas_limit {
-        vm.substate.revert_backup();
-        vm.restore_cache_state()?;
-
-        default_hook::undo_value_transfer(vm)?;
-
-        ctx_result.result =
-            crate::errors::TxResult::Revert(TxValidationError::InsufficientMaxFeePerGas.into());
-        ctx_result.gas_used = vm.current_call_frame.gas_limit;
-        ctx_result.output = Bytes::new();
-
-        l1_gas = vm
-            .current_call_frame
-            .gas_limit
-            .saturating_sub(execution_gas);
-        actual_gas_used = vm.current_call_frame.gas_limit;
-        total_gas_pre_refund = vm.current_call_frame.gas_limit;
-    }
+    // EIP-7778: pre-refund gas for block accounting
+    let total_gas_pre_refund = ctx_result.gas_used;
 
     default_hook::delete_self_destruct_accounts(vm)?;
 
@@ -240,6 +232,40 @@ fn validate_sufficient_max_fee_per_gas_l2(
     if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee {
         return Err(TxValidationError::InsufficientMaxFeePerGas);
     }
+    Ok(())
+}
+
+/// Reserves L1 data availability gas from the execution budget.
+///
+/// By consuming l1_gas from gas_remaining during prepare_execution,
+/// execution physically cannot use the L1 fee portion. This guarantees
+/// the L1 fee vault always receives the full l1_gas payment, eliminating
+/// the griefing vector where a user sets gas_limit = intrinsic_gas.
+///
+/// If gas_limit < intrinsic_gas + l1_gas, increase_consumed_gas returns
+/// OutOfGas, which we map to IntrinsicGasTooLow to reject the tx upfront.
+///
+/// On Prague+, also validates gas_limit >= floor + l1_gas (EIP-7623).
+/// Finalize computes actual_gas_used = max(execution_gas, floor) + l1_gas,
+/// so without this check a tx with heavy calldata could pass validation
+/// but underflow in refund_sender.
+fn reserve_l1_gas(vm: &mut VM<'_>, l1_fee_config: &Option<L1FeeConfig>) -> Result<(), VMError> {
+    let l1_gas = calculate_l1_fee_gas(vm, l1_fee_config)?;
+
+    // On Prague+, the EIP-7623 gas floor can raise execution_gas above
+    // intrinsic_gas at finalize time. Since actual_gas_used = execution_gas + l1_gas,
+    // we must ensure gas_limit can cover floor + l1_gas.
+    if vm.env.config.fork >= Fork::Prague {
+        let floor = vm.get_min_gas_used()?;
+        let floor_plus_l1 = floor.checked_add(l1_gas).ok_or(InternalError::Overflow)?;
+        if vm.env.gas_limit < floor_plus_l1 {
+            return Err(TxValidationError::IntrinsicGasTooLow.into());
+        }
+    }
+
+    vm.current_call_frame
+        .increase_consumed_gas(l1_gas)
+        .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
     Ok(())
 }
 
