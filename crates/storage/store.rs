@@ -3166,3 +3166,52 @@ fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     let is_empty = std::fs::read_dir(path)?.next().is_none();
     Ok(is_empty)
 }
+
+/// Checks if a valid database exists at the given path.
+/// Returns true if the path has a valid metadata.json file with matching schema version.
+pub fn has_valid_db(path: &Path) -> bool {
+    let metadata_path = path.join(STORE_METADATA_FILENAME);
+    if !metadata_path.is_file() {
+        return false;
+    }
+    let Ok(file_contents) = std::fs::read_to_string(&metadata_path) else {
+        return false;
+    };
+    let Ok(metadata) = serde_json::from_str::<StoreMetadata>(&file_contents) else {
+        return false;
+    };
+    metadata.schema_version == STORE_SCHEMA_VERSION
+}
+
+/// Reads the chain ID from an existing database without fully initializing the store.
+/// Returns None if the database doesn't exist, is invalid, or the chain config can't be read.
+#[cfg(feature = "rocksdb")]
+pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
+    use crate::api::tables::CHAIN_DATA;
+    use crate::utils::ChainDataIndex;
+    use ethrex_rlp::encode::RLPEncode;
+
+    if !has_valid_db(path) {
+        return None;
+    }
+
+    // Open the backend read-only style (without creating if missing)
+    let backend = RocksDBBackend::open(path).ok()?;
+
+    // Read the chain config
+    let key = (ChainDataIndex::ChainConfig as u8).encode_to_vec();
+    let tx = backend.begin_read().ok()?;
+    let value = tx.get(CHAIN_DATA, &key).ok()??;
+
+    // Deserialize the chain config
+    let value_str = String::from_utf8(value).ok()?;
+    let chain_config: ChainConfig = serde_json::from_str(&value_str).ok()?;
+
+    Some(chain_config.chain_id)
+}
+
+/// Fallback for non-RocksDB builds - always returns None.
+#[cfg(not(feature = "rocksdb"))]
+pub fn read_chain_id_from_db(_path: &Path) -> Option<u64> {
+    None
+}

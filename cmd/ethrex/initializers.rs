@@ -23,7 +23,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store, error::StoreError};
+use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -31,7 +31,7 @@ use secp256k1::SecretKey;
 use std::env;
 use std::{
     fs,
-    io::IsTerminal,
+    io::{self, IsTerminal, Write},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
@@ -433,22 +433,163 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
+/// Known network directory suffixes that indicate the new directory structure is in use.
+const NETWORK_SUBDIRS: &[&str] = &["mainnet", "hoodi", "holesky", "sepolia", "dev"];
+
+/// Checks if there's an existing database in the base datadir that should be migrated
+/// to the new network-specific directory structure.
+///
+/// If the network-specific directory is empty but the base directory has a compatible
+/// database (matching chain ID), prompts the user to migrate.
+fn check_and_offer_migration(
+    base_datadir: &Path,
+    network_datadir: &Path,
+    expected_chain_id: u64,
+    network_name: &str,
+) -> eyre::Result<()> {
+    // Only offer migration if:
+    // 1. The network-specific directory doesn't exist or is empty
+    // 2. The base directory has a valid database
+    // 3. The database's chain ID matches the expected network
+    // 4. The base directory doesn't already contain network subdirectories
+    //    (which would indicate partial adoption of the new structure)
+
+    // Check if network-specific directory already has data
+    if network_datadir.exists() && has_valid_db(network_datadir) {
+        return Ok(()); // Already has a database, nothing to migrate
+    }
+
+    // Check if base directory has a valid database
+    if !has_valid_db(base_datadir) {
+        return Ok(()); // No existing database to migrate
+    }
+
+    // Check if the base directory already contains any network subdirectories.
+    // If so, the user might already be using the new structure partially,
+    // and we shouldn't move the entire base directory.
+    for subdir in NETWORK_SUBDIRS {
+        let subdir_path = base_datadir.join(subdir);
+        if subdir_path.exists() && subdir_path.is_dir() {
+            info!(
+                "Found existing network subdirectory {:?} in base datadir. Skipping migration offer.",
+                subdir_path
+            );
+            return Ok(());
+        }
+    }
+
+    // Read the chain ID from the existing database
+    let Some(existing_chain_id) = read_chain_id_from_db(base_datadir) else {
+        return Ok(()); // Couldn't read chain ID, skip migration
+    };
+
+    // Check if the chain IDs match
+    if existing_chain_id != expected_chain_id {
+        info!(
+            "Found existing database at {:?} with chain ID {}, but starting {} (chain ID {}). Skipping migration.",
+            base_datadir, existing_chain_id, network_name, expected_chain_id
+        );
+        return Ok(());
+    }
+
+    // Prompt the user for migration
+    println!();
+    println!("=======================================================================");
+    println!("DATABASE MIGRATION AVAILABLE");
+    println!("=======================================================================");
+    println!();
+    println!(
+        "Found an existing {} database at the old default location:",
+        network_name
+    );
+    println!("  {:?}", base_datadir);
+    println!();
+    println!("The new location for {} databases is:", network_name);
+    println!("  {:?}", network_datadir);
+    println!();
+    println!("Would you like to move the database to the new location?");
+    println!("This will allow you to run multiple networks without conflicts.");
+    println!();
+    print!("Move database? (y/n): ");
+    io::stdout().flush().unwrap();
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+
+    if input.trim().eq_ignore_ascii_case("y") {
+        info!(
+            "Moving database from {:?} to {:?}",
+            base_datadir, network_datadir
+        );
+
+        // Ensure parent directory exists
+        if let Some(parent) = network_datadir.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // Move the database directory
+        fs::rename(base_datadir, network_datadir).map_err(|e| {
+            eyre::eyre!(
+                "Failed to move database from {:?} to {:?}: {}. You may need to move it manually.",
+                base_datadir,
+                network_datadir,
+                e
+            )
+        })?;
+
+        println!("Database moved successfully!");
+        println!();
+    } else {
+        println!("Skipping migration. Starting with a fresh database.");
+        println!(
+            "Your existing database remains at {:?}",
+            base_datadir
+        );
+        println!();
+    }
+
+    Ok(())
+}
+
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir: &PathBuf =
-        if opts.dev && cfg!(feature = "dev") && !is_memory_datadir(&opts.datadir) {
-            &opts.datadir.join("dev")
-        } else {
-            &opts.datadir
-        };
+    let network = get_network(&opts);
 
-    if !is_memory_datadir(datadir) {
-        init_datadir(datadir);
+    // Compute the effective datadir based on the network
+    // - For dev mode: append "dev" subdirectory
+    // - For public networks (mainnet, hoodi, holesky, sepolia): append network name
+    // - For custom genesis paths: use the base datadir as-is
+    let datadir: PathBuf = if !is_memory_datadir(&opts.datadir) {
+        if opts.dev && cfg!(feature = "dev") {
+            opts.datadir.join("dev")
+        } else if let Some(suffix) = network.datadir_suffix() {
+            opts.datadir.join(suffix)
+        } else {
+            opts.datadir.clone()
+        }
+    } else {
+        opts.datadir.clone()
+    };
+
+    // Check for database migration from old default location to new network-specific location
+    // This helps users who have an existing database in the base datadir
+    if !is_memory_datadir(&opts.datadir) && !opts.dev {
+        if let Some(suffix) = network.datadir_suffix() {
+            let genesis = network.get_genesis()?;
+            check_and_offer_migration(
+                &opts.datadir,
+                &datadir,
+                genesis.config.chain_id,
+                suffix,
+            )?;
+        }
     }
 
-    let network = get_network(&opts);
+    if !is_memory_datadir(&datadir) {
+        init_datadir(&datadir);
+    }
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
@@ -457,7 +598,7 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(datadir, genesis).await {
+    let store = match init_store(&datadir, genesis).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
@@ -488,11 +629,11 @@ pub async fn init_l1(
 
     regenerate_head_state(&store, &blockchain).await?;
 
-    let signer = get_signer(datadir);
+    let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
+    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
     let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
 
@@ -543,7 +684,7 @@ pub async fn init_l1(
         init_network(
             &opts,
             &network,
-            datadir,
+            &datadir,
             peer_handler.clone(),
             tracker.clone(),
             blockchain.clone(),
