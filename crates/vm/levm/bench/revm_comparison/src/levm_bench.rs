@@ -5,6 +5,7 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::errors::VMError;
 use ethrex_levm::{
     Environment,
@@ -100,5 +101,5 @@ fn init_vm(
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1, &NativeCrypto)
 }

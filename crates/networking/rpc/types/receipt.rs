@@ -8,6 +8,7 @@ use ethrex_common::{
         bloom_from_logs,
     },
 };
+use ethrex_crypto::NativeCrypto;
 
 use serde::{Deserialize, Serialize};
 
@@ -175,7 +176,7 @@ impl RpcReceiptTxInfo {
         base_fee_per_gas: Option<u64>,
     ) -> Result<Self, RpcErr> {
         let nonce = transaction.nonce();
-        let from = transaction.sender()?;
+        let from = transaction.sender(&NativeCrypto)?;
         let transaction_hash = transaction.hash();
         let effective_gas_price = transaction
             .effective_gas_price(base_fee_per_gas)

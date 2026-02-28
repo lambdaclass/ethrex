@@ -83,6 +83,7 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
+use ethrex_crypto::NativeCrypto;
 use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -423,7 +424,7 @@ impl Blockchain {
                             let _ = LEVM::warm_block_from_bal(bal, caching_store);
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            let _ = LEVM::warm_block(block, caching_store, vm_type);
+                            let _ = LEVM::warm_block(block, caching_store, vm_type, &NativeCrypto);
                         }
                         start.elapsed()
                     })
@@ -1327,7 +1328,9 @@ impl Blockchain {
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let mut vm = match self.options.r#type {
-                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L1 => {
+                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                }
                 BlockchainType::L2(_) => {
                     let l2_config = match fee_configs {
                         Some(fee_configs) => {
@@ -1339,7 +1342,7 @@ impl Blockchain {
                             "L2Config not found for witness generation".to_string(),
                         ))?,
                     };
-                    Evm::new_from_db_for_l2(logger.clone(), *l2_config)
+                    Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
                 }
             };
 
@@ -1929,12 +1932,15 @@ impl Blockchain {
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let vm = match self.options.r#type.clone() {
-                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L1 => {
+                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                }
                 BlockchainType::L2(l2_config) => Evm::new_from_db_for_l2(
                     logger.clone(),
                     *l2_config.fee_config.read().map_err(|_| {
                         EvmError::Custom("Fee config lock was poisoned".to_string())
                     })?,
+                    Arc::new(NativeCrypto),
                 ),
             };
             (vm, Some(logger))
@@ -2399,7 +2405,7 @@ impl Blockchain {
             blobs_bundle.validate(transaction, fork)?;
         }
 
-        let sender = transaction.sender()?;
+        let sender = transaction.sender(&NativeCrypto)?;
 
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
@@ -2427,7 +2433,7 @@ impl Blockchain {
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
-        let sender = transaction.sender()?;
+        let sender = transaction.sender(&NativeCrypto)?;
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
@@ -2657,14 +2663,14 @@ impl Blockchain {
 
 pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
     let evm = match blockchain_type {
-        BlockchainType::L1 => Evm::new_for_l1(vm_db),
+        BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
             let fee_config = *l2_config
                 .fee_config
                 .read()
                 .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
 
-            Evm::new_for_l2(vm_db, fee_config)?
+            Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
     };
     Ok(evm)

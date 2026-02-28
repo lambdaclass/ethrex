@@ -982,6 +982,7 @@ impl<'a> VM<'a> {
                 &mut gas_remaining,
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
+                self.crypto,
             )?;
 
             let call_frame = &mut self.current_call_frame;

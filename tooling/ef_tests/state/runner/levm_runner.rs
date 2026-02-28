@@ -12,6 +12,7 @@ use ethrex_common::{
         tx_fields::*,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     EVMConfig, Environment,
     db::gen_db::GeneralizedDatabase,
@@ -228,6 +229,7 @@ pub fn prepare_vm_for_tx<'a>(
         &tx,
         LevmCallTracer::disabled(),
         VMType::L1, // TODO: Should we run the EF tests with L2?
+        &NativeCrypto,
     )
     .map_err(|e| EFTestRunnerError::FailedToEnsurePreState(format!("Failed to initialize VM: {e}")))
 }

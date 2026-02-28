@@ -14,7 +14,8 @@ pub mod rkyv_utils;
 pub mod tracing;
 pub mod utils;
 
-pub use errors::{EcdsaError, InvalidBlockError};
+pub use errors::InvalidBlockError;
+pub use ethrex_crypto::CryptoError;
 pub use validation::{
     get_total_blob_gas, validate_block, validate_block_access_list_hash, validate_gas_used,
     validate_receipts_root, validate_requests_hash,

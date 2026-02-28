@@ -3959,9 +3959,21 @@ dependencies = [
 name = "ethrex-crypto"
 version = "9.0.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
  "c-kzg",
+ "ethereum-types 0.15.1",
+ "ff 0.13.1",
+ "hex-literal 0.4.1",
  "kzg-rs",
+ "malachite 0.6.1",
  "openvm-kzg",
+ "p256",
+ "ripemd",
+ "secp256k1",
+ "sha2",
  "thiserror 2.0.18",
  "tiny-keccak",
 ]
@@ -3996,12 +4008,14 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-vm",
  "hex",
+ "k256",
  "risc0-build",
  "rkyv",
  "serde",
  "serde_with",
  "sp1-build",
  "sp1-sdk",
+ "substrate-bn",
  "thiserror 2.0.18",
 ]
 
@@ -4097,6 +4111,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-p2p",
  "ethrex-rlp",
@@ -4121,11 +4136,7 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
  "bitvec",
- "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
  "bytes",
  "colored",
  "datatest-stable",
@@ -4134,24 +4145,16 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "hex",
- "k256",
- "lambdaworks-math 0.13.0",
  "lazy_static",
  "malachite 0.6.1",
- "p256",
- "ripemd",
  "rustc-hash 2.1.1",
- "secp256k1",
  "serde",
  "serde_json",
- "sha2",
  "sha3",
  "spinoff",
  "strum 0.27.2",
- "substrate-bn",
  "thiserror 2.0.18",
  "walkdir",
- "ziskos",
 ]
 
 [[package]]
@@ -6349,7 +6352,6 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "rand 0.8.5",
- "rayon",
  "serde",
  "serde_json",
 ]
@@ -6391,11 +6393,6 @@ name = "lazycell"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
-
-[[package]]
-name = "lib-c"
-version = "0.15.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
 
 [[package]]
 name = "libc"
@@ -11299,6 +11296,7 @@ dependencies = [
  "env_logger",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-levm",
  "ethrex-storage",
  "ethrex-vm",
@@ -14853,25 +14851,6 @@ dependencies = [
  "memchr",
  "thiserror 2.0.18",
  "zopfli",
-]
-
-[[package]]
-name = "ziskos"
-version = "0.15.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
-dependencies = [
- "bincode 2.0.1",
- "cfg-if 1.0.4",
- "getrandom 0.2.17",
- "lazy_static",
- "lib-c",
- "num-bigint 0.4.6",
- "num-integer",
- "num-traits",
- "rand 0.8.5",
- "serde",
- "static_assertions",
- "tiny-keccak",
 ]
 
 [[package]]

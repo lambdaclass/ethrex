@@ -2988,6 +2988,7 @@ dependencies = [
  "colored",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
+ "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp 9.0.0",
  "ethrex-storage 9.0.0",
@@ -3016,6 +3017,7 @@ dependencies = [
  "colored",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
+ "ethrex-crypto",
  "ethrex-l2-rpc",
  "ethrex-levm",
  "ethrex-rlp 9.0.0",
@@ -3394,8 +3396,20 @@ dependencies = [
 name = "ethrex-crypto"
 version = "9.0.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "bls12_381 0.8.0",
  "c-kzg",
+ "ethereum-types",
+ "ff 0.13.1",
+ "hex-literal",
  "kzg-rs",
+ "malachite",
+ "p256",
+ "ripemd",
+ "secp256k1 0.30.0",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "tiny-keccak",
 ]
