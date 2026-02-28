@@ -1353,6 +1353,13 @@ impl Store {
         self.backend.clear_table(FULLSYNC_HEADERS)
     }
 
+    /// Clears all entries from the invalid chains cache.
+    /// Called on startup to purge any false positives from a previous bug
+    /// where transient errors were cached as permanent block invalidity.
+    pub fn clear_invalid_chains(&self) -> Result<(), StoreError> {
+        self.backend.clear_table(INVALID_CHAINS)
+    }
+
     /// Delete a key from a table
     pub fn delete(&self, table: &'static str, key: Vec<u8>) -> Result<(), StoreError> {
         let mut txn = self.backend.begin_write()?;
