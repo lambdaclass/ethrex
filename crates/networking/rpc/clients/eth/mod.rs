@@ -208,6 +208,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method,
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -226,6 +227,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method,
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -315,6 +317,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_estimateGas".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -407,6 +410,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_getTransactionCount".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -453,6 +457,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "debug_getRawBlock".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }),
         };
 
@@ -563,6 +568,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_getCode".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -620,6 +626,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_blobBaseFee".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
