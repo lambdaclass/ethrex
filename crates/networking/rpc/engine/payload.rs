@@ -1076,15 +1076,8 @@ async fn try_execute_payload(
             ))
         }
         Err(ChainError::EvmError(error)) => {
-            warn!("Error executing block: {error}");
-            context
-                .storage
-                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
-                .await?;
-            Ok(PayloadStatus::invalid_with(
-                latest_valid_hash,
-                error.to_string(),
-            ))
+            error!("Internal error executing block {block_hash}: {error}");
+            Err(RpcErr::Internal(error.to_string()))
         }
         Err(ChainError::StoreError(error)) => {
             warn!("Error storing block: {error}");
