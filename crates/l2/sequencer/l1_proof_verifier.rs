@@ -33,7 +33,7 @@ use crate::{
 use super::{
     configs::AlignedConfig,
     errors::SequencerError,
-    utils::{send_verify_tx, sleep_random},
+    utils::{ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR, send_verify_tx, sleep_random},
 };
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
@@ -251,10 +251,11 @@ impl L1ProofVerifier {
         let send_verify_tx_result =
             send_verify_tx(calldata, &self.eth_client, target_address, &self.l1_signer).await;
 
-        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. })) =
-            send_verify_tx_result.as_ref()
-            && message.contains("00m")
-        // Invalid Aligned proof
+        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError {
+            data: Some(data),
+            ..
+        })) = send_verify_tx_result.as_ref()
+            && data.starts_with(ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR)
         {
             warn!("Deleting invalid ALIGNED proof");
             for batch_number in first_batch_number..=last_batch_number {
