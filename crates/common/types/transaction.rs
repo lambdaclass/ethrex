@@ -1062,9 +1062,12 @@ impl Transaction {
     fn compute_sender(&self) -> Result<Address, EcdsaError> {
         match self {
             Transaction::LegacyTransaction(tx) => {
+                let v: u64 =
+                    tx.v.try_into()
+                        .map_err(|_| EcdsaError::RecoveryIdOverflow)?;
                 let signature_y_parity = match self.chain_id() {
-                    Some(chain_id) => tx.v.as_u64().saturating_sub(35 + chain_id * 2) != 0,
-                    None => tx.v.as_u64().saturating_sub(27) != 0,
+                    Some(chain_id) => v.saturating_sub(35 + chain_id * 2) != 0,
+                    None => v.saturating_sub(27) != 0,
                 };
                 let mut buf = vec![];
                 match self.chain_id() {
@@ -1511,11 +1514,11 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
-    let v = v.as_u64(); //TODO: Could panic if v is bigger than Max u64
+    let v: u64 = v.try_into().ok()?;
     if v == 27 || v == 28 {
         None
     } else {
-        Some((v - 35) / 2)
+        v.checked_sub(35).map(|x| x / 2)
     }
 }
 
@@ -3669,5 +3672,46 @@ mod tests {
     fn test_eip1559_simple_transfer_size() {
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
         assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
+    }
+
+    #[test]
+    fn test_large_v_value_no_panic() {
+        let tx = LegacyTransaction {
+            v: U256::from(2).pow(U256::from(200)),
+            ..Default::default()
+        };
+        let transaction = Transaction::LegacyTransaction(tx);
+
+        assert!(transaction.chain_id().is_none());
+        assert!(transaction.sender().is_err());
+    }
+
+    #[test]
+    fn test_invalid_v_values_return_none_chain_id() {
+        // v = 0 and v = 1 (sometimes used in older implementations)
+        for v in [0u64, 1] {
+            let tx = LegacyTransaction {
+                v: U256::from(v),
+                ..Default::default()
+            };
+            let transaction = Transaction::LegacyTransaction(tx);
+            assert!(
+                transaction.chain_id().is_none(),
+                "v={v} should return None for chain_id"
+            );
+        }
+
+        // v values between 29-34 (invalid according to EIP-155, less than 35)
+        for v in 29u64..=34 {
+            let tx = LegacyTransaction {
+                v: U256::from(v),
+                ..Default::default()
+            };
+            let transaction = Transaction::LegacyTransaction(tx);
+            assert!(
+                transaction.chain_id().is_none(),
+                "v={v} should return None for chain_id"
+            );
+        }
     }
 }
