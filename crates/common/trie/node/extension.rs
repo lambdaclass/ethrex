@@ -246,7 +246,7 @@ impl ExtensionNode {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
-                        node_hash: self.child.clone().compute_hash().finalize(),
+                        node_hash: self.child.compute_hash().finalize(),
                         extension_node_hash: self.compute_hash().finalize(),
                         extension_node_prefix: self.prefix.clone(),
                         node_path: path.current(),
