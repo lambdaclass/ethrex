@@ -727,7 +727,9 @@ impl<'a> VM<'a> {
     /// Executes without making changes to the cache.
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
         // Add backup hook to restore state after execution.
-        self.add_hook(BackupHook::default());
+        if matches!(self.vm_type, VMType::L1) {
+            self.add_hook(BackupHook::default());
+        }
         let report = self.execute()?;
         // Restore cache to the state before execution.
         self.db.undo_last_transaction()?;
