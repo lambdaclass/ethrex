@@ -994,7 +994,7 @@ mod tests {
                         "bpo4Time": null,
                         "bpo5Time": null,
                         "amsterdamTime": null,
-                        "terminalTotalDifficulty": 0,
+                        "terminalTotalDifficulty": "0x0",
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
                         "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
@@ -1062,6 +1062,38 @@ mod tests {
                 .unwrap(),
             ..Default::default()
         }
+    }
+
+    /// Tests that admin_nodeInfo doesn't fail when terminal_total_difficulty
+    /// exceeds u64::MAX. Before the fix, serde_json::to_value() would return
+    /// "number out of range" because Value::Number can only hold u64/i64/f64.
+    #[tokio::test]
+    async fn admin_nodeinfo_large_terminal_total_difficulty() {
+        // Mainnet's terminal_total_difficulty: 58_750_000_000_000_000_000_000
+        // This exceeds u64::MAX (~1.8e19) and triggers the bug with serde_json::to_value().
+        let mainnet_ttd: u128 = 58_750_000_000_000_000_000_000;
+
+        let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let mut config = example_chain_config();
+        config.terminal_total_difficulty = Some(mainnet_ttd);
+        storage.set_chain_config(&config).await.unwrap();
+        let context = default_context_with_storage(storage).await;
+
+        let result = map_http_requests(&request, context).await;
+        assert!(
+            result.is_ok(),
+            "admin_nodeInfo should not fail with large terminal_total_difficulty"
+        );
+
+        let value = result.unwrap();
+        let ttd = value
+            .pointer("/protocols/eth/terminalTotalDifficulty")
+            .expect("terminalTotalDifficulty should be present in response");
+        // Serialized as a hex string to avoid serde_json Value::Number u64 limitation.
+        assert_eq!(ttd.as_str().unwrap(), "0xc70d808a128d7380000");
     }
 
     #[tokio::test]
