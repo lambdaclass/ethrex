@@ -52,8 +52,8 @@ ctr = "0.9.2"
 rand = "0.8.5"
 
 # discv5
-aes-gcm = { version = "0.10.3", optional = true }
-hkdf = { version = "0.12.4", optional = true }
+aes-gcm = "0.10.3"
+hkdf = "0.12.4"
 
 rayon = "1.10.0"
 crossbeam.workspace = true
@@ -71,8 +71,6 @@ sync-test = []
 l2 = ["dep:ethrex-storage-rollup", "dep:ethrex-l2-common"]
 test-utils = []
 metrics = ["dep:ethrex-metrics"]
-# discv5 is currently experimental and should only be enabled for development purposes
-experimental-discv5 = ["dep:aes-gcm", "dep:hkdf"]
 
 [lints.clippy]
 unwrap_used = "deny"

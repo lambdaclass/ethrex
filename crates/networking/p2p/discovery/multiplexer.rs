@@ -23,7 +23,6 @@ use crate::discv4::{
     server::{DiscoveryServer as Discv4Server, Discv4Message, InMessage as Discv4InMessage},
 };
 
-#[cfg(feature = "experimental-discv5")]
 use crate::discv5::{
     messages::Packet as Discv5Packet,
     server::{DiscoveryServer as Discv5Server, Discv5Message, InMessage as Discv5InMessage},
@@ -44,7 +43,7 @@ impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {
             discv4_enabled: true,
-            discv5_enabled: false,
+            discv5_enabled: true,
         }
     }
 }
@@ -53,32 +52,26 @@ impl Default for DiscoveryConfig {
 /// to the appropriate discovery protocol handler (discv4 or discv5).
 pub struct DiscoveryMultiplexer {
     udp_socket: Arc<UdpSocket>,
-    #[cfg_attr(not(feature = "experimental-discv5"), allow(dead_code))]
     local_node_id: H256,
     config: DiscoveryConfig,
     discv4_handle: Option<GenServerHandle<Discv4Server>>,
-    #[cfg(feature = "experimental-discv5")]
     discv5_handle: Option<GenServerHandle<Discv5Server>>,
 }
 
 impl DiscoveryMultiplexer {
     /// Create a new discovery multiplexer.
-    #[allow(unused_variables)]
     pub fn new(
         udp_socket: Arc<UdpSocket>,
         local_node_id: H256,
         config: DiscoveryConfig,
         discv4_handle: Option<GenServerHandle<Discv4Server>>,
-        #[cfg(feature = "experimental-discv5")] discv5_handle: Option<
-            GenServerHandle<Discv5Server>,
-        >,
+        discv5_handle: Option<GenServerHandle<Discv5Server>>,
     ) -> Self {
         Self {
             udp_socket,
             local_node_id,
             config,
             discv4_handle,
-            #[cfg(feature = "experimental-discv5")]
             discv5_handle,
         }
     }
@@ -178,11 +171,7 @@ impl DiscoveryMultiplexer {
         if is_discv4_packet(data) {
             self.route_to_discv4(data, from).await;
         } else {
-            #[cfg(feature = "experimental-discv5")]
             self.route_to_discv5(data, from).await;
-
-            #[cfg(not(feature = "experimental-discv5"))]
-            debug!("Received non-discv4 packet but discv5 is not enabled");
         }
     }
 
@@ -211,7 +200,6 @@ impl DiscoveryMultiplexer {
     }
 
     /// Route a packet to the discv5 handler.
-    #[cfg(feature = "experimental-discv5")]
     async fn route_to_discv5(&mut self, data: &[u8], from: SocketAddr) {
         if !self.config.discv5_enabled {
             return;
