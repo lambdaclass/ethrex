@@ -1497,105 +1497,21 @@ impl Blockchain {
         }
 
         // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
-        let mut block_headers_bytes = Vec::new();
-
-        let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
-        let first_needed_block_hash = first_blockhash_opcode_number
-            .and_then(|n| {
-                (*n < first_block_header.number.saturating_sub(1))
-                    .then(|| blockhash_opcode_references.get(n))?
-                    .copied()
-            })
-            .unwrap_or(first_block_header.parent_hash);
-
-        // At the beginning this is the header of the last block to execute.
-        let mut current_header = blocks
+        let last_block_header = &blocks
             .last()
             .ok_or_else(|| ChainError::WitnessGeneration("Empty batch".to_string()))?
-            .header
-            .clone();
+            .header;
 
-        // Headers from latest - 1 until we reach first block header we need.
-        // We do it this way because we want to fetch headers by hash, not by number
-        while current_header.hash() != first_needed_block_hash {
-            let parent_hash = current_header.parent_hash;
-            let current_number = current_header.number - 1;
-
-            current_header = self
-                .storage
-                .get_block_header_by_hash(parent_hash)?
-                .ok_or_else(|| {
-                    ChainError::WitnessGeneration(format!(
-                        "Failed to get block {current_number} header"
-                    ))
-                })?;
-
-            block_headers_bytes.push(current_header.encode_to_vec());
-        }
-
-        // Create a list of all read/write addresses and storage slots
-        let mut keys = Vec::new();
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(address.as_bytes().to_vec());
-            for slot in touched_storage_slots.iter() {
-                keys.push(slot.as_bytes().to_vec());
-            }
-        }
-
-        // Get initial state trie root and embed the rest of the trie into it
-        let nodes: BTreeMap<H256, Node> = used_trie_nodes
-            .into_iter()
-            .map(|node| (node.compute_hash().finalize(), node))
-            .collect();
-        let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-            Trie::get_embedded_root(&nodes, initial_state_root)?
-        {
-            Some((*state_trie_root).clone())
-        } else {
-            None
-        };
-
-        // Get all initial storage trie roots and embed the rest of the trie into it
-        let state_trie = if let Some(state_trie_root) = &state_trie_root {
-            Trie::new_temp_with_root(state_trie_root.clone().into())
-        } else {
-            Trie::new_temp()
-        };
-        let mut storage_trie_roots = BTreeMap::new();
-        for key in &keys {
-            if key.len() != 20 {
-                continue; // not an address
-            }
-            let address = Address::from_slice(key);
-            let hashed_address = hash_address(&address);
-            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
-                continue; // empty account, doesn't have a storage trie
-            };
-            let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
-            if storage_root_hash == *EMPTY_TRIE_HASH {
-                continue; // empty storage trie
-            }
-            if !nodes.contains_key(&storage_root_hash) {
-                continue; // storage trie isn't relevant to this execution
-            }
-            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
-            let NodeRef::Node(node, _) = node else {
-                return Err(ChainError::Custom(
-                    "execution witness does not contain non-empty storage trie".to_string(),
-                ));
-            };
-            storage_trie_roots.insert(address, (*node).clone());
-        }
-
-        Ok(ExecutionWitness {
+        self.construct_execution_witness(
+            initial_state_root,
+            used_trie_nodes,
+            touched_account_storage_slots,
+            blockhash_opcode_references,
+            first_block_header,
+            last_block_header,
             codes,
-            block_headers_bytes,
-            first_block_number: first_block_header.number,
-            chain_config: self.storage.get_chain_config(),
-            state_trie_root,
-            storage_trie_roots,
-            keys,
-        })
+            first_block_header.number,
+        )
     }
 
     pub fn generate_witness_from_account_updates(
@@ -1743,19 +1659,44 @@ impl Blockchain {
             used_trie_nodes.push((*root).clone());
         }
 
+        self.construct_execution_witness(
+            initial_state_root,
+            used_trie_nodes,
+            touched_account_storage_slots,
+            blockhash_opcode_references,
+            &block.header,
+            &block.header,
+            codes,
+            parent_header.number,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn construct_execution_witness(
+        &self,
+        initial_state_root: H256,
+        used_trie_nodes: Vec<Node>,
+        touched_account_storage_slots: BTreeMap<Address, Vec<H256>>,
+        blockhash_opcode_references: HashMap<u64, H256>,
+        first_block_header: &BlockHeader,
+        last_block_header: &BlockHeader,
+        codes: Vec<Vec<u8>>,
+        witness_first_block_number: u64,
+    ) -> Result<ExecutionWitness, ChainError> {
         // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
         let mut block_headers_bytes = Vec::new();
 
         let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
         let first_needed_block_hash = first_blockhash_opcode_number
             .and_then(|n| {
-                (*n < block.header.number.saturating_sub(1))
+                (*n < first_block_header.number.saturating_sub(1))
                     .then(|| blockhash_opcode_references.get(n))?
                     .copied()
             })
-            .unwrap_or(block.header.parent_hash);
+            .unwrap_or(first_block_header.parent_hash);
 
-        let mut current_header = block.header.clone();
+        // At the beginning this is the header of the last block to execute.
+        let mut current_header = last_block_header.clone();
 
         // Headers from latest - 1 until we reach first block header we need.
         // We do it this way because we want to fetch headers by hash, not by number
@@ -1832,7 +1773,7 @@ impl Blockchain {
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
-            first_block_number: parent_header.number,
+            first_block_number: witness_first_block_number,
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
