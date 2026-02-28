@@ -432,6 +432,95 @@ impl BlockAccessList {
         &self.inner
     }
 
+    /// Validates that the BAL has canonical ordering per EIP-7928.
+    /// - Accounts must be in strictly ascending order by address.
+    /// - Within each account: storage_changes by slot, storage_reads by slot value,
+    ///   slot_changes/balance_changes/nonce_changes/code_changes by block_access_index.
+    ///
+    /// Returns an error string describing the first violation found.
+    pub fn validate_ordering(&self) -> Result<(), String> {
+        let mut prev_addr = None;
+        for account in &self.inner {
+            if let Some(prev) = prev_addr {
+                if prev >= account.address {
+                    return Err(format!(
+                        "Block access list accounts not in strictly ascending order: \
+                         {:#x} >= {:#x}",
+                        prev, account.address
+                    ));
+                }
+            }
+            prev_addr = Some(account.address);
+
+            for window in account.storage_changes.windows(2) {
+                if window[0].slot >= window[1].slot {
+                    return Err(format!(
+                        "Block access list storage_changes not in strictly ascending order \
+                         for account {:#x}: {:#x} >= {:#x}",
+                        account.address, window[0].slot, window[1].slot
+                    ));
+                }
+            }
+            for slot_change in &account.storage_changes {
+                for window in slot_change.slot_changes.windows(2) {
+                    if window[0].block_access_index >= window[1].block_access_index {
+                        return Err(format!(
+                            "Block access list slot_changes not in strictly ascending order \
+                             for account {:#x} slot {:#x}: {} >= {}",
+                            account.address,
+                            slot_change.slot,
+                            window[0].block_access_index,
+                            window[1].block_access_index
+                        ));
+                    }
+                }
+            }
+            for window in account.storage_reads.windows(2) {
+                if window[0] >= window[1] {
+                    return Err(format!(
+                        "Block access list storage_reads not in strictly ascending order \
+                         for account {:#x}: {:#x} >= {:#x}",
+                        account.address, window[0], window[1]
+                    ));
+                }
+            }
+            for window in account.balance_changes.windows(2) {
+                if window[0].block_access_index >= window[1].block_access_index {
+                    return Err(format!(
+                        "Block access list balance_changes not in strictly ascending order \
+                         for account {:#x}: {} >= {}",
+                        account.address,
+                        window[0].block_access_index,
+                        window[1].block_access_index
+                    ));
+                }
+            }
+            for window in account.nonce_changes.windows(2) {
+                if window[0].block_access_index >= window[1].block_access_index {
+                    return Err(format!(
+                        "Block access list nonce_changes not in strictly ascending order \
+                         for account {:#x}: {} >= {}",
+                        account.address,
+                        window[0].block_access_index,
+                        window[1].block_access_index
+                    ));
+                }
+            }
+            for window in account.code_changes.windows(2) {
+                if window[0].block_access_index >= window[1].block_access_index {
+                    return Err(format!(
+                        "Block access list code_changes not in strictly ascending order \
+                         for account {:#x}: {} >= {}",
+                        account.address,
+                        window[0].block_access_index,
+                        window[1].block_access_index
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
     /// Use this when hashing a BAL constructed locally from execution.
     pub fn compute_hash(&self) -> H256 {
