@@ -84,6 +84,7 @@ pub use eth::{
     filter::{ActiveFilters, clean_outdated_filters},
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
+    simulate::SimulateV1Request,
     transaction::EstimateGasRequest,
 };
 pub use rpc::{

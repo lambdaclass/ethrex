@@ -1,4 +1,5 @@
 pub mod levm;
+pub use levm::get_max_allowed_gas_limit;
 use levm::LEVM;
 
 use crate::db::{DynVmDatabase, VmDatabase};
@@ -10,7 +11,7 @@ use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
     Withdrawal,
 };
-use ethrex_common::{Address, types::fee_config::FeeConfig};
+use ethrex_common::{Address, U256, types::fee_config::FeeConfig};
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
@@ -196,6 +197,30 @@ impl Evm {
         header: &BlockHeader,
     ) -> Result<ExecutionResult, EvmError> {
         LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type)
+    }
+
+    /// Like `simulate_tx_from_generic` but with configurable validation.
+    ///
+    /// When `validate` is true, real gas limits and fee checks apply
+    /// (for `eth_simulateV1` with `validation: true`).
+    ///
+    /// `blob_base_fee_override` directly overrides the blob base fee,
+    /// bypassing the normal derivation from `excess_blob_gas`.
+    pub fn simulate_tx_from_generic_with_validation(
+        &mut self,
+        tx: &GenericTransaction,
+        header: &BlockHeader,
+        validate: bool,
+        blob_base_fee_override: Option<U256>,
+    ) -> Result<ExecutionResult, EvmError> {
+        LEVM::simulate_tx_from_generic_with_validation(
+            tx,
+            header,
+            &mut self.db,
+            self.vm_type,
+            validate,
+            blob_base_fee_override,
+        )
     }
 
     pub fn create_access_list(

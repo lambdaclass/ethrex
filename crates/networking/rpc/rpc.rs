@@ -35,6 +35,7 @@ use crate::eth::{
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
+    simulate::SimulateV1Request,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
         GetTransactionByBlockHashAndIndexRequest, GetTransactionByBlockNumberAndIndexRequest,
@@ -371,6 +372,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidForkChoiceState(_) => "InvalidForkChoiceState",
         RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
         RpcErr::UnknownPayload(_) => "UnknownPayload",
+        RpcErr::SimulateError { .. } => "SimulateError",
     }
 }
 
@@ -759,6 +761,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_maxPriorityFeePerGas" => {
             eth::max_priority_fee::MaxPriorityFee::call(req, context).await
         }
+        "eth_simulateV1" => SimulateV1Request::call(req, context).await,
         "eth_config" => Config::call(req, context).await,
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
