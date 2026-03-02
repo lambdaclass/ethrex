@@ -331,7 +331,7 @@ async fn ask_peers_for_nodes(
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodesError>>,
     logged_no_free_peers_count: &mut u32,
 ) {
-    if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
+    while (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, connection)) = peers
             .peer_table
             .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
@@ -347,7 +347,7 @@ async fn ask_peers_for_nodes(
             *logged_no_free_peers_count -= 1;
             // Sleep for a bit to avoid busy polling
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            return;
+            break;
         };
         let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
