@@ -71,8 +71,8 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
-    get_total_blob_gas, validate_block, validate_block_access_list_hash, validate_gas_used,
-    validate_receipts_root, validate_requests_hash,
+    get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
+    validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
@@ -323,7 +323,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
@@ -392,7 +392,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -1238,7 +1238,7 @@ impl Blockchain {
         vm: &mut Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
-        validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;

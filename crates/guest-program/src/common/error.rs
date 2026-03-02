@@ -1,5 +1,6 @@
 use ethrex_common::InvalidBlockError;
 use ethrex_common::types::block_execution_witness::GuestProgramStateError;
+use ethrex_common::types::InvalidBlockBodyError;
 use ethrex_vm::EvmError;
 
 /// Errors that can occur during stateless block execution.
@@ -7,6 +8,8 @@ use ethrex_vm::EvmError;
 /// This error type contains variants common to both L1 and L2 execution.
 #[derive(Debug, thiserror::Error)]
 pub enum ExecutionError {
+    #[error("Block body and header don't match: {0}")]
+    BlockBodyValidation(InvalidBlockBodyError),
     #[error("Block validation error: {0}")]
     BlockValidation(InvalidBlockError),
     #[error("Gas validation error: {0}")]
