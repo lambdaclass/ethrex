@@ -1,7 +1,9 @@
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, VecDeque},
     sync::RwLock,
 };
+
+use rustc_hash::FxHashMap;
 
 use crate::{
     constants::{
@@ -22,8 +24,8 @@ use tracing::warn;
 #[derive(Debug, Default)]
 struct MempoolInner {
     broadcast_pool: HashSet<H256>,
-    transaction_pool: HashMap<H256, MempoolTransaction>,
-    blobs_bundle_pool: HashMap<H256, BlobsBundle>,
+    transaction_pool: FxHashMap<H256, MempoolTransaction>,
+    blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
     txs_order: VecDeque<H256>,
     max_mempool_size: usize,
@@ -35,7 +37,7 @@ impl MempoolInner {
     fn new(max_mempool_size: usize) -> Self {
         MempoolInner {
             txs_order: VecDeque::with_capacity(max_mempool_size * 2),
-            transaction_pool: HashMap::with_capacity(max_mempool_size),
+            transaction_pool: FxHashMap::with_capacity_and_hasher(max_mempool_size, Default::default()),
             max_mempool_size,
             mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
             ..Default::default()
@@ -191,7 +193,7 @@ impl Mempool {
     pub fn filter_transactions(
         &self,
         filter: &PendingTxFilter,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+    ) -> Result<FxHashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let filter_tx = |tx: &Transaction| -> bool {
             // Filter by tx type
             let is_blob_tx = matches!(tx, Transaction::EIP4844Transaction(_));
@@ -231,9 +233,9 @@ impl Mempool {
     /// Gets all the transactions in the mempool
     pub fn get_all_txs_by_sender(
         &self,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
-        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
-            HashMap::with_capacity(128);
+    ) -> Result<FxHashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+        let mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>> =
+            FxHashMap::with_capacity_and_hasher(128, Default::default());
         let tx_pool = &self.read()?.transaction_pool;
 
         for (_, tx) in tx_pool.iter() {
@@ -252,9 +254,9 @@ impl Mempool {
     pub fn filter_transactions_with_filter_fn(
         &self,
         filter: &dyn Fn(&Transaction) -> bool,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
-        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
-            HashMap::with_capacity(128);
+    ) -> Result<FxHashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+        let mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>> =
+            FxHashMap::with_capacity_and_hasher(128, Default::default());
         let tx_pool = &self.read()?.transaction_pool;
 
         for (_, tx) in tx_pool.iter() {
