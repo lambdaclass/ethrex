@@ -494,6 +494,7 @@ impl LEVM {
 
     /// Computes the intrinsic gas for a plain ETH transfer.
     /// This is TX_BASE_COST (21000) plus access-list gas if present.
+    #[allow(dead_code)]
     fn plain_transfer_intrinsic_gas(tx: &Transaction) -> Result<u64, VMError> {
         let mut gas = TX_BASE_COST;
         for (_, keys) in tx.access_list() {
@@ -520,6 +521,7 @@ impl LEVM {
     /// This fast-path handles simple value transfers between EOAs, performing
     /// the same validations and state changes as the full VM path but skipping
     /// VM construction, opcode table setup, and execution loop overhead.
+    #[allow(dead_code)]
     fn execute_plain_transfer(
         tx: &Transaction,
         tx_sender: Address,
@@ -724,16 +726,6 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
 
-        // Fast-path for plain ETH transfers: check cheap tx-level conditions
-        // before loading the recipient account from the DB.
-        if tx.data().is_empty() && tx.authorization_list().is_none() {
-            if let TxKind::Call(to) = tx.to() {
-                if !db.get_account(to)?.has_code() {
-                    return Self::execute_plain_transfer(tx, tx_sender, to, &env, db);
-                }
-            }
-        }
-
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -754,17 +746,6 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         env.disable_balance_check = disable_balance_check;
-
-        // Fast-path for plain ETH transfers (skip when balance check is disabled,
-        // e.g. during pre-warming, since our fast-path always validates balances).
-        // Check cheap tx-level conditions before loading the recipient account.
-        if !disable_balance_check && tx.data().is_empty() && tx.authorization_list().is_none() {
-            if let TxKind::Call(to) = tx.to() {
-                if !db.get_account(to)?.has_code() {
-                    return Self::execute_plain_transfer(tx, tx_sender, to, &env, db);
-                }
-            }
-        }
 
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
