@@ -1,4 +1,5 @@
 use ethrex_common::rkyv_utils::{H160Wrapper, H256Wrapper, U256Wrapper, VecVecWrapper};
+use ethrex_common::types::Block;
 use ethrex_common::types::blobs_bundle;
 use ethrex_common::types::l2::fee_config::FeeConfig;
 use ethrex_common::{Address, H256, U256};
