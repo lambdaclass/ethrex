@@ -331,7 +331,7 @@ impl Node {
 
     pub async fn notify_new_payload(&self, chain: &Chain) {
         let head = chain.blocks.last().unwrap();
-        let execution_payload = ExecutionPayload::from_block(head.clone());
+        let execution_payload = ExecutionPayload::from_block(head.clone(), None);
         // Support blobs
         // let commitments = execution_payload_response
         //     .blobs_bundle

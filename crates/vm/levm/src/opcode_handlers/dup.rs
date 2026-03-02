@@ -47,11 +47,13 @@ impl<'a> VM<'a> {
         };
 
         // Stack grows downwards, so we add the offset to get deeper elements
+        // relative_offset is 1-indexed stack depth (17-235), convert to 0-indexed for array access
+        // The n-th element (1-indexed) is at array index offset + (n-1)
         let absolute_offset = self
             .current_call_frame
             .stack
             .offset
-            .checked_add(usize::from(relative_offset))
+            .checked_add(usize::from(relative_offset).wrapping_sub(1))
             .ok_or(ExceptionalHalt::StackUnderflow)?;
 
         // Verify the offset is within stack bounds

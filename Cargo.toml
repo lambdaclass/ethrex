@@ -23,6 +23,7 @@ members = [
   "crates/vm/levm",
   "crates/vm/levm/runner",
   "crates/common/config",
+  "tooling/repl",
   "test",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
@@ -74,6 +75,8 @@ ethrex-guest-program = { path = "./crates/guest-program" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
+ethrex-monitor = { path = "./tooling/monitor" }
+ethrex-repl = { path = "./tooling/repl" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -112,7 +115,7 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23" }
+aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "54ca2471624700536561b6bd369ed9f4d327991e", package = "agg_mode_sdk" }
 spawned-concurrency = "0.4.2"
 spawned-rt = "0.4.2"
 lambdaworks-crypto = "0.13.0"

@@ -93,3 +93,45 @@ logs/
 # Node/npm (root tooling)
 node_modules/
 /package-lock.json
+
+# Test databases
+store-test-db-*/
+
+# Patch files
+*.patch
+*.diff
+
+# Editor/merge temporary files
+*.swp
+*.swo
+*~
+*.orig
+
+# Additional IDE files
+*.iml
+*.code-workspace
+
+# Cargo timing reports
+cargo-timing*.html
+
+# Rust/LLVM profiling artifacts
+*.profraw
+*.profdata
+
+# pprof profiles
+*.pb
+
+# Code coverage reports
+tarpaulin-report.html
+lcov.info
+cobertura.xml
+htmlcov/
+
+# Core dumps
+core
+core.*
+
+# Log files
+*.log
+
+__pycache__/

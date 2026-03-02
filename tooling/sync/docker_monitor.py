@@ -48,6 +48,18 @@ STATUS_EMOJI = {
     "block_processing": "📦", "success": "🎉", "failed": "❌"
 }
 
+# Phase completion patterns for parsing sync logs
+PHASE_COMPLETION_PATTERNS = {
+    "Block Headers": r"✓ BLOCK HEADERS complete: ([\d,]+) headers in (\d+:\d{2}:\d{2})",
+    "Account Ranges": r"✓ ACCOUNT RANGES complete: ([\d,]+) accounts in (\d+:\d{2}:\d{2})",
+    "Account Insertion": r"✓ ACCOUNT INSERTION complete: ([\d,]+) accounts inserted in (\d+:\d{2}:\d{2})",
+    "Storage Ranges": r"✓ STORAGE RANGES complete: ([\d,]+) storage slots in (\d+:\d{2}:\d{2})",
+    "Storage Insertion": r"✓ STORAGE INSERTION complete: ([\d,]+) storage slots inserted in (\d+:\d{2}:\d{2})",
+    "State Healing": r"✓ STATE HEALING complete: ([\d,]+) state paths healed in (\d+:\d{2}:\d{2})",
+    "Storage Healing": r"✓ STORAGE HEALING complete: ([\d,]+) storage accounts healed in (\d+:\d{2}:\d{2})",
+    "Bytecodes": r"✓ BYTECODES complete: ([\d,]+) bytecodes in (\d+:\d{2}:\d{2})",
+}
+
 
 @dataclass
 class Instance:
@@ -262,6 +274,30 @@ def rpc_call(url: str, method: str) -> Optional[Any]:
         return None
 
 
+def parse_phase_timings(run_id: str, container: str) -> list[tuple[str, str, str]]:
+    """Parse phase completion times from saved container logs.
+
+    Returns list of (phase_name, count, duration) tuples.
+    """
+    log_file = LOGS_DIR / f"run_{run_id}" / f"{container}.log"
+    if not log_file.exists():
+        return []
+
+    try:
+        logs = log_file.read_text()
+    except Exception:
+        return []
+
+    phases = []
+    for phase_name, pattern in PHASE_COMPLETION_PATTERNS.items():
+        match = re.search(pattern, logs)
+        if match:
+            count = match.group(1)
+            duration = match.group(2)
+            phases.append((phase_name, count, duration))
+    return phases
+
+
 def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, branch: str, commit: str, build_profile: str = ""):
     """Send a single summary Slack message for the run."""
     all_success = all(i.status == "success" for i in instances)
@@ -319,6 +355,21 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, br
         if i.error:
             line += f"\n       Error: {i.error}"
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": line}})
+
+    # Add phase breakdown for each instance
+    for i in instances:
+        phases = parse_phase_timings(run_id, i.container)
+        if phases:
+            phase_lines = [f"📊 *Phase Breakdown — {i.name}*", "```"]
+            max_name_len = max(len(name) for name, _, _ in phases)
+            for name, count, duration in phases:
+                phase_lines.append(f"{name:<{max_name_len}}  {duration}  ({count})")
+            phase_lines.append("```")
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "\n".join(phase_lines)}
+            })
+
     try:
         requests.post(url, json={"blocks": blocks}, timeout=10)
     except Exception:
@@ -417,6 +468,15 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
         if inst.error:
             line += f"\n       Error: {inst.error}"
         lines.append(line)
+
+        # Add phase breakdown
+        phases = parse_phase_timings(run_id, inst.container)
+        if phases:
+            lines.append(f"    Phase Breakdown:")
+            max_name_len = max(len(name) for name, _, _ in phases)
+            for name, count, duration in phases:
+                lines.append(f"      {name:<{max_name_len}}  {duration}  ({count})")
+
     lines.append("")
     # Append to log file
     with open(RUN_LOG_FILE, "a") as f:

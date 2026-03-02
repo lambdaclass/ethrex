@@ -51,6 +51,13 @@ pub struct ExecutionPayload {
         default
     )]
     pub excess_blob_gas: Option<u64>,
+    // ExecutionPayloadV4 fields (EIP-7843)
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::u64::hex_str_opt",
+        default
+    )]
+    pub slot_number: Option<u64>,
     // ExecutionPayloadV4 fields. Optional since we support previous versions.
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -141,6 +148,7 @@ impl ExecutionPayload {
             parent_beacon_block_root,
             // TODO: set the value properly
             requests_hash,
+            slot_number: self.slot_number,
             block_access_list_hash,
             ..Default::default()
         };
@@ -148,7 +156,7 @@ impl ExecutionPayload {
         Ok(Block::new(header, body))
     }
 
-    pub fn from_block(block: Block) -> Self {
+    pub fn from_block(block: Block, block_access_list: Option<BlockAccessList>) -> Self {
         Self {
             parent_hash: block.header.parent_hash,
             fee_recipient: block.header.coinbase,
@@ -172,8 +180,8 @@ impl ExecutionPayload {
             withdrawals: block.body.withdrawals,
             blob_gas_used: block.header.blob_gas_used,
             excess_blob_gas: block.header.excess_blob_gas,
-            // TODO: need to finish this after we are able to get BAL from blocks
-            block_access_list: None,
+            slot_number: block.header.slot_number,
+            block_access_list,
         }
     }
 }
@@ -267,6 +275,34 @@ impl From<BlockBody> for ExecutionPayloadBody {
                 .map(EncodedTransaction::encode)
                 .collect(),
             withdrawals: body.withdrawals,
+        }
+    }
+}
+
+/// ExecutionPayloadBody V2 - includes Block Access List for EIP-7928
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionPayloadBodyV2 {
+    pub transactions: Vec<EncodedTransaction>,
+    pub withdrawals: Option<Vec<Withdrawal>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::block_access_list::rlp_str_opt",
+        default
+    )]
+    pub block_access_list: Option<BlockAccessList>,
+}
+
+impl ExecutionPayloadBodyV2 {
+    pub fn from_body_with_bal(body: BlockBody, bal: Option<BlockAccessList>) -> Self {
+        Self {
+            transactions: body
+                .transactions
+                .iter()
+                .map(EncodedTransaction::encode)
+                .collect(),
+            withdrawals: body.withdrawals,
+            block_access_list: bal,
         }
     }
 }

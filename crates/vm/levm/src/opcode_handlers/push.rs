@@ -43,6 +43,7 @@ impl<'a> VM<'a> {
     }
 
     // PUSH0
+    #[inline]
     pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::PUSH0)?;

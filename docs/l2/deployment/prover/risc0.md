@@ -18,8 +18,8 @@ ethrex l2 prover \
 ```
 
 > [!IMPORTANT]
-> Cualquiera haya sido el metodo de instalacion de ethrex, asegurate de que el binario que estas utilizando tiene soporte para RISC0, y tambien para GPU si es que tu intencion es correr un prover RISC0 GPU.
+> Regardless of the installation method used for ethrex, make sure the binary you are using has RISC0 support, and also GPU support if you intend to run a RISC0 GPU prover.
 
 > [!NOTE]
-> The flag `--proof-coordinators` is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to `localhost:3900` because the command above command uses the port `3900` for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
+> The flag `--proof-coordinators` is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to `localhost:3900` because the command above uses the port `3900` for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
 > We choose RISC0 as the backend to indicate the prover to generate RISC0 proofs.
