@@ -156,7 +156,7 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 
 | Item | Priority | Status | Description |
 |-----|----------|--------|-------------|
-| Block-Level Access Lists | 2 | In Progress | Implement [EIP-7928](https://eips.ethereum.org/EIPS/eip-7928) |
+| Block-Level Access Lists | 2 | Done | Implement [EIP-7928](https://eips.ethereum.org/EIPS/eip-7928) |
 | Disc V5 | 2 | In Progress | Add discV5 Support |
 | Sparse Blobpool  | — | Pending | Implement [EIP-8070](https://eips.ethereum.org/EIPS/eip-8070) |
 | Pre merge blocks | — | Pending | Be able to process pre merge blocks |

@@ -54,12 +54,12 @@ interface ITimelock {
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external;
 
-    /// @notice Verifies a single batch through the timelock.
-    function verifyBatch(
-        uint256 batchNumber,
-        bytes memory risc0BlockProof,
-        bytes memory sp1ProofBytes,
-        bytes memory tdxSignature
+    /// @notice Verifies one or more consecutive batches through the timelock.
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
     ) external;
 
     /// @notice Verifies multiple batches through the timelock using aligned proofs.

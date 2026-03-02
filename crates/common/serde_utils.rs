@@ -233,10 +233,16 @@ pub mod u64 {
         where
             D: Deserializer<'de>,
         {
-            let value = Option::<String>::deserialize(d)?;
+            let value: Option<serde_json::Value> = Option::deserialize(d)?;
             match value {
-                Some(s) if !s.is_empty() => u64::from_str_radix(s.trim_start_matches("0x"), 16)
-                    .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
+                Some(serde_json::Value::String(s)) if !s.is_empty() => {
+                    u64::from_str_radix(s.trim_start_matches("0x"), 16)
+                        .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
+                        .map(Some)
+                }
+                Some(serde_json::Value::Number(n)) => n
+                    .as_u64()
+                    .ok_or_else(|| D::Error::custom("Failed to deserialize u64 value"))
                     .map(Some),
                 _ => Ok(None),
             }
@@ -308,6 +314,39 @@ pub mod u128 {
             S: Serializer,
         {
             serializer.serialize_str(&format!("{value:#x}"))
+        }
+    }
+
+    pub mod hex_str_opt {
+        use serde::Serialize;
+
+        use super::*;
+
+        pub fn serialize<S>(value: &Option<u128>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            Option::<String>::serialize(&value.map(|v| format!("{v:#x}")), serializer)
+        }
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<u128>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value: Option<serde_json::Value> = Option::deserialize(d)?;
+            match value {
+                Some(serde_json::Value::Number(n)) => n
+                    .to_string()
+                    .parse::<u128>()
+                    .map(Some)
+                    .map_err(|_| D::Error::custom("Failed to deserialize u128 number")),
+                Some(serde_json::Value::String(s)) if !s.is_empty() => {
+                    u128::from_str_radix(s.trim_start_matches("0x"), 16)
+                        .map_err(|_| D::Error::custom("Failed to deserialize u128 value"))
+                        .map(Some)
+                }
+                _ => Ok(None),
+            }
         }
     }
 }
