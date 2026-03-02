@@ -1,5 +1,4 @@
 use crate::utils::RpcErr;
-use ethrex_crypto::NativeCrypto;
 use ethrex_common::{
     Address, H256, serde_utils,
     types::{
@@ -8,6 +7,7 @@ use ethrex_common::{
         WrappedEIP4844Transaction,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use serde::{Deserialize, Serialize};
 

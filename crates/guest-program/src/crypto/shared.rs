@@ -41,10 +41,7 @@ pub(crate) fn k256_ecrecover(
 
 /// Transaction sender recovery using k256 (pure Rust, RISC-V compatible).
 /// Used by tx.sender() and EIP-7702 authority recovery.
-pub(crate) fn k256_recover_signer(
-    sig: &[u8; 65],
-    msg: &[u8; 32],
-) -> Result<Address, CryptoError> {
+pub(crate) fn k256_recover_signer(sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {
     use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 
     // EIP-2: reject high-s signatures (s > secp256k1n/2)
@@ -59,12 +56,10 @@ pub(crate) fn k256_recover_signer(
     }
 
     #[allow(clippy::indexing_slicing)]
-    let signature =
-        Signature::from_slice(&sig[..64]).map_err(|_| CryptoError::InvalidSignature)?;
+    let signature = Signature::from_slice(&sig[..64]).map_err(|_| CryptoError::InvalidSignature)?;
 
     #[allow(clippy::indexing_slicing)]
-    let recovery_id =
-        RecoveryId::from_byte(sig[64]).ok_or(CryptoError::InvalidRecoveryId)?;
+    let recovery_id = RecoveryId::from_byte(sig[64]).ok_or(CryptoError::InvalidRecoveryId)?;
 
     let vk = VerifyingKey::recover_from_prehash(msg, &signature, recovery_id)
         .map_err(|_| CryptoError::RecoveryFailed)?;
@@ -93,11 +88,9 @@ pub(crate) fn substrate_bn_g1_add(p1: &[u8], p2: &[u8]) -> Result<[u8; 64], Cryp
     }
 
     #[allow(clippy::indexing_slicing)]
-    let p1x =
-        Fq::from_slice(&p1[..32]).map_err(|_| CryptoError::InvalidInput("invalid P1.x"))?;
+    let p1x = Fq::from_slice(&p1[..32]).map_err(|_| CryptoError::InvalidInput("invalid P1.x"))?;
     #[allow(clippy::indexing_slicing)]
-    let p1y =
-        Fq::from_slice(&p1[32..64]).map_err(|_| CryptoError::InvalidInput("invalid P1.y"))?;
+    let p1y = Fq::from_slice(&p1[32..64]).map_err(|_| CryptoError::InvalidInput("invalid P1.y"))?;
 
     let g1_a: G1 = if p1x.is_zero() && p1y.is_zero() {
         G1::zero()
@@ -108,11 +101,9 @@ pub(crate) fn substrate_bn_g1_add(p1: &[u8], p2: &[u8]) -> Result<[u8; 64], Cryp
     };
 
     #[allow(clippy::indexing_slicing)]
-    let p2x =
-        Fq::from_slice(&p2[..32]).map_err(|_| CryptoError::InvalidInput("invalid P2.x"))?;
+    let p2x = Fq::from_slice(&p2[..32]).map_err(|_| CryptoError::InvalidInput("invalid P2.x"))?;
     #[allow(clippy::indexing_slicing)]
-    let p2y =
-        Fq::from_slice(&p2[32..64]).map_err(|_| CryptoError::InvalidInput("invalid P2.y"))?;
+    let p2y = Fq::from_slice(&p2[32..64]).map_err(|_| CryptoError::InvalidInput("invalid P2.y"))?;
 
     let g1_b: G1 = if p2x.is_zero() && p2y.is_zero() {
         G1::zero()
@@ -136,10 +127,7 @@ pub(crate) fn substrate_bn_g1_add(p1: &[u8], p2: &[u8]) -> Result<[u8; 64], Cryp
 
 /// BN254 G1 scalar multiplication using substrate-bn (pure Rust, RISC-V compatible).
 /// Used by SP1 and ZisK where substrate-bn is patched for circuit acceleration.
-pub(crate) fn substrate_bn_g1_mul(
-    point: &[u8],
-    scalar: &[u8],
-) -> Result<[u8; 64], CryptoError> {
+pub(crate) fn substrate_bn_g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
     use substrate_bn::{AffineG1, Fq, Fr, G1, Group};
 
     if point.len() < 64 || scalar.len() < 32 {
@@ -181,9 +169,7 @@ pub(crate) fn substrate_bn_g1_mul(
 
 /// BN254 pairing check using substrate-bn (pure Rust, RISC-V compatible).
 /// Used by SP1, RISC0, and ZisK where substrate-bn is patched for circuit acceleration.
-pub(crate) fn substrate_bn_pairing_check(
-    pairs: &[(&[u8], &[u8])],
-) -> Result<bool, CryptoError> {
+pub(crate) fn substrate_bn_pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1, G2, Group};
 
     if pairs.is_empty() {
@@ -202,8 +188,7 @@ pub(crate) fn substrate_bn_pairing_check(
 
         // Parse G1
         #[allow(clippy::indexing_slicing)]
-        let g1x =
-            Fq::from_slice(&g1_bytes[..32]).map_err(|_| CryptoError::InvalidInput("G1.x"))?;
+        let g1x = Fq::from_slice(&g1_bytes[..32]).map_err(|_| CryptoError::InvalidInput("G1.x"))?;
         #[allow(clippy::indexing_slicing)]
         let g1y =
             Fq::from_slice(&g1_bytes[32..64]).map_err(|_| CryptoError::InvalidInput("G1.y"))?;
@@ -221,26 +206,23 @@ pub(crate) fn substrate_bn_pairing_check(
         let g2_x_im =
             Fq::from_slice(&g2_bytes[..32]).map_err(|_| CryptoError::InvalidInput("G2.x_im"))?;
         #[allow(clippy::indexing_slicing)]
-        let g2_x_re = Fq::from_slice(&g2_bytes[32..64])
-            .map_err(|_| CryptoError::InvalidInput("G2.x_re"))?;
+        let g2_x_re =
+            Fq::from_slice(&g2_bytes[32..64]).map_err(|_| CryptoError::InvalidInput("G2.x_re"))?;
         #[allow(clippy::indexing_slicing)]
-        let g2_y_im = Fq::from_slice(&g2_bytes[64..96])
-            .map_err(|_| CryptoError::InvalidInput("G2.y_im"))?;
+        let g2_y_im =
+            Fq::from_slice(&g2_bytes[64..96]).map_err(|_| CryptoError::InvalidInput("G2.y_im"))?;
         #[allow(clippy::indexing_slicing)]
-        let g2_y_re = Fq::from_slice(&g2_bytes[96..128])
-            .map_err(|_| CryptoError::InvalidInput("G2.y_re"))?;
+        let g2_y_re =
+            Fq::from_slice(&g2_bytes[96..128]).map_err(|_| CryptoError::InvalidInput("G2.y_re"))?;
 
-        let g2: G2 = if g2_x_im.is_zero()
-            && g2_x_re.is_zero()
-            && g2_y_im.is_zero()
-            && g2_y_re.is_zero()
-        {
-            G2::zero()
-        } else {
-            AffineG2::new(Fq2::new(g2_x_im, g2_x_re), Fq2::new(g2_y_im, g2_y_re))
-                .map_err(|_| CryptoError::InvalidPoint("G2 not on curve"))?
-                .into()
-        };
+        let g2: G2 =
+            if g2_x_im.is_zero() && g2_x_re.is_zero() && g2_y_im.is_zero() && g2_y_re.is_zero() {
+                G2::zero()
+            } else {
+                AffineG2::new(Fq2::new(g2_x_im, g2_x_re), Fq2::new(g2_y_im, g2_y_re))
+                    .map_err(|_| CryptoError::InvalidPoint("G2 not on curve"))?
+                    .into()
+            };
 
         if g1.is_zero() || g2.is_zero() {
             continue;

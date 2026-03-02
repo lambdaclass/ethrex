@@ -17,7 +17,12 @@ fn pairing_infinity() {
     let calldata_bytes = Bytes::from(calldata.clone());
     let mut remaining_gas = 10000000;
 
-    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas, Fork::Cancun, &NativeCrypto);
+    let result = bls12_pairing_check(
+        &calldata_bytes,
+        &mut remaining_gas,
+        Fork::Cancun,
+        &NativeCrypto,
+    );
     assert_eq!(result.unwrap(), zero);
 
     // Now we add a pair were one point is infinity, the result must not change
@@ -32,7 +37,12 @@ fn pairing_infinity() {
 
     let calldata_bytes = Bytes::from(calldata.clone());
 
-    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas, Fork::Cancun, &NativeCrypto);
+    let result = bls12_pairing_check(
+        &calldata_bytes,
+        &mut remaining_gas,
+        Fork::Cancun,
+        &NativeCrypto,
+    );
 
     assert_eq!(result.unwrap(), zero);
 }

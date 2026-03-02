@@ -3,7 +3,6 @@ use super::{
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::utils::keccak;
-use ethrex_crypto::{Crypto, CryptoError};
 use crate::{
     Address, H256, U256,
     constants::{
@@ -14,6 +13,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
+use ethrex_crypto::{Crypto, CryptoError};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,

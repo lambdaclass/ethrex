@@ -1,7 +1,9 @@
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
-use super::shared::{k256_ecrecover, k256_recover_signer, substrate_bn_g1_mul, substrate_bn_pairing_check};
+use super::shared::{
+    k256_ecrecover, k256_recover_signer, substrate_bn_g1_mul, substrate_bn_pairing_check,
+};
 
 /// SP1 crypto provider.
 ///

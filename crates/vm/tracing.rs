@@ -44,6 +44,12 @@ impl Evm {
         block: &Block,
         stop_index: Option<usize>,
     ) -> Result<(), EvmError> {
-        LEVM::rerun_block(&mut self.db, block, stop_index, self.vm_type, self.crypto.as_ref())
+        LEVM::rerun_block(
+            &mut self.db,
+            block,
+            stop_index,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
     }
 }

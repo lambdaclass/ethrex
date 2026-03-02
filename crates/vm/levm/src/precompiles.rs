@@ -4,7 +4,7 @@ use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
 };
-use ethrex_crypto::{CryptoError, Crypto};
+use ethrex_crypto::{Crypto, CryptoError};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::sync::RwLock;
@@ -12,7 +12,7 @@ use std::sync::RwLock;
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
 use crate::{
-    constants::{VERSIONED_HASH_VERSION_KZG},
+    constants::VERSIONED_HASH_VERSION_KZG,
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
@@ -422,11 +422,20 @@ pub fn ecrecover(
 
     let input = fill_with_zeros(calldata, INPUT_LEN);
 
-    #[expect(clippy::indexing_slicing, reason = "fill_with_zeros guarantees len >= 128")]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fill_with_zeros guarantees len >= 128"
+    )]
     let raw_hash: &[u8] = &input[0..WORD];
-    #[expect(clippy::indexing_slicing, reason = "fill_with_zeros guarantees len >= 128")]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fill_with_zeros guarantees len >= 128"
+    )]
     let raw_v: &[u8] = &input[WORD..WORD * 2];
-    #[expect(clippy::indexing_slicing, reason = "fill_with_zeros guarantees len >= 128")]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fill_with_zeros guarantees len >= 128"
+    )]
     let raw_sig: &[u8] = &input[WORD * 2..WORD * 2 + 64];
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
@@ -450,7 +459,10 @@ pub fn ecrecover(
 
     // Address is the last 20 bytes of the keccak hash of the public key.
     let mut out = [0u8; 32];
-    #[expect(clippy::indexing_slicing, reason = "pk_hash is 32 bytes, out is 32 bytes")]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "pk_hash is 32 bytes, out is 32 bytes"
+    )]
     out[12..32].copy_from_slice(&pk_hash[12..32]);
 
     Ok(Bytes::copy_from_slice(&out))
@@ -567,8 +579,9 @@ pub fn modexp(
     use malachite::Natural;
     use malachite::base::num::conversion::traits::*;
     let exp_first_32_bytes = e.get(0..32.min(exponent_size)).unwrap_or_default();
-    let exp_first_32 = Natural::from_power_of_2_digits_desc(8u64, exp_first_32_bytes.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
+    let exp_first_32 =
+        Natural::from_power_of_2_digits_desc(8u64, exp_first_32_bytes.iter().cloned())
+            .ok_or(InternalError::TypeConversion)?;
 
     let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
 
@@ -988,9 +1001,7 @@ pub fn p_256_verify(
 
 /// Parse a 64-byte padded BLS12-381 field element into a 48-byte unpadded element.
 /// The first 16 bytes must be zero (padding). Returns error if padding is invalid.
-fn parse_bls12_padded_fp(
-    padded: &[u8; 64],
-) -> Result<[u8; 48], VMError> {
+fn parse_bls12_padded_fp(padded: &[u8; 64]) -> Result<[u8; 48], VMError> {
     if padded[..16] != [0u8; 16] {
         return Err(PrecompileError::ParsingInputError.into());
     }
@@ -1000,7 +1011,6 @@ fn parse_bls12_padded_fp(
         .map_err(|_| InternalError::TypeConversion)?;
     Ok(fp)
 }
-
 
 pub fn bls12_g1add(
     calldata: &Bytes,
@@ -1024,13 +1034,29 @@ pub fn bls12_g1add(
 
     // Parse two 128-byte padded G1 points into 48-byte unpadded coordinates.
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let ax = parse_bls12_padded_fp(x_data[..64].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let ax = parse_bls12_padded_fp(
+        x_data[..64]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let ay = parse_bls12_padded_fp(x_data[64..128].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let ay = parse_bls12_padded_fp(
+        x_data[64..128]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let bx = parse_bls12_padded_fp(y_data[..64].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let bx = parse_bls12_padded_fp(
+        y_data[..64]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let by = parse_bls12_padded_fp(y_data[64..128].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let by = parse_bls12_padded_fp(
+        y_data[64..128]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
 
     let result = crypto
         .bls12_381_g1_add((ax, ay), (bx, by))
@@ -1075,9 +1101,19 @@ pub fn bls12_g1msm(
         let point_bytes = &calldata[point_offset..scalar_offset];
         let scalar_bytes = &calldata[scalar_offset..pair_end];
 
-        let px = parse_bls12_padded_fp(point_bytes[..64].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let py = parse_bls12_padded_fp(point_bytes[64..128].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let scalar: [u8; 32] = scalar_bytes.try_into().map_err(|_| InternalError::TypeConversion)?;
+        let px = parse_bls12_padded_fp(
+            point_bytes[..64]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let py = parse_bls12_padded_fp(
+            point_bytes[64..128]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let scalar: [u8; 32] = scalar_bytes
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
 
         pairs.push(((px, py), scalar));
     }
@@ -1119,22 +1155,54 @@ pub fn bls12_g2add(
     // Parse two 256-byte padded G2 points into four 48-byte unpadded coordinates each.
     // G2 point layout: x_0(64) || x_1(64) || y_0(64) || y_1(64) = 256 bytes
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let ax0 = parse_bls12_padded_fp(x_data[0..64].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let ax0 = parse_bls12_padded_fp(
+        x_data[0..64]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let ax1 = parse_bls12_padded_fp(x_data[64..128].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let ax1 = parse_bls12_padded_fp(
+        x_data[64..128]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let ay0 = parse_bls12_padded_fp(x_data[128..192].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let ay0 = parse_bls12_padded_fp(
+        x_data[128..192]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let ay1 = parse_bls12_padded_fp(x_data[192..256].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let ay1 = parse_bls12_padded_fp(
+        x_data[192..256]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
 
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let bx0 = parse_bls12_padded_fp(y_data[0..64].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let bx0 = parse_bls12_padded_fp(
+        y_data[0..64]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let bx1 = parse_bls12_padded_fp(y_data[64..128].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let bx1 = parse_bls12_padded_fp(
+        y_data[64..128]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let by0 = parse_bls12_padded_fp(y_data[128..192].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let by0 = parse_bls12_padded_fp(
+        y_data[128..192]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
     #[expect(clippy::indexing_slicing, reason = "array sizes known")]
-    let by1 = parse_bls12_padded_fp(y_data[192..256].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+    let by1 = parse_bls12_padded_fp(
+        y_data[192..256]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
 
     let result = crypto
         .bls12_381_g2_add((ax0, ax1, ay0, ay1), (bx0, bx1, by0, by1))
@@ -1184,11 +1252,29 @@ pub fn bls12_g2msm(
         let point_bytes = &calldata[point_offset..scalar_offset];
         let scalar_bytes = &calldata[scalar_offset..pair_end];
 
-        let x0 = parse_bls12_padded_fp(point_bytes[0..64].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let x1 = parse_bls12_padded_fp(point_bytes[64..128].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let y0 = parse_bls12_padded_fp(point_bytes[128..192].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let y1 = parse_bls12_padded_fp(point_bytes[192..256].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let scalar: [u8; 32] = scalar_bytes.try_into().map_err(|_| InternalError::TypeConversion)?;
+        let x0 = parse_bls12_padded_fp(
+            point_bytes[0..64]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let x1 = parse_bls12_padded_fp(
+            point_bytes[64..128]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let y0 = parse_bls12_padded_fp(
+            point_bytes[128..192]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let y1 = parse_bls12_padded_fp(
+            point_bytes[192..256]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let scalar: [u8; 32] = scalar_bytes
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
 
         pairs.push(((x0, x1, y0, y1), scalar));
     }
@@ -1228,8 +1314,10 @@ pub fn bls12_pairing_check(
     let gas_cost = gas_cost::bls12_pairing_check(k)?;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let mut pairs: Vec<(([u8; 48], [u8; 48]), ([u8; 48], [u8; 48], [u8; 48], [u8; 48]))> =
-        Vec::with_capacity(k);
+    let mut pairs: Vec<(
+        ([u8; 48], [u8; 48]),
+        ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+    )> = Vec::with_capacity(k);
 
     #[expect(
         clippy::indexing_slicing,
@@ -1244,13 +1332,37 @@ pub fn bls12_pairing_check(
         let g1_bytes = &calldata[g1_offset..g2_offset];
         let g2_bytes = &calldata[g2_offset..pair_end];
 
-        let g1x = parse_bls12_padded_fp(g1_bytes[0..64].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let g1y = parse_bls12_padded_fp(g1_bytes[64..128].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+        let g1x = parse_bls12_padded_fp(
+            g1_bytes[0..64]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let g1y = parse_bls12_padded_fp(
+            g1_bytes[64..128]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
 
-        let g2x0 = parse_bls12_padded_fp(g2_bytes[0..64].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let g2x1 = parse_bls12_padded_fp(g2_bytes[64..128].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let g2y0 = parse_bls12_padded_fp(g2_bytes[128..192].try_into().map_err(|_| InternalError::TypeConversion)?)?;
-        let g2y1 = parse_bls12_padded_fp(g2_bytes[192..256].try_into().map_err(|_| InternalError::TypeConversion)?)?;
+        let g2x0 = parse_bls12_padded_fp(
+            g2_bytes[0..64]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let g2x1 = parse_bls12_padded_fp(
+            g2_bytes[64..128]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let g2y0 = parse_bls12_padded_fp(
+            g2_bytes[128..192]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let g2y1 = parse_bls12_padded_fp(
+            g2_bytes[192..256]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
 
         pairs.push(((g1x, g1y), (g2x0, g2x1, g2y0, g2y1)));
     }

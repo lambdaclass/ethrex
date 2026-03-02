@@ -1,5 +1,4 @@
 use ethrex_blockchain::Blockchain;
-use ethrex_crypto::NativeCrypto;
 use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
 use ethrex_blockchain::constants::{
     TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
@@ -8,6 +7,7 @@ use ethrex_blockchain::constants::{
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
+use ethrex_crypto::NativeCrypto;
 use std::collections::HashMap;
 
 use ethrex_common::types::{

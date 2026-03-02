@@ -101,9 +101,12 @@ impl LEVM {
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
         let transactions_with_sender =
-            block.body.get_transactions_with_sender(crypto).map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
+            block
+                .body
+                .get_transactions_with_sender(crypto)
+                .map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
@@ -161,9 +164,7 @@ impl LEVM {
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => {
-                extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
-            }
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
 
@@ -212,9 +213,12 @@ impl LEVM {
         let mut tx_since_last_flush = 2;
 
         let transactions_with_sender =
-            block.body.get_transactions_with_sender(crypto).map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
+            block
+                .body
+                .get_transactions_with_sender(crypto)
+                .map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
@@ -299,9 +303,7 @@ impl LEVM {
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => {
-                extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
-            }
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -337,9 +339,12 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
-        let txs_with_sender = block.body.get_transactions_with_sender(crypto).map_err(|error| {
-            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })?;
+        let txs_with_sender = block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
 
         // Group transactions by sender for sequential execution within groups
         let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
@@ -891,10 +896,9 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
-    let withdrawals_data: Vec<u8> =
-        LEVM::read_withdrawal_requests(header, db, vm_type, crypto)?
-            .output
-            .into();
+    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type, crypto)?
+        .output
+        .into();
     let consolidation_data: Vec<u8> =
         LEVM::dequeue_consolidation_requests(header, db, vm_type, crypto)?
             .output

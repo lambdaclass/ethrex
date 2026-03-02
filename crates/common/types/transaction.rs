@@ -1,9 +1,9 @@
 use std::{cmp::min, fmt::Display};
 
 use crate::utils::keccak;
-use ethrex_crypto::{Crypto, CryptoError};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
+use ethrex_crypto::{Crypto, CryptoError};
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};

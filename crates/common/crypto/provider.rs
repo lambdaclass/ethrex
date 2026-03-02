@@ -56,8 +56,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
             .recover(&message)
             .map_err(|_| CryptoError::RecoveryFailed)?;
 
-        let hash =
-            crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
+        let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
         Ok(hash)
     }
 
@@ -85,8 +84,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
             .recover_ecdsa(&message, &recoverable_sig)
             .map_err(|_| CryptoError::RecoveryFailed)?;
 
-        let hash =
-            crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
+        let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
         Ok(Address::from_slice(&hash[12..]))
     }
 
@@ -118,24 +116,23 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         use ark_ec::CurveGroup;
         use ark_ff::{BigInteger, PrimeField as _, Zero};
 
-        let parse_point =
-            |bytes: &[u8]| -> Result<ark_bn254::G1Affine, CryptoError> {
-                if bytes.len() < 64 {
-                    return Err(CryptoError::InvalidInput("G1 point must be 64 bytes"));
-                }
-                let x = Fq::from_be_bytes_mod_order(&bytes[..32]);
-                let y = Fq::from_be_bytes_mod_order(&bytes[32..64]);
+        let parse_point = |bytes: &[u8]| -> Result<ark_bn254::G1Affine, CryptoError> {
+            if bytes.len() < 64 {
+                return Err(CryptoError::InvalidInput("G1 point must be 64 bytes"));
+            }
+            let x = Fq::from_be_bytes_mod_order(&bytes[..32]);
+            let y = Fq::from_be_bytes_mod_order(&bytes[32..64]);
 
-                if x.is_zero() && y.is_zero() {
-                    return Ok(ark_bn254::G1Affine::identity());
-                }
+            if x.is_zero() && y.is_zero() {
+                return Ok(ark_bn254::G1Affine::identity());
+            }
 
-                let point = ark_bn254::G1Affine::new_unchecked(x, y);
-                if !point.is_on_curve() {
-                    return Err(CryptoError::InvalidPoint("G1 point not on curve"));
-                }
-                Ok(point)
-            };
+            let point = ark_bn254::G1Affine::new_unchecked(x, y);
+            if !point.is_on_curve() {
+                return Err(CryptoError::InvalidPoint("G1 point not on curve"));
+            }
+            Ok(point)
+        };
 
         let pt1 = parse_point(p1)?;
         let pt2 = parse_point(p2)?;
@@ -153,7 +150,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Input: uncompressed G1 point (64 bytes) + scalar (32 bytes big-endian).
     /// Output: uncompressed G1 point (64 bytes).
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
-        use ark_bn254::{Fr as FrArk, Fq};
+        use ark_bn254::{Fq, Fr as FrArk};
         use ark_ec::CurveGroup;
         use ark_ff::{BigInteger, PrimeField as _, Zero};
         use std::ops::Mul as _;
@@ -193,7 +190,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
         use ark_bn254::{Bn254, G1Affine, G2Affine};
         use ark_ec::pairing::Pairing;
-        use ark_ff::{Fp, One, QuadExtField, PrimeField as _};
+        use ark_ff::{Fp, One, PrimeField as _, QuadExtField};
 
         let mut g1_points = Vec::with_capacity(pairs.len());
         let mut g2_points = Vec::with_capacity(pairs.len());
@@ -331,14 +328,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     // ── Blake2 ─────────────────────────────────────────────────────────
 
     /// Blake2b compression function F. Used by BLAKE2F precompile (0x09).
-    fn blake2_compress(
-        &self,
-        rounds: u32,
-        h: &mut [u64; 8],
-        m: [u64; 16],
-        t: [u64; 2],
-        f: bool,
-    ) {
+    fn blake2_compress(&self, rounds: u32, h: &mut [u64; 8], m: [u64; 16], t: [u64; 2], f: bool) {
         #[allow(clippy::as_conversions)]
         crate::blake2f::blake2b_f(rounds as usize, h, &m, &t, f);
     }
@@ -445,11 +435,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(crate::kzg::KZG_PRECOMPUTE);
         c_kzg_settings
-            .verify_blob_kzg_proof(
-                &blob_arr.into(),
-                &(*commitment).into(),
-                &(*proof).into(),
-            )
+            .verify_blob_kzg_proof(&blob_arr.into(), &(*commitment).into(), &(*proof).into())
             .map_err(|e| CryptoError::Other(e.to_string()))
     }
 
@@ -553,7 +539,10 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// BLS12-381 pairing check.
     fn bls12_381_pairing_check(
         &self,
-        pairs: &[(([u8; 48], [u8; 48]), ([u8; 48], [u8; 48], [u8; 48], [u8; 48]))],
+        pairs: &[(
+            ([u8; 48], [u8; 48]),
+            ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+        )],
     ) -> Result<bool, CryptoError> {
         use bls12_381::{G1Affine, G2Prepared, Gt, multi_miller_loop};
 
@@ -565,8 +554,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
             points.push((g1, G2Prepared::from(g2)));
         }
 
-        let refs: Vec<(&G1Affine, &G2Prepared)> =
-            points.iter().map(|(g1, g2)| (g1, g2)).collect();
+        let refs: Vec<(&G1Affine, &G2Prepared)> = points.iter().map(|(g1, g2)| (g1, g2)).collect();
 
         let result: Gt = multi_miller_loop(&refs).final_exponentiation();
         Ok(result == Gt::identity())

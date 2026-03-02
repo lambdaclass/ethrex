@@ -1286,8 +1286,20 @@ dependencies = [
 name = "ethrex-crypto"
 version = "9.0.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "bls12_381",
  "c-kzg",
+ "ethereum-types",
+ "ff",
+ "hex-literal",
  "kzg-rs",
+ "malachite",
+ "p256",
+ "ripemd",
+ "secp256k1",
+ "sha2",
  "thiserror 2.0.18",
  "tiny-keccak",
 ]
@@ -1335,27 +1347,18 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff",
  "bitvec",
- "bls12_381",
  "bytes",
  "datatest-stable",
  "derive_more",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "k256",
- "lambdaworks-math",
  "lazy_static",
  "malachite",
- "p256",
- "ripemd",
  "rustc-hash",
  "serde 1.0.228",
  "serde_json",
- "sha2",
  "sha3",
  "strum",
  "thiserror 2.0.18",
@@ -2423,7 +2426,6 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "rand 0.8.5",
- "rayon",
  "serde 1.0.228",
  "serde_json",
 ]

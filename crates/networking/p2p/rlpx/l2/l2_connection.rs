@@ -5,8 +5,8 @@ use ethereum_types::Address;
 use ethereum_types::Signature;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
-use ethrex_common::types::batch::Batch;
 use ethrex_common::types::Block;
+use ethrex_common::types::batch::Batch;
 use ethrex_crypto::{Crypto as _, NativeCrypto};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
@@ -349,22 +349,22 @@ async fn should_process_new_block(
     let block_hash = msg.block.hash();
 
     let msg_signature = msg.signature;
-    let recovered_lead_sequencer =
-        tokio::task::spawn_blocking(move || {
-            NativeCrypto.recover_signer(&msg_signature.to_fixed_bytes(), &block_hash.to_fixed_bytes())
-        })
-            .await
-            .map_err(|_| {
-                PeerConnectionError::InternalError("Recover Address task failed".to_string())
-            })?
-            .map_err(|e| {
-                error!(
-                    peer=%established.node,
-                    error=%e,
-                    "Failed to recover lead sequencer",
-                );
-                PeerConnectionError::CryptographyError(e.to_string())
-            })?;
+    let recovered_lead_sequencer = tokio::task::spawn_blocking(move || {
+        NativeCrypto.recover_signer(
+            &msg_signature.to_fixed_bytes(),
+            &block_hash.to_fixed_bytes(),
+        )
+    })
+    .await
+    .map_err(|_| PeerConnectionError::InternalError("Recover Address task failed".to_string()))?
+    .map_err(|e| {
+        error!(
+            peer=%established.node,
+            error=%e,
+            "Failed to recover lead sequencer",
+        );
+        PeerConnectionError::CryptographyError(e.to_string())
+    })?;
 
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
