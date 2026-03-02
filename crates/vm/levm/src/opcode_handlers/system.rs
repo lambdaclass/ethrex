@@ -819,8 +819,24 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
 
+        // EIP-8037: Save snapshot BEFORE charging CREATE's account state gas.
+        // On initcode revert, we restore these to undo the state gas.
+        let create_reservoir_snapshot = self.state_gas_reservoir;
+        let create_state_gas_used_snapshot = self.state_gas_used;
+
+        // EIP-8037 (Amsterdam+): charge state gas for new account creation.
+        // Charged BEFORE early-failure checks (balance/depth/nonce) — state gas is
+        // consumed even if the CREATE fails early. Only initcode revert refunds it.
+        if self.env.config.fork >= Fork::Amsterdam {
+            let state_gas = gas_cost::STATE_BYTES_PER_NEW_ACCOUNT
+                .checked_mul(gas_cost::COST_PER_STATE_BYTE)
+                .ok_or(ExceptionalHalt::OutOfGas)?;
+            self.increase_state_gas(state_gas)?;
+        }
+
         // Validations that push 0 (FAIL) to the stack and return reserved gas to deployer
         // Per reference: these checks happen BEFORE the new address is tracked for BAL.
+        // Note: state gas (above) is NOT refunded on early failure.
         // 1. Sender doesn't have enough balance to send value.
         // 2. Depth limit has been reached
         // 3. Sender nonce is max.
@@ -854,21 +870,6 @@ impl<'a> VM<'a> {
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue);
-        }
-
-        // EIP-8037: Save snapshot BEFORE charging CREATE's account state gas.
-        // On initcode revert, we restore these to undo the state gas too.
-        let create_reservoir_snapshot = self.state_gas_reservoir;
-        let create_state_gas_used_snapshot = self.state_gas_used;
-
-        // EIP-8037 (Amsterdam+): charge state gas for new account creation.
-        // Charged here, after all early-failure checks pass, so that failed creates
-        // (balance/depth/nonce) don't incorrectly count against block state gas.
-        if self.env.config.fork >= Fork::Amsterdam {
-            let state_gas = gas_cost::STATE_BYTES_PER_NEW_ACCOUNT
-                .checked_mul(gas_cost::COST_PER_STATE_BYTE)
-                .ok_or(ExceptionalHalt::OutOfGas)?;
-            self.increase_state_gas(state_gas)?;
         }
 
         // Create BAL checkpoint before entering create call for potential revert per EIP-7928
