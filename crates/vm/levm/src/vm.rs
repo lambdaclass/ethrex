@@ -25,13 +25,13 @@ use ethrex_common::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     mem,
     rc::Rc,
 };
 
 /// Storage mapping from slot key to value.
-pub type Storage = HashMap<U256, H256>;
+pub type Storage = FxHashMap<U256, H256>;
 
 /// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
