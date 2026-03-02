@@ -1,9 +1,9 @@
 # Deploying a native rollups ethrex L2
 
-This guide covers how to deploy a native rollup L2 using ethrex. Native rollups (based on [EIP-8079](https://github.com/ethereum/EIPs/pull/9608)) replace ZK proofs and fraud proofs with direct re-execution on L1: when the L2 submits a block, L1 re-executes it via the `EXECUTE` precompile and verifies the state transition is correct.
+This guide covers how to deploy a native rollup L2 using ethrex. Native rollups (based on [EIP-8079](https://eips.ethereum.org/EIPS/eip-8079)) replace ZK proofs and fraud proofs with direct re-execution on L1: when the L2 submits a block, L1 re-executes it via the `EXECUTE` precompile and verifies the state transition is correct.
 
 > [!NOTE]
-> This is a Phase 1 proof-of-concept. The native rollup L2 runs against a local ethrex L1 with the EXECUTE precompile enabled. It is not yet intended for public testnets or production.
+> This is a proof-of-concept. The native rollup L2 runs against a local ethrex L1 with the EXECUTE precompile enabled. It is not yet intended for public testnets or production.
 
 ## Components
 
@@ -169,8 +169,8 @@ source cmd/.env
 Once the L2 is running, you should see log lines like:
 
 ```
-NativeBlockProducer: produced block N
-NativeL1Advancer: advanced block N on L1 (state_root=..., l1_msgs=0, tx=...)
+NativeBlockProducer: produced block N (0x...) with M txs, gas_used=X
+NativeL1Advancer: advanced block N on L1 (state_root=0x..., l1_msgs=0, tx=Some(0x...))
 ```
 
 Query the L1 contract to verify:
