@@ -231,13 +231,18 @@ impl<'a> VM<'a> {
                         gas_refunds = gas_refunds
                             .checked_add(restore_empty_slot_cost)
                             .ok_or(InternalError::Overflow)?;
-                        // EIP-8037 (Amsterdam+): refund state gas when restoring a storage slot to zero
+                        // EIP-8037 (Amsterdam+): state gas refund goes through the normal
+                        // refund counter (subject to the 1/5 cap), NOT a direct reduction
+                        // of state_gas_used. state_gas_used must reflect peak consumption
+                        // for block-level max(regular, state) accounting.
                         if fork >= Fork::Amsterdam {
-                            self.state_gas_used = self.state_gas_used.saturating_sub(
-                                STATE_BYTES_PER_STORAGE_SET
-                                    .checked_mul(COST_PER_STATE_BYTE)
-                                    .ok_or(InternalError::Overflow)?,
-                            );
+                            gas_refunds = gas_refunds
+                                .checked_add(
+                                    STATE_BYTES_PER_STORAGE_SET
+                                        .checked_mul(COST_PER_STATE_BYTE)
+                                        .ok_or(InternalError::Overflow)?,
+                                )
+                                .ok_or(InternalError::Overflow)?;
                         }
                     } else {
                         gas_refunds = gas_refunds
