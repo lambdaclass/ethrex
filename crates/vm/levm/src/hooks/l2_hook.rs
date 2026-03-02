@@ -482,7 +482,10 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
                 },
             ));
         }
-        if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
+        if vm.env.config.fork >= Fork::Osaka
+            && vm.env.config.fork < Fork::Amsterdam
+            && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        {
             return Err(VMError::TxValidation(
                 TxValidationError::TxMaxGasLimitExceeded {
                     tx_hash: vm.tx.hash(),
