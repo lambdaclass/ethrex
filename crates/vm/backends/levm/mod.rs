@@ -82,7 +82,8 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
-        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let record_bal = is_amsterdam;
 
         // Enable BAL recording for Amsterdam+ forks
         if record_bal {
@@ -137,7 +138,7 @@ impl LEVM {
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
 
-            if record_bal {
+            if is_amsterdam {
                 // Amsterdam+: block gas = max(regular_sum, state_sum) for check_gas_limit
                 block_gas_used = block_regular_gas_used.max(block_state_gas_used);
             } else {
@@ -200,7 +201,8 @@ impl LEVM {
         queue_length: &AtomicUsize,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
-        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let record_bal = is_amsterdam;
 
         // Enable BAL recording for Amsterdam+ forks
         if record_bal {
@@ -275,7 +277,7 @@ impl LEVM {
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
 
-            if record_bal {
+            if is_amsterdam {
                 // Amsterdam+: block gas = max(regular_sum, state_sum) for check_gas_limit
                 block_gas_used = block_regular_gas_used.max(block_state_gas_used);
             } else {

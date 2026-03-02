@@ -437,6 +437,8 @@ pub struct VM<'a> {
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
     /// EIP-8037: Accumulated state gas for this transaction (Amsterdam+).
     pub state_gas_used: u64,
+    /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
+    pub state_gas_reservoir: u64,
 }
 
 impl<'a> VM<'a> {
@@ -467,6 +469,7 @@ impl<'a> VM<'a> {
             stack_pool: Vec::new(),
             vm_type,
             state_gas_used: 0,
+            state_gas_reservoir: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -515,14 +518,27 @@ impl<'a> VM<'a> {
         self.hooks.push(Rc::new(RefCell::new(hook)));
     }
 
-    /// EIP-8037: Charge state gas by consuming from current call frame gas and
-    /// accumulating into the VM-level state_gas_used counter.
+    /// EIP-8037: Charge state gas, drawing from reservoir first, spilling to gas_remaining if exhausted.
+    #[expect(clippy::arithmetic_side_effects, reason = "arithmetic proven safe by min()")]
     pub fn increase_state_gas(&mut self, gas: u64) -> Result<(), VMError> {
-        self.current_call_frame.increase_consumed_gas(gas)?;
         self.state_gas_used = self
             .state_gas_used
             .checked_add(gas)
             .ok_or(InternalError::Overflow)?;
+        if self.env.config.fork >= Fork::Amsterdam {
+            // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted
+            let from_reservoir = self.state_gas_reservoir.min(gas);
+            // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
+            self.state_gas_reservoir -= from_reservoir;
+            // Safe: from_reservoir <= gas
+            let spill = gas - from_reservoir;
+            if spill > 0 {
+                self.current_call_frame.increase_consumed_gas(spill)?;
+            }
+        } else {
+            // Pre-Amsterdam: no reservoir, charge directly from gas_remaining
+            self.current_call_frame.increase_consumed_gas(gas)?;
+        }
         Ok(())
     }
 
