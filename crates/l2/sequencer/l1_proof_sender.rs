@@ -46,7 +46,7 @@ use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
 #[cfg(feature = "sp1")]
 use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
-const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -422,6 +422,9 @@ impl L1ProofSender {
                 .map(|proof| proof.calldata())
                 .unwrap_or(ProverType::TDX.empty_calldata())
                 .as_slice(),
+            // customPublicValues: empty for EVM-L2; populated for custom programs.
+            // TODO: Pass actual public values for custom programs once integrated.
+            &[Value::Bytes(vec![].into())],
         ]
         .concat();
 

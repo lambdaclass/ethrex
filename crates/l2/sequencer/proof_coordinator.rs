@@ -142,6 +142,7 @@ impl ProofCoordinator {
         stream: &mut TcpStream,
         commit_hash: String,
         prover_type: ProverType,
+        supported_programs: &[String],
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received from {prover_type} prover");
 
@@ -224,7 +225,24 @@ impl ProofCoordinator {
             lock.entry(batch_to_prove).or_insert(SystemTime::now());
         );
 
-        let response = ProofData::batch_response(batch_to_prove, input, format);
+        // Currently always assigns the default guest program ("evm-l2").
+        // Future: determine_program_for_batch() will look up the
+        // appropriate guest program per batch.
+        let program_id = "evm-l2".to_string();
+
+        // Check if the prover supports this program.  An empty list means the
+        // prover accepts any program (legacy / pre-modularization prover).
+        if !supported_programs.is_empty() && !supported_programs.contains(&program_id) {
+            debug!(
+                "Prover does not support program '{program_id}' \
+                 (supported: {supported_programs:?}), skipping"
+            );
+            send_response(stream, &ProofData::empty_batch_response()).await?;
+            return Ok(());
+        }
+
+        let response =
+            ProofData::batch_response_with_program(batch_to_prove, input, format, program_id);
         send_response(stream, &response).await?;
         info!("BatchResponse sent for batch number: {batch_to_prove}");
 
@@ -236,8 +254,9 @@ impl ProofCoordinator {
         stream: &mut TcpStream,
         batch_number: u64,
         batch_proof: BatchProof,
+        program_id: &str,
     ) -> Result<(), ProofCoordinatorError> {
-        info!("ProofSubmit received for batch number: {batch_number}");
+        info!("ProofSubmit received for batch number: {batch_number} (program: {program_id})");
 
         // Check if we have a proof for this batch and prover type
         let prover_type = batch_proof.prover_type();
@@ -271,6 +290,9 @@ impl ProofCoordinator {
             // If not, store it
             self.rollup_store
                 .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)
+                .await?;
+            self.rollup_store
+                .store_program_id_by_batch(batch_number, program_id)
                 .await?;
         }
         let response = ProofData::proof_submit_ack(batch_number);
@@ -389,10 +411,11 @@ impl ConnectionHandler {
                 Ok(ProofData::BatchRequest {
                     commit_hash,
                     prover_type,
+                    supported_programs,
                 }) => {
                     if let Err(e) = self
                         .proof_coordinator
-                        .handle_request(&mut stream, commit_hash, prover_type)
+                        .handle_request(&mut stream, commit_hash, prover_type, &supported_programs)
                         .await
                     {
                         error!("Failed to handle BatchRequest: {e}");
@@ -401,10 +424,11 @@ impl ConnectionHandler {
                 Ok(ProofData::ProofSubmit {
                     batch_number,
                     batch_proof,
+                    program_id,
                 }) => {
                     if let Err(e) = self
                         .proof_coordinator
-                        .handle_submit(&mut stream, batch_number, batch_proof)
+                        .handle_submit(&mut stream, batch_number, batch_proof, &program_id)
                         .await
                     {
                         error!("Failed to handle ProofSubmit: {e}");

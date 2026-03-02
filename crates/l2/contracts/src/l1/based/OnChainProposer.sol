@@ -11,6 +11,7 @@ import {IRiscZeroVerifier} from "../interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "../interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "../interfaces/ITDXVerifier.sol";
 import {ISequencerRegistry} from "../interfaces/ISequencerRegistry.sol";
+import {IGuestProgramRegistry} from "../interfaces/IGuestProgramRegistry.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -37,10 +38,16 @@ contract OnChainProposer is
         uint256 nonPrivilegedTransactions;
         /// @dev git commit hash that produced the proof/verification key used for this batch
         bytes32 commitHash;
+        uint8 programTypeId;
+        /// @dev Hash of the proof's public values for custom programs (programTypeId > 1).
+        bytes32 publicValuesHash;
     }
 
     uint8 internal constant SP1_VERIFIER_ID = 1;
     uint8 internal constant RISC0_VERIFIER_ID = 2;
+
+    /// @notice Program type ID for the default EVM-L2 guest program.
+    uint8 internal constant DEFAULT_PROGRAM_TYPE_ID = 1;
 
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
@@ -95,11 +102,17 @@ contract OnChainProposer is
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
     bool public ALIGNED_MODE;
 
+    /// @notice Address of the GuestProgramRegistry contract.
+    /// @dev When set (non-zero), commitBatch validates that programTypeId is registered and active.
+    address public GUEST_PROGRAM_REGISTRY;
+
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
 
-    /// @notice Verification keys keyed by git commit hash (keccak of the commit SHA string) and verifier type.
-    mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
+    /// @notice Verification keys keyed by git commit hash, program type, and verifier type.
+    /// @dev 3D mapping: commitHash → programTypeId → verifierId → vk.
+    /// @custom:oz-retyped-from mapping(bytes32 => mapping(uint8 => bytes32))
+    mapping(bytes32 commitHash => mapping(uint8 programTypeId => mapping(uint8 verifierId => bytes32 vk)))
         public verificationKeys;
 
     modifier onlyLeaderSequencer() {
@@ -136,7 +149,8 @@ contract OnChainProposer is
         bytes32 genesisStateRoot,
         address sequencer_registry,
         uint256 chainId,
-        address bridge
+        address bridge,
+        address guestProgramRegistry
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -168,8 +182,8 @@ contract OnChainProposer is
             !REQUIRE_RISC0_PROOF || risc0Vk != bytes32(0),
             "OnChainProposer: missing RISC0 verification key"
         );
-        verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
-        verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
+        verificationKeys[commitHash][DEFAULT_PROGRAM_TYPE_ID][SP1_VERIFIER_ID] = sp1Vk;
+        verificationKeys[commitHash][DEFAULT_PROGRAM_TYPE_ID][RISC0_VERIFIER_ID] = risc0Vk;
 
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
@@ -178,7 +192,9 @@ contract OnChainProposer is
             bytes32(0),
             bytes32(0),
             0,
-            commitHash
+            commitHash,
+            DEFAULT_PROGRAM_TYPE_ID,
+            bytes32(0)
         );
 
         // Set the SequencerRegistry address
@@ -210,6 +226,8 @@ contract OnChainProposer is
         );
         BRIDGE = bridge;
 
+        GUEST_PROGRAM_REGISTRY = guestProgramRegistry;
+
         emit VerificationKeyUpgraded("SP1", commitHash, sp1Vk);
         emit VerificationKeyUpgraded("RISC0", commitHash, risc0Vk);
     }
@@ -223,9 +241,7 @@ contract OnChainProposer is
             commit_hash != bytes32(0),
             "OnChainProposer: commit hash is zero"
         );
-        // we don't want to restrict setting the vk to zero
-        // as we may want to disable the version
-        verificationKeys[commit_hash][SP1_VERIFIER_ID] = new_vk;
+        verificationKeys[commit_hash][DEFAULT_PROGRAM_TYPE_ID][SP1_VERIFIER_ID] = new_vk;
         emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
     }
 
@@ -238,10 +254,14 @@ contract OnChainProposer is
             commit_hash != bytes32(0),
             "OnChainProposer: commit hash is zero"
         );
-        // we don't want to restrict setting the vk to zero
-        // as we may want to disable the version
-        verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
+        verificationKeys[commit_hash][DEFAULT_PROGRAM_TYPE_ID][RISC0_VERIFIER_ID] = new_vk;
         emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
+    }
+
+    /// @notice Set or update the GuestProgramRegistry address.
+    /// @param registry The address of the GuestProgramRegistry contract.
+    function setGuestProgramRegistry(address registry) public onlyOwner {
+        GUEST_PROGRAM_REGISTRY = registry;
     }
 
     /// @inheritdoc IOnChainProposer
@@ -253,6 +273,8 @@ contract OnChainProposer is
         bytes32 lastBlockHash,
         uint256 nonPrivilegedTransactions,
         bytes32 commitHash,
+        uint8 programTypeId,
+        bytes32 publicValuesHash,
         bytes[] calldata //rlpEncodedBlocks
     ) external override onlyLeaderSequencer {
         // TODO: Refactor validation
@@ -291,14 +313,33 @@ contract OnChainProposer is
 
         // Validate commit hash and corresponding verification keys are valid
         require(commitHash != bytes32(0), "012");
+        // Default to EVM-L2 if programTypeId is 0 (backward compatibility)
+        uint8 effectiveProgramTypeId = programTypeId == 0
+            ? DEFAULT_PROGRAM_TYPE_ID
+            : programTypeId;
+        // If GuestProgramRegistry is configured, validate the program is registered and active
+        if (GUEST_PROGRAM_REGISTRY != address(0)) {
+            require(
+                IGuestProgramRegistry(GUEST_PROGRAM_REGISTRY).isProgramActive(effectiveProgramTypeId),
+                "014" // OnChainProposer: program type not registered or inactive
+            );
+        }
         require(
             (!REQUIRE_SP1_PROOF ||
-                verificationKeys[commitHash][SP1_VERIFIER_ID] != bytes32(0)) &&
+                verificationKeys[commitHash][effectiveProgramTypeId][SP1_VERIFIER_ID] != bytes32(0)) &&
                 (!REQUIRE_RISC0_PROOF ||
-                    verificationKeys[commitHash][RISC0_VERIFIER_ID] !=
+                    verificationKeys[commitHash][effectiveProgramTypeId][RISC0_VERIFIER_ID] !=
                     bytes32(0)),
             "013" // missing verification key for commit hash
         );
+
+        // Custom programs (programTypeId > 1) must provide a publicValuesHash
+        if (effectiveProgramTypeId > 1) {
+            require(
+                publicValuesHash != bytes32(0),
+                "015" // OnChainProposer: custom program requires publicValuesHash
+            );
+        }
 
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
@@ -321,7 +362,9 @@ contract OnChainProposer is
             withdrawalsLogsMerkleRoot,
             lastBlockHash,
             nonPrivilegedTransactions,
-            commitHash
+            commitHash,
+            effectiveProgramTypeId,
+            publicValuesHash
         );
         emit BatchCommitted(batchNumber, newStateRoot);
 
@@ -345,7 +388,9 @@ contract OnChainProposer is
         //sp1
         bytes memory sp1ProofBytes,
         //tdx
-        bytes memory tdxSignature
+        bytes memory tdxSignature,
+        // Custom program public values (only needed for programTypeId > 1)
+        bytes memory customPublicValues
     ) external {
         require(
             !ALIGNED_MODE,
@@ -379,14 +424,33 @@ contract OnChainProposer is
             );
         }
 
-        // Reconstruct public inputs from commitments
-        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+        // Determine public inputs based on program type
+        uint8 batchProgramTypeId = batchCommitments[batchNumber].programTypeId;
+        // Backward compatibility: treat 0 as DEFAULT_PROGRAM_TYPE_ID
+        if (batchProgramTypeId == 0) batchProgramTypeId = DEFAULT_PROGRAM_TYPE_ID;
+        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+
+        bytes memory publicInputs;
+        if (batchProgramTypeId == DEFAULT_PROGRAM_TYPE_ID) {
+            // EVM-L2: reconstruct public inputs from commitment data
+            publicInputs = _getPublicInputsFromCommitment(batchNumber);
+        } else {
+            // Custom programs: verify public values hash matches commitment
+            require(
+                customPublicValues.length > 0,
+                "OnChainProposer: custom program requires customPublicValues"
+            );
+            require(
+                keccak256(customPublicValues) == batchCommitments[batchNumber].publicValuesHash,
+                "OnChainProposer: customPublicValues hash mismatch"
+            );
+            publicInputs = customPublicValues;
+        }
 
         if (REQUIRE_RISC0_PROOF) {
-            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
             bytes32 risc0Vk = verificationKeys[batchCommitHash][
-                RISC0_VERIFIER_ID
-            ];
+                batchProgramTypeId
+            ][RISC0_VERIFIER_ID];
             try
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
@@ -401,8 +465,7 @@ contract OnChainProposer is
         }
 
         if (REQUIRE_SP1_PROOF) {
-            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-            bytes32 sp1Vk = verificationKeys[batchCommitHash][SP1_VERIFIER_ID];
+            bytes32 sp1Vk = verificationKeys[batchCommitHash][batchProgramTypeId][SP1_VERIFIER_ID];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
                     sp1Vk,
@@ -499,21 +562,25 @@ contract OnChainProposer is
             );
 
             if (REQUIRE_SP1_PROOF) {
+                uint8 batchProgramType = batchCommitments[batchNumber].programTypeId;
+                if (batchProgramType == 0) batchProgramType = DEFAULT_PROGRAM_TYPE_ID;
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
                     verificationKeys[batchCommitments[batchNumber].commitHash][
-                        SP1_VERIFIER_ID
-                    ],
+                        batchProgramType
+                    ][SP1_VERIFIER_ID],
                     publicInputs
                 );
             }
 
             if (REQUIRE_RISC0_PROOF) {
+                uint8 batchProgramType = batchCommitments[batchNumber].programTypeId;
+                if (batchProgramType == 0) batchProgramType = DEFAULT_PROGRAM_TYPE_ID;
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
                     verificationKeys[batchCommitments[batchNumber].commitHash][
-                        RISC0_VERIFIER_ID
-                    ],
+                        batchProgramType
+                    ][RISC0_VERIFIER_ID],
                     publicInputs
                 );
             }

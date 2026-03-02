@@ -23,6 +23,8 @@ rkyv.workspace = true
 bincode = "1.3.3"
 anyhow = "1.0.86"
 url.workspace = true
+sha2.workspace = true
+toml.workspace = true
 
 # ethrex
 ethrex-common.workspace = true
@@ -54,6 +56,7 @@ openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", pa
 
 [dev-dependencies]
 ethrex-storage.workspace = true
+tempfile.workspace = true
 
 [lib]
 name = "ethrex_prover_lib"

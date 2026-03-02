@@ -1,17 +1,68 @@
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-env-changed=GUEST_PROGRAMS");
 
-    #[cfg(all(not(clippy), feature = "risc0"))]
-    build_risc0_program();
+    // Parse GUEST_PROGRAMS env var to determine which programs to build.
+    // Default: "evm-l2" (backward compatible).
+    // Example: GUEST_PROGRAMS=evm-l2,zk-dex,tokamon
+    let programs: Vec<String> = match std::env::var("GUEST_PROGRAMS") {
+        Ok(val) => val
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        Err(_) => vec!["evm-l2".to_string()],
+    };
 
-    #[cfg(all(not(clippy), feature = "sp1"))]
-    build_sp1_program();
+    // Log which programs will be built
+    for prog in &programs {
+        println!("cargo:warning=Guest program target: {prog}");
+    }
 
-    #[cfg(all(not(clippy), feature = "zisk"))]
-    build_zisk_program();
+    // Build ELF binaries for each requested program.
+    if programs.contains(&"evm-l2".to_string()) {
+        #[cfg(all(not(clippy), feature = "risc0"))]
+        build_risc0_program();
 
-    #[cfg(all(not(clippy), feature = "openvm"))]
-    build_openvm_program();
+        #[cfg(all(not(clippy), feature = "sp1"))]
+        build_sp1_program();
+
+        #[cfg(all(not(clippy), feature = "zisk"))]
+        build_zisk_program();
+
+        #[cfg(all(not(clippy), feature = "openvm"))]
+        build_openvm_program();
+    }
+
+    if programs.contains(&"zk-dex".to_string()) {
+        #[cfg(all(not(clippy), feature = "sp1"))]
+        build_sp1_zk_dex();
+    } else {
+        // Ensure placeholder ELF exists so `include_bytes!` doesn't fail
+        // when zk-dex isn't in the build list.
+        ensure_elf_placeholder("./bin/sp1-zk-dex");
+    }
+
+    if programs.contains(&"tokamon".to_string()) {
+        #[cfg(all(not(clippy), feature = "sp1"))]
+        build_sp1_tokamon();
+    } else {
+        // Ensure placeholder ELF exists so `include_bytes!` doesn't fail
+        // when tokamon isn't in the build list.
+        ensure_elf_placeholder("./bin/sp1-tokamon");
+    }
+}
+
+/// Create an empty placeholder ELF file if it doesn't already exist.
+/// This prevents `include_bytes!` from failing during `cargo check`
+/// when a guest program wasn't included in the build.
+fn ensure_elf_placeholder(bin_dir: &str) {
+    let out_dir = format!("{bin_dir}/out");
+    let elf_path = format!("{out_dir}/riscv32im-succinct-zkvm-elf");
+    if !std::path::Path::new(&elf_path).exists() {
+        let _ = std::fs::create_dir_all(&out_dir);
+        let _ = std::fs::write(&elf_path, b"");
+    }
 }
 
 #[cfg(all(not(clippy), feature = "risc0"))]
@@ -217,6 +268,74 @@ fn build_openvm_program() {
     }
 
     fs::copy(&elf_src, &elf_dst).expect("failed to copy ethrex-guest-openvm");
+}
+
+#[cfg(all(not(clippy), feature = "sp1"))]
+fn build_sp1_zk_dex() {
+    use hex;
+    use sp1_sdk::{HashableKey, ProverClient};
+
+    sp1_build::build_program_with_args(
+        "./bin/sp1-zk-dex",
+        sp1_build::BuildArgs {
+            output_directory: Some("./bin/sp1-zk-dex/out".to_string()),
+            elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
+            docker: option_env!("PROVER_REPRODUCIBLE_BUILD").is_some(),
+            tag: "v5.0.8".to_string(),
+            workspace_directory: Some(format!("{}/../../../", env!("CARGO_MANIFEST_DIR"))),
+            ..Default::default()
+        },
+    );
+
+    let elf = std::fs::read("./bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-elf")
+        .expect("could not read SP1 ZK-DEX elf file");
+    let prover = ProverClient::from_env();
+    let (_, vk) = prover.setup(&elf);
+
+    std::fs::write(
+        "./bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-vk-bn254",
+        format!("{}\n", vk.vk.bytes32()),
+    )
+    .expect("could not write SP1 ZK-DEX vk-bn254 to file");
+    std::fs::write(
+        "./bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-vk-u32",
+        format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
+    )
+    .expect("could not write SP1 ZK-DEX vk-u32 to file");
+}
+
+#[cfg(all(not(clippy), feature = "sp1"))]
+fn build_sp1_tokamon() {
+    use hex;
+    use sp1_sdk::{HashableKey, ProverClient};
+
+    sp1_build::build_program_with_args(
+        "./bin/sp1-tokamon",
+        sp1_build::BuildArgs {
+            output_directory: Some("./bin/sp1-tokamon/out".to_string()),
+            elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
+            docker: option_env!("PROVER_REPRODUCIBLE_BUILD").is_some(),
+            tag: "v5.0.8".to_string(),
+            workspace_directory: Some(format!("{}/../../../", env!("CARGO_MANIFEST_DIR"))),
+            ..Default::default()
+        },
+    );
+
+    let elf = std::fs::read("./bin/sp1-tokamon/out/riscv32im-succinct-zkvm-elf")
+        .expect("could not read SP1 Tokamon elf file");
+    let prover = ProverClient::from_env();
+    let (_, vk) = prover.setup(&elf);
+
+    std::fs::write(
+        "./bin/sp1-tokamon/out/riscv32im-succinct-zkvm-vk-bn254",
+        format!("{}\n", vk.vk.bytes32()),
+    )
+    .expect("could not write SP1 Tokamon vk-bn254 to file");
+    std::fs::write(
+        "./bin/sp1-tokamon/out/riscv32im-succinct-zkvm-vk-u32",
+        format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
+    )
+    .expect("could not write SP1 Tokamon vk-u32 to file");
 }
 
 #[cfg(all(not(clippy), feature = "zisk"))]

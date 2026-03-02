@@ -12,6 +12,7 @@ serde_with.workspace = true
 thiserror = "2.0.9"
 rkyv.workspace = true
 bytes.workspace = true
+sha2.workspace = true
 
 ethrex-common = { path = "../common/", default-features = false }
 ethrex-crypto = { path = "../common/crypto", default-features = false }
@@ -51,6 +52,9 @@ ci = []
 # When this feature is enabled, the cycles used in the code inside the
 # report_cycles function will be reported to stdout when running inside SP1 zkVM.
 sp1-cycles = []
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lib]
 path = "./src/lib.rs"

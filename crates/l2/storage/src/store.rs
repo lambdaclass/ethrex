@@ -462,4 +462,21 @@ impl Store {
     ) -> Result<Option<FeeConfig>, RollupStoreError> {
         self.engine.get_fee_config_by_block(block_number).await
     }
+
+    pub async fn store_program_id_by_batch(
+        &self,
+        batch_number: u64,
+        program_id: &str,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_program_id_by_batch(batch_number, program_id)
+            .await
+    }
+
+    pub async fn get_program_id_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<String>, RollupStoreError> {
+        self.engine.get_program_id_by_batch(batch_number).await
+    }
 }

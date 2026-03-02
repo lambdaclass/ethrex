@@ -11,4 +11,7 @@ pub struct ProverConfig {
     pub timed: bool,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
     pub sp1_server: Option<Url>,
+    /// Optional path to a TOML file that configures which guest programs to load.
+    #[serde(default)]
+    pub programs_config_path: Option<String>,
 }

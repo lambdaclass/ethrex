@@ -1181,6 +1181,7 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_with",
+ "sha2",
  "thiserror",
 ]
 

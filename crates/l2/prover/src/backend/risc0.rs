@@ -1,8 +1,10 @@
 use std::time::{Duration, Instant};
 
+use crate::backend::{BackendError, ProverBackend};
 use ethrex_guest_program::{
     input::ProgramInput,
     methods::{ETHREX_GUEST_RISC0_ELF, ETHREX_GUEST_RISC0_ID},
+    traits::backends,
 };
 use ethrex_l2_common::{
     calldata::Value,
@@ -11,9 +13,6 @@ use ethrex_l2_common::{
 use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
 };
-use rkyv::rancor::Error as RkyvError;
-
-use crate::backend::{BackendError, ProverBackend};
 
 /// RISC0 prover backend.
 #[derive(Default)]
@@ -93,10 +92,14 @@ impl ProverBackend for Risc0Backend {
         ProverType::RISC0
     }
 
+    fn backend_name(&self) -> &'static str {
+        backends::RISC0
+    }
+
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
-        let bytes = rkyv::to_bytes::<RkyvError>(input).map_err(BackendError::serialization)?;
+        let bytes = self.serialize_raw(input)?;
         ExecutorEnv::builder()
-            .write_slice(bytes.as_slice())
+            .write_slice(&bytes)
             .build()
             .map_err(BackendError::execution)
     }
@@ -156,5 +159,35 @@ impl ProverBackend for Risc0Backend {
         let start = Instant::now();
         let proof = self.prove_with_env(env, format)?;
         Ok((proof, start.elapsed()))
+    }
+
+    fn execute_with_elf(&self, elf: &[u8], serialized_input: &[u8]) -> Result<(), BackendError> {
+        let env = ExecutorEnv::builder()
+            .write_slice(serialized_input)
+            .build()
+            .map_err(BackendError::execution)?;
+        let executor = default_executor();
+        executor
+            .execute(env, elf)
+            .map_err(BackendError::execution)?;
+        Ok(())
+    }
+
+    fn prove_with_elf(
+        &self,
+        elf: &[u8],
+        serialized_input: &[u8],
+        format: ProofFormat,
+    ) -> Result<Self::ProofOutput, BackendError> {
+        let env = ExecutorEnv::builder()
+            .write_slice(serialized_input)
+            .build()
+            .map_err(BackendError::execution)?;
+        let prover = default_prover();
+        let prover_opts = Self::convert_format(format);
+        let prove_info = prover
+            .prove_with_opts(env, elf, &prover_opts)
+            .map_err(BackendError::proving)?;
+        Ok(prove_info.receipt)
     }
 }

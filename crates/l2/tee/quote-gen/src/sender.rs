@@ -14,6 +14,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
     let batch = connect_to_prover_server_wr(&ProofData::BatchRequest {
         commit_hash: commit_hash.clone(),
         prover_type: ProverType::TDX,
+        supported_programs: Vec::new(),
     })
     .await
     .map_err(|e| format!("Failed to get Response: {e}"))?;

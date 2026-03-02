@@ -1109,6 +1109,7 @@ impl From<ProverClientOptions> for ProverConfig {
             timed: config.timed,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: config.sp1_server,
+            programs_config_path: None,
         }
     }
 }
