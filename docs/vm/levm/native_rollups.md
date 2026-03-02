@@ -66,7 +66,7 @@ abi.encode(bytes32 postStateRoot, uint256 blockNumber, uint256 gasUsed, uint256 
 - **postStateRoot** — verified against the computed state root after execution
 - **blockNumber** — extracted from `block.header.number`
 - **gasUsed** — cumulative gas consumed by all transactions (pre-refund, matching `block.header.gas_used`)
-- **burnedFees** — `base_fee_per_gas * block_gas_used` (total EIP-1559 base fees burned). The NativeRollup contract on L1 sends this to the relayer
+- **burnedFees** — `base_fee_per_gas * block_gas_used` (total EIP-1559 base fees burned). The NativeRollup contract on L1 sends this to the advancer
 - **baseFeePerGas** — the computed EIP-1559 base fee for the executed block, returned so the L1 contract can store it on-chain for subsequent blocks
 
 No withdrawal root is returned — withdrawals are proven directly against the post-state root via MPT proofs on L1.
@@ -103,7 +103,7 @@ The L1Anchor predeploy lives at `0x00...fffe` with a single `bytes32 public l1Me
 The L1→L2 message flow uses a relayer, a prefunded L2 bridge contract, and Merkle proof verification against an anchored L1 messages root, following the book's recommended proof-based pattern (similar to Linea/Taiko):
 
 1. Users call `NativeRollup.sendL1Message(to, gasLimit, data)` on L1 with ETH value — this records `keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))` (168-byte preimage) as an L1 message hash in the contract's `pendingL1Messages` array
-2. When `advance()` is called with `_l1MessagesCount`, it computes a **Merkle root** over the consumed L1 message hashes (commutative Keccak256, OpenZeppelin-compatible)
+2. When `advance()` is called with `_l1MessagesCount`, it computes a **Merkle root** over the consumed L1 message hashes (commutative Keccak256)
 3. The Merkle root is passed to the EXECUTE precompile as the `l1Anchor` parameter (static `bytes32`)
 4. The EXECUTE precompile writes the `l1Anchor` to the **L1Anchor predeploy** (`0x00...fffe`) storage slot 0 before executing regular transactions (system transaction)
 5. On L2, a relayer sends real transactions calling `L2Bridge.processL1Message(from, to, value, gasLimit, data, nonce, merkleProof)`, which verifies the Merkle inclusion proof against the anchored root in L1Anchor, then executes `to.call{value: value, gas: gasLimit}(data)` (transferring ETH and/or executing calldata) and emits `L1MessageProcessed` events
@@ -111,9 +111,9 @@ The L1→L2 message flow uses a relayer, a prefunded L2 bridge contract, and Mer
 
 **Block builder constraint:** The relayer chooses how many L1 messages to consume (`_l1MessagesCount` can be 0). The Merkle root over those messages is computed in `advance()` on L1 and anchored in the L1Anchor predeploy *before* the block transactions execute. This means the block builder must know the Merkle root at block construction time and include the matching `processL1Message()` transactions — if they don't match, the L2Bridge proof verification will produce a different state root and the EXECUTE precompile will revert.
 
-The relayer pays gas for L1 message transactions, solving the "first deposit problem" (which the book lists as unresolved). L1 messages support arbitrary calldata, enabling not just ETH transfers but also arbitrary contract calls on L2.
+The relayer pays gas for L1 message transactions. L1 messages support arbitrary calldata, enabling not just ETH transfers but also arbitrary contract calls on L2.
 
-> **Gap with book:** None — aligned with the book's Linea/Taiko-style proof-based messaging recommendation. We're ahead on the first deposit problem.
+> **Gap with book:** None — aligned with the book's Linea/Taiko-style proof-based messaging recommendation.
 
 ## L2 to L1 Messaging (Withdrawals)
 
@@ -152,9 +152,9 @@ The L2Bridge predeploy at `0x00...fffd` is deployed in genesis with a large prem
 
 ## Fee Market
 
-EIP-1559 base fee is computed from explicit parent fields (`parentBaseFee`, `parentGasLimit`, `parentGasUsed`) via `calculate_base_fee_per_gas`. The coinbase is an explicit precompile input — priority fees go to the coinbase address. Burned fees are computed as `base_fee_per_gas * block_gas_used` and returned in the precompile output. The NativeRollup contract on L1 tracks `blockGasLimit`, `lastBaseFeePerGas`, and `lastGasUsed` on-chain from previous block executions, so the relayer does not need to provide these values. The contract sends the burned fees amount to the relayer (`msg.sender`) when `advance()` is called.
+EIP-1559 base fee is computed from explicit parent fields (`parentBaseFee`, `parentGasLimit`, `parentGasUsed`) via `calculate_base_fee_per_gas`. The coinbase is an explicit precompile input — priority fees go to the coinbase address. Burned fees are computed as `base_fee_per_gas * block_gas_used` and returned in the precompile output. The NativeRollup contract on L1 tracks `blockGasLimit`, `lastBaseFeePerGas`, and `lastGasUsed` on-chain from previous block executions, so the advancer does not need to provide these values. The contract sends the burned fees amount to the stored `advancer` address when `advance()` is called.
 
-> **Gap with book:** No DA cost mechanism. Burned fees are credited to the relayer on L1, but the L2-side crediting is not yet implemented (a production solution would redirect burned fees to the bridge contract on L2, similar to the OP Stack's `BaseFeeVault`).
+> **Gap with book:** No DA cost mechanism. Burned fees are credited to the advancer on L1, but the L2-side crediting is not yet implemented (a production solution would redirect burned fees to the bridge contract on L2, similar to the OP Stack's `BaseFeeVault`).
 
 ## Statelessness
 
@@ -186,24 +186,26 @@ L1 contract that manages L2 state on-chain. Storage layout:
 | 2 | `blockGasLimit` | L2 block gas limit (constant) |
 | 3 | `lastBaseFeePerGas` | Base fee from the last executed block |
 | 4 | `lastGasUsed` | Gas used in the last executed block |
-| 5 | `pendingL1Messages` | Array of L1 message hashes |
-| 6 | `l1MessageIndex` | Next L1 message index to consume |
-| 7 | `stateRootHistory` | `mapping(uint256 => bytes32)` — state root per block number |
-| 8 | `claimedWithdrawals` | `mapping(bytes32 => bool)` — prevents double-claiming |
-| 9 | `stateRootTimestamps` | `mapping(uint256 => uint256)` — commit timestamp per block |
-| 10 | `_reentrancyGuard` | Reentrancy protection |
+| 5 | `relayer` | Address of the L2 relayer (submits L1→L2 message transactions) |
+| 6 | `advancer` | Address of the advancer (calls `advance()` on L1, receives burned fees) |
+| 7 | `pendingL1Messages` | Array of L1 message hashes |
+| 8 | `l1MessageIndex` | Next L1 message index to consume |
+| 9 | `stateRootHistory` | `mapping(uint256 => bytes32)` — state root per block number |
+| 10 | `claimedWithdrawals` | `mapping(bytes32 => bool)` — prevents double-claiming |
+| 11 | `stateRootTimestamps` | `mapping(uint256 => uint256)` — commit timestamp per block |
+| 12 | `_reentrancyGuard` | Reentrancy protection |
 
 Immutables: `CHAIN_ID` (L2 chain ID) and `FINALITY_DELAY` (minimum seconds before withdrawals can be claimed).
 
-Constructor: `constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee, uint64 _chainId, uint256 _finalityDelay)` with `lastGasUsed = 0` for the first block.
+Constructor: `constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee, address _relayer, address _advancer)` with `lastGasUsed = 0` for the first block.
 
 Uses a 5-field `BlockParams` struct: `postStateRoot`, `postReceiptsRoot`, `coinbase`, `prevRandao`, `timestamp`.
 
 Functions:
 
 - **`sendL1Message(address _to, uint256 _gasLimit, bytes _data)`** — payable; records `keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))` as an L1 message hash
-- **`receive()`** — payable fallback; sends an L1 message to `msg.sender` with empty data
-- **`advance(uint256, BlockParams, bytes, bytes)`** — reads storage fields, computes L1 messages Merkle root, builds ABI-encoded precompile calldata (15 slots), calls EXECUTE at `0x0101`, decodes the 160-byte return, updates on-chain state, sends burned fees to relayer
+- **`receive()`** — payable fallback; accepts ETH without recording an L1 message (used to fund the contract)
+- **`advance(uint256, BlockParams, bytes, bytes)`** — reads storage fields, computes L1 messages Merkle root, builds ABI-encoded precompile calldata (15 slots), calls EXECUTE at `0x0101`, decodes the 160-byte return, updates on-chain state, sends burned fees to `advancer`
 - **`claimWithdrawal(address, address, uint256, uint256, uint256, bytes[], bytes[])`** — verifies MPT account + storage proofs against `stateRootHistory[blockNumber]`, enforces finality delay, transfers ETH
 
 ### L2Bridge.sol
@@ -223,7 +225,7 @@ Solidity library for MPT proof verification: trie traversal, RLP decoding, accou
 
 ### merkle_tree.rs
 
-`crates/common/merkle_tree.rs` — OpenZeppelin-compatible Merkle tree using commutative Keccak256 hashing. Provides `compute_merkle_root()` and `compute_merkle_proof()`. Shared across the EXECUTE precompile, L2 networking RPC, and integration tests.
+`crates/common/merkle_tree.rs` — Merkle tree using commutative Keccak256 hashing. Provides `compute_merkle_root()` and `compute_merkle_proof()`. Shared across the EXECUTE precompile, L2 networking RPC, and integration tests.
 
 ## Feature Flag
 
@@ -288,30 +290,7 @@ This PoC intentionally omits several things that would be needed for production:
 - **Fixed gas cost** — Uses a flat 100,000 gas cost instead of real metering
 - **No blob data support** — Only calldata-based input (spec proposes blob references for transactions)
 - **No generic L1 block hash anchoring** — L1Anchor stores an L1 messages Merkle root, not a generic L1 block hash (which would enable broader cross-chain proofs)
-- **Configurable finality delay for withdrawals** — The PoC includes a configurable `FINALITY_DELAY` that enforces a minimum time before withdrawals can be claimed (set to 1 second in tests). Production would use a longer challenge period (e.g., 7 days)
 - **No forced transaction mechanism** — No censorship resistance guarantees
-- **L2 ETH supply drain** — EIP-1559 base fees are burned on every L2 transaction, permanently removing ETH from circulation. Burned fees are now tracked and credited to the relayer on L1 (via `advance()`), but the L2-side crediting mechanism is not yet implemented. A production solution would redirect burned fees to the bridge contract on L2 (similar to the OP Stack's `BaseFeeVault`)
+- **L2 ETH supply drain** — EIP-1559 base fees are burned on every L2 transaction, permanently removing ETH from circulation. Burned fees are now tracked and credited to the advancer on L1 (via `advance()`), but the L2-side crediting mechanism is not yet implemented. A production solution would redirect burned fees to the bridge contract on L2 (similar to the OP Stack's `BaseFeeVault`)
 - **RLP transaction list** — Transactions are passed as an RLP-encoded list in ABI calldata (spec envisions blob-referenced transactions)
 
-These are all Phase 2+ concerns.
-
-## Files
-
-| File | Description |
-|------|-------------|
-| `crates/vm/levm/src/execute_precompile.rs` | EXECUTE precompile logic (ABI calldata parsing) |
-| `crates/vm/levm/src/db/guest_program_state_db.rs` | GuestProgramState → LEVM Database adapter |
-| `crates/vm/levm/src/precompiles.rs` | Precompile registration (modified) |
-| `crates/vm/levm/src/db/mod.rs` | Module export (modified) |
-| `crates/vm/levm/src/lib.rs` | Module export (modified) |
-| `crates/vm/levm/Cargo.toml` | Feature flag (modified) |
-| `crates/vm/Cargo.toml` | Feature flag propagation (modified) |
-| `cmd/ethrex/Cargo.toml` | Feature flag for ethrex binary (modified) |
-| `crates/common/merkle_tree.rs` | Shared OpenZeppelin-compatible Merkle tree (commutative Keccak256) |
-| `crates/vm/levm/contracts/NativeRollup.sol` | L1 contract: L2 state manager with L1 message hash queue, Merkle root advance, and withdrawal claiming |
-| `crates/vm/levm/contracts/MPTProof.sol` | Solidity library: MPT trie traversal, RLP decoding, account/storage proof verification |
-| `crates/vm/levm/contracts/L1Anchor.sol` | L2 predeploy: stores L1 messages Merkle root anchored by EXECUTE (system write) |
-| `crates/vm/levm/contracts/L2Bridge.sol` | L2 contract: unified bridge for L1 messages (processL1Message with Merkle proof) and withdrawals |
-| `test/tests/l2/native_rollup.rs` | Integration test: deposit, withdraw, and counter roundtrip with live L2 |
-| `test/Cargo.toml` | Feature flag for test crate (modified) |
-| `crates/l2/Makefile` | `init-l1` supports `NATIVE_ROLLUPS=1` (modified) |

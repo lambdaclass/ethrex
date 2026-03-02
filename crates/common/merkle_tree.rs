@@ -1,20 +1,13 @@
-//! OpenZeppelin-compatible Merkle tree implementation using commutative Keccak256 hashing.
+//! Merkle tree implementation using commutative Keccak256 hashing.
 //!
-//! This module provides functions to compute Merkle roots and proofs that are compatible with
-//! OpenZeppelin's MerkleProof.sol contract. The commutative property (H(a, b) == H(b, a)) is
-//! achieved by sorting inputs before hashing.
-//!
-//! See: https://docs.openzeppelin.com/contracts/5.x/api/utils#MerkleProof
+//! The commutative property (H(a, b) == H(b, a)) is achieved by sorting inputs before hashing.
 
 use crate::H256;
 use ethrex_crypto::keccak::keccak_hash;
 
-/// Compute a Merkle root using commutative Keccak256 hashing (OpenZeppelin-compatible).
+/// Compute a Merkle root using commutative Keccak256 hashing.
 ///
-/// Commutative hashing ensures H(a, b) == H(b, a), which is required for
-/// compatibility with OpenZeppelin's MerkleProof.verify().
-///
-/// See: https://docs.openzeppelin.com/contracts/5.x/api/utils#MerkleProof
+/// Commutative hashing ensures H(a, b) == H(b, a).
 pub fn compute_merkle_root(hashes: &[H256]) -> H256 {
     match hashes {
         [] => H256::zero(),
@@ -34,8 +27,7 @@ pub fn compute_merkle_root(hashes: &[H256]) -> H256 {
 
 /// Compute a Merkle proof for the leaf at `index`.
 ///
-/// Returns the sibling hashes from leaf to root, suitable for OpenZeppelin's
-/// MerkleProof.verify().
+/// Returns the sibling hashes from leaf to root.
 pub fn compute_merkle_proof(hashes: &[H256], index: usize) -> Vec<H256> {
     if hashes.len() <= 1 {
         return vec![];
