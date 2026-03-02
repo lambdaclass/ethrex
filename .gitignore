@@ -137,3 +137,17 @@ core.*
 
 __pycache__/
 
+# Next.js build artifacts
+.next/
+
+# SP1 guest program build artifacts
+crates/guest-program/bin/sp1/out/
+crates/guest-program/bin/sp1-tokamon/
+crates/guest-program/bin/sp1-zk-dex/
+
+# Local L2 config files
+zk-dex-l2-*.toml
+
+# Platform build artifacts
+platform/
+
