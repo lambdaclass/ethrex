@@ -21,7 +21,6 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
-use ethrex_levm::account::LevmAccount;
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
@@ -493,16 +492,6 @@ impl LEVM {
         Ok(env)
     }
 
-    /// Returns true if the transaction is a simple ETH transfer that can skip
-    /// full VM setup: not a create, empty calldata, no authorization list, and
-    /// the recipient has no code (i.e. is an EOA or empty account).
-    fn is_plain_eth_transfer(tx: &Transaction, recipient: &LevmAccount) -> bool {
-        !matches!(tx.to(), TxKind::Create)
-            && tx.data().is_empty()
-            && tx.authorization_list().is_none()
-            && !recipient.has_code()
-    }
-
     /// Computes the intrinsic gas for a plain ETH transfer.
     /// This is TX_BASE_COST (21000) plus access-list gas if present.
     fn plain_transfer_intrinsic_gas(tx: &Transaction) -> Result<u64, VMError> {
@@ -735,11 +724,13 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
 
-        // Fast-path for plain ETH transfers
-        if let TxKind::Call(to) = tx.to() {
-            let recipient = db.get_account(to)?;
-            if Self::is_plain_eth_transfer(tx, recipient) {
-                return Self::execute_plain_transfer(tx, tx_sender, to, &env, db);
+        // Fast-path for plain ETH transfers: check cheap tx-level conditions
+        // before loading the recipient account from the DB.
+        if tx.data().is_empty() && tx.authorization_list().is_none() {
+            if let TxKind::Call(to) = tx.to() {
+                if !db.get_account(to)?.has_code() {
+                    return Self::execute_plain_transfer(tx, tx_sender, to, &env, db);
+                }
             }
         }
 
@@ -765,11 +756,11 @@ impl LEVM {
         env.disable_balance_check = disable_balance_check;
 
         // Fast-path for plain ETH transfers (skip when balance check is disabled,
-        // e.g. during pre-warming, since our fast-path always validates balances)
-        if !disable_balance_check {
+        // e.g. during pre-warming, since our fast-path always validates balances).
+        // Check cheap tx-level conditions before loading the recipient account.
+        if !disable_balance_check && tx.data().is_empty() && tx.authorization_list().is_none() {
             if let TxKind::Call(to) = tx.to() {
-                let recipient = db.get_account(to)?;
-                if Self::is_plain_eth_transfer(tx, recipient) {
+                if !db.get_account(to)?.has_code() {
                     return Self::execute_plain_transfer(tx, tx_sender, to, &env, db);
                 }
             }
