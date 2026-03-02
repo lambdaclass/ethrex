@@ -122,6 +122,7 @@
   - [Guest program](./prover/guest_program.md)
 - [Rich Accounts](./developers/rich-accounts.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
+- [Native Rollups (EXECUTE precompile)](./vm/levm/native_rollups.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
   - [FAQ](./ethrex_replay/faq.md)
 - [Interactive REPL](./developers/repl.md)
