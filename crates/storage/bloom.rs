@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ethrex_common::{Address, H256};
 use fastbloom::AtomicBloomFilter;
@@ -11,6 +12,7 @@ const FALSE_POSITIVE_RATE: f64 = 0.01;
 /// never written to.
 pub struct StorageBloomFilter {
     filter: AtomicBloomFilter<FxBuildHasher>,
+    enabled: AtomicBool,
 }
 
 impl fmt::Debug for StorageBloomFilter {
@@ -25,7 +27,14 @@ impl StorageBloomFilter {
             filter: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
                 .hasher(FxBuildHasher)
                 .expected_items(capacity),
+            enabled: AtomicBool::new(false),
         }
+    }
+
+    /// Activate the bloom filter after it has been populated.
+    /// Before this is called, `might_contain` always returns `true` (pass-through).
+    pub fn enable(&self) {
+        self.enabled.store(true, Ordering::Release);
     }
 
     /// Record that a non-zero value exists at (address, key).
@@ -36,7 +45,11 @@ impl StorageBloomFilter {
 
     /// Returns `true` if the slot *might* contain a non-zero value.
     /// Returns `false` if the slot was definitely never written.
+    /// When the filter is not yet enabled, always returns `true` (pass-through).
     pub fn might_contain(&self, address: Address, key: H256) -> bool {
+        if !self.enabled.load(Ordering::Acquire) {
+            return true;
+        }
         let bloom_key = Self::make_key(address, key);
         self.filter.contains(&bloom_key)
     }
