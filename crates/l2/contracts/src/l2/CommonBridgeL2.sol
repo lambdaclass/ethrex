@@ -27,9 +27,15 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
 
     constructor(address nativeTokenL1, uint256 nativeTokenScaleFactor) {
         NATIVE_TOKEN_L1 = nativeTokenL1;
-        NATIVE_TOKEN_SCALE_FACTOR = nativeTokenScaleFactor > 0
-            ? nativeTokenScaleFactor
-            : 1;
+        if (nativeTokenL1 != address(0)) {
+            require(
+                nativeTokenScaleFactor >= 1 && nativeTokenScaleFactor <= 1e18,
+                "CommonBridgeL2: scale factor out of range (must be 1 to 1e18)"
+            );
+            NATIVE_TOKEN_SCALE_FACTOR = nativeTokenScaleFactor;
+        } else {
+            NATIVE_TOKEN_SCALE_FACTOR = 1;
+        }
     }
 
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
