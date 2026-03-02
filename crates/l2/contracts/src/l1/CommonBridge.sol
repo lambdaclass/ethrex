@@ -166,8 +166,8 @@ contract CommonBridge is
         NATIVE_TOKEN_L1 = nativeTokenL1;
         if (nativeTokenL1 != address(0)) {
             require(
-                nativeTokenScaleFactor > 0,
-                "CommonBridge: scale factor must be positive"
+                nativeTokenScaleFactor >= 1 && nativeTokenScaleFactor <= 1e18,
+                "CommonBridge: scale factor out of range (must be 1 to 1e18)"
             );
             NATIVE_TOKEN_SCALE_FACTOR = nativeTokenScaleFactor;
         } else {

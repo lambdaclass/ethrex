@@ -432,10 +432,18 @@ impl ChainConfig {
     /// Returns None if using ETH (no scaling needed).
     /// The scale factor converts L1 token amounts to L2 18-decimal amounts:
     ///   l2_amount = l1_amount * scale_factor
+    ///
+    /// # Panics
+    /// Panics if `native_token_l1_decimals > 18`. Tokens with more than 18
+    /// decimals are not supported as native gas tokens.
     pub fn native_token_scale_factor(&self) -> Option<U256> {
         self.native_token_l1_address.map(|_| {
             let decimals = self.native_token_l1_decimals();
-            let exponent = 18u8.saturating_sub(decimals);
+            assert!(
+                decimals <= 18,
+                "Native token L1 decimals ({decimals}) exceeds 18. Tokens with more than 18 decimals are not supported."
+            );
+            let exponent = 18 - decimals;
             U256::from(10u64).pow(U256::from(exponent))
         })
     }
@@ -1228,6 +1236,22 @@ mod tests {
         assert!(config.uses_custom_native_token());
         assert_eq!(config.native_token_l1_decimals(), 18);
         assert_eq!(config.native_token_scale_factor(), Some(U256::from(1)));
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds 18")]
+    fn native_token_decimals_above_18_panics() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: H160::zero(),
+            native_token_l1_address: Some(
+                H160::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            ),
+            native_token_l1_decimals: Some(24),
+            ..Default::default()
+        };
+        // This should panic because decimals > 18 is not supported
+        config.native_token_scale_factor();
     }
 
     #[test]
