@@ -3006,6 +3006,7 @@ mod mempool {
         fn encode(&self, buf: &mut dyn bytes::BufMut) {
             Encoder::new(buf)
                 .encode_field(&self.timestamp)
+                .encode_field(&self.sender)
                 .encode_field(&*self.inner)
                 .finish();
         }
