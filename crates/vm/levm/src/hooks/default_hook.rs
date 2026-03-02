@@ -47,7 +47,10 @@ impl Hook for DefaultHook {
                     },
                 ));
             }
-            if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
+            if vm.env.config.fork >= Fork::Osaka
+                && vm.env.config.fork < Fork::Amsterdam
+                && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+            {
                 return Err(VMError::TxValidation(
                     TxValidationError::TxMaxGasLimitExceeded {
                         tx_hash: vm.tx.hash(),

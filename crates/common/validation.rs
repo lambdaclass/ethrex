@@ -40,7 +40,9 @@ pub fn validate_block(
     if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)?;
         verify_blob_gas_usage(block, chain_config)?;
-        if chain_config.is_osaka_activated(block.header.timestamp) {
+        if chain_config.is_osaka_activated(block.header.timestamp)
+            && !chain_config.is_amsterdam_activated(block.header.timestamp)
+        {
             verify_transaction_max_gas_limit(block)?;
         }
     } else if chain_config.is_cancun_activated(block.header.timestamp) {
