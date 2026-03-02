@@ -24,8 +24,8 @@ use ethrex_common::{
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
-use std::collections::HashMap;
-pub type Storage = HashMap<U256, H256>;
+use rustc_hash::FxHashMap;
+pub type Storage = FxHashMap<U256, H256>;
 
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
