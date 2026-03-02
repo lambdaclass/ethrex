@@ -1,7 +1,7 @@
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
-use super::sp1::{k256_ecrecover, k256_recover_signer};
+use super::shared::{k256_ecrecover, k256_recover_signer};
 
 /// OpenVM crypto provider.
 ///

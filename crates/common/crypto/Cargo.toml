@@ -34,7 +34,7 @@ ff = "0.13"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
-default = ["kzg-rs", "c-kzg"]
+default = ["kzg-rs"]
 c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings"]
 openvm-kzg = ["dep:openvm-kzg"]
 kzg-rs = ["dep:kzg-rs"]

@@ -426,9 +426,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         _commitment: &[u8; 48],
         _proof: &[u8; 48],
     ) -> Result<(), CryptoError> {
-        Err(CryptoError::Other(
-            "c-kzg feature not enabled".to_string(),
-        ))
+        Err(CryptoError::Other("c-kzg feature not enabled".to_string()))
     }
 
     /// Verify blob KZG proof. Used by blob transaction validation.
@@ -462,9 +460,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         _commitment: &[u8; 48],
         _proof: &[u8; 48],
     ) -> Result<bool, CryptoError> {
-        Err(CryptoError::Other(
-            "c-kzg feature not enabled".to_string(),
-        ))
+        Err(CryptoError::Other("c-kzg feature not enabled".to_string()))
     }
 
     // ── BLS12-381 (Prague, EIP-2537) ───────────────────────────────────

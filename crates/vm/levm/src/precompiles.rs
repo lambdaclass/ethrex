@@ -389,9 +389,12 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 fn crypto_error_to_precompile(e: CryptoError) -> VMError {
     match e {
         CryptoError::InvalidPoint(_) => PrecompileError::InvalidPoint.into(),
-        CryptoError::InvalidInput(_) => PrecompileError::ParsingInputError.into(),
-        CryptoError::VerificationFailed => PrecompileError::ParsingInputError.into(),
-        _ => PrecompileError::ParsingInputError.into(),
+        CryptoError::InvalidInput(_)
+        | CryptoError::InvalidSignature
+        | CryptoError::InvalidRecoveryId
+        | CryptoError::RecoveryFailed
+        | CryptoError::VerificationFailed
+        | CryptoError::Other(_) => PrecompileError::ParsingInputError.into(),
     }
 }
 

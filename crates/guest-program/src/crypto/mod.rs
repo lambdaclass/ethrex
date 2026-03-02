@@ -1,3 +1,5 @@
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk", feature = "openvm"))]
+mod shared;
 #[cfg(feature = "sp1")]
 pub mod sp1;
 #[cfg(feature = "risc0")]
