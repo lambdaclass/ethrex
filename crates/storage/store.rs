@@ -1393,27 +1393,50 @@ impl Store {
         let t_begin_write = Instant::now();
 
         let mut tx_location_count = 0u64;
+        let mut header_encode_us = 0u128;
+        let mut body_encode_us = 0u128;
+        let mut tx_hash_us = 0u128;
+        let mut tx_loc_encode_us = 0u128;
+        let mut db_put_us = 0u128;
+        let mut receipt_encode_us = 0u128;
+        let mut receipt_put_us = 0u128;
         for block in update_batch.blocks {
             let block_number = block.header.number;
             let block_hash = block.hash();
             let hash_key = block_hash.encode_to_vec();
 
+            let t_enc = Instant::now();
             let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+            header_encode_us += t_enc.elapsed().as_micros();
+            let t_p = Instant::now();
             tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
+            db_put_us += t_p.elapsed().as_micros();
 
+            let t_enc = Instant::now();
             let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+            body_encode_us += t_enc.elapsed().as_micros();
+            let t_p = Instant::now();
             tx.put(BODIES, &hash_key, body_value.bytes())?;
+            db_put_us += t_p.elapsed().as_micros();
 
+            let t_p = Instant::now();
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
+            db_put_us += t_p.elapsed().as_micros();
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let t_h = Instant::now();
                 let tx_hash = transaction.hash();
+                tx_hash_us += t_h.elapsed().as_micros();
                 // Key: tx_hash + block_hash
+                let t_enc = Instant::now();
                 let mut composite_key = Vec::with_capacity(64);
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                tx_loc_encode_us += t_enc.elapsed().as_micros();
+                let t_p = Instant::now();
                 tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                db_put_us += t_p.elapsed().as_micros();
                 tx_location_count += 1;
             }
         }
@@ -1421,9 +1444,13 @@ impl Store {
 
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
+                let t_enc = Instant::now();
                 let key = (block_hash, index as u64).encode_to_vec();
                 let value = receipt.encode_to_vec();
+                receipt_encode_us += t_enc.elapsed().as_micros();
+                let t_p = Instant::now();
                 tx.put(RECEIPTS, &key, &value)?;
+                receipt_put_us += t_p.elapsed().as_micros();
             }
         }
         let t_receipts = Instant::now();
@@ -1449,7 +1476,7 @@ impl Store {
 
         let us = |a: Instant, b: Instant| b.duration_since(a).as_micros();
         info!(
-            "[STORE-DETAIL] apply_updates total={:.2}ms | header_lookup={} trie_send={} begin_write={} blocks={} receipts={} code={} layer_wait={} commit={} (us) | nodes: acct={} stor={} blks={} rcpts={} code={} txlocs={}",
+            "[STORE-DETAIL] apply_updates total={:.2}ms | header_lookup={} trie_send={} begin_write={} blocks={} receipts={} code={} layer_wait={} commit={} (us) | encode: hdr={} body={} tx_hash={} tx_loc={} rcpt={} db_put={} rcpt_put={} (us) | nodes: acct={} stor={} blks={} rcpts={} code={} txlocs={}",
             t_commit.duration_since(t0).as_secs_f64() * 1000.0,
             us(t0, t_header),
             us(t_header, t_trie_sent),
@@ -1459,6 +1486,13 @@ impl Store {
             us(t_receipts, t_code),
             us(t_code, t_layer_wait),
             us(t_layer_wait, t_commit),
+            header_encode_us,
+            body_encode_us,
+            tx_hash_us,
+            tx_loc_encode_us,
+            receipt_encode_us,
+            db_put_us,
+            receipt_put_us,
             account_updates_count,
             storage_updates_count,
             blocks_count,
