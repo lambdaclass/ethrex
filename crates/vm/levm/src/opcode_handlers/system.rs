@@ -536,14 +536,6 @@ impl<'a> VM<'a> {
             fork,
         )?)?;
 
-        // EIP-8037 (Amsterdam+): charge state gas for new account creation
-        if fork >= Fork::Amsterdam {
-            let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
-                .checked_mul(COST_PER_STATE_BYTE)
-                .ok_or(ExceptionalHalt::OutOfGas)?;
-            self.increase_state_gas(state_gas)?;
-        }
-
         self.generic_create(
             value_in_wei_to_send,
             code_offset_in_memory,
@@ -573,14 +565,6 @@ impl<'a> VM<'a> {
             code_size_in_memory,
             fork,
         )?)?;
-
-        // EIP-8037 (Amsterdam+): charge state gas for new account creation
-        if fork >= Fork::Amsterdam {
-            let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
-                .checked_mul(COST_PER_STATE_BYTE)
-                .ok_or(ExceptionalHalt::OutOfGas)?;
-            self.increase_state_gas(state_gas)?;
-        }
 
         self.generic_create(
             value_in_wei_to_send,
@@ -872,6 +856,21 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
+        // EIP-8037: Save snapshot BEFORE charging CREATE's account state gas.
+        // On initcode revert, we restore these to undo the state gas too.
+        let create_reservoir_snapshot = self.state_gas_reservoir;
+        let create_state_gas_used_snapshot = self.state_gas_used;
+
+        // EIP-8037 (Amsterdam+): charge state gas for new account creation.
+        // Charged here, after all early-failure checks pass, so that failed creates
+        // (balance/depth/nonce) don't incorrectly count against block state gas.
+        if self.env.config.fork >= Fork::Amsterdam {
+            let state_gas = gas_cost::STATE_BYTES_PER_NEW_ACCOUNT
+                .checked_mul(gas_cost::COST_PER_STATE_BYTE)
+                .ok_or(ExceptionalHalt::OutOfGas)?;
+            self.increase_state_gas(state_gas)?;
+        }
+
         // Create BAL checkpoint before entering create call for potential revert per EIP-7928
         let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
@@ -900,6 +899,9 @@ impl<'a> VM<'a> {
         );
         // Store BAL checkpoint in the call frame's backup for restoration on revert
         new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+        // EIP-8037: Store reservoir snapshot for revert restoration
+        new_call_frame.reservoir_snapshot = create_reservoir_snapshot;
+        new_call_frame.state_gas_used_snapshot = create_state_gas_used_snapshot;
 
         self.add_callframe(new_call_frame);
 
@@ -1107,6 +1109,9 @@ impl<'a> VM<'a> {
             );
             // Store BAL checkpoint in the call frame's backup for restoration on revert
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+            // EIP-8037: Save snapshot for potential revert restoration
+            new_call_frame.reservoir_snapshot = self.state_gas_reservoir;
+            new_call_frame.state_gas_used_snapshot = self.state_gas_used;
 
             self.add_callframe(new_call_frame);
 
@@ -1173,6 +1178,8 @@ impl<'a> VM<'a> {
             ret_offset,
             ret_size,
             memory: old_callframe_memory,
+            reservoir_snapshot,
+            state_gas_used_snapshot,
             ..
         } = executed_call_frame;
 
@@ -1211,6 +1218,8 @@ impl<'a> VM<'a> {
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
+                self.state_gas_reservoir = reservoir_snapshot;
+                self.state_gas_used = state_gas_used_snapshot;
                 self.current_call_frame.stack.push(FAIL)?;
             }
         };
@@ -1235,6 +1244,8 @@ impl<'a> VM<'a> {
             to,
             call_frame_backup,
             memory: old_callframe_memory,
+            reservoir_snapshot,
+            state_gas_used_snapshot,
             ..
         } = executed_call_frame;
 
@@ -1258,6 +1269,8 @@ impl<'a> VM<'a> {
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
             }
             TxResult::Revert(err) => {
+                self.state_gas_reservoir = reservoir_snapshot;
+                self.state_gas_used = state_gas_used_snapshot;
                 // If revert we have to copy the return_data
                 if err.is_revert_opcode() {
                     parent_call_frame.sub_return_data = ctx_result.output.clone();

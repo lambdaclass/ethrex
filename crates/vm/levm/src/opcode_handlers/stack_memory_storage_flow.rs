@@ -197,7 +197,15 @@ impl<'a> VM<'a> {
         let mut gas_refunds = self.substate.refunded_gas;
 
         // https://eips.ethereum.org/EIPS/eip-2929
-        let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) = (4800, 19900, 2800);
+        // EIP-8037 (Amsterdam+): restore_empty_slot_cost changes from 19900 to 2800 because
+        // the SSTORE creation cost changed from 20000 to 2900 (SSTORE_STORAGE_MODIFICATION).
+        let fork = self.env.config.fork;
+        let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) =
+            if fork >= Fork::Amsterdam {
+                (4800, 2800, 2800)
+            } else {
+                (4800, 19900, 2800)
+            };
 
         if new_storage_slot_value != current_value {
             if current_value == original_value {
@@ -223,6 +231,14 @@ impl<'a> VM<'a> {
                         gas_refunds = gas_refunds
                             .checked_add(restore_empty_slot_cost)
                             .ok_or(InternalError::Overflow)?;
+                        // EIP-8037 (Amsterdam+): refund state gas when restoring a storage slot to zero
+                        if fork >= Fork::Amsterdam {
+                            self.state_gas_used = self.state_gas_used.saturating_sub(
+                                STATE_BYTES_PER_STORAGE_SET
+                                    .checked_mul(COST_PER_STATE_BYTE)
+                                    .ok_or(InternalError::Overflow)?,
+                            );
+                        }
                     } else {
                         gas_refunds = gas_refunds
                             .checked_add(restore_slot_cost)
@@ -233,8 +249,6 @@ impl<'a> VM<'a> {
         }
 
         self.substate.refunded_gas = gas_refunds;
-
-        let fork = self.env.config.fork;
 
         // Main gas check - if this fails, the storage read is already recorded above
         self.current_call_frame

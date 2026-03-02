@@ -423,12 +423,26 @@ impl<'a> VM<'a> {
                 continue;
             }
 
-            // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
+            // 7. Refund if authority exists in the trie.
+            // EIP-8037 (Amsterdam+): return STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
+            // to the state gas reservoir (the new-account portion of the auth state charge).
+            // Pre-Amsterdam: add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST to global refund counter.
             if !authority_info.is_empty() {
-                let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
-                refunded_gas = refunded_gas
-                    .checked_add(refunded_gas_if_exists)
-                    .ok_or(InternalError::Overflow)?;
+                if self.env.config.fork >= Fork::Amsterdam {
+                    let state_refund = STATE_BYTES_PER_NEW_ACCOUNT
+                        .checked_mul(COST_PER_STATE_BYTE)
+                        .ok_or(InternalError::Overflow)?;
+                    self.state_gas_reservoir = self
+                        .state_gas_reservoir
+                        .checked_add(state_refund)
+                        .ok_or(InternalError::Overflow)?;
+                    self.state_gas_used = self.state_gas_used.saturating_sub(state_refund);
+                } else {
+                    let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
+                    refunded_gas = refunded_gas
+                        .checked_add(refunded_gas_if_exists)
+                        .ok_or(InternalError::Overflow)?;
+                }
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
@@ -478,6 +492,29 @@ impl<'a> VM<'a> {
             .state_gas_used
             .checked_add(state_gas)
             .ok_or(InternalError::Overflow)?;
+
+        // EIP-8037 (Amsterdam+): compute state gas reservoir from excess gas_limit.
+        // execution_gas = what remains after all intrinsic gas; regular_gas_budget = how much
+        // regular execution gas is allowed (capped at TX_MAX_GAS_LIMIT_AMSTERDAM); the difference becomes
+        // the reservoir for drawing state gas without consuming regular gas_remaining.
+        if self.env.config.fork >= Fork::Amsterdam {
+            let gas_limit = self.tx.gas_limit();
+            let execution_gas = gas_limit.saturating_sub(total_gas);
+            let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
+            let gas_left = regular_gas_budget.min(execution_gas);
+            let reservoir = execution_gas.saturating_sub(gas_left);
+            if reservoir > 0 {
+                // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
+                let reservoir_i64 =
+                    i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
+                self.current_call_frame.gas_remaining = self
+                    .current_call_frame
+                    .gas_remaining
+                    .checked_sub(reservoir_i64)
+                    .ok_or(InternalError::Overflow)?;
+                self.state_gas_reservoir = reservoir;
+            }
+        }
 
         Ok(())
     }

@@ -31,6 +31,9 @@ pub const TX_BASE_COST: u64 = 21000;
 // https://eips.ethereum.org/EIPS/eip-7825
 pub use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
 
+/// EIP-7825/EIP-8037: Maximum tx gas_limit for Prague (EIP-7825) and Amsterdam reservoir threshold.
+pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
+
 pub const MAX_CODE_SIZE: u64 = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
 
@@ -83,7 +86,7 @@ pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 // Set the code of authority to be 0xef0100 || address. This is a delegation designation.
 // len(SET_CODE_DELEGATION_BYTES) == 3 + len(Address) == 20 -> 23
 pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
-pub const PER_AUTH_BASE_COST: u64 = 12500;
+pub const PER_AUTH_BASE_COST: u64 = 7500;
 pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
 
 // Secp256r1 curve parameters

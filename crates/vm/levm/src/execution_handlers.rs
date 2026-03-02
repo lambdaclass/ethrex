@@ -195,14 +195,10 @@ impl<'a> VM<'a> {
             (regular, 0u64)
         };
 
-        let total_deposit = regular_deposit
-            .checked_add(state_deposit)
-            .ok_or(InternalError::Overflow)?;
-        self.current_call_frame.increase_consumed_gas(total_deposit)?;
-        self.state_gas_used = self
-            .state_gas_used
-            .checked_add(state_deposit)
-            .ok_or(InternalError::Overflow)?;
+        self.current_call_frame.increase_consumed_gas(regular_deposit)?;
+        if state_deposit > 0 {
+            self.increase_state_gas(state_deposit)?;
+        }
 
         Ok(())
     }

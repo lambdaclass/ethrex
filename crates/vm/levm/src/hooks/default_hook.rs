@@ -1,7 +1,9 @@
 use crate::{
     account::LevmAccount,
     constants::*,
-    errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
+    errors::{
+        ContextResult, ExceptionalHalt, InternalError, TxResult, TxValidationError, VMError,
+    },
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
@@ -33,6 +35,18 @@ impl Hook for DefaultHook {
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
+            // EIP-7825 (Prague to pre-Amsterdam): reject tx if gas_limit > TX_MAX_GAS_LIMIT_AMSTERDAM.
+            // Amsterdam removes this restriction (EIP-8037 reservoir model).
+            if vm.env.config.fork < Fork::Amsterdam
+                && vm.tx.gas_limit() > TX_MAX_GAS_LIMIT_AMSTERDAM
+            {
+                return Err(VMError::TxValidation(
+                    TxValidationError::TxMaxGasLimitExceeded {
+                        tx_hash: vm.tx.hash(),
+                        tx_gas_limit: vm.tx.gas_limit(),
+                    },
+                ));
+            }
             if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
                 return Err(VMError::TxValidation(
                     TxValidationError::TxMaxGasLimitExceeded {
@@ -136,6 +150,23 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
+        // EIP-8037 (Amsterdam+): unused reservoir is returned to sender, not consumed.
+        // On exceptional halt (OOG, etc.), all gas including reservoir is consumed.
+        // On success or REVERT opcode, remaining reservoir is subtracted from gas_used.
+        if vm.env.config.fork >= Fork::Amsterdam {
+            let exceptional_halt = match &ctx_result.result {
+                TxResult::Success => false,
+                TxResult::Revert(e) => !e.is_revert_opcode(),
+            };
+            if exceptional_halt {
+                vm.state_gas_reservoir = 0;
+            } else {
+                ctx_result.gas_used = ctx_result
+                    .gas_used
+                    .saturating_sub(vm.state_gas_reservoir);
+            }
+        }
+
         // Save pre-refund gas for EIP-7778 block accounting
         let gas_used_pre_refund = ctx_result.gas_used;
 
@@ -182,10 +213,16 @@ pub fn refund_sender(
 
     // EIP-7778: Separate block vs user gas accounting for Amsterdam+
     if vm.env.config.fork >= Fork::Amsterdam {
-        // Block accounting uses max(pre-refund gas, calldata floor)
-        // This prevents gas smuggling via refunds (EIP-7778)
+        // EIP-7623 floor applies to the regular (non-state) gas component only.
+        // State gas is a separate dimension; the floor guards against calldata abuse
+        // in the regular dimension only.
         let floor = vm.get_min_gas_used()?;
-        ctx_result.gas_used = gas_used_pre_refund.max(floor);
+        let state_gas = vm.state_gas_used;
+        let regular_gas = gas_used_pre_refund.saturating_sub(state_gas);
+        let effective_regular = regular_gas.max(floor);
+        ctx_result.gas_used = effective_regular
+            .checked_add(state_gas)
+            .ok_or(InternalError::Overflow)?;
         // User pays post-refund gas (with floor)
         ctx_result.gas_spent = gas_spent;
     } else {
