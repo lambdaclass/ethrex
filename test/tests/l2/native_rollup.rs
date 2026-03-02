@@ -20,8 +20,8 @@ use ethrex_common::{Address, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, create_deploy, send_generic_transaction,
-    wait_for_transaction_receipt,
+    build_generic_tx, calldata::encode_calldata, compile_contract, create_deploy,
+    send_generic_transaction, wait_for_transaction_receipt,
 };
 use ethrex_rpc::clients::Overrides;
 use ethrex_rpc::clients::eth::EthClient;
@@ -30,7 +30,7 @@ use reqwest::Url;
 use secp256k1::SecretKey;
 use std::time::Duration;
 
-use super::utils::read_env_file_by_config;
+use super::utils::{read_env_file_by_config, workspace_root};
 
 const L1_RPC_URL: &str = "http://localhost:8545";
 const L2_RPC_URL: &str = "http://localhost:1729";
@@ -46,10 +46,6 @@ const TEST_PRIVATE_KEY: &str = "000000000000000000000000000000000000000000000000
 
 const ONE_ETH: u64 = 1_000_000_000_000_000_000;
 
-/// Counter.sol initcode (compiled with solc --bin --optimize).
-/// Deploys a Counter contract with `count()` (selector 0x06661abd) and
-/// `increment()` (selector 0xd09de08a, payable).
-const COUNTER_INITCODE_HEX: &str = "6080604052348015600e575f5ffd5b5060e080601a5f395ff3fe608060405260043610602f575f3560e01c806306661abd1460335780636d4ce63c146057578063d09de08a146068575b5f5ffd5b348015603d575f5ffd5b5060455f5481565b60405190815260200160405180910390f35b3480156061575f5ffd5b505f546045565b606e6070565b005b60015f5f828254607f91906086565b9091555050565b8082018082111560a457634e487b7160e01b5f52601160045260245ffd5b9291505056fea26469706673582212207799e79076af790391bf7137f3f28f32f374dfc98b94553ba76891a74e4abada64736f6c634300081f0033";
 
 /// Deposit ETH from L1 to L2, then withdraw a portion back to L1 with proof.
 #[tokio::test]
@@ -368,8 +364,27 @@ async fn native_rollup_bridge_roundtrip() {
     // ── Phase 6: Counter contract demo via L1→L2 message ─────────────────
 
     // Deploy Counter on L2 using test_signer (has ETH from Phase 1 deposit)
-    let counter_initcode =
-        Bytes::from(hex::decode(COUNTER_INITCODE_HEX).expect("Invalid Counter initcode hex"));
+    let counter_path = workspace_root().join("crates/l2/contracts/src/example");
+    compile_contract(
+        &counter_path,
+        &counter_path.join("Counter.sol"),
+        false,
+        false,
+        None,
+        &[counter_path.as_path()],
+        None,
+    )
+    .expect("Failed to compile Counter.sol");
+    let counter_initcode = Bytes::from(
+        hex::decode(
+            String::from_utf8(
+                std::fs::read(counter_path.join("solc_out/Counter.bin"))
+                    .expect("Failed to read Counter.bin"),
+            )
+            .expect("Counter.bin is not valid UTF-8"),
+        )
+        .expect("Counter.bin is not valid hex"),
+    );
 
     let (_deploy_tx_hash, counter_address) = create_deploy(
         &l2_client,
