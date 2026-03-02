@@ -1,5 +1,6 @@
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
+use crate::bloom::StorageBloomFilter;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
@@ -182,6 +183,10 @@ pub struct Store {
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+
+    /// Bloom filter tracking (address, storage_key) pairs with non-zero values.
+    /// Used to skip trie lookups for storage slots that were never written.
+    storage_bloom: Arc<StorageBloomFilter>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -1483,6 +1488,7 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            storage_bloom: Arc::new(StorageBloomFilter::new(200_000_000)),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1729,6 +1735,7 @@ impl Store {
                     if storage_value.is_zero() {
                         storage_trie.remove(&hashed_key)?;
                     } else {
+                        self.storage_bloom.insert(update.address, *storage_key);
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
@@ -1820,6 +1827,7 @@ impl Store {
                     if storage_value.is_zero() {
                         storage_trie.remove(&hashed_key)?;
                     } else {
+                        self.storage_bloom.insert(update.address, *storage_key);
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
@@ -2107,6 +2115,11 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        // Fast path: if the bloom filter says this slot was never written, skip the trie.
+        if !self.storage_bloom.might_contain(address, storage_key) {
+            return Ok(None);
+        }
+
         let account_hash = hash_address_fixed(&address);
 
         // Pre-acquire shared resources once for both trie opens
