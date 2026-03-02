@@ -6,7 +6,9 @@ use crate::error::StoreError;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
-use std::sync::Arc;
+use lru::LruCache;
+use std::num::NonZeroUsize;
+use std::sync::{Arc, RwLock};
 
 /// TrieDB implementation that holds a pre-acquired read view for the entire
 /// trie traversal, avoiding per-node-lookup allocation and lock acquisition.
@@ -107,7 +109,7 @@ impl BackendTrieDB {
         })
     }
 
-    fn make_key(&self, path: Nibbles) -> Vec<u8> {
+    pub(crate) fn make_key(&self, path: Nibbles) -> Vec<u8> {
         apply_prefix(self.address_prefix, path).into_vec()
     }
 
@@ -208,6 +210,148 @@ impl TrieDB for BackendTrieDBLocked {
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // Read-only locked storage, should not be used for puts
+        Err(TrieError::DbError(anyhow::anyhow!("trie is read-only")))
+    }
+}
+
+/// Sharded LRU cache for trie node reads. Shared across all trie instances
+/// (warmer, merkleizer, execution) via `Arc` so that a node read by one
+/// thread benefits all subsequent readers.
+///
+/// 16 shards (keyed by first nibble of the prefixed key) match the
+/// merkleizer shard count, keeping lock contention low.
+const TRIE_NODE_CACHE_SHARDS: usize = 16;
+
+pub struct TrieNodeCache {
+    shards: [RwLock<LruCache<Vec<u8>, Vec<u8>>>; TRIE_NODE_CACHE_SHARDS],
+}
+
+impl std::fmt::Debug for TrieNodeCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TrieNodeCache")
+            .field("shards", &TRIE_NODE_CACHE_SHARDS)
+            .finish()
+    }
+}
+
+impl TrieNodeCache {
+    pub fn new(per_shard_capacity: usize) -> Self {
+        // SAFETY: per_shard_capacity is always > 0 (we clamp to at least 1)
+        let cap = NonZeroUsize::new(per_shard_capacity.max(1))
+            .expect("per_shard_capacity is always > 0");
+        Self {
+            shards: std::array::from_fn(|_| RwLock::new(LruCache::new(cap))),
+        }
+    }
+
+    fn shard_index(key: &[u8]) -> usize {
+        key.first().copied().unwrap_or(0) as usize % TRIE_NODE_CACHE_SHARDS
+    }
+
+    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        let idx = Self::shard_index(key);
+        self.shards[idx]
+            .write()
+            .ok()?
+            .get(key)
+            .cloned()
+    }
+
+    pub fn insert(&self, key: Vec<u8>, value: Vec<u8>) {
+        let idx = Self::shard_index(&key);
+        if let Ok(mut shard) = self.shards[idx].write() {
+            shard.put(key, value);
+        }
+    }
+
+    pub fn clear(&self) {
+        for shard in &self.shards {
+            if let Ok(mut s) = shard.write() {
+                s.clear();
+            }
+        }
+    }
+}
+
+/// Wraps a `BackendTrieDB` with a shared read cache. On `get()`, the cache
+/// is checked first; on miss the inner DB is queried and the result cached.
+pub struct CachingBackendTrieDB {
+    inner: BackendTrieDB,
+    cache: Arc<TrieNodeCache>,
+}
+
+impl CachingBackendTrieDB {
+    pub fn new(inner: BackendTrieDB, cache: Arc<TrieNodeCache>) -> Self {
+        Self { inner, cache }
+    }
+}
+
+impl TrieDB for CachingBackendTrieDB {
+    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        self.inner.flatkeyvalue_computed(key)
+    }
+
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let prefixed_key = self.inner.make_key(key.clone());
+
+        // Check cache first
+        if let Some(value) = self.cache.get(&prefixed_key) {
+            return Ok(Some(value));
+        }
+
+        // Cache miss — delegate to inner (uses pre-acquired read view)
+        let result = self.inner.get(key)?;
+
+        // Populate cache on hit
+        if let Some(ref value) = result {
+            self.cache.insert(prefixed_key, value.clone());
+        }
+
+        Ok(result)
+    }
+
+    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        self.inner.put_batch(key_values)
+    }
+}
+
+/// Wraps a `BackendTrieDBLocked` with a shared read cache.
+pub struct CachingBackendTrieDBLocked {
+    inner: BackendTrieDBLocked,
+    cache: Arc<TrieNodeCache>,
+}
+
+impl CachingBackendTrieDBLocked {
+    pub fn new(inner: BackendTrieDBLocked, cache: Arc<TrieNodeCache>) -> Self {
+        Self { inner, cache }
+    }
+}
+
+impl TrieDB for CachingBackendTrieDBLocked {
+    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        self.inner.flatkeyvalue_computed(key)
+    }
+
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let key_bytes = key.as_ref().to_vec();
+
+        // Check cache first
+        if let Some(value) = self.cache.get(&key_bytes) {
+            return Ok(Some(value));
+        }
+
+        // Cache miss — delegate to inner (uses locked snapshot)
+        let result = self.inner.get(key)?;
+
+        // Populate cache on hit
+        if let Some(ref value) = result {
+            self.cache.insert(key_bytes, value.clone());
+        }
+
+        Ok(result)
+    }
+
+    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         Err(TrieError::DbError(anyhow::anyhow!("trie is read-only")))
     }
 }

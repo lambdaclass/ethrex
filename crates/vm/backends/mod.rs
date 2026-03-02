@@ -240,4 +240,7 @@ pub struct BlockExecutionResult {
     /// Block gas used (PRE-REFUND for Amsterdam+ per EIP-7778).
     /// This differs from receipt cumulative_gas_used which is POST-REFUND.
     pub block_gas_used: u64,
+    /// Pre-encoded receipts (bloom + RLP) computed during per-tx execution.
+    /// Used by `validate_receipts_root_from_encoded` to avoid re-encoding.
+    pub encoded_receipts: Vec<Vec<u8>>,
 }

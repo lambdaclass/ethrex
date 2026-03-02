@@ -16,7 +16,6 @@ struct TrieLayer {
     id: usize,
 }
 
-#[derive(Clone)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
@@ -28,7 +27,22 @@ pub struct TrieLayerCache {
     ///
     /// Used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
-    bloom: AtomicBloomFilter<FxBuildHasher>,
+    ///
+    /// Wrapped in Arc to make TrieLayerCache::clone() cheap (~875KB filter
+    /// becomes a pointer copy). AtomicBloomFilter::insert takes &self, so
+    /// concurrent inserts through Arc are safe.
+    bloom: Arc<AtomicBloomFilter<FxBuildHasher>>,
+}
+
+impl Clone for TrieLayerCache {
+    fn clone(&self) -> Self {
+        Self {
+            last_id: self.last_id,
+            commit_threshold: self.commit_threshold,
+            layers: self.layers.clone(),
+            bloom: Arc::clone(&self.bloom),
+        }
+    }
 }
 
 impl fmt::Debug for TrieLayerCache {
@@ -45,7 +59,7 @@ impl fmt::Debug for TrieLayerCache {
 impl Default for TrieLayerCache {
     fn default() -> Self {
         Self {
-            bloom: Self::create_filter(BLOOM_SIZE),
+            bloom: Arc::new(Self::create_filter(BLOOM_SIZE)),
             last_id: 0,
             layers: Default::default(),
             commit_threshold: 128,
@@ -56,7 +70,7 @@ impl Default for TrieLayerCache {
 impl TrieLayerCache {
     pub fn new(commit_threshold: usize) -> Self {
         Self {
-            bloom: Self::create_filter(BLOOM_SIZE),
+            bloom: Arc::new(Self::create_filter(BLOOM_SIZE)),
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
@@ -163,7 +177,7 @@ impl TrieLayerCache {
             }
         });
 
-        self.bloom = filter;
+        self.bloom = Arc::new(filter);
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
