@@ -147,6 +147,7 @@ jobs:
           dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
           dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           variant: l1
+          cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -190,7 +191,7 @@ jobs:
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
           enclave_name: ${{ matrix.enclave_name }}
-          kurtosis_version: "1.10.2"
+          kurtosis_version: "1.15.2"
           ethereum_package_url: "github.com/ethpandaops/ethereum-package"
           ethereum_package_branch: "82e5a7178138d892c0c31c3839c89d53ffd42d9a"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
@@ -289,7 +290,7 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          hive_version: 7709e5892146c793307da072e1593f48039a7e4b
+          hive_version: 0921fb7833e3de180eacdc9f26de6e51dcab0dba
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
