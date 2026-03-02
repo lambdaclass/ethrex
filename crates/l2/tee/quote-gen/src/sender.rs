@@ -32,6 +32,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
                     blob_commitment: input.blob_commitment,
                     blob_proof: input.blob_proof,
                     fee_configs: input.fee_configs,
+                    native_token_scale_factor: input.native_token_scale_factor,
                 };
                 #[cfg(not(feature = "l2"))]
                 let input = ProgramInput {

@@ -289,14 +289,15 @@ impl BlockFetcher {
         batch_number: U256,
         commit_tx: H256,
     ) -> Result<(), BlockFetcherError> {
-        let chain_id = self.store.get_chain_config().chain_id;
+        let chain_config = self.store.get_chain_config();
         let batch = get_batch(
             &self.store,
             batch,
             batch_number,
             Some(commit_tx),
             BlobsBundle::default(),
-            chain_id,
+            chain_config.chain_id,
+            chain_config.native_token_scale_factor(),
         )
         .await?;
 

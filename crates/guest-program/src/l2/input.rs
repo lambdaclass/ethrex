@@ -1,3 +1,4 @@
+use ethrex_common::U256;
 use ethrex_common::types::{
     Block, blobs_bundle, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
 };
@@ -23,6 +24,11 @@ pub struct ProgramInput {
     /// KZG opening for a challenge over the blob commitment.
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
+    /// Scale factor for custom native token decimal conversion (10^(18 - l1_decimals)).
+    /// None when using ETH as native token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[rkyv(with = ethrex_common::rkyv_utils::OptionU256Wrapper)]
+    pub native_token_scale_factor: Option<U256>,
 }
 
 impl Default for ProgramInput {
@@ -34,6 +40,7 @@ impl Default for ProgramInput {
             fee_configs: Default::default(),
             blob_commitment: [0; 48],
             blob_proof: [0u8; 48],
+            native_token_scale_factor: None,
         }
     }
 }

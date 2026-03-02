@@ -621,7 +621,8 @@ impl L1Committer {
             return Ok(None);
         };
 
-        let balance_diffs = get_balance_diffs(&l2_messages);
+        let native_token_scale_factor = self.genesis.config.native_token_scale_factor();
+        let balance_diffs = get_balance_diffs(&l2_messages, native_token_scale_factor);
 
         let batch = Batch {
             number: batch_number,
@@ -1109,6 +1110,7 @@ impl L1Committer {
             blob_commitment,
             blob_proof,
             fee_configs,
+            native_token_scale_factor: self.genesis.config.native_token_scale_factor(),
         };
 
         Ok(prover_input)

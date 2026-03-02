@@ -28,6 +28,7 @@ pub async fn get_batch(
     commit_tx: Option<H256>,
     blobs_bundle: BlobsBundle,
     chain_id: u64,
+    native_token_scale_factor: Option<U256>,
 ) -> Result<Batch, UtilsError> {
     let l1_in_messages: Vec<PrivilegedL2Transaction> = batch
         .iter()
@@ -85,7 +86,7 @@ pub async fn get_batch(
         .hash_no_commit();
 
     let (l1_out_message_hashes, balance_diffs) =
-        get_batch_message_hashes_and_balance_diffs(store, batch, chain_id).await?;
+        get_batch_message_hashes_and_balance_diffs(store, batch, chain_id, native_token_scale_factor).await?;
 
     Ok(Batch {
         number: batch_number.as_u64(),
@@ -107,6 +108,7 @@ async fn get_batch_message_hashes_and_balance_diffs(
     store: &Store,
     batch: &[Block],
     chain_id: u64,
+    native_token_scale_factor: Option<U256>,
 ) -> Result<(Vec<H256>, Vec<BalanceDiff>), UtilsError> {
     let mut l1_message_hashes = Vec::new();
     let mut l2_messages = Vec::new();
@@ -124,7 +126,7 @@ async fn get_batch_message_hashes_and_balance_diffs(
         }
     }
 
-    let balance_diffs = get_balance_diffs(&l2_messages);
+    let balance_diffs = get_balance_diffs(&l2_messages, native_token_scale_factor);
 
     Ok((l1_message_hashes, balance_diffs))
 }
