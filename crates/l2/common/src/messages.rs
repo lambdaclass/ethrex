@@ -220,7 +220,7 @@ pub fn get_balance_diffs(
             }
             // Scale down to L1 units if using custom native token
             if let Some(scale_factor) = native_token_scale_factor {
-                value = value / scale_factor;
+                value /= scale_factor;
             }
             (value, None)
         };
