@@ -332,6 +332,7 @@ impl From<Block> for CoreBlock {
                 transactions: val.transactions.iter().map(|t| t.clone().into()).collect(),
                 ommers: val.uncle_headers.iter().map(|h| h.clone().into()).collect(),
                 withdrawals: val.withdrawals,
+                rlp_cache: Default::default(),
             },
         )
     }

@@ -223,6 +223,8 @@ pub enum EngineType {
 /// Used during block execution to collect all state changes before
 /// committing them to the database in a single transaction.
 pub struct UpdateBatch {
+    /// State root of the parent block (avoids a DB lookup in apply_updates).
+    pub parent_state_root: H256,
     /// New nodes to add to the state trie.
     pub account_updates: Vec<TrieNode>,
     /// Storage trie updates per account (keyed by hashed address).
@@ -267,21 +269,18 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let mut tx = db.begin_write()?;
 
-            // TODO: Same logic in apply_updates
             for block in blocks {
-                let block_number = block.header.number;
-                let block_hash = block.hash();
+                let Block { header, body } = block;
+                let block_hash = header.hash();
+                let block_number = header.number;
                 let hash_key = block_hash.encode_to_vec();
 
-                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-                tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-                tx.put(BODIES, &hash_key, body_value.bytes())?;
+                tx.put(HEADERS, &hash_key, &header.rlp_encode())?;
+                tx.put(BODIES, &hash_key, &body.rlp_encode())?;
 
                 tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
+                for (index, transaction) in body.transactions.iter().enumerate() {
                     let tx_hash = transaction.hash();
                     // Key: tx_hash + block_hash
                     let mut composite_key = Vec::with_capacity(64);
@@ -304,7 +303,7 @@ impl Store {
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
         let hash_key = block_hash.encode_to_vec();
-        let header_value = BlockHeaderRLP::from(block_header).into_vec();
+        let header_value = block_header.rlp_encode().to_vec();
         self.write_async(HEADERS, hash_key, header_value).await
     }
 
@@ -319,9 +318,8 @@ impl Store {
             let block_hash = header.hash();
             let block_number = header.number;
             let hash_key = block_hash.encode_to_vec();
-            let header_value = BlockHeaderRLP::from(header).into_vec();
 
-            txn.put(HEADERS, &hash_key, &header_value)?;
+            txn.put(HEADERS, &hash_key, &header.rlp_encode())?;
 
             let number_key = block_number.to_le_bytes().to_vec();
             txn.put(BLOCK_NUMBERS, &hash_key, &number_key)?;
@@ -349,7 +347,7 @@ impl Store {
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
         let hash_key = block_hash.encode_to_vec();
-        let body_value = BlockBodyRLP::from(block_body).into_vec();
+        let body_value = block_body.rlp_encode().to_vec();
         self.write_async(BODIES, hash_key, body_value).await
     }
 
@@ -1339,17 +1337,7 @@ impl Store {
 
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.backend.clone();
-        let parent_state_root = self
-            .get_block_header_by_hash(
-                update_batch
-                    .blocks
-                    .first()
-                    .ok_or(StoreError::UpdateBatchNoBlocks)?
-                    .header
-                    .parent_hash,
-            )?
-            .map(|header| header.state_root)
-            .unwrap_or_default();
+        let parent_state_root = update_batch.parent_state_root;
         let last_state_root = update_batch
             .blocks
             .last()
@@ -1380,19 +1368,17 @@ impl Store {
         let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
-            let block_number = block.header.number;
-            let block_hash = block.hash();
+            let Block { header, body } = block;
+            let block_hash = header.hash();
+            let block_number = header.number;
             let hash_key = block_hash.encode_to_vec();
 
-            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            tx.put(BODIES, &hash_key, body_value.bytes())?;
+            tx.put(HEADERS, &hash_key, &header.rlp_encode())?;
+            tx.put(BODIES, &hash_key, &body.rlp_encode())?;
 
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
+            for (index, transaction) in body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
                 // Key: tx_hash + block_hash
                 let mut composite_key = Vec::with_capacity(64);

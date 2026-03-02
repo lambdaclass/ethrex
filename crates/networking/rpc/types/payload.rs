@@ -121,6 +121,7 @@ impl ExecutionPayload {
                 .collect::<Result<Vec<_>, RLPDecodeError>>()?,
             ommers: vec![],
             withdrawals: self.withdrawals,
+            rlp_cache: Default::default(),
         };
         let header = BlockHeader {
             parent_hash: self.parent_hash,

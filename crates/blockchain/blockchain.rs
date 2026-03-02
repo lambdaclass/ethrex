@@ -1315,6 +1315,7 @@ impl Blockchain {
                 .get_block_header_by_hash(parent_hash)
                 .map_err(ChainError::StoreError)?
                 .ok_or(ChainError::ParentNotFound)?;
+            let parent_state_root = parent_header.state_root;
 
             // This assumes that the user has the necessary state stored already,
             // so if the user only has the state previous to the first block, it
@@ -1449,7 +1450,12 @@ impl Blockchain {
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), account_updates_list, execution_result)?;
+            self.store_block(
+                block.clone(),
+                account_updates_list,
+                execution_result,
+                parent_state_root,
+            )?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -1851,11 +1857,13 @@ impl Blockchain {
         block: Block,
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
+        parent_state_root: H256,
     ) -> Result<(), ChainError> {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
         let update_batch = UpdateBatch {
+            parent_state_root,
             account_updates: account_updates_list.state_updates,
             storage_updates: account_updates_list.storage_updates,
             receipts: vec![(block.hash(), execution_result.receipts)],
@@ -1870,6 +1878,11 @@ impl Blockchain {
 
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
+        let parent_state_root = self
+            .storage
+            .get_block_header_by_hash(block.header.parent_hash)?
+            .map(|h| h.state_root)
+            .unwrap_or_default();
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
@@ -1887,7 +1900,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, account_updates_list, res, parent_state_root);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -1916,6 +1929,8 @@ impl Blockchain {
             self.storage.add_pending_block(block)?;
             return Err(ChainError::ParentNotFound);
         };
+
+        let parent_state_root = parent_header.state_root;
 
         let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
             // If witness pre-generation is enabled, we wrap the db with a logger
@@ -1974,7 +1989,7 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, account_updates_list, res, parent_state_root);
 
         let stored = Instant::now();
 
@@ -2253,6 +2268,7 @@ impl Blockchain {
             .get_block_header_by_hash(first_block_header.parent_hash)
             .map_err(|e| (ChainError::StoreError(e), None))?
             .ok_or((ChainError::ParentNotFound, None))?;
+        let parent_state_root = parent_header.state_root;
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
             parent_header,
@@ -2337,6 +2353,7 @@ impl Blockchain {
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
         let update_batch = UpdateBatch {
+            parent_state_root,
             account_updates: state_updates,
             storage_updates: accounts_updates,
             blocks,

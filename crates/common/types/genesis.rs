@@ -755,6 +755,7 @@ impl Genesis {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            rlp_cache: Default::default(),
         }
     }
 

@@ -813,6 +813,10 @@ impl L1Committer {
                     .ok_or(CommitterError::FailedToGetInformationFromStorage(
                         "no account updated".to_owned(),
                     ))?;
+                let parent_state_root = checkpoint_store
+                    .get_block_header_by_hash(potential_batch_block.header.parent_hash)?
+                    .map(|h| h.state_root)
+                    .unwrap_or_default();
                 checkpoint_blockchain.store_block(
                     potential_batch_block.clone(),
                     account_updates_list,
@@ -822,6 +826,7 @@ impl L1Committer {
                         // Use the block header's gas_used
                         block_gas_used: potential_batch_block.header.gas_used,
                     },
+                    parent_state_root,
                 )?;
             } else {
                 warn!(

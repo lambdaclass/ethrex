@@ -181,6 +181,7 @@ pub fn create_payload(
         transactions: Vec::new(),
         ommers: Vec::new(),
         withdrawals: args.withdrawals.clone(),
+        rlp_cache: Default::default(),
     };
 
     // Delay applying withdrawals until the payload is requested and built

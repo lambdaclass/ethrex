@@ -73,6 +73,7 @@ impl RLPDecode for Block {
             transactions,
             ommers,
             withdrawals,
+            rlp_cache: OnceCell::new(),
         };
         let block = Block::new(header, body);
         Ok((block, remaining))
@@ -86,6 +87,9 @@ pub struct BlockHeader {
     #[serde(skip)]
     #[rkyv(with=rkyv::with::Skip)]
     pub hash: OnceCell<BlockHash>,
+    #[serde(skip)]
+    #[rkyv(with=rkyv::with::Skip)]
+    pub rlp_cache: OnceCell<Bytes>,
     #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub parent_hash: H256,
     #[serde(rename = "sha3Uncles")]
@@ -159,6 +163,7 @@ impl PartialEq for BlockHeader {
     fn eq(&self, other: &Self) -> bool {
         let BlockHeader {
             hash: _,
+            rlp_cache: _,
             parent_hash,
             ommers_hash,
             coinbase,
@@ -268,9 +273,14 @@ impl RLPDecode for BlockHeader {
         let (block_access_list_hash, decoder) = decoder.decode_optional_field();
         let (slot_number, decoder) = decoder.decode_optional_field();
 
+        let remaining = decoder.finish()?;
+        let consumed = rlp.len() - remaining.len();
+        let rlp_cache = OnceCell::new();
+        let _ = rlp_cache.set(Bytes::copy_from_slice(&rlp[..consumed]));
         Ok((
             BlockHeader {
                 hash: OnceCell::new(),
+                rlp_cache,
                 parent_hash,
                 ommers_hash,
                 coinbase,
@@ -295,21 +305,30 @@ impl RLPDecode for BlockHeader {
                 block_access_list_hash,
                 slot_number,
             },
-            decoder.finish()?,
+            remaining,
         ))
     }
 }
 
 // The body of a block on the chain
-#[derive(
-    Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive,
-)]
+#[derive(Clone, Debug, Eq, Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 pub struct BlockBody {
     pub transactions: Vec<Transaction>,
     // TODO: ommers list is always empty, so we can remove it
     #[serde(rename = "uncles")]
     pub ommers: Vec<BlockHeader>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    #[serde(skip)]
+    #[rkyv(with=rkyv::with::Skip)]
+    pub rlp_cache: OnceCell<Bytes>,
+}
+
+impl PartialEq for BlockBody {
+    fn eq(&self, other: &Self) -> bool {
+        self.transactions == other.transactions
+            && self.ommers == other.ommers
+            && self.withdrawals == other.withdrawals
+    }
 }
 
 impl BlockBody {
@@ -318,15 +337,32 @@ impl BlockBody {
             transactions: Vec::new(),
             ommers: Vec::new(),
             withdrawals: Some(Vec::new()),
+            rlp_cache: OnceCell::new(),
         }
+    }
+
+    /// Returns the RLP encoding, using the cached value if available.
+    pub fn rlp_encode(&self) -> Bytes {
+        self.rlp_cache
+            .get_or_init(|| {
+                let mut buf = Vec::new();
+                RLPEncode::encode(self, &mut buf);
+                Bytes::from(buf)
+            })
+            .clone()
     }
 
     pub fn get_transactions_with_sender(&self) -> Result<Vec<(&Transaction, Address)>, EcdsaError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
+        // We also pre-compute tx hashes here since we're already iterating
+        // in parallel — the OnceCell cache makes downstream hash() calls free.
         self.transactions
             .par_iter()
-            .map(|tx| Ok((tx, tx.sender()?)))
+            .map(|tx| {
+                let _ = tx.hash();
+                Ok((tx, tx.sender()?))
+            })
             .collect::<Result<Vec<(&Transaction, Address)>, EcdsaError>>()
     }
 }
@@ -374,26 +410,40 @@ impl RLPDecode for BlockBody {
         let (transactions, decoder) = decoder.decode_field("transactions")?;
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
+        let remaining = decoder.finish()?;
+        let consumed = rlp.len() - remaining.len();
+        let rlp_cache = OnceCell::new();
+        let _ = rlp_cache.set(Bytes::copy_from_slice(&rlp[..consumed]));
         Ok((
             BlockBody {
                 transactions,
                 ommers,
                 withdrawals,
+                rlp_cache,
             },
-            decoder.finish()?,
+            remaining,
         ))
     }
 }
 
 impl BlockHeader {
     pub fn compute_block_hash(&self) -> H256 {
-        let mut buf = vec![];
-        self.encode(&mut buf);
-        keccak(buf)
+        keccak(self.rlp_encode())
     }
 
     pub fn hash(&self) -> H256 {
         *self.hash.get_or_init(|| self.compute_block_hash())
+    }
+
+    /// Returns the RLP encoding, using the cached value if available.
+    pub fn rlp_encode(&self) -> Bytes {
+        self.rlp_cache
+            .get_or_init(|| {
+                let mut buf = Vec::new();
+                self.encode(&mut buf);
+                Bytes::from(buf)
+            })
+            .clone()
     }
 }
 

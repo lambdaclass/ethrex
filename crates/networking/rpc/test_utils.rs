@@ -96,6 +96,7 @@ async fn add_blocks_with_transactions(
             transactions: txs_per_block.clone(),
             ommers: Default::default(),
             withdrawals: Default::default(),
+            rlp_cache: Default::default(),
         };
         let block_header = test_header(block_num);
         let block = Block::new(block_header.clone(), block_body);

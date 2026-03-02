@@ -34,6 +34,7 @@ pub fn migrate_block_header(header: LibmdbxBlockHeader) -> BlockHeader {
         requests_hash: header.requests_hash,
         block_access_list_hash: None,
         slot_number: None,
+        rlp_cache: Default::default(),
     }
 }
 
@@ -56,6 +57,7 @@ pub fn migrate_block_body(body: LibmdbxBlockBody) -> BlockBody {
                 })
                 .collect()
         }),
+        rlp_cache: Default::default(),
     }
 }
 

@@ -141,6 +141,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         requests_hash,
         block_access_list_hash: None,
         slot_number: None,
+        rlp_cache: Default::default(),
     };
     let block = Block::new(header, body);
 
