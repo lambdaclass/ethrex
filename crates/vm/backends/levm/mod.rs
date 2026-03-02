@@ -21,6 +21,7 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
+use ethrex_levm::account::LevmAccount;
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
@@ -28,10 +29,11 @@ use ethrex_levm::constants::{
 use ethrex_levm::db::Database;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::gas_cost::{ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::utils::get_base_fee_per_blob_gas;
+use ethrex_levm::utils::{create_eth_transfer_log, get_base_fee_per_blob_gas};
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -325,6 +327,7 @@ impl LEVM {
         block: &Block,
         store: Arc<dyn Database>,
         vm_type: VMType,
+        cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
@@ -342,6 +345,9 @@ impl LEVM {
         sender_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
+                if cancelled.load(Ordering::Relaxed) {
+                    return;
+                }
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
                 // Execute transactions sequentially within sender group
@@ -388,6 +394,7 @@ impl LEVM {
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
+        cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<(), EvmError> {
         let accounts = bal.accounts();
         if accounts.is_empty() {
@@ -400,6 +407,10 @@ impl LEVM {
         accounts.par_iter().for_each(|ac| {
             let _ = store.get_account_state(ac.address);
         });
+
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
         // Phase 2: Prefetch storage slots and contract code in parallel.
         // Storage is flattened to (address, slot) pairs so rayon can distribute
@@ -416,6 +427,10 @@ impl LEVM {
         slots.par_iter().for_each(|(addr, key)| {
             let _ = store.get_storage_value(*addr, *key);
         });
+
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
         // Code prefetch: get_account_state is a cache hit from Phase 1
         accounts.par_iter().for_each(|ac| {
