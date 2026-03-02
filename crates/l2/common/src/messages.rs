@@ -250,6 +250,7 @@ pub fn get_balance_diffs(
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
