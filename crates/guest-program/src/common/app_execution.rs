@@ -24,7 +24,6 @@ use ethrex_common::{Address, U256};
 
 use crate::l2::ProgramOutput;
 use crate::l2::messages::{compute_message_digests, get_batch_messages};
-use crate::l2::messages::{compute_message_digests, get_batch_messages};
 
 use super::app_state::{AppState, AppStateError};
 use super::app_types::AppProgramInput;

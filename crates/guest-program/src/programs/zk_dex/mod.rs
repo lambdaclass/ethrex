@@ -76,11 +76,6 @@ impl GuestProgram for ZkDexGuestProgram {
                 .map_err(|e| GuestProgramError::Serialization(e.to_string()))?;
             Ok(bytes.to_vec())
         }
-
-        // 4. Re-serialize as AppProgramInput via rkyv.
-        let bytes = rkyv::to_bytes::<RkyvError>(&app_input)
-            .map_err(|e| GuestProgramError::Serialization(e.to_string()))?;
-        Ok(bytes.to_vec())
     }
 
     fn encode_output(&self, raw_output: &[u8]) -> Result<Vec<u8>, GuestProgramError> {
@@ -174,8 +169,11 @@ fn analyze_zk_dex_transactions(
 
                 accounts.insert(to_addr);
 
+                has_non_privileged = true;
+
                 // Withdrawal via CommonBridgeL2.
                 if to_addr == COMMON_BRIDGE_L2_ADDRESS {
+                    has_withdrawal = true;
                     accounts.insert(COMMON_BRIDGE_L2_ADDRESS);
                     continue;
                 }
@@ -338,8 +336,10 @@ fn analyze_zk_dex_transactions(
         for block in blocks {
             accounts.insert(block.header.coinbase);
         }
-        if let Some(op) = fc.operator_fee_config {
-            accounts.insert(op.operator_fee_vault);
+        for fc in fee_configs {
+            if let Some(op) = fc.operator_fee_config {
+                accounts.insert(op.operator_fee_vault);
+            }
         }
     }
 
