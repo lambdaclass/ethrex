@@ -215,13 +215,20 @@ pub fn refund_sender(
     vm.substate.refunded_gas = refunded_gas;
 
     // EIP-7778: Separate block vs user gas accounting for Amsterdam+
+    // Block header gas_used = max(regular_dimension, state_dimension) per EIP-7778.
+    // Receipt cumulative_gas_used = post-refund total (what user pays).
     if vm.env.config.fork >= Fork::Amsterdam {
         // EIP-7623 floor applies to the regular (non-state) gas component only.
-        // State gas is a separate dimension; the floor guards against calldata abuse
-        // in the regular dimension only.
         let floor = vm.get_min_gas_used()?;
         let state_gas = vm.state_gas_used;
-        let regular_gas = gas_used_pre_refund.saturating_sub(state_gas);
+        // Exclude state gas that was spilled into gas_left in child frames
+        // that then reverted. This gas is consumed (user pays for it) but
+        // is NOT regular gas — it was charged via charge_state_gas and the
+        // child's state_gas_used was restored on revert.
+        let orphaned_spill = vm.reverted_child_state_spill;
+        let regular_gas = gas_used_pre_refund
+            .saturating_sub(state_gas)
+            .saturating_sub(orphaned_spill);
         let effective_regular = regular_gas.max(floor);
         ctx_result.gas_used = effective_regular
             .checked_add(state_gas)

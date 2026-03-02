@@ -819,20 +819,21 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
 
-        // EIP-8037: Save snapshot BEFORE charging CREATE's account state gas.
-        // On initcode revert, we restore these to undo the state gas.
-        let create_reservoir_snapshot = self.state_gas_reservoir;
-        let create_state_gas_used_snapshot = self.state_gas_used;
-
         // EIP-8037 (Amsterdam+): charge state gas for new account creation.
         // Charged BEFORE early-failure checks (balance/depth/nonce) — state gas is
-        // consumed even if the CREATE fails early. Only initcode revert refunds it.
+        // consumed even if the CREATE fails early, and survives initcode revert.
         if self.env.config.fork >= Fork::Amsterdam {
             let state_gas = gas_cost::STATE_BYTES_PER_NEW_ACCOUNT
                 .checked_mul(gas_cost::COST_PER_STATE_BYTE)
                 .ok_or(ExceptionalHalt::OutOfGas)?;
             self.increase_state_gas(state_gas)?;
         }
+
+        // EIP-8037: Save snapshot AFTER charging CREATE's account state gas.
+        // The CREATE account charge survives initcode revert per EELS — only the
+        // child's own state gas charges (e.g., SSTOREs in initcode) are undone.
+        let create_reservoir_snapshot = self.state_gas_reservoir;
+        let create_state_gas_used_snapshot = self.state_gas_used;
 
         // Validations that push 0 (FAIL) to the stack and return reserved gas to deployer
         // Per reference: these checks happen BEFORE the new address is tracked for BAL.
@@ -1219,6 +1220,20 @@ impl<'a> VM<'a> {
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
+                // EIP-8037: Track state gas that spilled into gas_left during
+                // this child's execution. The child consumed it (halted), but
+                // state_gas_used is about to be restored, so the spill becomes
+                // "orphaned" — in gas_used but in neither regular nor state
+                // counters. We track it to exclude from the regular dimension.
+                let child_state_gas = self
+                    .state_gas_used
+                    .saturating_sub(state_gas_used_snapshot);
+                let child_reservoir_consumed = reservoir_snapshot
+                    .saturating_sub(self.state_gas_reservoir);
+                let child_spill = child_state_gas
+                    .saturating_sub(child_reservoir_consumed);
+                self.reverted_child_state_spill += child_spill;
+
                 self.state_gas_reservoir = reservoir_snapshot;
                 self.state_gas_used = state_gas_used_snapshot;
                 self.current_call_frame.stack.push(FAIL)?;
@@ -1270,6 +1285,16 @@ impl<'a> VM<'a> {
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
             }
             TxResult::Revert(err) => {
+                // EIP-8037: Track orphaned spill (same logic as handle_return_call)
+                let child_state_gas = self
+                    .state_gas_used
+                    .saturating_sub(state_gas_used_snapshot);
+                let child_reservoir_consumed = reservoir_snapshot
+                    .saturating_sub(self.state_gas_reservoir);
+                let child_spill = child_state_gas
+                    .saturating_sub(child_reservoir_consumed);
+                self.reverted_child_state_spill += child_spill;
+
                 self.state_gas_reservoir = reservoir_snapshot;
                 self.state_gas_used = state_gas_used_snapshot;
                 // If revert we have to copy the return_data
