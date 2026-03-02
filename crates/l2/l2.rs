@@ -11,5 +11,5 @@ pub use sequencer::configs::{
 };
 pub use sequencer::start_l2;
 
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 pub use sequencer::native_rollup::{NativeRollupConfig, start_native_rollup_l2};

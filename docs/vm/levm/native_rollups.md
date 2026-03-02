@@ -26,7 +26,7 @@ Individual Block Fields + Transactions (RLP) + ExecutionWitness (JSON) + L1 Anch
 
 ## EXECUTE Precompile
 
-The [L2Beat native rollups book](https://native-rollups.l2beat.com/) defines two variants: `apply_body` (individual fields, skips header validation) and `state_transition` (full headers, complete STF). We implement `apply_body` — it receives individual block fields, skips full header validation (no parent hash chain, no timestamp ordering, no ommers hash check), and re-executes transactions to verify the resulting state root and receipts root.
+The [L2Beat native rollups book](https://native-rollup.l2beat.com/) defines two variants: `apply_body` (individual fields, skips header validation) and `state_transition` (full headers, complete STF). We implement `apply_body` — it receives individual block fields, skips full header validation (no parent hash chain, no timestamp ordering, no ommers hash check), and re-executes transactions to verify the resulting state root and receipts root.
 
 The core logic lives in `execute_precompile.rs`. It parses ABI-encoded calldata, computes the base fee from explicit parent fields (EIP-1559), writes the l1Anchor to the L1Anchor predeploy's storage slot 0 (system transaction — step 5 of `apply_body`), builds a synthetic block header from individual fields, and orchestrates the full verification flow: state root checks, block execution, and receipts root verification.
 
@@ -227,24 +227,24 @@ Solidity library for MPT proof verification: trie traversal, RLP decoding, accou
 
 ## Feature Flag
 
-All native rollups code is gated behind the `native-rollups` feature flag:
+All native rollups code is gated behind the `native-rollup` feature flag:
 
 ```toml
 # In crates/vm/levm/Cargo.toml
 [features]
-native-rollups = []
+native-rollup = []
 
 # In crates/vm/Cargo.toml (propagates to levm)
 [features]
-native-rollups = ["ethrex-levm/native-rollups"]
+native-rollup = ["ethrex-levm/native-rollup"]
 
 # In cmd/ethrex/Cargo.toml (enables for the binary)
 [features]
-native-rollups = ["ethrex-vm/native-rollups"]
+native-rollup = ["ethrex-vm/native-rollup"]
 
 # In test/Cargo.toml (enables for integration tests)
 [features]
-native-rollups = ["ethrex-levm/native-rollups"]
+native-rollup = ["ethrex-levm/native-rollup"]
 ```
 
 This ensures the precompile code is only compiled when explicitly opted in.

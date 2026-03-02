@@ -102,14 +102,14 @@ impl L2Command {
             println!("Initializing L2");
         }
         if l2_options.sequencer_opts.native_rollups {
-            #[cfg(feature = "native-rollups")]
+            #[cfg(feature = "native-rollup")]
             {
                 l2::init_native_rollup_l2(l2_options, log_filter_handler).await?;
                 return Ok(());
             }
-            #[cfg(not(feature = "native-rollups"))]
+            #[cfg(not(feature = "native-rollup"))]
             return Err(eyre::eyre!(
-                "--native-rollups requires the native-rollups feature flag"
+                "--native-rollup requires the native-rollup feature flag"
             ));
         }
         l2::init_l2(l2_options, log_filter_handler).await?;
@@ -634,14 +634,14 @@ impl Command {
             }
             Command::Deploy { options } => {
                 if options.native_rollups {
-                    #[cfg(feature = "native-rollups")]
+                    #[cfg(feature = "native-rollup")]
                     {
                         l2::deployer::deploy_native_rollup_contracts(options).await?;
                         return Ok(());
                     }
-                    #[cfg(not(feature = "native-rollups"))]
+                    #[cfg(not(feature = "native-rollup"))]
                     return Err(eyre::eyre!(
-                        "--native-rollups requires the native-rollups feature flag"
+                        "--native-rollup requires the native-rollup feature flag"
                     ));
                 }
                 deploy_l1_contracts(options).await?;

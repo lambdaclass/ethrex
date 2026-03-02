@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod gen_db;
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 pub mod guest_program_state_db;
 
 // Type aliases for cache storage maps

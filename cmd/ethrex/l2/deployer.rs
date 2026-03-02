@@ -42,7 +42,7 @@ use ethrex_config::networks::{
     LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, LOCAL_DEVNETL2_GENESIS_CONTENTS,
 };
 
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 use ethrex_common::types::{ChainConfig, GenesisAccount};
 
 #[derive(Parser)]
@@ -380,7 +380,7 @@ pub struct DeployerOptions {
     )]
     pub initial_fee_token: Option<Address>,
     #[arg(
-        long = "native-rollups",
+        long = "native-rollup",
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_NATIVE_ROLLUPS",
@@ -389,9 +389,9 @@ pub struct DeployerOptions {
         help = "If set, deploy NativeRollup.sol instead of the standard L2 contracts."
     )]
     pub native_rollups: bool,
-    #[cfg(feature = "native-rollups")]
+    #[cfg(feature = "native-rollup")]
     #[arg(
-        long = "native-rollups.relayer-pk",
+        long = "native-rollup.relayer-pk",
         value_name = "PRIVATE_KEY",
         value_parser = parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
@@ -482,7 +482,7 @@ impl Default for DeployerOptions {
             deploy_router: false,
             initial_fee_token: None,
             native_rollups: false,
-            #[cfg(feature = "native-rollups")]
+            #[cfg(feature = "native-rollup")]
             native_rollups_relayer_pk: SecretKey::from_slice(
                 &hex::decode("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
                     .expect("Valid hex"),
@@ -583,21 +583,21 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 ));
 
 /// Creation bytecode of the NativeRollup contract (for deployment to L1).
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 const NATIVE_ROLLUP_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/contracts/solc_out/NativeRollup.bytecode"
 ));
 
 /// Runtime bytecode of the L2Bridge contract (for L2 genesis predeploy).
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 const L2_BRIDGE_RUNTIME_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/contracts/solc_out/L2Bridge.bytecode"
 ));
 
 /// Runtime bytecode of the L1Anchor contract (for L2 genesis predeploy).
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 const L1_ANCHOR_RUNTIME_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/contracts/solc_out/L1Anchor.bytecode"
@@ -1757,7 +1757,7 @@ fn write_contract_addresses_to_env(
 // Native Rollups Deployment
 // =============================================================================
 
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 pub async fn deploy_native_rollup_contracts(
     opts: DeployerOptions,
 ) -> Result<Address, DeployerError> {
@@ -1947,7 +1947,7 @@ pub async fn deploy_native_rollup_contracts(
 /// Pre-deploys L2Bridge and L1Anchor at their predeploy addresses, funds the
 /// relayer and test accounts, and configures a Shanghai-only chain (no Cancun/
 /// Prague — matches EXECUTE precompile semantics).
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 fn build_native_l2_genesis(relayer_address: Address) -> Result<Genesis, DeployerError> {
     use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE;
     use ethrex_levm::execute_precompile::L1_ANCHOR;

@@ -77,12 +77,12 @@ down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
 ifdef NATIVE_ROLLUPS
-  NATIVE_ROLLUPS? := native-rollups
+  NATIVE_ROLLUPS? := native-rollup
 else
   NATIVE_ROLLUPS? :=
 endif
 
-init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client (set NATIVE_ROLLUPS=1 to enable native-rollups)
+init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client (set NATIVE_ROLLUPS=1 to enable native-rollup)
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "$(NATIVE_ROLLUPS?)" -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
@@ -97,11 +97,11 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 ifdef NATIVE_ROLLUPS
 deploy-l1: ## 📜 Deploys NativeRollup.sol to L1 (native rollups mode)
 	COMPILE_CONTRACTS=true \
-	cargo run --release --features l2,l2-sql,native-rollups --manifest-path ../../Cargo.toml -- l2 deploy \
+	cargo run --release --features l2,l2-sql,native-rollup --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--native-rollups \
-	--native-rollups.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
+	--native-rollup \
+	--native-rollup.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
 	--genesis-l2-path ${NATIVE_L2_GENESIS_FILE_PATH} \
 	--on-chain-proposer-owner 0x0000000000000000000000000000000000000000 \
 	--bridge-owner 0x0000000000000000000000000000000000000000
@@ -155,13 +155,13 @@ ifdef NATIVE_ROLLUPS
 init-l2: ## 🚀 Initializes a native rollup L2 client
 	export $(shell cat ../../cmd/.env | xargs); \
 	ETHREX_NO_MONITOR=true \
-	cargo run --release --features l2,l2-sql,native-rollups --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features l2,l2-sql,native-rollup --manifest-path ../../Cargo.toml -- \
 	l2 \
-	--native-rollups \
-	--native-rollups.block-time 10000 \
-	--native-rollups.contract-address $${ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS} \
-	--native-rollups.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
-	--native-rollups.l1-pk ${L1_PRIVATE_KEY} \
+	--native-rollup \
+	--native-rollup.block-time 10000 \
+	--native-rollup.contract-address $${ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS} \
+	--native-rollup.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
+	--native-rollup.l1-pk ${L1_PRIVATE_KEY} \
 	--network ${NATIVE_L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \

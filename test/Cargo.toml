@@ -11,7 +11,7 @@ path = "src/lib.rs"
 rocksdb = ["ethrex-storage/rocksdb"]
 l2 = []
 c-kzg = ["ethrex-common/c-kzg"]
-native-rollups = ["ethrex-levm/native-rollups"]
+native-rollup = ["ethrex-levm/native-rollup"]
 
 [dependencies]
 ethrex-common.workspace = true

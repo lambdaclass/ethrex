@@ -129,7 +129,7 @@ sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
 
-native-rollups = ["ethrex-vm/native-rollups", "ethrex-l2?/native-rollups", "dep:ethrex-levm", "dep:tempfile"]
+native-rollup = ["ethrex-vm/native-rollup", "ethrex-l2?/native-rollup", "dep:ethrex-levm", "dep:tempfile"]
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]
 

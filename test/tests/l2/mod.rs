@@ -1,6 +1,6 @@
 #[cfg(feature = "l2")]
 mod integration_tests;
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 mod native_rollup;
 mod sdk;
 #[cfg(feature = "l2")]

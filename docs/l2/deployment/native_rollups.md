@@ -13,7 +13,7 @@ The native rollup L2 integration wires together the EXECUTE precompile (EVM-leve
 - Compiles `NativeRollup.sol` (creation bytecode), `L2Bridge.sol` and `L1Anchor.sol` (runtime bytecodes) via solc during the build.
 
 **Deployer** (`cmd/ethrex/l2/deployer.rs`):
-- New `--native-rollups` deploy path that:
+- New `--native-rollup` deploy path that:
   1. Generates the L2 genesis file dynamically with pre-deployed L2Bridge (`0x...fffd`) and L1Anchor (`0x...fffe`), a funded relayer account, and test accounts.
   2. Computes the L2 genesis state root from the generated genesis.
   3. Deploys `NativeRollup.sol` to L1 with the genesis state root.
@@ -23,13 +23,13 @@ The native rollup L2 integration wires together the EXECUTE precompile (EVM-leve
 The L2Bridge is preminted with an effectively infinite ETH balance (`U256::MAX / 2`) so it can cover any number of L1-to-L2 deposits without running out.
 
 **CLI options** (`cmd/ethrex/l2/options.rs`):
-- `NativeRollupOptions` struct with flags: `--native-rollups`, `--native-rollups.contract-address`, `--native-rollups.relayer-pk`, `--native-rollups.l1-pk`, `--native-rollups.block-time`, `--native-rollups.advance-interval`.
+- `NativeRollupOptions` struct with flags: `--native-rollup`, `--native-rollup.contract-address`, `--native-rollup.relayer-pk`, `--native-rollup.l1-pk`, `--native-rollup.block-time`, `--native-rollup.advance-interval`.
 
 **L2 initializer** (`cmd/ethrex/l2/initializers.rs`):
 - `init_native_rollup_l2()` boots the L2 node with `BlockchainType::L1`. This is intentional: native rollups run L2 blocks through an unmodified L1 execution environment (the EXECUTE precompile re-executes them on L1). The L2 must produce blocks compatible with L1's precompile set and execution rules, so it uses the same `BlockchainType` as L1.
 
 **Command routing** (`cmd/ethrex/l2/command.rs`):
-- Routes to the native rollup deploy/init paths when `--native-rollups` is set.
+- Routes to the native rollup deploy/init paths when `--native-rollup` is set.
 
 **Makefile** (`crates/l2/Makefile`):
 - Conditional `deploy-l1` and `init-l2` targets activated by `NATIVE_ROLLUPS=1`.
@@ -111,7 +111,7 @@ All commands are run from the repository root.
 Build the binary first (this compiles the Solidity contracts and embeds them):
 
 ```shell
-COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,native-rollups
+COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,native-rollup
 ```
 
 #### Terminal 1 — Start L1
@@ -135,8 +135,8 @@ Deploy `NativeRollup.sol` to L1 and generate the L2 genesis:
 ./target/release/ethrex l2 deploy \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-  --native-rollups \
-  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollup \
+  --native-rollup.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
   --genesis-l2-path fixtures/genesis/native_l2.json
 ```
 
@@ -153,10 +153,10 @@ Save the contract address and start the L2 node:
 source cmd/.env
 
 ./target/release/ethrex l2 \
-  --native-rollups \
-  --native-rollups.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
-  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
-  --native-rollups.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --native-rollup \
+  --native-rollup.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  --native-rollup.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollup.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --network fixtures/genesis/native_l2.json \
   --http.port 1729 --http.addr 0.0.0.0 \
   --datadir /tmp/ethrex_l2 \
@@ -304,7 +304,7 @@ rex balance $L1_RECEIVER --rpc-url http://localhost:8545
 > [!TIP]
 > The integration test at `test/tests/l2/native_rollup.rs` automates the full deposit/withdraw/counter roundtrip including proof fetching and claim submission. Run it with:
 > ```shell
-> cargo test -p ethrex-test --features native-rollups -- l2::native_rollup --nocapture
+> cargo test -p ethrex-test --features native-rollup -- l2::native_rollup --nocapture
 > ```
 
 ### Cleaning up

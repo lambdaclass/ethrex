@@ -4,7 +4,7 @@
 //!   1. Start L1:      `NATIVE_ROLLUPS=1 make -C crates/l2 rm-db-l1 init-l1`
 //!   2. Deploy:        `NATIVE_ROLLUPS=1 make -C crates/l2 deploy-l1`
 //!   3. Start L2:      `NATIVE_ROLLUPS=1 make -C crates/l2 rm-db-l2 init-l2`
-//!   4. Run this test: `cargo test -p ethrex-test --features native-rollups -- l2::native_rollup_bridge --nocapture`
+//!   4. Run this test: `cargo test -p ethrex-test --features native-rollup -- l2::native_rollup_bridge --nocapture`
 
 #![allow(
     clippy::expect_used,

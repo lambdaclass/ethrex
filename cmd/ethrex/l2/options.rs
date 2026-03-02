@@ -23,7 +23,7 @@ use std::{
 };
 use tracing::Level;
 
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 use ethrex_l2::NativeRollupConfig;
 
 use clap::ArgAction;
@@ -113,7 +113,7 @@ pub struct SequencerOptions {
     pub no_monitor: bool,
     #[arg(
         id = "native_rollups",
-        long = "native-rollups",
+        long = "native-rollup",
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_NATIVE_ROLLUPS",
@@ -122,16 +122,16 @@ pub struct SequencerOptions {
         help = "Enable native rollup L2 mode."
     )]
     pub native_rollups: bool,
-    #[cfg(feature = "native-rollups")]
+    #[cfg(feature = "native-rollup")]
     #[command(flatten)]
     pub native_rollup_opts: NativeRollupOptions,
 }
 
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 #[derive(Parser, Debug)]
 pub struct NativeRollupOptions {
     #[arg(
-        long = "native-rollups.contract-address",
+        long = "native-rollup.contract-address",
         value_name = "ADDRESS",
         env = "ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS",
         help_heading = "Native rollups options",
@@ -139,7 +139,7 @@ pub struct NativeRollupOptions {
     )]
     pub contract_address: Option<Address>,
     #[arg(
-        long = "native-rollups.relayer-pk",
+        long = "native-rollup.relayer-pk",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
@@ -149,7 +149,7 @@ pub struct NativeRollupOptions {
     )]
     pub relayer_private_key: SecretKey,
     #[arg(
-        long = "native-rollups.l1-pk",
+        long = "native-rollup.l1-pk",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_L1_PK",
@@ -159,7 +159,7 @@ pub struct NativeRollupOptions {
     )]
     pub l1_private_key: SecretKey,
     #[arg(
-        long = "native-rollups.block-time",
+        long = "native-rollup.block-time",
         id = "native_rollups_block_time_ms",
         default_value = "10000",
         value_name = "UINT64",
@@ -169,7 +169,7 @@ pub struct NativeRollupOptions {
     )]
     pub block_time_ms: u64,
     #[arg(
-        long = "native-rollups.advance-interval",
+        long = "native-rollup.advance-interval",
         id = "native_rollups_advance_interval_ms",
         default_value = "3000",
         value_name = "UINT64",
@@ -180,7 +180,7 @@ pub struct NativeRollupOptions {
     pub advance_interval_ms: u64,
 }
 
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 impl Default for NativeRollupOptions {
     fn default() -> Self {
         Self {
@@ -1247,7 +1247,7 @@ impl Default for ProverClientOptions {
     }
 }
 
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 impl NativeRollupOptions {
     pub fn to_config(
         &self,

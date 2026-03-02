@@ -367,7 +367,7 @@ pub async fn init_l2(
     Ok(())
 }
 
-#[cfg(feature = "native-rollups")]
+#[cfg(feature = "native-rollup")]
 pub async fn init_native_rollup_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -427,7 +427,7 @@ pub async fn init_native_rollup_l2(
     let native_opts = &opts.sequencer_opts.native_rollup_opts;
     let contract_address = native_opts
         .contract_address
-        .ok_or_else(|| eyre::eyre!("--native-rollups.contract-address is required"))?;
+        .ok_or_else(|| eyre::eyre!("--native-rollup.contract-address is required"))?;
 
     let l1_rpc_url = opts
         .sequencer_opts

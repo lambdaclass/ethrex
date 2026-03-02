@@ -97,4 +97,4 @@ metrics = ["ethrex-blockchain/metrics"]
 
 l2 = ["ethrex-guest-program/l2"]
 
-native-rollups = ["ethrex-vm/native-rollups", "dep:k256", "dep:ethrex-crypto", "dep:rustc-hash"]
+native-rollup = ["ethrex-vm/native-rollup", "dep:k256", "dep:ethrex-crypto", "dep:rustc-hash"]

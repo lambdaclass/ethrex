@@ -257,8 +257,8 @@ pub const P256VERIFY: Precompile = Precompile {
 };
 
 /// EXECUTE precompile address (0x0101) for Native Rollups (EIP-8079 PoC).
-/// Only available when the `native-rollups` feature is enabled.
-#[cfg(feature = "native-rollups")]
+/// Only available when the `native-rollup` feature is enabled.
+#[cfg(feature = "native-rollup")]
 pub const EXECUTE: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -297,7 +297,7 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    #[cfg(feature = "native-rollups")]
+    #[cfg(feature = "native-rollup")]
     if *address == EXECUTE.address {
         return true;
     }
@@ -382,7 +382,7 @@ pub fn execute_precompile(
     };
 
     // EXECUTE precompile is dispatched before the const table (feature-gated)
-    #[cfg(feature = "native-rollups")]
+    #[cfg(feature = "native-rollup")]
     if address == EXECUTE.address {
         return crate::execute_precompile::execute_precompile(calldata, gas_remaining, fork);
     }
