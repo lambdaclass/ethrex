@@ -104,11 +104,6 @@ contract CommonBridge is
     /// @dev If set to address(0), ETH is the native token.
     address public NATIVE_TOKEN_L1;
 
-    /// @notice Scale factor for converting between L1 token decimals and L2 18-decimal amounts.
-    /// @dev NATIVE_TOKEN_SCALE_FACTOR = 10^(18 - l1_decimals).
-    /// L2 amount = L1 amount * NATIVE_TOKEN_SCALE_FACTOR.
-    uint256 public NATIVE_TOKEN_SCALE_FACTOR;
-
     /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
     uint256 private pendingPrivilegedTxIndex;
 
@@ -125,6 +120,11 @@ contract CommonBridge is
     /// @notice Mapping of chain ID to index of the first unprocessed message hash in the array.
     mapping(uint256 chainId => uint256 index)
         public pendingMessagesIndexPerChain;
+
+    /// @notice Scale factor for converting between L1 token decimals and L2 18-decimal amounts.
+    /// @dev NATIVE_TOKEN_SCALE_FACTOR = 10^(18 - l1_decimals).
+    /// L2 amount = L1 amount * NATIVE_TOKEN_SCALE_FACTOR.
+    uint256 public NATIVE_TOKEN_SCALE_FACTOR;
 
     modifier onlyOnChainProposer() {
         require(
