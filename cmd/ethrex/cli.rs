@@ -637,28 +637,32 @@ impl FromStr for LogColor {
 }
 
 pub fn remove_db(datadir: &Path, force: bool) {
-    init_datadir(datadir);
-
-    if datadir.exists() {
-        if force {
-            std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
-            info!("Database removed successfully.");
-        } else {
-            print!("Are you sure you want to remove the database? (y/n): ");
-            io::stdout().flush().unwrap();
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
-
-            if input.trim().eq_ignore_ascii_case("y") {
-                std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
-                println!("Database removed successfully.");
-            } else {
-                println!("Operation canceled.");
-            }
-        }
-    } else {
+    if !datadir.exists() {
         warn!("Data directory does not exist: {datadir:?}");
+        return;
+    }
+
+    if !datadir.is_dir() {
+        warn!("Data path exists but is not a directory: {datadir:?}");
+        return;
+    }
+
+    if force {
+        std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
+        info!("Database removed successfully.");
+    } else {
+        print!("Are you sure you want to remove the database? (y/n): ");
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+
+        if input.trim().eq_ignore_ascii_case("y") {
+            std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
+            println!("Database removed successfully.");
+        } else {
+            println!("Operation canceled.");
+        }
     }
 }
 
