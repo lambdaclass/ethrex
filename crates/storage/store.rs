@@ -2730,7 +2730,7 @@ impl Store {
         Ok(header)
     }
 
-    fn last_written(&self) -> Result<Vec<u8>, StoreError> {
+    pub fn last_written(&self) -> Result<Vec<u8>, StoreError> {
         let last_computed_flatkeyvalue = self
             .last_computed_flatkeyvalue
             .read()
