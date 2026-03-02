@@ -112,30 +112,30 @@ fn test_stack_swap_depth_16() {
 
 #[test]
 fn test_dupn_decode_low_range() {
-    // Bytes 0x00-0x5A should decode to depths 17-107
+    // Bytes 0x00-0x5A decode via (x + 145) % 256
 
-    // 0x00 -> 0 + 17 = 17
-    assert_eq!(decode_dupn_offset(0x00), 17);
+    // 0x00 -> (0 + 145) % 256 = 145
+    assert_eq!(decode_dupn_offset(0x00), 145);
 
-    // 0x2A (42) -> 42 + 17 = 59
-    assert_eq!(decode_dupn_offset(0x2A), 59);
+    // 0x2A (42) -> (42 + 145) % 256 = 187
+    assert_eq!(decode_dupn_offset(0x2A), 187);
 
-    // 0x5A (90) -> 90 + 17 = 107
-    assert_eq!(decode_dupn_offset(0x5A), 107);
+    // 0x5A (90) -> (90 + 145) % 256 = 235
+    assert_eq!(decode_dupn_offset(0x5A), 235);
 }
 
 #[test]
 fn test_dupn_decode_high_range() {
-    // Bytes 0x80-0xFF should decode to depths 108-235
+    // Bytes 0x80-0xFF decode via (x + 145) % 256
 
-    // 0x80 (128) -> 128 - 20 = 108
-    assert_eq!(decode_dupn_offset(0x80), 108);
+    // 0x80 (128) -> (128 + 145) % 256 = 17
+    assert_eq!(decode_dupn_offset(0x80), 17);
 
-    // 0xAA (170) -> 170 - 20 = 150
-    assert_eq!(decode_dupn_offset(0xAA), 150);
+    // 0xAA (170) -> (170 + 145) % 256 = 59
+    assert_eq!(decode_dupn_offset(0xAA), 59);
 
-    // 0xFF (255) -> 255 - 20 = 235
-    assert_eq!(decode_dupn_offset(0xFF), 235);
+    // 0xFF (255) -> (255 + 145) % 256 = 144
+    assert_eq!(decode_dupn_offset(0xFF), 144);
 }
 
 // ==================== EIP-8024 SWAPN Decode Tests ====================
@@ -145,95 +145,99 @@ fn test_swapn_decode_same_as_dupn() {
     // SWAPN uses the same decode_single function as DUPN
     // but swaps with the (n+1)th element
 
-    // For immediate 0x00, depth is 17, so it swaps top with 18th element
-    assert_eq!(decode_dupn_offset(0x00), 17);
+    // For immediate 0x80, depth is 17, so it swaps top with 18th element
+    assert_eq!(decode_dupn_offset(0x80), 17);
 
-    // For immediate 0xFF, depth is 235, so it swaps top with 236th element
-    assert_eq!(decode_dupn_offset(0xFF), 235);
+    // For immediate 0xFF, depth is 144
+    assert_eq!(decode_dupn_offset(0xFF), 144);
 }
 
 // ==================== EIP-8024 EXCHANGE Decode Tests ====================
 
 #[test]
 fn test_exchange_decode_basic() {
-    // Test immediate byte 0x00 -> k=0, q=0, r=0
-    // Since q < r is false (0 < 0), we get (r+1, 29-q) = (1, 29)
-    let (n, m) = decode_exchange_offset(0x00);
-    assert_eq!(n, 1);
-    assert_eq!(m, 29);
-}
-
-#[test]
-fn test_exchange_decode_q_less_than_r() {
-    // Test immediate byte 0x01 -> k=1, q=0, r=1
+    // Test immediate byte 0x8E -> k = 0x8E ^ 0x8F = 0x01, q=0, r=1
     // Since q < r (0 < 1), we get (q+1, r+1) = (1, 2)
-    let (n, m) = decode_exchange_offset(0x01);
+    let (n, m) = decode_exchange_offset(0x8E);
     assert_eq!(n, 1);
     assert_eq!(m, 2);
 }
 
 #[test]
-fn test_exchange_decode_boundary_low() {
-    // Test immediate byte 0x4F (79) -> k=79, q=4, r=15
-    // Since q < r (4 < 15), we get (q+1, r+1) = (5, 16)
-    let (n, m) = decode_exchange_offset(0x4F);
-    assert_eq!(n, 5);
-    assert_eq!(m, 16);
+fn test_exchange_decode_from_spec() {
+    // From the EIP spec examples:
+    // 0x9D -> k = 0x9D ^ 0x8F = 0x12, q=1, r=2
+    // q < r -> (2, 3)
+    let (n, m) = decode_exchange_offset(0x9D);
+    assert_eq!(n, 2);
+    assert_eq!(m, 3);
+
+    // 0x2F -> k = 0x2F ^ 0x8F = 0xA0, q=10, r=0
+    // q >= r -> (1, 19)
+    let (n, m) = decode_exchange_offset(0x2F);
+    assert_eq!(n, 1);
+    assert_eq!(m, 19);
 }
 
 #[test]
-fn test_exchange_decode_with_offset() {
-    // Test immediate byte 0x80 (128) -> k = 128 - 48 = 80, q=5, r=0
-    // Since q < r is false (5 < 0), we get (r+1, 29-q) = (1, 24)
+fn test_exchange_decode_new_pairs() {
+    // 0x50 -> k = 0x50 ^ 0x8F = 0xDF, q=13, r=15
+    // q < r -> (14, 16) - new pair with n=14
+    let (n, m) = decode_exchange_offset(0x50);
+    assert_eq!(n, 14);
+    assert_eq!(m, 16);
+
+    // 0x51 -> k = 0x51 ^ 0x8F = 0xDE, q=13, r=14
+    // q < r -> (14, 15) - new pair with n=14
+    let (n, m) = decode_exchange_offset(0x51);
+    assert_eq!(n, 14);
+    assert_eq!(m, 15);
+}
+
+#[test]
+fn test_exchange_decode_high_range() {
+    // Test immediate byte 0x80 -> k = 0x80 ^ 0x8F = 0x0F, q=0, r=15
+    // q < r -> (1, 16)
     let (n, m) = decode_exchange_offset(0x80);
     assert_eq!(n, 1);
-    assert_eq!(m, 24);
-}
-
-#[test]
-fn test_exchange_decode_high_byte() {
-    // Test immediate byte 0xFF (255) -> k = 255 - 48 = 207, q=12, r=15
-    // Since q < r (12 < 15), we get (q+1, r+1) = (13, 16)
-    let (n, m) = decode_exchange_offset(0xFF);
-    assert_eq!(n, 13);
     assert_eq!(m, 16);
+
+    // Test immediate byte 0xFF -> k = 0xFF ^ 0x8F = 0x70, q=7, r=0
+    // q >= r -> (1, 22)
+    let (n, m) = decode_exchange_offset(0xFF);
+    assert_eq!(n, 1);
+    assert_eq!(m, 22);
 }
 
 #[test]
 fn test_exchange_decode_various_values() {
-    // Test a few more values to ensure the decoding works correctly
+    // 0x00 -> k = 0x00 ^ 0x8F = 0x8F, q=8, r=15
+    // q < r -> (9, 16)
+    let (n, m) = decode_exchange_offset(0x00);
+    assert_eq!(n, 9);
+    assert_eq!(m, 16);
 
-    // 0x10 -> k=16, q=1, r=0, q >= r -> (0+1, 29-1) = (1, 28)
-    let (n, m) = decode_exchange_offset(0x10);
-    assert_eq!(n, 1);
-    assert_eq!(m, 28);
-
-    // 0x23 -> k=35, q=2, r=3, q < r -> (2+1, 3+1) = (3, 4)
-    let (n, m) = decode_exchange_offset(0x23);
-    assert_eq!(n, 3);
-    assert_eq!(m, 4);
+    // 0x01 -> k = 0x01 ^ 0x8F = 0x8E, q=8, r=14
+    // q < r -> (9, 15)
+    let (n, m) = decode_exchange_offset(0x01);
+    assert_eq!(n, 9);
+    assert_eq!(m, 15);
 }
 
 // ==================== Helper Functions (matching EIP-8024 spec) ====================
 
 /// Decodes the immediate byte for DUPN/SWAPN according to EIP-8024 decode_single
 fn decode_dupn_offset(byte: u8) -> u8 {
-    if byte <= 0x5A {
-        byte.wrapping_add(17)
-    } else {
-        // Assumes byte >= 0x80 (invalid range 0x5B-0x7F should error in actual implementation)
-        byte.wrapping_sub(20)
-    }
+    // Assumes byte is in valid range (0x00-0x5A or 0x80-0xFF)
+    // Invalid range 0x5B-0x7F should error in actual implementation
+    byte.wrapping_add(145)
 }
 
 /// Decodes the immediate byte for EXCHANGE according to EIP-8024 decode_pair
 fn decode_exchange_offset(byte: u8) -> (u8, u8) {
-    let k = if byte <= 0x4F {
-        byte
-    } else {
-        // Assumes byte >= 0x80 (invalid range 0x50-0x7F should error in actual implementation)
-        byte.wrapping_sub(48)
-    };
+    // Assumes byte is in valid range (0x00-0x51 or 0x80-0xFF)
+    // Invalid range 0x52-0x7F should error in actual implementation
+    let k = byte ^ 0x8F;
 
     let q = k >> 4;
     let r = k & 0x0F;
@@ -252,33 +256,30 @@ fn test_dupn_invalid_range_detection() {
     // Bytes 0x5B-0x7F should be invalid for DUPN
     // These correspond to JUMPDEST (0x5B) and PUSH opcodes (0x5F-0x7F)
 
-    // We can't test the actual VM error here without creating a full VM,
-    // but we can verify the valid ranges
-
     // Last valid in low range
-    assert_eq!(decode_dupn_offset(0x5A), 107);
+    assert_eq!(decode_dupn_offset(0x5A), 235);
 
     // First valid in high range
-    assert_eq!(decode_dupn_offset(0x80), 108);
+    assert_eq!(decode_dupn_offset(0x80), 17);
 
-    // The gap 0x5B-0x7F should cause InvalidOpcode in actual implementation
+    // The gap 0x5B-0x7F causes InvalidOpcode in the VM implementation
 }
 
 #[test]
 fn test_exchange_invalid_range_detection() {
-    // Bytes 0x50-0x7F should be invalid for EXCHANGE
+    // Bytes 0x52-0x7F should be invalid for EXCHANGE
 
     // Last valid in low range
-    let (n, m) = decode_exchange_offset(0x4F);
-    assert_eq!(n, 5);
-    assert_eq!(m, 16);
+    let (n, m) = decode_exchange_offset(0x51);
+    assert_eq!(n, 14);
+    assert_eq!(m, 15);
 
     // First valid in high range
     let (n, m) = decode_exchange_offset(0x80);
     assert_eq!(n, 1);
-    assert_eq!(m, 24);
+    assert_eq!(m, 16);
 
-    // The gap 0x50-0x7F should cause InvalidOpcode in actual implementation
+    // The gap 0x52-0x7F causes InvalidOpcode in the VM implementation
 }
 
 #[test]
@@ -286,7 +287,7 @@ fn test_exchange_n_less_than_m_invariant() {
     // EIP-8024 requires that n < m for all valid EXCHANGE operations
     // Let's verify this for a range of valid bytes
 
-    for byte in 0x00..=0x4F {
+    for byte in 0x00..=0x51 {
         let (n, m) = decode_exchange_offset(byte);
         assert!(
             n < m,
@@ -313,7 +314,7 @@ fn test_exchange_n_less_than_m_invariant() {
 fn test_exchange_sum_constraint() {
     // EIP-8024 requires that n + m <= 30 for all valid EXCHANGE operations
 
-    for byte in 0x00..=0x4F {
+    for byte in 0x00..=0x51 {
         let (n, m) = decode_exchange_offset(byte);
         assert!(
             n + m <= 30,
@@ -355,7 +356,7 @@ fn test_stack_dupn_basic() {
     let expected_value = U256::from(3);
 
     // Manually duplicate by calculating the offset
-    // relative_offset for depth 17 would be encoded as 0x00 (0 + 17 = 17)
+    // relative_offset for depth 17 would be encoded as 0x80 ((0x80 + 145) % 256 = 17)
     // absolute_offset = stack.offset + 17
     let absolute_offset = stack.offset + 17;
     let value_to_dup = stack.values[absolute_offset];
@@ -600,8 +601,8 @@ fn test_exchange_coverage_valid_pairs() {
     // Verify that EXCHANGE can access all valid (n, m) pairs where n < m and n + m <= 30
     let mut pairs = std::collections::HashSet::new();
 
-    // Low range: 0x00-0x4F
-    for byte in 0x00..=0x4F {
+    // Low range: 0x00-0x51
+    for byte in 0x00..=0x51 {
         pairs.insert(decode_exchange_offset(byte));
     }
 
