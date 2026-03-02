@@ -313,9 +313,12 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         None,
     )?;
 
-    let bridge_code = hex::decode(std::fs::read(
+    let mut bridge_code = hex::decode(std::fs::read(
         contracts_path.join("solc_out/CommonBridgeL2.bin"),
     )?)?;
+    // Append constructor args: (address nativeTokenL1 = address(0), uint256 nativeTokenScaleFactor = 0)
+    // address(0) means ETH mode, scale factor 0 defaults to 1 in the constructor.
+    bridge_code.extend_from_slice(&[0u8; 64]);
 
     println!("test_upgrade: Deploying CommonBridgeL2 contract");
     let (deploy_address, fees_details) = test_deploy(
