@@ -410,9 +410,12 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
+        let cancelled = Arc::new(AtomicBool::new(false));
+
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
+                let cancelled_warmer = cancelled.clone();
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
@@ -421,12 +424,12 @@ impl Blockchain {
                         let start = Instant::now();
                         if let Some(bal) = bal {
                             // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            if let Err(e) = LEVM::warm_block_from_bal(bal, caching_store) {
+                            if let Err(e) = LEVM::warm_block_from_bal(bal, caching_store, &cancelled_warmer) {
                                 debug!("BAL warming failed (non-fatal): {e}");
                             }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            if let Err(e) = LEVM::warm_block(block, caching_store, vm_type) {
+                            if let Err(e) = LEVM::warm_block(block, caching_store, vm_type, &cancelled_warmer) {
                                 debug!("Block warming failed (non-fatal): {e}");
                             }
                         }
@@ -437,11 +440,14 @@ impl Blockchain {
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
                 let (tx, rx) = channel();
+                let cancelled_exec = cancelled.clone();
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
                         let (execution_result, produced_bal) =
                             vm.execute_block_pipeline(block, tx, queue_length_ref, bal)?;
+
+                        cancelled_exec.store(true, Ordering::Relaxed);
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -496,22 +502,20 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
                     })?;
+                let execution_result = execution_handle.join().unwrap_or_else(|_| {
+                    Err(ChainError::Custom("execution thread panicked".to_string()))
+                });
+                let merkleization_result = merkleize_handle.join().unwrap_or_else(|_| {
+                    Err(StoreError::Custom(
+                        "merklization thread panicked".to_string(),
+                    ))
+                });
                 let warmer_duration = warm_handle
                     .join()
                     .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                     .ok()
                     .unwrap_or(Duration::ZERO);
-                Ok((
-                    execution_handle.join().unwrap_or_else(|_| {
-                        Err(ChainError::Custom("execution thread panicked".to_string()))
-                    }),
-                    merkleize_handle.join().unwrap_or_else(|_| {
-                        Err(StoreError::Custom(
-                            "merklization thread panicked".to_string(),
-                        ))
-                    }),
-                    warmer_duration,
-                ))
+                Ok((execution_result, merkleization_result, warmer_duration))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
