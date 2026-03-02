@@ -85,8 +85,13 @@ pub async fn get_batch(
         ))?
         .hash_no_commit();
 
-    let (l1_out_message_hashes, balance_diffs) =
-        get_batch_message_hashes_and_balance_diffs(store, batch, chain_id, native_token_scale_factor).await?;
+    let (l1_out_message_hashes, balance_diffs) = get_batch_message_hashes_and_balance_diffs(
+        store,
+        batch,
+        chain_id,
+        native_token_scale_factor,
+    )
+    .await?;
 
     Ok(Batch {
         number: batch_number.as_u64(),

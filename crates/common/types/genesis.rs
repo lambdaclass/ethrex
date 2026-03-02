@@ -1184,7 +1184,9 @@ mod tests {
         let config = ChainConfig {
             chain_id: 1,
             deposit_contract_address: H160::zero(),
-            native_token_l1_address: Some(H160::from_str("0x1111111111111111111111111111111111111111").unwrap()),
+            native_token_l1_address: Some(
+                H160::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            ),
             native_token_l1_decimals: Some(18),
             ..Default::default()
         };
@@ -1199,7 +1201,9 @@ mod tests {
         let config = ChainConfig {
             chain_id: 1,
             deposit_contract_address: H160::zero(),
-            native_token_l1_address: Some(H160::from_str("0x1111111111111111111111111111111111111111").unwrap()),
+            native_token_l1_address: Some(
+                H160::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            ),
             native_token_l1_decimals: Some(6),
             ..Default::default()
         };
@@ -1215,7 +1219,9 @@ mod tests {
         let config = ChainConfig {
             chain_id: 1,
             deposit_contract_address: H160::zero(),
-            native_token_l1_address: Some(H160::from_str("0x1111111111111111111111111111111111111111").unwrap()),
+            native_token_l1_address: Some(
+                H160::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            ),
             native_token_l1_decimals: None,
             ..Default::default()
         };

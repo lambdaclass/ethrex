@@ -10,8 +10,7 @@ use ethrex_common::{
     Address, H160, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
-        Code,
-        SAFE_BYTES_PER_BLOB,
+        Code, SAFE_BYTES_PER_BLOB,
         fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig},
     },
 };
@@ -327,7 +326,6 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     default_hook::set_bytecode_and_code_address(vm)
 }
 
-
 /// Calculates the L1 fee based on the account diffs size and the L1 fee config.
 /// This is done according to the formula:
 /// L1 Fee = (L1 Fee per Blob Gas * GAS_PER_BLOB / SAFE_BYTES_PER_BLOB) * account_diffs_size
@@ -393,4 +391,3 @@ fn pay_to_l1_fee_vault(
         .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
     Ok(())
 }
-
