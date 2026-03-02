@@ -7,9 +7,9 @@ use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
-use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::Fork;
 use ethrex_common::types::P2PTransaction;
+use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{H256, types::Transaction};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
@@ -85,18 +85,26 @@ impl NewPooledTransactionHashes {
             transaction_types.push(transaction_type as u8);
             let transaction_hash = transaction.hash();
             transaction_hashes.push(transaction_hash);
-            // size is defined as the len of the concatenation of tx_type and the tx_data
-            // as the tx_type goes from 0x00 to 0xff, the size of tx_type is 1 byte
+            // size is defined as the len of the canonical encoding of the transaction
+            // as it would appear in a PooledTransactions response.
             // https://eips.ethereum.org/EIPS/eip-2718
             let transaction_size = match transaction {
-                // Network representation for PooledTransactions
+                // Blob transactions use the network (wrapped) representation
+                // which includes the blobs bundle.
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
                 Transaction::EIP4844Transaction(eip4844_tx) => {
                     let tx_blobs_bundle = blockchain
                         .mempool
                         .get_blobs_bundle(transaction_hash)?
-                        .unwrap_or(BlobsBundle::empty());
-                    eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle)
+                        .unwrap_or_default();
+                    let p2p_tx =
+                        P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
+                            tx: eip4844_tx,
+                            wrapper_version: (tx_blobs_bundle.version != 0)
+                                .then_some(tx_blobs_bundle.version),
+                            blobs_bundle: tx_blobs_bundle,
+                        });
+                    p2p_tx.encode_canonical_to_vec().len()
                 }
                 _ => transaction.encode_canonical_to_vec().len(),
             };
@@ -243,7 +251,7 @@ impl PooledTransactions {
     ) -> Result<(), MempoolError> {
         for tx in &self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate(&itx.tx, fork)?;
+                itx.blobs_bundle.validate_cheap(&itx.tx, fork)?;
             }
             let tx_hash = tx.compute_hash();
             let Some(pos) = requested
@@ -287,6 +295,9 @@ impl PooledTransactions {
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
+                    if matches!(e, MempoolError::BlobsBundleError(_)) {
+                        return Err(e);
+                    }
                     debug!(
                         peer=%node,
                         error=%e,

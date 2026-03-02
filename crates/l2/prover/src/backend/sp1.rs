@@ -143,6 +143,10 @@ impl ProverBackend for Sp1Backend {
     type ProofOutput = Sp1ProveOutput;
     type SerializedInput = SP1Stdin;
 
+    fn prover_type(&self) -> ProverType {
+        ProverType::SP1
+    }
+
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
         let mut stdin = SP1Stdin::new();
         let bytes = rkyv::to_bytes::<Error>(input).map_err(BackendError::serialization)?;
