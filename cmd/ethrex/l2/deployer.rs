@@ -1821,16 +1821,19 @@ pub async fn deploy_native_rollup_contracts(
     let initial_state_root = genesis_header.state_root;
     info!("L2 genesis state root: {initial_state_root:#x}");
 
-    // 5. Deploy NativeRollup.sol with constructor(initialStateRoot, blockGasLimit, initialBaseFee)
+    // 5. Deploy NativeRollup.sol with constructor(initialStateRoot, blockGasLimit, initialBaseFee, relayer, advancer)
     let block_gas_limit: u64 = 30_000_000;
     let initial_base_fee: u64 = 1_000_000_000; // 1 gwei
+    let advancer_address = signer.address();
 
     let constructor_args = encode_calldata(
-        "constructor(bytes32,uint256,uint256)",
+        "constructor(bytes32,uint256,uint256,address,address)",
         &[
             Value::FixedBytes(initial_state_root.as_bytes().to_vec().into()),
             Value::Uint(U256::from(block_gas_limit)),
             Value::Uint(U256::from(initial_base_fee)),
+            Value::Address(relayer_address),
+            Value::Address(advancer_address),
         ],
     )?;
     // Strip the 4-byte selector from the encoded constructor args

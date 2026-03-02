@@ -23,12 +23,14 @@ import "./MPTProof.sol";
 ///   Slot 2: blockGasLimit (uint256)
 ///   Slot 3: lastBaseFeePerGas (uint256)
 ///   Slot 4: lastGasUsed (uint256)
-///   Slot 5: pendingL1Messages (bytes32[])
-///   Slot 6: l1MessageIndex (uint256)
-///   Slot 7: stateRootHistory (mapping(uint256 => bytes32))
-///   Slot 8: claimedWithdrawals (mapping(bytes32 => bool))
-///   Slot 9: stateRootTimestamps (mapping(uint256 => uint256))
-///   Slot 10: _locked (bool)
+///   Slot 5: relayer (address)
+///   Slot 6: advancer (address)
+///   Slot 7: pendingL1Messages (bytes32[])
+///   Slot 8: l1MessageIndex (uint256)
+///   Slot 9: stateRootHistory (mapping(uint256 => bytes32))
+///   Slot 10: claimedWithdrawals (mapping(bytes32 => bool))
+///   Slot 11: stateRootTimestamps (mapping(uint256 => uint256))
+///   Slot 12: _locked (bool)
 
 struct BlockParams {
     bytes32 postStateRoot;
@@ -44,6 +46,11 @@ contract NativeRollup {
     uint256 public blockGasLimit;
     uint256 public lastBaseFeePerGas;
     uint256 public lastGasUsed;
+
+    /// @notice Address of the relayer — the account that submits L1→L2 message transactions on L2.
+    address public relayer;
+    /// @notice Address of the advancer — the account that calls advance() on L1 and receives burned fees.
+    address public advancer;
 
     address constant EXECUTE_PRECOMPILE = address(0x0101);
 
@@ -78,13 +85,15 @@ contract NativeRollup {
         _locked = false;
     }
 
-    constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee, uint64 _chainId, uint256 _finalityDelay) {
+    constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee, address _relayer, address _advancer) {
         stateRoot = _initialStateRoot;
         blockGasLimit = _blockGasLimit;
         lastBaseFeePerGas = _initialBaseFee;
         lastGasUsed = 0;
-        CHAIN_ID = _chainId;
-        FINALITY_DELAY = _finalityDelay;
+        CHAIN_ID = 0;
+        FINALITY_DELAY = 0;
+        relayer = _relayer;
+        advancer = _advancer;
     }
 
     // ===== L1 Messaging =====
@@ -170,7 +179,7 @@ contract NativeRollup {
         stateRootTimestamps[newBlockNumber] = block.timestamp;
 
         if (burnedFees > 0) {
-            (bool sent, ) = msg.sender.call{value: burnedFees}("");
+            (bool sent, ) = advancer.call{value: burnedFees}("");
             require(sent, "Burned fees transfer failed");
         }
 
