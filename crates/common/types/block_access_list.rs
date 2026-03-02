@@ -441,14 +441,14 @@ impl BlockAccessList {
     pub fn validate_ordering(&self) -> Result<(), String> {
         let mut prev_addr = None;
         for account in &self.inner {
-            if let Some(prev) = prev_addr {
-                if prev >= account.address {
-                    return Err(format!(
-                        "Block access list accounts not in strictly ascending order: \
-                         {:#x} >= {:#x}",
-                        prev, account.address
-                    ));
-                }
+            if let Some(prev) = prev_addr
+                && prev >= account.address
+            {
+                return Err(format!(
+                    "Block access list accounts not in strictly ascending order: \
+                     {:#x} >= {:#x}",
+                    prev, account.address
+                ));
             }
             prev_addr = Some(account.address);
 
