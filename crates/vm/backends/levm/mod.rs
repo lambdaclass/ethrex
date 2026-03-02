@@ -491,7 +491,13 @@ impl LEVM {
                 info,
                 code,
                 added_storage,
-                removed_storage: false, // EIP-6780: SELFDESTRUCT only same-tx
+                // EIP-6780 restricts SELFDESTRUCT to the creation tx, so
+                // cross-tx storage wipes can't happen. For the rare same-tx
+                // destroy+recreate case at a reused address, EIP-7928 records
+                // individual slot zeroing in storage_changes (each old slot → 0),
+                // so `added_storage` already contains those zeroed entries and
+                // the trie update is correct without setting removed_storage.
+                removed_storage: false,
             };
             updates.push(update);
         }
@@ -871,6 +877,10 @@ impl LEVM {
                 // Account not in BAL. Modified status can come from read-only
                 // get_account_mut calls (warm access, etc.). Skip — state root
                 // will catch any true discrepancy.
+                ::tracing::debug!(
+                    "[BAL-VALIDATE] tx {bal_idx}: account {addr:?} marked Modified \
+                     but absent from BAL — likely warm-access artifact, skipping"
+                );
                 continue;
             };
 
@@ -912,7 +922,9 @@ impl LEVM {
                 }
             }
 
-            // Code: same pattern
+            // Code: same pattern — use keccak256 of the raw bytes directly to
+            // avoid reconstructing a full Code object (seed_db_from_bal already
+            // did that work; here we only need the hash for comparison).
             if !has_exact_change_code(&acct.code_changes, bal_idx) {
                 let seeded_pos = acct
                     .code_changes
@@ -922,7 +934,7 @@ impl LEVM {
                     let seeded_hash = if seeded_code.is_empty() {
                         *EMPTY_KECCACK_HASH
                     } else {
-                        Code::from_bytecode(seeded_code.clone()).hash
+                        ethrex_common::utils::keccak(seeded_code)
                     };
                     if account.info.code_hash != seeded_hash {
                         return Err(format!(
