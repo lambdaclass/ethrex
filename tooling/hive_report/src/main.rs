@@ -257,14 +257,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let result_cancun = create_fork_result(&json_data, "Cancun", "fork_Cancun");
                 // Prague
                 let result_prague = create_fork_result(&json_data, "Prague", "fork_Prague");
-
+                // Osaka
                 let result_osaka = create_fork_result(&json_data, "Osaka", "fork_Osaka");
+
+                let result_amsterdam =
+                    create_fork_result(&json_data, "Amsterdam", "fork_Amsterdam");
 
                 aggregate_result(&mut aggregated_results, result_paris);
                 aggregate_result(&mut aggregated_results, result_shanghai);
                 aggregate_result(&mut aggregated_results, result_cancun);
                 aggregate_result(&mut aggregated_results, result_prague);
                 aggregate_result(&mut aggregated_results, result_osaka);
+                aggregate_result(&mut aggregated_results, result_amsterdam);
             } else {
                 let total_tests = json_data.test_cases.len();
                 let passed_tests = json_data
@@ -301,11 +305,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let fork_rank = |display_name: &str| match display_name {
-            "Osaka" => Some(0),
-            "Prague" => Some(1),
-            "Cancun" => Some(2),
-            "Shanghai" => Some(3),
-            "Paris" => Some(4),
+            "Amsterdam" => Some(0),
+            "Osaka" => Some(1),
+            "Prague" => Some(2),
+            "Cancun" => Some(3),
+            "Shanghai" => Some(4),
+            "Paris" => Some(5),
             _ => None,
         };
 

@@ -501,7 +501,7 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "sishort"
         },
         "overrides": [
           {
@@ -515,18 +515,6 @@
                 "value": 0
               }
             ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "batch_verification_gas (lastNotNull)"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "sishort"
-              }
-            ]
           }
         ]
       },
@@ -536,13 +524,13 @@
         "x": 0,
         "y": 10
       },
-      "id": 104,
+      "id": 115,
       "options": {
         "legend": {
           "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "mapping": "auto",
         "series": [
@@ -558,17 +546,18 @@
       "targets": [
         {
           "expr": "batch_verification_gas",
-          "legendFormat": "Batch Verification Gas",
+          "legendFormat": "Verification Gas",
           "refId": "A"
         }
       ],
-      "title": "Batch Verification Gas",
+      "title": "Verification Gas by Batch",
       "transformations": [
         {
           "id": "joinByLabels",
           "options": {
             "join": [
-              "batch_number"
+              "batch_number",
+              "tx_hash"
             ],
             "value": "__name__"
           }
@@ -620,8 +609,26 @@
                   "lastNotNull"
                 ],
                 "operation": "aggregate"
+              },
+              "tx_hash": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
               }
             }
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "string",
+                "targetField": "tx_hash (lastNotNull)"
+              }
+            ],
+            "fields": {}
           }
         }
       ],
