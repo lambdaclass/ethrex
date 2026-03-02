@@ -293,7 +293,7 @@ impl L1Watcher {
             }
 
             info!(
-                "Initiating mint transaction for {:x} with value {:x} and transactionId: {:#}",
+                "Initiating privileged transaction for {:x} with value {:x} and transactionId: {:#}",
                 privileged_transaction_data.to_address,
                 privileged_transaction_data.value,
                 privileged_transaction_data.transaction_id
@@ -309,7 +309,7 @@ impl L1Watcher {
                 continue;
             };
 
-            info!("Mint transaction added to mempool {hash:#x}",);
+            info!("Privileged transaction added to mempool {hash:#x}",);
             privileged_txs.push(hash);
         }
 
