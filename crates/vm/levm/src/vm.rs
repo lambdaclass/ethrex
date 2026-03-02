@@ -439,10 +439,12 @@ pub struct VM<'a> {
     pub state_gas_used: u64,
     /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
     pub state_gas_reservoir: u64,
-    /// EIP-8037: State gas that spilled into gas_left in child frames that then
-    /// reverted. This gas was consumed (child halted) but is not reflected in
-    /// `state_gas_used` (which was restored on revert). Needed to correctly
-    /// derive regular gas for block-level `max(regular, state)` accounting.
+    /// EIP-8037: Gas consumed from gas_left that should NOT be counted as regular
+    /// gas when deriving `regular = gas_used - state_gas`. This accounts for:
+    /// 1. State gas spilled into gas_left in child frames that then reverted
+    ///    (child halted, state_gas_used restored, but spill stays consumed).
+    /// 2. Reserved child gas consumed on CREATE collision (EELS escrow mechanism
+    ///    keeps this out of regular_gas_used; ethrex must exclude it manually).
     pub reverted_child_state_spill: u64,
 }
 

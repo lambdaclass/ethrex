@@ -381,6 +381,16 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         .checked_add(TX_BASE_COST)
         .ok_or(InternalError::Overflow)?;
 
+    // EIP-8037 (Amsterdam+): Regular gas is capped at TX_MAX_GAS_LIMIT — reject if
+    // intrinsic regular gas or calldata floor exceeds the cap (no amount of gas_limit
+    // can make the TX valid since excess gas_limit becomes state gas reservoir).
+    // Must be checked before the floor check so the correct error is returned.
+    if vm.env.config.fork >= Fork::Amsterdam
+        && regular_gas.max(floor_cost_by_tokens) > TX_MAX_GAS_LIMIT_AMSTERDAM
+    {
+        return Err(TxValidationError::IntrinsicGasTooLow.into());
+    }
+
     if vm.current_call_frame.gas_limit < floor_cost_by_tokens {
         return Err(TxValidationError::IntrinsicGasBelowFloorGasCost.into());
     }

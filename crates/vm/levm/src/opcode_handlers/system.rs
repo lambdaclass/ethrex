@@ -867,6 +867,11 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
+            // EIP-8037: The reserved child gas (gas_limit) is consumed on collision
+            // but per EELS escrow mechanism it doesn't count as regular gas.
+            // Without this, derived regular = gas_used - state_gas includes the
+            // huge reserved gas, inflating block_gas_used.
+            self.reverted_child_state_spill += gas_limit;
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
