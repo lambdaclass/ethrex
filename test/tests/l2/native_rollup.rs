@@ -477,4 +477,6 @@ async fn native_rollup_bridge_roundtrip() {
         counter_incremented,
         "Counter was not incremented via L1→L2 message within timeout"
     );
+
+    let _ = std::fs::remove_dir_all(counter_path.join("solc_out"));
 }
