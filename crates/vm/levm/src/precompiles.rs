@@ -1951,6 +1951,18 @@ fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
+    // Validate that the coordinate is strictly less than the BLS12-381 field modulus.
+    // The bls12_381 crate's from_uncompressed interprets the top bits of the first
+    // byte as BLS serialization flags (compression, infinity, sort), masking them
+    // away. EIP-2537 uses a different encoding where all 48 bytes are pure coordinate
+    // data. Rejecting values >= p here prevents the crate from misinterpreting
+    // coordinate bits as flags.
+    let coord_value = UnsignedInteger::<6>::from_bytes_be(&coordinate_raw_bytes[16..64])
+        .unwrap_or_default();
+    if coord_value >= BLS12381FieldModulus::MODULUS {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
+
     #[expect(
         unsafe_code,
         reason = "The bounds are confirmed to be correct due to the previous checks."
