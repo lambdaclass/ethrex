@@ -85,7 +85,7 @@ The three L2 GenServer actors run as concurrent tasks:
 
 - Rust toolchain (stable)
 - `solc` (Solidity compiler) — needed to compile the contracts during build
-- `rex` (cast-compatible CLI) — for querying contracts in the demo steps. Install: `cargo install rex-cli` (or use `cast` from Foundry as a drop-in replacement)
+- [`rex`](https://github.com/lambdaclass/rex/tree/feat/claim-native-withdraw) — run `make cli` in that branch to install the required version
 
 > [!NOTE]
 > **Rex CLI syntax quirks:**
