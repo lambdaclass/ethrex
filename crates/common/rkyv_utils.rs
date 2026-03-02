@@ -76,10 +76,9 @@ pub enum OptionU256Wrapper {
 
 impl From<OptionU256Wrapper> for Option<U256> {
     fn from(value: OptionU256Wrapper) -> Self {
-        if let OptionU256Wrapper::Some(x) = value {
-            Some(x)
-        } else {
-            None
+        match value {
+            OptionU256Wrapper::Some(x) => Some(x),
+            OptionU256Wrapper::None => None,
         }
     }
 }

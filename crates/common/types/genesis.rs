@@ -433,13 +433,11 @@ impl ChainConfig {
     /// The scale factor converts L1 token amounts to L2 18-decimal amounts:
     ///   l2_amount = l1_amount * scale_factor
     pub fn native_token_scale_factor(&self) -> Option<U256> {
-        if self.uses_custom_native_token() {
+        self.native_token_l1_address.map(|_| {
             let decimals = self.native_token_l1_decimals();
             let exponent = 18u8.saturating_sub(decimals);
-            Some(U256::from(10u64).pow(U256::from(exponent)))
-        } else {
-            None
-        }
+            U256::from(10u64).pow(U256::from(exponent))
+        })
     }
 
     pub fn display_config(&self) -> String {
