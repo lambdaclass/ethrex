@@ -198,23 +198,23 @@ sort_entries=()
     case "$client" in
       ethrex)
         printf "• ethrex (%s)\n" "$version_ethrex"
-        printf "  Block time: %.3fms (mean) | Throughput: %.3f Ggas/s (mean)\n" \
-          "${ethrex_bt:-0}" "${ethrex_tput:-0}"
+        printf "  • Block time: %.3fms (mean)\n" "${ethrex_bt:-0}"
+        printf "  • Throughput: %.3f Ggas/s (mean)\n" "${ethrex_tput:-0}"
         ;;
       reth)
         printf "• reth (%s)\n" "$version_reth"
-        printf "  Block time: %.3fms (p50) | %.3fms (p99.9) | Throughput: %.3f Ggas/s (mean)\n" \
-          "${reth_bt_p50:-0}" "${reth_bt_p999:-0}" "${reth_tput:-0}"
+        printf "  • Block time: %.3fms (p50) | %.3fms (p99.9)\n" "${reth_bt_p50:-0}" "${reth_bt_p999:-0}"
+        printf "  • Throughput: %.3f Ggas/s (mean)\n" "${reth_tput:-0}"
         ;;
       geth)
         printf "• geth (%s)\n" "$version_geth"
-        printf "  Block time: %.3fms (p50) | %.3fms (p99.9) | Throughput: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n" \
-          "${geth_bt_p50:-0}" "${geth_bt_p999:-0}" "${geth_tput_p50:-0}" "${geth_tput_p999:-0}"
+        printf "  • Block time: %.3fms (p50) | %.3fms (p99.9)\n" "${geth_bt_p50:-0}" "${geth_bt_p999:-0}"
+        printf "  • Throughput: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n" "${geth_tput_p50:-0}" "${geth_tput_p999:-0}"
         ;;
       nethermind)
         printf "• nethermind (%s)\n" "$version_nethermind"
-        printf "  Block time: %.3fms (mean) | Throughput: %.3f Ggas/s (mean)\n" \
-          "${nether_bt:-0}" "${nether_tput:-0}"
+        printf "  • Block time: %.3fms (mean)\n" "${nether_bt:-0}"
+        printf "  • Throughput: %.3f Ggas/s (mean)\n" "${nether_tput:-0}"
         ;;
     esac
   done < <(printf '%s\n' "${sort_entries[@]}" | LC_ALL=C sort -n)
@@ -226,19 +226,19 @@ slack_text=""
 while read -r _sort_val client; do
   case "$client" in
     ethrex)
-      slack_text+=$(printf "• *ethrex* (%s)\n  Block time: %.3fms (mean) | Throughput: %.3f Ggas/s (mean)" \
+      slack_text+=$(printf "• *ethrex* (%s)\n  • Block time: %.3fms (mean)\n  • Throughput: %.3f Ggas/s (mean)" \
         "$version_ethrex" "${ethrex_bt:-0}" "${ethrex_tput:-0}")$'\n'
       ;;
     reth)
-      slack_text+=$(printf "• *reth* (%s)\n  Block time: %.3fms (p50) | %.3fms (p99.9) | Throughput: %.3f Ggas/s (mean)" \
+      slack_text+=$(printf "• *reth* (%s)\n  • Block time: %.3fms (p50) | %.3fms (p99.9)\n  • Throughput: %.3f Ggas/s (mean)" \
         "$version_reth" "${reth_bt_p50:-0}" "${reth_bt_p999:-0}" "${reth_tput:-0}")$'\n'
       ;;
     geth)
-      slack_text+=$(printf "• *geth* (%s)\n  Block time: %.3fms (p50) | %.3fms (p99.9) | Throughput: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)" \
+      slack_text+=$(printf "• *geth* (%s)\n  • Block time: %.3fms (p50) | %.3fms (p99.9)\n  • Throughput: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)" \
         "$version_geth" "${geth_bt_p50:-0}" "${geth_bt_p999:-0}" "${geth_tput_p50:-0}" "${geth_tput_p999:-0}")$'\n'
       ;;
     nethermind)
-      slack_text+=$(printf "• *nethermind* (%s)\n  Block time: %.3fms (mean) | Throughput: %.3f Ggas/s (mean)" \
+      slack_text+=$(printf "• *nethermind* (%s)\n  • Block time: %.3fms (mean)\n  • Throughput: %.3f Ggas/s (mean)" \
         "$version_nethermind" "${nether_bt:-0}" "${nether_tput:-0}")$'\n'
       ;;
   esac
