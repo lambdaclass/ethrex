@@ -64,9 +64,10 @@ interface ICommonBridgeL2 {
     /// @notice Transfers native token to the given address.
     /// @dev This is called by a privileged transaction from the L1 bridge.
     /// @dev The msg.value carries the L2 18-decimal amount of native token.
-    /// @dev If the transfer fails, a withdrawal is initiated.
-    /// @param to the address to transfer the funds to
-    function mintNativeToken(address to) external payable;
+    /// @dev If the transfer fails, a withdrawal is initiated to the original depositor on L1.
+    /// @param to the address to transfer the funds to on L2
+    /// @param depositor the original depositor address on L1 (for fallback withdrawal)
+    function mintNativeToken(address to, address depositor) external payable;
 
     /// @notice Initiates the withdrawal of native token to L1.
     /// @dev Burns the native token on L2 and sends a withdrawal message to L1.

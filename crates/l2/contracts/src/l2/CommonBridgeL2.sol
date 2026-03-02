@@ -66,11 +66,17 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
 
     /// @notice Transfers native token to the given address.
     /// @dev Called via privileged transaction. msg.value is in L2 18-decimal units.
-    /// @dev If the transfer fails, a withdrawal is automatically initiated.
-    function mintNativeToken(address to) external payable onlySelf {
+    /// @dev If the transfer fails, a withdrawal is initiated to the original depositor on L1,
+    /// @dev not to the L2 recipient, since the same address on L1 may belong to a different entity.
+    /// @param to the L2 recipient address
+    /// @param depositor the original depositor address on L1 (for fallback withdrawal)
+    function mintNativeToken(
+        address to,
+        address depositor
+    ) external payable onlySelf {
         (bool success, ) = to.call{value: msg.value}("");
         if (!success) {
-            this.withdrawNativeToken{value: msg.value}(to);
+            this.withdrawNativeToken{value: msg.value}(depositor);
         }
         emit DepositProcessed(to, msg.value);
     }
@@ -209,7 +215,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         if (msg.value > 0) {
             // Use mintNativeToken if custom native token is configured, otherwise mintETH
             bytes memory mintCallData = NATIVE_TOKEN_L1 != address(0)
-                ? abi.encodeCall(ICommonBridgeL2.mintNativeToken, (msg.sender))
+                ? abi.encodeCall(ICommonBridgeL2.mintNativeToken, (msg.sender, msg.sender))
                 : abi.encodeCall(ICommonBridgeL2.mintETH, (msg.sender));
             IMessenger(L1_MESSENGER).sendMessageToL2(
                 chainId,
@@ -233,7 +239,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         );
         transactionIds[chainId] += 1;
         (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
-        require(success, "Failed to burn Ether");
+        require(success, "Failed to burn native token");
     }
 
     /// Burns at least {amount} gas

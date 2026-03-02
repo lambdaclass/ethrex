@@ -328,7 +328,7 @@ contract CommonBridge is
 
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintNativeToken,
-            (l2Recipient)
+            (l2Recipient, msg.sender)
         );
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
