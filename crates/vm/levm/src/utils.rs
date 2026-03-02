@@ -7,8 +7,9 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
-        COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
+        COLD_ADDRESS_ACCESS_COST, COST_PER_STATE_BYTE, CREATE_BASE_COST,
+        REGULAR_GAS_CREATE, STANDARD_TOKEN_COST, STATE_BYTES_PER_AUTH_TOTAL,
+        STATE_BYTES_PER_NEW_ACCOUNT, TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     vm::{Substate, VM},
 };
@@ -463,38 +464,66 @@ impl<'a> VM<'a> {
     pub fn add_intrinsic_gas(&mut self) -> Result<(), VMError> {
         // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
-        let intrinsic_gas = self.get_intrinsic_gas()?;
+        let (regular_gas, state_gas) = self.get_intrinsic_gas()?;
+
+        let total_gas = regular_gas
+            .checked_add(state_gas)
+            .ok_or(OutOfGas)?;
 
         self.current_call_frame
-            .increase_consumed_gas(intrinsic_gas)
+            .increase_consumed_gas(total_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
+
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_add(state_gas)
+            .ok_or(InternalError::Overflow)?;
 
         Ok(())
     }
 
     // ==================== Gas related functions =======================
-    pub fn get_intrinsic_gas(&self) -> Result<u64, VMError> {
+    /// Returns `(regular_gas, state_gas)` intrinsic gas for the transaction.
+    /// For Amsterdam+, state_gas is the EIP-8037 state portion.
+    /// For pre-Amsterdam, state_gas is always 0.
+    pub fn get_intrinsic_gas(&self) -> Result<(u64, u64), VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
-        let mut intrinsic_gas: u64 = 0;
+        let mut regular_gas: u64 = 0;
+        let mut state_gas: u64 = 0;
+        let fork = self.env.config.fork;
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
         let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
 
-        intrinsic_gas = intrinsic_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
+        regular_gas = regular_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
         // Base Cost
-        intrinsic_gas = intrinsic_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
+        regular_gas = regular_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
 
         // Create Cost
         if self.is_create()? {
-            // https://eips.ethereum.org/EIPS/eip-2#specification
-            intrinsic_gas = intrinsic_gas
-                .checked_add(CREATE_BASE_COST)
-                .ok_or(OutOfGas)?;
+            if fork >= Fork::Amsterdam {
+                // EIP-8037: reduced regular cost + state gas for new account
+                regular_gas = regular_gas
+                    .checked_add(REGULAR_GAS_CREATE)
+                    .ok_or(OutOfGas)?;
+                state_gas = state_gas
+                    .checked_add(
+                        STATE_BYTES_PER_NEW_ACCOUNT
+                            .checked_mul(COST_PER_STATE_BYTE)
+                            .ok_or(InternalError::Overflow)?,
+                    )
+                    .ok_or(OutOfGas)?;
+            } else {
+                // https://eips.ethereum.org/EIPS/eip-2#specification
+                regular_gas = regular_gas
+                    .checked_add(CREATE_BASE_COST)
+                    .ok_or(OutOfGas)?;
+            }
 
             // https://eips.ethereum.org/EIPS/eip-3860
-            if self.env.config.fork >= Fork::Shanghai {
+            if fork >= Fork::Shanghai {
                 let number_of_words = &self.current_call_frame.calldata.len().div_ceil(WORD_SIZE);
                 let double_number_of_words: u64 = number_of_words
                     .checked_mul(2)
@@ -502,7 +531,7 @@ impl<'a> VM<'a> {
                     .try_into()
                     .map_err(|_| InternalError::TypeConversion)?;
 
-                intrinsic_gas = intrinsic_gas
+                regular_gas = regular_gas
                     .checked_add(double_number_of_words)
                     .ok_or(OutOfGas)?;
             }
@@ -521,29 +550,47 @@ impl<'a> VM<'a> {
             }
         }
 
-        intrinsic_gas = intrinsic_gas
+        regular_gas = regular_gas
             .checked_add(access_lists_cost)
             .ok_or(OutOfGas)?;
 
         // Authorization List Cost
         // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
         // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
-        let amount_of_auth_tuples = match self.tx.authorization_list() {
+        let amount_of_auth_tuples: u64 = match self.tx.authorization_list() {
             None => 0,
             Some(list) => list
                 .len()
                 .try_into()
                 .map_err(|_| InternalError::TypeConversion)?,
         };
-        let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
-            .checked_mul(amount_of_auth_tuples)
-            .ok_or(InternalError::Overflow)?;
 
-        intrinsic_gas = intrinsic_gas
-            .checked_add(authorization_list_cost)
-            .ok_or(OutOfGas)?;
+        if fork >= Fork::Amsterdam {
+            // EIP-8037: per-auth regular cost is PER_AUTH_BASE_COST, state is 135 * COST_PER_STATE_BYTE
+            let regular_auth_cost = PER_AUTH_BASE_COST
+                .checked_mul(amount_of_auth_tuples)
+                .ok_or(InternalError::Overflow)?;
+            regular_gas = regular_gas
+                .checked_add(regular_auth_cost)
+                .ok_or(OutOfGas)?;
+            let state_auth_cost = STATE_BYTES_PER_AUTH_TOTAL
+                .checked_mul(COST_PER_STATE_BYTE)
+                .ok_or(InternalError::Overflow)?
+                .checked_mul(amount_of_auth_tuples)
+                .ok_or(InternalError::Overflow)?;
+            state_gas = state_gas
+                .checked_add(state_auth_cost)
+                .ok_or(OutOfGas)?;
+        } else {
+            let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
+                .checked_mul(amount_of_auth_tuples)
+                .ok_or(InternalError::Overflow)?;
+            regular_gas = regular_gas
+                .checked_add(authorization_list_cost)
+                .ok_or(OutOfGas)?;
+        }
 
-        Ok(intrinsic_gas)
+        Ok((regular_gas, state_gas))
     }
 
     /// Calculates the minimum gas to be consumed in the transaction.

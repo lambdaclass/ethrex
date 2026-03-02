@@ -435,6 +435,8 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Opcode dispatch table, built dynamically per fork.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    /// EIP-8037: Accumulated state gas for this transaction (Amsterdam+).
+    pub state_gas_used: u64,
 }
 
 impl<'a> VM<'a> {
@@ -464,6 +466,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
+            state_gas_used: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -510,6 +513,17 @@ impl<'a> VM<'a> {
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
         self.hooks.push(Rc::new(RefCell::new(hook)));
+    }
+
+    /// EIP-8037: Charge state gas by consuming from current call frame gas and
+    /// accumulating into the VM-level state_gas_used counter.
+    pub fn increase_state_gas(&mut self, gas: u64) -> Result<(), VMError> {
+        self.current_call_frame.increase_consumed_gas(gas)?;
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_add(gas)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
@@ -766,6 +780,7 @@ impl<'a> VM<'a> {
             gas_used: ctx_result.gas_used,
             gas_spent: ctx_result.gas_spent,
             gas_refunded: self.substate.refunded_gas,
+            state_gas_used: self.state_gas_used,
             output: std::mem::take(&mut ctx_result.output),
             logs,
         };

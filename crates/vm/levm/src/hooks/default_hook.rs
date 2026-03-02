@@ -1,7 +1,7 @@
 use crate::{
     account::LevmAccount,
     constants::*,
-    errors::{ContextResult, InternalError, TxValidationError, VMError},
+    errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
@@ -314,7 +314,8 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
     let calldata = vm.current_call_frame.calldata.clone();
-    let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
+    let (regular_gas, state_gas) = vm.get_intrinsic_gas()?;
+    let intrinsic_gas: u64 = regular_gas.checked_add(state_gas).ok_or(ExceptionalHalt::OutOfGas)?;
 
     if vm.current_call_frame.gas_limit < intrinsic_gas {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
