@@ -225,6 +225,19 @@ pub struct BatchBlockProcessingFailure {
     pub failed_block_hash: H256,
 }
 
+fn increase_thread_priority() {
+    use thread_priority::{ThreadPriority, ThreadPriorityValue};
+    if let Err(err) = ThreadPriority::Max.set_for_current() {
+        tracing::debug!(?err, "failed to set max thread priority, trying moderate bump");
+        let fallback = ThreadPriority::Crossplatform(
+            ThreadPriorityValue::try_from(62u8).expect("62 is within valid 0..100 range"),
+        );
+        if let Err(err) = fallback.set_for_current() {
+            tracing::debug!(?err, "failed to set moderate thread priority");
+        }
+    }
+}
+
 fn log_batch_progress(batch_size: u32, current_block: u32) {
     let progress_needed = batch_size > 10;
     const PERCENT_MARKS: [u32; 4] = [20, 40, 60, 80];
@@ -418,6 +431,7 @@ impl Blockchain {
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
+                        increase_thread_priority();
                         // Warming uses the same caching store, sharing cached state with execution.
                         // Precompile cache lives inside CachingDatabase, shared automatically.
                         let start = Instant::now();
@@ -439,6 +453,7 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        increase_thread_priority();
                         let (execution_result, bal) =
                             vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
@@ -471,6 +486,7 @@ impl Blockchain {
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, StoreError> {
+                        increase_thread_priority();
                         let (account_updates_list, accumulated_updates) = if bal.is_some() {
                             self.handle_merkleization_bal(
                                 rx,
