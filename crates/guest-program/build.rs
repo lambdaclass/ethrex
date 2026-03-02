@@ -65,7 +65,8 @@ fn build_risc0_program() {
 #[cfg(all(not(clippy), feature = "sp1"))]
 fn build_sp1_program() {
     use hex;
-    use sp1_sdk::{HashableKey, ProverClient};
+    use sp1_sdk::blocking::{Prover, ProverClient};
+    use sp1_sdk::{Elf, HashableKey, ProvingKey};
 
     let features = if cfg!(feature = "l2") {
         vec!["l2".to_string()]
@@ -80,27 +81,35 @@ fn build_sp1_program() {
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
             docker: option_env!("PROVER_REPRODUCIBLE_BUILD").is_some(),
-            tag: "v5.0.8".to_string(),
+            tag: "v6.0.1".to_string(),
             workspace_directory: Some(format!("{}/../../../", env!("CARGO_MANIFEST_DIR"))),
             ..Default::default()
         },
     );
 
+    // When building is skipped (SP1_SKIP_PROGRAM_BUILD=true), the ELF won't exist
+    // so we skip VK generation as well.
+    if option_env!("SP1_SKIP_PROGRAM_BUILD").is_some() {
+        return;
+    }
+
     // Get verification key
     // ref: https://github.com/succinctlabs/sp1/blob/dev/crates/cli/src/commands/vkey.rs
-    let elf = std::fs::read("./bin/sp1/out/riscv32im-succinct-zkvm-elf")
+    let elf_bytes = std::fs::read("./bin/sp1/out/riscv32im-succinct-zkvm-elf")
         .expect("could not read SP1 elf file");
+    let elf = Elf::from(elf_bytes);
     let prover = ProverClient::from_env();
-    let (_, vk) = prover.setup(&elf);
+    let pk = prover.setup(elf).expect("could not setup SP1 prover");
+    let vk = pk.verifying_key();
 
     std::fs::write(
         "./bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
-        format!("{}\n", vk.vk.bytes32()),
+        format!("{}\n", vk.bytes32()),
     )
     .expect("could not write SP1 vk-bn254 to file");
     std::fs::write(
         "./bin/sp1/out/riscv32im-succinct-zkvm-vk-u32",
-        format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
+        format!("0x{}\n", hex::encode(vk.hash_bytes())),
     )
     .expect("could not write SP1 vk-u32 to file");
 }

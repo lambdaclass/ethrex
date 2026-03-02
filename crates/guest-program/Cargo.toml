@@ -22,8 +22,8 @@ ethrex-l2-common = { path = "../l2/common", default-features = false }
 [build-dependencies]
 hex.workspace = true
 risc0-build = { version = "=3.0.3", optional = true }
-sp1-build = { version = "=5.0.8", optional = true }
-sp1-sdk = { version = "=5.0.8", optional = true }
+sp1-build = { version = "=6.0.1", optional = true }
+sp1-sdk = { version = "=6.0.1", optional = true, features = ["blocking"] }
 
 [package.metadata.risc0]
 methods = ["bin/risc0"]

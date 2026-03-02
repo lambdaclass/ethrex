@@ -131,6 +131,9 @@ perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]
 
 [build-dependencies]
+# vergen pinned to =9.0.6 because vergen-git2 1.0.7 depends on vergen-lib 0.1.6,
+# while vergen 9.1.0 uses vergen-lib 9.1.0 (incompatible Add trait).
+vergen = "=9.0.6"
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
 ethrex-sdk = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }

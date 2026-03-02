@@ -82,6 +82,12 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
+      - name: Install protoc (required by SP1 v6, only Linux)
+        if: ${{ matrix.os == 'linux' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
       - name: Install SP1 (only Linux)
         if: ${{ matrix.os == 'linux' }}
         env:
@@ -89,7 +95,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+          ~/.sp1/bin/sp1up --version 6.0.1
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
@@ -166,6 +172,12 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
+      - name: Install protoc (required by SP1 v6)
+        if: ${{ matrix.zkvm == 'sp1' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
       - name: Install SP1
         if: ${{ matrix.zkvm == 'sp1' }}
         env:
@@ -173,7 +185,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+          ~/.sp1/bin/sp1up --version 6.0.1
 
       - name: Install RISC0
         if: ${{ matrix.zkvm == 'risc0' }}

@@ -56,7 +56,7 @@ pub fn download_script() {
     compile_contract_to_bytecode(
         &output_contracts_path,
         &output_contracts_path
-            .join("lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol"),
+            .join("lib/sp1-contracts/contracts/src/v6.0.0/SP1VerifierGroth16.sol"),
         "SP1Verifier",
         false,
         false,
@@ -238,7 +238,7 @@ fn download_contract_deps(contracts_path: &Path) {
     ethrex_l2_sdk::git_clone(
         "https://github.com/succinctlabs/sp1-contracts.git",
         &contracts_path.join("lib/sp1-contracts").to_string_lossy(),
-        None,
+        Some("main"),
         false,
     )
     .expect("Failed to clone sp1-contracts");
