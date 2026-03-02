@@ -4,7 +4,7 @@
 This note tracks the current state of metrics and dashboard observability for the L1, highlights the gaps against a cross-client baseline. It covers runtime metrics exposed through our crates, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
 
 ### At a glance
-- **Covered today**: Block execution timings, detailed execution breakdown, Engine API and JSON-RPC method telemetry, and host/process health are exported and graphed through `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`. The refreshed [L1 Dashboard doc](./dashboards.md) has screenshots and panel descriptions.
+- **Covered today**: Block execution timings, detailed execution breakdown, Engine API and JSON-RPC method telemetry, and host/process health are exported and graphed through `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`. The refreshed [L1 Dashboard doc](../../developers/l1/dashboards.md) has screenshots and panel descriptions.
 - **Missing**: Sync/peer awareness, txpool depth, storage IO metrics, and richer error taxonomy are absent or only logged.
 - **Near-term focus**: Ship sync & peer gauges, surface txpool counters we already emit, extend storage instrumentation, and harden alerting before widening coverage further.
 

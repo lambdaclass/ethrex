@@ -23,6 +23,7 @@ impl<'a> VM<'a> {
     }
 
     // SUB operation
+    #[inline]
     pub fn op_sub(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
@@ -35,6 +36,7 @@ impl<'a> VM<'a> {
     }
 
     // MUL operation
+    #[inline]
     pub fn op_mul(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::MUL)?;

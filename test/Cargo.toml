@@ -10,6 +10,7 @@ path = "src/lib.rs"
 [features]
 rocksdb = ["ethrex-storage/rocksdb"]
 l2 = []
+c-kzg = ["ethrex-common/c-kzg"]
 
 [dependencies]
 ethrex-common.workspace = true
@@ -48,6 +49,7 @@ anyhow.workspace = true
 ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
+tokio-util.workspace = true
 
 [[test]]
 name = "ethrex_tests"

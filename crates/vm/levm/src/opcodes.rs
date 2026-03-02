@@ -606,6 +606,7 @@ impl<'a> VM<'a> {
         Err(ExceptionalHalt::InvalidOpcode.into())
     }
 
+    #[inline]
     pub fn op_stop(&mut self) -> Result<OpcodeResult, VMError> {
         Ok(OpcodeResult::Halt)
     }

@@ -14,6 +14,7 @@ use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_process
 use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
+    DiscoveryConfig,
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::PeerTable,
@@ -252,7 +253,12 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
-    ethrex_p2p::start_network(context, bootnodes)
+    let discovery_config = DiscoveryConfig {
+        discv4_enabled: opts.discv4_enabled,
+        discv5_enabled: opts.discv5_enabled,
+    };
+
+    ethrex_p2p::start_network(context, bootnodes, discovery_config)
         .await
         .expect("Network starts");
 
@@ -620,7 +626,7 @@ pub async fn regenerate_head_state(
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block_pipeline(block)?;
+        blockchain.add_block_pipeline(block, None)?;
     }
 
     info!("Finished regenerating state");
