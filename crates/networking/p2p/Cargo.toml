@@ -60,6 +60,7 @@ crossbeam.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [lib]
 path = "./p2p.rs"
@@ -77,3 +78,7 @@ experimental-discv5 = ["dep:aes-gcm", "dep:hkdf"]
 [lints.clippy]
 unwrap_used = "deny"
 redundant_clone = "warn"
+
+[[bench]]
+name = "decode"
+harness = false
