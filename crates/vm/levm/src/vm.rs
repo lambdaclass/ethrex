@@ -439,6 +439,11 @@ pub struct VM<'a> {
     pub state_gas_used: u64,
     /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
     pub state_gas_reservoir: u64,
+    /// EIP-8037: State gas that spilled into gas_left in child frames that then
+    /// reverted. This gas was consumed (child halted) but is not reflected in
+    /// `state_gas_used` (which was restored on revert). Needed to correctly
+    /// derive regular gas for block-level `max(regular, state)` accounting.
+    pub reverted_child_state_spill: u64,
 }
 
 impl<'a> VM<'a> {
@@ -470,6 +475,7 @@ impl<'a> VM<'a> {
             vm_type,
             state_gas_used: 0,
             state_gas_reservoir: 0,
+            reverted_child_state_spill: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -521,24 +527,27 @@ impl<'a> VM<'a> {
     /// EIP-8037: Charge state gas, drawing from reservoir first, spilling to gas_remaining if exhausted.
     #[expect(clippy::arithmetic_side_effects, reason = "arithmetic proven safe by min()")]
     pub fn increase_state_gas(&mut self, gas: u64) -> Result<(), VMError> {
-        self.state_gas_used = self
-            .state_gas_used
-            .checked_add(gas)
-            .ok_or(InternalError::Overflow)?;
         if self.env.config.fork >= Fork::Amsterdam {
             // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted
             let from_reservoir = self.state_gas_reservoir.min(gas);
-            // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
-            self.state_gas_reservoir -= from_reservoir;
             // Safe: from_reservoir <= gas
             let spill = gas - from_reservoir;
             if spill > 0 {
+                // Charge spill from gas_remaining first — if OOG, return early
+                // without mutating reservoir or state_gas_used (matches EELS behavior)
                 self.current_call_frame.increase_consumed_gas(spill)?;
             }
+            // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
+            self.state_gas_reservoir -= from_reservoir;
         } else {
             // Pre-Amsterdam: no reservoir, charge directly from gas_remaining
             self.current_call_frame.increase_consumed_gas(gas)?;
         }
+        // Only increment state_gas_used AFTER the charge succeeds
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_add(gas)
+            .ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
