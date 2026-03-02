@@ -21,6 +21,7 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
+use ethrex_levm::account::LevmAccount;
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
@@ -28,10 +29,11 @@ use ethrex_levm::constants::{
 use ethrex_levm::db::Database;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::gas_cost::{ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::utils::get_base_fee_per_blob_gas;
+use ethrex_levm::utils::{create_eth_transfer_log, get_base_fee_per_blob_gas};
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -491,6 +493,236 @@ impl LEVM {
         Ok(env)
     }
 
+    /// Returns true if the transaction is a simple ETH transfer that can skip
+    /// full VM setup: not a create, empty calldata, no authorization list, and
+    /// the recipient has no code (i.e. is an EOA or empty account).
+    fn is_plain_eth_transfer(tx: &Transaction, recipient: &LevmAccount) -> bool {
+        !matches!(tx.to(), TxKind::Create)
+            && tx.data().is_empty()
+            && tx.authorization_list().is_none()
+            && !recipient.has_code()
+    }
+
+    /// Computes the intrinsic gas for a plain ETH transfer.
+    /// This is TX_BASE_COST (21000) plus access-list gas if present.
+    fn plain_transfer_intrinsic_gas(tx: &Transaction) -> Result<u64, VMError> {
+        let mut gas = TX_BASE_COST;
+        for (_, keys) in tx.access_list() {
+            gas = gas
+                .checked_add(ACCESS_LIST_ADDRESS_COST)
+                .ok_or(InternalError::Overflow)?;
+            let key_count: u64 = keys
+                .len()
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?;
+            gas = gas
+                .checked_add(
+                    key_count
+                        .checked_mul(ACCESS_LIST_STORAGE_KEY_COST)
+                        .ok_or(InternalError::Overflow)?,
+                )
+                .ok_or(InternalError::Overflow)?;
+        }
+        Ok(gas)
+    }
+
+    /// Executes a plain ETH transfer without creating a full VM.
+    ///
+    /// This fast-path handles simple value transfers between EOAs, performing
+    /// the same validations and state changes as the full VM path but skipping
+    /// VM construction, opcode table setup, and execution loop overhead.
+    fn execute_plain_transfer(
+        tx: &Transaction,
+        tx_sender: Address,
+        to: Address,
+        env: &Environment,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<ExecutionReport, EvmError> {
+        let sender = db.get_account(tx_sender)?.info.clone();
+        let value = tx.value();
+
+        // --- Validations (mirrors DefaultHook::prepare_execution) ---
+
+        // Gas limit * gas price overflow check
+        let gaslimit_price_product =
+            env.gas_price
+                .checked_mul(env.gas_limit.into())
+                .ok_or(VMError::TxValidation(
+                    TxValidationError::GasLimitPriceProductOverflow,
+                ))?;
+
+        // Sender balance check: balance >= max_fee_per_gas * gas_limit + value
+        let gas_fee_for_valid_tx =
+            env.tx_max_fee_per_gas
+                .unwrap_or(env.gas_price)
+                .checked_mul(env.gas_limit.into())
+                .ok_or(VMError::TxValidation(
+                    TxValidationError::GasLimitPriceProductOverflow,
+                ))?;
+        let balance_for_valid_tx =
+            gas_fee_for_valid_tx
+                .checked_add(value)
+                .ok_or(VMError::TxValidation(
+                    TxValidationError::InsufficientAccountFunds,
+                ))?;
+        if sender.balance < balance_for_valid_tx {
+            return Err(VMError::TxValidation(TxValidationError::InsufficientAccountFunds).into());
+        }
+
+        // Max fee per gas >= base fee
+        if env.tx_max_fee_per_gas.unwrap_or(env.gas_price) < env.base_fee_per_gas {
+            return Err(VMError::TxValidation(TxValidationError::InsufficientMaxFeePerGas).into());
+        }
+
+        // Intrinsic gas check
+        let intrinsic_gas = Self::plain_transfer_intrinsic_gas(tx)?;
+        if env.gas_limit < intrinsic_gas {
+            return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow).into());
+        }
+
+        // Nonce check (must happen before increment)
+        if sender.nonce != env.tx_nonce {
+            return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
+                expected: sender.nonce,
+                actual: env.tx_nonce,
+            })
+            .into());
+        }
+
+        // Sender must be an EOA (no code, or EIP-7702 delegation code)
+        let sender_code = db.get_code(sender.code_hash)?;
+        if !sender_code.bytecode.is_empty()
+            && !ethrex_levm::utils::code_has_delegation(&sender_code.bytecode)?
+        {
+            return Err(
+                VMError::TxValidation(TxValidationError::SenderNotEOA(tx_sender)).into(),
+            );
+        }
+
+        // Gas limit must not exceed block gas limit
+        if env.gas_limit > env.block_gas_limit {
+            return Err(VMError::TxValidation(TxValidationError::GasAllowanceExceeded {
+                block_gas_limit: env.block_gas_limit,
+                tx_gas_limit: env.gas_limit,
+            })
+            .into());
+        }
+
+        // Priority fee <= max fee per gas
+        if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) =
+            (env.tx_max_priority_fee_per_gas, env.tx_max_fee_per_gas)
+        {
+            if tx_max_priority_fee > tx_max_fee_per_gas {
+                return Err(VMError::TxValidation(
+                    TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                        priority_fee: tx_max_priority_fee,
+                        max_fee_per_gas: tx_max_fee_per_gas,
+                    },
+                )
+                .into());
+            }
+        }
+
+        // --- State changes ---
+
+        // Deduct upfront cost from sender: gas_price * gas_limit + value
+        let up_front_cost =
+            gaslimit_price_product
+                .checked_add(value)
+                .ok_or(VMError::TxValidation(
+                    TxValidationError::InsufficientAccountFunds,
+                ))?;
+        {
+            let sender_account = db.get_account_mut(tx_sender)?;
+            sender_account.info.balance = sender_account
+                .info
+                .balance
+                .checked_sub(up_front_cost)
+                .ok_or(VMError::TxValidation(
+                    TxValidationError::InsufficientAccountFunds,
+                ))?;
+
+            // Increment sender nonce
+            sender_account.info.nonce = sender_account
+                .info
+                .nonce
+                .checked_add(1)
+                .ok_or(VMError::TxValidation(TxValidationError::NonceIsMax))?;
+        }
+
+        // Transfer value to recipient
+        if !value.is_zero() {
+            let recipient_account = db.get_account_mut(to)?;
+            recipient_account.info.balance = recipient_account
+                .info
+                .balance
+                .checked_add(value)
+                .ok_or(InternalError::Overflow)?;
+        }
+
+        // For plain transfers with no calldata, gas_used == intrinsic_gas.
+        // There are no refunds (no SSTORE operations).
+        let gas_used = intrinsic_gas;
+        let gas_spent = intrinsic_gas;
+
+        // Refund unused gas to sender
+        let gas_to_return = env
+            .gas_limit
+            .checked_sub(gas_spent)
+            .ok_or(InternalError::Underflow)?;
+        let wei_return = env
+            .gas_price
+            .checked_mul(U256::from(gas_to_return))
+            .ok_or(InternalError::Overflow)?;
+        if !wei_return.is_zero() {
+            let sender_account = db.get_account_mut(tx_sender)?;
+            sender_account.info.balance = sender_account
+                .info
+                .balance
+                .checked_add(wei_return)
+                .ok_or(InternalError::Overflow)?;
+        }
+
+        // Pay coinbase the priority fee
+        let priority_fee_per_gas = env
+            .gas_price
+            .checked_sub(env.base_fee_per_gas)
+            .ok_or(InternalError::Underflow)?;
+        let coinbase_fee = U256::from(gas_spent)
+            .checked_mul(priority_fee_per_gas)
+            .ok_or(InternalError::Overflow)?;
+
+        // Record coinbase as touched in BAL (per EIP-7928)
+        if let Some(recorder) = db.bal_recorder.as_mut() {
+            recorder.record_touched_address(env.coinbase);
+        }
+
+        if !coinbase_fee.is_zero() {
+            let coinbase_account = db.get_account_mut(env.coinbase)?;
+            coinbase_account.info.balance = coinbase_account
+                .info
+                .balance
+                .checked_add(coinbase_fee)
+                .ok_or(InternalError::Overflow)?;
+        }
+
+        // EIP-7708: Emit transfer log for Amsterdam+ if value > 0 and from != to
+        let logs = if env.config.fork >= Fork::Amsterdam && !value.is_zero() && tx_sender != to {
+            vec![create_eth_transfer_log(tx_sender, to, value)]
+        } else {
+            Vec::new()
+        };
+
+        Ok(ExecutionReport {
+            result: TxResult::Success,
+            gas_used,
+            gas_spent,
+            gas_refunded: 0,
+            output: Bytes::new(),
+            logs,
+        })
+    }
+
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
@@ -502,6 +734,15 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+
+        // Fast-path for plain ETH transfers
+        if let TxKind::Call(to) = tx.to() {
+            let recipient = db.get_account(to)?;
+            if Self::is_plain_eth_transfer(tx, recipient) {
+                return Self::execute_plain_transfer(tx, tx_sender, to, &env, db);
+            }
+        }
+
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -522,6 +763,18 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         env.disable_balance_check = disable_balance_check;
+
+        // Fast-path for plain ETH transfers (skip when balance check is disabled,
+        // e.g. during pre-warming, since our fast-path always validates balances)
+        if !disable_balance_check {
+            if let TxKind::Call(to) = tx.to() {
+                let recipient = db.get_account(to)?;
+                if Self::is_plain_eth_transfer(tx, recipient) {
+                    return Self::execute_plain_transfer(tx, tx_sender, to, &env, db);
+                }
+            }
+        }
+
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
