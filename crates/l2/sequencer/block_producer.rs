@@ -12,22 +12,27 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
     validate_block,
 };
-use ethrex_common::Address;
 use ethrex_common::H256;
+use ethrex_common::{Address, U256};
+use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_rpc::{
+    EthClient,
+    clients::{EthClientError, Overrides},
+};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 pub use payload_builder::build_payload;
+use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    BlockProducerConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-};
+use crate::{BlockProducerConfig, SequencerConfig};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
+use std::str::FromStr;
 
 use super::errors::BlockProducerError;
 
@@ -60,9 +65,11 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
-    // Needed to ensure privileged tx nonces are sequential
-    last_privileged_nonce: Option<u64>,
+    // Needed to ensure privileged tx nonces are sequential per source chain
+    privileged_nonces: std::collections::HashMap<u64, Option<u64>>,
     block_gas_limit: u64,
+    eth_client: EthClient,
+    router_address: Address,
 }
 
 #[derive(Clone, Serialize)]
@@ -76,11 +83,13 @@ pub struct BlockProducerHealth {
 impl BlockProducer {
     pub fn new(
         config: &BlockProducerConfig,
+        l1_rpc_url: Vec<Url>,
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
-    ) -> Self {
+        router_address: Address,
+    ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
@@ -89,6 +98,8 @@ impl BlockProducer {
             elasticity_multiplier,
             block_gas_limit,
         } = config;
+
+        let eth_client = EthClient::new_with_multiple_urls(l1_rpc_url)?;
 
         if base_fee_vault_address.is_some_and(|base_fee_vault| base_fee_vault == *coinbase_address)
         {
@@ -104,7 +115,7 @@ impl BlockProducer {
             );
         }
 
-        Self {
+        Ok(Self {
             store,
             blockchain,
             sequencer_state,
@@ -113,9 +124,11 @@ impl BlockProducer {
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
             // FIXME: Initialize properly to the last privileged nonce in the chain
-            last_privileged_nonce: None,
+            privileged_nonces: std::collections::HashMap::new(),
             block_gas_limit: *block_gas_limit,
-        }
+            eth_client,
+            router_address,
+        })
     }
 
     pub async fn spawn(
@@ -124,14 +137,17 @@ impl BlockProducer {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        router_address: Address,
     ) -> Result<GenServerHandle<BlockProducer>, BlockProducerError> {
         let mut block_producer = Self::new(
             &cfg.block_producer,
+            cfg.eth.rpc_url,
             store,
             rollup_store,
             blockchain,
             sequencer_state,
-        )
+            router_address,
+        )?
         .start_blocking();
         block_producer
             .cast(InMessage::Produce)
@@ -165,19 +181,23 @@ impl BlockProducer {
             random: H256::zero(),
             withdrawals: Default::default(),
             beacon_root: Some(head_beacon_block_root),
+            slot_number: None,
             version,
             elasticity_multiplier: self.elasticity_multiplier,
             gas_ceil: self.block_gas_limit,
         };
         let payload = create_payload(&args, &self.store, Bytes::new())?;
 
+        let registered_chains = self.get_registered_l2_chain_ids().await?;
+
         // Blockchain builds the payload from mempool txs and executes them
         let payload_build_result = build_payload(
             self.blockchain.clone(),
             payload,
             &self.store,
-            &mut self.last_privileged_nonce,
+            &mut self.privileged_nonces,
             self.block_gas_limit,
+            registered_chains,
         )
         .await?;
         info!(
@@ -200,6 +220,8 @@ impl BlockProducer {
         let execution_result = BlockExecutionResult {
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
+            // Use the block header's gas_used which was set during payload building
+            block_gas_used: block.header.gas_used,
         };
 
         let account_updates_list = self
@@ -251,6 +273,51 @@ impl BlockProducer {
             .await?;
         Ok(())
     }
+
+    async fn get_registered_l2_chain_ids(&self) -> Result<Vec<U256>, BlockProducerError> {
+        if self.router_address == Address::zero() {
+            info!("Router address is zero, no registered L2 chain IDs.");
+            return Ok(Vec::new());
+        }
+        let calldata = encode_calldata("getRegisteredChainIds()", &[])?;
+
+        let registered_chains = self
+            .eth_client
+            .call(self.router_address, calldata.into(), Overrides::default())
+            .await?;
+        let registered_chains = registered_chains.trim_start_matches("0x");
+        let length = usize::from_str_radix(
+            registered_chains
+                .get(64..128)
+                .ok_or(BlockProducerError::Custom(
+                    "Failed to get length for registered chains".into(),
+                ))?,
+            16,
+        )
+        .map_err(|_| {
+            BlockProducerError::Custom("Failed to parse length for registered chains".into())
+        })?;
+
+        let mut chain_ids = Vec::new();
+
+        let mut index = 128;
+        for _ in 0..length {
+            let elem_hex =
+                registered_chains
+                    .get(index..index + 64)
+                    .ok_or(BlockProducerError::Custom(
+                        "Failed to get chain id hex".into(),
+                    ))?;
+            let chain_id = U256::from_str(elem_hex).map_err(|_| {
+                BlockProducerError::Custom("Failed to get chain for registered chains".into())
+            })?;
+            chain_ids.push(chain_id);
+            index += 64;
+        }
+
+        info!("Registered chains: {:?}", chain_ids);
+        Ok(chain_ids)
+    }
 }
 
 impl GenServer for BlockProducer {
@@ -266,7 +333,7 @@ impl GenServer for BlockProducer {
     ) -> CastResponse {
         match message {
             InMessage::Produce => {
-                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
                     let _ = self
                         .produce_block()
                         .await
@@ -294,7 +361,7 @@ impl GenServer for BlockProducer {
     ) -> CallResponse<Self> {
         match message {
             CallMessage::Health => CallResponse::Reply(OutMessage::Health(BlockProducerHealth {
-                sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+                sequencer_state: format!("{:?}", self.sequencer_state.status()),
                 block_time_ms: self.block_time_ms,
                 coinbase_address: self.coinbase_address,
                 elasticity_multiplier: self.elasticity_multiplier,

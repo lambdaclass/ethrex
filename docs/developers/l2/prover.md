@@ -12,7 +12,7 @@ Before you begin, ensure you have the following dependencies installed:
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
   2. `sp1up --version 5.0.8`
-- [SOLC (v0.8.29)](https://docs.soliditylang.org/en/latest/installing-solidity.html)
+- [SOLC (v0.8.31)](https://docs.soliditylang.org/en/latest/installing-solidity.html)
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
 
@@ -35,7 +35,7 @@ make init-prover-<sp1|risc0|exec> # optional: GPU=true
 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
-   - It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by [datadir](https://docs.rs/dirs/latest/dirs/fn.datadir.html).
+   - It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by [datadir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
 3. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
@@ -100,11 +100,11 @@ Two separate machines are recommended for running the `Prover` and the `sequence
       ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
       # Set to true if you want SP1 proofs to be required
       ETHREX_L2_SP1=true
-      # Check the if the verification contract is present on your preferred network. Don't define this if you want it to be deployed automatically.
+      # Check if the verification contract is present on your preferred network. Don't define this if you want it to be deployed automatically.
       ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS=<address>
       # Set to true if you want proofs to be required
       ETHREX_L2_RISC0=true
-      # Check the if the contract is present on your preferred network. You shall deploy it manually if not.
+      # Check if the contract is present on your preferred network. You shall deploy it manually if not.
       ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS=<address>
       # Set to any L1 endpoint.
       ETHREX_ETH_RPC_URL=<url>

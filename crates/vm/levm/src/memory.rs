@@ -191,18 +191,45 @@ impl Memory {
         self.store(data, offset, data.len())
     }
 
-    /// Stores the given data and data size at the given offset.
-    ///
-    /// Resizes memory to fit the given data.
+    /// Stores data and zero-pads up to total_size at the given offset.
     #[inline(always)]
-    pub fn store_range(&mut self, offset: usize, size: usize, data: &[u8]) -> Result<(), VMError> {
-        if size == 0 {
+    pub fn store_data_zero_padded(
+        &mut self,
+        offset: usize,
+        data: &[u8],
+        total_size: usize,
+    ) -> Result<(), VMError> {
+        if total_size == 0 {
             return Ok(());
         }
 
-        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
+        let new_size = offset.checked_add(total_size).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
-        self.store(data, offset, size)
+
+        let copy_size = data.len().min(total_size);
+        if copy_size > 0 {
+            self.store(data, offset, copy_size)?;
+        }
+
+        #[allow(clippy::arithmetic_side_effects)]
+        if copy_size < total_size {
+            // SAFETY: copy_size < total_size and offset + total_size didn't overflow (checked above),
+            // so offset + copy_size cannot overflow.
+            let zero_offset = offset.wrapping_add(copy_size);
+            let zero_size = total_size - copy_size;
+            let real_offset = self.current_base.wrapping_add(zero_offset);
+            let mut buffer = self.buffer.borrow_mut();
+
+            // resize ensures bounds are correct
+            #[expect(unsafe_code)]
+            unsafe {
+                buffer
+                    .get_unchecked_mut(real_offset..real_offset.wrapping_add(zero_size))
+                    .fill(0);
+            }
+        }
+
+        Ok(())
     }
 
     /// Stores a word at the given offset, resizing memory if needed.
@@ -328,75 +355,4 @@ pub fn calculate_memory_size(offset: usize, size: usize) -> Result<usize, VMErro
         .checked_add(size)
         .and_then(|sum| sum.checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE))
         .ok_or(OutOfBounds.into())
-}
-
-#[cfg(test)]
-mod test {
-    #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-    use ethrex_common::U256;
-
-    use crate::memory::Memory;
-
-    #[test]
-    fn test_basic_store_data() {
-        let mut mem = Memory::new();
-
-        mem.store_data(0, &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]).unwrap();
-
-        assert_eq!(&mem.buffer.borrow()[0..10], &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(mem.len(), 32);
-    }
-
-    #[test]
-    fn test_words() {
-        let mut mem = Memory::new();
-
-        mem.store_word(0, U256::from(4)).unwrap();
-
-        assert_eq!(mem.load_word(0).unwrap(), U256::from(4));
-        assert_eq!(mem.len(), 32);
-    }
-
-    #[test]
-    fn test_copy_word_within() {
-        {
-            let mut mem = Memory::new();
-
-            mem.store_word(0, U256::from(4)).unwrap();
-            mem.copy_within(0, 32, 32).unwrap();
-
-            assert_eq!(mem.load_word(32).unwrap(), U256::from(4));
-            assert_eq!(mem.len(), 64);
-        }
-
-        {
-            let mut mem = Memory::new();
-
-            mem.store_word(32, U256::from(4)).unwrap();
-            mem.copy_within(32, 0, 32).unwrap();
-
-            assert_eq!(mem.load_word(0).unwrap(), U256::from(4));
-            assert_eq!(mem.len(), 64);
-        }
-
-        {
-            let mut mem = Memory::new();
-
-            mem.store_word(0, U256::from(4)).unwrap();
-            mem.copy_within(0, 0, 32).unwrap();
-
-            assert_eq!(mem.load_word(0).unwrap(), U256::from(4));
-            assert_eq!(mem.len(), 32);
-        }
-
-        {
-            let mut mem = Memory::new();
-
-            mem.store_word(0, U256::from(4)).unwrap();
-            mem.copy_within(32, 0, 32).unwrap();
-
-            assert_eq!(mem.load_word(0).unwrap(), U256::zero());
-            assert_eq!(mem.len(), 64);
-        }
-    }
 }

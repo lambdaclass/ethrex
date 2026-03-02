@@ -1,13 +1,29 @@
+//! Gas price estimation for `eth_gasPrice` RPC method.
+//!
+//! This module implements the gas price oracle that estimates a reasonable
+//! gas price based on recent block history and network conditions.
+
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
 use ethrex_blockchain::BlockchainType;
 use serde_json::Value;
 
-// TODO: This does not need a struct,
-// but I'm leaving it like this for consistency
-// with the other RPC endpoints.
-// The handle function could simply be
-// a function called 'estimate'.
+/// Handler for the `eth_gasPrice` RPC method.
+///
+/// Returns the current gas price in wei as a hexadecimal string.
+/// The price is calculated as: `base_fee + estimated_priority_fee + operator_fee (L2 only)`.
+///
+/// # Algorithm
+///
+/// 1. Gets the base fee from the latest block header
+/// 2. Estimates a reasonable priority fee (gas tip) by analyzing recent transactions
+/// 3. For L2 nodes, adds the operator fee if configured
+///
+/// # Example Response
+///
+/// ```json
+/// "0x3b9aca00"  // 1 Gwei in hexadecimal
+/// ```
 #[derive(Debug, Clone)]
 pub struct GasPrice;
 
@@ -95,6 +111,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
+
     #[tokio::test]
     async fn test_with_mixed_transactions() {
         let storage = setup_store().await;
@@ -107,6 +124,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
+
     #[tokio::test]
     async fn test_with_not_enough_blocks_or_transactions() {
         let storage = setup_store().await;
@@ -119,6 +137,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI + MIN_GAS_TIP);
     }
+
     #[tokio::test]
     async fn test_with_no_blocks_but_genesis() {
         let storage = setup_store().await;
@@ -130,6 +149,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, expected_gas_price);
     }
+
     #[tokio::test]
     async fn request_smoke_test() {
         let raw_json = json!(

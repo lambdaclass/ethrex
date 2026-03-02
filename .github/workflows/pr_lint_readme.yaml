@@ -1,6 +1,7 @@
 name: Check CLI Help Consistency
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "cmd/ethrex/**"
@@ -17,6 +18,9 @@ concurrency:
 env:
   # Remember to update the triggers whenever this path changes
   MDFILE_WITH_CLI_HELP: docs/CLI.md
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   check-cli-help:

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -34,7 +34,13 @@ contract OnChainProposer is
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
+        uint256 nonPrivilegedTransactions;
+        /// @dev git commit hash that produced the proof/verification key used for this batch
+        bytes32 commitHash;
     }
+
+    uint8 internal constant SP1_VERIFIER_ID = 1;
+    uint8 internal constant RISC0_VERIFIER_ID = 2;
 
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
@@ -65,6 +71,7 @@ contract OnChainProposer is
     address public TDX_VERIFIER_ADDRESS;
     address public SEQUENCER_REGISTRY;
 
+    /// @dev Deprecated variable.
     bytes32 public SP1_VERIFICATION_KEY;
 
     /// @notice Indicates whether the contract operates in validium mode.
@@ -75,6 +82,7 @@ contract OnChainProposer is
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
     address public ALIGNEDPROOFAGGREGATOR;
 
+    /// @dev Deprecated variable.
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice True if a Risc0 proof is required for batch verification.
@@ -90,12 +98,15 @@ contract OnChainProposer is
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
 
+    /// @notice Verification keys keyed by git commit hash (keccak of the commit SHA string) and verifier type.
+    mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
+        public verificationKeys;
+
     modifier onlyLeaderSequencer() {
-        require(
-            msg.sender ==
-                ISequencerRegistry(SEQUENCER_REGISTRY).leaderSequencer(),
-            "OnChainProposer: caller has no sequencing rights"
-        );
+        if (
+            msg.sender !=
+            ISequencerRegistry(SEQUENCER_REGISTRY).leaderSequencer()
+        ) revert CallerHasNoSequencingRights();
         _;
     }
 
@@ -120,22 +131,21 @@ contract OnChainProposer is
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
+        bytes32 commitHash,
         bytes32 genesisStateRoot,
         address sequencer_registry,
-        uint256 chainId
+        uint256 chainId,
+        address bridge
     ) public initializer {
         VALIDIUM = _validium;
 
         // Risc0 constants
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
         RISC0_VERIFIER_ADDRESS = r0verifier;
-        RISC0_VERIFICATION_KEY = risc0Vk;
 
         // SP1 constants
         REQUIRE_SP1_PROOF = requireSp1Proof;
         SP1_VERIFIER_ADDRESS = sp1verifier;
-        SP1_VERIFICATION_KEY = sp1Vk;
-        RISC0_VERIFICATION_KEY = risc0Vk;
 
         // TDX constants
         REQUIRE_TDX_PROOF = requireTdxProof;
@@ -145,61 +155,66 @@ contract OnChainProposer is
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
+        if (commitHash == bytes32(0)) revert CommitHashIsZero();
+        if (REQUIRE_SP1_PROOF && sp1Vk == bytes32(0))
+            revert MissingSp1VerificationKey();
+        if (REQUIRE_RISC0_PROOF && risc0Vk == bytes32(0))
+            revert MissingRisc0VerificationKey();
+        verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
+        verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
+
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
             bytes32(0),
             bytes32(0),
             bytes32(0),
-            bytes32(0)
+            bytes32(0),
+            0,
+            commitHash
         );
 
         // Set the SequencerRegistry address
-        require(
-            SEQUENCER_REGISTRY == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            sequencer_registry != address(0),
-            "OnChainProposer: sequencer_registry is the zero address"
-        );
-        require(
-            sequencer_registry != address(this),
-            "OnChainProposer: sequencer_registry is the contract address"
-        );
+        if (SEQUENCER_REGISTRY != address(0)) revert AlreadyInitialized();
+        if (sequencer_registry == address(0))
+            revert SequencerRegistryIsZeroAddress();
+        if (sequencer_registry == address(this))
+            revert SequencerRegistryIsContractAddress();
         SEQUENCER_REGISTRY = sequencer_registry;
 
         CHAIN_ID = chainId;
 
         OwnableUpgradeable.__Ownable_init(owner);
-    }
 
-    /// @inheritdoc IOnChainProposer
-    function initializeBridgeAddress(address bridge) public onlyOwner {
-        require(
-            BRIDGE == address(0),
-            "OnChainProposer: bridge already initialized"
-        );
-        require(
-            bridge != address(0),
-            "OnChainProposer: bridge is the zero address"
-        );
-        require(
-            bridge != address(this),
-            "OnChainProposer: bridge is the contract address"
-        );
+        if (bridge == address(0)) revert BridgeIsZeroAddress();
+        if (bridge == address(this)) revert BridgeIsContractAddress();
         BRIDGE = bridge;
+
+        emit VerificationKeyUpgraded("SP1", commitHash, sp1Vk);
+        emit VerificationKeyUpgraded("RISC0", commitHash, risc0Vk);
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeSP1VerificationKey(bytes32 new_vk) public onlyOwner {
-        SP1_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("SP1", new_vk);
+    function upgradeSP1VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        if (commit_hash == bytes32(0)) revert CommitHashIsZero();
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][SP1_VERIFIER_ID] = new_vk;
+        emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeRISC0VerificationKey(bytes32 new_vk) public onlyOwner {
-        RISC0_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("RISC0", new_vk);
+    function upgradeRISC0VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        if (commit_hash == bytes32(0)) revert CommitHashIsZero();
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
+        emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -209,34 +224,25 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
+        uint256 nonPrivilegedTransactions,
+        bytes32 commitHash,
         bytes[] calldata //rlpEncodedBlocks
     ) external override onlyLeaderSequencer {
-        // TODO: Refactor validation
-        require(
-            batchNumber == lastCommittedBatch + 1,
-            "OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch"
-        );
-        require(
-            batchCommitments[batchNumber].newStateRoot == bytes32(0),
-            "OnChainProposer: tried to commit an already committed batch"
-        );
-        require(
-            lastBlockHash != bytes32(0),
-            "OnChainProposer: lastBlockHash cannot be zero"
-        );
-
-        // Check if commitment is equivalent to blob's KZG commitment.
+        if (batchNumber != lastCommittedBatch + 1)
+            revert BatchNumberNotSuccessor();
+        if (batchCommitments[batchNumber].newStateRoot != bytes32(0))
+            revert BatchAlreadyCommitted();
+        if (lastBlockHash == bytes32(0)) revert LastBlockHashIsZero();
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
             bytes32 claimedProcessedTransactions = ICommonBridge(BRIDGE)
                 .getPendingTransactionsVersionedHash(
                     uint16(bytes2(processedPrivilegedTransactionsRollingHash))
                 );
-            require(
-                claimedProcessedTransactions ==
-                    processedPrivilegedTransactionsRollingHash,
-                "OnChainProposer: invalid privileged transactions log"
-            );
+            if (
+                claimedProcessedTransactions !=
+                processedPrivilegedTransactionsRollingHash
+            ) revert InvalidPrivilegedTransactionLogs();
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
@@ -245,18 +251,21 @@ contract OnChainProposer is
             );
         }
 
+        // Validate commit hash and corresponding verification keys are valid
+        if (commitHash == bytes32(0)) revert CommitHashIsZero();
+        if (
+            (REQUIRE_SP1_PROOF &&
+                verificationKeys[commitHash][SP1_VERIFIER_ID] == bytes32(0)) ||
+            (REQUIRE_RISC0_PROOF &&
+                verificationKeys[commitHash][RISC0_VERIFIER_ID] == bytes32(0))
+        ) revert MissingVerificationKeyForCommit();
+
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
         if (VALIDIUM) {
-            require(
-                blobVersionedHash == 0,
-                "L2 running as validium but blob was published"
-            );
+            if (blobVersionedHash != 0) revert ValidiumBlobPublished();
         } else {
-            require(
-                blobVersionedHash != 0,
-                "L2 running as rollup but blob was not published"
-            );
+            if (blobVersionedHash == 0) revert RollupBlobNotPublished();
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -264,7 +273,9 @@ contract OnChainProposer is
             blobVersionedHash,
             processedPrivilegedTransactionsRollingHash,
             withdrawalsLogsMerkleRoot,
-            lastBlockHash
+            lastBlockHash,
+            nonPrivilegedTransactions,
+            commitHash
         );
         emit BatchCommitted(batchNumber, newStateRoot);
 
@@ -275,30 +286,17 @@ contract OnChainProposer is
         );
     }
 
-    /// @inheritdoc IOnChainProposer
-    /// @notice The first `require` checks that the batch number is the subsequent block.
-    /// @notice The second `require` checks if the batch has been committed.
-    /// @notice The order of these `require` statements is important.
-    /// Ordering Reason: After the verification process, we delete the `batchCommitments` for `batchNumber - 1`. This means that when checking the batch,
-    /// we might get an error indicating that the batch hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
-    function verifyBatch(
+    /// @notice Internal batch verification logic used by verifyBatches.
+    function _verifyBatchInternal(
         uint256 batchNumber,
-        //risc0
-        bytes memory risc0BlockProof,
-        bytes calldata risc0Journal,
-        //sp1
-        bytes calldata sp1PublicValues,
-        bytes memory sp1ProofBytes,
-        //tdx
-        bytes calldata tdxPublicValues,
-        bytes memory tdxSignature
-    ) external {
-        require(!ALIGNED_MODE, "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.");
-
-        require(
-            batchCommitments[batchNumber].newStateRoot != bytes32(0),
-            "OnChainProposer: cannot verify an uncommitted batch"
-        );
+        bytes calldata risc0BlockProof,
+        bytes calldata sp1ProofBytes,
+        bytes calldata tdxSignature
+    ) internal {
+        if (batchNumber != lastVerifiedBatch + 1)
+            revert BatchNotSequential();
+        if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
+            revert BatchNotCommitted();
 
         // The first 2 bytes are the number of privileged transactions.
         uint16 privileged_transaction_count = uint16(
@@ -313,80 +311,59 @@ contract OnChainProposer is
             );
         }
 
+        if (
+            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
+            batchCommitments[batchNumber].nonPrivilegedTransactions != 0
+        ) {
+            revert ExpiredPrivilegedTransactionDeadline();
+        }
+
+        // Reconstruct public inputs from commitments
+        // MUST be BEFORE updating lastVerifiedBatch
+        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+
         if (REQUIRE_RISC0_PROOF) {
-            // If the verification fails, it will revert.
-            string memory reason = _verifyPublicData(batchNumber, risc0Journal);
-            if (bytes(reason).length != 0) {
-                revert(
-                    string.concat(
-                        "OnChainProposer: Invalid RISC0 proof: ",
-                        reason
-                    )
-                );
-            }
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 risc0Vk = verificationKeys[batchCommitHash][
+                RISC0_VERIFIER_ID
+            ];
             try
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
-                    RISC0_VERIFICATION_KEY,
-                    sha256(risc0Journal)
+                    risc0Vk,
+                    sha256(publicInputs)
                 )
             {} catch {
-                revert(
-                    "OnChainProposer: Invalid RISC0 proof failed proof verification"
-                );
+                revert InvalidRisc0Proof();
             }
         }
 
         if (REQUIRE_SP1_PROOF) {
-            // If the verification fails, it will revert.
-            string memory reason = _verifyPublicData(
-                batchNumber,
-                sp1PublicValues
-            );
-            if (bytes(reason).length != 0) {
-                revert(
-                    string.concat(
-                        "OnChainProposer: Invalid SP1 proof: ",
-                        reason
-                    )
-                );
-            }
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 sp1Vk = verificationKeys[batchCommitHash][SP1_VERIFIER_ID];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
-                    SP1_VERIFICATION_KEY,
-                    sp1PublicValues,
+                    sp1Vk,
+                    publicInputs,
                     sp1ProofBytes
                 )
             {} catch {
-                revert(
-                    "OnChainProposer: Invalid SP1 proof failed proof verification"
-                );
+                revert InvalidSp1Proof();
             }
         }
 
         if (REQUIRE_TDX_PROOF) {
-            // If the verification fails, it will revert.
-            string memory reason = _verifyPublicData(
-                batchNumber,
-                tdxPublicValues
-            );
-            if (bytes(reason).length != 0) {
-                revert(
-                    string.concat(
-                        "OnChainProposer: Invalid TDX proof: ",
-                        reason
-                    )
-                );
-            }
             try
-                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(tdxPublicValues, tdxSignature)
+                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
+                    publicInputs,
+                    tdxSignature
+                )
             {} catch {
-                revert(
-                    "OnChainProposer: Invalid TDX proof failed proof verification"
-                );
+                revert InvalidTdxProof();
             }
         }
 
+        // MUST be AFTER _getPublicInputsFromCommitment
         lastVerifiedBatch = batchNumber;
 
         // Remove previous batch commitment as it is no longer needed.
@@ -396,41 +373,58 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
+    /// @notice Callable by anyone (no access control) so that any party can
+    ///         advance verification once proofs are available.
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
+    ) external {
+        if (ALIGNED_MODE) revert UseAlignedVerification();
+        uint256 batchCount = risc0BlockProofs.length;
+        if (batchCount == 0) revert EmptyBatchArray();
+        if (sp1ProofsBytes.length != batchCount || tdxSignatures.length != batchCount)
+            revert BatchArrayLengthMismatch();
+        for (uint256 i = 0; i < batchCount; i++) {
+            _verifyBatchInternal(
+                firstBatchNumber + i,
+                risc0BlockProofs[i],
+                sp1ProofsBytes[i],
+                tdxSignatures[i]
+            );
+        }
+    }
+
+    /// @inheritdoc IOnChainProposer
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata publicInputsList,
+        uint256 lastBatchNumber,
         bytes32[][] calldata sp1MerkleProofsList,
         bytes32[][] calldata risc0MerkleProofsList
     ) external override {
-        require(
-            ALIGNED_MODE,
-            "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead."
-        );
-        require(
-            firstBatchNumber == lastVerifiedBatch + 1,
-            "OnChainProposer: incorrect first batch number"
-        );
+        if (!ALIGNED_MODE) revert UseSmartContractVerification();
+        if (firstBatchNumber != lastVerifiedBatch + 1)
+            revert IncorrectFirstBatchNumber();
+        if (lastBatchNumber > lastCommittedBatch)
+            revert LastBatchExceedsCommitted();
+
+        uint256 batchesToVerify = (lastBatchNumber - firstBatchNumber) + 1;
 
         if (REQUIRE_SP1_PROOF) {
-            require(
-                publicInputsList.length == sp1MerkleProofsList.length,
-                "OnChainProposer: SP1 input/proof array length mismatch"
-            );
+            if (batchesToVerify != sp1MerkleProofsList.length)
+                revert Sp1ProofArrayLengthMismatch();
         }
         if (REQUIRE_RISC0_PROOF) {
-            require(
-                publicInputsList.length == risc0MerkleProofsList.length,
-                "OnChainProposer: Risc0 input/proof array length mismatch"
-            );
+            if (batchesToVerify != risc0MerkleProofsList.length)
+                revert Risc0ProofArrayLengthMismatch();
         }
 
         uint256 batchNumber = firstBatchNumber;
 
-        for (uint256 i = 0; i < publicInputsList.length; i++) {
-            require(
-                batchCommitments[batchNumber].newStateRoot != bytes32(0),
-                "OnChainProposer: cannot verify an uncommitted batch"
-            );
+        for (uint256 i = 0; i < batchesToVerify; i++) {
+            if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
+                revert BatchNotCommitted();
 
             // The first 2 bytes are the number of privileged transactions.
             uint16 privileged_transaction_count = uint16(
@@ -445,33 +439,28 @@ contract OnChainProposer is
                 );
             }
 
-            // Verify public data for the batch
-            string memory reason = _verifyPublicData(
-                batchNumber,
-                publicInputsList[i]
+            // Reconstruct public inputs from commitments
+            bytes memory publicInputs = _getPublicInputsFromCommitment(
+                batchNumber
             );
-            if (bytes(reason).length != 0) {
-                revert(
-                    string.concat(
-                        "OnChainProposer: Invalid ALIGNED proof: ",
-                        reason
-                    )
-                );
-            }
 
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
-                    SP1_VERIFICATION_KEY,
-                    publicInputsList[i]
+                    verificationKeys[batchCommitments[batchNumber].commitHash][
+                        SP1_VERIFIER_ID
+                    ],
+                    publicInputs
                 );
             }
 
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
-                    RISC0_VERIFICATION_KEY,
-                    publicInputsList[i]
+                    verificationKeys[batchCommitments[batchNumber].commitHash][
+                        RISC0_VERIFIER_ID
+                    ],
+                    publicInputs
                 );
             }
 
@@ -485,68 +474,41 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    function _verifyPublicData(
-        uint256 batchNumber,
-        bytes calldata publicData
-    ) internal view returns (string memory) {
-        if (publicData.length != 256) {
-            return "invalid public data length";
-        }
-        bytes32 initialStateRoot = bytes32(publicData[0:32]);
-        if (
-            batchCommitments[lastVerifiedBatch].newStateRoot != initialStateRoot
-        ) {
-            return
-                "initial state root public inputs don't match with initial state root";
-        }
-        bytes32 finalStateRoot = bytes32(publicData[32:64]);
-        if (batchCommitments[batchNumber].newStateRoot != finalStateRoot) {
-            return
-                "final state root public inputs don't match with final state root";
-        }
-        bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
-        if (
-            batchCommitments[batchNumber].withdrawalsLogsMerkleRoot !=
-            withdrawalsMerkleRoot
-        ) {
-            return
-                "withdrawals public inputs don't match with committed withdrawals";
-        }
-        bytes32 privilegedTransactionsHash = bytes32(publicData[96:128]);
-        if (
-            batchCommitments[batchNumber]
-                .processedPrivilegedTransactionsRollingHash !=
-            privilegedTransactionsHash
-        ) {
-            return
-                "privileged transactions hash public input does not match with committed transactions";
-        }
-        bytes32 lastBlockHash = bytes32(publicData[128:160]);
-        if (batchCommitments[batchNumber].lastBlockHash != lastBlockHash) {
-            return
-                "last block hash public inputs don't match with last block hash";
-        }
-        uint256 chainId = uint256(bytes32(publicData[160:182]));
-        if (chainId != CHAIN_ID) {
-            return "given chain id does not correspond to this network";
-        }
-        uint256 nonPrivilegedTransactions = uint256(
-            bytes32(publicData[192:224])
-        );
-        if (
-            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
-            nonPrivilegedTransactions != 0
-        ) {
-            return
-                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
-        }
-        return "";
+    /// @notice Constructs public inputs from committed batch data for proof verification.
+    /// @dev Public inputs structure:
+    /// Fixed-size fields (256 bytes):
+    /// - bytes 0-32: Initial state root (from the last verified batch)
+    /// - bytes 32-64: Final state root (from the current batch)
+    /// - bytes 64-96: Withdrawals merkle root (from the current batch)
+    /// - bytes 96-128: Processed L1 messages rolling hash (from the current batch)
+    /// - bytes 128-160: Blob versioned hash (from the current batch)
+    /// - bytes 160-192: Last block hash (from the current batch)
+    /// - bytes 192-224: Chain ID
+    /// - bytes 224-256: Non-privileged transactions count (from the current batch)
+    /// @param batchNumber The batch number for which to construct public inputs.
+    /// @return publicInputs The constructed public inputs as a byte array.
+    function _getPublicInputsFromCommitment(
+        uint256 batchNumber
+    ) internal view returns (bytes memory) {
+        BatchCommitmentInfo memory currentBatch = batchCommitments[batchNumber];
+
+        return
+            abi.encodePacked(
+                batchCommitments[lastVerifiedBatch].newStateRoot,
+                currentBatch.newStateRoot,
+                currentBatch.withdrawalsLogsMerkleRoot,
+                currentBatch.processedPrivilegedTransactionsRollingHash,
+                currentBatch.blobVersionedHash,
+                currentBatch.lastBlockHash,
+                bytes32(CHAIN_ID),
+                bytes32(currentBatch.nonPrivilegedTransactions)
+            );
     }
 
     function _verifyProofInclusionAligned(
         bytes32[] calldata merkleProofsList,
         bytes32 verificationKey,
-        bytes calldata publicInputsList
+        bytes memory publicInputsList
     ) internal view {
         bytes memory callData = abi.encodeWithSignature(
             "verifyProofInclusion(bytes32[],bytes32,bytes)",
@@ -556,15 +518,9 @@ contract OnChainProposer is
         );
         (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
             .staticcall(callData);
-        require(
-            callResult,
-            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
-        );
+        if (!callResult) revert AlignedAggregatorCallFailed();
         bool proofVerified = abi.decode(response, (bool));
-        require(
-            proofVerified,
-            "OnChainProposer: Aligned proof verification failed"
-        );
+        if (!proofVerified) revert AlignedProofVerificationFailed();
     }
 
     /// @notice Allow owner to upgrade the contract.

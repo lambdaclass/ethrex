@@ -62,6 +62,7 @@ pub const SELFBALANCE: u64 = 5;
 pub const BASEFEE: u64 = 2;
 pub const BLOBHASH: u64 = 3;
 pub const BLOBBASEFEE: u64 = 2;
+pub const SLOTNUM: u64 = 2;
 pub const POP: u64 = 2;
 pub const MLOAD_STATIC: u64 = 3;
 pub const MSTORE_STATIC: u64 = 3;
@@ -80,6 +81,7 @@ pub const PUSH0: u64 = 2;
 pub const PUSHN: u64 = 3;
 pub const DUPN: u64 = 3;
 pub const SWAPN: u64 = 3;
+pub const EXCHANGE: u64 = 3;
 pub const LOGN_STATIC: u64 = 375;
 pub const LOGN_DYNAMIC_BASE: u64 = 375;
 pub const LOGN_DYNAMIC_BYTE_BASE: u64 = 8;
@@ -533,6 +535,20 @@ fn compute_gas_create(
     Ok(gas_create_cost)
 }
 
+/// Base cost of SELFDESTRUCT before evaluating NEW_ACCOUNT.
+/// Used for EIP-7928 two-phase gas check: first verify base cost is
+/// available (to allow BAL state access), then charge the full cost.
+pub fn selfdestruct_base(address_was_cold: bool) -> Result<u64, VMError> {
+    let cold_cost = if address_was_cold {
+        COLD_ADDRESS_ACCESS_COST
+    } else {
+        0
+    };
+    SELFDESTRUCT_STATIC
+        .checked_add(cold_cost)
+        .ok_or(OutOfGas.into())
+}
+
 pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
@@ -572,17 +588,6 @@ pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
         }
     }
     Ok(calldata_cost)
-}
-
-pub fn tx_creation(code_length: u64, number_of_words: u64) -> Result<u64, VMError> {
-    let mut creation_cost = code_length.checked_mul(CODE_DEPOSIT_COST).ok_or(OutOfGas)?;
-    creation_cost = creation_cost
-        .checked_add(CREATE_BASE_COST)
-        .ok_or(OutOfGas)?;
-
-    // GInitCodeword * number_of_words rounded up. GinitCodeWord = 2
-    let words_cost = number_of_words.checked_mul(2).ok_or(OutOfGas)?;
-    creation_cost.checked_add(words_cost).ok_or(OutOfGas.into())
 }
 
 fn address_access_cost(

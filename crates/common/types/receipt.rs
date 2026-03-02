@@ -17,6 +17,9 @@ pub type Index = u64;
 pub struct Receipt {
     pub tx_type: TxType,
     pub succeeded: bool,
+    /// Cumulative gas used by this and all previous transactions in the block.
+    /// This is always post-refund gas.
+    /// Note: Block-level gas accounting (pre-refund for EIP-7778) uses BlockExecutionResult::block_gas_used.
     pub cumulative_gas_used: u64,
     pub logs: Vec<Log>,
 }
@@ -112,6 +115,9 @@ impl RLPDecode for Receipt {
 pub struct ReceiptWithBloom {
     pub tx_type: TxType,
     pub succeeded: bool,
+    /// Cumulative gas used by this and all previous transactions in the block.
+    /// This is always post-refund gas.
+    /// Note: Block-level gas accounting (pre-refund for EIP-7778) uses BlockExecutionResult::block_gas_used.
     pub cumulative_gas_used: u64,
     pub bloom: Bloom,
     pub logs: Vec<Log>,
@@ -366,6 +372,7 @@ mod test {
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
     }
+
     #[test]
     fn test_encode_decode_inner_receipt_legacy() {
         let receipt = ReceiptWithBloom {

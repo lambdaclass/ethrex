@@ -147,7 +147,7 @@ fn main() {
         state_root: *EMPTY_TRIE_HASH,
         ..Default::default()
     };
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header));
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header).unwrap());
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
 
     // Initialize VM

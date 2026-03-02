@@ -4,7 +4,7 @@ use ethrex_common::serde_utils::bytes::deserialize;
 use ethrex_common::serde_utils::u64;
 use ethrex_common::serde_utils::u256;
 use ethrex_common::types::Code;
-use ethrex_common::types::{Account, AccountInfo, code_hash};
+use ethrex_common::types::{Account, AccountInfo};
 use ethrex_common::{Address, U256, types::Fork};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -35,13 +35,14 @@ pub struct InputAccount {
 
 impl From<InputAccount> for Account {
     fn from(account: InputAccount) -> Self {
+        let code = Code::from_bytecode(account.code);
         Account {
             info: AccountInfo {
-                code_hash: code_hash(&account.code),
+                code_hash: code.hash,
                 balance: account.balance,
                 nonce: 0,
             },
-            code: Code::from_bytecode(account.code),
+            code,
             storage: account
                 .storage
                 .into_iter()

@@ -130,7 +130,7 @@ impl Message {
             }
             Message::GetReceipts(_) => eth_version.eth_capability_offset() + GetReceipts::CODE,
             Message::Receipts68(_) => eth_version.eth_capability_offset() + Receipts68::CODE,
-            Message::Receipts69(_) => eth_version.eth_capability_offset() + Receipts68::CODE,
+            Message::Receipts69(_) => eth_version.eth_capability_offset() + Receipts69::CODE,
             Message::BlockRangeUpdate(_) => {
                 eth_version.eth_capability_offset() + BlockRangeUpdate::CODE
             }

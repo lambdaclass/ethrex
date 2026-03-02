@@ -1,4 +1,4 @@
-use aligned_sdk::common::types::Network;
+use aligned_sdk::types::Network;
 use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
 use ethrex_common::types::fee_config::FeeConfig;
@@ -20,7 +20,15 @@ use rand::Rng;
 use reqwest::Url;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
-use tracing::info;
+use tracing::{info, warn};
+
+/// 4-byte ABI selectors for OnChainProposer custom errors.
+/// These are the first 4 bytes of keccak256 of the error signature.
+/// Used to detect specific revert reasons from the `data` field of RPC error responses.
+pub const INVALID_RISC0_PROOF_SELECTOR: &str = "0x14add973";
+pub const INVALID_SP1_PROOF_SELECTOR: &str = "0x7ff849b5";
+pub const INVALID_TDX_PROOF_SELECTOR: &str = "0x62013a95";
+pub const ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR: &str = "0x44602025";
 
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
@@ -117,11 +125,15 @@ pub async fn get_needed_proof_types(
 pub fn resolve_aligned_network(network: &str) -> Network {
     match network {
         "devnet" => Network::Devnet,
-        "holesky" => Network::Holesky,
-        "holesky-stage" => Network::HoleskyStage,
-        "mainnet" => Network::Mainnet,
         "hoodi" => Network::Hoodi,
-        _ => Network::Devnet, // TODO: Implement custom networks
+        "mainnet" => Network::Mainnet,
+        unknown => {
+            warn!(
+                "Unknown Aligned network '{}', defaulting to devnet. Valid options: devnet, hoodi, mainnet",
+                unknown
+            );
+            Network::Devnet
+        }
     }
 }
 

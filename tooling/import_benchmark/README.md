@@ -46,11 +46,11 @@ Parameters:
   - BENCH_ID: Identifier for the log file, saved as bench-BENCH_ID.log
   - NETWORK: Network to access (e.g., hoodi, mainnet)
 
+Example:
 
-Example: 
 `make run-bench BENCH_ID=1 NETWORK=mainnet`
 
 ## View Output
 
 You can view and compare benchmark results with:
-`python3 parse_bench.py <bench_num_1> <bench_num_2>`
+`python3 parse_bench.py <bench_file_1> <bench_file_2> <...>`
