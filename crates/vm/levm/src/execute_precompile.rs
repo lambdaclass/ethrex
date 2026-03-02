@@ -6,9 +6,6 @@
 //! messages), re-executes the transactions, and verifies the resulting state
 //! root and receipts root.
 //!
-//! This implements the `apply_body` variant from the native rollups spec:
-//! individual execution parameters are provided instead of a full block.
-//!
 //! Before executing regular transactions, the precompile writes the L1 anchor
 //! to the L1Anchor predeploy's storage slot 0 (system transaction). L2
 //! contracts (e.g., L2Bridge) verify individual L1 messages via Merkle proofs
@@ -45,14 +42,6 @@ use crate::{
 /// Fixed gas cost for the PoC. Real cost TBD in the EIP.
 const EXECUTE_GAS_COST: u64 = 100_000;
 
-/// Address of the L2 bridge predeploy (handles L1 messages and withdrawals).
-/// Must match the deployed address in the L2 genesis state.
-/// Exported for test use (L2 genesis setup).
-pub const L2_BRIDGE: Address = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0xff, 0xfd,
-]);
-
 /// Address of the L1Anchor predeploy (one above L2Bridge).
 /// The EXECUTE precompile writes the L1 messages Merkle root here before
 /// executing regular transactions.
@@ -61,11 +50,11 @@ pub const L1_ANCHOR: Address = H160([
     0x00, 0x00, 0xff, 0xfe,
 ]);
 
-/// Input to the EXECUTE precompile (`apply_body` variant).
+/// Input to the EXECUTE precompile.
 ///
-/// Individual block fields are provided instead of a full RLP-encoded block.
-/// Transactions are decoded from RLP and the witness provides stateless
-/// execution data (state tries, storage tries, code, block headers).
+/// Individual block fields are provided along with transactions (RLP-encoded)
+/// and an execution witness (stateless execution data: state tries, storage
+/// tries, code, block headers).
 pub struct ExecutePrecompileInput {
     pub chain_id: u64,
     pub pre_state_root: H256,
@@ -126,164 +115,7 @@ pub fn execute_precompile(
     execute_inner(input)
 }
 
-/// Read `n` bytes from `calldata` starting at `offset`, advancing `offset`.
-fn read_calldata<'a>(
-    calldata: &'a [u8],
-    offset: &mut usize,
-    n: usize,
-) -> Result<&'a [u8], VMError> {
-    let end = offset
-        .checked_add(n)
-        .ok_or_else(|| custom_err("EXECUTE calldata offset overflow".to_string()))?;
-    if end > calldata.len() {
-        return Err(custom_err(format!(
-            "EXECUTE calldata too short: need {n} more bytes at offset {}, have {}",
-            *offset,
-            calldata.len()
-        )));
-    }
-    let slice = calldata
-        .get(*offset..end)
-        .ok_or_else(|| custom_err("EXECUTE calldata slice out of bounds".to_string()))?;
-    *offset = end;
-    Ok(slice)
-}
-
-/// Read the dynamic `bytes` at the given ABI offset.
-///
-/// In ABI encoding, a dynamic `bytes` parameter is stored as:
-///   - At the offset position: uint256 length (32 bytes)
-///   - Immediately after: the raw bytes (padded to 32-byte boundary)
-///
-/// Returns the raw bytes (without padding).
-fn read_abi_bytes(calldata: &[u8], abi_offset: usize) -> Result<&[u8], VMError> {
-    // Read the length word at the offset
-    let mut pos = abi_offset;
-    let len_bytes = read_calldata(calldata, &mut pos, 32)?;
-    let len = U256::from_big_endian(len_bytes);
-    let len: usize = len
-        .try_into()
-        .map_err(|_| custom_err("ABI bytes length too large".to_string()))?;
-
-    // Read the actual data
-    read_calldata(calldata, &mut pos, len)
-}
-
-/// Decode an RLP-encoded transaction list into a `Vec<Transaction>`.
-fn decode_transactions_from_rlp(rlp_bytes: &[u8]) -> Result<Vec<Transaction>, VMError> {
-    Vec::<Transaction>::decode(rlp_bytes)
-        .map_err(|e| custom_err(format!("Failed to RLP-decode transactions: {e}")))
-}
-
-/// Read a uint256 from calldata as a u64, failing if the value overflows.
-fn read_u64_slot(calldata: &[u8], offset: &mut usize) -> Result<u64, VMError> {
-    let bytes = read_calldata(calldata, offset, 32)?;
-    let val = U256::from_big_endian(bytes);
-    val.try_into()
-        .map_err(|_| custom_err("ABI uint256 value overflows u64".to_string()))
-}
-
-/// Parse ABI-encoded calldata into an [`ExecutePrecompileInput`].
-///
-/// The head is 15 x 32 = 480 bytes:
-///   - slots 0-12: static fields (uint256, bytes32, address)
-///   - slot 13: offset to transactions RLP bytes (dynamic)
-///   - slot 14: offset to witness JSON bytes (dynamic)
-fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError> {
-    let mut offset: usize = 0;
-
-    // Slot 0: chainId (uint256 -> u64)
-    let chain_id = read_u64_slot(calldata, &mut offset)?;
-
-    // Slot 1: preStateRoot (bytes32)
-    let pre_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
-
-    // Slot 2: postStateRoot (bytes32)
-    let post_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
-
-    // Slot 3: postReceiptsRoot (bytes32)
-    let post_receipts_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
-
-    // Slot 4: blockNumber (uint256 -> u64)
-    let block_number = read_u64_slot(calldata, &mut offset)?;
-
-    // Slot 5: blockGasLimit (uint256 -> u64)
-    let block_gas_limit = read_u64_slot(calldata, &mut offset)?;
-
-    // Slot 6: coinbase (address, left-padded to 32 bytes)
-    let coinbase_bytes = read_calldata(calldata, &mut offset, 32)?;
-    let coinbase = Address::from_slice(
-        coinbase_bytes
-            .get(12..)
-            .ok_or(InternalError::Custom("coinbase slot too short".to_string()))?,
-    );
-
-    // Slot 7: prevRandao (bytes32)
-    let prev_randao = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
-
-    // Slot 8: timestamp (uint256 -> u64)
-    let timestamp = read_u64_slot(calldata, &mut offset)?;
-
-    // Slot 9: parentBaseFee (uint256 -> u64)
-    let parent_base_fee = read_u64_slot(calldata, &mut offset)?;
-
-    // Slot 10: parentGasLimit (uint256 -> u64)
-    let parent_gas_limit = read_u64_slot(calldata, &mut offset)?;
-
-    // Slot 11: parentGasUsed (uint256 -> u64)
-    let parent_gas_used = read_u64_slot(calldata, &mut offset)?;
-
-    // Slot 12: l1Anchor (bytes32) — Merkle root of consumed L1 messages
-    let l1_anchor = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
-
-    // Slot 13: offset to transactions (dynamic)
-    let txs_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
-    let txs_offset: usize = U256::from_big_endian(txs_offset_bytes)
-        .try_into()
-        .map_err(|_| custom_err("Transactions offset too large".to_string()))?;
-
-    // Slot 14: offset to witnessJson (dynamic)
-    let witness_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
-    let witness_offset: usize = U256::from_big_endian(witness_offset_bytes)
-        .try_into()
-        .map_err(|_| custom_err("Witness offset too large".to_string()))?;
-
-    // Read transactions RLP bytes and decode
-    let txs_rlp = read_abi_bytes(calldata, txs_offset)?;
-    let transactions = decode_transactions_from_rlp(txs_rlp)?;
-
-    // Read witness JSON bytes and deserialize
-    let witness_bytes = read_abi_bytes(calldata, witness_offset)?;
-    let execution_witness: ExecutionWitness = serde_json::from_slice(witness_bytes)
-        .map_err(|e| custom_err(format!("Failed to deserialize ExecutionWitness JSON: {e}")))?;
-
-    Ok(ExecutePrecompileInput {
-        chain_id,
-        pre_state_root,
-        post_state_root,
-        post_receipts_root,
-        block_number,
-        block_gas_limit,
-        coinbase,
-        prev_randao,
-        timestamp,
-        parent_base_fee,
-        parent_gas_limit,
-        parent_gas_used,
-        l1_anchor,
-        transactions,
-        execution_witness,
-    })
-}
-
-fn custom_err(msg: String) -> VMError {
-    VMError::Internal(InternalError::Custom(msg))
-}
-
 /// Core logic, separated so tests can call it directly with a structured input.
-///
-/// Implements the `apply_body` variant: receives individual block fields,
-/// builds a synthetic block header internally, re-executes, and verifies.
 ///
 /// Returns `abi.encode(bytes32 postStateRoot, uint256 blockNumber, uint256 gasUsed, uint256 burnedFees, uint256 baseFeePerGas)` -- 160 bytes.
 /// The post-state root is verified against the actual computed state root after
@@ -324,9 +156,8 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
         )));
     }
 
-    // Initialize block header hashes from witness headers (empty blocks slice
-    // since we no longer have a full block — the witness already contains the
-    // relevant headers for BLOCKHASH).
+    // Initialize block header hashes from witness headers (the witness already
+    // contains the relevant headers for BLOCKHASH).
     guest_state
         .initialize_block_header_hashes(&[])
         .map_err(|e| custom_err(format!("Failed to initialize block header hashes: {e}")))?;
@@ -589,4 +420,158 @@ fn calculate_gas_price(tx: &Transaction, base_fee_per_gas: u64) -> Result<U256, 
         max_fee_per_gas,
     )
     .into())
+}
+
+/// Parse ABI-encoded calldata into an [`ExecutePrecompileInput`].
+///
+/// The head is 15 x 32 = 480 bytes:
+///   - slots 0-12: static fields (uint256, bytes32, address)
+///   - slot 13: offset to transactions RLP bytes (dynamic)
+///   - slot 14: offset to witness JSON bytes (dynamic)
+fn parse_abi_calldata(calldata: &[u8]) -> Result<ExecutePrecompileInput, VMError> {
+    let mut offset: usize = 0;
+
+    // Slot 0: chainId (uint256 -> u64)
+    let chain_id = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 1: preStateRoot (bytes32)
+    let pre_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // Slot 2: postStateRoot (bytes32)
+    let post_state_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // Slot 3: postReceiptsRoot (bytes32)
+    let post_receipts_root = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // Slot 4: blockNumber (uint256 -> u64)
+    let block_number = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 5: blockGasLimit (uint256 -> u64)
+    let block_gas_limit = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 6: coinbase (address, left-padded to 32 bytes)
+    let coinbase_bytes = read_calldata(calldata, &mut offset, 32)?;
+    let coinbase = Address::from_slice(
+        coinbase_bytes
+            .get(12..)
+            .ok_or(InternalError::Custom("coinbase slot too short".to_string()))?,
+    );
+
+    // Slot 7: prevRandao (bytes32)
+    let prev_randao = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // Slot 8: timestamp (uint256 -> u64)
+    let timestamp = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 9: parentBaseFee (uint256 -> u64)
+    let parent_base_fee = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 10: parentGasLimit (uint256 -> u64)
+    let parent_gas_limit = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 11: parentGasUsed (uint256 -> u64)
+    let parent_gas_used = read_u64_slot(calldata, &mut offset)?;
+
+    // Slot 12: l1Anchor (bytes32) — Merkle root of consumed L1 messages
+    let l1_anchor = H256::from_slice(read_calldata(calldata, &mut offset, 32)?);
+
+    // Slot 13: offset to transactions (dynamic)
+    let txs_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
+    let txs_offset: usize = U256::from_big_endian(txs_offset_bytes)
+        .try_into()
+        .map_err(|_| custom_err("Transactions offset too large".to_string()))?;
+
+    // Slot 14: offset to witnessJson (dynamic)
+    let witness_offset_bytes = read_calldata(calldata, &mut offset, 32)?;
+    let witness_offset: usize = U256::from_big_endian(witness_offset_bytes)
+        .try_into()
+        .map_err(|_| custom_err("Witness offset too large".to_string()))?;
+
+    // Read transactions RLP bytes and decode
+    let txs_rlp = read_abi_bytes(calldata, txs_offset)?;
+    let transactions = decode_transactions_from_rlp(txs_rlp)?;
+
+    // Read witness JSON bytes and deserialize
+    let witness_bytes = read_abi_bytes(calldata, witness_offset)?;
+    let execution_witness: ExecutionWitness = serde_json::from_slice(witness_bytes)
+        .map_err(|e| custom_err(format!("Failed to deserialize ExecutionWitness JSON: {e}")))?;
+
+    Ok(ExecutePrecompileInput {
+        chain_id,
+        pre_state_root,
+        post_state_root,
+        post_receipts_root,
+        block_number,
+        block_gas_limit,
+        coinbase,
+        prev_randao,
+        timestamp,
+        parent_base_fee,
+        parent_gas_limit,
+        parent_gas_used,
+        l1_anchor,
+        transactions,
+        execution_witness,
+    })
+}
+
+/// Read `n` bytes from `calldata` starting at `offset`, advancing `offset`.
+fn read_calldata<'a>(
+    calldata: &'a [u8],
+    offset: &mut usize,
+    n: usize,
+) -> Result<&'a [u8], VMError> {
+    let end = offset
+        .checked_add(n)
+        .ok_or_else(|| custom_err("EXECUTE calldata offset overflow".to_string()))?;
+    if end > calldata.len() {
+        return Err(custom_err(format!(
+            "EXECUTE calldata too short: need {n} more bytes at offset {}, have {}",
+            *offset,
+            calldata.len()
+        )));
+    }
+    let slice = calldata
+        .get(*offset..end)
+        .ok_or_else(|| custom_err("EXECUTE calldata slice out of bounds".to_string()))?;
+    *offset = end;
+    Ok(slice)
+}
+
+/// Read the dynamic `bytes` at the given ABI offset.
+///
+/// In ABI encoding, a dynamic `bytes` parameter is stored as:
+///   - At the offset position: uint256 length (32 bytes)
+///   - Immediately after: the raw bytes (padded to 32-byte boundary)
+///
+/// Returns the raw bytes (without padding).
+fn read_abi_bytes(calldata: &[u8], abi_offset: usize) -> Result<&[u8], VMError> {
+    // Read the length word at the offset
+    let mut pos = abi_offset;
+    let len_bytes = read_calldata(calldata, &mut pos, 32)?;
+    let len = U256::from_big_endian(len_bytes);
+    let len: usize = len
+        .try_into()
+        .map_err(|_| custom_err("ABI bytes length too large".to_string()))?;
+
+    // Read the actual data
+    read_calldata(calldata, &mut pos, len)
+}
+
+/// Decode an RLP-encoded transaction list into a `Vec<Transaction>`.
+fn decode_transactions_from_rlp(rlp_bytes: &[u8]) -> Result<Vec<Transaction>, VMError> {
+    Vec::<Transaction>::decode(rlp_bytes)
+        .map_err(|e| custom_err(format!("Failed to RLP-decode transactions: {e}")))
+}
+
+/// Read a uint256 from calldata as a u64, failing if the value overflows.
+fn read_u64_slot(calldata: &[u8], offset: &mut usize) -> Result<u64, VMError> {
+    let bytes = read_calldata(calldata, offset, 32)?;
+    let val = U256::from_big_endian(bytes);
+    val.try_into()
+        .map_err(|_| custom_err("ABI uint256 value overflows u64".to_string()))
+}
+
+fn custom_err(msg: String) -> VMError {
+    VMError::Internal(InternalError::Custom(msg))
 }

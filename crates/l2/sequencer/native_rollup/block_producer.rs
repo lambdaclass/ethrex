@@ -27,9 +27,10 @@ use ethrex_common::merkle_tree::{compute_merkle_proof, compute_merkle_root};
 use ethrex_common::types::{EIP1559Transaction, MempoolTransaction, Transaction, TxKind};
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE as L2_BRIDGE;
 use ethrex_l2_rpc::signer::{Signable, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_levm::execute_precompile::{L1_ANCHOR, L2_BRIDGE};
+use ethrex_levm::execute_precompile::L1_ANCHOR;
 use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use spawned_concurrency::tasks::{

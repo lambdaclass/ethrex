@@ -1,4 +1,5 @@
-use ethrex_common::{Address, H160, H256, U256, utils::keccak};
+use ethrex_common::{Address, H256, U256, utils::keccak};
+use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE as L2_BRIDGE;
 use serde::Serialize;
 use serde_json::Value;
 use tracing::info;
@@ -7,12 +8,6 @@ use crate::{
     rpc::{RpcApiContext, RpcHandler},
     utils::RpcErr,
 };
-
-/// L2Bridge predeploy address (0x...fffd).
-const L2_BRIDGE: Address = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0xff, 0xfd,
-]);
 
 /// Storage slot of `sentMessages` mapping in L2Bridge (slot 3).
 const SENT_MESSAGES_SLOT: u64 = 3;

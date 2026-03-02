@@ -1168,9 +1168,11 @@ async fn initialize_contracts(
 ) -> Result<Vec<H256>, DeployerError> {
     trace!("Initializing contracts");
 
-    let on_chain_proposer_owner = opts
-        .on_chain_proposer_owner
-        .ok_or(DeployerError::ConfigValueNotSet("on-chain-proposer-owner".to_owned()))?;
+    let on_chain_proposer_owner =
+        opts.on_chain_proposer_owner
+            .ok_or(DeployerError::ConfigValueNotSet(
+                "on-chain-proposer-owner".to_owned(),
+            ))?;
     let bridge_owner = opts
         .bridge_owner
         .ok_or(DeployerError::ConfigValueNotSet("bridge-owner".to_owned()))?;
@@ -1947,7 +1949,8 @@ pub async fn deploy_native_rollup_contracts(
 /// Prague — matches EXECUTE precompile semantics).
 #[cfg(feature = "native-rollups")]
 fn build_native_l2_genesis(relayer_address: Address) -> Result<Genesis, DeployerError> {
-    use ethrex_levm::execute_precompile::{L1_ANCHOR, L2_BRIDGE};
+    use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE as L2_BRIDGE;
+    use ethrex_levm::execute_precompile::L1_ANCHOR;
     use std::collections::BTreeMap;
 
     let one_eth = U256::from(10).pow(U256::from(18));
