@@ -1,12 +1,13 @@
 pub fn get_address_from_secret_key(
     secret_key_bytes: &[u8],
 ) -> Result<ethrex_common::Address, String> {
-    let secret_key = secp256k1::SecretKey::from_slice(secret_key_bytes)
+    let signing_key = k256::ecdsa::SigningKey::from_bytes(secret_key_bytes.into())
         .map_err(|e| format!("Failed to parse secret key from slice: {e}"))?;
 
-    let public_key = secret_key
-        .public_key(secp256k1::SECP256K1)
-        .serialize_uncompressed();
+    let public_key = signing_key
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
     let hash = ethrex_common::utils::keccak(&public_key[1..]);
 
     // Get the last 20 bytes of the hash
