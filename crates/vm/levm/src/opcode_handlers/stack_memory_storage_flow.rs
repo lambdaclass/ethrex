@@ -2,13 +2,14 @@ use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self, SSTORE_STIPEND},
+    gas_cost::{self, COST_PER_STATE_BYTE, STATE_BYTES_PER_STORAGE_SET, SSTORE_STIPEND},
     memory::calculate_memory_size,
     utils::u256_to_usize,
     vm::VM,
 };
 use ethrex_common::{
     U256,
+    types::Fork,
     utils::{u256_to_big_endian, u256_to_h256},
 };
 
@@ -233,6 +234,8 @@ impl<'a> VM<'a> {
 
         self.substate.refunded_gas = gas_refunds;
 
+        let fork = self.env.config.fork;
+
         // Main gas check - if this fails, the storage read is already recorded above
         self.current_call_frame
             .increase_consumed_gas(gas_cost::sstore(
@@ -240,7 +243,21 @@ impl<'a> VM<'a> {
                 current_value,
                 new_storage_slot_value,
                 storage_slot_was_cold,
+                fork,
             )?)?;
+
+        // EIP-8037 (Amsterdam+): charge state gas for new storage slot creation (0 -> nonzero)
+        if fork >= Fork::Amsterdam
+            && new_storage_slot_value != current_value
+            && current_value == original_value
+            && original_value.is_zero()
+            && !new_storage_slot_value.is_zero()
+        {
+            let state_gas = STATE_BYTES_PER_STORAGE_SET
+                .checked_mul(COST_PER_STATE_BYTE)
+                .ok_or(ExceptionalHalt::OutOfGas)?;
+            self.increase_state_gas(state_gas)?;
+        }
 
         // Note: BAL read already recorded above (after stipend check, before gas check).
         // If value changes, update_account_storage will record the write.

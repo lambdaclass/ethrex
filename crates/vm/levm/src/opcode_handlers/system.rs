@@ -2,7 +2,9 @@ use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
-    gas_cost::{self, max_message_call_gas},
+    gas_cost::{
+        self, COST_PER_STATE_BYTE, STATE_BYTES_PER_NEW_ACCOUNT, max_message_call_gas,
+    },
     memory::{self, calculate_memory_size},
     precompiles,
     utils::{address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *},
@@ -101,6 +103,24 @@ impl<'a> VM<'a> {
             create_cost,
         );
 
+        let fork = self.env.config.fork;
+
+        // EIP-8037 (Amsterdam+): charge state gas for call to empty account with value transfer.
+        // The CALL_TO_EMPTY_ACCOUNT cost is excluded from regular gas and charged as state gas.
+        // We must recompute gas_left after this charge so gas_cost::call sees the correct remaining gas.
+        #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+        let gas_left = if fork >= Fork::Amsterdam && account_is_empty && !value.is_zero() {
+            let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
+                .checked_mul(COST_PER_STATE_BYTE)
+                .ok_or(ExceptionalHalt::OutOfGas)?;
+            self.increase_state_gas(state_gas)?;
+            // gas_remaining is i64; recompute gas_left from current frame after state gas charge.
+            // If gas_remaining went negative, the increase_state_gas already returned OutOfGas.
+            self.current_call_frame.gas_remaining as u64
+        } else {
+            gas_left
+        };
+
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
@@ -109,6 +129,7 @@ impl<'a> VM<'a> {
             value,
             gas,
             gas_left,
+            fork,
         )?;
 
         let callframe = &mut self.current_call_frame;
@@ -515,6 +536,14 @@ impl<'a> VM<'a> {
             fork,
         )?)?;
 
+        // EIP-8037 (Amsterdam+): charge state gas for new account creation
+        if fork >= Fork::Amsterdam {
+            let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
+                .checked_mul(COST_PER_STATE_BYTE)
+                .ok_or(ExceptionalHalt::OutOfGas)?;
+            self.increase_state_gas(state_gas)?;
+        }
+
         self.generic_create(
             value_in_wei_to_send,
             code_offset_in_memory,
@@ -544,6 +573,14 @@ impl<'a> VM<'a> {
             code_size_in_memory,
             fork,
         )?)?;
+
+        // EIP-8037 (Amsterdam+): charge state gas for new account creation
+        if fork >= Fork::Amsterdam {
+            let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
+                .checked_mul(COST_PER_STATE_BYTE)
+                .ok_or(ExceptionalHalt::OutOfGas)?;
+            self.increase_state_gas(state_gas)?;
+        }
 
         self.generic_create(
             value_in_wei_to_send,
@@ -610,12 +647,14 @@ impl<'a> VM<'a> {
         let current_account = self.db.get_account(to)?;
         let balance = current_account.info.balance;
 
+        let fork = self.env.config.fork;
+
         // EIP-7928 (Amsterdam): Two-phase gas check for SELFDESTRUCT.
         // First check base cost (SELFDESTRUCT + cold access) before state access,
         // then record BAL tracking, then charge the full cost including NEW_ACCOUNT.
         // This ensures the beneficiary is recorded in BAL even when the full
         // selfdestruct cost (with NEW_ACCOUNT) would cause OOG.
-        if self.env.config.fork >= Fork::Amsterdam {
+        if fork >= Fork::Amsterdam {
             let base_cost = gas_cost::selfdestruct_base(target_account_is_cold)?;
             // Phase 1: Check base cost is available (without charging)
             #[expect(clippy::as_conversions, reason = "base_cost fits in i64")]
@@ -637,19 +676,29 @@ impl<'a> VM<'a> {
                 }
             }
 
-            // Phase 2: Charge the full cost (base + NEW_ACCOUNT if applicable)
+            // Phase 2: Charge the full cost (base only for Amsterdam+; NEW_ACCOUNT moved to state gas)
             self.current_call_frame
                 .increase_consumed_gas(gas_cost::selfdestruct(
                     target_account_is_cold,
                     target_account_is_empty,
                     balance,
+                    fork,
                 )?)?;
+
+            // EIP-8037 (Amsterdam+): charge state gas for new account creation via SELFDESTRUCT
+            if target_account_is_empty && balance > U256::zero() {
+                let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
+                    .checked_mul(COST_PER_STATE_BYTE)
+                    .ok_or(ExceptionalHalt::OutOfGas)?;
+                self.increase_state_gas(state_gas)?;
+            }
         } else {
             self.current_call_frame
                 .increase_consumed_gas(gas_cost::selfdestruct(
                     target_account_is_cold,
                     target_account_is_empty,
                     balance,
+                    fork,
                 )?)?;
 
             // Record beneficiary and destroyed account for BAL per EIP-7928

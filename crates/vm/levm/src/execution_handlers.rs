@@ -1,7 +1,9 @@
 use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
-    gas_cost::CODE_DEPOSIT_COST,
+    gas_cost::{
+        CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD, COST_PER_STATE_BYTE,
+    },
     utils::create_eth_transfer_log,
     vm::VM,
 };
@@ -156,17 +158,13 @@ impl<'a> VM<'a> {
 
     /// Validates that the contract creation was successful, otherwise it returns an ExceptionalHalt.
     fn validate_contract_creation(&mut self) -> Result<(), VMError> {
-        let callframe = &mut self.current_call_frame;
-        let code = &callframe.output;
+        let fork = self.env.config.fork;
+        let code = &self.current_call_frame.output;
 
         let code_length: u64 = code
             .len()
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?;
-
-        let code_deposit_cost: u64 = code_length
-            .checked_mul(CODE_DEPOSIT_COST)
-            .ok_or(InternalError::Overflow)?;
 
         // Revert Scenarios
         // 1. If the first byte of code is 0xEF
@@ -180,7 +178,31 @@ impl<'a> VM<'a> {
         }
 
         // 3. current_consumed_gas + code_deposit_cost > gas_limit
-        callframe.increase_consumed_gas(code_deposit_cost)?;
+        // EIP-8037 (Amsterdam+): regular cost = 6 * ceil(len/32), state cost = len * 1174
+        let (regular_deposit, state_deposit) = if fork >= Fork::Amsterdam {
+            let words = code_length.div_ceil(32);
+            let regular = words
+                .checked_mul(CODE_DEPOSIT_REGULAR_COST_PER_WORD)
+                .ok_or(InternalError::Overflow)?;
+            let state = code_length
+                .checked_mul(COST_PER_STATE_BYTE)
+                .ok_or(InternalError::Overflow)?;
+            (regular, state)
+        } else {
+            let regular = code_length
+                .checked_mul(CODE_DEPOSIT_COST)
+                .ok_or(InternalError::Overflow)?;
+            (regular, 0u64)
+        };
+
+        let total_deposit = regular_deposit
+            .checked_add(state_deposit)
+            .ok_or(InternalError::Overflow)?;
+        self.current_call_frame.increase_consumed_gas(total_deposit)?;
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_add(state_deposit)
+            .ok_or(InternalError::Overflow)?;
 
         Ok(())
     }

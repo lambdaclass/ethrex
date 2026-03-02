@@ -98,6 +98,9 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
+        // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
+        let mut block_regular_gas_used = 0_u64;
+        let mut block_state_gas_used = 0_u64;
         let transactions_with_sender =
             block.body.get_transactions_with_sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
@@ -126,7 +129,20 @@ impl LEVM {
             // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
             // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
             cumulative_gas_used += report.gas_spent;
-            block_gas_used += report.gas_used;
+
+            // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
+            // For pre-Amsterdam, state_gas_used is always 0 so gas_used == regular_gas.
+            let tx_state_gas = report.state_gas_used;
+            let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
+            block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
+            block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
+
+            if record_bal {
+                // Amsterdam+: block gas = max(regular_sum, state_sum) for check_gas_limit
+                block_gas_used = block_regular_gas_used.max(block_state_gas_used);
+            } else {
+                block_gas_used = block_gas_used.saturating_add(report.gas_used);
+            }
 
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -202,6 +218,9 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
+        // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
+        let mut block_regular_gas_used = 0_u64;
+        let mut block_state_gas_used = 0_u64;
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
@@ -248,7 +267,20 @@ impl LEVM {
             // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
             // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
             cumulative_gas_used += report.gas_spent;
-            block_gas_used += report.gas_used;
+
+            // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
+            // For pre-Amsterdam, state_gas_used is always 0 so gas_used == regular_gas.
+            let tx_state_gas = report.state_gas_used;
+            let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
+            block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
+            block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
+
+            if record_bal {
+                // Amsterdam+: block gas = max(regular_sum, state_sum) for check_gas_limit
+                block_gas_used = block_regular_gas_used.max(block_state_gas_used);
+            } else {
+                block_gas_used = block_gas_used.saturating_add(report.gas_used);
+            }
 
             let receipt = Receipt::new(
                 tx.tx_type(),
