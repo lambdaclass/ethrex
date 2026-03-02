@@ -27,7 +27,7 @@ use ethrex_common::merkle_tree::{compute_merkle_proof, compute_merkle_root};
 use ethrex_common::types::{EIP1559Transaction, MempoolTransaction, Transaction, TxKind};
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE as L2_BRIDGE;
+use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE;
 use ethrex_l2_rpc::signer::{Signable, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_levm::execute_precompile::L1_ANCHOR;
@@ -293,7 +293,7 @@ impl NativeBlockProducer {
                 max_priority_fee_per_gas: max_priority_fee,
                 max_fee_per_gas: max_fee,
                 gas_limit: msg.gas_limit,
-                to: TxKind::Call(L2_BRIDGE),
+                to: TxKind::Call(NATIVE_ROLLUP_L2_BRIDGE),
                 value: U256::zero(),
                 data: Bytes::from(calldata),
                 access_list: vec![],

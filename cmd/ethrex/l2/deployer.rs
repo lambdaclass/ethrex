@@ -1949,7 +1949,7 @@ pub async fn deploy_native_rollup_contracts(
 /// Prague — matches EXECUTE precompile semantics).
 #[cfg(feature = "native-rollups")]
 fn build_native_l2_genesis(relayer_address: Address) -> Result<Genesis, DeployerError> {
-    use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE as L2_BRIDGE;
+    use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE;
     use ethrex_levm::execute_precompile::L1_ANCHOR;
     use std::collections::BTreeMap;
 
@@ -1983,7 +1983,7 @@ fn build_native_l2_genesis(relayer_address: Address) -> Result<Genesis, Deployer
         U256::from_big_endian(relayer_address.as_bytes()),
     );
     alloc.insert(
-        L2_BRIDGE,
+        NATIVE_ROLLUP_L2_BRIDGE,
         GenesisAccount {
             code: Bytes::from(L2_BRIDGE_RUNTIME_BYTECODE.to_vec()),
             storage: l2_bridge_storage,

@@ -1,5 +1,5 @@
 use ethrex_common::{Address, H256, U256, utils::keccak};
-use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE as L2_BRIDGE;
+use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE;
 use serde::Serialize;
 use serde_json::Value;
 use tracing::info;
@@ -75,7 +75,7 @@ impl RpcHandler for GetNativeWithdrawalProof {
         let log = match receipt
             .logs
             .iter()
-            .find(|l| l.address == L2_BRIDGE && l.topics.first() == Some(&topic0))
+            .find(|l| l.address == NATIVE_ROLLUP_L2_BRIDGE && l.topics.first() == Some(&topic0))
         {
             Some(l) => l,
             None => {
@@ -123,7 +123,7 @@ impl RpcHandler for GetNativeWithdrawalProof {
 
         // 7. Get account proof + storage proof via eth_getProof path
         let account_proof = storage
-            .get_account_proof(header.state_root, L2_BRIDGE, &[storage_key])
+            .get_account_proof(header.state_root, NATIVE_ROLLUP_L2_BRIDGE, &[storage_key])
             .await?
             .ok_or_else(|| {
                 RpcErr::Internal("Could not generate account proof for L2Bridge".to_string())
