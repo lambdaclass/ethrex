@@ -46,7 +46,6 @@ const TEST_PRIVATE_KEY: &str = "000000000000000000000000000000000000000000000000
 
 const ONE_ETH: u64 = 1_000_000_000_000_000_000;
 
-
 /// Deposit ETH from L1 to L2, then withdraw a portion back to L1 with proof.
 #[tokio::test]
 async fn native_rollup_bridge_roundtrip() {
