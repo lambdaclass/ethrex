@@ -17,6 +17,7 @@ use bytes::{Bytes, BytesMut};
 use ethrex_common::{H256, H512, types::ForkId};
 use ethrex_storage::{Store, error::StoreError};
 use rand::rngs::OsRng;
+use rustc_hash::FxHashSet;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
@@ -88,6 +89,11 @@ pub struct DiscoveryServer {
     /// signatures being expensive.
     find_node_message: BytesMut,
     initial_lookup_interval: f64,
+    /// Node IDs of configured bootnodes, used to detect the first bootnode pong.
+    bootnode_ids: FxHashSet<H256>,
+    /// Whether we still need to trigger an immediate lookup on the first bootnode pong.
+    /// Set to `true` when bootnodes are configured, consumed on the first bootnode pong.
+    pending_lookup_reset: bool,
 }
 
 impl DiscoveryServer {
@@ -114,6 +120,10 @@ impl DiscoveryServer {
                 .expect("Failed to set fork_id on local node record");
         }
 
+        let bootnode_ids: FxHashSet<H256> =
+            bootnodes.iter().map(|n| n.node_id()).collect();
+        let pending_lookup_reset = !bootnodes.is_empty();
+
         let mut discovery_server = Self {
             local_node: local_node.clone(),
             local_node_record,
@@ -123,6 +133,8 @@ impl DiscoveryServer {
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
+            bootnode_ids,
+            pending_lookup_reset,
         };
 
         info!(
@@ -146,6 +158,8 @@ impl DiscoveryServer {
         Ok(discovery_server.start())
     }
 
+    /// Handle a decoded discovery message.
+    /// Returns `true` if an immediate lookup should be triggered (first bootnode pong).
     async fn handle_message(
         &mut self,
         Discv4Message {
@@ -154,10 +168,10 @@ impl DiscoveryServer {
             hash,
             sender_public_key,
         }: Discv4Message,
-    ) -> Result<(), DiscoveryServerError> {
+    ) -> Result<bool, DiscoveryServerError> {
         // Ignore packets sent by ourselves
         if node_id(&sender_public_key) == self.local_node.node_id() {
-            return Ok(());
+            return Ok(false);
         }
         match message {
             Message::Ping(ping_message) => {
@@ -165,7 +179,7 @@ impl DiscoveryServer {
 
                 if is_msg_expired(ping_message.expiration) {
                     trace!(protocol = "discv4", "Ping expired, skipped");
-                    return Ok(());
+                    return Ok(false);
                 }
 
                 let node = Node::new(
@@ -184,14 +198,14 @@ impl DiscoveryServer {
 
                 let node_id = node_id(&sender_public_key);
 
-                self.handle_pong(pong_message, node_id).await?;
+                return self.handle_pong(pong_message, node_id).await;
             }
             Message::FindNode(find_node_message) => {
                 trace!(protocol = "discv4", received = "FindNode", msg = ?find_node_message, from = %format!("{:#x}", sender_public_key));
 
                 if is_msg_expired(find_node_message.expiration) {
                     trace!(protocol = "discv4", "FindNode expired, skipped");
-                    return Ok(());
+                    return Ok(false);
                 }
 
                 self.handle_find_node(sender_public_key, find_node_message.target, from)
@@ -202,7 +216,7 @@ impl DiscoveryServer {
 
                 if is_msg_expired(neighbors_message.expiration) {
                     trace!(protocol = "discv4", "Neighbors expired, skipping");
-                    return Ok(());
+                    return Ok(false);
                 }
 
                 self.handle_neighbors(neighbors_message).await?;
@@ -212,7 +226,7 @@ impl DiscoveryServer {
 
                 if is_msg_expired(enrrequest_message.expiration) {
                     trace!(protocol = "discv4", "ENRRequest expired, skipping");
-                    return Ok(());
+                    return Ok(false);
                 }
 
                 self.handle_enr_request(sender_public_key, from, hash)
@@ -233,7 +247,7 @@ impl DiscoveryServer {
                     .await?;
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Generate and store a FindNodeMessage with a random key. We then send the same message on Disovery lookup.
@@ -436,13 +450,15 @@ impl DiscoveryServer {
         Ok(())
     }
 
+    /// Handle an incoming Pong message.
+    /// Returns `true` if this was the first bootnode pong and an immediate lookup should be triggered.
     async fn handle_pong(
         &mut self,
         message: PongMessage,
         node_id: H256,
-    ) -> Result<(), DiscoveryServerError> {
+    ) -> Result<bool, DiscoveryServerError> {
         let Some(contact) = self.peer_table.get_contact(node_id).await? else {
-            return Ok(());
+            return Ok(false);
         };
 
         // If the contact doesn't exist then there is nothing to record.
@@ -453,6 +469,12 @@ impl DiscoveryServer {
             .record_pong_received(&node_id, ping_id)
             .await?;
 
+        let trigger_lookup =
+            self.pending_lookup_reset && self.bootnode_ids.contains(&node_id);
+        if trigger_lookup {
+            self.pending_lookup_reset = false;
+        }
+
         // If the contact has stale ENR then request the updated one.
         let stored_enr_seq = contact.record.map(|r| r.seq);
         let received_enr_seq = message.enr_seq;
@@ -462,7 +484,7 @@ impl DiscoveryServer {
             self.send_enr_request(&contact.node).await?;
         }
 
-        Ok(())
+        Ok(trigger_lookup)
     }
 
     async fn handle_find_node(
@@ -725,9 +747,16 @@ impl GenServer for DiscoveryServer {
     ) -> CastResponse {
         match message {
             Self::CastMsg::Message(message) => {
-                let _ = self.handle_message(*message).await.inspect_err(
-                    |e| error!(protocol = "discv4", err=?e, "Error Handling Discovery message"),
-                );
+                match self.handle_message(*message).await {
+                    Ok(true) => {
+                        info!(protocol = "discv4", "First bootnode pong received, triggering immediate lookup");
+                        let _ = handle.clone().cast(InMessage::Lookup).await;
+                    }
+                    Err(e) => {
+                        error!(protocol = "discv4", err=?e, "Error Handling Discovery message");
+                    }
+                    _ => {}
+                }
             }
             Self::CastMsg::Revalidate => {
                 trace!(protocol = "discv4", received = "Revalidate");
