@@ -7,6 +7,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
+use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
 use std::{collections::HashMap, fmt, hint::assert_unchecked};
@@ -274,6 +275,9 @@ pub struct CallFrame {
 pub struct CallFrameBackup {
     pub original_accounts_info: HashMap<Address, LevmAccount>,
     pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+    /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
+    /// while preserving touched_addresses.
+    pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
 }
 
 impl CallFrameBackup {
@@ -297,6 +301,7 @@ impl CallFrameBackup {
     pub fn clear(&mut self) {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
+        self.bal_checkpoint = None;
     }
 
     pub fn extend(&mut self, other: CallFrameBackup) {
@@ -304,6 +309,7 @@ impl CallFrameBackup {
             .extend(other.original_account_storage_slots);
         self.original_accounts_info
             .extend(other.original_accounts_info);
+        // Don't extend bal_checkpoint - it's specific to each call frame
     }
 }
 
