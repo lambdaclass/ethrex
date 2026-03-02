@@ -1,0 +1,6 @@
+[submodule "tests/fixtures/ethereum-tests"]
+	path = tests/fixtures/ethereum-tests
+	url = https://github.com/ethereum/tests.git
+[submodule "tests/fixtures/execution-spec-tests"]
+	path = tests/fixtures/execution-spec-tests
+	url = https://github.com/ethereum/execution-spec-tests.git

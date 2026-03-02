@@ -3945,6 +3945,7 @@ dependencies = [
  "ethrex-rlp 9.0.0",
  "ethrex-trie 9.0.0",
  "lazy_static",
+ "libc",
  "rayon",
  "rkyv",
  "rustc-hash 2.1.1",

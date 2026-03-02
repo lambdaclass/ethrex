@@ -1,4 +1,7 @@
+pub mod gevm_sys;
 pub mod levm;
+mod gevm;
+use gevm::GEVM;
 use levm::LEVM;
 
 use crate::db::{DynVmDatabase, VmDatabase};
@@ -82,7 +85,7 @@ impl Evm {
         &mut self,
         block: &Block,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
-        LEVM::execute_block(block, &mut self.db, self.vm_type)
+        GEVM::execute_block(block, &mut self.db, self.vm_type)
     }
 
     #[instrument(
@@ -97,7 +100,7 @@ impl Evm {
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
-        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
+        GEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
     }
 
     /// Wraps [LEVM::execute_tx].
@@ -114,7 +117,7 @@ impl Evm {
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
         let execution_report =
-            LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
+            GEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
 
         // Use gas_used (pre-refund for EIP-7778/Amsterdam+) for block gas accounting
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);

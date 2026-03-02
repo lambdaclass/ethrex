@@ -1,0 +1,10 @@
+upstream/
+*.test
+gevm-test*
+UPSTREAM_COMMIT
+tests/bench/*.txt
+tests/fixtures/execution-spec-tests/fixtures/
+tests/fixtures/ethereum-tests/
+gevm-evmbench
+capi/libgevm.a
+capi/libgevm.h
