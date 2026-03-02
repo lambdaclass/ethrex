@@ -61,6 +61,19 @@ interface ICommonBridgeL2 {
     /// @param to the address to transfer the funds to
     function mintETH(address to) external payable;
 
+    /// @notice Transfers native token to the given address.
+    /// @dev This is called by a privileged transaction from the L1 bridge.
+    /// @dev The msg.value carries the L2 18-decimal amount of native token.
+    /// @dev If the transfer fails, a withdrawal is initiated.
+    /// @param to the address to transfer the funds to
+    function mintNativeToken(address to) external payable;
+
+    /// @notice Initiates the withdrawal of native token to L1.
+    /// @dev Burns the native token on L2 and sends a withdrawal message to L1.
+    /// @dev The msg.value must be evenly divisible by the scale factor.
+    /// @param _receiverOnL1 the address that can claim the funds on L1.
+    function withdrawNativeToken(address _receiverOnL1) external payable;
+
     /// @notice Tries to deposit an ERC20 token
     /// @dev The msg.sender must be the bridge itself, using a privileged transaction
     /// @param tokenL1 Address of the token on L1

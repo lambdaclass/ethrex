@@ -553,7 +553,7 @@ const INITIALIZE_TIMELOCK_SIGNATURE: &str = "initialize(uint256,address[],addres
 
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address, uint256)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address,uint256,address,uint256)";
 const ROUTER_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address)";
 
@@ -1347,12 +1347,22 @@ async fn initialize_contracts(
                 BlockIdentifier::Tag(BlockTag::Pending),
             )
             .await?;
+        let native_token_l1_address = genesis
+            .config
+            .native_token_l1_address
+            .unwrap_or_default();
+        let native_token_scale_factor = genesis
+            .config
+            .native_token_scale_factor()
+            .unwrap_or(U256::one());
         let calldata_values = vec![
             Value::Address(initializer.address()),
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
             Value::Address(contract_addresses.router.unwrap_or_default()),
             Value::Uint(genesis.config.chain_id.into()),
+            Value::Address(native_token_l1_address),
+            Value::Uint(native_token_scale_factor),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;

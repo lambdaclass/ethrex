@@ -215,6 +215,30 @@ interface ICommonBridge {
         bytes32[] calldata withdrawalProof
     ) external;
 
+    /// @notice Deposits a custom native token (ERC-20) to L2.
+    /// @param l2Recipient the address on L2 that will receive the deposit.
+    /// @param l1Amount the amount of the L1 ERC-20 token to deposit (in L1 decimals).
+    function depositNativeToken(
+        address l2Recipient,
+        uint256 l1Amount
+    ) external;
+
+    /// @notice Claims a native token withdrawal from L2.
+    /// @param claimedL2Amount the L2-side amount (18 decimals) being claimed.
+    /// @param withdrawalBatchNumber the batch number where the withdrawal was emitted.
+    /// @param withdrawalMessageId the message index within the batch.
+    /// @param withdrawalProof the merkle proof for the withdrawal.
+    function claimNativeTokenWithdrawal(
+        uint256 claimedL2Amount,
+        uint256 withdrawalBatchNumber,
+        uint256 withdrawalMessageId,
+        bytes32[] calldata withdrawalProof
+    ) external;
+
+    /// @notice Receives native token (ERC-20) from the shared bridge router.
+    /// @param amount The amount of the native token received (in L1 units).
+    function receiveNativeTokenFromSharedBridge(uint256 amount) external;
+
     /// @notice Checks if the sequencer has exceeded it's processing deadlines
     function hasExpiredPrivilegedTransactions() external view returns (bool);
 
