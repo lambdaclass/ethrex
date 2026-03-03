@@ -576,7 +576,7 @@ jobs:
           ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec \
           ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
           ETHREX_LOG_LEVEL=debug \
-          docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
+          docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps tokamak-app-l2
 
       - name: Wait for L2 deposits to be processed
         run: |
