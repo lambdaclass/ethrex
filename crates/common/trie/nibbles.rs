@@ -733,10 +733,7 @@ mod tests {
 
     /// Scalar reference for expand_bytes_to_nibbles (no SIMD).
     fn expand_bytes_scalar_ref(bytes: &[u8]) -> Vec<u8> {
-        bytes
-            .iter()
-            .flat_map(|&b| [b >> 4, b & 0x0F])
-            .collect()
+        bytes.iter().flat_map(|&b| [b >> 4, b & 0x0F]).collect()
     }
 
     /// Scalar reference for pack_nibble_pairs (no SIMD).
