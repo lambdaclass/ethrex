@@ -1,6 +1,6 @@
 use ethrex_common::Bytes;
 use ethrex_common::H256;
-use ethrex_common::utils::keccak;
+use ethrex_common::utils::{decode_hex, keccak};
 use ethrex_common::{Address, H32, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::clients::EthClientError;
@@ -521,7 +521,7 @@ fn copy_into(
 
 #[allow(clippy::indexing_slicing)]
 pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthClientError> {
-    let bytes = hex::decode(hex_string.strip_prefix("0x").unwrap_or(hex_string))
+    let bytes = decode_hex(hex_string)
         .map_err(|_| EthClientError::Custom("Invalid hex string".to_owned()))?;
 
     // The ABI encoding for dynamic arrays is:
