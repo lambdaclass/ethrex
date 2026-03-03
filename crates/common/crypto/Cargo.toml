@@ -18,7 +18,7 @@ ethereum-types.workspace = true
 thiserror.workspace = true
 
 # Native crypto dependencies (always required — trait defaults call these)
-secp256k1.workspace = true
+secp256k1 = { workspace = true, optional = true }
 sha2 = "0.10.9"
 ripemd = "0.1.3"
 hex-literal = "0.4.1"
@@ -34,7 +34,8 @@ ff = "0.13"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
-default = ["kzg-rs"]
+default = ["kzg-rs", "secp256k1"]
+secp256k1 = ["dep:secp256k1"]
 c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings"]
 openvm-kzg = ["dep:openvm-kzg"]
 kzg-rs = ["dep:kzg-rs"]

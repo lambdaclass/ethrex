@@ -43,49 +43,66 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         recid: u8,
         msg: &[u8; 32],
     ) -> Result<[u8; 32], CryptoError> {
-        let recovery_id = secp256k1::ecdsa::RecoveryId::try_from(recid as i32)
-            .map_err(|_| CryptoError::InvalidRecoveryId)?;
+        #[cfg(feature = "secp256k1")]
+        {
+            let recovery_id = secp256k1::ecdsa::RecoveryId::try_from(recid as i32)
+                .map_err(|_| CryptoError::InvalidRecoveryId)?;
 
-        let recoverable_sig =
-            secp256k1::ecdsa::RecoverableSignature::from_compact(sig, recovery_id)
-                .map_err(|_| CryptoError::InvalidSignature)?;
+            let recoverable_sig =
+                secp256k1::ecdsa::RecoverableSignature::from_compact(sig, recovery_id)
+                    .map_err(|_| CryptoError::InvalidSignature)?;
 
-        let message = secp256k1::Message::from_digest(*msg);
+            let message = secp256k1::Message::from_digest(*msg);
 
-        let public_key = recoverable_sig
-            .recover(&message)
-            .map_err(|_| CryptoError::RecoveryFailed)?;
+            let public_key = recoverable_sig
+                .recover(&message)
+                .map_err(|_| CryptoError::RecoveryFailed)?;
 
-        let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
-        Ok(hash)
+            let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
+            Ok(hash)
+        }
+        #[cfg(not(feature = "secp256k1"))]
+        {
+            let _ = (sig, recid, msg);
+            Err(CryptoError::Other("secp256k1 feature not enabled".into()))
+        }
     }
 
     /// Recover the signer address from a 65-byte signature (r||s||v) + 32-byte message hash.
     /// Used by transaction validation (tx.sender()) and EIP-7702 authority recovery.
     fn recover_signer(&self, sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {
-        // EIP-2: reject high-s signatures (s > secp256k1n/2)
-        const SECP256K1_N_HALF: [u8; 32] =
-            hex_literal::hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
-        if sig[32..64] > SECP256K1_N_HALF[..] {
-            return Err(CryptoError::InvalidSignature);
+        #[cfg(feature = "secp256k1")]
+        {
+            // EIP-2: reject high-s signatures (s > secp256k1n/2)
+            const SECP256K1_N_HALF: [u8; 32] = hex_literal::hex!(
+                "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0"
+            );
+            if sig[32..64] > SECP256K1_N_HALF[..] {
+                return Err(CryptoError::InvalidSignature);
+            }
+
+            let recid_byte = sig[64] as i32;
+            let recovery_id = secp256k1::ecdsa::RecoveryId::try_from(recid_byte)
+                .map_err(|_| CryptoError::InvalidRecoveryId)?;
+
+            let recoverable_sig =
+                secp256k1::ecdsa::RecoverableSignature::from_compact(&sig[..64], recovery_id)
+                    .map_err(|_| CryptoError::InvalidSignature)?;
+
+            let message = secp256k1::Message::from_digest(*msg);
+
+            let public_key = secp256k1::SECP256K1
+                .recover_ecdsa(&message, &recoverable_sig)
+                .map_err(|_| CryptoError::RecoveryFailed)?;
+
+            let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
+            Ok(Address::from_slice(&hash[12..]))
         }
-
-        let recid_byte = sig[64] as i32;
-        let recovery_id = secp256k1::ecdsa::RecoveryId::try_from(recid_byte)
-            .map_err(|_| CryptoError::InvalidRecoveryId)?;
-
-        let recoverable_sig =
-            secp256k1::ecdsa::RecoverableSignature::from_compact(&sig[..64], recovery_id)
-                .map_err(|_| CryptoError::InvalidSignature)?;
-
-        let message = secp256k1::Message::from_digest(*msg);
-
-        let public_key = secp256k1::SECP256K1
-            .recover_ecdsa(&message, &recoverable_sig)
-            .map_err(|_| CryptoError::RecoveryFailed)?;
-
-        let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
-        Ok(Address::from_slice(&hash[12..]))
+        #[cfg(not(feature = "secp256k1"))]
+        {
+            let _ = (sig, msg);
+            Err(CryptoError::Other("secp256k1 feature not enabled".into()))
+        }
     }
 
     // ── Hashing ────────────────────────────────────────────────────────
@@ -468,6 +485,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     }
 
     /// G1 multi-scalar multiplication. Returns 96-byte unpadded G1 point.
+    #[allow(clippy::type_complexity)]
     fn bls12_381_g1_msm(
         &self,
         pairs: &[(([u8; 48], [u8; 48]), [u8; 32])],
@@ -511,6 +529,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     }
 
     /// G2 multi-scalar multiplication. Returns 192-byte unpadded G2 point.
+    #[allow(clippy::type_complexity)]
     fn bls12_381_g2_msm(
         &self,
         pairs: &[(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])],
@@ -537,6 +556,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     }
 
     /// BLS12-381 pairing check.
+    #[allow(clippy::type_complexity)]
     fn bls12_381_pairing_check(
         &self,
         pairs: &[(

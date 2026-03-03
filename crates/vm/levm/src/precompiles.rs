@@ -459,10 +459,6 @@ pub fn ecrecover(
 
     // Address is the last 20 bytes of the keccak hash of the public key.
     let mut out = [0u8; 32];
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "pk_hash is 32 bytes, out is 32 bytes"
-    )]
     out[12..32].copy_from_slice(&pk_hash[12..32]);
 
     Ok(Bytes::copy_from_slice(&out))
@@ -1005,7 +1001,6 @@ fn parse_bls12_padded_fp(padded: &[u8; 64]) -> Result<[u8; 48], VMError> {
     if padded[..16] != [0u8; 16] {
         return Err(PrecompileError::ParsingInputError.into());
     }
-    #[expect(clippy::indexing_slicing, reason = "bounds known from array size")]
     let fp: [u8; 48] = padded[16..64]
         .try_into()
         .map_err(|_| InternalError::TypeConversion)?;
@@ -1033,25 +1028,21 @@ pub fn bls12_g1add(
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     // Parse two 128-byte padded G1 points into 48-byte unpadded coordinates.
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let ax = parse_bls12_padded_fp(
         x_data[..64]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let ay = parse_bls12_padded_fp(
         x_data[64..128]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let bx = parse_bls12_padded_fp(
         y_data[..64]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let by = parse_bls12_padded_fp(
         y_data[64..128]
             .try_into()
@@ -1064,11 +1055,8 @@ pub fn bls12_g1add(
 
     // Re-pad the 96-byte unpadded result (x||y each 48 bytes) to 128 bytes.
     let mut output = [0u8; 128];
-    #[expect(clippy::indexing_slicing, reason = "result is 96 bytes")]
-    {
-        output[16..64].copy_from_slice(&result[..48]);
-        output[80..128].copy_from_slice(&result[48..96]);
-    }
+    output[16..64].copy_from_slice(&result[..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
     Ok(Bytes::copy_from_slice(&output))
 }
 
@@ -1086,6 +1074,7 @@ pub fn bls12_g1msm(
     let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G1_K_DISCOUNT, G1_MUL_COST)?;
     increase_precompile_consumed_gas(required_gas, gas_remaining)?;
 
+    #[allow(clippy::type_complexity)]
     let mut pairs: Vec<(([u8; 48], [u8; 48]), [u8; 32])> = Vec::with_capacity(k);
 
     #[expect(
@@ -1124,11 +1113,8 @@ pub fn bls12_g1msm(
 
     // Re-pad output: 96-byte result → 128-byte padded
     let mut output = [0u8; 128];
-    #[expect(clippy::indexing_slicing, reason = "result is 96 bytes")]
-    {
-        output[16..64].copy_from_slice(&result[..48]);
-        output[80..128].copy_from_slice(&result[48..96]);
-    }
+    output[16..64].copy_from_slice(&result[..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
     Ok(Bytes::copy_from_slice(&output))
 }
 
@@ -1154,50 +1140,42 @@ pub fn bls12_g2add(
 
     // Parse two 256-byte padded G2 points into four 48-byte unpadded coordinates each.
     // G2 point layout: x_0(64) || x_1(64) || y_0(64) || y_1(64) = 256 bytes
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let ax0 = parse_bls12_padded_fp(
         x_data[0..64]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let ax1 = parse_bls12_padded_fp(
         x_data[64..128]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let ay0 = parse_bls12_padded_fp(
         x_data[128..192]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let ay1 = parse_bls12_padded_fp(
         x_data[192..256]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
 
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let bx0 = parse_bls12_padded_fp(
         y_data[0..64]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let bx1 = parse_bls12_padded_fp(
         y_data[64..128]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let by0 = parse_bls12_padded_fp(
         y_data[128..192]
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    #[expect(clippy::indexing_slicing, reason = "array sizes known")]
     let by1 = parse_bls12_padded_fp(
         y_data[192..256]
             .try_into()
@@ -1212,13 +1190,10 @@ pub fn bls12_g2add(
     // Unpadded: x_0(48) || x_1(48) || y_0(48) || y_1(48) = 192 bytes
     // Padded output: x_0_padded(64) || x_1_padded(64) || y_0_padded(64) || y_1_padded(64) = 256 bytes
     let mut output = [0u8; 256];
-    #[expect(clippy::indexing_slicing, reason = "result is 192 bytes")]
-    {
-        output[16..64].copy_from_slice(&result[0..48]);
-        output[80..128].copy_from_slice(&result[48..96]);
-        output[144..192].copy_from_slice(&result[96..144]);
-        output[208..256].copy_from_slice(&result[144..192]);
-    }
+    output[16..64].copy_from_slice(&result[0..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
+    output[144..192].copy_from_slice(&result[96..144]);
+    output[208..256].copy_from_slice(&result[144..192]);
     Ok(Bytes::copy_from_slice(&output))
 }
 
@@ -1236,6 +1211,7 @@ pub fn bls12_g2msm(
     let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G2_K_DISCOUNT, G2_MUL_COST)?;
     increase_precompile_consumed_gas(required_gas, gas_remaining)?;
 
+    #[allow(clippy::type_complexity)]
     let mut pairs: Vec<(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])> =
         Vec::with_capacity(k);
 
@@ -1285,13 +1261,10 @@ pub fn bls12_g2msm(
 
     // Re-pad the 192-byte unpadded result to 256 bytes.
     let mut output = [0u8; 256];
-    #[expect(clippy::indexing_slicing, reason = "result is 192 bytes")]
-    {
-        output[16..64].copy_from_slice(&result[0..48]);
-        output[80..128].copy_from_slice(&result[48..96]);
-        output[144..192].copy_from_slice(&result[96..144]);
-        output[208..256].copy_from_slice(&result[144..192]);
-    }
+    output[16..64].copy_from_slice(&result[0..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
+    output[144..192].copy_from_slice(&result[96..144]);
+    output[208..256].copy_from_slice(&result[144..192]);
     Ok(Bytes::copy_from_slice(&output))
 }
 
@@ -1314,6 +1287,7 @@ pub fn bls12_pairing_check(
     let gas_cost = gas_cost::bls12_pairing_check(k)?;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
+    #[allow(clippy::type_complexity)]
     let mut pairs: Vec<(
         ([u8; 48], [u8; 48]),
         ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
@@ -1407,11 +1381,8 @@ pub fn bls12_map_fp_to_g1(
 
     // Re-pad the 96-byte unpadded G1 result to 128 bytes.
     let mut output = [0u8; 128];
-    #[expect(clippy::indexing_slicing, reason = "result is 96 bytes")]
-    {
-        output[16..64].copy_from_slice(&result[0..48]);
-        output[80..128].copy_from_slice(&result[48..96]);
-    }
+    output[16..64].copy_from_slice(&result[0..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
     Ok(Bytes::copy_from_slice(&output))
 }
 
@@ -1450,12 +1421,9 @@ pub fn bls12_map_fp2_to_g2(
     // Unpadded: x_0(48) || x_1(48) || y_0(48) || y_1(48) = 192 bytes
     // Padded output: x_0_padded(64) || x_1_padded(64) || y_0_padded(64) || y_1_padded(64) = 256 bytes
     let mut output = [0u8; 256];
-    #[expect(clippy::indexing_slicing, reason = "result is 192 bytes")]
-    {
-        output[16..64].copy_from_slice(&result[0..48]);
-        output[80..128].copy_from_slice(&result[48..96]);
-        output[144..192].copy_from_slice(&result[96..144]);
-        output[208..256].copy_from_slice(&result[144..192]);
-    }
+    output[16..64].copy_from_slice(&result[0..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
+    output[144..192].copy_from_slice(&result[96..144]);
+    output[208..256].copy_from_slice(&result[144..192]);
     Ok(Bytes::copy_from_slice(&output))
 }
