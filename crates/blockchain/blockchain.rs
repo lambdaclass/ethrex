@@ -444,10 +444,10 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, produced_bal) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal)?;
-
+                        let result =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
                         cancelled_exec.store(true, Ordering::Relaxed);
+                        let (execution_result, produced_bal) = result?;
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
