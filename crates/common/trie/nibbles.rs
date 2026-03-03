@@ -595,7 +595,9 @@ impl Nibbles {
         compact.push(prefix_nibble + if is_leaf { 0x20 } else { 0x00 });
 
         // SIMD-accelerated packing of nibble pairs → bytes.
-        // SAFETY: we just reserved `pair_count` additional bytes and set_len accordingly.
+        // SAFETY: compact has capacity for `pair_count` bytes beyond the one already pushed.
+        // pack_nibble_pairs writes exactly `pair_count` bytes starting at offset 1;
+        // set_len then exposes those initialized bytes.
         unsafe {
             let out_ptr = compact.as_mut_ptr().add(1);
             pack_nibble_pairs(hex, out_ptr);
