@@ -190,6 +190,7 @@ jobs:
           done
 
       - name: Post results to Telegram
+        if: github.event_name == 'schedule' || inputs.slack_channel == 'prod'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ETHREX_CHAT_ID: ${{ secrets.TELEGRAM_ETHREX_CHAT_ID }}

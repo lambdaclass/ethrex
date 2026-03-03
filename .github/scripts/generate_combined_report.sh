@@ -220,12 +220,49 @@ done
 
 header_text="Daily ethrex report"
 
-# Build sort keys per client: block time ascending (p50 for reth/geth, mean for ethrex/nethermind)
-sort_entries=()
-[[ -n "$ethrex_bt" ]] && sort_entries+=("$ethrex_bt ethrex")
-[[ -n "$reth_bt_p50" || -n "$reth_bt_p999" ]] && sort_entries+=("${reth_bt_p50:-0} reth")
-[[ -n "$geth_bt_p50" || -n "$geth_bt_p999" ]] && sort_entries+=("${geth_bt_p50:-0} geth")
-[[ -n "$nether_bt" ]] && sort_entries+=("$nether_bt nethermind")
+# Sort entries for block time (ascending) and throughput (descending)
+bt_sort_entries=()
+[[ -n "$ethrex_bt" ]]                          && bt_sort_entries+=("$ethrex_bt ethrex")
+[[ -n "$reth_bt_p50"   || -n "$reth_bt_p999"  ]] && bt_sort_entries+=("${reth_bt_p50:-0} reth")
+[[ -n "$geth_bt_p50"   || -n "$geth_bt_p999"  ]] && bt_sort_entries+=("${geth_bt_p50:-0} geth")
+[[ -n "$nether_bt" ]]                          && bt_sort_entries+=("$nether_bt nethermind")
+
+tput_sort_entries=()
+[[ -n "$ethrex_tput" ]]                            && tput_sort_entries+=("$ethrex_tput ethrex")
+[[ -n "$reth_tput" ]]                              && tput_sort_entries+=("$reth_tput reth")
+[[ -n "$geth_tput_p50" || -n "$geth_tput_p999" ]] && tput_sort_entries+=("${geth_tput_p50:-0} geth")
+[[ -n "$nether_tput" ]]                            && tput_sort_entries+=("$nether_tput nethermind")
+
+# "Comparing ..." line, listed in block time order
+comparing_line=""
+while read -r _val client; do
+  case "$client" in
+    ethrex)     comparing_line+="ethrex (${version_ethrex}), " ;;
+    reth)       comparing_line+="reth (${version_reth}), " ;;
+    geth)       comparing_line+="geth (${version_geth}), " ;;
+    nethermind) comparing_line+="nethermind (${version_nethermind}), " ;;
+  esac
+done < <(printf '%s\n' "${bt_sort_entries[@]}" | LC_ALL=C sort -n)
+comparing_line="${comparing_line%, }"  # strip trailing ", "
+
+# Per-row formatters — right-align name to 10 chars so ":" lines up
+fmt_bt_row() {
+  case "$1" in
+    ethrex)     printf "%10s: %.3fms (mean)\n"                    "ethrex"     "${ethrex_bt:-0}" ;;
+    reth)       printf "%10s: %.3fms (p50) | %.3fms (p99.9)\n"   "reth"       "${reth_bt_p50:-0}" "${reth_bt_p999:-0}" ;;
+    geth)       printf "%10s: %.3fms (p50) | %.3fms (p99.9)\n"   "geth"       "${geth_bt_p50:-0}" "${geth_bt_p999:-0}" ;;
+    nethermind) printf "%10s: %.3fms (mean)\n"                    "nethermind" "${nether_bt:-0}" ;;
+  esac
+}
+
+fmt_tput_row() {
+  case "$1" in
+    ethrex)     printf "%10s: %.3f Ggas/s (mean)\n"                       "ethrex"     "${ethrex_tput:-0}" ;;
+    reth)       printf "%10s: %.3f Ggas/s (mean)\n"                       "reth"       "${reth_tput:-0}" ;;
+    geth)       printf "%10s: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n" "geth"       "${geth_tput_p50:-0}" "${geth_tput_p999:-0}" ;;
+    nethermind) printf "%10s: %.3f Ggas/s (mean)\n"                       "nethermind" "${nether_tput:-0}" ;;
+  esac
+}
 
 # --- Generate text report for GitHub/Telegram ---
 {
@@ -241,34 +278,23 @@ sort_entries=()
 
   echo "## Comparative performance report (24h average)"
   echo
+  echo "Comparing ${comparing_line}"
+  echo
 
-  while read -r _sort_val client; do
-    case "$client" in
-      ethrex)
-        printf "ethrex (%s)\n" "$version_ethrex"
-        printf "  • Block time: %.3fms (mean)\n" "${ethrex_bt:-0}"
-        printf "  • Throughput: %.3f Ggas/s (mean)\n" "${ethrex_tput:-0}"
-        ;;
-      reth)
-        printf "reth (%s)\n" "$version_reth"
-        printf "  • Block time: %.3fms (p50) | %.3fms (p99.9)\n" "${reth_bt_p50:-0}" "${reth_bt_p999:-0}"
-        printf "  • Throughput: %.3f Ggas/s (mean)\n" "${reth_tput:-0}"
-        ;;
-      geth)
-        printf "geth (%s)\n" "$version_geth"
-        printf "  • Block time: %.3fms (p50) | %.3fms (p99.9)\n" "${geth_bt_p50:-0}" "${geth_bt_p999:-0}"
-        printf "  • Throughput: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n" "${geth_tput_p50:-0}" "${geth_tput_p999:-0}"
-        ;;
-      nethermind)
-        printf "nethermind (%s)\n" "$version_nethermind"
-        printf "  • Block time: %.3fms (mean)\n" "${nether_bt:-0}"
-        printf "  • Throughput: %.3f Ggas/s (mean)\n" "${nether_tput:-0}"
-        ;;
-    esac
-  done < <(printf '%s\n' "${sort_entries[@]}" | LC_ALL=C sort -n)
+  echo "### Block Time"
+  echo
+  while read -r _val client; do fmt_bt_row "$client"; done \
+    < <(printf '%s\n' "${bt_sort_entries[@]}" | LC_ALL=C sort -n)
+  echo
+
+  echo "### Throughput"
+  echo
+  while read -r _val client; do fmt_tput_row "$client"; done \
+    < <(printf '%s\n' "${tput_sort_entries[@]}" | LC_ALL=C sort -rn)
 } >"${OUTPUT_DIR}/daily_report_github.txt"
 
 # --- Generate Slack JSON ---
+# Use code blocks for the aligned tables so monospace rendering preserves column alignment
 slack_text=""
 if [[ -n "$loc_text" ]]; then
   slack_text="*Lines of code*"$'\n'
@@ -276,27 +302,21 @@ if [[ -n "$loc_text" ]]; then
 fi
 
 slack_text+="*Comparative performance report (24h average)*"$'\n'
+slack_text+="Comparing ${comparing_line}"$'\n\n'
 
-while read -r _sort_val client; do
-  case "$client" in
-    ethrex)
-      slack_text+=$(printf "*ethrex* (%s)\n  • Block time: %.3fms (mean)\n  • Throughput: %.3f Ggas/s (mean)" \
-        "$version_ethrex" "${ethrex_bt:-0}" "${ethrex_tput:-0}")$'\n'
-      ;;
-    reth)
-      slack_text+=$(printf "*reth* (%s)\n  • Block time: %.3fms (p50) | %.3fms (p99.9)\n  • Throughput: %.3f Ggas/s (mean)" \
-        "$version_reth" "${reth_bt_p50:-0}" "${reth_bt_p999:-0}" "${reth_tput:-0}")$'\n'
-      ;;
-    geth)
-      slack_text+=$(printf "*geth* (%s)\n  • Block time: %.3fms (p50) | %.3fms (p99.9)\n  • Throughput: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)" \
-        "$version_geth" "${geth_bt_p50:-0}" "${geth_bt_p999:-0}" "${geth_tput_p50:-0}" "${geth_tput_p999:-0}")$'\n'
-      ;;
-    nethermind)
-      slack_text+=$(printf "*nethermind* (%s)\n  • Block time: %.3fms (mean)\n  • Throughput: %.3f Ggas/s (mean)" \
-        "$version_nethermind" "${nether_bt:-0}" "${nether_tput:-0}")$'\n'
-      ;;
-  esac
-done < <(printf '%s\n' "${sort_entries[@]}" | LC_ALL=C sort -n)
+slack_text+="*Block Time*"$'\n'
+slack_text+='```'$'\n'
+while read -r _val client; do
+  slack_text+="$(fmt_bt_row "$client")"$'\n'
+done < <(printf '%s\n' "${bt_sort_entries[@]}" | LC_ALL=C sort -n)
+slack_text+='```'$'\n\n'
+
+slack_text+="*Throughput*"$'\n'
+slack_text+='```'$'\n'
+while read -r _val client; do
+  slack_text+="$(fmt_tput_row "$client")"$'\n'
+done < <(printf '%s\n' "${tput_sort_entries[@]}" | LC_ALL=C sort -rn)
+slack_text+='```'$'\n'
 
 jq -n --arg header "$header_text" --arg text "$slack_text" '{
   "blocks": [
