@@ -2162,6 +2162,7 @@ impl Store {
     /// Adds all genesis accounts and returns the genesis block's state_root
     pub async fn setup_genesis_state_trie(
         &self,
+        genesis_block_hash: BlockHash,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         #[cfg(feature = "ethrex-db")]
@@ -2171,11 +2172,11 @@ impl Store {
             let bc = bc.write().map_err(|_| StoreError::LockError)?;
 
             // Create a genesis block (block 0, parent is zero hash)
-            let genesis_hash = primitive_types::H256::zero();
+            let genesis_hash_db = h256_to_db(&genesis_block_hash);
             let mut block = bc
                 .start_new(
                     primitive_types::H256::zero(),
-                    genesis_hash,
+                    genesis_hash_db,
                     0,
                 )
                 .map_err(|e| StoreError::Custom(format!("ethrex-db genesis start_new: {e}")))?;
@@ -2207,10 +2208,10 @@ impl Store {
                 .map_err(|e| StoreError::Custom(format!("ethrex-db genesis commit: {e}")))?;
 
             // Finalize genesis
-            bc.finalize(genesis_hash)
+            bc.finalize(genesis_hash_db)
                 .map_err(|e| StoreError::Custom(format!("ethrex-db genesis finalize: {e}")))?;
 
-            bc.set_genesis(genesis_hash, 0);
+            bc.set_genesis(genesis_hash_db, 0);
 
             let state_root = H256(bc.state_root());
             tracing::warn!("ethrex-db computed genesis state root: {state_root:?}");
@@ -2428,7 +2429,9 @@ impl Store {
         }
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
-        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
+        let genesis_state_root = self
+            .setup_genesis_state_trie(genesis_hash, genesis.alloc)
+            .await?;
         tracing::warn!(
             "Genesis state root: computed={genesis_state_root:?}, expected={:?}",
             genesis_block.header.state_root
