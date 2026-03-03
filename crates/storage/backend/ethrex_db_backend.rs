@@ -39,9 +39,9 @@ impl EthrexDbBackend {
     /// - `ethrex_db_path`: directory for the ethrex-db state database.
     /// - `rocksdb_path`: directory for the RocksDB chain metadata database.
     pub fn new(ethrex_db_path: &Path, rocksdb_path: &Path) -> Result<Self, StoreError> {
-        // 16GB initial size (4M pages * 4KB) to fit full Ethereum state
+        // 32GB initial size (8M pages * 4KB) to fit full Ethereum state
         let paged_db =
-            ethrex_db::store::PagedDb::open_with_size(ethrex_db_path, 4_000_000).map_err(|e| {
+            ethrex_db::store::PagedDb::open_with_size(ethrex_db_path, 8_000_000).map_err(|e| {
                 StoreError::Custom(format!("Failed to open ethrex-db at {ethrex_db_path:?}: {e}"))
             })?;
         let blockchain = ethrex_db::chain::Blockchain::new(paged_db);
