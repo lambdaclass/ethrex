@@ -4,6 +4,44 @@ set -euo pipefail
 OUTPUT_DIR="${DAILY_REPORT_OUTPUT_DIR:-tooling/daily_report}"
 mkdir -p "$OUTPUT_DIR"
 
+# --- LOC section (read from JSON produced by the loc tool) ---
+LOC_JSON="tooling/loc/loc_report.json"
+LOC_OLD_JSON="tooling/loc/loc_report.json.old"
+
+loc_text=""
+if [[ -f "$LOC_JSON" ]]; then
+  read -r loc_total loc_l1 loc_l2 loc_levm \
+    < <(jq -r '[.ethrex, .ethrex_l1, .ethrex_l2, .levm] | @tsv' "$LOC_JSON")
+
+  if [[ -f "$LOC_OLD_JSON" ]]; then
+    read -r loc_old_total loc_old_l1 loc_old_l2 loc_old_levm \
+      < <(jq -r '[.ethrex, .ethrex_l1, .ethrex_l2, .levm] | @tsv' "$LOC_OLD_JSON")
+  else
+    loc_old_total=$loc_total; loc_old_l1=$loc_l1
+    loc_old_l2=$loc_l2;       loc_old_levm=$loc_levm
+  fi
+
+  fmt_loc_diff() {
+    local new=$1 old=$2
+    if [[ $new -gt $old ]];   then printf " (+%d)" $((new - old))
+    elif [[ $new -lt $old ]]; then printf " (-%d)" $((old - new))
+    fi
+  }
+
+  # L1 sub-crates: everything except l2 and vm (those are L2 and LEVM)
+  l1_crates=$(jq -r '
+    .ethrex_crates[]
+    | select(.[0] != "l2" and .[0] != "vm")
+    | "  • \(.[0]): \(.[1])"
+  ' "$LOC_JSON")
+
+  loc_text="Total: ${loc_total}$(fmt_loc_diff "$loc_total" "$loc_old_total")"$'\n'
+  loc_text+="• L1: ${loc_l1}$(fmt_loc_diff "$loc_l1" "$loc_old_l1")"$'\n'
+  loc_text+="${l1_crates}"$'\n'
+  loc_text+="• L2: ${loc_l2}$(fmt_loc_diff "$loc_l2" "$loc_old_l2")"$'\n'
+  loc_text+="• LEVM: ${loc_levm}$(fmt_loc_diff "$loc_levm" "$loc_old_levm")"
+fi
+
 BASE_URL="${PERF_PROMETHEUS_URL:-${BLOCK_TIME_PROMETHEUS_URL:-${PROMETHEUS_URL:-}}}"
 if [[ -z "$BASE_URL" ]]; then
   echo "Set PERF_PROMETHEUS_URL to build the Prometheus query endpoint." >&2
@@ -180,7 +218,7 @@ for row in "${raw_bt[@]}"; do
   esac
 done
 
-header_text="Daily performance report (24-hour average)"
+header_text="Daily ethrex report"
 
 # Build sort keys per client: block time ascending (p50 for reth/geth, mean for ethrex/nethermind)
 sort_entries=()
@@ -194,25 +232,35 @@ sort_entries=()
   echo "# ${header_text}"
   echo
 
+  if [[ -n "$loc_text" ]]; then
+    echo "## Lines of code"
+    echo
+    printf "%s\n" "$loc_text"
+    echo
+  fi
+
+  echo "## Comparative performance report (24h average)"
+  echo
+
   while read -r _sort_val client; do
     case "$client" in
       ethrex)
-        printf "• ethrex (%s)\n" "$version_ethrex"
+        printf "ethrex (%s)\n" "$version_ethrex"
         printf "  • Block time: %.3fms (mean)\n" "${ethrex_bt:-0}"
         printf "  • Throughput: %.3f Ggas/s (mean)\n" "${ethrex_tput:-0}"
         ;;
       reth)
-        printf "• reth (%s)\n" "$version_reth"
+        printf "reth (%s)\n" "$version_reth"
         printf "  • Block time: %.3fms (p50) | %.3fms (p99.9)\n" "${reth_bt_p50:-0}" "${reth_bt_p999:-0}"
         printf "  • Throughput: %.3f Ggas/s (mean)\n" "${reth_tput:-0}"
         ;;
       geth)
-        printf "• geth (%s)\n" "$version_geth"
+        printf "geth (%s)\n" "$version_geth"
         printf "  • Block time: %.3fms (p50) | %.3fms (p99.9)\n" "${geth_bt_p50:-0}" "${geth_bt_p999:-0}"
         printf "  • Throughput: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n" "${geth_tput_p50:-0}" "${geth_tput_p999:-0}"
         ;;
       nethermind)
-        printf "• nethermind (%s)\n" "$version_nethermind"
+        printf "nethermind (%s)\n" "$version_nethermind"
         printf "  • Block time: %.3fms (mean)\n" "${nether_bt:-0}"
         printf "  • Throughput: %.3f Ggas/s (mean)\n" "${nether_tput:-0}"
         ;;
@@ -222,23 +270,29 @@ sort_entries=()
 
 # --- Generate Slack JSON ---
 slack_text=""
+if [[ -n "$loc_text" ]]; then
+  slack_text="*Lines of code*"$'\n'
+  slack_text+="${loc_text}"$'\n\n'
+fi
+
+slack_text+="*Comparative performance report (24h average)*"$'\n'
 
 while read -r _sort_val client; do
   case "$client" in
     ethrex)
-      slack_text+=$(printf "• *ethrex* (%s)\n  • Block time: %.3fms (mean)\n  • Throughput: %.3f Ggas/s (mean)" \
+      slack_text+=$(printf "*ethrex* (%s)\n  • Block time: %.3fms (mean)\n  • Throughput: %.3f Ggas/s (mean)" \
         "$version_ethrex" "${ethrex_bt:-0}" "${ethrex_tput:-0}")$'\n'
       ;;
     reth)
-      slack_text+=$(printf "• *reth* (%s)\n  • Block time: %.3fms (p50) | %.3fms (p99.9)\n  • Throughput: %.3f Ggas/s (mean)" \
+      slack_text+=$(printf "*reth* (%s)\n  • Block time: %.3fms (p50) | %.3fms (p99.9)\n  • Throughput: %.3f Ggas/s (mean)" \
         "$version_reth" "${reth_bt_p50:-0}" "${reth_bt_p999:-0}" "${reth_tput:-0}")$'\n'
       ;;
     geth)
-      slack_text+=$(printf "• *geth* (%s)\n  • Block time: %.3fms (p50) | %.3fms (p99.9)\n  • Throughput: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)" \
+      slack_text+=$(printf "*geth* (%s)\n  • Block time: %.3fms (p50) | %.3fms (p99.9)\n  • Throughput: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)" \
         "$version_geth" "${geth_bt_p50:-0}" "${geth_bt_p999:-0}" "${geth_tput_p50:-0}" "${geth_tput_p999:-0}")$'\n'
       ;;
     nethermind)
-      slack_text+=$(printf "• *nethermind* (%s)\n  • Block time: %.3fms (mean)\n  • Throughput: %.3f Ggas/s (mean)" \
+      slack_text+=$(printf "*nethermind* (%s)\n  • Block time: %.3fms (mean)\n  • Throughput: %.3f Ggas/s (mean)" \
         "$version_nethermind" "${nether_bt:-0}" "${nether_tput:-0}")$'\n'
       ;;
   esac

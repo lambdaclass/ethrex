@@ -175,12 +175,7 @@ jobs:
 
       - name: Post results in summary
         run: |
-          {
-            echo "# 'ethrex' lines of code report"
-            cat tooling/loc/loc_report_github.txt
-            echo ""
-            cat tooling/daily_report/daily_report_github.txt
-          } >> "$GITHUB_STEP_SUMMARY"
+          cat tooling/daily_report/daily_report_github.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post results to Slack
         env:
@@ -191,7 +186,6 @@ jobs:
             }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
-            sh .github/scripts/publish_loc.sh "$webhook"
             bash .github/scripts/publish_performance.sh "$webhook" tooling/daily_report/daily_report_slack.json
           done
 
@@ -200,5 +194,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ETHREX_CHAT_ID: ${{ secrets.TELEGRAM_ETHREX_CHAT_ID }}
         run: |
-          bash .github/scripts/publish_telegram.sh tooling/loc/loc_report_github.txt
           bash .github/scripts/publish_telegram.sh tooling/daily_report/daily_report_github.txt
