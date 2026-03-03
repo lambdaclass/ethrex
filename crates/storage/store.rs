@@ -219,6 +219,18 @@ pub enum EngineType {
     RocksDB,
 }
 
+/// Pre-computed encoding results from the encoder thread.
+///
+/// Contains RLP-encoded block header, body, and receipts that were
+/// computed concurrently with execution, so `apply_updates` can skip
+/// re-encoding them.
+pub struct PreEncodedBlockData {
+    pub header_rlp: Vec<u8>,
+    pub body_rlp: Vec<u8>,
+    /// Each entry is `receipt.encode_to_vec()` (== `encode_inner()`), ready for DB storage.
+    pub encoded_receipts: Vec<Vec<u8>>,
+}
+
 /// Batch of updates to apply to the store atomically.
 ///
 /// Used during block execution to collect all state changes before
@@ -234,6 +246,8 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// Pre-encoded block data from the encoder thread (pipeline path only).
+    pub pre_encoded: Option<PreEncodedBlockData>,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1363,6 +1377,7 @@ impl Store {
         let UpdateBatch {
             account_updates,
             storage_updates,
+            pre_encoded,
             ..
         } = update_batch;
 
@@ -1406,17 +1421,29 @@ impl Store {
             let hash_key = block_hash.encode_to_vec();
 
             let t_enc = Instant::now();
-            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+            let header_encoded;
+            let header_bytes: &[u8] = if let Some(ref pe) = pre_encoded {
+                &pe.header_rlp
+            } else {
+                header_encoded = BlockHeaderRLP::from(block.header.clone()).into_vec();
+                &header_encoded
+            };
             header_encode_us += t_enc.elapsed().as_micros();
             let t_p = Instant::now();
-            tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
+            tx.put(HEADERS, &hash_key, header_bytes)?;
             db_put_us += t_p.elapsed().as_micros();
 
             let t_enc = Instant::now();
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+            let body_encoded;
+            let body_bytes: &[u8] = if let Some(ref pe) = pre_encoded {
+                &pe.body_rlp
+            } else {
+                body_encoded = block.body.encode_to_vec();
+                &body_encoded
+            };
             body_encode_us += t_enc.elapsed().as_micros();
             let t_p = Instant::now();
-            tx.put(BODIES, &hash_key, body_value.bytes())?;
+            tx.put(BODIES, &hash_key, body_bytes)?;
             db_put_us += t_p.elapsed().as_micros();
 
             let t_p = Instant::now();
@@ -1446,10 +1473,16 @@ impl Store {
             for (index, receipt) in receipts.into_iter().enumerate() {
                 let t_enc = Instant::now();
                 let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
+                let receipt_encoded;
+                let value: &[u8] = if let Some(ref pe) = pre_encoded {
+                    &pe.encoded_receipts[index]
+                } else {
+                    receipt_encoded = receipt.encode_to_vec();
+                    &receipt_encoded
+                };
                 receipt_encode_us += t_enc.elapsed().as_micros();
                 let t_p = Instant::now();
-                tx.put(RECEIPTS, &key, &value)?;
+                tx.put(RECEIPTS, &key, value)?;
                 receipt_put_us += t_p.elapsed().as_micros();
             }
         }

@@ -181,6 +181,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
+        encoder: Sender<Receipt>,
         queue_length: &AtomicUsize,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
@@ -257,8 +258,15 @@ impl LEVM {
                 report.logs,
             );
 
+            // Send receipt to encoder thread for concurrent encoding/trie building.
+            // Ignore send errors — the encoder thread may have exited early on error.
+            let _ = encoder.send(receipt.clone());
+
             receipts.push(receipt);
         }
+
+        // Drop the encoder sender so the encoder thread knows all receipts have been sent.
+        drop(encoder);
 
         #[cfg(feature = "perf_opcode_timings")]
         {

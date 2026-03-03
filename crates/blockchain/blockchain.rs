@@ -79,7 +79,8 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
+    AccountUpdatesList, PreEncodedBlockData, Store, UpdateBatch, error::StoreError, hash_address,
+    hash_key, rlp::BlockHeaderRLP,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
@@ -118,9 +119,10 @@ type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
     Option<Vec<AccountUpdate>>,
-    usize,        // max queue length
-    [Instant; 6], // timing instants
-    Duration,     // warmer duration
+    usize,                       // max queue length
+    [Instant; 6],                // timing instants
+    Duration,                    // warmer duration
+    Option<PreEncodedBlockData>, // pre-encoded block data from encoder thread
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -409,7 +411,7 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
-        let (execution_result, merkleization_result, warmer_duration) =
+        let (execution_result, merkleization_result, warmer_duration, encoder_result) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let warm_handle = std::thread::Builder::new()
@@ -432,15 +434,58 @@ impl Blockchain {
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
                 let (tx, rx) = channel();
+                let (encoder_tx, encoder_rx) = channel::<Receipt>();
+                // Encoder thread: encodes block header/body, hashes txs, encodes receipts,
+                // builds receipt trie, and verifies receipts root — all concurrent with execution.
+                let encoder_handle = std::thread::Builder::new()
+                    .name("block_executor_encoder".to_string())
+                    .spawn_scoped(s, move || -> Result<PreEncodedBlockData, ChainError> {
+                        // 1. Encode block header & body immediately (no receipt dependency)
+                        let header_rlp = BlockHeaderRLP::from(block.header.clone()).into_vec();
+                        let body_rlp = block.body.encode_to_vec();
+
+                        // 2. Hash all transactions (populates OnceLock on block.body.transactions)
+                        for tx in &block.body.transactions {
+                            tx.hash();
+                        }
+
+                        // 3. Process receipts as they arrive from the execution thread
+                        let mut encoded_receipts = Vec::new();
+                        let mut trie_entries = Vec::new();
+                        for (idx, receipt) in encoder_rx.into_iter().enumerate() {
+                            // DB encoding (same as receipt.encode_to_vec())
+                            encoded_receipts.push(receipt.encode_to_vec());
+                            // Trie encoding (with bloom) for receipts root verification
+                            let trie_value = receipt.encode_inner_with_bloom();
+                            let trie_key = idx.encode_to_vec();
+                            trie_entries.push((trie_key, trie_value));
+                        }
+
+                        // 4. Verify receipts root
+                        let computed_root =
+                            Trie::compute_hash_from_unsorted_iter(trie_entries.into_iter());
+                        if computed_root != block.header.receipts_root {
+                            return Err(InvalidBlockError::ReceiptsRootMismatch.into());
+                        }
+
+                        Ok(PreEncodedBlockData {
+                            header_rlp,
+                            body_rlp,
+                            encoded_receipts,
+                        })
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn encoder thread: {e}"))
+                    })?;
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
                         let (execution_result, bal) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                            vm.execute_block_pipeline(block, tx, encoder_tx, queue_length_ref)?;
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-                        validate_receipts_root(&block.header, &execution_result.receipts)?;
+                        // Receipts root validation is done by the encoder thread
                         validate_requests_hash(
                             &block.header,
                             &chain_config,
@@ -506,10 +551,14 @@ impl Blockchain {
                         ))
                     }),
                     warmer_duration,
+                    encoder_handle.join().unwrap_or_else(|_| {
+                        Err(ChainError::Custom("encoder thread panicked".to_string()))
+                    }),
                 ))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
+        let pre_encoded = encoder_result?;
 
         let exec_merkle_end_instant = Instant::now();
 
@@ -527,6 +576,7 @@ impl Blockchain {
                 exec_merkle_end_instant,
             ],
             warmer_duration,
+            Some(pre_encoded),
         ))
     }
 
@@ -1449,7 +1499,7 @@ impl Blockchain {
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), account_updates_list, execution_result)?;
+            self.store_block(block.clone(), account_updates_list, execution_result, None)?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -1851,6 +1901,7 @@ impl Blockchain {
         block: Block,
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
+        pre_encoded: Option<PreEncodedBlockData>,
     ) -> Result<(), ChainError> {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
@@ -1861,6 +1912,7 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
+            pre_encoded,
         };
 
         self.storage
@@ -1887,7 +1939,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, account_updates_list, res, None);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -1951,6 +2003,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
+            pre_encoded,
         ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
@@ -1974,7 +2027,7 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, account_updates_list, res, pre_encoded);
 
         let stored = Instant::now();
 
@@ -2342,6 +2395,7 @@ impl Blockchain {
             blocks,
             receipts: all_receipts,
             code_updates,
+            pre_encoded: None,
         };
 
         self.storage
