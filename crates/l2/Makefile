@@ -70,11 +70,11 @@ PROVER_SRC_FILES := $(shell find prover/src -type f)
 
 init-l1-docker: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
-	docker compose up -d ethrex_l1
+	docker compose up -d tokamak-app-l1
 
 down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
-	docker compose down ethrex_l1
+	docker compose down tokamak-app-l1
 
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
@@ -366,7 +366,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
 	docker compose up --detach --build
-	docker cp contract_deployer:/env/.env ../../cmd/.env
+	docker cp tokamak-app-deployer:/env/.env ../../cmd/.env
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec & \
 	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT
@@ -397,8 +397,8 @@ state-diff-test:
 	-s $$PWD/store
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
-	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
-	docker logs --follow ethrex_l2 & \
+	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps tokamak-app-l2
+	docker logs --follow tokamak-app-l2 & \
 	cargo test -p ethrex-test test_state_reconstruct --release --features l2
 
 # Fast validation to check if blobs match genesis
