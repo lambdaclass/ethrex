@@ -11,10 +11,10 @@ use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use spawned_concurrency::{
-    error::GenServerError,
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+    error::ActorError,
+    tasks::{Actor, ActorStart as _, Context, Handler, send_after},
 };
+use spawned_macros::{actor, protocol};
 use tracing::{debug, error, info};
 
 use crate::utils::state_reconstruct::get_batch;
@@ -50,7 +50,7 @@ pub enum BlockFetcherError {
         #[from] ethrex_l2_common::privileged_transactions::PrivilegedTransactionError,
     ),
     #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
+    InternalError(#[from] ActorError),
     #[error("Tried to store an empty batch")]
     EmptyBatchError,
     #[error("Failed to retrieve data: {0}")]
@@ -63,14 +63,11 @@ pub enum BlockFetcherError {
     CalculationError(String),
 }
 
-#[derive(Clone)]
-pub enum InMessage {
-    Fetch,
-}
+pub type BlockFetcherRef = Arc<dyn BlockFetcherProtocol>;
 
-#[derive(Clone, PartialEq)]
-pub enum OutMessage {
-    Done,
+#[protocol]
+pub trait BlockFetcherProtocol: Send + Sync {
+    fn fetch(&self) -> Result<(), ActorError>;
 }
 
 pub struct BlockFetcher {
@@ -111,22 +108,7 @@ impl BlockFetcher {
         })
     }
 
-    pub async fn spawn(
-        cfg: &SequencerConfig,
-        store: Store,
-        rollup_store: StoreRollup,
-        blockchain: Arc<Blockchain>,
-        sequencer_state: SequencerState,
-    ) -> Result<(), BlockFetcherError> {
-        let state = Self::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
-        let mut block_fetcher = state.start();
-        block_fetcher
-            .cast(InMessage::Fetch)
-            .await
-            .map_err(BlockFetcherError::InternalError)
-    }
-
-    async fn fetch(&mut self) -> Result<(), BlockFetcherError> {
+    async fn do_fetch(&mut self) -> Result<(), BlockFetcherError> {
         while !node_is_up_to_date::<BlockFetcherError>(
             &self.eth_client,
             self.on_chain_proposer_address,
@@ -337,28 +319,39 @@ impl BlockFetcher {
     }
 }
 
-impl GenServer for BlockFetcher {
-    type CallMsg = Unused;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-    type Error = BlockFetcherError;
+#[actor(protocol = BlockFetcherProtocol)]
+impl BlockFetcher {
+    pub async fn spawn(
+        cfg: &SequencerConfig,
+        store: Store,
+        rollup_store: StoreRollup,
+        blockchain: Arc<Blockchain>,
+        sequencer_state: SequencerState,
+    ) -> Result<(), BlockFetcherError> {
+        let state = Self::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
+        let actor_ref = state.start();
+        actor_ref
+            .send(block_fetcher_protocol::Fetch)
+            .map_err(BlockFetcherError::InternalError)?;
+        Ok(())
+    }
 
-    async fn handle_cast(
+    #[send_handler]
+    async fn handle_fetch(
         &mut self,
-        _message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
+        _msg: block_fetcher_protocol::Fetch,
+        ctx: &Context<Self>,
+    ) {
         if let SequencerStatus::Syncing = self.sequencer_state.status() {
-            let _ = self.fetch().await.inspect_err(|err| {
+            let _ = self.do_fetch().await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });
         }
         send_after(
             Duration::from_millis(self.fetch_interval_ms),
-            handle.clone(),
-            Self::CastMsg::Fetch,
+            ctx.clone(),
+            block_fetcher_protocol::Fetch,
         );
-        CastResponse::NoReply
     }
 }
 

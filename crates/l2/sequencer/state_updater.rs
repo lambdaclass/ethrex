@@ -7,9 +7,10 @@ use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use spawned_concurrency::{
-    error::GenServerError,
-    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, send_after},
+    error::ActorError,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_after},
 };
+use spawned_macros::{actor, protocol};
 use tracing::{debug, error, info, warn};
 
 use crate::{SequencerConfig, sequencer::utils::node_is_up_to_date, utils::parse::hash_to_address};
@@ -30,25 +31,17 @@ pub enum StateUpdaterError {
     #[error("Failed to apply fork choice for fetched block: {0}")]
     InvalidForkChoice(#[from] ethrex_blockchain::error::InvalidForkChoice),
     #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
+    InternalError(#[from] ActorError),
     #[error("Missing data: {0}")]
     MissingData(String),
 }
 
-#[derive(Clone)]
-pub enum InMessage {
-    UpdateState,
-}
+pub type StateUpdaterRef = std::sync::Arc<dyn StateUpdaterProtocol>;
 
-#[derive(Clone, PartialEq)]
-pub enum OutMessage {
-    Done,
-    Set,
-}
-
-#[derive(Clone)]
-pub enum CallMessage {
-    StopAt(u64),
+#[protocol]
+pub trait StateUpdaterProtocol: Send + Sync {
+    fn update_state(&self) -> Result<(), ActorError>;
+    fn stop_at(&self, block_number: u64) -> Response<()>;
 }
 
 pub struct StateUpdater {
@@ -100,27 +93,7 @@ impl StateUpdater {
         })
     }
 
-    pub async fn spawn(
-        sequencer_cfg: SequencerConfig,
-        sequencer_state: SequencerState,
-        blockchain: Arc<Blockchain>,
-        store: Store,
-        rollup_store: StoreRollup,
-    ) -> Result<GenServerHandle<StateUpdater>, StateUpdaterError> {
-        let mut state_updater = Self::new(
-            sequencer_cfg,
-            sequencer_state,
-            blockchain,
-            store,
-            rollup_store,
-        )?
-        .start();
-        state_updater
-            .cast(InMessage::UpdateState)
-            .await
-            .map_err(StateUpdaterError::InternalError)?;
-        Ok(state_updater)
-    }
+    // spawn is in the #[actor] impl block below
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
         let current_state = self.sequencer_state.status();
@@ -293,43 +266,55 @@ impl StateUpdater {
         Ok(())
     }
 
-    fn set_stop_at(&mut self, block_number: u64) -> CallResponse<Self> {
-        self.stop_at = Some(block_number);
-        CallResponse::Reply(OutMessage::Set)
-    }
 }
 
-impl GenServer for StateUpdater {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-    type Error = StateUpdaterError;
+#[actor(protocol = StateUpdaterProtocol)]
+impl StateUpdater {
+    pub async fn spawn(
+        sequencer_cfg: SequencerConfig,
+        sequencer_state: SequencerState,
+        blockchain: Arc<Blockchain>,
+        store: Store,
+        rollup_store: StoreRollup,
+    ) -> Result<ActorRef<StateUpdater>, StateUpdaterError> {
+        let state_updater = Self::new(
+            sequencer_cfg,
+            sequencer_state,
+            blockchain,
+            store,
+            rollup_store,
+        )?;
+        let actor_ref = state_updater.start();
+        actor_ref
+            .send(state_updater_protocol::UpdateState)
+            .map_err(StateUpdaterError::InternalError)?;
+        Ok(actor_ref)
+    }
 
-    async fn handle_cast(
+    #[send_handler]
+    async fn handle_update_state(
         &mut self,
-        _message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
+        _msg: state_updater_protocol::UpdateState,
+        ctx: &Context<Self>,
+    ) {
         let _ = self
             .update_state()
             .await
             .inspect_err(|err| error!("State Updater Error: {err}"));
         send_after(
             Duration::from_millis(self.check_interval_ms),
-            handle.clone(),
-            Self::CastMsg::UpdateState,
+            ctx.clone(),
+            state_updater_protocol::UpdateState,
         );
-        CastResponse::NoReply
     }
 
-    async fn handle_call(
+    #[request_handler]
+    async fn handle_stop_at(
         &mut self,
-        message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> spawned_concurrency::tasks::CallResponse<Self> {
-        match message {
-            CallMessage::StopAt(block_number) => self.set_stop_at(block_number),
-        }
+        msg: state_updater_protocol::StopAt,
+        _ctx: &Context<Self>,
+    ) -> () {
+        self.stop_at = Some(msg.block_number);
     }
 }
 

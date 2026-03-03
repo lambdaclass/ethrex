@@ -17,31 +17,24 @@ use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_storage::Store;
 use reqwest::Url;
 use serde::Serialize;
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
+use spawned_concurrency::{
+    error::ActorError,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_after},
 };
+use spawned_macros::{actor, protocol};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-#[derive(Clone)]
-pub enum CallMessage {
-    Health,
-}
+pub type L1WatcherRef = std::sync::Arc<dyn L1WatcherProtocol>;
 
-#[derive(Clone)]
-pub enum InMessage {
-    WatchLogsL1,
-    WatchLogsL2,
-    UpdateL1BlobBaseFee,
-}
-
-#[derive(Clone)]
-pub enum OutMessage {
-    Done,
-    Error,
-    Health(L1WatcherHealth),
+#[protocol]
+pub trait L1WatcherProtocol: Send + Sync {
+    fn watch_logs_l1(&self) -> Result<(), ActorError>;
+    fn watch_logs_l2(&self) -> Result<(), ActorError>;
+    fn update_l1_blob_base_fee(&self) -> Result<(), ActorError>;
+    fn health(&self) -> Response<L1WatcherHealth>;
 }
 
 pub struct L1Watcher {
@@ -137,23 +130,7 @@ impl L1Watcher {
         })
     }
 
-    pub fn spawn(
-        store: Store,
-        blockchain: Arc<Blockchain>,
-        cfg: SequencerConfig,
-        sequencer_state: SequencerState,
-        l2_url: Url,
-    ) -> Result<GenServerHandle<Self>, L1WatcherError> {
-        let state = Self::new(
-            store,
-            blockchain,
-            &cfg.eth,
-            &cfg.l1_watcher,
-            sequencer_state,
-            l2_url,
-        )?;
-        Ok(state.start())
-    }
+    // spawn is in the #[actor] impl block below
 
     async fn watch_l1(&mut self) {
         let Ok(logs) = self
@@ -398,20 +375,6 @@ impl L1Watcher {
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 
-    async fn health(&self) -> CallResponse<Self> {
-        let l1_rpc_healthcheck = self.eth_client.test_urls().await;
-
-        CallResponse::Reply(OutMessage::Health(L1WatcherHealth {
-            l1_rpc_healthcheck,
-            max_block_step: self.max_block_step.to_string(),
-            last_block_fetched: self.last_block_fetched_l1.to_string(),
-            check_interval: self.check_interval,
-            l1_block_delay: self.l1_block_delay,
-            sequencer_state: format!("{:?}", self.sequencer_state.status()),
-            bridge_address: self.bridge_address,
-        }))
-    }
-
     async fn watch_l2s(&mut self) {
         let Ok(l2_txs) = self
             .get_logs_l2()
@@ -528,110 +491,128 @@ pub async fn filter_verified_messages(
     Ok(verified_logs)
 }
 
-impl GenServer for L1Watcher {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-    type Error = L1WatcherError;
-
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        // Perform the first log watch and schedule periodic checks.
-        handle
-            .clone()
-            .cast(Self::CastMsg::WatchLogsL1)
-            .await
-            .map_err(Self::Error::InternalError)?;
-
-        // Perform the first l2 log watch and schedule periodic checks.
-        handle
-            .clone()
-            .cast(Self::CastMsg::WatchLogsL2)
-            .await
-            .map_err(Self::Error::InternalError)?;
-
-        // Perform the first L1 blob base fee update and schedule periodic updates.
-        handle
-            .clone()
-            .cast(InMessage::UpdateL1BlobBaseFee)
-            .await
-            .map_err(L1WatcherError::InternalError)?;
-        Ok(Success(self))
+#[actor(protocol = L1WatcherProtocol)]
+impl L1Watcher {
+    pub fn spawn(
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        cfg: SequencerConfig,
+        sequencer_state: SequencerState,
+        l2_url: Url,
+    ) -> Result<ActorRef<L1Watcher>, L1WatcherError> {
+        let state = Self::new(
+            store,
+            blockchain,
+            &cfg.eth,
+            &cfg.l1_watcher,
+            sequencer_state,
+            l2_url,
+        )?;
+        Ok(state.start())
     }
 
-    async fn handle_cast(
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(l1_watcher_protocol::WatchLogsL1)
+            .inspect_err(|e| error!("Failed to send initial WatchLogsL1: {e}"));
+        let _ = ctx
+            .send(l1_watcher_protocol::WatchLogsL2)
+            .inspect_err(|e| error!("Failed to send initial WatchLogsL2: {e}"));
+        let _ = ctx
+            .send(l1_watcher_protocol::UpdateL1BlobBaseFee)
+            .inspect_err(|e| error!("Failed to send initial UpdateL1BlobBaseFee: {e}"));
+    }
+
+    #[send_handler]
+    async fn handle_watch_logs_l1(
         &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            Self::CastMsg::WatchLogsL1 => {
-                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
-                    self.watch_l1().await;
-                }
-                let check_interval = random_duration(self.check_interval);
-                send_after(check_interval, handle.clone(), Self::CastMsg::WatchLogsL1);
-                CastResponse::NoReply
-            }
-            Self::CastMsg::WatchLogsL2 => {
-                info!("Watching L2 logs");
-                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
-                    self.watch_l2s().await;
-                }
-                let check_interval = random_duration(self.check_interval);
-                send_after(check_interval, handle.clone(), Self::CastMsg::WatchLogsL2);
-                CastResponse::NoReply
-            }
-            Self::CastMsg::UpdateL1BlobBaseFee => {
-                info!("Updating L1 blob base fee");
-                let Ok(blob_base_fee) = self
-                    .eth_client
-                    .get_blob_base_fee(BlockIdentifier::Tag(BlockTag::Latest))
-                    .await
-                    .inspect_err(|e| {
-                        error!("Failed to fetch L1 blob base fee: {e}");
-                    })
-                else {
-                    return CastResponse::NoReply;
-                };
-
-                info!("Fetched L1 blob base fee: {blob_base_fee}");
-
-                let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
-                    error!("Invalid blockchain type. Expected L2.");
-                    return CastResponse::NoReply;
-                };
-
-                let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
-                    error!("Fee config lock was poisoned when updating L1 blob base fee");
-                    return CastResponse::NoReply;
-                };
-
-                let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_mut() else {
-                    warn!("L1 fee config is not set. Skipping L1 blob base fee update.");
-                    return CastResponse::NoReply;
-                };
-
-                info!(
-                    "Updating L1 blob base fee from {} to {}",
-                    l1_fee_config.l1_fee_per_blob_gas, blob_base_fee
-                );
-
-                l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
-
-                let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
-                send_after(interval, handle.clone(), Self::CastMsg::UpdateL1BlobBaseFee);
-                CastResponse::NoReply
-            }
+        _msg: l1_watcher_protocol::WatchLogsL1,
+        ctx: &Context<Self>,
+    ) {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
+            self.watch_l1().await;
         }
+        let check_interval = random_duration(self.check_interval);
+        send_after(check_interval, ctx.clone(), l1_watcher_protocol::WatchLogsL1);
     }
 
-    async fn handle_call(
+    #[send_handler]
+    async fn handle_watch_logs_l2(
         &mut self,
-        message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> spawned_concurrency::tasks::CallResponse<Self> {
-        match message {
-            CallMessage::Health => self.health().await,
+        _msg: l1_watcher_protocol::WatchLogsL2,
+        ctx: &Context<Self>,
+    ) {
+        info!("Watching L2 logs");
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
+            self.watch_l2s().await;
+        }
+        let check_interval = random_duration(self.check_interval);
+        send_after(check_interval, ctx.clone(), l1_watcher_protocol::WatchLogsL2);
+    }
+
+    #[send_handler]
+    async fn handle_update_l1_blob_base_fee(
+        &mut self,
+        _msg: l1_watcher_protocol::UpdateL1BlobBaseFee,
+        ctx: &Context<Self>,
+    ) {
+        info!("Updating L1 blob base fee");
+        let Ok(blob_base_fee) = self
+            .eth_client
+            .get_blob_base_fee(BlockIdentifier::Tag(BlockTag::Latest))
+            .await
+            .inspect_err(|e| {
+                error!("Failed to fetch L1 blob base fee: {e}");
+            })
+        else {
+            return;
+        };
+
+        info!("Fetched L1 blob base fee: {blob_base_fee}");
+
+        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
+            error!("Invalid blockchain type. Expected L2.");
+            return;
+        };
+
+        let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
+            error!("Fee config lock was poisoned when updating L1 blob base fee");
+            return;
+        };
+
+        let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_mut() else {
+            warn!("L1 fee config is not set. Skipping L1 blob base fee update.");
+            return;
+        };
+
+        info!(
+            "Updating L1 blob base fee from {} to {}",
+            l1_fee_config.l1_fee_per_blob_gas, blob_base_fee
+        );
+
+        l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
+
+        let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
+        send_after(interval, ctx.clone(), l1_watcher_protocol::UpdateL1BlobBaseFee);
+    }
+
+    #[request_handler]
+    async fn handle_health(
+        &mut self,
+        _msg: l1_watcher_protocol::Health,
+        _ctx: &Context<Self>,
+    ) -> L1WatcherHealth {
+        let l1_rpc_healthcheck = self.eth_client.test_urls().await;
+
+        L1WatcherHealth {
+            l1_rpc_healthcheck,
+            max_block_step: self.max_block_step.to_string(),
+            last_block_fetched: self.last_block_fetched_l1.to_string(),
+            check_interval: self.check_interval,
+            l1_block_delay: self.l1_block_delay,
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
+            bridge_address: self.bridge_address,
         }
     }
 }

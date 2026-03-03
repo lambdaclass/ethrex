@@ -64,9 +64,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+use spawned_concurrency::{
+    error::ActorError,
+    tasks::{Actor, ActorRef, ActorStart as _, Backend, Context, Handler, Response, send_after},
 };
+use spawned_macros::{actor, protocol};
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,uint256,bytes32,bytes[])";
@@ -75,26 +77,20 @@ const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,byt
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
 #[derive(Clone)]
-pub enum CallMessage {
-    Stop,
-    /// time to wait in ms before sending commit
-    Start(u64),
-    Health,
-}
-
-#[derive(Clone)]
-pub enum InMessage {
-    Commit,
-    Abort,
-}
-
-#[derive(Clone)]
-pub enum OutMessage {
-    Done,
+pub enum CommitterActionResult {
+    Ok,
     Error(String),
-    Stopped,
-    Started,
-    Health(Box<L1CommitterHealth>),
+}
+
+pub type L1CommitterRef = std::sync::Arc<dyn L1CommitterProtocol>;
+
+#[protocol]
+pub trait L1CommitterProtocol: Send + Sync {
+    fn commit(&self) -> Result<(), ActorError>;
+    fn abort(&self) -> Result<(), ActorError>;
+    fn stop_committer(&self) -> Response<CommitterActionResult>;
+    fn start_committer(&self, delay: u64) -> Response<CommitterActionResult>;
+    fn health(&self) -> Response<Box<L1CommitterHealth>>;
 }
 
 pub struct L1Committer {
@@ -117,7 +113,7 @@ pub struct L1Committer {
     last_committed_batch_timestamp: u128,
     /// Last succesful committed batch number
     last_committed_batch: u64,
-    /// Cancellation token for the next inbound InMessage::Commit
+    /// Cancellation token for the next inbound Commit message
     cancellation_token: Option<CancellationToken>,
     /// Timestamp for Osaka activation on L1. This is used to determine which fork to use when generating blobs proofs.
     osaka_activation_time: Option<u64>,
@@ -293,43 +289,7 @@ impl L1Committer {
         Ok(true)
     }
 
-    pub async fn spawn(
-        store: Store,
-        blockchain: Arc<Blockchain>,
-        rollup_store: StoreRollup,
-        cfg: SequencerConfig,
-        sequencer_state: SequencerState,
-        genesis: Genesis,
-        checkpoints_dir: PathBuf,
-    ) -> Result<GenServerHandle<L1Committer>, CommitterError> {
-        let state = Self::new(
-            &cfg.l1_committer,
-            &cfg.block_producer,
-            &cfg.eth,
-            blockchain,
-            store.clone(),
-            rollup_store.clone(),
-            cfg.based.enabled,
-            sequencer_state,
-            genesis,
-            checkpoints_dir,
-        )
-        .await?;
-        // NOTE: we spawn as blocking due to `generate_blobs_bundle` and
-        // `send_tx_bump_gas_exponential_backoff` blocking for more than 40ms
-        let l1_committer = state.start_blocking();
-        if let OutMessage::Error(reason) = l1_committer
-            .clone()
-            .call(CallMessage::Start(cfg.l1_committer.first_wake_up_time_ms))
-            .await?
-        {
-            Err(CommitterError::UnexpectedError(format!(
-                "Failed to send first wake up message to committer {reason}"
-            )))
-        } else {
-            Ok(l1_committer)
-        }
-    }
+    // spawn is in the #[actor] impl block below
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
         info!("Running committer main loop");
@@ -1360,66 +1320,66 @@ impl L1Committer {
         Ok(commit_tx_hash)
     }
 
-    fn stop_committer(&mut self) -> CallResponse<Self> {
-        if let Some(token) = self.cancellation_token.take() {
-            token.cancel();
-            info!("L1 committer stopped");
-            CallResponse::Reply(OutMessage::Stopped)
-        } else {
-            warn!("L1 committer received stop command but it is already stopped");
-            CallResponse::Reply(OutMessage::Error("Already stopped".to_string()))
-        }
-    }
-
-    fn start_committer(&mut self, handle: GenServerHandle<Self>, delay: u64) -> CallResponse<Self> {
-        if self.cancellation_token.is_none() {
-            self.schedule_commit(delay, handle);
-            info!("L1 committer restarted next commit will be sent in {delay}ms");
-            CallResponse::Reply(OutMessage::Started)
-        } else {
-            warn!("L1 committer received start command but it is already running");
-            CallResponse::Reply(OutMessage::Error("Already started".to_string()))
-        }
-    }
-
-    fn schedule_commit(&mut self, delay: u64, handle: GenServerHandle<Self>) {
+    fn do_schedule_commit(&mut self, delay: u64, ctx: Context<Self>) {
         let check_interval = random_duration(delay);
-        let handle = send_after(check_interval, handle, InMessage::Commit);
+        let handle = send_after(check_interval, ctx, l1_committer_protocol::Commit);
         self.cancellation_token = Some(handle.cancellation_token);
     }
+}
 
-    async fn health(&self) -> CallResponse<Self> {
-        let rpc_urls = self.eth_client.test_urls().await;
-        let signer_status = self.signer.health().await;
-
-        CallResponse::Reply(OutMessage::Health(Box::new(L1CommitterHealth {
-            rpc_healthcheck: rpc_urls,
-            commit_time_ms: self.commit_time_ms,
-            arbitrary_base_blob_gas_price: self.arbitrary_base_blob_gas_price,
-            validium: self.validium,
-            based: self.based,
-            sequencer_state: format!("{:?}", self.sequencer_state.status()),
-            committer_wake_up_ms: self.committer_wake_up_ms,
-            last_committed_batch_timestamp: self.last_committed_batch_timestamp,
-            last_committed_batch: self.last_committed_batch,
-            signer_status,
-            running: self.cancellation_token.is_some(),
-            on_chain_proposer_address: self.on_chain_proposer_address,
-        })))
+#[actor(protocol = L1CommitterProtocol)]
+impl L1Committer {
+    pub async fn spawn(
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        rollup_store: StoreRollup,
+        cfg: SequencerConfig,
+        sequencer_state: SequencerState,
+        genesis: Genesis,
+        checkpoints_dir: PathBuf,
+    ) -> Result<ActorRef<L1Committer>, CommitterError> {
+        let state = Self::new(
+            &cfg.l1_committer,
+            &cfg.block_producer,
+            &cfg.eth,
+            blockchain,
+            store.clone(),
+            rollup_store.clone(),
+            cfg.based.enabled,
+            sequencer_state,
+            genesis,
+            checkpoints_dir,
+        )
+        .await?;
+        let actor_ref = state.start_with_backend(Backend::Blocking);
+        let first_wake_up = cfg.l1_committer.first_wake_up_time_ms;
+        match actor_ref
+            .request(l1_committer_protocol::StartCommitter { delay: first_wake_up })
+            .await?
+        {
+            CommitterActionResult::Error(reason) => Err(CommitterError::UnexpectedError(format!(
+                "Failed to send first wake up message to committer {reason}"
+            ))),
+            CommitterActionResult::Ok => Ok(actor_ref),
+        }
     }
 
-    async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
+    #[send_handler]
+    async fn handle_commit(
+        &mut self,
+        _msg: l1_committer_protocol::Commit,
+        ctx: &Context<Self>,
+    ) {
         if let SequencerStatus::Sequencing = self.sequencer_state.status() {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
                     .await
                     .unwrap_or(self.last_committed_batch);
             let Some(current_time) = utils::system_now_ms() else {
-                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
-                return CastResponse::NoReply;
+                self.do_schedule_commit(self.committer_wake_up_ms, ctx.clone());
+                return;
             };
 
-            // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
             if current_last_committed_batch > self.last_committed_batch {
                 info!(
                     l1_batch = current_last_committed_batch,
@@ -1428,8 +1388,8 @@ impl L1Committer {
                 );
                 self.last_committed_batch = current_last_committed_batch;
                 self.last_committed_batch_timestamp = current_time;
-                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
-                return CastResponse::NoReply;
+                self.do_schedule_commit(self.committer_wake_up_ms, ctx.clone());
+                return;
             }
 
             let commit_time: u128 = self.commit_time_ms.into();
@@ -1456,47 +1416,76 @@ impl L1Committer {
                 }
             }
         }
-        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
-        CastResponse::NoReply
+        self.do_schedule_commit(self.committer_wake_up_ms, ctx.clone());
     }
-}
 
-impl GenServer for L1Committer {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-
-    type Error = CommitterError;
-
-    // Right now we only have the `Commit` message, so we ignore the `message` parameter
-    async fn handle_cast(
+    #[send_handler]
+    async fn handle_abort(
         &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            InMessage::Commit => self.handle_commit_message(handle).await,
-            InMessage::Abort => {
-                // start_blocking keeps the committer loop alive even if the JoinSet aborts the task.
-                // Returning CastResponse::Stop is what unblocks shutdown by ending that blocking loop.
-                if let Some(ct) = self.cancellation_token.take() {
-                    ct.cancel()
-                };
-                CastResponse::Stop
-            }
+        _msg: l1_committer_protocol::Abort,
+        ctx: &Context<Self>,
+    ) {
+        if let Some(ct) = self.cancellation_token.take() {
+            ct.cancel()
+        };
+        ctx.stop();
+    }
+
+    #[request_handler]
+    async fn handle_stop_committer(
+        &mut self,
+        _msg: l1_committer_protocol::StopCommitter,
+        _ctx: &Context<Self>,
+    ) -> CommitterActionResult {
+        if let Some(token) = self.cancellation_token.take() {
+            token.cancel();
+            info!("L1 committer stopped");
+            CommitterActionResult::Ok
+        } else {
+            warn!("L1 committer received stop command but it is already stopped");
+            CommitterActionResult::Error("Already stopped".to_string())
         }
     }
 
-    async fn handle_call(
+    #[request_handler]
+    async fn handle_start_committer(
         &mut self,
-        message: Self::CallMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CallResponse<Self> {
-        match message {
-            CallMessage::Stop => self.stop_committer(),
-            CallMessage::Start(delay) => self.start_committer(handle.clone(), delay),
-            CallMessage::Health => self.health().await,
+        msg: l1_committer_protocol::StartCommitter,
+        ctx: &Context<Self>,
+    ) -> CommitterActionResult {
+        if self.cancellation_token.is_none() {
+            self.do_schedule_commit(msg.delay, ctx.clone());
+            info!("L1 committer restarted next commit will be sent in {}ms", msg.delay);
+            CommitterActionResult::Ok
+        } else {
+            warn!("L1 committer received start command but it is already running");
+            CommitterActionResult::Error("Already started".to_string())
         }
+    }
+
+    #[request_handler]
+    async fn handle_health(
+        &mut self,
+        _msg: l1_committer_protocol::Health,
+        _ctx: &Context<Self>,
+    ) -> Box<L1CommitterHealth> {
+        let rpc_urls = self.eth_client.test_urls().await;
+        let signer_status = self.signer.health().await;
+
+        Box::new(L1CommitterHealth {
+            rpc_healthcheck: rpc_urls,
+            commit_time_ms: self.commit_time_ms,
+            arbitrary_base_blob_gas_price: self.arbitrary_base_blob_gas_price,
+            validium: self.validium,
+            based: self.based,
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
+            committer_wake_up_ms: self.committer_wake_up_ms,
+            last_committed_batch_timestamp: self.last_committed_batch_timestamp,
+            last_committed_batch: self.last_committed_batch,
+            signer_status,
+            running: self.cancellation_token.is_some(),
+            on_chain_proposer_address: self.on_chain_proposer_address,
+        })
     }
 }
 
