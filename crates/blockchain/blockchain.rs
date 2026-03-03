@@ -104,11 +104,11 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-/// Persistent thread pool for merkleization shard workers.
+/// Persistent thread pool for BAL merkleization workers (Stages B and C).
 ///
 /// Reusing these threads across blocks avoids the ~50–100 µs `pthread_create`
 /// overhead and the 8 MB stack allocation that would otherwise occur for every
-/// block's 16 merkle shard workers.
+/// block's shard workers.
 static MERKLE_POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 fn merkle_pool() -> &'static ThreadPool {
@@ -119,6 +119,58 @@ fn merkle_pool() -> &'static ThreadPool {
             .build()
             .expect("failed to build merkle thread pool")
     })
+}
+
+/// A job sent to a persistent non-BAL shard worker for one block's execution.
+struct ShardJob {
+    /// Per-block trie request channel.
+    rx: Receiver<MerklizationRequest>,
+    /// Storage handle (Arc-backed clone, cheap).
+    storage: Store,
+    /// Parent block header (Arc-wrapped to avoid copying).
+    parent_header: Arc<BlockHeader>,
+    /// Channel to report the result back to the merkleizer thread.
+    done_tx: Sender<Result<(), StoreError>>,
+}
+
+/// Persistent pool of 16 shard worker threads for non-BAL merkleization.
+///
+/// Unlike the rayon pool used for BAL stages, these workers block on a channel
+/// recv loop for the duration of a block.  A rayon pool cannot be used for
+/// blocking jobs (it deadlocks when all pool threads are held).  Instead we
+/// keep 16 plain OS threads alive permanently; each block hands them a fresh
+/// `Receiver<MerklizationRequest>` via a lightweight channel message,
+/// eliminating the per-block `pthread_create` cost.
+struct ShardWorkerPool {
+    /// One sender per worker thread (indexed 0..16).
+    job_txs: Vec<Sender<ShardJob>>,
+}
+
+impl ShardWorkerPool {
+    fn new() -> Self {
+        let mut job_txs = Vec::with_capacity(16);
+        for i in 0..16u8 {
+            let (job_tx, job_rx) = channel::<ShardJob>();
+            std::thread::Builder::new()
+                .name(format!("merkle-shard-{i}"))
+                .spawn(move || {
+                    while let Ok(job) = job_rx.recv() {
+                        let result =
+                            run_merkleization_subtrie(job.rx, &job.storage, &job.parent_header, i);
+                        let _ = job.done_tx.send(result);
+                    }
+                })
+                .expect("failed to spawn merkle shard worker");
+            job_txs.push(job_tx);
+        }
+        Self { job_txs }
+    }
+}
+
+static SHARD_POOL: OnceLock<ShardWorkerPool> = OnceLock::new();
+
+fn shard_pool() -> &'static ShardWorkerPool {
+    SHARD_POOL.get_or_init(ShardWorkerPool::new)
 }
 
 use vm::StoreVmDatabase;
@@ -493,7 +545,6 @@ impl Blockchain {
                             )?
                         } else {
                             self.handle_merkleization(
-                                s,
                                 rx,
                                 parent_header_ref,
                                 queue_length_ref,
@@ -555,36 +606,35 @@ impl Blockchain {
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn handle_merkleization<'a, 's, 'b>(
-        &'a self,
-        scope: &'s std::thread::Scope<'s, '_>,
+    fn handle_merkleization(
+        &self,
         rx: Receiver<Vec<AccountUpdate>>,
-        parent_header: &'b BlockHeader,
+        parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError>
-    where
-        'a: 's,
-        'b: 's,
-    {
-        // The 16 shard workers are channel-based: they block in a recv loop for
-        // the duration of a block's merkleization.  Blocking jobs must NOT be
-        // placed in a rayon pool (the pool threads would be held, and a second
-        // concurrent call would deadlock).  Use a fresh std::thread::scope so
-        // the OS scheduler can suspend the workers while they wait.
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+        // Dispatch the 16 shard workers onto the persistent pool to avoid
+        // per-block pthread_create overhead. Workers block on channel recv for
+        // the duration of merkleization, which is safe here because only one
+        // block is ever in this phase at a time (the outer std::thread::scope
+        // in execute_block_pipeline serializes blocks).
+        let pool = shard_pool();
+        let (done_tx, done_rx) = channel::<Result<(), StoreError>>();
+        let parent_header_arc = Arc::new(parent_header.clone());
         let mut workers_tx = Vec::with_capacity(16);
-        let mut workers_handles = Vec::with_capacity(16);
-        for i in 0..16 {
-            let (tx, rx) = channel();
-            let handle = std::thread::Builder::new()
-                .name(format!("block_executor_merkleization_shard_worker_{i}"))
-                .spawn_scoped(scope, move || {
-                    self.handle_merkleization_subtrie(rx, parent_header, i)
+        for job_tx in &pool.job_txs {
+            let (tx, worker_rx) = channel();
+            job_tx
+                .send(ShardJob {
+                    rx: worker_rx,
+                    storage: self.storage.clone(),
+                    parent_header: Arc::clone(&parent_header_arc),
+                    done_tx: done_tx.clone(),
                 })
-                .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}",)))?;
-            workers_handles.push(handle);
+                .map_err(|e| StoreError::Custom(format!("shard pool send failed: {e}")))?;
             workers_tx.push(tx);
         }
+        drop(done_tx); // only the workers hold senders now
 
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
         let mut code_updates: Vec<(H256, Code)> = vec![];
@@ -729,6 +779,13 @@ impl Blockchain {
             state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
+
+        // Drop senders so workers' recv loops terminate, then collect results.
+        drop(workers_tx);
+        for result in done_rx {
+            result?;
+        }
+
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
@@ -1083,199 +1140,15 @@ impl Blockchain {
         ))
     }
 
-    fn load_trie(
-        &self,
-        parent_header: &BlockHeader,
-        prefix: Option<H256>,
-    ) -> Result<Trie, StoreError> {
-        Ok(match prefix {
-            Some(account_hash) => {
-                let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
-                let storage_root = match state_trie.get(account_hash.as_bytes())? {
-                    Some(rlp) => AccountState::decode(&rlp)?.storage_root,
-                    None => *EMPTY_TRIE_HASH,
-                };
-                self.storage.open_storage_trie(
-                    account_hash,
-                    parent_header.state_root,
-                    storage_root,
-                )?
-            }
-            None => self.storage.open_state_trie(parent_header.state_root)?,
-        })
-    }
-
     /// Collapses a root branch node into an extension or leaf node if it has only one valid child.
     /// Returns None if there are no valid children.
     fn collapse_root_node(
         &self,
         parent_header: &BlockHeader,
         prefix: Option<H256>,
-        mut root: BranchNode,
+        root: BranchNode,
     ) -> Result<Option<Node>, StoreError> {
-        // Ensures the children are included in the final commit
-        root.choices.iter_mut().for_each(NodeRef::clear_hash);
-        let children: Vec<(usize, &NodeRef)> = root
-            .choices
-            .iter()
-            .enumerate()
-            .filter(|(_, choice)| choice.is_valid())
-            .take(2)
-            .collect();
-        if children.len() > 1 {
-            return Ok(Some(Node::Branch(Box::from(root))));
-        }
-        let Some((choice, only_child)) = children.first() else {
-            return Ok(None);
-        };
-        let only_child = Arc::unwrap_or_clone(match only_child {
-            NodeRef::Node(node, _) => node.clone(),
-            noderef @ NodeRef::Hash(_) => {
-                let trie = self.load_trie(parent_header, prefix)?;
-                let Some(node) =
-                    noderef.get_node(trie.db(), Nibbles::from_hex(vec![*choice as u8]))?
-                else {
-                    return Ok(None);
-                };
-                node
-            }
-        });
-        Ok(Some(match only_child {
-            Node::Branch(_) => {
-                ExtensionNode::new(Nibbles::from_hex(vec![*choice as u8]), only_child.into()).into()
-            }
-            Node::Extension(mut extension_node) => {
-                extension_node.prefix.prepend(*choice as u8);
-                extension_node.into()
-            }
-            Node::Leaf(mut leaf) => {
-                leaf.partial.prepend(*choice as u8);
-                leaf.into()
-            }
-        }))
-    }
-
-    fn handle_merkleization_subtrie(
-        &self,
-        rx: Receiver<MerklizationRequest>,
-        parent_header: &BlockHeader,
-        index: u8,
-    ) -> Result<(), StoreError> {
-        let mut tree: FxHashMap<H256, Trie> = Default::default();
-        let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
-        let mut storage_nodes = vec![];
-        let mut accounts: FxHashMap<H256, AccountState> = Default::default();
-        for msg in rx {
-            match msg {
-                MerklizationRequest::LoadAccount(prefix) => match accounts.entry(prefix) {
-                    Entry::Occupied(_) => {}
-                    Entry::Vacant(vacant_entry) => {
-                        let account_state = match state_trie.get(prefix.as_bytes())? {
-                            Some(rlp) => {
-                                let state = AccountState::decode(&rlp)?;
-                                state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
-                                state
-                            }
-                            None => AccountState::default(),
-                        };
-                        vacant_entry.insert(account_state);
-                    }
-                },
-                MerklizationRequest::Delete(prefix) => {
-                    tree.insert(prefix, Trie::new_temp());
-                }
-                MerklizationRequest::MerklizeStorage { prefix, key, value } => {
-                    let trie = match tree.entry(prefix) {
-                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
-                        Entry::Vacant(vacant_entry) => {
-                            let storage_root = match state_trie.get(prefix.as_bytes())? {
-                                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
-                                None => *EMPTY_TRIE_HASH,
-                            };
-                            vacant_entry.insert(self.storage.open_storage_trie(
-                                prefix,
-                                parent_header.state_root,
-                                storage_root,
-                            )?)
-                        }
-                    };
-                    if value.is_zero() {
-                        trie.remove(key.as_bytes())?;
-                    } else {
-                        trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
-                    }
-                }
-                MerklizationRequest::MerklizeAccount {
-                    hashed_account,
-                    mut state,
-                } => {
-                    let mut storage_root = None;
-                    if let Some(root) = state.storage_root {
-                        if let Some(root) =
-                            self.collapse_root_node(parent_header, Some(hashed_account), *root)?
-                        {
-                            let mut root = NodeRef::from(root);
-                            let hash = root.commit(Nibbles::default(), &mut state.nodes);
-                            storage_root = Some(hash.finalize());
-                        } else {
-                            state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
-                            storage_root = Some(*EMPTY_TRIE_HASH);
-                        }
-                    }
-                    storage_nodes.push((hashed_account, state.nodes));
-
-                    let path = hashed_account.as_bytes();
-                    let old_state = match accounts.entry(hashed_account) {
-                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
-                        Entry::Vacant(vacant_entry) => {
-                            let account_state = match state_trie.get(path)? {
-                                Some(rlp) => AccountState::decode(&rlp)?,
-                                None => AccountState::default(),
-                            };
-                            vacant_entry.insert(account_state)
-                        }
-                    };
-
-                    if let Some(storage_root) = storage_root {
-                        old_state.storage_root = storage_root;
-                    }
-                    if let Some(info) = state.info {
-                        old_state.nonce = info.nonce;
-                        old_state.balance = info.balance;
-                        old_state.code_hash = info.code_hash;
-                    }
-                    if *old_state != AccountState::default() {
-                        state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
-                    } else {
-                        state_trie.remove(path)?;
-                    }
-                }
-                MerklizationRequest::CollectStorages { tx } => {
-                    for (prefix, trie) in tree.drain() {
-                        let (root, nodes) = collect_trie(index, trie)?;
-                        tx.send(CollectedStorageMsg {
-                            index,
-                            prefix,
-                            subroot: root,
-                            nodes,
-                        })
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    }
-                }
-                MerklizationRequest::CollectState { tx } => {
-                    let (subroot, state_nodes) =
-                        collect_trie(index, std::mem::take(&mut state_trie))?;
-                    tx.send(CollectedStateMsg {
-                        index,
-                        subroot,
-                        state_nodes,
-                        storage_nodes: std::mem::take(&mut storage_nodes),
-                    })
-                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                }
-            }
-        }
-        Ok(())
+        collapse_root_node(&self.storage, parent_header, prefix, root)
     }
 
     /// Executes a block from a given vm instance an does not clear its state
@@ -2793,6 +2666,202 @@ fn branchify(node: Node) -> Box<BranchNode> {
             Box::new(BranchNode::new(choices))
         }
     }
+}
+
+fn load_trie(
+    storage: &Store,
+    parent_header: &BlockHeader,
+    prefix: Option<H256>,
+) -> Result<Trie, StoreError> {
+    Ok(match prefix {
+        Some(account_hash) => {
+            let state_trie = storage.open_state_trie(parent_header.state_root)?;
+            let storage_root = match state_trie.get(account_hash.as_bytes())? {
+                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                None => *EMPTY_TRIE_HASH,
+            };
+            storage.open_storage_trie(account_hash, parent_header.state_root, storage_root)?
+        }
+        None => storage.open_state_trie(parent_header.state_root)?,
+    })
+}
+
+/// Collapses a root branch node into an extension or leaf node if it has only one valid child.
+/// Returns None if there are no valid children.
+fn collapse_root_node(
+    storage: &Store,
+    parent_header: &BlockHeader,
+    prefix: Option<H256>,
+    mut root: BranchNode,
+) -> Result<Option<Node>, StoreError> {
+    // Ensures the children are included in the final commit
+    root.choices.iter_mut().for_each(NodeRef::clear_hash);
+    let children: Vec<(usize, &NodeRef)> = root
+        .choices
+        .iter()
+        .enumerate()
+        .filter(|(_, choice)| choice.is_valid())
+        .take(2)
+        .collect();
+    if children.len() > 1 {
+        return Ok(Some(Node::Branch(Box::from(root))));
+    }
+    let Some((choice, only_child)) = children.first() else {
+        return Ok(None);
+    };
+    let only_child = Arc::unwrap_or_clone(match only_child {
+        NodeRef::Node(node, _) => node.clone(),
+        noderef @ NodeRef::Hash(_) => {
+            let trie = load_trie(storage, parent_header, prefix)?;
+            let Some(node) =
+                noderef.get_node(trie.db(), Nibbles::from_hex(vec![*choice as u8]))?
+            else {
+                return Ok(None);
+            };
+            node
+        }
+    });
+    Ok(Some(match only_child {
+        Node::Branch(_) => {
+            ExtensionNode::new(Nibbles::from_hex(vec![*choice as u8]), only_child.into()).into()
+        }
+        Node::Extension(mut extension_node) => {
+            extension_node.prefix.prepend(*choice as u8);
+            extension_node.into()
+        }
+        Node::Leaf(mut leaf) => {
+            leaf.partial.prepend(*choice as u8);
+            leaf.into()
+        }
+    }))
+}
+
+/// Core logic for a single shard worker during non-BAL merkleization.
+///
+/// Extracted as a free function so it can be called from both the legacy
+/// `handle_merkleization_subtrie` method and the persistent `ShardWorkerPool`
+/// threads without borrowing `self`.
+fn run_merkleization_subtrie(
+    rx: Receiver<MerklizationRequest>,
+    storage: &Store,
+    parent_header: &BlockHeader,
+    index: u8,
+) -> Result<(), StoreError> {
+    let mut tree: FxHashMap<H256, Trie> = Default::default();
+    let mut state_trie = storage.open_state_trie(parent_header.state_root)?;
+    let mut storage_nodes = vec![];
+    let mut accounts: FxHashMap<H256, AccountState> = Default::default();
+    for msg in rx {
+        match msg {
+            MerklizationRequest::LoadAccount(prefix) => match accounts.entry(prefix) {
+                Entry::Occupied(_) => {}
+                Entry::Vacant(vacant_entry) => {
+                    let account_state = match state_trie.get(prefix.as_bytes())? {
+                        Some(rlp) => {
+                            let state = AccountState::decode(&rlp)?;
+                            state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
+                            state
+                        }
+                        None => AccountState::default(),
+                    };
+                    vacant_entry.insert(account_state);
+                }
+            },
+            MerklizationRequest::Delete(prefix) => {
+                tree.insert(prefix, Trie::new_temp());
+            }
+            MerklizationRequest::MerklizeStorage { prefix, key, value } => {
+                let trie = match tree.entry(prefix) {
+                    Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+                    Entry::Vacant(vacant_entry) => {
+                        let storage_root = match state_trie.get(prefix.as_bytes())? {
+                            Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                            None => *EMPTY_TRIE_HASH,
+                        };
+                        vacant_entry.insert(storage.open_storage_trie(
+                            prefix,
+                            parent_header.state_root,
+                            storage_root,
+                        )?)
+                    }
+                };
+                if value.is_zero() {
+                    trie.remove(key.as_bytes())?;
+                } else {
+                    trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+                }
+            }
+            MerklizationRequest::MerklizeAccount {
+                hashed_account,
+                mut state,
+            } => {
+                let mut storage_root_hash = None;
+                if let Some(root) = state.storage_root {
+                    if let Some(root) =
+                        collapse_root_node(storage, parent_header, Some(hashed_account), *root)?
+                    {
+                        let mut root = NodeRef::from(root);
+                        let hash = root.commit(Nibbles::default(), &mut state.nodes);
+                        storage_root_hash = Some(hash.finalize());
+                    } else {
+                        state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
+                        storage_root_hash = Some(*EMPTY_TRIE_HASH);
+                    }
+                }
+                storage_nodes.push((hashed_account, state.nodes));
+
+                let path = hashed_account.as_bytes();
+                let old_state = match accounts.entry(hashed_account) {
+                    Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+                    Entry::Vacant(vacant_entry) => {
+                        let account_state = match state_trie.get(path)? {
+                            Some(rlp) => AccountState::decode(&rlp)?,
+                            None => AccountState::default(),
+                        };
+                        vacant_entry.insert(account_state)
+                    }
+                };
+
+                if let Some(storage_root) = storage_root_hash {
+                    old_state.storage_root = storage_root;
+                }
+                if let Some(info) = state.info {
+                    old_state.nonce = info.nonce;
+                    old_state.balance = info.balance;
+                    old_state.code_hash = info.code_hash;
+                }
+                if *old_state != AccountState::default() {
+                    state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
+                } else {
+                    state_trie.remove(path)?;
+                }
+            }
+            MerklizationRequest::CollectStorages { tx } => {
+                for (prefix, trie) in tree.drain() {
+                    let (root, nodes) = collect_trie(index, trie)?;
+                    tx.send(CollectedStorageMsg {
+                        index,
+                        prefix,
+                        subroot: root,
+                        nodes,
+                    })
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                }
+            }
+            MerklizationRequest::CollectState { tx } => {
+                let (subroot, state_nodes) =
+                    collect_trie(index, std::mem::take(&mut state_trie))?;
+                tx.send(CollectedStateMsg {
+                    index,
+                    subroot,
+                    state_nodes,
+                    storage_nodes: std::mem::take(&mut storage_nodes),
+                })
+                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
