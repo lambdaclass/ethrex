@@ -33,11 +33,10 @@ use ethrex_levm::constants::{
 use ethrex_levm::db::Database;
 use ethrex_levm::db::gen_db::{CacheDB, GeneralizedDatabase};
 use ethrex_levm::errors::{InternalError, TxValidationError};
-use ethrex_levm::gas_cost::{ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::utils::{create_eth_transfer_log, get_base_fee_per_blob_gas};
+use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
