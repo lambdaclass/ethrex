@@ -172,7 +172,7 @@ unsafe fn expand_bytes_to_nibbles_scalar(bytes: &[u8], output: *mut u8) {
 #[inline]
 #[allow(unsafe_code)]
 unsafe fn pack_nibble_pairs(nibbles: &[u8], output: *mut u8) {
-    debug_assert!(nibbles.len() % 2 == 0);
+    debug_assert!(nibbles.len().is_multiple_of(2));
     #[cfg(target_arch = "x86_64")]
     {
         unsafe { pack_nibble_pairs_x86_64(nibbles, output) };
