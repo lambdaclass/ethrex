@@ -393,7 +393,7 @@ jobs:
         run: |
           #
           # If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries
-          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          # in the tokamak-app-deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
           cd crates/l2
@@ -404,18 +404,18 @@ jobs:
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          docker compose up contract_deployer
+          docker compose up tokamak-app-deployer
 
-          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' tokamak-app-deployer)
           if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
-            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
-            docker logs contract_deployer
+            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the tokamak-app-deployer service in crates/l2/docker-compose.yaml"
+            docker logs tokamak-app-deployer
             exit 1
           fi
 
       - name: Copy env to host
         run: |
-          docker cp contract_deployer:/env/.env cmd/.env
+          docker cp tokamak-app-deployer:/env/.env cmd/.env
           cat cmd/.env
 
       - name: Register sequencer
@@ -661,19 +661,19 @@ jobs:
         run: |
           #
           # If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries
-          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          # in the tokamak-app-deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           COMPILE_CONTRACTS=true \
-          docker compose up contract_deployer
+          docker compose up tokamak-app-deployer
 
-          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' tokamak-app-deployer)
           if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
-            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
-            docker logs contract_deployer
+            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the tokamak-app-deployer service in crates/l2/docker-compose.yaml"
+            docker logs tokamak-app-deployer
             exit 1
           fi
 
@@ -749,7 +749,7 @@ jobs:
         run: |
           #
           # If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries
-          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          # in the tokamak-app-deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
           cd crates/l2
@@ -760,18 +760,18 @@ jobs:
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true \
-          docker compose up contract_deployer
+          docker compose up tokamak-app-deployer
 
-          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' tokamak-app-deployer)
           if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
-            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
-            docker logs contract_deployer
+            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the tokamak-app-deployer service in crates/l2/docker-compose.yaml"
+            docker logs tokamak-app-deployer
             exit 1
           fi
 
       - name: Copy env to host
         run: |
-          docker cp contract_deployer:/env/.env cmd/.env_l2a
+          docker cp tokamak-app-deployer:/env/.env cmd/.env_l2a
           cat cmd/.env_l2a
 
       - name: Deploy contracts L2B
@@ -779,7 +779,7 @@ jobs:
           jq '.config.chainId = 1730' fixtures/genesis/l2.json > fixtures/genesis/l2b.json
           #
           # If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries
-          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          # in the tokamak-app-deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
           cd crates/l2
@@ -787,18 +787,18 @@ jobs:
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
-          docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up contract_deployer
+          docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up tokamak-app-deployer
 
-          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' tokamak-app-deployer)
           if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
-            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
-            docker logs contract_deployer
+            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the tokamak-app-deployer service in crates/l2/docker-compose.yaml"
+            docker logs tokamak-app-deployer
             exit 1
           fi
 
       - name: Copy env to host
         run: |
-          docker cp contract_deployer:/env/.env cmd/.env_l2b
+          docker cp tokamak-app-deployer:/env/.env cmd/.env_l2b
           cat cmd/.env_l2b
 
       - name: Start Sequencer L2A
