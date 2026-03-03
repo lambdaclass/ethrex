@@ -21,25 +21,75 @@ if [[ -f "$LOC_JSON" ]]; then
     loc_old_l2=$loc_l2;       loc_old_levm=$loc_levm
   fi
 
+  fmt_num() {
+    # Add comma thousands separators (e.g. 84994 → 84,994) — pure bash, no sed
+    local n out='' len i
+    n=$(printf "%d" "$1")
+    len=${#n}
+    for ((i=0; i<len; i++)); do
+      if [[ $i -gt 0 && $(( (len - i) % 3 )) -eq 0 ]]; then out+=","; fi
+      out+="${n:$i:1}"
+    done
+    printf "%s" "$out"
+  }
+
   fmt_loc_diff() {
     local new=$1 old=$2
-    if [[ $new -gt $old ]];   then printf " (+%d)" $((new - old))
-    elif [[ $new -lt $old ]]; then printf " (-%d)" $((old - new))
+    if [[ $new -gt $old ]];   then printf " (+%s)" "$(fmt_num $((new - old)))"
+    elif [[ $new -lt $old ]]; then printf " (-%s)" "$(fmt_num $((old - new)))"
     fi
   }
 
-  # L1 sub-crates: everything except l2 and vm (those are L2 and LEVM)
-  l1_crates=$(jq -r '
-    .ethrex_crates[]
-    | select(.[0] != "l2" and .[0] != "vm")
-    | "  • \(.[0]): \(.[1])"
+  pct() {
+    # Integer percentage: pct numerator denominator
+    printf "%d" $(( ($1 * 100 + $2 / 2) / $2 ))
+  }
+
+  # Max crate name length (for sub-crate alignment)
+  max_name_len=$(jq -r '
+    [.ethrex_crates[] | select(.[0] != "l2" and .[0] != "vm") | .[0] | length] | max
   ' "$LOC_JSON")
 
-  loc_text="Total: ${loc_total}$(fmt_loc_diff "$loc_total" "$loc_old_total")"$'\n'
-  loc_text+="• L1: ${loc_l1}$(fmt_loc_diff "$loc_l1" "$loc_old_l1")"$'\n'
-  loc_text+="${l1_crates}"$'\n'
-  loc_text+="• L2: ${loc_l2}$(fmt_loc_diff "$loc_l2" "$loc_old_l2")"$'\n'
-  loc_text+="• LEVM: ${loc_levm}$(fmt_loc_diff "$loc_levm" "$loc_old_levm")"
+  num_width=7  # right-aligns formatted numbers; fits up to "999,999"
+
+  fmt_top_row() {
+    local label=$1 new=$2 old=$3 denom=$4
+    printf "%-6s  %${num_width}s (%2d%%)%s" \
+      "$label" \
+      "$(fmt_num "$new")" \
+      "$(pct "$new" "$denom")" \
+      "$(fmt_loc_diff "$new" "$old")"
+  }
+
+  fmt_sub_row() {
+    local name=$1 new=$2 old=$3 denom=$4
+    printf "    • %-${max_name_len}s  %${num_width}s (%2d%%)%s" \
+      "$name" \
+      "$(fmt_num "$new")" \
+      "$(pct "$new" "$denom")" \
+      "$(fmt_loc_diff "$new" "$old")"
+  }
+
+  # L1 sub-crates: everything except l2 and vm (those are L2 and LEVM)
+  # Build as array of lines for proper newline handling
+  l1_crates_text=""
+  while IFS=$'\t' read -r crate_name crate_loc; do
+    old_crate_loc=$(jq -r --arg n "$crate_name" '
+      (.ethrex_crates[] | select(.[0] == $n) | .[1]) // 0
+    ' "${LOC_OLD_JSON:-/dev/null}" 2>/dev/null || echo 0)
+    [[ -z "$old_crate_loc" || "$old_crate_loc" == "null" ]] && old_crate_loc=0
+    l1_crates_text+="$(fmt_sub_row "$crate_name" "$crate_loc" "$old_crate_loc" "$loc_l1")"$'\n'
+  done < <(jq -r '
+    .ethrex_crates[]
+    | select(.[0] != "l2" and .[0] != "vm")
+    | [.[0], (.[1] | tostring)] | @tsv
+  ' "$LOC_JSON")
+
+  loc_text="$(fmt_top_row "Total" "$loc_total" "$loc_old_total" "$loc_total")"$'\n'
+  loc_text+="$(fmt_top_row "• L1" "$loc_l1" "$loc_old_l1" "$loc_total")"$'\n'
+  loc_text+="${l1_crates_text}"
+  loc_text+="$(fmt_top_row "• L2" "$loc_l2" "$loc_old_l2" "$loc_total")"$'\n'
+  loc_text+="$(fmt_top_row "• LEVM" "$loc_levm" "$loc_old_levm" "$loc_total")"
 fi
 
 BASE_URL="${PERF_PROMETHEUS_URL:-${BLOCK_TIME_PROMETHEUS_URL:-${PROMETHEUS_URL:-}}}"
