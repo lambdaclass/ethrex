@@ -601,27 +601,6 @@ impl<'a> VM<'a> {
         Ok(new_nonce)
     }
 
-    /// Gets original storage value of an account, caching it if not already cached.
-    /// Also saves the original value for future gas calculations.
-    pub fn get_original_storage(
-        &mut self,
-        address: Address,
-        key: H256,
-    ) -> Result<U256, InternalError> {
-        if let Some(address_values) = self.storage_original_values.get(&address)
-            && let Some(value) = address_values.get(&key)
-        {
-            return Ok(*value);
-        }
-
-        let value = self.get_storage_value(address, key)?;
-        self.storage_original_values
-            .entry(address)
-            .or_default()
-            .insert(key, value);
-        Ok(value)
-    }
-
     /// Accesses to an account's storage slot and returns the value in it.
     ///
     /// Accessed storage slots are stored in the `accessed_storage_slots` set.
