@@ -62,6 +62,7 @@ use ethrex_common::types::EIP4844Transaction;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
@@ -436,44 +437,55 @@ impl Blockchain {
                 let (tx, rx) = channel();
                 let (encoder_tx, encoder_rx) = channel::<Receipt>();
                 // Encoder thread: encodes block header/body, hashes txs, encodes receipts,
-                // builds receipt trie, and verifies receipts root — all concurrent with execution.
+                // builds receipt trie incrementally, and verifies receipts root — all
+                // concurrent with execution. Receipts are moved (not cloned) from the
+                // execution thread and returned here for later use.
                 let encoder_handle = std::thread::Builder::new()
                     .name("block_executor_encoder".to_string())
-                    .spawn_scoped(s, move || -> Result<PreEncodedBlockData, ChainError> {
-                        // 1. Encode block header & body immediately (no receipt dependency)
-                        let header_rlp = BlockHeaderRLP::from(block.header.clone()).into_vec();
-                        let body_rlp = block.body.encode_to_vec();
+                    .spawn_scoped(
+                        s,
+                        move || -> Result<(PreEncodedBlockData, Vec<Receipt>), ChainError> {
+                            // 1. Encode block header & body immediately (no receipt dependency)
+                            let header_rlp = BlockHeaderRLP::from(block.header.clone()).into_vec();
+                            let body_rlp = block.body.encode_to_vec();
 
-                        // 2. Hash all transactions (populates OnceLock on block.body.transactions)
-                        for tx in &block.body.transactions {
-                            tx.hash();
-                        }
+                            // 2. Hash all transactions (populates OnceLock on block.body.transactions)
+                            for tx in &block.body.transactions {
+                                tx.hash();
+                            }
 
-                        // 3. Process receipts as they arrive from the execution thread
-                        let mut encoded_receipts = Vec::new();
-                        let mut trie_entries = Vec::new();
-                        for (idx, receipt) in encoder_rx.into_iter().enumerate() {
-                            // DB encoding (same as receipt.encode_to_vec())
-                            encoded_receipts.push(receipt.encode_to_vec());
-                            // Trie encoding (with bloom) for receipts root verification
-                            let trie_value = receipt.encode_inner_with_bloom();
-                            let trie_key = idx.encode_to_vec();
-                            trie_entries.push((trie_key, trie_value));
-                        }
+                            // 3. Process receipts incrementally as they arrive
+                            let mut encoded_receipts = Vec::new();
+                            let mut receipts = Vec::new();
+                            let mut trie = Trie::new_temp();
+                            for (idx, receipt) in encoder_rx.into_iter().enumerate() {
+                                // DB encoding
+                                encoded_receipts.push(receipt.encode_to_vec());
+                                // Build receipt trie incrementally (bloom + RLP + insert)
+                                let trie_value = receipt.encode_inner_with_bloom();
+                                let trie_key = idx.encode_to_vec();
+                                trie.insert(trie_key, trie_value).map_err(|e| {
+                                    ChainError::Custom(format!("receipt trie insert: {e}"))
+                                })?;
+                                receipts.push(receipt);
+                            }
 
-                        // 4. Verify receipts root
-                        let computed_root =
-                            Trie::compute_hash_from_unsorted_iter(trie_entries.into_iter());
-                        if computed_root != block.header.receipts_root {
-                            return Err(InvalidBlockError::ReceiptsRootMismatch.into());
-                        }
+                            // 4. Verify receipts root
+                            let computed_root = trie.hash_no_commit();
+                            if computed_root != block.header.receipts_root {
+                                return Err(InvalidBlockError::ReceiptsRootMismatch.into());
+                            }
 
-                        Ok(PreEncodedBlockData {
-                            header_rlp,
-                            body_rlp,
-                            encoded_receipts,
-                        })
-                    })
+                            Ok((
+                                PreEncodedBlockData {
+                                    header_rlp,
+                                    body_rlp,
+                                    encoded_receipts,
+                                },
+                                receipts,
+                            ))
+                        },
+                    )
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn encoder thread: {e}"))
                     })?;
@@ -485,12 +497,8 @@ impl Blockchain {
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-                        // Receipts root validation is done by the encoder thread
-                        validate_requests_hash(
-                            &block.header,
-                            &chain_config,
-                            &execution_result.requests,
-                        )?;
+                        // Receipts root: validated by encoder thread
+                        // Requests hash: validated after joining (needs receipts for deposits)
                         if let Some(bal) = &bal {
                             validate_block_access_list_hash(
                                 &block.header,
@@ -557,8 +565,31 @@ impl Blockchain {
                 ))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
-        let (execution_result, exec_end_instant) = execution_result?;
-        let pre_encoded = encoder_result?;
+        let (mut execution_result, exec_end_instant) = execution_result?;
+        let (pre_encoded, encoder_receipts) = encoder_result?;
+
+        // Restore receipts from encoder (moved from execution thread for zero-copy)
+        execution_result.receipts = encoder_receipts;
+
+        // Re-obtain chain_config (original was moved into scoped threads)
+        let chain_config = self.storage.get_chain_config();
+
+        // Add deposit requests if Prague+ (system call requests are already in execution_result)
+        let fork = chain_config.fork(block.header.timestamp);
+        if fork >= Fork::Prague {
+            let deposits = Requests::from_deposit_receipts(
+                chain_config.deposit_contract_address,
+                &execution_result.receipts,
+            )
+            .ok_or(ChainError::InvalidBlock(
+                InvalidBlockError::InvalidTransaction("Invalid deposit request layout".to_string()),
+            ))?;
+            // Deposits go first: [deposits, withdrawals, consolidation]
+            execution_result.requests.insert(0, deposits);
+        }
+
+        // Validate requests hash (deferred from execution thread to here)
+        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
 
         let exec_merkle_end_instant = Instant::now();
 

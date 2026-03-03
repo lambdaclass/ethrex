@@ -198,7 +198,6 @@ impl LEVM {
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
-        let mut receipts = Vec::new();
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
@@ -258,11 +257,9 @@ impl LEVM {
                 report.logs,
             );
 
-            // Send receipt to encoder thread for concurrent encoding/trie building.
-            // Ignore send errors — the encoder thread may have exited early on error.
-            let _ = encoder.send(receipt.clone());
-
-            receipts.push(receipt);
+            // Move receipt to encoder thread (zero-copy). The encoder collects
+            // receipts and returns them — no clone needed.
+            let _ = encoder.send(receipt);
         }
 
         // Drop the encoder sender so the encoder thread knows all receipts have been sent.
@@ -271,7 +268,7 @@ impl LEVM {
         #[cfg(feature = "perf_opcode_timings")]
         {
             let mut timings = OPCODE_TIMINGS.lock().expect("poison");
-            timings.inc_tx_count(receipts.len());
+            timings.inc_tx_count(block.body.transactions.len());
             timings.inc_block_count();
             ::tracing::info!("{}", timings.info_pretty());
             let precompiles_timings = PRECOMPILES_TIMINGS.lock().expect("poison");
@@ -297,11 +294,30 @@ impl LEVM {
             Self::process_withdrawals(db, withdrawals)?;
         }
 
-        // TODO: I don't like deciding the behavior based on the VMType here.
-        // TODO2: Revise this, apparently extract_all_requests_levm is not called
-        // in L2 execution, but its implementation behaves differently based on this.
+        // Run system contract calls only (withdrawal, consolidation requests).
+        // Deposit extraction from receipts is handled by the encoder thread,
+        // which owns the receipts (moved via channel for zero-copy).
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L1 => {
+                let chain_config = db.store.get_chain_config()?;
+                let fork = chain_config.fork(block.header.timestamp);
+                if fork >= Fork::Prague {
+                    let withdrawals_data: Vec<u8> =
+                        LEVM::read_withdrawal_requests(&block.header, db, vm_type)?
+                            .output
+                            .into();
+                    let consolidation_data: Vec<u8> =
+                        LEVM::dequeue_consolidation_requests(&block.header, db, vm_type)?
+                            .output
+                            .into();
+                    vec![
+                        Requests::from_withdrawals_data(withdrawals_data),
+                        Requests::from_consolidation_data(consolidation_data),
+                    ]
+                } else {
+                    Default::default()
+                }
+            }
             VMType::L2(_) => Default::default(),
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -309,9 +325,11 @@ impl LEVM {
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
 
+        // Receipts vec is empty here — the encoder thread collected them.
+        // blockchain.rs will restore receipts from the encoder result.
         Ok((
             BlockExecutionResult {
-                receipts,
+                receipts: Vec::new(),
                 requests,
                 block_gas_used,
             },
