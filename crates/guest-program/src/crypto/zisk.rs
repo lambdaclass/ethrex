@@ -68,8 +68,7 @@ impl Crypto for ZiskCrypto {
         let exp_limbs = bytes_be_to_limbs_asc(exp);
         let modulus_limbs = bytes_be_to_limbs_asc(modulus);
 
-        let result_limbs =
-            ziskos::zisklib::modexp_u64(&base_limbs, &exp_limbs, &modulus_limbs);
+        let result_limbs = ziskos::zisklib::modexp_u64(&base_limbs, &exp_limbs, &modulus_limbs);
 
         let result_bytes = limbs_asc_to_bytes_be(&result_limbs);
 

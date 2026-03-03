@@ -1355,6 +1355,7 @@ dependencies = [
  "ethrex-rlp",
  "lazy_static",
  "malachite",
+ "rayon",
  "rustc-hash",
  "serde 1.0.228",
  "serde_json",

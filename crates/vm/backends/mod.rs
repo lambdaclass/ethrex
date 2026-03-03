@@ -110,6 +110,7 @@ impl Evm {
         block: &Block,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
+        bal: Option<&BlockAccessList>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block_pipeline(
             block,
@@ -118,6 +119,7 @@ impl Evm {
             merkleizer,
             queue_length,
             self.crypto.as_ref(),
+            bal,
         )
     }
 

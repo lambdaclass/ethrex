@@ -644,10 +644,14 @@ fn parse_bls12_g1(
     // coordinate bits as flags.
     Fp::from_bytes(&x_bytes)
         .into_option()
-        .ok_or(CryptoError::InvalidInput("G1 x coordinate >= field modulus"))?;
+        .ok_or(CryptoError::InvalidInput(
+            "G1 x coordinate >= field modulus",
+        ))?;
     Fp::from_bytes(&y_bytes)
         .into_option()
-        .ok_or(CryptoError::InvalidInput("G1 y coordinate >= field modulus"))?;
+        .ok_or(CryptoError::InvalidInput(
+            "G1 y coordinate >= field modulus",
+        ))?;
 
     let mut g1_bytes = [0u8; 96];
     g1_bytes[..48].copy_from_slice(&x_bytes);

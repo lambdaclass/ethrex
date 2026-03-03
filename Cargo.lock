@@ -4149,6 +4149,7 @@ dependencies = [
  "hex",
  "lazy_static",
  "malachite 0.6.1",
+ "rayon",
  "rustc-hash 2.1.1",
  "serde",
  "serde_json",
