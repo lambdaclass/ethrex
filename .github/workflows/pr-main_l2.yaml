@@ -381,7 +381,7 @@ jobs:
       - name: Start L1
         run: |
           cd crates/l2
-          ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
+          ETHREX_LOG_LEVEL=debug docker compose up --detach tokamak-app-l1
 
       - name: Install rex
         run: |
@@ -392,7 +392,7 @@ jobs:
       - name: Deploy contracts
         run: |
           #
-          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries
           # in the contract_deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
@@ -408,7 +408,7 @@ jobs:
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
           if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
-            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
             docker logs contract_deployer
             exit 1
           fi
@@ -453,7 +453,7 @@ jobs:
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           ETHREX_LOG_LEVEL=debug \
-          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
+          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps tokamak-app-l2
 
       - name: Wait for L2 deposits to be processed
         run: |
@@ -483,8 +483,8 @@ jobs:
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
-          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
-          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow tokamak-app-l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow tokamak-app-l1 | grep -E "INFO|WARN|ERROR" &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
@@ -616,7 +616,7 @@ jobs:
             -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap"
           tail -f tdx_prover.log &
           cd ../../
-          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow tokamak-app-l2 | grep -E "INFO|WARN|ERROR" &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
           pkill -9 -f ethrex_tdx_prover
 
@@ -660,7 +660,7 @@ jobs:
       - name: Start L1 & Deploy contracts
         run: |
           #
-          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries
           # in the contract_deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
@@ -672,7 +672,7 @@ jobs:
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
           if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
-            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
             docker logs contract_deployer
             exit 1
           fi
@@ -743,12 +743,12 @@ jobs:
       - name: Start L1
         run: |
           cd crates/l2
-          ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
+          ETHREX_LOG_LEVEL=debug docker compose up --detach tokamak-app-l1
 
       - name: Deploy contracts L2A
         run: |
           #
-          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries
           # in the contract_deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
@@ -764,7 +764,7 @@ jobs:
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
           if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
-            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
             docker logs contract_deployer
             exit 1
           fi
@@ -778,7 +778,7 @@ jobs:
         run: |
           jq '.config.chainId = 1730' fixtures/genesis/l2.json > fixtures/genesis/l2b.json
           #
-          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries
           # in the contract_deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
@@ -791,7 +791,7 @@ jobs:
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
           if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
-            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            echo "If this job fails due to connection refused to tokamak-app-l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
             docker logs contract_deployer
             exit 1
           fi
@@ -810,7 +810,7 @@ jobs:
           export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
           if  [ "${{ matrix.forced_inclusion }}" = false ]; then
             # In forced_inclusion, we ommit these variables to avoid including messages from L2B into L2A
-            export ETHREX_WATCHER_L2_RPCS=http://ethrex_l2_b:1730
+            export ETHREX_WATCHER_L2_RPCS=http://tokamak-app-l2-b:1730
             export ETHREX_WATCHER_L2_CHAIN_IDS=1730
           fi
           cd crates/l2
@@ -821,7 +821,7 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           ETHREX_LOG_LEVEL=debug \
           ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
-          docker compose -f docker-compose.yaml up --detach --no-deps ethrex_l2
+          docker compose -f docker-compose.yaml up --detach --no-deps tokamak-app-l2
 
       - name: Start Sequencer L2B
         run: |
@@ -836,11 +836,11 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          ETHREX_WATCHER_L2_RPCS=http://ethrex_l2:1729 \
+          ETHREX_WATCHER_L2_RPCS=http://tokamak-app-l2:1729 \
           ETHREX_WATCHER_L2_CHAIN_IDS=65536999 \
           ETHREX_LOG_LEVEL=debug \
           ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
-          docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
+          docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps tokamak-app-l2-b
 
       - name: Wait for L2A deposits to be processed
         run: |
@@ -895,9 +895,9 @@ jobs:
           l2 prover \
           --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
           --backend exec &
-          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
-          docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
-          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow tokamak-app-l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow tokamak-app-l2-b | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow tokamak-app-l1 | grep -E "INFO|WARN|ERROR" &
           cp ../../cmd/.env_l2a ../../cmd/.env
           export $(xargs < ../../cmd/.env_l2a)
           cargo test -p ethrex-test test_shared_bridge --release --features l2 -- --nocapture --test-threads=1
@@ -919,9 +919,9 @@ jobs:
           l2 prover \
           --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
           --backend exec &
-          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
-          docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
-          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow tokamak-app-l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow tokamak-app-l2-b | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow tokamak-app-l1 | grep -E "INFO|WARN|ERROR" &
           cp ../../cmd/.env_l2a ../../cmd/.env
           cargo test -p ethrex-test forced_inclusion --release --features l2 -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
