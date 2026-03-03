@@ -56,7 +56,7 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | Item | Issue | Priority | Status | Description |
 |------|-------|----------|--------|-------------|
 | Add Block Cache (RocksDB) | #5935 | 0 | Discarded. Did not improve (#6195). | Currently there is no explicit block cache, relying on OS page cache. Also try row cache |
-| Use Two-Level Index (RocksDB) | #5936 | 0 | Pending | Use Two-Level Index with Partitioned Filters |
+| Use Two-Level Index (RocksDB) | #5936 | 0 | Discarded. Performance regressed by two orders of magnitude on both throughput and latency (#6196). | Use Two-Level Index with Partitioned Filters |
 | Enable unordered writes for State (RocksDB) | #5937 | 0 | Pending | For `ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES cf_opts.set_unordered_write(true);` Faster writes when we don't need strict ordering|
 | Increase Bloom Filter (RocksDB) | #5938 | 0 | Pending | Change and benchmark higher bits per key for state tables |
 | Consider LZ4 for State Tables (RocksDB) | #5939 | 0 | Pending | Trades CPU for smaller DB and potentially better cache utilization |
