@@ -2649,9 +2649,8 @@ fn collapse_root_node(
 
 /// Core logic for a single shard worker during non-BAL merkleization.
 ///
-/// Extracted as a free function so it can be called from both the legacy
-/// `handle_merkleization_subtrie` method and the persistent `ShardWorkerPool`
-/// threads without borrowing `self`.
+/// Extracted as a free function so it can be called from scoped worker threads
+/// without borrowing `self`.
 fn run_merkleization_subtrie(
     rx: Receiver<MerklizationRequest>,
     storage: &Store,
