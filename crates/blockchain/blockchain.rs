@@ -856,14 +856,14 @@ impl Blockchain {
 
         // Use the persistent merkle pool so Stage B workers reuse pre-existing
         // OS threads instead of paying pthread_create overhead per block.
-        let shared_results: Arc<std::sync::Mutex<Vec<(usize, H256, Vec<TrieNode>)>>> =
-            Arc::new(std::sync::Mutex::new(Vec::new()));
+        type StageBResults = Arc<std::sync::Mutex<Vec<(usize, H256, Vec<TrieNode>)>>>;
+        let shared_results: StageBResults = Arc::new(std::sync::Mutex::new(Vec::new()));
         let stage_b_error: Arc<std::sync::Mutex<Option<StoreError>>> =
             Arc::new(std::sync::Mutex::new(None));
 
         merkle_pool().in_place_scope(|scope| {
             let accounts_ref = &accounts;
-            for (_worker_id, bin) in bins.into_iter().enumerate() {
+            for bin in bins.into_iter() {
                 if bin.is_empty() {
                     continue;
                 }
@@ -933,10 +933,10 @@ impl Blockchain {
                             }
                         }
                         Err(e) => {
-                            if let Ok(mut guard) = stage_b_error_ref.lock() {
-                                if guard.is_none() {
-                                    *guard = Some(e);
-                                }
+                            if let Ok(mut guard) = stage_b_error_ref.lock()
+                                && guard.is_none()
+                            {
+                                *guard = Some(e);
                             }
                         }
                     }
@@ -944,10 +944,10 @@ impl Blockchain {
             }
         });
 
-        if let Ok(mut guard) = stage_b_error.lock() {
-            if let Some(e) = guard.take() {
-                return Err(e);
-            }
+        if let Ok(mut guard) = stage_b_error.lock()
+            && let Some(e) = guard.take()
+        {
+            return Err(e);
         }
 
         let accounts_ref = &accounts;
@@ -984,12 +984,12 @@ impl Blockchain {
         //
         // Results are stored in a fixed-size array indexed by shard; the Option
         // is populated by each job and unwrapped after the scope completes.
-        let shard_results: Arc<Vec<std::sync::Mutex<Option<Result<(Box<BranchNode>, Vec<TrieNode>), StoreError>>>>> =
-            Arc::new(
-                (0..NUM_WORKERS)
-                    .map(|_| std::sync::Mutex::new(None))
-                    .collect(),
-            );
+        type ShardResult = std::sync::Mutex<Option<Result<(Box<BranchNode>, Vec<TrieNode>), StoreError>>>;
+        let shard_results: Arc<Vec<ShardResult>> = Arc::new(
+            (0..NUM_WORKERS)
+                .map(|_| std::sync::Mutex::new(None))
+                .collect(),
+        );
 
         merkle_pool().in_place_scope(|scope| {
             for (index, shard_items) in shards.into_iter().enumerate() {
