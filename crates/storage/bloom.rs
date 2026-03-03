@@ -33,6 +33,7 @@ impl StorageBloomFilter {
 
     /// Activate the bloom filter after it has been populated.
     /// Before this is called, `might_contain` always returns `true` (pass-through).
+    #[allow(dead_code)]
     pub fn enable(&self) {
         self.enabled.store(true, Ordering::Release);
     }
