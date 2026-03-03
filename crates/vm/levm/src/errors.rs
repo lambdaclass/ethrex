@@ -271,4 +271,14 @@ impl ContextResult {
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
     }
+
+    /// Returns true if this result is an address collision error.
+    pub fn is_collision(&self) -> bool {
+        matches!(
+            self.result,
+            TxResult::Revert(VMError::ExceptionalHalt(
+                ExceptionalHalt::AddressAlreadyOccupied
+            ))
+        )
+    }
 }

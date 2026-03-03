@@ -141,6 +141,42 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
+        // EIP-8037 (Amsterdam+): Handle CREATE collision specially.
+        // Per EELS, collision at process_message_call level returns
+        // gas_left=0, state_gas_left=0, regular_gas_used=0, state_gas_used=0.
+        // The user pays tx.gas (everything), but block accounting only sees
+        // intrinsic gas (no execution gas was consumed).
+        if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
+            let gas_limit = vm.env.gas_limit;
+            // Block accounting: gas_used = intrinsic_regular + intrinsic_state
+            // state_gas_used already = intrinsic_state (no execution state gas)
+            let state_gas = vm
+                .state_gas_used
+                .saturating_sub(vm.intrinsic_state_gas_refund);
+            let floor = vm.get_min_gas_used()?;
+            // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
+            // = total_intrinsic_gas consumed so far, minus state portion
+            #[expect(
+                clippy::as_conversions,
+                reason = "gas_remaining is positive at collision"
+            )]
+            let gas_remaining = vm.current_call_frame.gas_remaining as u64;
+            let total_intrinsic = gas_limit
+                .saturating_sub(vm.state_gas_reservoir)
+                .saturating_sub(gas_remaining);
+            let regular_gas = total_intrinsic.saturating_sub(state_gas);
+            let effective_regular = regular_gas.max(floor);
+            ctx_result.gas_used = effective_regular
+                .checked_add(state_gas)
+                .ok_or(InternalError::Overflow)?;
+            // User pays everything (gas_left=0, state_gas_left=0)
+            ctx_result.gas_spent = gas_limit;
+            // Coinbase gets paid on what user pays
+            pay_coinbase(vm, gas_limit)?;
+            // Return 0 gas to sender (they lose everything)
+            return Ok(());
+        }
+
         // EIP-8037 (Amsterdam+): unused reservoir is always returned to sender.
         // Per EELS, state_gas_left is preserved even on exceptional halt — only
         // regular gas_left is burned.  The user does NOT pay for unspent reservoir.
