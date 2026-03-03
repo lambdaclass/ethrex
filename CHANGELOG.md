@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-03-03
+
+- Reuse persistent rayon thread pool for BAL merkleization workers to avoid per-block OS thread spawning overhead [#6292](https://github.com/lambdaclass/ethrex/pull/6292)
+
 ### 2026-02-25
 
 - Speed up snap sync validation with parallelism and deduplication [#6191](https://github.com/lambdaclass/ethrex/pull/6191)
