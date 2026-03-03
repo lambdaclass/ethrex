@@ -489,9 +489,7 @@ impl BlockAccessList {
                     return Err(format!(
                         "Block access list balance_changes not in strictly ascending order \
                          for account {:#x}: {} >= {}",
-                        account.address,
-                        window[0].block_access_index,
-                        window[1].block_access_index
+                        account.address, window[0].block_access_index, window[1].block_access_index
                     ));
                 }
             }
@@ -500,9 +498,7 @@ impl BlockAccessList {
                     return Err(format!(
                         "Block access list nonce_changes not in strictly ascending order \
                          for account {:#x}: {} >= {}",
-                        account.address,
-                        window[0].block_access_index,
-                        window[1].block_access_index
+                        account.address, window[0].block_access_index, window[1].block_access_index
                     ));
                 }
             }
@@ -511,9 +507,7 @@ impl BlockAccessList {
                     return Err(format!(
                         "Block access list code_changes not in strictly ascending order \
                          for account {:#x}: {} >= {}",
-                        account.address,
-                        window[0].block_access_index,
-                        window[1].block_access_index
+                        account.address, window[0].block_access_index, window[1].block_access_index
                     ));
                 }
             }
