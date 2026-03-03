@@ -43,6 +43,7 @@ ark-ff = { version = "0.5.0", features = ["asm"] }
 strum = { version = "0.27.1", features = ["derive"] }
 k256.workspace = true
 rustc-hash.workspace = true
+dashmap.workspace = true
 substrate-bn = { version = "0.6.0", optional = true }
 secp256k1 = { workspace = true, optional = true }
 ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.15.0", optional = true }
