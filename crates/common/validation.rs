@@ -17,9 +17,13 @@ use ethrex_rlp::encode::RLPEncode;
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
 /// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas.
 ///
-/// Note that this doesn't validate that the transactions or withdrawals root of the header matches the body
+/// # WARNING
+///
+/// This doesn't validate that the transactions or withdrawals root of the header matches the body
 /// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
-pub fn validate_block(
+///
+/// To validate it, use [`ethrex_common::types::validate_block_body`]
+pub fn validate_block_pre_execution(
     block: &Block,
     parent_header: &BlockHeader,
     chain_config: &ChainConfig,
