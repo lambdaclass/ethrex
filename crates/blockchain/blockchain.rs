@@ -89,11 +89,9 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::OnceLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
@@ -103,75 +101,6 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
-
-/// Persistent thread pool for BAL merkleization workers (Stages B and C).
-///
-/// Reusing these threads across blocks avoids the ~50–100 µs `pthread_create`
-/// overhead and the 8 MB stack allocation that would otherwise occur for every
-/// block's shard workers.
-static MERKLE_POOL: OnceLock<ThreadPool> = OnceLock::new();
-
-fn merkle_pool() -> &'static ThreadPool {
-    MERKLE_POOL.get_or_init(|| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(16)
-            .thread_name(|i| format!("merkle-shard-{i}"))
-            .build()
-            .expect("failed to build merkle thread pool")
-    })
-}
-
-/// A job sent to a persistent non-BAL shard worker for one block's execution.
-struct ShardJob {
-    /// Per-block trie request channel.
-    rx: Receiver<MerklizationRequest>,
-    /// Storage handle (Arc-backed clone, cheap).
-    storage: Store,
-    /// Parent block header (Arc-wrapped to avoid copying).
-    parent_header: Arc<BlockHeader>,
-    /// Channel to report the result back to the merkleizer thread.
-    done_tx: Sender<Result<(), StoreError>>,
-}
-
-/// Persistent pool of 16 shard worker threads for non-BAL merkleization.
-///
-/// Unlike the rayon pool used for BAL stages, these workers block on a channel
-/// recv loop for the duration of a block.  A rayon pool cannot be used for
-/// blocking jobs (it deadlocks when all pool threads are held).  Instead we
-/// keep 16 plain OS threads alive permanently; each block hands them a fresh
-/// `Receiver<MerklizationRequest>` via a lightweight channel message,
-/// eliminating the per-block `pthread_create` cost.
-struct ShardWorkerPool {
-    /// One sender per worker thread (indexed 0..16).
-    job_txs: Vec<Sender<ShardJob>>,
-}
-
-impl ShardWorkerPool {
-    fn new() -> Self {
-        let mut job_txs = Vec::with_capacity(16);
-        for i in 0..16u8 {
-            let (job_tx, job_rx) = channel::<ShardJob>();
-            std::thread::Builder::new()
-                .name(format!("merkle-shard-{i}"))
-                .spawn(move || {
-                    while let Ok(job) = job_rx.recv() {
-                        let result =
-                            run_merkleization_subtrie(job.rx, &job.storage, &job.parent_header, i);
-                        let _ = job.done_tx.send(result);
-                    }
-                })
-                .expect("failed to spawn merkle shard worker");
-            job_txs.push(job_tx);
-        }
-        Self { job_txs }
-    }
-}
-
-static SHARD_POOL: OnceLock<ShardWorkerPool> = OnceLock::new();
-
-fn shard_pool() -> &'static ShardWorkerPool {
-    SHARD_POOL.get_or_init(ShardWorkerPool::new)
-}
 
 use vm::StoreVmDatabase;
 
@@ -613,200 +542,189 @@ impl Blockchain {
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
-        // Dispatch the 16 shard workers onto the persistent pool to avoid
-        // per-block pthread_create overhead. Workers block on channel recv for
-        // the duration of merkleization, which is safe here because only one
-        // block is ever in this phase at a time (the outer std::thread::scope
-        // in execute_block_pipeline serializes blocks).
-        let pool = shard_pool();
-        let (done_tx, done_rx) = channel::<Result<(), StoreError>>();
-        let parent_header_arc = Arc::new(parent_header.clone());
-        let mut workers_tx = Vec::with_capacity(16);
-        for job_tx in &pool.job_txs {
-            let (tx, worker_rx) = channel();
-            job_tx
-                .send(ShardJob {
-                    rx: worker_rx,
-                    storage: self.storage.clone(),
-                    parent_header: Arc::clone(&parent_header_arc),
-                    done_tx: done_tx.clone(),
-                })
-                .map_err(|e| StoreError::Custom(format!("shard pool send failed: {e}")))?;
-            workers_tx.push(tx);
-        }
-        drop(done_tx); // only the workers hold senders now
+        std::thread::scope(|scope| {
+            let mut workers_tx = Vec::with_capacity(16);
+            for i in 0..16u8 {
+                let (tx, worker_rx) = channel();
+                std::thread::Builder::new()
+                    .name(format!("block_executor_merkleization_shard_worker_{i}"))
+                    .spawn_scoped(scope, move || {
+                        run_merkleization_subtrie(worker_rx, &self.storage, parent_header, i)
+                    })
+                    .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}")))?;
+                workers_tx.push(tx);
+            }
 
-        let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
-        let mut code_updates: Vec<(H256, Code)> = vec![];
-        let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
+            let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> =
+                Default::default();
+            let mut code_updates: Vec<(H256, Code)> = vec![];
+            let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
 
-        // Accumulator for witness generation (only used if precompute_witnesses is true)
-        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-            if self.options.precompute_witnesses {
-                Some(FxHashMap::default())
-            } else {
-                None
-            };
+            // Accumulator for witness generation (only used if precompute_witnesses is true)
+            let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
+                if self.options.precompute_witnesses {
+                    Some(FxHashMap::default())
+                } else {
+                    None
+                };
 
-        for updates in rx {
-            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
-            *max_queue_length = current_length.max(*max_queue_length);
-            // Accumulate updates for witness generation if enabled
-            if let Some(acc) = &mut accumulator {
-                for update in updates.clone() {
-                    match acc.entry(update.address) {
-                        Entry::Vacant(e) => {
-                            e.insert(update);
-                        }
-                        Entry::Occupied(mut e) => {
-                            e.get_mut().merge(update);
+            for updates in rx {
+                let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
+                *max_queue_length = current_length.max(*max_queue_length);
+                // Accumulate updates for witness generation if enabled
+                if let Some(acc) = &mut accumulator {
+                    for update in updates.clone() {
+                        match acc.entry(update.address) {
+                            Entry::Vacant(e) => {
+                                e.insert(update);
+                            }
+                            Entry::Occupied(mut e) => {
+                                e.get_mut().merge(update);
+                            }
                         }
                     }
                 }
-            }
 
-            for update in updates {
-                let hashed_address = *hashed_address_cache
-                    .entry(update.address)
-                    .or_insert_with(|| keccak(update.address));
-                let account_bucket = hashed_address.as_fixed_bytes()[0] >> 4;
-                workers_tx[account_bucket as usize]
-                    .send(MerklizationRequest::LoadAccount(hashed_address))
-                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                if update.removed {
-                    // Match old behavior: remove account, skip added_storage processing.
-                    // Send Delete to clear any existing storage in workers so the
-                    // storage root becomes EMPTY_TRIE_HASH during collection.
-                    for tx in &workers_tx {
-                        tx.send(MerklizationRequest::Delete(hashed_address))
+                for update in updates {
+                    let hashed_address = *hashed_address_cache
+                        .entry(update.address)
+                        .or_insert_with(|| keccak(update.address));
+                    let account_bucket = hashed_address.as_fixed_bytes()[0] >> 4;
+                    workers_tx[account_bucket as usize]
+                        .send(MerklizationRequest::LoadAccount(hashed_address))
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    if update.removed {
+                        // Match old behavior: remove account, skip added_storage processing.
+                        // Send Delete to clear any existing storage in workers so the
+                        // storage root becomes EMPTY_TRIE_HASH during collection.
+                        for tx in &workers_tx {
+                            tx.send(MerklizationRequest::Delete(hashed_address))
+                                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        }
+                        let state = account_state.entry(hashed_address).or_default();
+                        *state = PreMerkelizedAccountState {
+                            info: Some(Default::default()),
+                            ..Default::default()
+                        };
+                        continue;
+                    }
+
+                    if update.removed_storage {
+                        for tx in &workers_tx {
+                            tx.send(MerklizationRequest::Delete(hashed_address))
+                                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        }
+                    }
+                    for (key, value) in update.added_storage {
+                        let hashed_key = keccak(key);
+                        let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
+                        workers_tx[bucket as usize]
+                            .send(MerklizationRequest::MerklizeStorage {
+                                prefix: hashed_address,
+                                key: hashed_key,
+                                value,
+                            })
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
                     let state = account_state.entry(hashed_address).or_default();
-                    *state = PreMerkelizedAccountState {
-                        info: Some(Default::default()),
-                        ..Default::default()
-                    };
-                    continue;
-                }
-
-                if update.removed_storage {
-                    for tx in &workers_tx {
-                        tx.send(MerklizationRequest::Delete(hashed_address))
-                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    if let Some(info) = update.info {
+                        if let Some(code) = update.code {
+                            code_updates.push((info.code_hash, code));
+                        }
+                        state.info = Some(info);
                     }
                 }
-                for (key, value) in update.added_storage {
-                    let hashed_key = keccak(key);
-                    let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
-                    workers_tx[bucket as usize]
-                        .send(MerklizationRequest::MerklizeStorage {
-                            prefix: hashed_address,
-                            key: hashed_key,
-                            value,
-                        })
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                }
-                let state = account_state.entry(hashed_address).or_default();
-                if let Some(info) = update.info {
-                    if let Some(code) = update.code {
-                        code_updates.push((info.code_hash, code));
-                    }
-                    state.info = Some(info);
-                }
             }
-        }
 
-        let (gatherer_tx, gatherer_rx) = channel();
-        for tx in &workers_tx {
-            tx.send(MerklizationRequest::CollectStorages {
-                tx: gatherer_tx.clone(),
-            })
-            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-        }
-        drop(gatherer_tx);
-
-        for CollectedStorageMsg {
-            index,
-            prefix,
-            mut subroot,
-            nodes,
-        } in gatherer_rx
-        {
-            let state = account_state.entry(prefix).or_default();
-            match &mut state.storage_root {
-                Some(root) => {
-                    root.choices[index as usize] =
-                        std::mem::take(&mut subroot.choices[index as usize]);
-                }
-                rootptr => {
-                    *rootptr = Some(subroot);
-                }
-            }
-            state.nodes.extend(nodes);
-        }
-
-        let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
-
-        for (hashed_account, state) in account_state {
-            let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
-            workers_tx[bucket as usize]
-                .send(MerklizationRequest::MerklizeAccount {
-                    hashed_account,
-                    state,
+            let (gatherer_tx, gatherer_rx) = channel();
+            for tx in &workers_tx {
+                tx.send(MerklizationRequest::CollectStorages {
+                    tx: gatherer_tx.clone(),
                 })
                 .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-        }
+            }
+            drop(gatherer_tx);
 
-        let (gatherer_tx, gatherer_rx) = channel();
-        for tx in &workers_tx {
-            tx.send(MerklizationRequest::CollectState {
-                tx: gatherer_tx.clone(),
-            })
-            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-        }
-        drop(gatherer_tx);
+            for CollectedStorageMsg {
+                index,
+                prefix,
+                mut subroot,
+                nodes,
+            } in gatherer_rx
+            {
+                let state = account_state.entry(prefix).or_default();
+                match &mut state.storage_root {
+                    Some(root) => {
+                        root.choices[index as usize] =
+                            std::mem::take(&mut subroot.choices[index as usize]);
+                    }
+                    rootptr => {
+                        *rootptr = Some(subroot);
+                    }
+                }
+                state.nodes.extend(nodes);
+            }
 
-        let mut root = BranchNode::default();
-        let mut state_updates = Vec::new();
-        for CollectedStateMsg {
-            index,
-            subroot,
-            state_nodes,
-            storage_nodes,
-        } in gatherer_rx
-        {
-            storage_updates.extend(storage_nodes);
-            state_updates.extend(state_nodes);
-            root.choices[index as usize] = subroot.choices[index as usize].clone();
-        }
+            let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
-        // Drop senders so workers' recv loops terminate, then collect results.
-        drop(workers_tx);
-        for result in done_rx {
-            result?;
-        }
+            for (hashed_account, state) in account_state {
+                let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
+                workers_tx[bucket as usize]
+                    .send(MerklizationRequest::MerklizeAccount {
+                        hashed_account,
+                        state,
+                    })
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            }
 
-        let state_trie_hash =
-            if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
-                let mut root = NodeRef::from(root);
-                let hash = root.commit(Nibbles::default(), &mut state_updates);
-                hash.finalize()
-            } else {
-                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
-                *EMPTY_TRIE_HASH
-            };
+            let (gatherer_tx, gatherer_rx) = channel();
+            for tx in &workers_tx {
+                tx.send(MerklizationRequest::CollectState {
+                    tx: gatherer_tx.clone(),
+                })
+                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            }
+            drop(gatherer_tx);
 
-        let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+            let mut root = BranchNode::default();
+            let mut state_updates = Vec::new();
+            for CollectedStateMsg {
+                index,
+                subroot,
+                state_nodes,
+                storage_nodes,
+            } in gatherer_rx
+            {
+                storage_updates.extend(storage_nodes);
+                state_updates.extend(state_nodes);
+                root.choices[index as usize] = subroot.choices[index as usize].clone();
+            }
 
-        Ok((
-            AccountUpdatesList {
-                state_trie_hash,
-                state_updates,
-                storage_updates,
-                code_updates,
-            },
-            accumulated_updates,
-        ))
+            // Drop senders so workers' recv loops terminate; scope join collects them.
+            drop(workers_tx);
+
+            let state_trie_hash =
+                if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
+                    let mut root = NodeRef::from(root);
+                    let hash = root.commit(Nibbles::default(), &mut state_updates);
+                    hash.finalize()
+                } else {
+                    state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+                    *EMPTY_TRIE_HASH
+                };
+
+            let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+
+            Ok((
+                AccountUpdatesList {
+                    state_trie_hash,
+                    state_updates,
+                    storage_updates,
+                    code_updates,
+                },
+                accumulated_updates,
+            ))
+        })
     }
 
     /// BAL-specific merkleization handler.
@@ -911,14 +829,12 @@ impl Blockchain {
         let mut storage_roots: Vec<Option<H256>> = vec![None; accounts.len()];
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Vec::new();
 
-        // Use the persistent merkle pool so Stage B workers reuse pre-existing
-        // OS threads instead of paying pthread_create overhead per block.
         type StageBResults = Arc<std::sync::Mutex<Vec<(usize, H256, Vec<TrieNode>)>>>;
         let shared_results: StageBResults = Arc::new(std::sync::Mutex::new(Vec::new()));
         let stage_b_error: Arc<std::sync::Mutex<Option<StoreError>>> =
             Arc::new(std::sync::Mutex::new(None));
 
-        merkle_pool().in_place_scope(|scope| {
+        std::thread::scope(|scope| {
             let accounts_ref = &accounts;
             for bin in bins.into_iter() {
                 if bin.is_empty() {
@@ -926,7 +842,7 @@ impl Blockchain {
                 }
                 let shared_results_ref = Arc::clone(&shared_results);
                 let stage_b_error_ref = Arc::clone(&stage_b_error);
-                scope.spawn(move |_| {
+                scope.spawn(move || {
                     let worker_result =
                         (|| -> Result<Vec<(usize, H256, Vec<TrieNode>)>, StoreError> {
                             let mut results: Vec<(usize, H256, Vec<TrieNode>)> = Vec::new();
@@ -1033,11 +949,6 @@ impl Blockchain {
         let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
 
-        // All 16 shard jobs must run, even for empty shards: each worker opens
-        // the parent state trie and returns its existing subtree so the root can
-        // be correctly assembled via `collect_trie`. Reuse pool threads instead
-        // of spawning fresh OS threads per block.
-        //
         // Results are stored in a fixed-size array indexed by shard; the Option
         // is populated by each job and unwrapped after the scope completes.
         type ShardResult =
@@ -1048,10 +959,10 @@ impl Blockchain {
                 .collect(),
         );
 
-        merkle_pool().in_place_scope(|scope| {
+        std::thread::scope(|scope| {
             for (index, shard_items) in shards.into_iter().enumerate() {
                 let shard_results_ref = Arc::clone(&shard_results);
-                scope.spawn(move |_| {
+                scope.spawn(move || {
                     let result = (|| -> Result<(Box<BranchNode>, Vec<TrieNode>), StoreError> {
                         let mut state_trie = self.storage.open_state_trie(parent_state_root)?;
 

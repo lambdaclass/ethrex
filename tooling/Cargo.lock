@@ -3313,7 +3313,6 @@ dependencies = [
  "ethrex-trie 9.0.0",
  "ethrex-vm",
  "hex",
- "rayon",
  "rustc-hash 2.1.1",
  "thiserror 2.0.18",
  "tokio",
