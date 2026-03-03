@@ -628,13 +628,26 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 fn parse_bls12_g1(
     (x_bytes, y_bytes): ([u8; 48], [u8; 48]),
 ) -> Result<bls12_381::G1Affine, CryptoError> {
-    use bls12_381::G1Affine;
+    use bls12_381::{Fp, G1Affine};
 
     const ALL_ZERO: [u8; 48] = [0u8; 48];
 
     if x_bytes == ALL_ZERO && y_bytes == ALL_ZERO {
         return Ok(G1Affine::identity());
     }
+
+    // Validate that coordinates are strictly less than the BLS12-381 field modulus.
+    // The bls12_381 crate's from_uncompressed interprets the top bits of the first
+    // byte as BLS serialization flags (compression, infinity, sort), masking them
+    // away. EIP-2537 uses a different encoding where all 48 bytes are pure coordinate
+    // data. Rejecting values >= p here prevents the crate from misinterpreting
+    // coordinate bits as flags.
+    Fp::from_bytes(&x_bytes)
+        .into_option()
+        .ok_or(CryptoError::InvalidInput("G1 x coordinate >= field modulus"))?;
+    Fp::from_bytes(&y_bytes)
+        .into_option()
+        .ok_or(CryptoError::InvalidInput("G1 y coordinate >= field modulus"))?;
 
     let mut g1_bytes = [0u8; 96];
     g1_bytes[..48].copy_from_slice(&x_bytes);
@@ -657,12 +670,25 @@ fn parse_bls12_g1(
 fn parse_bls12_g2(
     (x0, x1, y0, y1): ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
 ) -> Result<bls12_381::G2Affine, CryptoError> {
-    use bls12_381::G2Affine;
+    use bls12_381::{Fp, G2Affine};
 
     const ALL_ZERO: [u8; 48] = [0u8; 48];
 
     if x0 == ALL_ZERO && x1 == ALL_ZERO && y0 == ALL_ZERO && y1 == ALL_ZERO {
         return Ok(G2Affine::identity());
+    }
+
+    // Validate that all four coordinates are strictly less than the BLS12-381
+    // field modulus. See comment in parse_bls12_g1 for why this is needed.
+    for (coord, label) in [
+        (&x0, "G2 x0"),
+        (&x1, "G2 x1"),
+        (&y0, "G2 y0"),
+        (&y1, "G2 y1"),
+    ] {
+        Fp::from_bytes(coord)
+            .into_option()
+            .ok_or(CryptoError::InvalidInput(label))?;
     }
 
     let mut g2_bytes = [0u8; 192];
