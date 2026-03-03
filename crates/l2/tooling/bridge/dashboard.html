@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ethrex ZK-DEX Localnet</title>
+  <title>TokamakAppL2 ZK-DEX Localnet</title>
   <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
   <style>
     :root {
@@ -318,7 +318,7 @@
 <body>
   <div class="header">
     <div class="header-left">
-      <div class="logo"><span>ethrex</span> ZK-DEX</div>
+      <div class="logo"><span>TokamakAppL2</span> ZK-DEX</div>
       <span class="badge">Localnet</span>
     </div>
     <div class="header-status" id="overallStatus">
@@ -497,11 +497,18 @@
       </div>
     </div>
 
-    <!-- Contract Addresses (dynamically populated) -->
-    <div class="section-title">Key Addresses</div>
+    <!-- L1 Deployed Contract Addresses (dynamically populated) -->
+    <div class="section-title">L1 Deployed Contracts</div>
     <div class="contracts-card" id="contractsSection">
       <div style="color:var(--text-dim);font-size:13px;padding:8px 0;">Loading deployed addresses...</div>
     </div>
+
+    <!-- L2 Genesis Contract Addresses -->
+    <div class="section-title">L2 Genesis Contracts (System)</div>
+    <div class="contracts-card" id="genesisSystemSection"></div>
+
+    <div class="section-title">L2 Genesis Contracts (ZK-DEX)</div>
+    <div class="contracts-card" id="genesisZkDexSection"></div>
 
     <!-- Test Accounts -->
     <div class="section-title">Test Accounts (1B ETH each)</div>
@@ -590,7 +597,7 @@
         <h4 style="color: var(--l1-color);">L1 Network</h4>
         <div class="config-row">
           <span class="label">Network Name</span>
-          <span class="value">ethrex L1 Local</span>
+          <span class="value">TokamakAppL2 L1 Local</span>
         </div>
         <div class="config-row">
           <span class="label">RPC URL</span>
@@ -608,7 +615,7 @@
           <span class="label">Explorer</span>
           <span class="value">http://localhost:8083</span>
         </div>
-        <button class="btn-add-network" onclick="addNetwork(9, 'http://localhost:8545', 'ethrex L1 Local', 'http://localhost:8083')">
+        <button class="btn-add-network" onclick="addNetwork(9, 'http://localhost:8545', 'TokamakAppL2 L1 Local', 'http://localhost:8083')">
           Add to MetaMask
         </button>
       </div>
@@ -616,7 +623,7 @@
         <h4 style="color: var(--l2-color);">L2 Network</h4>
         <div class="config-row">
           <span class="label">Network Name</span>
-          <span class="value">ethrex L2 Local</span>
+          <span class="value">TokamakAppL2 L2 Local</span>
         </div>
         <div class="config-row">
           <span class="label">RPC URL</span>
@@ -634,7 +641,7 @@
           <span class="label">Explorer</span>
           <span class="value">http://localhost:8082</span>
         </div>
-        <button class="btn-add-network" onclick="addNetwork(65536999, 'http://localhost:1729', 'ethrex L2 Local', 'http://localhost:8082')">
+        <button class="btn-add-network" onclick="addNetwork(65536999, 'http://localhost:1729', 'TokamakAppL2 L2 Local', 'http://localhost:8082')">
           Add to MetaMask
         </button>
       </div>
@@ -642,7 +649,7 @@
   </div>
 
   <div class="footer">
-    ethrex ZK-DEX Localnet Dashboard &middot; <a href="https://github.com/lambdaclass/ethrex" target="_blank">GitHub</a>
+    TokamakAppL2 ZK-DEX Localnet Dashboard &middot; <a href="https://github.com/lambdaclass/ethrex" target="_blank">GitHub</a>
   </div>
 
   <script>
@@ -692,58 +699,7 @@
       renderContracts();
     }
 
-    function renderContracts() {
-      const section = document.getElementById('contractsSection');
-      const l1Explorer = CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083';
-      const l2Explorer = CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082';
-
-      const contracts = [];
-
-      if (CONFIG && CONFIG.bridge_address) {
-        contracts.push({
-          name: 'CommonBridge (L1)',
-          address: CONFIG.bridge_address,
-          explorer: l1Explorer
-        });
-      }
-
-      if (CONFIG && CONFIG.on_chain_proposer_address) {
-        contracts.push({
-          name: 'OnChainProposer (L1)',
-          address: CONFIG.on_chain_proposer_address,
-          explorer: l1Explorer
-        });
-      }
-
-      if (CONFIG && CONFIG.timelock_address) {
-        contracts.push({
-          name: 'Timelock (L1)',
-          address: CONFIG.timelock_address,
-          explorer: l1Explorer
-        });
-      }
-
-      if (CONFIG && CONFIG.sp1_verifier_address && CONFIG.sp1_verifier_address !== '0x0000000000000000000000000000000000000000') {
-        contracts.push({
-          name: 'SP1 Verifier (L1)',
-          address: CONFIG.sp1_verifier_address,
-          explorer: l1Explorer
-        });
-      }
-
-      // Always show CommonBridgeL2 (fixed system contract)
-      contracts.push({
-        name: 'CommonBridgeL2 (L2)',
-        address: '0x000000000000000000000000000000000000ffff',
-        explorer: l2Explorer
-      });
-
-      if (contracts.length === 1) {
-        // Only CommonBridgeL2, config not loaded
-        section.innerHTML = '<div style="color:var(--warning);font-size:13px;padding:8px 0;">Could not load deployed addresses. Make sure localnet is running and config.json is generated.</div>';
-        // Still render the L2 bridge
-      }
-
+    function renderContractRows(contracts) {
       let html = '';
       for (const c of contracts) {
         html += `
@@ -759,7 +715,59 @@
             </div>
           </div>`;
       }
-      section.innerHTML = html;
+      return html;
+    }
+
+    function renderContracts() {
+      const l1Explorer = CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083';
+      const l2Explorer = CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082';
+
+      // --- L1 Deployed Contracts ---
+      const l1Section = document.getElementById('contractsSection');
+      const l1Contracts = [];
+
+      if (CONFIG && CONFIG.bridge_address) {
+        l1Contracts.push({ name: 'CommonBridge', address: CONFIG.bridge_address, explorer: l1Explorer });
+      }
+      if (CONFIG && CONFIG.on_chain_proposer_address) {
+        l1Contracts.push({ name: 'OnChainProposer', address: CONFIG.on_chain_proposer_address, explorer: l1Explorer });
+      }
+      if (CONFIG && CONFIG.timelock_address) {
+        l1Contracts.push({ name: 'Timelock', address: CONFIG.timelock_address, explorer: l1Explorer });
+      }
+      if (CONFIG && CONFIG.sp1_verifier_address && CONFIG.sp1_verifier_address !== '0x0000000000000000000000000000000000000000') {
+        l1Contracts.push({ name: 'SP1 Verifier', address: CONFIG.sp1_verifier_address, explorer: l1Explorer });
+      }
+
+      if (l1Contracts.length === 0) {
+        l1Section.innerHTML = '<div style="color:var(--warning);font-size:13px;padding:8px 0;">L1 deployed addresses not loaded. Make sure localnet is running and config.json is generated.</div>';
+      } else {
+        l1Section.innerHTML = renderContractRows(l1Contracts);
+      }
+
+      // --- L2 Genesis System Contracts ---
+      const systemSection = document.getElementById('genesisSystemSection');
+      const systemContracts = [
+        { name: 'CommonBridgeL2', address: '0x000000000000000000000000000000000000ffff', explorer: l2Explorer },
+        { name: 'L2ToL1Messenger', address: '0x000000000000000000000000000000000000fffe', explorer: l2Explorer },
+        { name: 'WETH9', address: '0x000000000000000000000000000000000000fffd', explorer: l2Explorer },
+        { name: 'FeeTokenRegistry', address: '0x000000000000000000000000000000000000fffc', explorer: l2Explorer },
+        { name: 'FeeTokenRatioPricer', address: '0x000000000000000000000000000000000000fffb', explorer: l2Explorer },
+      ];
+      systemSection.innerHTML = renderContractRows(systemContracts);
+
+      // --- L2 Genesis ZK-DEX Contracts ---
+      const zkDexSection = document.getElementById('genesisZkDexSection');
+      const zkDexContracts = [
+        { name: 'ZkDex (Main)', address: '0xDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDE', explorer: l2Explorer },
+        { name: 'Verifier 1 - Deposit', address: '0xDE00000000000000000000000000000000000001', explorer: l2Explorer },
+        { name: 'Verifier 2 - Withdrawal', address: '0xDE00000000000000000000000000000000000002', explorer: l2Explorer },
+        { name: 'Verifier 3 - Mint', address: '0xDE00000000000000000000000000000000000003', explorer: l2Explorer },
+        { name: 'Verifier 4 - Spend', address: '0xDE00000000000000000000000000000000000004', explorer: l2Explorer },
+        { name: 'Verifier 5 - MakeOrder', address: '0xDE00000000000000000000000000000000000005', explorer: l2Explorer },
+        { name: 'Verifier 6 - SettleOrder', address: '0xDE00000000000000000000000000000000000006', explorer: l2Explorer },
+      ];
+      zkDexSection.innerHTML = renderContractRows(zkDexContracts);
     }
 
     async function updateChainStats() {

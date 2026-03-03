@@ -192,8 +192,8 @@ do_start() {
     fi
 
     # Step 3: Start L1
-    log_step 3 "Starting L1 (ethrex_l1)"
-    compose_cmd up -d ethrex_l1
+    log_step 3 "Starting L1 (tokamak-app-l1)"
+    compose_cmd up -d tokamak-app-l1
 
     if ! wait_for_container_rpc "http://localhost:$L1_PORT" "L1" 120; then
         log_error "L1 failed to start. Check: $0 logs l1"
@@ -203,20 +203,20 @@ do_start() {
 
     # Step 4: Deploy contracts (SP1 verifier + ZK-DEX guest program registration)
     log_step 4 "Deploying contracts (SP1 verifier + ZK-DEX)"
-    compose_cmd up -d contract_deployer
+    compose_cmd up -d tokamak-app-deployer
 
-    if ! wait_for_container_exit "contract_deployer" 300; then
+    if ! wait_for_container_exit "tokamak-app-deployer" 300; then
         log_error "Contract deployment failed. Check: $0 logs deploy"
         do_stop
         exit 1
     fi
 
     # Step 5: Start L2 with ZK-DEX guest program
-    # NOTE: depends_on causes contract_deployer to re-run, which may
+    # NOTE: depends_on causes tokamak-app-deployer to re-run, which may
     # redeploy contracts with new addresses. We extract addresses AFTER
     # L2 starts to get the final deployed addresses.
     log_step 5 "Starting L2 (ZK-DEX guest program)"
-    compose_cmd up -d ethrex_l2
+    compose_cmd up -d tokamak-app-l2
 
     if ! wait_for_container_rpc "http://localhost:$L2_PORT" "L2" 120; then
         log_error "L2 failed to start. Check: $0 logs l2"
@@ -227,8 +227,8 @@ do_start() {
     # Extract deployed contract addresses AFTER L2 is up
     # (deployer may run again due to depends_on, so we get the final addresses)
     log_info "Extracting deployed contract addresses..."
-    docker exec ethrex_l2 cat /env/.env > "$L2_DIR/.zk-dex-deployed.env" 2>/dev/null || \
-        docker cp contract_deployer:/env/.env "$L2_DIR/.zk-dex-deployed.env" 2>/dev/null || true
+    docker exec tokamak-app-l2 cat /env/.env > "$L2_DIR/.zk-dex-deployed.env" 2>/dev/null || \
+        docker cp tokamak-app-deployer:/env/.env "$L2_DIR/.zk-dex-deployed.env" 2>/dev/null || true
     if [[ -f "$L2_DIR/.zk-dex-deployed.env" ]]; then
         log_info "Deployed addresses saved to .zk-dex-deployed.env"
         grep -E "^ETHREX_WATCHER_BRIDGE_ADDRESS=" "$L2_DIR/.zk-dex-deployed.env" || true
@@ -245,7 +245,7 @@ do_start() {
             gpu_label="GPU accelerated"
         fi
         log_step 6 "Starting SP1 Prover ($gpu_label)"
-        compose_cmd up -d ethrex_prover
+        compose_cmd up -d tokamak-app-prover
         prover_status="running (SP1, $gpu_label)"
         log_info "Prover started"
     else
@@ -286,10 +286,10 @@ do_logs() {
     local component="${1:-}"
 
     case "$component" in
-        l1)     compose_cmd logs -f ethrex_l1 ;;
-        l2)     compose_cmd logs -f ethrex_l2 ;;
-        prover) compose_cmd logs -f ethrex_prover ;;
-        deploy) compose_cmd logs contract_deployer ;;
+        l1)     compose_cmd logs -f tokamak-app-l1 ;;
+        l2)     compose_cmd logs -f tokamak-app-l2 ;;
+        prover) compose_cmd logs -f tokamak-app-prover ;;
+        deploy) compose_cmd logs tokamak-app-deployer ;;
         "")     compose_cmd logs -f ;;
         *)
             log_error "Unknown component: $component"

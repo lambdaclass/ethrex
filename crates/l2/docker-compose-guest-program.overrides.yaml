@@ -9,13 +9,13 @@
 #   make init-guest-program PROGRAM=zk-dex
 
 services:
-  ethrex_l2:
+  tokamak-app-l2:
     environment:
       - ETHREX_GUEST_PROGRAM_ID=${ETHREX_GUEST_PROGRAM_ID:-evm-l2}
     volumes:
       - ./programs.toml:/etc/ethrex/programs.toml
 
-  ethrex_prover:
+  tokamak-app-prover:
     environment:
       - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml
     volumes:
@@ -23,5 +23,5 @@ services:
     command: >
       l2 prover
       --backend exec
-      --proof-coordinators tcp://ethrex_l2:3900
+      --proof-coordinators tcp://tokamak-app-l2:3900
       --programs-config /etc/ethrex/programs.toml

@@ -1,7 +1,8 @@
 # ZK-DEX 프로젝트 진행현황
 
 **작성일**: 2026-02-23
-**브랜치**: `feat/zk/sp1-zk-dex-e2e` (from `feat/zk/guest-program-modularization`)
+**최종 업데이트**: 2026-02-27
+**브랜치**: `feat/zk/zk-dex-full-circuit` (from `feat/zk/sp1-zk-dex-e2e`)
 
 ---
 
@@ -167,6 +168,17 @@
 - [x] SP1 벤치마크 바이너리
 - [x] Cycle-tracker 계측
 
+**출금 UX 최적화 (Phase 4)**:
+- [x] 출금 감지 시 조건부 즉시 배치 커밋 (`has_pending_withdrawals()` + 증명 상태 확인)
+- [x] 즉시 커밋 조건: 출금 TX 있음 + 증명 대기 배치 없음 (`committed ≤ verified`)
+- [x] Withdrawal Tracker UI (4단계 상태 추적 + Claim 버튼)
+
+**Docker 인프라 (Phase 4)**:
+- [x] Blockscout restart policy + heavy indexer 비활성화
+- [x] ethrex → TokamakAppL2 ZK-DEX 리브랜딩 (docker-compose, dashboard, bridge UI)
+- [x] Dashboard에 L2 genesis 컨트랙트 섹션 추가
+- [x] 로컬 배포 주소 파일 (`.zk-dex-deployed.env`)
+
 ### Phase 2: L1/L2 환경 구성 + 배포 자동화 — 완료
 
 | 날짜 | 작업 | 커밋 |
@@ -209,6 +221,28 @@
 | | - Batch 2: 15.8M cycles, 6분 46초 proving, L1 검증 성공 | |
 | | - Groth16 wrapping 고정 ~17초, core proving이 지배적 | |
 
+### Phase 4: Docker 인프라 + 출금 UX 최적화 — 완료
+
+| 날짜 | 작업 | 커밋 |
+|------|------|------|
+| 2026-02-26 | **Genesis state root 검증 + 프루버 버전 불일치 수정** | `f329a93` |
+| | - Genesis 상태 root 검증 로직 추가 | |
+| | - 프루버 버전 불일치 문제 수정 | |
+| 2026-02-27 | **출금 감지 시 조건부 즉시 배치 커밋 (Early Batch Commit)** | `23759c9` |
+| | - `l1_committer.rs`에 `has_pending_withdrawals()` 메서드 추가 | |
+| | - 미커밋 블록 중 BRIDGE_ADDRESS(0x...ffff) 대상 TX 감지 | |
+| | - 즉시 커밋 조건: 출금 감지 **+** 증명 대기 배치 없음 (`committed ≤ verified`) | |
+| | - 증명 중인 배치가 있으면 프루버가 바빠서 즉시 커밋 불필요 → 기존 타이머 대기 | |
+| | - `get_last_verified_batch()` L1 조회로 증명 상태 판단 | |
+| 2026-02-27 | **Docker Tools 안정화 + TokamakAppL2 브랜딩** | `931fad9` |
+| | - Blockscout restart policy + 무거운 indexer 비활성화 | |
+| | - ethrex → TokamakAppL2 ZK-DEX 전체 리브랜딩 | |
+| | - Dashboard에 L2 genesis 컨트랙트 섹션 추가 | |
+| | - Withdrawal Tracker에 Claim 버튼 + 상태 추적 UI 추가 | |
+| | - 로컬 배포 주소 파일 (`.zk-dex-deployed.env`) 추가 | |
+| 2026-02-27 | **SP1 ZK-DEX 인프라 비용 분석 문서** | `6767b30` |
+| | - GPU/CPU 프루버 비용 비교, 운영 비용 추정 | |
+
 ### 해결된 주요 이슈
 
 | 이슈 | 증상 | 근본 원인 | 해결 |
@@ -227,6 +261,11 @@
 - [x] Circom 회로 컴파일 + trusted setup 실행 (1회, 오프라인) → 6개 회로 컴파일 + PTAU 14 setup 완료
 - [x] End-to-end 증명 생성 및 L1 검증 — Batch 1~9 SP1 Groth16 증명 + L1 온체인 검증 성공
 - [x] 대규모 배치 벤치마크 — 200 ETH transfers, 15.8M cycles, 6분 46초 proving
+- [x] 출금 시 즉시 배치 커밋 → `has_pending_withdrawals()` + early commit 구현
+- [x] Docker 인프라 안정화 → Blockscout restart, indexer 최적화, TokamakAppL2 리브랜딩
+- [x] Withdrawal Claim UI → withdraw-status.html에 Claim 버튼 + 4단계 상태 추적
+- [x] 인프라 비용 분석 문서 → `sp1-zk-dex-infra-cost-analysis.md`
+- [ ] 출금 E2E 테스트 (L2 출금 → 즉시 배치 커밋 → L1 Claim)
 - [ ] 실제 DEX 트랜잭션 (mint/spend/makeOrder) 벤치마크
 - [ ] 프론트엔드 DEX 트레이딩 UI 개발
 - [ ] Native ARM 벤치마크 (Rosetta 2 없이)
@@ -322,17 +361,22 @@ cast call $ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS "lastVerifiedBatch()(uint2
 
 ### 남은 작업
 
-1. **실제 DEX 트랜잭션 벤치마크**
+1. **출금 E2E 테스트** (우선순위: 높음)
+   - L1→L2 deposit → L2 withdraw → 즉시 배치 커밋 → L1 Claim 전체 흐름 검증
+   - `"Pending withdrawal detected, triggering early batch commit"` 로그 확인
+   - withdraw-status.html의 4단계 상태 추적 동작 확인
+
+2. **실제 DEX 트랜잭션 벤치마크**
    - mint/spend/makeOrder/takeOrder/settleOrder 트랜잭션을 L2에 전송
    - Groth16 client-side 증명 생성 필요 (snarkjs, circomlibjs)
    - DEX 트랜잭션의 SP1 proving overhead 측정
 
-2. **프론트엔드 DEX 트레이딩 UI**
+3. **프론트엔드 DEX 트레이딩 UI**
    - `platform/client/`는 현재 Guest Program Store (배포 관리 플랫폼)
    - DEX 전용 트레이딩 UI (swap, order book, trade history) 미구현
    - BabyJubJub 키 관리 + ECDH 노트 암호화 필요
 
-3. **Native ARM 벤치마크**
+4. **Native ARM 벤치마크**
    - 현재: Rosetta 2 / x86_64 에뮬레이션 (M4 Max)
    - SP1 Docker Groth16 wrapping은 x86_64 전용
    - Native ARM proving은 compressed proof만 가능 (Groth16 wrapping 불가)

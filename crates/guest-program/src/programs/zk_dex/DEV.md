@@ -201,22 +201,21 @@ storage slots need Merkle proofs. For each operation:
 
 - **mint**: `tx.value` transfers ETH from sender to contract (handled by `app_execution.rs`)
 - **liquidate**: Contract → recipient ETH transfer (handled in `execute_liquidate`)
+- **DAI**: Not yet supported (requires DAI contract storage proofs)
 
-## Test Coverage (45 tests)
+## Test Coverage (39 tests)
 
-- `storage.rs`: 9 tests (slot computation, bytes short/long encoding verification)
-- `events.rs`: 5 tests (log format, topic uniqueness, signature verification)
+- `storage.rs`: 7 tests (slot computation, bytes encoding)
+- `events.rs`: 3 tests (log format verification)
 - `notes.rs`: 4 tests (mint, spend, liquidate, convertNote)
-- `orders.rs`: 4 tests (makeOrder, takeOrder, settleOrder lifecycle, RLP decoding)
+- `orders.rs`: 3 tests (makeOrder, takeOrder, RLP decoding)
 - `circuit.rs`: 16 tests (classify_tx, execute, gas, logs)
-- `mod.rs`: 4 tests (program metadata, ELF, backend)
-- `traits.rs`: 2 tests (serialize_input edge cases — requires `l2` feature)
+- `mod.rs`: 5 tests (program metadata, ELF, serialization)
 
 ## TODO
 
-- [x] Verify storage slot numbers with manual trace (slot 3, 4, 14 confirmed)
-- [x] Add settleOrder old-note slots to witness analyzer (makerNote, takerStakeNote from calldata)
-- [x] Fix witness analyzer for storage-dependent slots (parentNote + makeOrder order slots)
+- [ ] Verify storage slot numbers with `forge inspect ZkDex storage-layout`
 - [ ] Measure actual EVM gas costs and update constants
+- [ ] Add DAI token support for liquidate (requires DAI contract proofs)
+- [ ] Add settleOrder old-note slots to witness analyzer (currently relies on ExecutionWitness)
 - [ ] Docker E2E test: deploy ZkDex → call each function → SP1 prove → L1 verify
-- [ ] L2 제네시스에 ZkDex 컨트랙트 포함 → `tokamak-notes/guest-program-modularization/13-zkdex-genesis-deployment.md` 참조

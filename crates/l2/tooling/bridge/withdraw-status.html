@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ethrex ZK-DEX Withdrawal Tracker</title>
+  <title>TokamakAppL2 ZK-DEX Withdrawal Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
   <style>
     :root {
@@ -198,6 +198,10 @@
       background: rgba(99, 102, 241, 0.15);
       color: var(--accent);
     }
+    .status-badge.finalized {
+      background: rgba(136, 136, 160, 0.15);
+      color: var(--text-dim);
+    }
 
     .empty-state {
       text-align: center;
@@ -377,6 +381,43 @@
       background: rgba(99, 102, 241, 0.1);
     }
 
+    /* Claim section */
+    .claim-section {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .btn-claim {
+      background: var(--success);
+      color: #fff;
+      font-weight: 600;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      border: none;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    .btn-claim:hover:not(:disabled) { background: #16a34a; }
+    .btn-claim:disabled { background: var(--surface-3); color: var(--text-dim); cursor: not-allowed; }
+    .btn-claim.claiming {
+      pointer-events: none;
+      opacity: 0.8;
+    }
+    .claim-status {
+      font-size: 12px;
+      color: var(--text-dim);
+      word-break: break-all;
+    }
+    .claim-status a { color: var(--accent); text-decoration: none; }
+    .claim-status a:hover { text-decoration: underline; }
+    .claim-status.error { color: var(--error); }
+    .claim-status.success { color: var(--success); }
+
     .auto-refresh-note {
       text-align: center;
       font-size: 11px;
@@ -397,7 +438,7 @@
 </head>
 <body>
   <div class="header">
-    <h1><span>ethrex</span> Withdrawal Tracker</h1>
+    <h1><span>TokamakAppL2</span> Withdrawal Tracker</h1>
     <div class="nav-links">
       <a href="/">Dashboard</a>
       <a href="/bridge.html">Bridge</a>
@@ -523,9 +564,17 @@
           </div>
         </div>
 
+        <div class="claim-section" id="claimSection" style="display:none;">
+          <button class="btn btn-claim" id="claimBtn" disabled onclick="claimWithdrawal()">
+            Claim Withdrawal
+          </button>
+          <div class="claim-status" id="claimStatus"></div>
+        </div>
+
         <div class="detail-links">
           <a id="linkL2Tx" href="#" target="_blank">View on L2 Explorer</a>
           <a id="linkL1Proposer" href="#" target="_blank">OnChainProposer</a>
+          <a id="linkClaimTx" href="#" target="_blank" style="display:none;background:rgba(34,197,94,0.1);border-color:var(--success);color:var(--success);">Claim TX on L1</a>
         </div>
       </div>
     </div>
@@ -546,11 +595,17 @@
     let currentPage = 0;
     let filterMine = false;
     let selectedTxHash = null;
+    let selectedWithdrawal = null;
     let refreshTimer = null;
+    const claimedTxMap = {};  // l2TxHash -> { hash, timestamp }
 
     // L1 batch status (cached per refresh cycle)
     let lastCommitted = 0n;
     let lastVerified = 0n;
+
+    // L1 event caches: batchNumber(string) -> { timestamp, txHash }
+    const commitEventCache = {};
+    const verifyEventCache = {};
 
     function getL1Explorer() { return CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083'; }
     function getL2Explorer() { return CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082'; }
@@ -640,10 +695,13 @@
           document.getElementById('connectBtn').textContent = shortenAddr(connectedAddress);
           document.getElementById('walletLabel').textContent = shortenAddr(connectedAddress);
           applyFilterAndRender();
+          if (selectedWithdrawal) updateClaimSection(selectedWithdrawal);
         });
 
         // Re-render to highlight user's withdrawals
         applyFilterAndRender();
+        // Update claim section if detail card is open
+        if (selectedWithdrawal) updateClaimSection(selectedWithdrawal);
       } catch (err) {
         console.error('Connection failed:', err);
       }
@@ -676,7 +734,14 @@
           amount: BigInt(log.topics[3]),
           _batch: null,
           _stage: 0,
-          _timestamp: null
+          _timestamp: null,
+          _claimed: false,
+          _claimTxHash: null,
+          _claimTimestamp: null,
+          _commitTimestamp: null,
+          _commitTxHash: null,
+          _verifyTimestamp: null,
+          _verifyTxHash: null
         }));
 
         // Fetch block timestamps
@@ -711,6 +776,11 @@
           }
         }
 
+        // 2b. Fetch L1 batch commit/verify events for timestamps & tx hashes
+        if (proposerAddr) {
+          await fetchBatchEvents(l1, proposerAddr);
+        }
+
         // 3. Get batch number for each withdrawal
         const batchPromises = allWithdrawals.map(async (w) => {
           try {
@@ -727,12 +797,143 @@
         for (let i = 0; i < allWithdrawals.length; i++) {
           allWithdrawals[i]._batch = batches[i];
           allWithdrawals[i]._stage = computeStage(batches[i], lastCommitted, lastVerified);
+
+          // Attach commit/verify timestamps & tx hashes from L1 event cache
+          if (batches[i] !== null) {
+            const bKey = batches[i].toString();
+            const ci = commitEventCache[bKey];
+            const vi = verifyEventCache[bKey];
+            if (ci) { allWithdrawals[i]._commitTimestamp = ci.timestamp; allWithdrawals[i]._commitTxHash = ci.txHash; }
+            if (vi) { allWithdrawals[i]._verifyTimestamp = vi.timestamp; allWithdrawals[i]._verifyTxHash = vi.txHash; }
+          }
+        }
+
+        // Check on-chain claim status for stage 3 (claimable) withdrawals
+        const bridgeAddr = CONFIG ? CONFIG.bridge_address : null;
+        if (bridgeAddr) {
+          const claimableWithdrawals = allWithdrawals.filter(w => w._stage >= 3 && !claimedTxMap[w.txHash]);
+          if (claimableWithdrawals.length > 0) {
+            try {
+              const bridge = new ethers.Contract(bridgeAddr, [
+                "function claimedWithdrawalIDs(uint256) view returns (bool)",
+                "event WithdrawalClaimed(uint256 indexed withdrawalId)"
+              ], l1);
+
+              // Get proofs for claimable withdrawals to obtain messageIds
+              const proofPromises = claimableWithdrawals.map(w =>
+                l2.send("ethrex_getL1MessageProof", [w.txHash]).catch(() => null)
+              );
+              const proofs = await Promise.all(proofPromises);
+
+              // Check claimedWithdrawalIDs for each
+              const checkPromises = proofs.map((proof, i) => {
+                if (!proof || proof.length === 0) return Promise.resolve({ claimed: false });
+                const messageId = BigInt(proof[0].message_id);
+                return bridge.claimedWithdrawalIDs(messageId)
+                  .then(claimed => ({ claimed, messageId }))
+                  .catch(() => ({ claimed: false }));
+              });
+              const claimResults = await Promise.all(checkPromises);
+
+              // Fetch WithdrawalClaimed events for claimed ones
+              const claimedIndices = [];
+              for (let i = 0; i < claimResults.length; i++) {
+                if (claimResults[i].claimed) {
+                  claimableWithdrawals[i]._claimed = true;
+                  claimedIndices.push(i);
+                }
+              }
+
+              // Batch-fetch claim tx hashes from events
+              const eventPromises = claimedIndices.map(i => {
+                const messageId = claimResults[i].messageId;
+                return bridge.queryFilter(bridge.filters.WithdrawalClaimed(messageId), 0, 'latest')
+                  .then(events => ({ index: i, events }))
+                  .catch(() => ({ index: i, events: [] }));
+              });
+              const eventResults = await Promise.all(eventPromises);
+
+              for (const { index, events } of eventResults) {
+                const w = claimableWithdrawals[index];
+                if (events.length > 0) {
+                  w._claimTxHash = events[0].transactionHash;
+                  try {
+                    const block = await l1.getBlock(events[0].blockNumber);
+                    if (block) w._claimTimestamp = block.timestamp * 1000;
+                  } catch {}
+                  claimedTxMap[w.txHash] = { hash: w._claimTxHash, timestamp: w._claimTimestamp };
+                }
+              }
+            } catch (err) {
+              console.warn('Failed to check on-chain claim status:', err);
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to load withdrawal logs:', err);
       }
 
+      // Apply cached claim status
+      for (const w of allWithdrawals) {
+        const cached = claimedTxMap[w.txHash];
+        if (cached) {
+          w._claimed = true;
+          w._claimTxHash = cached.hash;
+          w._claimTimestamp = cached.timestamp;
+        }
+      }
+
       applyFilterAndRender();
+
+      // Auto-update open detail card with fresh data
+      if (selectedTxHash) {
+        const updated = allWithdrawals.find(w => w.txHash === selectedTxHash);
+        if (updated) {
+          selectedWithdrawal = updated;
+          showDetail(updated);
+        }
+      }
+    }
+
+    // ── Fetch L1 batch commit/verify events ──
+    async function fetchBatchEvents(l1, proposerAddr) {
+      try {
+        const proposer = new ethers.Contract(proposerAddr, [
+          "event BatchCommitted(bytes32 indexed newStateRoot)",
+          "event BatchVerified(uint256 indexed lastVerifiedBatch)"
+        ], l1);
+
+        // BatchCommitted: events are sequential (1st = batch 1, 2nd = batch 2, ...)
+        const commitEvents = await proposer.queryFilter(proposer.filters.BatchCommitted(), 0, 'latest');
+        const l1BlockCache = {};
+        for (let i = 0; i < commitEvents.length; i++) {
+          const batchNum = (i + 1).toString();
+          if (!commitEventCache[batchNum]) {
+            const bn = commitEvents[i].blockNumber;
+            if (l1BlockCache[bn] === undefined) {
+              try { const b = await l1.getBlock(bn); l1BlockCache[bn] = b ? b.timestamp : null; }
+              catch { l1BlockCache[bn] = null; }
+            }
+            commitEventCache[batchNum] = { timestamp: l1BlockCache[bn], txHash: commitEvents[i].transactionHash };
+          }
+        }
+
+        // BatchVerified: indexed by batch number
+        const verifyEvents = await proposer.queryFilter(proposer.filters.BatchVerified(), 0, 'latest');
+        for (const ev of verifyEvents) {
+          const batchNum = ev.args[0].toString();
+          if (!verifyEventCache[batchNum]) {
+            const bn = ev.blockNumber;
+            if (l1BlockCache[bn] === undefined) {
+              try { const b = await l1.getBlock(bn); l1BlockCache[bn] = b ? b.timestamp : null; }
+              catch { l1BlockCache[bn] = null; }
+            }
+            verifyEventCache[batchNum] = { timestamp: l1BlockCache[bn], txHash: ev.transactionHash };
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch batch events:', err);
+      }
     }
 
     function computeStage(batchNumber, committed, verified) {
@@ -801,13 +1002,18 @@
         tr.onclick = () => { selectedTxHash = w.txHash; showDetail(w); applyFilterAndRender(); };
 
         const amountEth = parseFloat(ethers.formatEther(w.amount)).toFixed(4);
+        const txLink = getL2Explorer() + '/tx/' + w.txHash;
+
+        const stageBadge = w._claimed
+          ? '<span class="status-badge finalized">Finalized</span>'
+          : renderStageBadge(w._stage);
 
         tr.innerHTML =
-          '<td class="mono">' + shortenHash(w.txHash) + '</td>' +
+          '<td class="mono"><a href="' + txLink + '" target="_blank" style="color:var(--accent);text-decoration:none;" onclick="event.stopPropagation();">' + shortenHash(w.txHash) + '</a></td>' +
           '<td>' + amountEth + ' ETH</td>' +
           '<td class="mono">' + shortenAddr(w.sender) + '</td>' +
           '<td class="mono">' + shortenAddr(w.receiver) + '</td>' +
-          '<td>' + renderStageBadge(w._stage) + '</td>';
+          '<td>' + stageBadge + '</td>';
         tbody.appendChild(tr);
       }
 
@@ -846,6 +1052,7 @@
 
     // ── Detail view ──
     function showDetail(w) {
+      selectedWithdrawal = w;
       const card = document.getElementById('detailCard');
       card.classList.add('visible');
 
@@ -859,11 +1066,19 @@
       const stage = w._stage;
       const batch = w._batch;
 
+      const l1Exp = getL1Explorer();
+      const l2Exp = getL2Explorer();
+
+      // Helper: format a tx link
+      function txLink(explorer, hash) {
+        return ' &mdash; TX: <a href="' + explorer + '/tx/' + hash + '" target="_blank" class="mono" style="color:var(--accent);text-decoration:none;">' + shortenHash(hash) + '</a>';
+      }
+
       // Stage 1: always done (we only see confirmed logs)
-      const tsInfo = w._timestamp
-        ? 'Block #' + w.blockNumber + ' &mdash; ' + formatTimestamp(w._timestamp) + ' (' + timeAgo(w._timestamp) + ')'
-        : 'Block #' + w.blockNumber;
-      setStage(1, 'done', tsInfo);
+      let s1 = 'Block #' + w.blockNumber;
+      if (w._timestamp) s1 += ' &mdash; ' + formatTimestamp(w._timestamp) + ' (' + timeAgo(w._timestamp) + ')';
+      s1 += txLink(l2Exp, w.txHash);
+      setStage(1, 'done', s1);
       setStageLine(1, true);
 
       // Stage 2
@@ -875,7 +1090,10 @@
           'Batch #' + batch.toString() + ' &mdash; waiting for commit (last committed: #' + lastCommitted.toString() + ')');
         setStageLine(2, false);
       } else {
-        setStage(2, 'done', 'Batch #' + batch.toString() + ' committed');
+        let s2 = 'Batch #' + batch.toString() + ' committed';
+        if (w._commitTimestamp) s2 += ' &mdash; ' + formatTimestamp(w._commitTimestamp) + ' (' + timeAgo(w._commitTimestamp) + ')';
+        if (w._commitTxHash) s2 += txLink(l1Exp, w._commitTxHash);
+        setStage(2, 'done', s2);
         setStageLine(2, true);
       }
 
@@ -888,16 +1106,27 @@
           'Batch #' + batch.toString() + ' &mdash; waiting for ZK proof (last verified: #' + lastVerified.toString() + ')');
         setStageLine(3, false);
       } else {
-        setStage(3, 'done', 'Batch #' + batch.toString() + ' verified');
+        let s3 = 'Batch #' + batch.toString() + ' verified';
+        if (w._verifyTimestamp) s3 += ' &mdash; ' + formatTimestamp(w._verifyTimestamp) + ' (' + timeAgo(w._verifyTimestamp) + ')';
+        if (w._verifyTxHash) s3 += txLink(l1Exp, w._verifyTxHash);
+        setStage(3, 'done', s3);
         setStageLine(3, true);
       }
 
       // Stage 4
       if (stage < 3) {
         setStage(4, 'locked', 'Waiting for batch verification');
+      } else if (w._claimed) {
+        let s4 = 'Claimed on L1';
+        if (w._claimTimestamp) s4 += ' &mdash; ' + new Date(w._claimTimestamp).toLocaleString();
+        if (w._claimTxHash) s4 += txLink(l1Exp, w._claimTxHash);
+        setStage(4, 'done', s4);
       } else {
         setStage(4, 'done', 'Ready to claim on L1 via CommonBridge.claimWithdrawal()');
       }
+
+      // Claim section
+      updateClaimSection(w);
 
       // Links
       document.getElementById('linkL2Tx').href = getL2Explorer() + '/tx/' + w.txHash;
@@ -925,6 +1154,221 @@
       document.querySelectorAll('.withdrawals-table tr.clickable').forEach(tr => {
         tr.classList.remove('selected');
       });
+    }
+
+    // ── Claim withdrawal ──
+    function showClaimedState(section, btn, status, claimTxLink, claimTxHash, claimTimestamp) {
+      section.style.display = '';
+      btn.disabled = true;
+      btn.classList.remove('claiming');
+      btn.textContent = 'Claimed';
+      status.className = 'claim-status success';
+      let msg = 'Already claimed on L1';
+      if (claimTimestamp) {
+        msg = 'Claimed at ' + new Date(claimTimestamp).toLocaleString();
+      }
+      if (claimTxHash) {
+        msg += ' &mdash; TX: <a href="' + getL1Explorer() + '/tx/' + claimTxHash + '" target="_blank" class="mono">' + shortenHash(claimTxHash) + '</a>';
+        claimTxLink.href = getL1Explorer() + '/tx/' + claimTxHash;
+        claimTxLink.style.display = '';
+      }
+      status.innerHTML = msg;
+    }
+
+    async function updateClaimSection(w) {
+      const section = document.getElementById('claimSection');
+      const btn = document.getElementById('claimBtn');
+      const status = document.getElementById('claimStatus');
+      const claimTxLink = document.getElementById('linkClaimTx');
+
+      // Check if already claimed in this session
+      const claimed = claimedTxMap[w.txHash];
+      if (claimed) {
+        showClaimedState(section, btn, status, claimTxLink, claimed.hash, claimed.timestamp);
+        return;
+      }
+
+      // Reset state
+      btn.disabled = true;
+      btn.classList.remove('claiming');
+      btn.textContent = 'Claim Withdrawal';
+      status.textContent = '';
+      status.className = 'claim-status';
+      claimTxLink.style.display = 'none';
+
+      if (w._stage < 3) {
+        section.style.display = 'none';
+        return;
+      }
+
+      section.style.display = '';
+      status.textContent = 'Checking on-chain claim status...';
+
+      // Check on-chain if already claimed
+      try {
+        const { l1, l2 } = getProviders();
+        const proofResult = await l2.send("ethrex_getL1MessageProof", [w.txHash]);
+
+        if (proofResult && proofResult.length > 0) {
+          const messageId = BigInt(proofResult[0].message_id);
+          const bridgeAddr = CONFIG ? CONFIG.bridge_address : null;
+
+          if (bridgeAddr) {
+            const bridge = new ethers.Contract(bridgeAddr, [
+              "function claimedWithdrawalIDs(uint256) view returns (bool)",
+              "event WithdrawalClaimed(uint256 indexed withdrawalId)"
+            ], l1);
+
+            const isClaimed = await bridge.claimedWithdrawalIDs(messageId);
+
+            if (isClaimed) {
+              // Find the claim TX from WithdrawalClaimed event
+              let claimTxHash = null;
+              let claimTimestamp = null;
+              try {
+                const filter = bridge.filters.WithdrawalClaimed(messageId);
+                const events = await bridge.queryFilter(filter, 0, 'latest');
+                if (events.length > 0) {
+                  claimTxHash = events[0].transactionHash;
+                  const block = await l1.getBlock(events[0].blockNumber);
+                  if (block) claimTimestamp = block.timestamp * 1000;
+                }
+              } catch (e) {
+                console.warn('Failed to find WithdrawalClaimed event:', e);
+              }
+
+              // Cache it
+              claimedTxMap[w.txHash] = { hash: claimTxHash, timestamp: claimTimestamp };
+              // Update table badge
+              applyFilterAndRender();
+
+              showClaimedState(section, btn, status, claimTxLink, claimTxHash, claimTimestamp);
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to check on-chain claim status:', e);
+      }
+
+      // Not claimed yet - show claim button
+      status.textContent = '';
+
+      if (!connectedAddress) {
+        btn.disabled = true;
+        status.textContent = 'Connect wallet to claim';
+        return;
+      }
+
+      if (connectedAddress !== w.receiver.toLowerCase()) {
+        btn.disabled = true;
+        status.textContent = 'Only the receiver (' + shortenAddr(w.receiver) + ') can claim';
+        return;
+      }
+
+      btn.disabled = false;
+    }
+
+    async function claimWithdrawal() {
+      if (!selectedWithdrawal) return;
+      const w = selectedWithdrawal;
+      const btn = document.getElementById('claimBtn');
+      const status = document.getElementById('claimStatus');
+
+      // Ensure wallet connected
+      if (!connectedAddress) {
+        await connectWallet();
+        if (!connectedAddress) return;
+      }
+
+      btn.disabled = true;
+      btn.classList.add('claiming');
+      btn.textContent = 'Getting proof...';
+      status.textContent = '';
+      status.className = 'claim-status';
+
+      try {
+        // 1. Get proof from L2
+        const { l2 } = getProviders();
+        const proofResult = await l2.send("ethrex_getL1MessageProof", [w.txHash]);
+
+        if (!proofResult || proofResult.length === 0) {
+          throw new Error('No proof data returned. The withdrawal may not be ready for claiming.');
+        }
+
+        const proofData = proofResult[0];
+        const batchNumber = BigInt(proofData.batch_number);
+        const messageId = BigInt(proofData.message_id);
+        const merkleProof = proofData.merkle_proof || [];
+
+        btn.textContent = 'Switch to L1...';
+
+        // 2. Switch MetaMask to L1 chain
+        const l1ChainId = CONFIG ? CONFIG.l1_chain_id : null;
+        if (l1ChainId) {
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: '0x' + BigInt(l1ChainId).toString(16) }]
+            });
+          } catch (switchErr) {
+            // User may have rejected or chain not added — continue anyway
+            console.warn('Chain switch failed:', switchErr);
+          }
+        }
+
+        btn.textContent = 'Confirm in wallet...';
+
+        // 3. Send claimWithdrawal tx via MetaMask
+        const browserProvider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await browserProvider.getSigner();
+
+        const bridgeAddr = CONFIG ? CONFIG.bridge_address : null;
+        if (!bridgeAddr) throw new Error('Bridge address not found in config');
+
+        const bridge = new ethers.Contract(bridgeAddr, [
+          "function claimWithdrawal(uint256,uint256,uint256,bytes32[])"
+        ], signer);
+
+        const tx = await bridge.claimWithdrawal(w.amount, batchNumber, messageId, merkleProof);
+
+        btn.textContent = 'Claiming...';
+        status.innerHTML = 'TX: <a href="' + getL1Explorer() + '/tx/' + tx.hash + '" target="_blank" class="mono">' + shortenHash(tx.hash) + '</a>';
+
+        // 4. Wait for confirmation
+        await tx.wait();
+
+        // Save claim tx
+        const claimTime = Date.now();
+        claimedTxMap[w.txHash] = { hash: tx.hash, timestamp: claimTime };
+
+        btn.textContent = 'Claimed';
+        btn.classList.remove('claiming');
+        status.className = 'claim-status success';
+        const claimTimeStr = new Date(claimTime).toLocaleString();
+        status.innerHTML = 'Claimed at ' + claimTimeStr + ' &mdash; TX: <a href="' + getL1Explorer() + '/tx/' + tx.hash + '" target="_blank" class="mono">' + shortenHash(tx.hash) + '</a>';
+
+        // Show claim TX link in detail-links
+        const claimTxLink = document.getElementById('linkClaimTx');
+        claimTxLink.href = getL1Explorer() + '/tx/' + tx.hash;
+        claimTxLink.style.display = '';
+
+        // Re-render table to update badge
+        applyFilterAndRender();
+
+      } catch (err) {
+        console.error('Claim failed:', err);
+        btn.disabled = false;
+        btn.classList.remove('claiming');
+        btn.textContent = 'Claim Withdrawal';
+        status.className = 'claim-status error';
+
+        if (err.code === 'ACTION_REJECTED' || err.code === 4001) {
+          status.textContent = 'Transaction rejected by user';
+        } else {
+          status.textContent = 'Error: ' + (err.reason || err.shortMessage || err.message || 'Unknown error');
+        }
+      }
     }
 
     // ── Auto-refresh ──

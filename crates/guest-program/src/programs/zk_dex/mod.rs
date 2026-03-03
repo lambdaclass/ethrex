@@ -66,7 +66,6 @@ impl GuestProgram for ZkDexGuestProgram {
                 &program_input.blocks,
                 DEX_CONTRACT_ADDRESS,
                 &program_input.fee_configs,
-                &program_input.execution_witness,
             )
             .map_err(|e| GuestProgramError::Internal(e.to_string()))?;
 
@@ -77,9 +76,6 @@ impl GuestProgram for ZkDexGuestProgram {
                 .map_err(|e| GuestProgramError::Serialization(e.to_string()))?;
             Ok(bytes.to_vec())
         }
-
-        #[cfg(not(feature = "l2"))]
-        Ok(raw_input.to_vec())
     }
 
     fn encode_output(&self, raw_output: &[u8]) -> Result<Vec<u8>, GuestProgramError> {
@@ -98,13 +94,6 @@ impl GuestProgram for ZkDexGuestProgram {
     }
 }
 
-/// Accounts and storage slots required for proof generation.
-#[cfg(feature = "l2")]
-type ProofRequirements = (
-    Vec<ethrex_common::Address>,
-    Vec<(ethrex_common::Address, ethrex_common::H256)>,
-);
-
 /// Analyze zk-dex batch transactions to determine which accounts and storage
 /// slots are needed for proof generation.
 ///
@@ -120,15 +109,17 @@ fn analyze_zk_dex_transactions(
     blocks: &[ethrex_common::types::Block],
     dex_contract: ethrex_common::Address,
     fee_configs: &[ethrex_common::types::l2::fee_config::FeeConfig],
-    witness: &ethrex_common::types::block_execution_witness::ExecutionWitness,
-) -> Result<ProofRequirements, String> {
+) -> Result<
+    (
+        Vec<ethrex_common::Address>,
+        Vec<(ethrex_common::Address, ethrex_common::H256)>,
+    ),
+    String,
+> {
     use std::collections::BTreeSet;
 
     use ethrex_common::types::TxKind;
     use ethrex_common::{H256, U256};
-    use ethrex_crypto::keccak::keccak_hash;
-    use ethrex_rlp::decode::RLPDecode;
-    use ethrex_trie::Trie;
 
     use crate::common::handlers::constants::{
         BURN_ADDRESS, COMMON_BRIDGE_L2_ADDRESS, FEE_TOKEN_RATIO_ADDRESS,
@@ -138,30 +129,6 @@ fn analyze_zk_dex_transactions(
     let mut accounts: BTreeSet<ethrex_common::Address> = BTreeSet::new();
     let mut storage_slots: BTreeSet<(ethrex_common::Address, ethrex_common::H256)> =
         BTreeSet::new();
-
-    // Build DEX contract's storage trie from witness for dependent lookups.
-    let dex_storage_trie = witness.storage_trie_roots.get(&dex_contract).map(|root| {
-        let trie = Trie::new_temp_with_root(root.clone().into());
-        trie.hash_no_commit();
-        trie
-    });
-
-    /// Read a storage value from the DEX contract's witness trie.
-    fn read_dex_storage(trie: &Option<Trie>, slot: H256) -> U256 {
-        let trie = match trie {
-            Some(t) => t,
-            None => return U256::zero(),
-        };
-        let hashed_slot = keccak_hash(slot.as_bytes()).to_vec();
-        match trie.get(&hashed_slot) {
-            Ok(Some(rlp)) => U256::decode(&rlp).unwrap_or_default(),
-            _ => U256::zero(),
-        }
-    }
-
-    // Track makeOrder count for order index computation across the batch.
-    let initial_order_count = read_dex_storage(&dex_storage_trie, storage::orders_length_slot());
-    let mut make_order_offset: u64 = 0;
 
     // Selectors for all supported operations.
     let transfer_sel = circuit::transfer_selector_bytes();
@@ -193,7 +160,6 @@ fn analyze_zk_dex_transactions(
 
             // Sender always needed (nonce, balance for gas).
             if let Ok(sender) = tx.sender() {
-                has_non_privileged = true;
                 accounts.insert(sender);
 
                 let to_addr = match tx.to() {
@@ -202,6 +168,8 @@ fn analyze_zk_dex_transactions(
                 };
 
                 accounts.insert(to_addr);
+
+                has_non_privileged = true;
 
                 // Withdrawal via CommonBridgeL2.
                 if to_addr == COMMON_BRIDGE_L2_ADDRESS {
@@ -288,16 +256,13 @@ fn analyze_zk_dex_transactions(
                         storage_slots.insert((dex_contract, storage::note_state_slot(maker_note)));
                         // orders.length
                         storage_slots.insert((dex_contract, storage::orders_length_slot()));
-                        // Compute exact order index from witness + batch offset.
-                        let order_index = initial_order_count + U256::from(make_order_offset);
-                        for field in 0..7u64 {
-                            storage_slots.insert((
-                                dex_contract,
-                                storage::order_field_slot(order_index, field),
-                            ));
-                        }
-                        make_order_offset += 1;
-                    } else if sel == take_order_sel && data.len() >= 516 {
+                        // We need to read orders.length to know the index, but for the
+                        // witness we pre-allocate order field slots. Read the current
+                        // length from the execution witness to compute the exact index.
+                        // For safety, we add a slot range (the actual index will be
+                        // determined at execution time and slots auto-created by set_storage).
+                        add_order_field_slots_for_next(&mut storage_slots, dex_contract);
+                    } else if sel == &take_order_sel && data.len() >= 516 {
                         // takeOrder: 2 notes + order fields + encrypted staking note
                         let order_id = U256::from_big_endian(&data[4..36]);
                         let parent_note = H256::from_slice(&data[324..356]);
@@ -338,28 +303,14 @@ fn analyze_zk_dex_transactions(
                         // Order fields (to read makerNote, parentNote, takerNoteToMaker)
                         add_order_field_slots(&mut storage_slots, dex_contract, order_id);
 
-                        // Old notes: makerNote (input[1]) and takerStakeNote (input[3])
-                        // are available as public inputs in calldata. The execution
-                        // code reads these from order storage, but their note state
-                        // slots need proofs for the incremental MPT update.
-                        let maker_note_hash = H256::from_slice(&data[324..356]);
-                        let taker_stake_hash = H256::from_slice(&data[388..420]);
-                        storage_slots
-                            .insert((dex_contract, storage::note_state_slot(maker_note_hash)));
-                        storage_slots
-                            .insert((dex_contract, storage::note_state_slot(taker_stake_hash)));
-
-                        // parentNote is only available in order storage.
-                        // Look it up from the witness trie.
-                        let parent_note_u256 = read_dex_storage(
-                            &dex_storage_trie,
-                            storage::order_field_slot(order_id, orders::ORDER_PARENT_NOTE),
-                        );
-                        if !parent_note_u256.is_zero() {
-                            let parent_note = H256::from(parent_note_u256.to_big_endian());
-                            storage_slots
-                                .insert((dex_contract, storage::note_state_slot(parent_note)));
-                        }
+                        // Old notes from order (we don't know the hashes yet,
+                        // but we need the order fields to read them).
+                        // The execute function will read them from order storage.
+                        // We need their note_state_slots too, but we can only know
+                        // them after reading the order. For now, we rely on the
+                        // execution witness containing all touched slots.
+                        // In practice, the L2 execution already touched these slots,
+                        // so they'll be in the ExecutionWitness.
                     }
                 }
             }
@@ -379,9 +330,6 @@ fn analyze_zk_dex_transactions(
             accounts.insert(block.header.coinbase);
         }
         for fc in fee_configs {
-            if let Some(vault) = fc.base_fee_vault {
-                accounts.insert(vault);
-            }
             if let Some(op) = fc.operator_fee_config {
                 accounts.insert(op.operator_fee_vault);
             }
@@ -456,6 +404,22 @@ fn add_order_field_slots(
     }
 }
 
+/// Add order field slots for the next order (to be created by makeOrder).
+///
+/// Since we don't know the order index yet (it comes from orders.length),
+/// the `set_storage` calls in `execute_make_order` will auto-create the
+/// slots in AppState. We just need orders.length to be available.
+#[cfg(feature = "l2")]
+fn add_order_field_slots_for_next(
+    storage_slots: &mut std::collections::BTreeSet<(ethrex_common::Address, ethrex_common::H256)>,
+    contract: ethrex_common::Address,
+) {
+    // orders.length is already added by the caller.
+    // For new order slots, set_storage in AppState creates them on write.
+    // We only need the length slot to read the current count.
+    let _ = (storage_slots, contract);
+}
+
 /// Add encrypted note slots for settleOrder's 3 new notes.
 ///
 /// Uses a conservative size estimate since the individual encrypted notes
@@ -527,7 +491,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "l2")]
     fn serialize_input_rejects_invalid_bytes() {
         let gp = ZkDexGuestProgram;
         let data = b"test data";

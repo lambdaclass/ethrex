@@ -1,8 +1,8 @@
 # ZK-DEX E2E 실행 설계 문서
 
 **작성일**: 2026-02-24
-**최종 업데이트**: 2026-02-24
-**브랜치**: `feat/zk/sp1-zk-dex-e2e`
+**최종 업데이트**: 2026-02-27
+**브랜치**: `feat/zk/zk-dex-full-circuit`
 **선행 문서**: `zk-dex-progress.md`, `12-app-specific-circuit-dev-plan.md`
 
 ---
@@ -381,7 +381,7 @@ enabled_programs = ["zk-dex"]
 
 ---
 
-### Phase 3: E2E 테스트 실행 — 미완료
+### Phase 3: E2E 테스트 실행 — 완료 (2026-02-26)
 
 #### 6.1 실행 순서
 
@@ -491,16 +491,118 @@ Phase 1 (L1 배포 파이프라인)     ✅ 완료
    ↓
 Phase 2 (빌드 + Makefile)       ✅ 완료
    ↓
-Phase 3 (E2E 테스트)            ⬜ 미실행
+Phase 3 (E2E 테스트)            ✅ 완료 — Batch 1~9 SP1 Groth16 증명 + L1 온체인 검증 성공
+   ↓
+Phase 4 (출금 UX + Docker 인프라) ✅ 완료 — Early batch commit + Withdrawal Claim UI
 ```
 
-빌드 검증: `cargo check --release --features l2,l2-sql,sp1` — ✅ 통과 (2026-02-24)
+빌드 검증: `cargo build --release -p ethrex` — ✅ 통과 (2026-02-27)
 
 총 수정 파일 2개 + 생성 1개. 구현량이 매우 적다.
 
 ---
 
-## 8. 리스크 및 대응
+## 8. 출금 시 즉시 배치 커밋 (Early Batch Commit)
+
+### 8.1 배경
+
+기본 L1 committer는 `commit_time_ms` 주기(예: 5분)로만 배치를 커밋한다.
+사용자가 L2에서 출금(withdraw) 요청을 보내면 다음 주기까지 최대 5분을 기다려야 한다.
+출금 요청이 감지되면 즉시 배치를 커밋하여 출금 지연을 줄인다.
+
+### 8.2 설계 결정: 조건부 즉시 커밋
+
+무조건 즉시 커밋하면 프루버가 바쁜 상황에서 배치만 쌓이고 실질적 이득이 없다.
+따라서 **두 가지 조건을 모두 만족할 때만** 즉시 커밋한다:
+
+1. **출금 TX 존재**: 미커밋 블록 중 `BRIDGE_ADDRESS`(0x...ffff) 대상 TX가 있음
+2. **증명 대기 배치 없음**: L1의 `lastCommittedBatch ≤ lastVerifiedBatch`
+
+```
+60초마다 handle_commit_message() 실행
+    ├── 5분 타이머 만료? → 커밋 (기존 동작)
+    ├── 타이머 미만료 + 출금 TX 있음 + committed ≤ verified
+    │   → 즉시 커밋 (프루버가 유휴 상태)
+    ├── 타이머 미만료 + 출금 TX 있음 + committed > verified
+    │   → 스킵 (프루버가 바빠서 새 배치 의미 없음, 타이머 대기)
+    └── 타이머 미만료 + 출금 없음 → 스킵
+```
+
+### 8.3 구현
+
+**파일**: `crates/l2/sequencer/l1_committer.rs`
+
+#### `has_pending_withdrawals()` 메서드
+
+```rust
+async fn has_pending_withdrawals(&self) -> Result<bool, CommitterError> {
+    // 마지막 커밋된 배치의 마지막 블록 번호
+    let last_committed_block = self.rollup_store
+        .get_block_numbers_by_batch(self.last_committed_batch)
+        .await?
+        .and_then(|blocks| blocks.last().copied())
+        .unwrap_or(0);
+
+    let latest_block = self.store.get_latest_block_number().await?;
+
+    // 미커밋 블록 순회하며 BRIDGE_ADDRESS 대상 TX 확인
+    for block_num in (last_committed_block + 1)..=latest_block {
+        if let Some(body) = self.store.get_block_body(block_num).await? {
+            for tx in &body.transactions {
+                if tx.to() == TxKind::Call(BRIDGE_ADDRESS) {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+```
+
+#### `handle_commit_message()` 수정
+
+```rust
+let timer_expired = current_time - self.last_committed_batch_timestamp > commit_time;
+
+let early_commit = if !timer_expired {
+    let has_withdrawal = self.has_pending_withdrawals().await.unwrap_or(false);
+    if has_withdrawal {
+        let last_verified = get_last_verified_batch(
+            &self.eth_client, self.on_chain_proposer_address,
+        ).await.unwrap_or(0);
+        let no_pending_proof = current_last_committed_batch <= last_verified;
+        // 프루버 유휴 상태에서만 즉시 커밋
+        no_pending_proof
+    } else {
+        false
+    }
+} else {
+    false
+};
+
+let should_send_commitment = timer_expired || early_commit;
+```
+
+### 8.4 증명 상태 판단
+
+L1 OnChainProposer 컨트랙트의 두 카운터를 비교:
+
+| 상태 | committed | verified | 의미 |
+|------|-----------|----------|------|
+| 프루버 유휴 | 5 | 5 | 모든 배치 증명 완료 → 즉시 커밋 OK |
+| 프루버 바쁨 | 5 | 3 | 배치 4,5 증명 대기/진행 중 → 즉시 커밋 불필요 |
+
+### 8.5 검증 방법
+
+1. `cargo build -p ethrex` 컴파일 확인
+2. Localnet 시작 → L1 deposit → L2 withdraw TX 전송
+3. 프루버가 유휴일 때: 로그 `"Pending withdrawal detected, triggering early batch commit"` 확인
+4. 프루버가 바쁠 때: 로그 `"prover is busy, waiting for timer"` 확인
+5. 출금 없는 일반 상황에서 기존 5분 주기 커밋 정상 동작 확인
+
+---
+
+## 9. 리스크 및 대응 (기존 §8)
 
 | 리스크 | 영향 | 대응 |
 |--------|------|------|
@@ -512,7 +614,7 @@ Phase 3 (E2E 테스트)            ⬜ 미실행
 
 ---
 
-## 9. 향후 확장
+## 10. 향후 확장
 
 이 E2E 파이프라인이 성공하면:
 

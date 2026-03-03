@@ -43,6 +43,7 @@ make zk-dex-docker-no-prover
 ./scripts/zk-dex-docker.sh start              # SP1 + GPU
 ./scripts/zk-dex-docker.sh start --no-gpu     # SP1 CPU-only
 ./scripts/zk-dex-docker.sh start --no-prover  # 프루버 없이
+./scripts/zk-dex-docker.sh start --no-build   # 이미지 재빌드 스킵 (코드 변경 없을 때)
 ./scripts/zk-dex-docker.sh stop               # 전체 중지
 ./scripts/zk-dex-docker.sh status             # 상태 확인
 ./scripts/zk-dex-docker.sh logs [l1|l2|prover|deploy]  # 로그
@@ -53,7 +54,7 @@ make zk-dex-docker-no-prover
 
 스크립트가 자동으로 다음 단계를 순차 실행한다:
 
-1. **Docker 이미지 빌드** — `Dockerfile.sp1`로 SP1 툴체인 + ZK-DEX 게스트 프로그램 포함 이미지 빌드 (최초 10-20분, 이후 캐시)
+1. **Docker 이미지 빌드** — `Dockerfile.sp1`로 SP1 툴체인 + ZK-DEX 게스트 프로그램 포함 이미지 빌드 (최초 10-20분, 이후 소스 변경 없으면 캐시 히트로 수초 내 완료)
 2. **L1 기동** — ethrex `--dev` 모드, 포트 8545
 3. **컨트랙트 배포** — OnChainProposer, Bridge, SP1 Verifier 배포 + ZK-DEX 게스트 프로그램 등록
 4. **L2 기동** — ZK-DEX 게스트 프로그램으로 L2 시퀀서, 포트 1729
@@ -88,6 +89,29 @@ Docker 환경에서 실측한 SP1 ZK-DEX 증명 시간 (Apple M4 Max, CPU-only):
 > 대규모 배치(100+ tx)에서 STARK proving 비례 구간이 커지면 native ARM의 이점이 드러날 것.
 >
 > 상세 프로파일링은 [sp1-zk-dex-vs-baseline.md](./sp1-zk-dex-vs-baseline.md) 참조.
+
+### L1 검증 가스 비용
+
+SP1 Groth16 증명의 L1 온체인 검증 가스 사용량 (실측):
+
+| 배치 유형 | Gas Used | 비고 |
+|-----------|----------|------|
+| Empty batch (proof-free) | ~128K | ZK proof 없이 자동 검증 |
+| SP1 Groth16 proof | ~330K–356K | 배치 크기와 무관하게 거의 고정 |
+
+메인넷 가스비 추정 (1 gwei 기준):
+- **배치당**: 330K gas × 1 gwei ≈ **0.00033 ETH (~$0.83)**
+- **TX 200개 배치**: TX당 ~$0.004
+
+> Groth16 검증 가스는 배치 내 트랜잭션 수와 무관하게 고정이므로,
+> 배치가 클수록 TX당 검증 비용이 낮아진다.
+
+### 배치 동작 방식
+
+- L2는 `ETHREX_BLOCK_PRODUCER_BLOCK_TIME` (기본 5초)마다 블록을 생성
+- `ETHREX_COMMITTER_COMMIT_TIME` (기본 60초)마다 배치를 L1에 커밋
+- **빈 배치** (트랜잭션 없음): ZK proof 없이 자동 검증됨 → 프루버 부하 없음
+- **출금 감지 시**: 즉시 배치 커밋 트리거 (프루버가 유휴 상태일 때만)
 
 ### 확인
 
@@ -168,6 +192,7 @@ make zk-dex-docker-tools-clean
 |--------|-----|------|
 | Dashboard | `http://localhost:3000` | 환경 전체 대시보드 (메인 페이지) |
 | Bridge UI | `http://localhost:3000/bridge.html` | L1/L2 ETH 브릿지 |
+| Withdrawal Tracker | `http://localhost:3000/withdraw-status.html` | 출금 4단계 상태 추적 + Claim |
 | L1 Blockscout | `http://localhost:8083` | L1 블록 익스플로러 |
 | L2 Blockscout | `http://localhost:8082` | L2 블록 익스플로러 |
 
@@ -282,6 +307,18 @@ grep "proving_time_ms" prover-sp1.log
 ---
 
 ## 트러블슈팅
+
+### Docker 빌드가 매번 오래 걸림
+
+소스 코드 변경 없이 `start`만 반복하는 경우 `--no-build`로 이미지 재빌드를 스킵:
+
+```bash
+./scripts/zk-dex-docker.sh start --no-build
+```
+
+> Docker 빌드 캐시는 소스 파일 기준으로 동작한다.
+> `.git` 디렉토리는 빌드 컨텍스트에서 제외되어 있으므로 (``.dockerignore``),
+> git 커밋만으로는 캐시가 무효화되지 않는다.
 
 ### Docker 이미지 빌드 실패
 
@@ -409,7 +446,9 @@ PROVER_CLIENT_TIMED=true make init-prover-sp1-zk-dex  # Terminal 3: 프루버
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `PROVER_CLIENT_TIMED` | false | 배치별 증명 시간 로깅 |
-| `ETHREX_GUEST_PROGRAM_ID` | evm-l2 | 게스트 프로그램 ID |
+| `ETHREX_GUEST_PROGRAM_ID` | evm-l2 | 게스트 프로그램 ID (zk-dex로 설정 시 ZK-DEX 모드) |
+| `ETHREX_COMMITTER_COMMIT_TIME` | 60000 | 배치 커밋 간격 (ms). 300000 = 5분 |
+| `ETHREX_BLOCK_PRODUCER_BLOCK_TIME` | 5000 | L2 블록 생성 간격 (ms) |
 | `GUEST_PROGRAMS` | evm-l2 | 빌드할 게스트 프로그램 목록 (comma-separated) |
 | `ETHREX_REGISTER_GUEST_PROGRAMS` | (없음) | 배포 시 등록할 게스트 프로그램 |
 | `ETHREX_L2_SP1` | false | SP1 검증자 배포 여부 |

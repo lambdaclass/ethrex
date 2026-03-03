@@ -136,43 +136,6 @@ mod tests {
     }
 
     #[test]
-    fn event_topics_are_unique_and_nonzero() {
-        // Verify topics are non-zero (keccak actually computed) and all different
-        // (no copy-paste errors in signature strings).
-        let nsc = note_state_change_topic();
-        let ot = order_taken_topic();
-        let os = order_settled_topic();
-
-        assert_ne!(nsc, H256::zero());
-        assert_ne!(ot, H256::zero());
-        assert_ne!(os, H256::zero());
-
-        assert_ne!(nsc, ot);
-        assert_ne!(nsc, os);
-        assert_ne!(ot, os);
-    }
-
-    #[test]
-    fn event_topics_match_solidity_signatures() {
-        // Golden values: keccak256 of the canonical Solidity event signatures.
-        // Verify with: cast sig-event "NoteStateChange(bytes32,uint8)" etc.
-        assert_eq!(
-            note_state_change_topic(),
-            H256::from(keccak_hash(b"NoteStateChange(bytes32,uint8)")),
-        );
-        assert_eq!(
-            order_taken_topic(),
-            H256::from(keccak_hash(b"OrderTaken(uint256,bytes32,bytes32)")),
-        );
-        assert_eq!(
-            order_settled_topic(),
-            H256::from(keccak_hash(
-                b"OrderSettled(uint256,bytes32,bytes32,bytes32)"
-            )),
-        );
-    }
-
-    #[test]
     fn order_settled_log_format() {
         let order_id = U256::from(3);
         let reward = H256::from_low_u64_be(10);

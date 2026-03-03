@@ -700,26 +700,14 @@ fn extract_abi_bytes(data: &[u8], offset_pos: usize) -> Result<Vec<u8>, AppCircu
             "calldata too short for bytes offset".into(),
         ));
     }
-    let offset_u256 = U256::from_big_endian(&data[offset_pos..offset_pos + 32]);
-    if offset_u256 > U256::from(data.len()) {
-        return Err(AppCircuitError::InvalidParams(
-            "bytes offset exceeds calldata length".into(),
-        ));
-    }
-    let offset = offset_u256.low_u64() as usize;
+    let offset = U256::from_big_endian(&data[offset_pos..offset_pos + 32]).low_u64() as usize;
     let abs_pos = 4 + offset;
     if data.len() < abs_pos + 32 {
         return Err(AppCircuitError::InvalidParams(
             "calldata too short for bytes length".into(),
         ));
     }
-    let length_u256 = U256::from_big_endian(&data[abs_pos..abs_pos + 32]);
-    if length_u256 > U256::from(data.len()) {
-        return Err(AppCircuitError::InvalidParams(
-            "bytes length exceeds calldata length".into(),
-        ));
-    }
-    let length = length_u256.low_u64() as usize;
+    let length = U256::from_big_endian(&data[abs_pos..abs_pos + 32]).low_u64() as usize;
     if data.len() < abs_pos + 32 + length {
         return Err(AppCircuitError::InvalidParams(
             "calldata too short for bytes data".into(),

@@ -9,7 +9,7 @@
 #     up --detach --build
 
 services:
-  ethrex_prover:
+  tokamak-app-prover:
     deploy:
       resources:
         reservations:
