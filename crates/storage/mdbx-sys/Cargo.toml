@@ -1,0 +1,11 @@
+[package]
+name = "ethrex-mdbx-sys"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+links = "mdbx"
+
+[build-dependencies]
+cc = "1"

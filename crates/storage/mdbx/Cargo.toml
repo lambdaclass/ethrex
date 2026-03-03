@@ -1,0 +1,11 @@
+[package]
+name = "ethrex-mdbx"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex-mdbx-sys = { path = "../mdbx-sys" }
+tracing.workspace = true

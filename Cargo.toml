@@ -19,6 +19,8 @@ members = [
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
+  "crates/storage/mdbx-sys",
+  "crates/storage/mdbx",
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/runner",

@@ -6,3 +6,6 @@ pub mod in_memory;
 /// RocksDB backend
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
+/// MDBX backend
+#[cfg(feature = "mdbx")]
+pub mod mdbx;

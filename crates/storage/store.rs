@@ -1,3 +1,5 @@
+#[cfg(feature = "mdbx")]
+use crate::backend::mdbx::MdbxBackend;
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
@@ -216,6 +218,9 @@ pub enum EngineType {
     /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    /// MDBX storage, persistent. Suitable for production.
+    #[cfg(feature = "mdbx")]
+    Mdbx,
 }
 
 /// Batch of updates to apply to the store atomically.
@@ -1442,6 +1447,11 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+            }
+            #[cfg(feature = "mdbx")]
+            EngineType::Mdbx => {
+                let backend = Arc::new(MdbxBackend::open(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {

@@ -4155,6 +4155,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-mdbx"
+version = "9.0.0"
+dependencies = [
+ "ethrex-mdbx-sys",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-mdbx-sys"
+version = "9.0.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "ethrex-metrics"
 version = "9.0.0"
 dependencies = [
@@ -4401,6 +4416,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-mdbx",
  "ethrex-rlp",
  "ethrex-trie",
  "fastbloom",
