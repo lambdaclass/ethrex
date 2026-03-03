@@ -51,7 +51,6 @@ use std::{
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
-    time::Instant,
 };
 use tracing::{debug, error, info};
 
@@ -1353,7 +1352,6 @@ impl Store {
     }
 
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let t0 = Instant::now();
         let db = self.backend.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
@@ -1381,14 +1379,6 @@ impl Store {
             ..
         } = update_batch;
 
-        let t_header = Instant::now();
-
-        let account_updates_count = account_updates.len();
-        let storage_updates_count: usize = storage_updates.iter().map(|(_, v)| v.len()).sum();
-        let blocks_count = update_batch.blocks.len();
-        let receipts_count: usize = update_batch.receipts.iter().map(|(_, r)| r.len()).sum();
-        let code_updates_count = update_batch.code_updates.len();
-
         // Capacity one ensures sender just notifies and goes on
         let (notify_tx, notify_rx) = sync_channel(1);
         let wait_for_new_layer = notify_rx;
@@ -1402,25 +1392,13 @@ impl Store {
         trie_upd_worker_tx.send(trie_update).map_err(|e| {
             StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
         })?;
-        let t_trie_sent = Instant::now();
-
         let mut tx = db.begin_write()?;
-        let t_begin_write = Instant::now();
 
-        let mut tx_location_count = 0u64;
-        let mut header_encode_us = 0u128;
-        let mut body_encode_us = 0u128;
-        let mut tx_hash_us = 0u128;
-        let mut tx_loc_encode_us = 0u128;
-        let mut db_put_us = 0u128;
-        let mut receipt_encode_us = 0u128;
-        let mut receipt_put_us = 0u128;
         for block in update_batch.blocks {
             let block_number = block.header.number;
             let block_hash = block.hash();
             let hash_key = block_hash.encode_to_vec();
 
-            let t_enc = Instant::now();
             let header_encoded;
             let header_bytes: &[u8] = if let Some(ref pe) = pre_encoded {
                 &pe.header_rlp
@@ -1428,12 +1406,8 @@ impl Store {
                 header_encoded = BlockHeaderRLP::from(block.header.clone()).into_vec();
                 &header_encoded
             };
-            header_encode_us += t_enc.elapsed().as_micros();
-            let t_p = Instant::now();
             tx.put(HEADERS, &hash_key, header_bytes)?;
-            db_put_us += t_p.elapsed().as_micros();
 
-            let t_enc = Instant::now();
             let body_encoded;
             let body_bytes: &[u8] = if let Some(ref pe) = pre_encoded {
                 &pe.body_rlp
@@ -1441,37 +1415,23 @@ impl Store {
                 body_encoded = block.body.encode_to_vec();
                 &body_encoded
             };
-            body_encode_us += t_enc.elapsed().as_micros();
-            let t_p = Instant::now();
             tx.put(BODIES, &hash_key, body_bytes)?;
-            db_put_us += t_p.elapsed().as_micros();
 
-            let t_p = Instant::now();
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
-            db_put_us += t_p.elapsed().as_micros();
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let t_h = Instant::now();
                 let tx_hash = transaction.hash();
-                tx_hash_us += t_h.elapsed().as_micros();
                 // Key: tx_hash + block_hash
-                let t_enc = Instant::now();
                 let mut composite_key = Vec::with_capacity(64);
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                tx_loc_encode_us += t_enc.elapsed().as_micros();
-                let t_p = Instant::now();
                 tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
-                db_put_us += t_p.elapsed().as_micros();
-                tx_location_count += 1;
             }
         }
-        let t_blocks = Instant::now();
 
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
-                let t_enc = Instant::now();
                 let key = (block_hash, index as u64).encode_to_vec();
                 let receipt_encoded;
                 let value: &[u8] = if let Some(ref pe) = pre_encoded {
@@ -1480,13 +1440,9 @@ impl Store {
                     receipt_encoded = receipt.encode_to_vec();
                     &receipt_encoded
                 };
-                receipt_encode_us += t_enc.elapsed().as_micros();
-                let t_p = Instant::now();
                 tx.put(RECEIPTS, &key, value)?;
-                receipt_put_us += t_p.elapsed().as_micros();
             }
         }
-        let t_receipts = Instant::now();
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
@@ -1494,45 +1450,14 @@ impl Store {
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
-        let t_code = Instant::now();
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
         // Specifically, the next block produced MUST see this upper layer.
         wait_for_new_layer
             .recv()
             .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
-        let t_layer_wait = Instant::now();
-
         // After top-level is added, we can make the rest of the changes visible.
         tx.commit()?;
-        let t_commit = Instant::now();
-
-        let us = |a: Instant, b: Instant| b.duration_since(a).as_micros();
-        info!(
-            "[STORE-DETAIL] apply_updates total={:.2}ms | header_lookup={} trie_send={} begin_write={} blocks={} receipts={} code={} layer_wait={} commit={} (us) | encode: hdr={} body={} tx_hash={} tx_loc={} rcpt={} db_put={} rcpt_put={} (us) | nodes: acct={} stor={} blks={} rcpts={} code={} txlocs={}",
-            t_commit.duration_since(t0).as_secs_f64() * 1000.0,
-            us(t0, t_header),
-            us(t_header, t_trie_sent),
-            us(t_trie_sent, t_begin_write),
-            us(t_begin_write, t_blocks),
-            us(t_blocks, t_receipts),
-            us(t_receipts, t_code),
-            us(t_code, t_layer_wait),
-            us(t_layer_wait, t_commit),
-            header_encode_us,
-            body_encode_us,
-            tx_hash_us,
-            tx_loc_encode_us,
-            receipt_encode_us,
-            db_put_us,
-            receipt_put_us,
-            account_updates_count,
-            storage_updates_count,
-            blocks_count,
-            receipts_count,
-            code_updates_count,
-            tx_location_count,
-        );
 
         Ok(())
     }
@@ -1800,28 +1725,14 @@ impl Store {
         state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
-        let t0 = Instant::now();
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
-        let t_initial_hash = Instant::now();
-
-        let mut accounts_processed = 0u64;
-        let mut accounts_removed = 0u64;
-        let mut storage_slots_total = 0u64;
-        let mut storage_tries_opened = 0u64;
-        let mut storage_trie_open_us = 0u128;
-        let mut storage_insert_us = 0u128;
-        let mut storage_hash_us = 0u128;
-        let mut state_insert_us = 0u128;
-
         for update in account_updates {
-            accounts_processed += 1;
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(hashed_address.as_bytes())?;
-                accounts_removed += 1;
                 continue;
             }
             // Add or update AccountState in the trie
@@ -1844,15 +1755,8 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let t_open = Instant::now();
                 let mut storage_trie =
                     self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
-                storage_trie_open_us += t_open.elapsed().as_micros();
-                storage_tries_opened += 1;
-
-                let t_ins = Instant::now();
-                let slot_count = update.added_storage.len() as u64;
-                storage_slots_total += slot_count;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -1861,46 +1765,17 @@ impl Store {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
-                storage_insert_us += t_ins.elapsed().as_micros();
-
-                let t_hash = Instant::now();
                 let (storage_hash, storage_updates) =
                     storage_trie.collect_changes_since_last_hash();
-                storage_hash_us += t_hash.elapsed().as_micros();
-
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address, storage_updates));
             }
-            let t_si = Instant::now();
             state_trie.insert(
                 hashed_address.as_bytes().to_vec(),
                 account_state.encode_to_vec(),
             )?;
-            state_insert_us += t_si.elapsed().as_micros();
         }
-        let t_loop_end = Instant::now();
-
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
-        let t_final_hash = Instant::now();
-
-        let us = |a: Instant, b: Instant| b.duration_since(a).as_micros();
-        info!(
-            "[MERKLE-DETAIL] total={:.2}ms | initial_hash={} loop={} final_hash={} (us) | accts={} removed={} stor_tries={} stor_slots={} | loop_breakdown: trie_open={} stor_insert={} stor_hash={} state_insert={} (us) | state_nodes={} stor_node_groups={}",
-            t_final_hash.duration_since(t0).as_secs_f64() * 1000.0,
-            us(t0, t_initial_hash),
-            us(t_initial_hash, t_loop_end),
-            us(t_loop_end, t_final_hash),
-            accounts_processed,
-            accounts_removed,
-            storage_tries_opened,
-            storage_slots_total,
-            storage_trie_open_us,
-            storage_insert_us,
-            storage_hash_us,
-            state_insert_us,
-            state_updates.len(),
-            ret_storage_updates.len(),
-        );
 
         Ok(AccountUpdatesList {
             state_trie_hash,
@@ -2920,7 +2795,6 @@ fn apply_trie_updates(
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
-    let t0 = Instant::now();
     let TrieUpdate {
         result_sender,
         parent_state_root,
@@ -2929,11 +2803,8 @@ fn apply_trie_updates(
         storage_updates,
     } = trie_update;
 
-    let acct_node_count = account_updates.len();
-    let stor_node_count: usize = storage_updates.iter().map(|(_, v)| v.len()).sum();
-
     // Phase 1: update the in-memory diff-layers only, then notify block production.
-    let new_layer: Vec<_> = storage_updates
+    let new_layer = storage_updates
         .into_iter()
         .flat_map(|(account_hash, nodes)| {
             nodes
@@ -2942,55 +2813,25 @@ fn apply_trie_updates(
         })
         .chain(account_updates)
         .collect();
-    let t_collect = Instant::now();
-
-    let layer_size = new_layer.len();
-
     // Read-Copy-Update the trie cache with a new layer.
     let trie = trie_cache
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
-    let t_read_lock = Instant::now();
-
     let mut trie_mut = (*trie).clone();
-    let t_clone = Instant::now();
-
     trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
-    let t_put_batch = Instant::now();
-
     let trie = Arc::new(trie_mut);
     *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
-    let t_write_lock = Instant::now();
-
     // Update finished, signal block processing.
     result_sender
         .send(Ok(()))
         .map_err(|_| StoreError::LockError)?;
-    let t_signal = Instant::now();
-
-    let us = |a: Instant, b: Instant| b.duration_since(a).as_micros();
-    info!(
-        "[TRIE-WORKER] phase1={:.2}ms | collect={} read_lock={} clone={} put_batch={} write_lock={} signal={} (us) | layer_size={} acct_nodes={} stor_nodes={}",
-        t_signal.duration_since(t0).as_secs_f64() * 1000.0,
-        us(t0, t_collect),
-        us(t_collect, t_read_lock),
-        us(t_read_lock, t_clone),
-        us(t_clone, t_put_batch),
-        us(t_put_batch, t_write_lock),
-        us(t_write_lock, t_signal),
-        layer_size,
-        acct_node_count,
-        stor_node_count,
-    );
 
     // Phase 2: update disk layer.
     let Some(root) = trie.get_commitable(parent_state_root) else {
         // Nothing to commit to disk, move on.
         return Ok(());
     };
-    let t_phase2_start = Instant::now();
-
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
@@ -3004,25 +2845,18 @@ fn apply_trie_updates(
         .unwrap_or_default();
 
     let mut write_tx = backend.begin_write()?;
-    let t_begin_write = Instant::now();
 
     // Before encoding, accounts have only the account address as their path, while storage keys have
     // the account address (32 bytes) + storage path (up to 32 bytes).
 
     // Commit removes the bottom layer and returns it, this is the mutation step.
     let nodes = trie_mut.commit(root).unwrap_or_default();
-    let t_layer_commit = Instant::now();
-
-    let mut disk_nodes_written = 0u64;
-    let mut disk_nodes_deleted = 0u64;
-    let mut disk_nodes_skipped = 0u64;
     let mut result = Ok(());
     for (key, value) in nodes {
         let is_leaf = key.len() == 65 || key.len() == 131;
         let is_account = key.len() <= 65;
 
         if is_leaf && key > last_written {
-            disk_nodes_skipped += 1;
             continue;
         }
         let table = if is_leaf {
@@ -3038,42 +2872,21 @@ fn apply_trie_updates(
         };
         if value.is_empty() {
             result = write_tx.delete(table, &key);
-            disk_nodes_deleted += 1;
         } else {
             result = write_tx.put(table, &key, &value);
-            disk_nodes_written += 1;
         }
         if result.is_err() {
             break;
         }
     }
-    let t_writes = Instant::now();
-
     if result.is_ok() {
         result = write_tx.commit();
     }
-    let t_disk_commit = Instant::now();
-
     // We want to send this message even if there was an error during the batch write
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
     // Phase 3: update diff layers with the removal of bottom layer.
     *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
-    let t_phase3 = Instant::now();
-
-    info!(
-        "[TRIE-WORKER] phase2+3={:.2}ms | begin_write={} layer_commit={} db_writes={} db_commit={} phase3={} (us) | written={} deleted={} skipped={}",
-        t_phase3.duration_since(t_phase2_start).as_secs_f64() * 1000.0,
-        us(t_phase2_start, t_begin_write),
-        us(t_begin_write, t_layer_commit),
-        us(t_layer_commit, t_writes),
-        us(t_writes, t_disk_commit),
-        us(t_disk_commit, t_phase3),
-        disk_nodes_written,
-        disk_nodes_deleted,
-        disk_nodes_skipped,
-    );
-
     Ok(())
 }
 
