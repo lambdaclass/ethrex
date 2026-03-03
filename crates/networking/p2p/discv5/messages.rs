@@ -144,15 +144,20 @@ impl PacketHeader {
         let nonce = static_header[9..21].try_into()?;
         let authdata_size = u16::from_be_bytes(static_header[21..23].try_into()?) as usize;
         let authdata_end = STATIC_HEADER_END + authdata_size;
-        let authdata = &mut encoded_packet[STATIC_HEADER_END..authdata_end].to_vec();
 
-        cipher.try_apply_keystream(authdata)?;
+        if encoded_packet.len() < authdata_end {
+            return Err(PacketCodecError::InvalidSize);
+        }
+
+        let mut authdata = encoded_packet[STATIC_HEADER_END..authdata_end].to_vec();
+
+        cipher.try_apply_keystream(&mut authdata)?;
 
         Ok(PacketHeader {
             static_header,
             flag,
             nonce,
-            authdata: authdata.to_vec(),
+            authdata,
             header_end_offset: authdata_end,
         })
     }
