@@ -416,6 +416,34 @@ fn crypto_error_to_precompile(e: CryptoError) -> VMError {
     }
 }
 
+/// Map crypto errors for BLS12-381 G1 operations (add).
+/// The old code returned BLS12381G1PointNotInCurve for invalid G1 points.
+fn bls12_g1_crypto_error(e: CryptoError) -> VMError {
+    match e {
+        CryptoError::InvalidPoint(_) => PrecompileError::BLS12381G1PointNotInCurve.into(),
+        other => crypto_error_to_precompile(other),
+    }
+}
+
+/// Map crypto errors for BLS12-381 G2 operations (add).
+/// The old code returned BLS12381G2PointNotInCurve for invalid G2 points.
+fn bls12_g2_crypto_error(e: CryptoError) -> VMError {
+    match e {
+        CryptoError::InvalidPoint(_) => PrecompileError::BLS12381G2PointNotInCurve.into(),
+        other => crypto_error_to_precompile(other),
+    }
+}
+
+/// Map crypto errors for BLS12-381 MSM and pairing operations.
+/// The old code used `G1Affine::from_uncompressed` (checked), which returned
+/// ParsingInputError for any invalid point (not on curve or not in subgroup).
+fn bls12_msm_pairing_crypto_error(e: CryptoError) -> VMError {
+    match e {
+        CryptoError::InvalidPoint(_) => PrecompileError::ParsingInputError.into(),
+        other => crypto_error_to_precompile(other),
+    }
+}
+
 /// ## ECRECOVER precompile.
 /// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
 ///
@@ -1069,7 +1097,7 @@ pub fn bls12_g1add(
 
     let result = crypto
         .bls12_381_g1_add((ax, ay), (bx, by))
-        .map_err(crypto_error_to_precompile)?;
+        .map_err(bls12_g1_crypto_error)?;
 
     // Re-pad the 96-byte unpadded result (x||y each 48 bytes) to 128 bytes.
     let mut output = [0u8; 128];
@@ -1127,7 +1155,7 @@ pub fn bls12_g1msm(
 
     let result = crypto
         .bls12_381_g1_msm(&pairs)
-        .map_err(crypto_error_to_precompile)?;
+        .map_err(bls12_msm_pairing_crypto_error)?;
 
     // Re-pad output: 96-byte result → 128-byte padded
     let mut output = [0u8; 128];
@@ -1202,7 +1230,7 @@ pub fn bls12_g2add(
 
     let result = crypto
         .bls12_381_g2_add((ax0, ax1, ay0, ay1), (bx0, bx1, by0, by1))
-        .map_err(crypto_error_to_precompile)?;
+        .map_err(bls12_g2_crypto_error)?;
 
     // Re-pad the 192-byte unpadded result to 256 bytes.
     // Unpadded: x_0(48) || x_1(48) || y_0(48) || y_1(48) = 192 bytes
@@ -1275,7 +1303,7 @@ pub fn bls12_g2msm(
 
     let result = crypto
         .bls12_381_g2_msm(&pairs)
-        .map_err(crypto_error_to_precompile)?;
+        .map_err(bls12_msm_pairing_crypto_error)?;
 
     // Re-pad the 192-byte unpadded result to 256 bytes.
     let mut output = [0u8; 256];
@@ -1361,7 +1389,7 @@ pub fn bls12_pairing_check(
 
     let result = crypto
         .bls12_381_pairing_check(&pairs)
-        .map_err(crypto_error_to_precompile)?;
+        .map_err(bls12_msm_pairing_crypto_error)?;
 
     if result {
         let mut out = vec![0_u8; 31];

@@ -219,7 +219,7 @@ pub(crate) fn substrate_bn_pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<boo
             if g2_x_im.is_zero() && g2_x_re.is_zero() && g2_y_im.is_zero() && g2_y_re.is_zero() {
                 G2::zero()
             } else {
-                AffineG2::new(Fq2::new(g2_x_im, g2_x_re), Fq2::new(g2_y_im, g2_y_re))
+                AffineG2::new(Fq2::new(g2_x_re, g2_x_im), Fq2::new(g2_y_re, g2_y_im))
                     .map_err(|_| CryptoError::InvalidPoint("G2 not on curve"))?
                     .into()
             };
