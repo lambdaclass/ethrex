@@ -14,15 +14,19 @@ runs:
             if "$@"; then
               return 0
             fi
-            echo "Attempt $i/$retries failed. Retrying in ${delay}s..."
-            sleep $delay
-            delay=$((delay * 2))
+            if [ $i -lt $retries ]; then
+              echo "Attempt $i/$retries failed. Retrying in ${delay}s..."
+              sleep $delay
+              delay=$((delay * 2))
+            else
+              echo "All $retries attempts failed."
+            fi
           done
-          echo "All $retries attempts failed."
           return 1
         }
 
-        curl -L https://risczero.com/install | bash
+        retry curl -L https://risczero.com/install -o /tmp/risc0_install.sh
+        bash /tmp/risc0_install.sh
         retry ~/.risc0/bin/rzup install cargo-risczero 3.0.3
         retry ~/.risc0/bin/rzup install risc0-groth16
         retry ~/.risc0/bin/rzup install rust
