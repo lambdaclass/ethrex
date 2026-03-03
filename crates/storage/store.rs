@@ -2213,6 +2213,7 @@ impl Store {
             bc.set_genesis(genesis_hash, 0);
 
             let state_root = H256(bc.state_root());
+            tracing::warn!("ethrex-db computed genesis state root: {state_root:?}");
             return Ok(state_root);
         }
 
@@ -2428,6 +2429,10 @@ impl Store {
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
+        tracing::warn!(
+            "Genesis state root: computed={genesis_state_root:?}, expected={:?}",
+            genesis_block.header.state_root
+        );
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
         // Store genesis block
@@ -3339,6 +3344,11 @@ impl Store {
                 .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
             let bc = bc.read().map_err(|_| StoreError::LockError)?;
             let finalized_root = bc.state_root();
+            tracing::warn!(
+                "has_state_root: requested={state_root:?}, finalized={:?}, match={}",
+                H256(finalized_root),
+                state_root.0 == finalized_root
+            );
             return Ok(state_root.0 == finalized_root);
         }
 
