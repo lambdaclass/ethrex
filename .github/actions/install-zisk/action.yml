@@ -1,0 +1,36 @@
+name: "Install ZisK"
+description: "Install ZisK Toolchain"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install ZisK dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+
+    - name: Install ZisK
+      shell: bash
+      run: |
+        retry() {
+          local retries=5
+          local delay=10
+          for i in $(seq 1 $retries); do
+            if "$@"; then
+              return 0
+            fi
+            if [ $i -lt $retries ]; then
+              echo "Attempt $i/$retries failed. Retrying in ${delay}s..."
+              sleep $delay
+              delay=$((delay * 2))
+            else
+              echo "All $retries attempts failed."
+            fi
+          done
+          return 1
+        }
+
+        retry curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh -o /tmp/zisk_install.sh
+        bash /tmp/zisk_install.sh
+        echo "$HOME/.zisk/bin" >> $GITHUB_PATH
