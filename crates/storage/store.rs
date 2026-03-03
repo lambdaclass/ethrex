@@ -1423,6 +1423,10 @@ impl Store {
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
 
+        // Apply buffered writes to MDBX (B-tree modifications) before waiting,
+        // so they overlap with the trie layer computation on the background thread.
+        tx.flush()?;
+
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
         // Specifically, the next block produced MUST see this upper layer.
         wait_for_new_layer

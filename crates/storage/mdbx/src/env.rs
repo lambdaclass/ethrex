@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::path::Path;
 use std::ptr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Configuration for opening an MDBX environment.
 pub struct EnvConfig {
@@ -35,11 +35,21 @@ impl Default for EnvConfig {
             page_size: 8192,                           // 8 KB
             max_dbs: 32,
             max_readers: 256,
-            env_flags: ffi::MDBX_NORDAHEAD | ffi::MDBX_WRITEMAP | ffi::MDBX_NOSTICKYTHREADS,
+            env_flags: ffi::MDBX_NORDAHEAD
+                | ffi::MDBX_WRITEMAP
+                | ffi::MDBX_NOSTICKYTHREADS
+                | ffi::MDBX_SAFE_NOSYNC
+                | ffi::MDBX_NOMEMINIT,
             mode: 0o664,
         }
     }
 }
+
+/// Maximum number of read-only transaction handles kept in the pool.
+const RO_TXN_POOL_CAP: usize = 32;
+
+/// Pool of reset read-only transaction handles for reuse via `mdbx_txn_renew`.
+pub(crate) type ReadTxnPool = Mutex<Vec<*mut ffi::MDBX_txn>>;
 
 /// An opened MDBX environment.
 ///
@@ -49,6 +59,8 @@ pub struct Environment {
     env: *mut ffi::MDBX_env,
     /// Cached DBI handles, opened once at init and reused for the lifetime.
     dbis: Arc<HashMap<&'static str, ffi::MDBX_dbi>>,
+    /// Pool of reset RO transaction handles.
+    ro_pool: Arc<ReadTxnPool>,
 }
 
 // SAFETY: MDBX environment handles are thread-safe. We compile with
@@ -121,7 +133,7 @@ impl Environment {
             MdbxError::from_code(ffi::mdbx_env_open(
                 env,
                 c_path.as_ptr(),
-                config.env_flags | ffi::MDBX_SYNC_DURABLE,
+                config.env_flags,
                 config.mode,
             ))?;
         }
@@ -162,11 +174,33 @@ impl Environment {
         Ok(Environment {
             env,
             dbis: Arc::new(dbis),
+            ro_pool: Arc::new(Mutex::new(Vec::with_capacity(RO_TXN_POOL_CAP))),
         })
     }
 
     /// Begin a read-only transaction.
+    ///
+    /// Tries to reuse a pooled (reset) transaction handle via `mdbx_txn_renew`
+    /// before falling back to creating a fresh one. Pooled handles avoid the
+    /// cost of acquiring the `lck_rdt_lock` mutex on every read.
     pub fn begin_ro_txn(&self) -> Result<Transaction<RO>, MdbxError> {
+        // Try to reuse a pooled handle.
+        if let Some(cached) = self.ro_pool.lock().unwrap().pop() {
+            let rc = unsafe { ffi::mdbx_txn_renew(cached) };
+            if rc == ffi::MDBX_SUCCESS {
+                return Ok(Transaction::new_pooled(
+                    cached,
+                    self.dbis.clone(),
+                    self.ro_pool.clone(),
+                ));
+            }
+            // Renew failed — abort the stale handle and fall through.
+            unsafe {
+                ffi::mdbx_txn_abort(cached);
+            }
+        }
+
+        // Fresh transaction.
         let mut txn: *mut ffi::MDBX_txn = ptr::null_mut();
         unsafe {
             MdbxError::from_code(ffi::mdbx_txn_begin_ex(
@@ -177,7 +211,11 @@ impl Environment {
                 ptr::null_mut(),
             ))?;
         }
-        Ok(Transaction::new(txn, self.dbis.clone()))
+        Ok(Transaction::new_pooled(
+            txn,
+            self.dbis.clone(),
+            self.ro_pool.clone(),
+        ))
     }
 
     /// Begin a read-write transaction.
@@ -211,6 +249,14 @@ impl Environment {
 
 impl Drop for Environment {
     fn drop(&mut self) {
+        // Abort all pooled RO transactions before closing the env.
+        if let Ok(mut pool) = self.ro_pool.lock() {
+            for txn in pool.drain(..) {
+                unsafe {
+                    ffi::mdbx_txn_abort(txn);
+                }
+            }
+        }
         unsafe {
             ffi::mdbx_env_close_ex(self.env, false);
         }

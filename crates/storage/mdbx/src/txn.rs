@@ -1,6 +1,7 @@
 use ethrex_mdbx_sys as ffi;
 
 use crate::cursor::Cursor;
+use crate::env::ReadTxnPool;
 use crate::error::MdbxError;
 
 use std::collections::HashMap;
@@ -14,6 +15,9 @@ pub struct RO;
 /// Marker type for read-write transactions.
 pub struct RW;
 
+/// Maximum number of reset RO handles kept in the pool.
+const RO_TXN_POOL_CAP: usize = 32;
+
 /// A type-safe MDBX transaction.
 ///
 /// `K` is either [`RO`] or [`RW`], restricting which operations are available.
@@ -22,6 +26,9 @@ pub struct Transaction<K> {
     txn: *mut ffi::MDBX_txn,
     dbis: Arc<HashMap<&'static str, ffi::MDBX_dbi>>,
     committed: bool,
+    /// If set, the RO handle is returned to this pool on drop (via `mdbx_txn_reset`)
+    /// instead of being aborted.
+    pool: Option<Arc<ReadTxnPool>>,
     _marker: PhantomData<K>,
 }
 
@@ -38,6 +45,21 @@ impl<K> Transaction<K> {
             txn,
             dbis,
             committed: false,
+            pool: None,
+            _marker: PhantomData,
+        }
+    }
+
+    pub(crate) fn new_pooled(
+        txn: *mut ffi::MDBX_txn,
+        dbis: Arc<HashMap<&'static str, ffi::MDBX_dbi>>,
+        pool: Arc<ReadTxnPool>,
+    ) -> Self {
+        Transaction {
+            txn,
+            dbis,
+            committed: false,
+            pool: Some(pool),
             _marker: PhantomData,
         }
     }
@@ -144,11 +166,24 @@ impl Transaction<RW> {
 
 impl<K> Drop for Transaction<K> {
     fn drop(&mut self) {
-        if !self.committed {
-            // Safety net: abort uncommitted transactions
-            unsafe {
-                ffi::mdbx_txn_abort(self.txn);
+        if self.committed {
+            return;
+        }
+        // If we have a pool, reset the handle and return it instead of aborting.
+        if let Some(ref pool) = self.pool {
+            let rc = unsafe { ffi::mdbx_txn_reset(self.txn) };
+            if rc == ffi::MDBX_SUCCESS {
+                if let Ok(mut vec) = pool.lock() {
+                    if vec.len() < RO_TXN_POOL_CAP {
+                        vec.push(self.txn);
+                        return;
+                    }
+                }
             }
+        }
+        // Fallback: abort the transaction.
+        unsafe {
+            ffi::mdbx_txn_abort(self.txn);
         }
     }
 }

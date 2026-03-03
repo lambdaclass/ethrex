@@ -88,6 +88,16 @@ pub trait StorageWriteBatch: Send {
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
 
+    /// Apply buffered operations to the database without committing.
+    ///
+    /// This opens a write transaction and replays all buffered ops (B-tree
+    /// modifications), but does **not** commit. A subsequent [`commit()`] will
+    /// finalize the transaction. Backends that don't support this can use the
+    /// default no-op — `commit()` will apply + commit in one step as before.
+    fn flush(&mut self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;
 }

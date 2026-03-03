@@ -228,6 +228,10 @@ unsafe extern "C" {
 
     pub fn mdbx_txn_abort(txn: *mut MDBX_txn) -> c_int;
 
+    pub fn mdbx_txn_reset(txn: *mut MDBX_txn) -> c_int;
+
+    pub fn mdbx_txn_renew(txn: *mut MDBX_txn) -> c_int;
+
     // -- Table (DBI) --
 
     pub fn mdbx_dbi_open(

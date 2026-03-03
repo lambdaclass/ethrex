@@ -1,6 +1,6 @@
 use ethrex_mdbx::env::{EnvConfig, Environment};
 use ethrex_mdbx::error::MdbxError;
-use ethrex_mdbx::txn::{RO, Transaction};
+use ethrex_mdbx::txn::{RO, RW, Transaction};
 
 use crate::api::tables::TABLES;
 use crate::api::{
@@ -73,6 +73,7 @@ impl StorageBackend for MdbxBackend {
         Ok(Box::new(MdbxWriteBatch {
             env: self.env.clone(),
             ops: Vec::new(),
+            flushed_txn: None,
         }))
     }
 
@@ -139,6 +140,25 @@ enum WriteOp {
 struct MdbxWriteBatch {
     env: Arc<Environment>,
     ops: Vec<WriteOp>,
+    /// Holds the open RW transaction after `flush()` has been called.
+    flushed_txn: Option<Transaction<RW>>,
+}
+
+impl MdbxWriteBatch {
+    /// Apply buffered ops to the given transaction, draining the ops buffer.
+    fn apply_ops(txn: &Transaction<RW>, ops: Vec<WriteOp>) -> Result<(), StoreError> {
+        for op in ops {
+            match op {
+                WriteOp::Put { table, key, value } => {
+                    txn.put(table, &key, &value).map_err(mdbx_to_store)?;
+                }
+                WriteOp::Delete { table, key } => {
+                    txn.del(table, &key).map_err(mdbx_to_store)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl StorageWriteBatch for MdbxWriteBatch {
@@ -170,24 +190,31 @@ impl StorageWriteBatch for MdbxWriteBatch {
         Ok(())
     }
 
-    fn commit(&mut self) -> Result<(), StoreError> {
+    fn flush(&mut self) -> Result<(), StoreError> {
         let ops = std::mem::take(&mut self.ops);
         if ops.is_empty() {
             return Ok(());
         }
-
         let txn = self.env.begin_rw_txn().map_err(mdbx_to_store)?;
-        for op in ops {
-            match op {
-                WriteOp::Put { table, key, value } => {
-                    txn.put(table, &key, &value).map_err(mdbx_to_store)?;
-                }
-                WriteOp::Delete { table, key } => {
-                    txn.del(table, &key).map_err(mdbx_to_store)?;
-                }
+        Self::apply_ops(&txn, ops)?;
+        self.flushed_txn = Some(txn);
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), StoreError> {
+        if let Some(txn) = self.flushed_txn.take() {
+            // flush() was called — just commit the already-open transaction.
+            txn.commit().map_err(mdbx_to_store)?;
+        } else {
+            // No flush — apply + commit in one step (original behavior).
+            let ops = std::mem::take(&mut self.ops);
+            if ops.is_empty() {
+                return Ok(());
             }
+            let txn = self.env.begin_rw_txn().map_err(mdbx_to_store)?;
+            Self::apply_ops(&txn, ops)?;
+            txn.commit().map_err(mdbx_to_store)?;
         }
-        txn.commit().map_err(mdbx_to_store)?;
         Ok(())
     }
 }
