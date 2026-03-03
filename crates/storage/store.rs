@@ -2122,6 +2122,10 @@ impl Store {
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
         // Fast path: if the bloom filter says this slot was never written, skip the trie.
+        // NOTE: The bloom only tracks writes during the current process lifetime.
+        // For historical state_root queries (RPC), a slot that was non-zero in older
+        // states but later zeroed won't be in the filter. When the bloom is enabled,
+        // this check may need to be limited to latest-state lookups only.
         if !self.storage_bloom.might_contain(address, storage_key) {
             return Ok(None);
         }
