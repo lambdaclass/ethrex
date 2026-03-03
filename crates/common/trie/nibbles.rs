@@ -36,7 +36,9 @@ unsafe fn expand_bytes_to_nibbles(bytes: &[u8], output: *mut u8) {
     // Portable scalar fallback for other architectures.
     #[allow(unreachable_code)]
     // SAFETY: caller guarantees output is writable for bytes.len() * 2 bytes.
-    unsafe { expand_bytes_to_nibbles_scalar(bytes, output) };
+    unsafe {
+        expand_bytes_to_nibbles_scalar(bytes, output)
+    };
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -184,7 +186,9 @@ unsafe fn pack_nibble_pairs(nibbles: &[u8], output: *mut u8) {
         return;
     }
     #[allow(unreachable_code)]
-    unsafe { pack_nibble_pairs_scalar(nibbles, output) };
+    unsafe {
+        pack_nibble_pairs_scalar(nibbles, output)
+    };
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -374,8 +378,8 @@ unsafe fn count_common_prefix_aarch64(a: &[u8], b: &[u8]) -> usize {
             }
             // Find first non-matching byte by scanning the 16-byte window.
             let eq_arr: [u8; 16] = std::mem::transmute(eq);
-            for j in 0..16 {
-                if eq_arr[j] == 0 {
+            for (j, &byte) in eq_arr.iter().enumerate() {
+                if byte == 0 {
                     return i + j;
                 }
             }
