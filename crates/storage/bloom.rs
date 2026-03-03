@@ -1,6 +1,6 @@
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ethrex_common::{Address, H256};
 use fastbloom::AtomicBloomFilter;
