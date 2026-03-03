@@ -1654,8 +1654,11 @@ impl Store {
         std::fs::create_dir_all(&ethrex_db_path)
             .map_err(|e| StoreError::Custom(format!("Failed to create ethrex-db dir: {e}")))?;
         let ethrex_db_file = ethrex_db_path.join("state.db");
-        let paged_db = ethrex_db::store::PagedDb::open(&ethrex_db_file)
-            .map_err(|e| StoreError::Custom(format!("ethrex-db open error: {e}")))?;
+        // 16GB initial size (4M pages * 4KB) to fit full Ethereum state.
+        // The default 64MB is far too small for mainnet/testnet state.
+        let paged_db =
+            ethrex_db::store::PagedDb::open_with_size(&ethrex_db_file, 4_000_000)
+                .map_err(|e| StoreError::Custom(format!("ethrex-db open error: {e}")))?;
 
         // Create Blockchain manager over the PagedDb
         let blockchain = ethrex_db::chain::Blockchain::new(paged_db);
