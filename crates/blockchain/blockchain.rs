@@ -67,7 +67,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
+    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction, validate_block_body,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -398,6 +398,8 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_body(&block.header, &block.body)
+            .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();

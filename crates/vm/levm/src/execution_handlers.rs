@@ -164,26 +164,16 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?;
 
-        // Revert Scenarios
         // 1. If the first byte of code is 0xEF
         if code.first().is_some_and(|v| v == &EOF_PREFIX) {
             return Err(ExceptionalHalt::InvalidContractPrefix.into());
         }
 
-        // 2. If the code_length > MAX_CODE_SIZE
-        //    [EIP-7954] - Amsterdam increases the limit
-        let max_code_size = if fork >= Fork::Amsterdam {
-            AMSTERDAM_MAX_CODE_SIZE
-        } else {
-            MAX_CODE_SIZE
-        };
-        if code_length > max_code_size {
-            return Err(ExceptionalHalt::ContractOutputTooBig.into());
-        }
-
-        // 3. current_consumed_gas + code_deposit_cost > gas_limit
-        // EIP-8037 (Amsterdam+): regular cost = 6 * ceil(len/32), state cost = len * 1174
-        let (regular_deposit, state_deposit) = if fork >= Fork::Amsterdam {
+        // EIP-8037 (Amsterdam+): charge state gas BEFORE regular gas and size check.
+        // Per EELS process_create_message: charge_state_gas → charge_gas → size check.
+        // This ordering matters because on OOG, already-charged state gas must be
+        // reflected in state_gas_used even if the CREATE reverts.
+        if fork >= Fork::Amsterdam {
             let words = code_length.div_ceil(32);
             let regular = words
                 .checked_mul(CODE_DEPOSIT_REGULAR_COST_PER_WORD)
@@ -191,18 +181,26 @@ impl<'a> VM<'a> {
             let state = code_length
                 .checked_mul(COST_PER_STATE_BYTE)
                 .ok_or(InternalError::Overflow)?;
-            (regular, state)
+
+            // State gas first (from reservoir), then regular gas (hash cost)
+            if state > 0 {
+                self.increase_state_gas(state)?;
+            }
+            self.current_call_frame.increase_consumed_gas(regular)?;
+
+            // Size check AFTER gas charges per EELS
+            if code_length > AMSTERDAM_MAX_CODE_SIZE {
+                return Err(ExceptionalHalt::ContractOutputTooBig.into());
+            }
         } else {
+            // Pre-Amsterdam: size check first, then regular gas charge
+            if code_length > MAX_CODE_SIZE {
+                return Err(ExceptionalHalt::ContractOutputTooBig.into());
+            }
             let regular = code_length
                 .checked_mul(CODE_DEPOSIT_COST)
                 .ok_or(InternalError::Overflow)?;
-            (regular, 0u64)
-        };
-
-        self.current_call_frame
-            .increase_consumed_gas(regular_deposit)?;
-        if state_deposit > 0 {
-            self.increase_state_gas(state_deposit)?;
+            self.current_call_frame.increase_consumed_gas(regular)?;
         }
 
         Ok(())
