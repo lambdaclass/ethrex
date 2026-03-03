@@ -536,6 +536,17 @@ impl<'a> VM<'a> {
             fork,
         )?)?;
 
+        // EIP-8037 (Amsterdam+): charge state gas for new account creation BEFORE
+        // generic_create() reserves child gas. This matches EELS where charge_state_gas()
+        // is called in create() before generic_create(), so child gas is 63/64 of the
+        // gas remaining AFTER the state gas charge (or spill to regular gas).
+        if fork >= Fork::Amsterdam {
+            let state_gas = gas_cost::STATE_BYTES_PER_NEW_ACCOUNT
+                .checked_mul(gas_cost::COST_PER_STATE_BYTE)
+                .ok_or(ExceptionalHalt::OutOfGas)?;
+            self.increase_state_gas(state_gas)?;
+        }
+
         self.generic_create(
             value_in_wei_to_send,
             code_offset_in_memory,
@@ -565,6 +576,17 @@ impl<'a> VM<'a> {
             code_size_in_memory,
             fork,
         )?)?;
+
+        // EIP-8037 (Amsterdam+): charge state gas for new account creation BEFORE
+        // generic_create() reserves child gas. This matches EELS where charge_state_gas()
+        // is called in create2() before generic_create(), so child gas is 63/64 of the
+        // gas remaining AFTER the state gas charge (or spill to regular gas).
+        if fork >= Fork::Amsterdam {
+            let state_gas = gas_cost::STATE_BYTES_PER_NEW_ACCOUNT
+                .checked_mul(gas_cost::COST_PER_STATE_BYTE)
+                .ok_or(ExceptionalHalt::OutOfGas)?;
+            self.increase_state_gas(state_gas)?;
+        }
 
         self.generic_create(
             value_in_wei_to_send,
@@ -819,17 +841,8 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
 
-        // EIP-8037 (Amsterdam+): charge state gas for new account creation.
-        // Charged BEFORE early-failure checks (balance/depth/nonce) — state gas is
-        // consumed even if the CREATE fails early, and survives initcode revert.
-        if self.env.config.fork >= Fork::Amsterdam {
-            let state_gas = gas_cost::STATE_BYTES_PER_NEW_ACCOUNT
-                .checked_mul(gas_cost::COST_PER_STATE_BYTE)
-                .ok_or(ExceptionalHalt::OutOfGas)?;
-            self.increase_state_gas(state_gas)?;
-        }
-
-        // EIP-8037: Save snapshot AFTER charging CREATE's account state gas.
+        // EIP-8037: Save snapshot AFTER charging CREATE's account state gas
+        // (charged in op_create/op_create2 before this function is called).
         // The CREATE account charge survives initcode revert per EELS — only the
         // child's own state gas charges (e.g., SSTOREs in initcode) are undone.
         let create_reservoir_snapshot = self.state_gas_reservoir;
