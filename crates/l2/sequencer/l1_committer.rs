@@ -789,9 +789,9 @@ impl L1Committer {
             };
 
             // ── Empty block fast-forward ──
-            // Empty blocks (0 transactions) don't change state, consume no blob
-            // space, and need no receipt/message processing. We skip all heavy
-            // processing and just track the block number and state root.
+            // Empty blocks (0 transactions) don't change state and need no
+            // receipt/message processing. We skip heavy processing but still
+            // include them in the blob so the prover can verify KZG proofs.
             if potential_batch_block.body.transactions.is_empty() {
                 // Empty blocks don't change state — use the block header's
                 // state_root directly (which equals the parent's state_root).
@@ -817,6 +817,19 @@ impl L1Committer {
                         block_gas_used: 0,
                     },
                 )?;
+
+                // Include empty blocks in the blob for KZG proof consistency.
+                if !self.validium {
+                    let fee_config = self
+                        .rollup_store
+                        .get_fee_config_by_block(block_to_commit_number)
+                        .await?
+                        .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                            "Failed to get fee config for empty block".to_owned(),
+                        ))?;
+                    current_blocks.push(potential_batch_block.clone());
+                    current_fee_configs.push(fee_config);
+                }
 
                 last_added_block_number += 1;
                 acc_blocks.push((last_added_block_number, potential_batch_block.hash()));
