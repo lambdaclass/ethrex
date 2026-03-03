@@ -2,7 +2,7 @@
 use crate::backend::rocksdb::RocksDBBackend;
 #[cfg(feature = "ethrex-db")]
 use crate::backend::ethrex_db_conv::{
-    account_info_from_db, account_info_to_db, account_state_from_db, address_to_h256,
+    account_info_from_db, account_info_to_db, account_state_from_db, address_to_db_key,
     data_to_account_state, h256_from_db, h256_to_db, u256_from_db, u256_to_db,
 };
 #[cfg(feature = "ethrex-db")]
@@ -1930,7 +1930,7 @@ impl Store {
             let mut code_updates = Vec::new();
 
             for update in account_updates {
-                let addr_key = address_to_h256(&update.address);
+                let addr_key = address_to_db_key(&update.address);
 
                 if update.removed {
                     block.delete_account(&addr_key);
@@ -2185,7 +2185,7 @@ impl Store {
                 let code = Code::from_bytecode(account.code.clone());
                 self.add_account_code(code.clone()).await?;
 
-                let addr_key = address_to_h256(address);
+                let addr_key = address_to_db_key(address);
                 let db_account = ethrex_db::chain::Account {
                     nonce: account.nonce,
                     balance: u256_to_db(&account.balance),
