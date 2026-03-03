@@ -1095,6 +1095,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "rayon",
  "rustc-hash",
  "thiserror",
  "tokio",
