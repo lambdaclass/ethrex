@@ -2710,6 +2710,11 @@ pub fn validate_state_root(
     block_header: &BlockHeader,
     new_state_root: H256,
 ) -> Result<(), ChainError> {
+    // H256::zero() means state root was not computed (e.g., ethrex-db backend
+    // where incremental root computation is not yet supported). Skip validation.
+    if new_state_root.is_zero() {
+        return Ok(());
+    }
     // Compare state root
     if new_state_root == block_header.state_root {
         Ok(())

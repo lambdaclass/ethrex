@@ -4530,7 +4530,7 @@ dependencies = [
 [[package]]
 name = "ethrex_db"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex-db?branch=ethrex-db-integration#7adb252ecae5d51034b4fabe9e3022d1775efd4c"
+source = "git+https://github.com/lambdaclass/ethrex-db?branch=ethrex-db-integration#af6b9d8e91e22532ca6de3022835993c3de0f9aa"
 dependencies = [
  "hashbrown 0.15.5",
  "lru 0.12.5",
