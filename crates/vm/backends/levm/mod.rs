@@ -8,11 +8,12 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
-    Address, U256,
+    Address, BigEndianHash, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
         GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
@@ -37,7 +38,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
@@ -51,6 +52,24 @@ use std::sync::mpsc::Sender;
 /// [LEVM::process_withdrawals]
 #[derive(Debug)]
 pub struct LEVM;
+
+/// Checks that adding `tx_gas_limit` to `block_gas_used` doesn't exceed `block_gas_limit`.
+/// NOTE: Message must contain "Gas allowance exceeded" and "Block gas used overflow"
+/// as literal substrings for the EELS exception mapper (see execution-specs ethrex.py).
+/// Can be simplified once we update the mapper regexes.
+fn check_gas_limit(
+    block_gas_used: u64,
+    tx_gas_limit: u64,
+    block_gas_limit: u64,
+) -> Result<(), EvmError> {
+    if block_gas_used + tx_gas_limit > block_gas_limit {
+        return Err(EvmError::Transaction(format!(
+            "Gas allowance exceeded: Block gas used overflow: \
+             used {block_gas_used} + tx limit {tx_gas_limit} > block limit {block_gas_limit}"
+        )));
+    }
+    Ok(())
+}
 
 impl LEVM {
     /// Execute a block and return the execution result.
@@ -79,21 +98,13 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
-
         let transactions_with_sender =
             block.body.get_transactions_with_sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            // Use block_gas_used for limit check (pre-refund for Amsterdam+)
-            if block_gas_used + tx.gas_limit() > block.header.gas_limit {
-                return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
-                    block.header.gas_limit,
-                    tx.gas_limit()
-                )));
-            }
+            check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if record_bal {
@@ -191,7 +202,6 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
-
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
@@ -202,14 +212,7 @@ impl LEVM {
             })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            // Use block_gas_used for limit check (pre-refund for Amsterdam+)
-            if block_gas_used + tx.gas_limit() > block.header.gas_limit {
-                return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
-                    block.header.gas_limit,
-                    tx.gas_limit()
-                )));
-            }
+            check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if record_bal {
@@ -232,6 +235,7 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                false,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -340,7 +344,6 @@ impl LEVM {
             |stack_pool, (sender, txs)| {
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
-
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
                 for tx in txs {
@@ -351,6 +354,7 @@ impl LEVM {
                         &mut group_db,
                         vm_type,
                         stack_pool,
+                        true,
                     );
                 }
             },
@@ -370,6 +374,58 @@ impl LEVM {
                 ))
             })?;
         }
+        Ok(())
+    }
+
+    /// Pre-warms state by loading all accounts and storage slots listed in the
+    /// Block Access List directly, without speculative re-execution.
+    ///
+    /// Two-phase approach:
+    /// - Phase 1: Load all account states (parallel via rayon) -> warms CachingDatabase
+    ///   account cache AND trie layer cache nodes
+    /// - Phase 2: Load all storage slots (parallel via rayon, per-slot) + contract code
+    ///   (parallel via rayon, per-account) -> benefits from trie nodes cached in Phase 1
+    pub fn warm_block_from_bal(
+        bal: &BlockAccessList,
+        store: Arc<dyn Database>,
+    ) -> Result<(), EvmError> {
+        let accounts = bal.accounts();
+        if accounts.is_empty() {
+            return Ok(());
+        }
+
+        // Phase 1: Prefetch all account states in parallel.
+        // This warms the CachingDatabase account cache and the TrieLayerCache
+        // with state trie nodes, so Phase 2 storage reads benefit from cached lookups.
+        accounts.par_iter().for_each(|ac| {
+            let _ = store.get_account_state(ac.address);
+        });
+
+        // Phase 2: Prefetch storage slots and contract code in parallel.
+        // Storage is flattened to (address, slot) pairs so rayon can distribute
+        // work across threads regardless of how many slots each account has.
+        // Without flattening, a hot contract with hundreds of slots (e.g. a DEX
+        // pool) would monopolize a single thread while others go idle.
+        let slots: Vec<(ethrex_common::Address, ethrex_common::H256)> = accounts
+            .iter()
+            .flat_map(|ac| {
+                ac.all_storage_slots()
+                    .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
+            })
+            .collect();
+        slots.par_iter().for_each(|(addr, key)| {
+            let _ = store.get_storage_value(*addr, *key);
+        });
+
+        // Code prefetch: get_account_state is a cache hit from Phase 1
+        accounts.par_iter().for_each(|ac| {
+            if let Ok(acct) = store.get_account_state(ac.address)
+                && acct.code_hash != *EMPTY_KECCACK_HASH
+            {
+                let _ = store.get_account_code(acct.code_hash);
+            }
+        });
+
         Ok(())
     }
 
@@ -429,6 +485,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
+            disable_balance_check: false,
         };
 
         Ok(env)
@@ -461,8 +518,10 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        disable_balance_check: bool,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        env.disable_balance_check = disable_balance_check;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
@@ -952,6 +1011,7 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
+        disable_balance_check: false,
     })
 }
 

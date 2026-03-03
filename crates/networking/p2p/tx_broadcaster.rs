@@ -184,7 +184,6 @@ impl TxBroadcaster {
             .get_txs_for_broadcast()
             .map_err(|_| TxBroadcasterError::Broadcast)?;
         if txs_to_broadcast.is_empty() {
-            trace!("No transactions to broadcast");
             return Ok(());
         }
         let peers = self.peer_table.get_peers_with_capabilities().await?;
@@ -244,7 +243,10 @@ impl TxBroadcaster {
             )
             .await?;
         }
-        self.blockchain.mempool.clear_broadcasted_txs()?;
+        let broadcasted_hashes: Vec<H256> = txs_to_broadcast.iter().map(|tx| tx.hash()).collect();
+        self.blockchain
+            .mempool
+            .remove_broadcasted_txs(&broadcasted_hashes)?;
         Ok(())
     }
 

@@ -34,7 +34,7 @@ use tokio::{
     sync::mpsc::{Sender, error::TrySendError},
     task::yield_now,
 };
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
@@ -449,7 +449,19 @@ async fn zip_requeue_node_responses_score_peer(
     }
 
     if request.requests.len() < nodes_size {
-        panic!("The node responded with more data than us!");
+        warn!(
+            peer = ?request.peer_id,
+            requested = request.requests.len(),
+            received = nodes_size,
+            "Peer responded with more trie nodes than requested"
+        );
+        *failed_downloads += 1;
+        peer_handler
+            .peer_table
+            .record_failure(&request.peer_id)
+            .await?;
+        download_queue.extend(request.requests);
+        return Ok(None);
     }
 
     if let Ok(nodes) = request
