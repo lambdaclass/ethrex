@@ -27,16 +27,19 @@ permissions:
 
 jobs:
   kimi-review:
+    if: ${{ github.event.pull_request.head.repo.fork != true }}
     uses: lambdaclass/actions/.github/workflows/ai-review-kimi.yml@v1
     secrets:
       KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
 
   codex-review:
+    if: ${{ github.event.pull_request.head.repo.fork != true }}
     uses: lambdaclass/actions/.github/workflows/ai-review-codex.yml@v1
     secrets:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
   claude-review:
+    if: ${{ github.event.pull_request.head.repo.fork != true }}
     uses: lambdaclass/actions/.github/workflows/ai-review-claude.yml@v1
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
