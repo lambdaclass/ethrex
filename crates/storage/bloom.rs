@@ -86,3 +86,52 @@ impl StorageBloomFilter {
         buf
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addr(n: u8) -> Address {
+        Address::from([n; 20])
+    }
+
+    fn key(n: u8) -> H256 {
+        H256::from([n; 32])
+    }
+
+    #[test]
+    fn disabled_is_pass_through() {
+        let bloom = StorageBloomFilter::new(1000);
+        // Before enable, might_contain always returns true
+        assert!(bloom.might_contain(addr(1), key(1)));
+        assert!(bloom.might_contain(addr(99), key(255)));
+    }
+
+    #[test]
+    fn no_false_negatives_after_enable() {
+        let bloom = StorageBloomFilter::new(1000);
+        bloom.insert(addr(1), key(10));
+        bloom.insert(addr(2), key(20));
+        bloom.enable();
+        // Inserted keys must always return true
+        assert!(bloom.might_contain(addr(1), key(10)));
+        assert!(bloom.might_contain(addr(2), key(20)));
+    }
+
+    #[test]
+    fn rejects_unknown_after_enable() {
+        let bloom = StorageBloomFilter::new(1000);
+        bloom.insert(addr(1), key(10));
+        bloom.enable();
+        // A never-inserted key should return false (with high probability)
+        assert!(!bloom.might_contain(addr(99), key(99)));
+    }
+
+    #[test]
+    fn make_key_distinctness() {
+        // Different (address, key) pairs must produce different bloom keys
+        let k1 = StorageBloomFilter::make_key(addr(1), key(2));
+        let k2 = StorageBloomFilter::make_key(addr(2), key(1));
+        assert_ne!(k1, k2);
+    }
+}
