@@ -513,6 +513,145 @@ mod tests {
     }
 
     #[test]
+    fn execute_settle_order_full_lifecycle() {
+        let maker_note = H256::from_low_u64_be(100);
+        let parent_note = H256::from_low_u64_be(200);
+        let stake_note = H256::from_low_u64_be(300);
+        let reward_note = H256::from_low_u64_be(400);
+        let payment_note = H256::from_low_u64_be(500);
+        let change_note = H256::from_low_u64_be(600);
+
+        let all_notes = vec![
+            maker_note,
+            parent_note,
+            stake_note,
+            reward_note,
+            payment_note,
+            change_note,
+        ];
+
+        let mut state = make_order_state(0, &all_notes, 0);
+        let contract = dex_address();
+
+        // ── Step 1: makeOrder ──
+        let mut make_params = Vec::new();
+        make_params.extend_from_slice(&U256::from(1).to_big_endian());
+        make_params.extend_from_slice(&U256::from(50).to_big_endian());
+        make_params.extend_from_slice(maker_note.as_bytes());
+        make_params.extend_from_slice(&U256::from(0).to_big_endian());
+        let make_result = execute_make_order(&mut state, contract, &make_params).unwrap();
+        assert!(make_result.success);
+
+        // ── Step 2: takeOrder ──
+        let mut take_params = Vec::new();
+        take_params.extend_from_slice(&U256::zero().to_big_endian());
+        take_params.extend_from_slice(parent_note.as_bytes());
+        take_params.extend_from_slice(stake_note.as_bytes());
+        take_params.extend_from_slice(&[0xAA; 16]);
+        let take_result = execute_take_order(&mut state, contract, &take_params).unwrap();
+        assert!(take_result.success);
+
+        // Verify pre-settle state
+        assert_eq!(
+            state
+                .get_storage(contract, note_state_slot(maker_note))
+                .unwrap(),
+            NOTE_TRADING,
+        );
+        assert_eq!(
+            state
+                .get_storage(contract, note_state_slot(parent_note))
+                .unwrap(),
+            NOTE_TRADING,
+        );
+        assert_eq!(
+            state
+                .get_storage(contract, note_state_slot(stake_note))
+                .unwrap(),
+            NOTE_TRADING,
+        );
+        assert_eq!(
+            state
+                .get_storage(contract, order_field_slot(U256::zero(), ORDER_STATE))
+                .unwrap(),
+            ORDER_STATE_TAKEN,
+        );
+
+        // ── Step 3: settleOrder ──
+        let mut enc_datas = vec![0xDB]; // list prefix (27 bytes content)
+        enc_datas.push(0x88);
+        enc_datas.extend_from_slice(&[0xAA; 8]);
+        enc_datas.push(0x88);
+        enc_datas.extend_from_slice(&[0xBB; 8]);
+        enc_datas.push(0x88);
+        enc_datas.extend_from_slice(&[0xCC; 8]);
+
+        let mut settle_params = Vec::new();
+        settle_params.extend_from_slice(&U256::zero().to_big_endian());
+        settle_params.extend_from_slice(reward_note.as_bytes());
+        settle_params.extend_from_slice(payment_note.as_bytes());
+        settle_params.extend_from_slice(change_note.as_bytes());
+        settle_params.extend_from_slice(&enc_datas);
+
+        let settle_result = execute_settle_order(&mut state, contract, &settle_params).unwrap();
+        assert!(settle_result.success);
+
+        // ── Verify new notes are Valid ──
+        assert_eq!(
+            state
+                .get_storage(contract, note_state_slot(reward_note))
+                .unwrap(),
+            NOTE_VALID,
+        );
+        assert_eq!(
+            state
+                .get_storage(contract, note_state_slot(payment_note))
+                .unwrap(),
+            NOTE_VALID,
+        );
+        assert_eq!(
+            state
+                .get_storage(contract, note_state_slot(change_note))
+                .unwrap(),
+            NOTE_VALID,
+        );
+
+        // ── Verify old notes are Spent ──
+        assert_eq!(
+            state
+                .get_storage(contract, note_state_slot(maker_note))
+                .unwrap(),
+            NOTE_SPENT,
+        );
+        assert_eq!(
+            state
+                .get_storage(contract, note_state_slot(parent_note))
+                .unwrap(),
+            NOTE_SPENT,
+        );
+        assert_eq!(
+            state
+                .get_storage(contract, note_state_slot(stake_note))
+                .unwrap(),
+            NOTE_SPENT,
+        );
+
+        // ── Verify order state is Settled ──
+        assert_eq!(
+            state
+                .get_storage(contract, order_field_slot(U256::zero(), ORDER_STATE))
+                .unwrap(),
+            ORDER_STATE_SETTLED,
+        );
+
+        // ── Verify result.data contains the 3 old note hashes ──
+        assert_eq!(settle_result.data.len(), 96);
+        assert_eq!(&settle_result.data[0..32], maker_note.as_bytes());
+        assert_eq!(&settle_result.data[32..64], parent_note.as_bytes());
+        assert_eq!(&settle_result.data[64..96], stake_note.as_bytes());
+    }
+
+    #[test]
     fn decode_enc_datas_basic() {
         // RLP encode 3 short byte strings.
         // item1 = [0x01, 0x02] => 0x82, 0x01, 0x02 (3 bytes)

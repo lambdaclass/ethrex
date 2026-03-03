@@ -150,4 +150,37 @@ mod tests {
         assert_eq!(&log.data[32..64], payment.as_bytes());
         assert_eq!(&log.data[64..96], change.as_bytes());
     }
+
+    #[test]
+    fn event_topics_are_unique_and_nonzero() {
+        let nsc = note_state_change_topic();
+        let ot = order_taken_topic();
+        let os = order_settled_topic();
+
+        assert_ne!(nsc, H256::zero());
+        assert_ne!(ot, H256::zero());
+        assert_ne!(os, H256::zero());
+
+        assert_ne!(nsc, ot);
+        assert_ne!(nsc, os);
+        assert_ne!(ot, os);
+    }
+
+    #[test]
+    fn event_topics_match_solidity_signatures() {
+        assert_eq!(
+            note_state_change_topic(),
+            H256::from(keccak_hash(b"NoteStateChange(bytes32,uint8)")),
+        );
+        assert_eq!(
+            order_taken_topic(),
+            H256::from(keccak_hash(b"OrderTaken(uint256,bytes32,bytes32)")),
+        );
+        assert_eq!(
+            order_settled_topic(),
+            H256::from(keccak_hash(
+                b"OrderSettled(uint256,bytes32,bytes32,bytes32)"
+            )),
+        );
+    }
 }
