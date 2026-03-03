@@ -372,7 +372,7 @@ mod tests {
     use super::*;
     use crate::common::app_state::AppState;
     use crate::common::app_types::{AccountProof, StorageProof};
-    use crate::programs::zk_dex::storage::{ORDERS_SLOT, encrypted_note_slots};
+    use crate::programs::zk_dex::storage::encrypted_note_slots;
     use ethrex_common::H160;
 
     fn dex_address() -> Address {

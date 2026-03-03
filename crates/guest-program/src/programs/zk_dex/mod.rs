@@ -7,6 +7,7 @@ pub mod storage;
 use crate::traits::{GuestProgram, GuestProgramError, ResourceLimits, backends};
 
 /// DEX contract address on the L2 (must match the guest binary constant).
+#[cfg(feature = "l2")]
 const DEX_CONTRACT_ADDRESS: ethrex_common::Address = ethrex_common::H160([0xDE; 20]);
 
 /// ZK-DEX Guest Program — privacy-preserving decentralized exchange.
