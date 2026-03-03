@@ -54,8 +54,13 @@ if [[ -f "$LOC_JSON" ]]; then
 
   fmt_top_row() {
     local label=$1 new=$2 old=$3 denom=$4
-    printf "%-6s  %${num_width}s (%2d%%)%s" \
-      "$label" \
+    # Use wc -m (char count, not byte count) to pad correctly despite multi-byte •
+    local char_len pad padded
+    char_len=$(printf "%s" "$label" | wc -m | tr -d ' ')
+    pad=$(( 6 - char_len ))
+    padded=$(printf "%s%${pad}s" "$label" "")
+    printf "%s  %${num_width}s (%2d%%)%s" \
+      "$padded" \
       "$(fmt_num "$new")" \
       "$(pct "$new" "$denom")" \
       "$(fmt_loc_diff "$new" "$old")"
@@ -63,7 +68,7 @@ if [[ -f "$LOC_JSON" ]]; then
 
   fmt_sub_row() {
     local name=$1 new=$2 old=$3 denom=$4
-    printf "    • %-${max_name_len}s  %${num_width}s (%2d%%)%s" \
+    printf "  • %-${max_name_len}s  %${num_width}s (%2d%%)%s" \
       "$name" \
       "$(fmt_num "$new")" \
       "$(pct "$new" "$denom")" \
