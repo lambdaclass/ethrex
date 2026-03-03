@@ -198,7 +198,6 @@ unsafe fn pack_nibble_pairs_x86_64(nibbles: &[u8], output: *mut u8) {
     use std::arch::x86_64::*;
 
     let n = nibbles.len(); // always even
-    let pairs = n / 2;
     let mut i = 0usize; // index into nibbles (steps of 32)
     let mut o = 0usize; // index into output (steps of 16)
 
@@ -234,7 +233,6 @@ unsafe fn pack_nibble_pairs_x86_64(nibbles: &[u8], output: *mut u8) {
             o += 1;
         }
     }
-    let _ = pairs; // suppress unused warning when SSSE3 loop handles all
 }
 
 #[cfg(target_arch = "aarch64")]
