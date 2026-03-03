@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-03-03
+
+- Replace per-block OS thread spawning for merkleization shard workers with a persistent `ShardWorkerPool` (16 threads, channel-of-channels design), eliminating ~50–100 µs `pthread_create` overhead × 16 per block [#6292](https://github.com/lambdaclass/ethrex/pull/6292)
+
 ### 2026-02-25
 
 - Speed up snap sync validation with parallelism and deduplication [#6191](https://github.com/lambdaclass/ethrex/pull/6191)
