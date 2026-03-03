@@ -1734,6 +1734,96 @@ impl Store {
         self.ethrex_db_blockchain.as_ref()
     }
 
+    /// Transfers state from the RocksDB trie (populated during snap sync) into ethrex-db.
+    ///
+    /// After snap sync, the healed state trie lives in RocksDB (trie node tables).
+    /// This method iterates all accounts and their storage from that trie and inserts
+    /// them into ethrex-db's state trie using raw RLP values, then persists to disk.
+    #[cfg(feature = "ethrex-db")]
+    pub fn transfer_snap_state_to_ethrex_db(
+        &self,
+        state_root: H256,
+        block_number: u64,
+        block_hash: H256,
+    ) -> Result<(), StoreError> {
+        use ethrex_common::constants::EMPTY_TRIE_HASH as COMMON_EMPTY_TRIE_HASH;
+
+        let bc = self
+            .ethrex_db_blockchain()
+            .ok_or(StoreError::Custom(
+                "ethrex-db blockchain handle missing".into(),
+            ))?;
+
+        // Open the state trie from RocksDB (this is the healed trie from snap sync)
+        let state_trie = self.open_direct_state_trie(state_root)?;
+
+        // Iterate all account leaves
+        let mut account_count: u64 = 0;
+        let mut storage_account_count: u64 = 0;
+
+        for (path, value) in state_trie.into_iter().content() {
+            if path.len() != 32 {
+                continue; // Skip non-account entries
+            }
+            let address_hash: [u8; 32] = path
+                .try_into()
+                .map_err(|_| StoreError::Custom("invalid account path length".into()))?;
+
+            // Decode the account to check if it has storage
+            let account = AccountState::decode(&value)
+                .map_err(|e| StoreError::Custom(format!("failed to decode account: {e}")))?;
+
+            // Insert raw RLP into ethrex-db (no re-encoding needed)
+            bc.read()
+                .map_err(|_| StoreError::LockError)?
+                .set_account_raw(&address_hash, value);
+
+            // If the account has a non-empty storage root, transfer its storage
+            if account.storage_root != *COMMON_EMPTY_TRIE_HASH {
+                let storage_trie = self.open_direct_storage_trie(
+                    H256::from(address_hash),
+                    account.storage_root,
+                )?;
+                let bc_read = bc.read().map_err(|_| StoreError::LockError)?;
+                for (slot_path, slot_value) in storage_trie.into_iter().content() {
+                    if slot_path.len() != 32 {
+                        continue;
+                    }
+                    let slot_hash: [u8; 32] = slot_path
+                        .try_into()
+                        .map_err(|_| StoreError::Custom("invalid slot path length".into()))?;
+                    bc_read.storage_set_raw(&address_hash, &slot_hash, slot_value);
+                }
+                storage_account_count += 1;
+            }
+
+            account_count += 1;
+            if account_count % 1_000_000 == 0 {
+                tracing::info!(
+                    "State transfer progress: {} accounts ({} with storage)",
+                    account_count,
+                    storage_account_count,
+                );
+            }
+        }
+
+        tracing::info!(
+            "State transfer complete: {} accounts ({} with storage). Persisting to ethrex-db...",
+            account_count,
+            storage_account_count,
+        );
+
+        // Persist the populated state trie to disk
+        let block_hash_db = h256_to_db(&block_hash);
+        bc.read()
+            .map_err(|_| StoreError::LockError)?
+            .persist_state_trie(block_number, block_hash_db)
+            .map_err(|e| StoreError::Custom(format!("failed to persist state trie: {e}")))?;
+
+        tracing::info!("ethrex-db state trie persisted successfully");
+        Ok(())
+    }
+
     pub async fn new_from_genesis(
         store_path: &Path,
         engine_type: EngineType,

@@ -491,6 +491,19 @@ pub async fn snap_sync(
 
     info!("Finished healing");
 
+    // Transfer snap sync state to ethrex-db if using the ethrex-db backend.
+    // The healed state trie is in RocksDB; we need to populate ethrex-db for block execution.
+    #[cfg(feature = "ethrex-db")]
+    if store.is_ethrex_db() {
+        info!("Transferring snap sync state to ethrex-db...");
+        store.transfer_snap_state_to_ethrex_db(
+            pivot_header.state_root,
+            pivot_header.number,
+            pivot_header.hash(),
+        )?;
+        info!("State transfer to ethrex-db complete");
+    }
+
     // Finish code hash collection
     code_hash_collector.finish().await?;
 
