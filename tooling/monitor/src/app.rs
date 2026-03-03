@@ -76,7 +76,7 @@ pub type MonitorRef = Arc<dyn MonitorProtocol>;
 #[protocol]
 pub trait MonitorProtocol: Send + Sync {
     fn tick(&self) -> Result<(), ActorError>;
-    fn terminal_event(&self, event: Event) -> Result<(), ActorError>;
+    fn event(&self, event: Event) -> Result<(), ActorError>;
 }
 
 pub struct EthrexMonitor {
@@ -115,7 +115,7 @@ impl EthrexMonitor {
             ctx.clone(),
             EventStream::new()
                 .filter_map(|result| async move {
-                    result.ok().map(|e| monitor_protocol::TerminalEvent { event: e })
+                    result.ok().map(|e| monitor_protocol::Event { event: e })
                 }),
         );
     }
@@ -148,7 +148,7 @@ impl EthrexMonitor {
     }
 
     #[send_handler]
-    async fn handle_event(&mut self, msg: monitor_protocol::TerminalEvent, ctx: &Context<Self>) {
+    async fn handle_event(&mut self, msg: monitor_protocol::Event, ctx: &Context<Self>) {
         if let Some(key) = msg.event.as_key_press_event() {
             self.widget.on_key_event(key.code);
         }
