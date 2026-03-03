@@ -943,7 +943,6 @@ dependencies = [
  "ethereum-types",
  "ff",
  "hex-literal",
- "kzg-rs",
  "malachite",
  "p256",
  "ripemd",
@@ -958,6 +957,7 @@ name = "ethrex-guest-program"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "ethereum-types",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
