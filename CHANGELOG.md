@@ -4,7 +4,7 @@
 
 ### 2026-03-03
 
-- Reuse persistent rayon thread pool for BAL merkleization workers to avoid per-block OS thread spawning overhead [#6292](https://github.com/lambdaclass/ethrex/pull/6292)
+- Replace per-block OS thread spawning for merkleization shard workers with a persistent `ShardWorkerPool` (16 threads, channel-of-channels design), eliminating ~50–100 µs `pthread_create` overhead × 16 per block [#6292](https://github.com/lambdaclass/ethrex/pull/6292)
 
 ### 2026-02-25
 
