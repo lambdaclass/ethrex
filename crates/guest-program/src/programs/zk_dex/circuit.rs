@@ -735,13 +735,13 @@ pub fn balance_storage_slot(token: Address, user: Address) -> H256 {
     let mut inner_preimage = [0u8; 64];
     inner_preimage[12..32].copy_from_slice(token.as_bytes());
 
-    let inner_hash = keccak_hash(&inner_preimage);
+    let inner_hash = keccak_hash(inner_preimage);
 
     let mut outer_preimage = [0u8; 64];
     outer_preimage[12..32].copy_from_slice(user.as_bytes());
     outer_preimage[32..64].copy_from_slice(&inner_hash);
 
-    H256::from(keccak_hash(&outer_preimage))
+    H256::from(keccak_hash(outer_preimage))
 }
 
 fn address_from_abi_word(word: &[u8]) -> Address {
@@ -812,6 +812,7 @@ mod tests {
         })
     }
 
+    /// Build an AppState with the DEX contract account and given storage slots.
     fn make_state_with_balances(token: Address, balances: Vec<(Address, U256)>) -> AppState {
         let contract = dex_address();
         let account_proofs = vec![AccountProof {

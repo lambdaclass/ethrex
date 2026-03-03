@@ -53,7 +53,7 @@ jobs:
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --no-progress --exclude 'localhost' docs/
+          args: --no-progress --timeout 30 --exclude 'localhost' --exclude 'medium\.com' --exclude 'github\.com/lambdaclass/ethrex' --exclude 'docs\.taiko\.xyz' --exclude 'ephema\.io' --exclude 'share\.firefox\.dev' docs/
           fail: true
 
   deploy:

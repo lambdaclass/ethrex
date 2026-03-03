@@ -400,7 +400,7 @@ contract OnChainProposer is
         if (GUEST_PROGRAM_REGISTRY != address(0)) {
             require(
                 IGuestProgramRegistry(GUEST_PROGRAM_REGISTRY).isProgramActive(effectiveProgramTypeId),
-                "014" // OnChainProposer: program type not registered or inactive
+                "OnChainProposer: program not active"
             );
         }
         if (

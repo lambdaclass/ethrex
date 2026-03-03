@@ -98,6 +98,13 @@ impl GuestProgram for ZkDexGuestProgram {
     }
 }
 
+/// Accounts and storage slots required for proof generation.
+#[cfg(feature = "l2")]
+type ProofRequirements = (
+    Vec<ethrex_common::Address>,
+    Vec<(ethrex_common::Address, ethrex_common::H256)>,
+);
+
 /// Analyze zk-dex batch transactions to determine which accounts and storage
 /// slots are needed for proof generation.
 ///
@@ -114,13 +121,7 @@ fn analyze_zk_dex_transactions(
     dex_contract: ethrex_common::Address,
     fee_configs: &[ethrex_common::types::l2::fee_config::FeeConfig],
     witness: &ethrex_common::types::block_execution_witness::ExecutionWitness,
-) -> Result<
-    (
-        Vec<ethrex_common::Address>,
-        Vec<(ethrex_common::Address, ethrex_common::H256)>,
-    ),
-    String,
-> {
+) -> Result<ProofRequirements, String> {
     use std::collections::BTreeSet;
 
     use ethrex_common::types::TxKind;

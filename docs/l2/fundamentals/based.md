@@ -133,7 +133,7 @@ _Special thanks to [Lorenzo](https://x.com/_eltitan) and [Kubi](https://x.com/ku
 > [!IMPORTANT]
 > We believe that [Gattaca's model](https://ethresear.ch/t/becoming-based-a-path-towards-decentralised-sequencing/21733)—permissionless with preconfs using L1 proposers (either directly or through delegations) as L2 sequencers—is the ideal approach. However, this model cannot achieve permissionlessness until the deterministic lookahead becomes available after Fusaka. In the meantime, we consider the Spire approach, based on a Dutch auction, to be the most suitable for our current needs. It is important to note that Rogue cannot implement a centralized mechanism for offering preconfs, so we have chosen to prioritize a permissionless structure before enabling preconfirmations. This initial approach is **decentralized** and **permissionless** but not **based** yet. Although sequencing rights aren't currently guaranteed to the L1 proposer, there will be incentives for L1 proposers to eventually participate in the L2, moving toward [Justin Drake's definition](https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016).
 
-From the beginning, [ethrex](https://github.com/lambdaclass/ethrex) was conceived not just as an Ethereum L1 client, but also as an L2 (ZK Rollup). This means anyone will be able to use ethrex to deploy an EVM-equivalent, multi-prover (supporting SP1, RISC Zero, and TEEs) based rollup with just one command. We recently wrote a [blog post](https://blog.lambdaclass.com/celebrating-a-year-of-ethrex/) where we expand this idea more in depth.
+From the beginning, [ethrex](https://github.com/tokamak-network/ethrex) was conceived not just as an Ethereum L1 client, but also as an L2 (ZK Rollup). This means anyone will be able to use ethrex to deploy an EVM-equivalent, multi-prover (supporting SP1, RISC Zero, and TEEs) based rollup with just one command. We recently wrote a [blog post](https://blog.lambdaclass.com/celebrating-a-year-of-ethrex/) where we expand this idea more in depth.
 
 The purpose of this document is to provide a high-level overview of how ethrex will implement its based rollup feature.
 
@@ -334,7 +334,7 @@ A list of all the configurable parameters of the network.
 ### Batch commitment/proposal
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](../architecture/overview.md) as this only details the diff with what we already have.
 
 - Only lead Sequencer can post batches.
 - Lead Sequencer batches are accepted during their sequencing period and rejected outside this period.
@@ -343,7 +343,7 @@ A list of all the configurable parameters of the network.
 ### Batch verification
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](../architecture/overview.md) as this only details the diff with what we already have.
 
 - Anyone can verify batches.
 - Only one valid verification is required to advance the network.
@@ -428,7 +428,7 @@ The following links, repos, and projects have been important in the development 
 ### Based rollups + extra steps
 
 - [Based Ticketing Rollup by George Spasov](https://hackmd.io/@Perseverance/Syk2oQU36)
-- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/contestable-rollup)
+- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/contestable-rollup/)
 - [Native Based Rollup by Taiko (Taiko Gwyneth)](https://docs.taiko.xyz/taiko-gwyneth-protocol/what-is-taiko-gwyneth/)
 
 ### Misc

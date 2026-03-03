@@ -321,7 +321,7 @@ contract OnChainProposer is
         if (GUEST_PROGRAM_REGISTRY != address(0)) {
             require(
                 IGuestProgramRegistry(GUEST_PROGRAM_REGISTRY).isProgramActive(effectiveProgramTypeId),
-                "014" // OnChainProposer: program type not registered or inactive
+                "OnChainProposer: program not active"
             );
         }
         require(
@@ -337,7 +337,7 @@ contract OnChainProposer is
         if (effectiveProgramTypeId > 1) {
             require(
                 publicValuesHash != bytes32(0),
-                "015" // OnChainProposer: custom program requires publicValuesHash
+                "OnChainProposer: custom program requires publicValuesHash"
             );
         }
 
