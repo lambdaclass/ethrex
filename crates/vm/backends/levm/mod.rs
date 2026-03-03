@@ -1031,6 +1031,10 @@ impl LEVM {
             },
         );
 
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
         for withdrawal in block
             .body
             .withdrawals
