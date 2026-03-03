@@ -1957,8 +1957,8 @@ fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
     // away. EIP-2537 uses a different encoding where all 48 bytes are pure coordinate
     // data. Rejecting values >= p here prevents the crate from misinterpreting
     // coordinate bits as flags.
-    let coord_value = UnsignedInteger::<6>::from_bytes_be(&coordinate_raw_bytes[16..64])
-        .unwrap_or_default();
+    let coord_value =
+        UnsignedInteger::<6>::from_bytes_be(&coordinate_raw_bytes[16..64]).unwrap_or_default();
     if coord_value >= BLS12381FieldModulus::MODULUS {
         return Err(PrecompileError::ParsingInputError.into());
     }
