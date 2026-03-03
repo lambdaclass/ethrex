@@ -39,7 +39,8 @@ impl Default for EnvConfig {
                 | ffi::MDBX_WRITEMAP
                 | ffi::MDBX_NOSTICKYTHREADS
                 | ffi::MDBX_SAFE_NOSYNC
-                | ffi::MDBX_NOMEMINIT,
+                | ffi::MDBX_NOMEMINIT
+                | ffi::MDBX_COALESCE,
             mode: 0o664,
         }
     }

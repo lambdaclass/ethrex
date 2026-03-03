@@ -145,18 +145,65 @@ struct MdbxWriteBatch {
 }
 
 impl MdbxWriteBatch {
-    /// Apply buffered ops to the given transaction, draining the ops buffer.
-    fn apply_ops(txn: &Transaction<RW>, ops: Vec<WriteOp>) -> Result<(), StoreError> {
-        for op in ops {
-            match op {
-                WriteOp::Put { table, key, value } => {
-                    txn.put(table, &key, &value).map_err(mdbx_to_store)?;
-                }
-                WriteOp::Delete { table, key } => {
-                    txn.del(table, &key).map_err(mdbx_to_store)?;
-                }
-            }
+    /// Apply buffered ops to the given transaction using cursor-based bulk writes.
+    ///
+    /// Ops are sorted by (table, key) so that each table's writes form a
+    /// sequential cursor walk through the B-tree. This maximizes page cache
+    /// hits and minimizes B-tree rebalancing compared to random `mdbx_put` calls.
+    fn apply_ops(txn: &Transaction<RW>, mut ops: Vec<WriteOp>) -> Result<(), StoreError> {
+        if ops.is_empty() {
+            return Ok(());
         }
+
+        // Sort by table name first, then by key within each table.
+        // This groups writes per table and makes cursor walks sequential.
+        ops.sort_unstable_by(|a, b| {
+            let (t_a, k_a) = match a {
+                WriteOp::Put { table, key, .. } => (*table, key.as_slice()),
+                WriteOp::Delete { table, key } => (*table, key.as_slice()),
+            };
+            let (t_b, k_b) = match b {
+                WriteOp::Put { table, key, .. } => (*table, key.as_slice()),
+                WriteOp::Delete { table, key } => (*table, key.as_slice()),
+            };
+            t_a.cmp(&t_b).then_with(|| k_a.cmp(k_b))
+        });
+
+        // Process ops in table-contiguous runs using one cursor per table.
+        let mut i = 0;
+        while i < ops.len() {
+            let current_table = match &ops[i] {
+                WriteOp::Put { table, .. } => *table,
+                WriteOp::Delete { table, .. } => *table,
+            };
+
+            let mut cursor = txn.cursor(current_table).map_err(mdbx_to_store)?;
+
+            // Apply all ops for this table through the cursor.
+            while i < ops.len() {
+                let op_table = match &ops[i] {
+                    WriteOp::Put { table, .. } => *table,
+                    WriteOp::Delete { table, .. } => *table,
+                };
+                if op_table != current_table {
+                    break;
+                }
+
+                match &ops[i] {
+                    WriteOp::Put { key, value, .. } => {
+                        cursor.put(key, value).map_err(mdbx_to_store)?;
+                    }
+                    WriteOp::Delete { table, key } => {
+                        // Use direct txn.del for deletes — simpler and equally fast
+                        // since deletes are rare compared to puts.
+                        txn.del(table, key).map_err(mdbx_to_store)?;
+                    }
+                }
+                i += 1;
+            }
+            // cursor dropped here, closing it before opening the next table's cursor
+        }
+
         Ok(())
     }
 }

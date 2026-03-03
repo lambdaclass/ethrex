@@ -1,6 +1,7 @@
 use ethrex_mdbx_sys as ffi;
 
 use crate::error::MdbxError;
+use crate::txn::RW;
 
 use std::marker::PhantomData;
 
@@ -86,6 +87,37 @@ impl<'txn, K> Cursor<'txn, K> {
             started: false,
             done: false,
         }
+    }
+}
+
+impl Cursor<'_, RW> {
+    /// Insert or update a key-value pair via cursor.
+    ///
+    /// More efficient than `Transaction::put` when writing multiple entries
+    /// to the same table, because the cursor maintains position in the B-tree.
+    pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), MdbxError> {
+        let key_val = ffi::MDBX_val::from_slice(key);
+        let mut data_val = ffi::MDBX_val::from_slice(value);
+        unsafe {
+            MdbxError::from_code(ffi::mdbx_cursor_put(
+                self.cursor,
+                &key_val,
+                &mut data_val,
+                ffi::MDBX_UPSERT,
+            ))?;
+        }
+        Ok(())
+    }
+
+    /// Delete the entry at the current cursor position.
+    ///
+    /// The cursor must be positioned on a valid entry (e.g. after a successful
+    /// `seek_range` or `move_next`).
+    pub fn del(&mut self) -> Result<(), MdbxError> {
+        unsafe {
+            MdbxError::from_code(ffi::mdbx_cursor_del(self.cursor, 0))?;
+        }
+        Ok(())
     }
 }
 

@@ -283,4 +283,16 @@ unsafe extern "C" {
         data: *mut MDBX_val,
         op: MDBX_cursor_op,
     ) -> c_int;
+
+    pub fn mdbx_cursor_put(
+        cursor: *mut MDBX_cursor,
+        key: *const MDBX_val,
+        data: *mut MDBX_val,
+        flags: MDBX_put_flags_t,
+    ) -> c_int;
+
+    pub fn mdbx_cursor_del(
+        cursor: *mut MDBX_cursor,
+        flags: MDBX_put_flags_t,
+    ) -> c_int;
 }
