@@ -43,6 +43,10 @@ tokio = { workspace = true, features = ["full"] }
 [lib]
 path = "./lib.rs"
 
+[[example]]
+name = "rocksdb_memory_comparison"
+required-features = ["rocksdb"]
+
 [lints.clippy]
 unwrap_used = "deny"
 redundant_clone = "warn"

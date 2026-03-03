@@ -201,6 +201,114 @@ impl RocksDBBackend {
         }
         Ok(Self { db: Arc::new(db) })
     }
+
+    /// Opens a RocksDB instance with lightweight settings suitable for checkpoint stores.
+    ///
+    /// Checkpoint stores are short-lived: they re-execute a handful of blocks and are then
+    /// dropped. The aggressive buffer settings of `open()` waste ~1.5-3 GB of memory per
+    /// instance for buffers that are barely used. This method uses much smaller buffers.
+    pub fn open_checkpoint(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+
+        opts.set_max_open_files(256);
+        opts.set_max_file_opening_threads(4);
+
+        opts.set_max_background_jobs(2);
+
+        opts.set_level_zero_file_num_compaction_trigger(4);
+        opts.set_level_zero_slowdown_writes_trigger(20);
+        opts.set_level_zero_stop_writes_trigger(36);
+        opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB
+        opts.set_max_bytes_for_level_base(256 * 1024 * 1024); // 256MB
+        opts.set_max_bytes_for_level_multiplier(10.0);
+        opts.set_level_compaction_dynamic_level_bytes(true);
+
+        opts.set_db_write_buffer_size(64 * 1024 * 1024); // 64MB (was 1GB)
+        opts.set_write_buffer_size(16 * 1024 * 1024); // 16MB (was 128MB)
+        opts.set_max_write_buffer_number(2);
+        opts.set_min_write_buffer_number_to_merge(1);
+
+        opts.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
+        opts.set_max_total_wal_size(128 * 1024 * 1024); // 128MB (was 2GB)
+        opts.set_wal_bytes_per_sync(8 * 1024 * 1024); // 8MB
+        opts.set_bytes_per_sync(8 * 1024 * 1024); // 8MB
+        opts.set_use_fsync(false);
+
+        opts.set_enable_pipelined_write(true);
+        opts.set_allow_concurrent_memtable_write(true);
+        opts.set_enable_write_thread_adaptive_yield(true);
+        opts.set_compaction_readahead_size(2 * 1024 * 1024); // 2MB
+        opts.set_advise_random_on_open(false);
+        opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+        let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
+            .unwrap_or_else(|_| vec!["default".to_string()]);
+
+        let mut all_cfs_to_open = HashSet::new();
+        all_cfs_to_open.extend(existing_cfs.iter().cloned());
+        all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
+
+        let cf_descriptors: Vec<_> = all_cfs_to_open
+            .iter()
+            .map(|cf_name| {
+                let mut cf_opts = Options::default();
+                cf_opts.set_write_buffer_size(16 * 1024 * 1024); // 16MB uniform
+                cf_opts.set_max_write_buffer_number(2);
+                cf_opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB
+                cf_opts.set_level_zero_file_num_compaction_trigger(4);
+                cf_opts.set_level_zero_slowdown_writes_trigger(20);
+                cf_opts.set_level_zero_stop_writes_trigger(36);
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+                let mut block_opts = BlockBasedOptions::default();
+                block_opts.set_block_size(16 * 1024); // 16KB
+                cf_opts.set_block_based_table_factory(&block_opts);
+
+                ColumnFamilyDescriptor::new(cf_name, cf_opts)
+            })
+            .collect();
+
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+            &opts,
+            path.as_ref(),
+            cf_descriptors,
+        )
+        .map_err(|e| {
+            StoreError::Custom(format!(
+                "Failed to open checkpoint RocksDB with all CFs: {}",
+                e
+            ))
+        })?;
+
+        Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Returns the total size of all memtables across all column families (in bytes).
+    ///
+    /// Queries the `rocksdb.cur-size-all-mem-tables` property for each CF and sums them.
+    /// Useful for measuring and comparing memory usage between store configurations.
+    pub fn mem_table_total_size(&self) -> u64 {
+        let mut total: u64 = 0;
+        for table in TABLES {
+            if let Some(cf) = self.db.cf_handle(table)
+                && let Ok(Some(val)) = self
+                    .db
+                    .property_int_value_cf(&cf, "rocksdb.cur-size-all-mem-tables")
+            {
+                total += val;
+            }
+        }
+        // Also include the "default" CF
+        if let Ok(Some(val)) = self
+            .db
+            .property_int_value("rocksdb.cur-size-all-mem-tables")
+        {
+            total += val;
+        }
+        total
+    }
 }
 
 impl Drop for RocksDBBackend {
