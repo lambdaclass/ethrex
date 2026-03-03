@@ -1737,6 +1737,82 @@ impl Store {
         self.ethrex_db_blockchain.as_ref()
     }
 
+    /// Checks if ethrex-db has state and re-transfers from RocksDB if needed.
+    ///
+    /// After snap sync, the state is persisted to ethrex-db. If the ethrex-db state
+    /// is missing or corrupt (e.g., after a bug fix in the persistence layer), this
+    /// method detects the condition and re-runs the state transfer.
+    ///
+    /// Detection uses two sources:
+    /// 1. ethrex-db metadata (block number/hash from a previous persist)
+    /// 2. RocksDB latest block header (if ethrex-db is a fresh database)
+    #[cfg(feature = "ethrex-db")]
+    pub fn ensure_ethrex_db_state(&self) -> Result<(), StoreError> {
+        let bc = self
+            .ethrex_db_blockchain()
+            .ok_or(StoreError::Custom(
+                "ethrex-db blockchain handle missing".into(),
+            ))?;
+
+        let bc_read = bc.read().map_err(|_| StoreError::LockError)?;
+
+        // Check if ethrex-db already has a populated state trie
+        let has_state = {
+            let db = bc_read.db_ref();
+            let db_read = db.read().map_err(|_| StoreError::LockError)?;
+            !db_read.begin_read_only().state_root().is_null()
+        };
+
+        if has_state {
+            return Ok(());
+        }
+
+        // ethrex-db has no state. Try to find the block to retransfer from.
+        // First check ethrex-db metadata (from a previous persist attempt).
+        let db_block_number = {
+            let db = bc_read.db_ref();
+            let db_read = db.read().map_err(|_| StoreError::LockError)?;
+            db_read.block_number() as u64
+        };
+        drop(bc_read);
+
+        let (block_number, block_hash, state_root) = if db_block_number > 0 {
+            // ethrex-db has metadata from a previous persist
+            let bc_read = bc.read().map_err(|_| StoreError::LockError)?;
+            let block_hash_bytes = {
+                let db = bc_read.db_ref();
+                let db_read = db.read().map_err(|_| StoreError::LockError)?;
+                db_read.block_hash()
+            };
+            drop(bc_read);
+            let block_hash = H256::from(block_hash_bytes);
+            let header = self
+                .get_block_header_by_hash(block_hash)?
+                .ok_or_else(|| {
+                    StoreError::Custom(format!(
+                        "Cannot retransfer state: block header for hash {block_hash:#x} not found"
+                    ))
+                })?;
+            (db_block_number, block_hash, header.state_root)
+        } else {
+            // Fresh ethrex-db. Check if RocksDB has blocks (from completed snap sync).
+            let latest = self.latest_block_header.get();
+            if latest.number == 0 {
+                // No blocks in RocksDB either — nothing to transfer
+                return Ok(());
+            }
+            (latest.number, latest.hash(), latest.state_root)
+        };
+
+        tracing::info!(
+            "ethrex-db state is empty. Re-transferring state from RocksDB (block {}, root {:#x})...",
+            block_number,
+            state_root,
+        );
+
+        self.transfer_snap_state_to_ethrex_db(state_root, block_number, block_hash)
+    }
+
     /// Transfers state from the RocksDB trie (populated during snap sync) into ethrex-db.
     ///
     /// After snap sync, the healed state trie lives in RocksDB (trie node tables).

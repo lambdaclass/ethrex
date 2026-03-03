@@ -470,6 +470,11 @@ pub async fn init_l1(
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
     };
 
+    #[cfg(feature = "ethrex-db")]
+    if store.is_ethrex_db() {
+        store.ensure_ethrex_db_state()?;
+    }
+
     if opts.syncmode == SyncMode::Full {
         store.generate_flatkeyvalue()?;
     }
