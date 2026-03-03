@@ -4404,10 +4404,12 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
+ "ethrex_db",
  "fastbloom",
  "hex",
  "hex-literal 0.4.1",
  "lru 0.16.3",
+ "primitive-types 0.13.1",
  "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",
@@ -4523,6 +4525,25 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "ethrex_db"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex-db?branch=ethrex-db-integration#5b5a295fabc808bd1f26898222f65e9f17fabb36"
+dependencies = [
+ "hashbrown 0.15.5",
+ "lru 0.12.5",
+ "memmap2",
+ "parking_lot",
+ "primitive-types 0.13.1",
+ "rayon",
+ "rlp 0.6.1",
+ "rustc-hash 2.1.1",
+ "thiserror 2.0.18",
+ "tiny-keccak",
+ "tracing",
+ "wide",
 ]
 
 [[package]]
@@ -5383,6 +5404,7 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.1.5",
+ "rayon",
 ]
 
 [[package]]

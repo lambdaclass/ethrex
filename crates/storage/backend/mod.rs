@@ -6,3 +6,8 @@ pub mod in_memory;
 /// RocksDB backend
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
+/// EthrexDb backend
+#[cfg(feature = "ethrex-db")]
+pub mod ethrex_db_backend;
+#[cfg(feature = "ethrex-db")]
+pub mod ethrex_db_conv;

@@ -1,5 +1,12 @@
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
+#[cfg(feature = "ethrex-db")]
+use crate::backend::ethrex_db_conv::{
+    account_info_from_db, account_info_to_db, account_state_from_db, address_to_h256,
+    data_to_account_state, h256_from_db, h256_to_db, u256_from_db, u256_to_db,
+};
+#[cfg(feature = "ethrex-db")]
+use ethrex_db::chain::{ReadOnlyWorldState, WorldState as DbWorldState};
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
@@ -148,12 +155,14 @@ impl CodeCache {
 /// let info = store.get_account_info(block_number, address)?;
 /// let balance = info.map(|a| a.balance).unwrap_or_default();
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Store {
     /// Path to the database directory.
     db_path: PathBuf,
-    /// Storage backend (InMemory or RocksDB).
+    /// Storage backend (InMemory, RocksDB, or EthrexDb).
     backend: Arc<dyn StorageBackend>,
+    /// Which engine type this store was created with.
+    engine_type: EngineType,
     /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
     /// Cache for trie nodes from recent blocks.
@@ -184,6 +193,20 @@ pub struct Store {
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
 
     background_threads: Arc<ThreadList>,
+
+    /// ethrex-db blockchain handle (only present when using EthrexDb backend).
+    #[cfg(feature = "ethrex-db")]
+    ethrex_db_blockchain: Option<Arc<std::sync::RwLock<ethrex_db::chain::Blockchain>>>,
+}
+
+impl Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("db_path", &self.db_path)
+            .field("engine_type", &self.engine_type)
+            .field("chain_config", &self.chain_config)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -216,6 +239,9 @@ pub enum EngineType {
     /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    /// EthrexDb storage: ethrex-db for state/storage tries, RocksDB for metadata.
+    #[cfg(feature = "ethrex-db")]
+    EthrexDb,
 }
 
 /// Batch of updates to apply to the store atomically.
@@ -1338,6 +1364,56 @@ impl Store {
     }
 
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        // For ethrex-db: skip trie update worker (ethrex-db manages tries internally),
+        // but still write chain metadata (blocks, receipts, codes) to RocksDB.
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let db = self.backend.clone();
+            let mut tx = db.begin_write()?;
+
+            for block in &update_batch.blocks {
+                let block_number = block.header.number;
+                let block_hash = block.hash();
+                let hash_key = block_hash.encode_to_vec();
+
+                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+                tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
+
+                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+                tx.put(BODIES, &hash_key, body_value.bytes())?;
+
+                tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
+
+                for (index, transaction) in block.body.transactions.iter().enumerate() {
+                    let tx_hash = transaction.hash();
+                    let mut composite_key = Vec::with_capacity(64);
+                    composite_key.extend_from_slice(tx_hash.as_bytes());
+                    composite_key.extend_from_slice(block_hash.as_bytes());
+                    let location_value =
+                        (block_number, block_hash, index as u64).encode_to_vec();
+                    tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                }
+            }
+
+            for (block_hash, receipts) in &update_batch.receipts {
+                for (index, receipt) in receipts.iter().enumerate() {
+                    let key = (*block_hash, index as u64).encode_to_vec();
+                    let value = receipt.encode_to_vec();
+                    tx.put(RECEIPTS, &key, &value)?;
+                }
+            }
+
+            for (code_hash, code) in &update_batch.code_updates {
+                let buf = encode_code(code);
+                let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+                tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+                tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
+            }
+
+            tx.commit()?;
+            return Ok(());
+        }
+
         let db = self.backend.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
@@ -1433,27 +1509,38 @@ impl Store {
         // Ignore unused variable warning when compiling without DB features
         let db_path = path.as_ref().to_path_buf();
 
-        if engine_type != EngineType::InMemory {
-            // Check that the last used DB version matches the current version
-            validate_store_schema_version(&db_path)?;
+        match engine_type {
+            EngineType::InMemory => {}
+            #[cfg(feature = "ethrex-db")]
+            EngineType::EthrexDb => {
+                // ethrex-db manages its own schema; skip store schema validation
+            }
+            #[allow(unreachable_patterns)]
+            _ => {
+                // Check that the last used DB version matches the current version
+                validate_store_schema_version(&db_path)?;
+            }
         }
 
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
-                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+                Self::from_backend(backend, db_path, engine_type, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
                 let backend = Arc::new(InMemoryBackend::open()?);
-                Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+                Self::from_backend(backend, db_path, engine_type, IN_MEMORY_COMMIT_THRESHOLD)
             }
+            #[cfg(feature = "ethrex-db")]
+            EngineType::EthrexDb => Self::new_ethrex_db(db_path),
         }
     }
 
     fn from_backend(
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,
+        engine_type: EngineType,
         commit_threshold: usize,
     ) -> Result<Self, StoreError> {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
@@ -1475,6 +1562,7 @@ impl Store {
         let mut store = Self {
             db_path,
             backend,
+            engine_type,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
             trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
@@ -1484,6 +1572,8 @@ impl Store {
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
+            #[cfg(feature = "ethrex-db")]
+            ethrex_db_blockchain: None,
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
@@ -1554,6 +1644,96 @@ impl Store {
         Ok(store)
     }
 
+    /// Creates a Store backed by ethrex-db (state/storage tries) + RocksDB (metadata).
+    #[cfg(feature = "ethrex-db")]
+    fn new_ethrex_db(db_path: PathBuf) -> Result<Self, StoreError> {
+        use crate::backend::ethrex_db_backend::EthrexDbBackend;
+
+        // Open ethrex-db's PagedDb for the state trie
+        let ethrex_db_path = db_path.join("ethrex_db");
+        std::fs::create_dir_all(&ethrex_db_path)
+            .map_err(|e| StoreError::Custom(format!("Failed to create ethrex-db dir: {e}")))?;
+        let ethrex_db_file = ethrex_db_path.join("state.db");
+        let paged_db = ethrex_db::store::PagedDb::open(&ethrex_db_file)
+            .map_err(|e| StoreError::Custom(format!("ethrex-db open error: {e}")))?;
+
+        // Create Blockchain manager over the PagedDb
+        let blockchain = ethrex_db::chain::Blockchain::new(paged_db);
+        let blockchain = Arc::new(std::sync::RwLock::new(blockchain));
+
+        // Open RocksDB for metadata tables (headers, bodies, receipts, etc.)
+        #[cfg(feature = "rocksdb")]
+        let metadata_db = {
+            let rocksdb_path = db_path.join("metadata");
+            Arc::new(RocksDBBackend::open(&rocksdb_path)?)
+        };
+
+        let backend = Arc::new(EthrexDbBackend {
+            blockchain: blockchain.clone(),
+            #[cfg(feature = "rocksdb")]
+            metadata_db,
+        });
+
+        Self::from_backend_ethrex_db(backend, db_path, blockchain)
+    }
+
+    /// Simplified Store construction for ethrex-db: no background trie workers.
+    ///
+    /// ethrex-db manages its own trie persistence through `Blockchain::finalize()`,
+    /// so the FlatKeyValue generator and trie update worker are not needed.
+    #[cfg(feature = "ethrex-db")]
+    fn from_backend_ethrex_db(
+        backend: Arc<dyn StorageBackend>,
+        db_path: PathBuf,
+        blockchain: Arc<std::sync::RwLock<ethrex_db::chain::Blockchain>>,
+    ) -> Result<Self, StoreError> {
+        // Create dummy channels that will never be used.
+        // ethrex-db doesn't use the FKV generator or trie update worker.
+        let (fkv_tx, _fkv_rx) = std::sync::mpsc::sync_channel(1);
+        let (trie_upd_tx, _trie_upd_rx) = std::sync::mpsc::sync_channel(1);
+
+        Ok(Self {
+            db_path,
+            backend,
+            engine_type: EngineType::EthrexDb,
+            chain_config: Default::default(),
+            latest_block_header: Default::default(),
+            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(128)))),
+            flatkeyvalue_control_tx: fkv_tx,
+            trie_update_worker_tx: trie_upd_tx,
+            last_computed_flatkeyvalue: Arc::new(RwLock::new(vec![0xff; 64])),
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            background_threads: Default::default(),
+            ethrex_db_blockchain: Some(blockchain),
+        })
+    }
+
+    /// Returns the engine type this store was created with.
+    pub fn engine_type(&self) -> EngineType {
+        self.engine_type
+    }
+
+    /// Returns true if this Store is using the ethrex-db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn is_ethrex_db(&self) -> bool {
+        self.engine_type == EngineType::EthrexDb
+    }
+
+    /// Returns true if this Store is using the ethrex-db backend.
+    #[cfg(not(feature = "ethrex-db"))]
+    pub fn is_ethrex_db(&self) -> bool {
+        false
+    }
+
+    /// Returns a handle to the ethrex-db Blockchain, if this store uses the ethrex-db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn ethrex_db_blockchain(
+        &self,
+    ) -> Option<&Arc<std::sync::RwLock<ethrex_db::chain::Blockchain>>> {
+        self.ethrex_db_blockchain.as_ref()
+    }
+
     pub async fn new_from_genesis(
         store_path: &Path,
         engine_type: EngineType,
@@ -1585,6 +1765,25 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self.ethrex_db_blockchain()
+                .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+            let block_hash_db = h256_to_db(&block_hash);
+            let addr_key = crate::backend::ethrex_db_conv::address_to_db_key(&address);
+            // Try committed (unfinalized) blocks first
+            if let Some(account) = bc.get_account(&block_hash_db, &addr_key) {
+                return Ok(Some(account_info_from_db(&account)));
+            }
+            // Fall back to finalized state
+            let addr_bytes: [u8; 20] = address.0;
+            if let Some(account) = bc.get_finalized_account(&addr_bytes) {
+                return Ok(Some(account_info_from_db(&account)));
+            }
+            return Ok(None);
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1607,6 +1806,17 @@ impl Store {
         block_hash: BlockHash,
         account_hash: H256,
     ) -> Result<Option<AccountState>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self.ethrex_db_blockchain()
+                .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+            if let Some(account) = bc.get_finalized_account_by_hash(&account_hash.0) {
+                return Ok(Some(account_state_from_db(&account)));
+            }
+            return Ok(None);
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1637,6 +1847,17 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<Code>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
+                return Ok(None);
+            };
+            let Some(account_info) = self.get_account_info_by_hash(block_hash, address)? else {
+                return Ok(None);
+            };
+            return self.get_account_code(account_info.code_hash);
+        }
+
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -1656,6 +1877,17 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<u64>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
+                return Ok(None);
+            };
+            let Some(account_info) = self.get_account_info_by_hash(block_hash, address)? else {
+                return Ok(None);
+            };
+            return Ok(Some(account_info.nonce));
+        }
+
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -1677,6 +1909,72 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let header = self
+                .get_block_header_by_hash(block_hash)?
+                .ok_or(StoreError::Custom("Block header not found".into()))?;
+
+            let bc = self.ethrex_db_blockchain()
+                .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
+            let bc = bc.write().map_err(|_| StoreError::LockError)?;
+
+            let mut block = bc
+                .start_new(
+                    h256_to_db(&header.parent_hash),
+                    h256_to_db(&block_hash),
+                    header.number,
+                )
+                .map_err(|e| StoreError::Custom(format!("ethrex-db start_new: {e}")))?;
+
+            let mut code_updates = Vec::new();
+
+            for update in account_updates {
+                let addr_key = address_to_h256(&update.address);
+
+                if update.removed {
+                    block.delete_account(&addr_key);
+                    continue;
+                }
+
+                if let Some(info) = &update.info {
+                    let storage_root = block
+                        .get_account(&addr_key)
+                        .map(|a| h256_from_db(&a.storage_root))
+                        .unwrap_or_default();
+
+                    let db_account = account_info_to_db(info, storage_root);
+                    block.set_account(addr_key, db_account);
+
+                    if let Some(code) = &update.code {
+                        code_updates.push((info.code_hash, code.clone()));
+                    }
+                }
+
+                for (storage_key, storage_value) in &update.added_storage {
+                    let hashed_key = h256_to_db(&keccak(storage_key.as_bytes()));
+                    block.set_storage(addr_key, hashed_key, u256_to_db(storage_value));
+                }
+            }
+
+            bc.commit(block)
+                .map_err(|e| StoreError::Custom(format!("ethrex-db commit: {e}")))?;
+
+            // Compute state root for this block
+            let block_hash_db = h256_to_db(&block_hash);
+            let state_trie_hash = bc
+                .state_root_for_block(&block_hash_db)
+                .map(H256::from)
+                .unwrap_or(H256::zero());
+
+            return Ok(Some(AccountUpdatesList {
+                state_trie_hash,
+                state_updates: Vec::new(),
+                storage_updates: Vec::new(),
+                code_updates,
+            }));
+        }
+
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1692,6 +1990,13 @@ impl Store {
         state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            return Err(StoreError::Custom(
+                "apply_account_updates_from_trie_batch should not be called with ethrex-db; use apply_account_updates_batch instead".into(),
+            ));
+        }
+
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
@@ -1760,6 +2065,13 @@ impl Store {
         account_updates: &[AccountUpdate],
         mut storage_tries: StorageTries,
     ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            return Err(StoreError::Custom(
+                "apply_account_updates_from_trie_with_witness should not be called with ethrex-db; use apply_account_updates_batch instead".into(),
+            ));
+        }
+
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
@@ -1852,6 +2164,58 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self.ethrex_db_blockchain()
+                .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
+            let bc = bc.write().map_err(|_| StoreError::LockError)?;
+
+            // Create a genesis block (block 0, parent is zero hash)
+            let genesis_hash = primitive_types::H256::zero();
+            let mut block = bc
+                .start_new(
+                    primitive_types::H256::zero(),
+                    genesis_hash,
+                    0,
+                )
+                .map_err(|e| StoreError::Custom(format!("ethrex-db genesis start_new: {e}")))?;
+
+            for (address, account) in &genesis_accounts {
+                // Store account code via the metadata RocksDB path
+                let code = Code::from_bytecode(account.code.clone());
+                self.add_account_code(code.clone()).await?;
+
+                let addr_key = address_to_h256(address);
+                let db_account = ethrex_db::chain::Account {
+                    nonce: account.nonce,
+                    balance: u256_to_db(&account.balance),
+                    code_hash: h256_to_db(&code.hash),
+                    storage_root: primitive_types::H256::zero(),
+                };
+                block.set_account(addr_key, db_account);
+
+                for (storage_key, storage_value) in &account.storage {
+                    if !storage_value.is_zero() {
+                        let hashed_key =
+                            h256_to_db(&keccak(H256(storage_key.to_big_endian()).as_bytes()));
+                        block.set_storage(addr_key, hashed_key, u256_to_db(storage_value));
+                    }
+                }
+            }
+
+            bc.commit(block)
+                .map_err(|e| StoreError::Custom(format!("ethrex-db genesis commit: {e}")))?;
+
+            // Finalize genesis
+            bc.finalize(genesis_hash)
+                .map_err(|e| StoreError::Custom(format!("ethrex-db genesis finalize: {e}")))?;
+
+            bc.set_genesis(genesis_hash, 0);
+
+            let state_root = H256(bc.state_root());
+            return Ok(state_root);
+        }
+
         let mut storage_trie_nodes = vec![];
         let mut genesis_state_trie = self.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
         for (address, account) in genesis_accounts {
@@ -2095,6 +2459,30 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self.ethrex_db_blockchain()
+                .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+            // Try committed blocks via block hash lookup
+            if let Some(header) = self.get_block_header(block_number)? {
+                let block_hash_db = h256_to_db(&header.hash());
+                let addr_key = crate::backend::ethrex_db_conv::address_to_db_key(&address);
+                let key_hash = keccak(storage_key.as_bytes());
+                let key_db = h256_to_db(&key_hash);
+                if let Some(value) = bc.get_storage(&block_hash_db, &addr_key, &key_db) {
+                    return Ok(Some(u256_from_db(&value)));
+                }
+            }
+            // Fall back to finalized state
+            let addr_hash = hash_address_fixed(&address);
+            let key_hash = hash_key_fixed(&storage_key);
+            if let Some(value) = bc.get_finalized_storage_by_hash(&addr_hash.0, &key_hash) {
+                return Ok(Some(u256_from_db(&value)));
+            }
+            return Ok(Some(U256::zero()));
+        }
+
         match self.get_block_header(block_number)? {
             Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
             None => Ok(None),
@@ -2107,6 +2495,19 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self.ethrex_db_blockchain()
+                .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+            let addr_hash = hash_address_fixed(&address);
+            let key_hash = hash_key_fixed(&storage_key);
+            if let Some(value) = bc.get_finalized_storage_by_hash(&addr_hash.0, &key_hash) {
+                return Ok(Some(u256_from_db(&value)));
+            }
+            return Ok(Some(U256::zero()));
+        }
+
         let account_hash = hash_address_fixed(&address);
 
         // Pre-acquire shared resources once for both trie opens
@@ -2185,11 +2586,49 @@ impl Store {
         )
         .await?;
 
+        // Propagate finalization to ethrex-db
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            if let Some(finalized_number) = finalized {
+                if let Some(finalized_hash) =
+                    self.get_canonical_block_hash(finalized_number).await?
+                {
+                    // Resolve safe_hash before acquiring the write lock to avoid
+                    // holding the lock across an .await point.
+                    let safe_hash = if let Some(safe_number) = safe {
+                        self.get_canonical_block_hash(safe_number)
+                            .await?
+                            .map(|h| h256_to_db(&h))
+                    } else {
+                        None
+                    };
+
+                    let bc = self.ethrex_db_blockchain()
+                        .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
+                    let bc = bc.write().map_err(|_| StoreError::LockError)?;
+                    bc.fork_choice_update(
+                        h256_to_db(&head_hash),
+                        safe_hash,
+                        Some(h256_to_db(&finalized_hash)),
+                    )
+                    .map_err(|e| StoreError::Custom(format!("ethrex-db FCU: {e}")))?;
+                }
+            }
+        }
+
         Ok(())
     }
 
     /// Obtain the storage trie for the given block
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            return Err(StoreError::Custom(
+                "state_trie() not supported with ethrex-db backend; use direct account queries"
+                    .into(),
+            ));
+        }
+
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
@@ -2202,6 +2641,14 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<Trie>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            return Err(StoreError::Custom(
+                "storage_trie() not supported with ethrex-db backend; use direct storage queries"
+                    .into(),
+            ));
+        }
+
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
@@ -2228,6 +2675,28 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
+                return Ok(None);
+            };
+            let bc = self.ethrex_db_blockchain()
+                .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+            let block_hash_db = h256_to_db(&block_hash);
+            let addr_key = crate::backend::ethrex_db_conv::address_to_db_key(&address);
+            // Try committed (unfinalized) blocks first
+            if let Some(account) = bc.get_account(&block_hash_db, &addr_key) {
+                return Ok(Some(account_state_from_db(&account)));
+            }
+            // Fall back to finalized state
+            let addr_bytes: [u8; 20] = address.0;
+            if let Some(account) = bc.get_finalized_account(&addr_bytes) {
+                return Ok(Some(account_state_from_db(&account)));
+            }
+            return Ok(None);
+        }
+
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -2242,6 +2711,13 @@ impl Store {
         state_root: H256,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            return Err(StoreError::Custom(
+                "Root-based account lookups not yet supported with ethrex-db backend".into(),
+            ));
+        }
+
         let state_trie = self.open_state_trie(state_root)?;
         self.get_account_state_from_trie(&state_trie, address)
     }
@@ -2268,6 +2744,59 @@ impl Store {
         address: Address,
         storage_keys: &[H256],
     ) -> Result<Option<AccountProof>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self
+                .ethrex_db_blockchain()
+                .ok_or(StoreError::Custom(
+                    "ethrex-db blockchain handle missing".into(),
+                ))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+
+            // Validate state root matches finalized state
+            let finalized_root = bc.state_root();
+            if state_root.0 != finalized_root {
+                return Err(StoreError::Custom(
+                    "ethrex-db proofs only available for finalized state root".into(),
+                ));
+            }
+
+            let address_hash = hash_address_fixed(&address);
+            let proof = bc.generate_account_proof(&address_hash.0);
+
+            // Get account state for the response
+            let account = bc
+                .get_finalized_account_by_hash(&address_hash.0)
+                .map(|a| account_state_from_db(&a))
+                .unwrap_or_default();
+
+            // Build storage proofs
+            let mut storage_proof = Vec::with_capacity(storage_keys.len());
+            for key in storage_keys {
+                let slot_hash = keccak(key.as_bytes());
+                let s_proof = bc
+                    .generate_storage_proof(&address_hash.0, &slot_hash.0)
+                    .unwrap_or_default();
+
+                let value = bc
+                    .get_finalized_storage_by_hash(&address_hash.0, &slot_hash.0)
+                    .map(|v| u256_from_db(&v))
+                    .unwrap_or_default();
+
+                storage_proof.push(StorageSlotProof {
+                    proof: s_proof,
+                    key: *key,
+                    value,
+                });
+            }
+
+            return Ok(Some(AccountProof {
+                proof,
+                account,
+                storage_proof,
+            }));
+        }
+
         // TODO: check state root
         // let Some(state_trie) = self.open_state_trie(state_trie)? else {
         //     return Ok(None);
@@ -2325,8 +2854,44 @@ impl Store {
         state_root: H256,
         starting_address: H256,
     ) -> Result<impl Iterator<Item = (H256, AccountState)>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self
+                .ethrex_db_blockchain()
+                .ok_or(StoreError::Custom(
+                    "ethrex-db blockchain handle missing".into(),
+                ))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+
+            let finalized_root = bc.state_root();
+            if state_root.0 != finalized_root {
+                return Err(StoreError::Custom(
+                    "ethrex-db iteration only available for finalized state root".into(),
+                ));
+            }
+
+            let accounts: Vec<(H256, AccountState)> = bc
+                .iter_finalized_accounts()
+                .into_iter()
+                .filter(move |(hash, _)| H256::from(*hash) >= starting_address)
+                .map(|(hash, data)| (H256::from(hash), data_to_account_state(&data)))
+                .collect();
+            return Ok(accounts.into_iter());
+        }
+
         let mut iter = self.open_locked_state_trie(state_root)?.into_iter();
         iter.advance(starting_address.0.to_vec())?;
+        #[cfg(feature = "ethrex-db")]
+        {
+            let accounts: Vec<(H256, AccountState)> = iter
+                .content()
+                .map_while(|(path, value)| {
+                    Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
+                })
+                .collect();
+            Ok(accounts.into_iter())
+        }
+        #[cfg(not(feature = "ethrex-db"))]
         Ok(iter.content().map_while(|(path, value)| {
             Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
         }))
@@ -2349,6 +2914,34 @@ impl Store {
         hashed_address: H256,
         starting_slot: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self
+                .ethrex_db_blockchain()
+                .ok_or(StoreError::Custom(
+                    "ethrex-db blockchain handle missing".into(),
+                ))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+
+            let finalized_root = bc.state_root();
+            if state_root.0 != finalized_root {
+                return Err(StoreError::Custom(
+                    "ethrex-db iteration only available for finalized state root".into(),
+                ));
+            }
+
+            let Some(slots) = bc.iter_finalized_storage(&hashed_address.0) else {
+                return Ok(None);
+            };
+
+            let items: Vec<(H256, U256)> = slots
+                .into_iter()
+                .filter(|(hash, _)| H256::from(*hash) >= starting_slot)
+                .map(|(hash, value)| (H256::from(hash), U256::from_big_endian(&value)))
+                .collect();
+            return Ok(Some(items.into_iter()));
+        }
+
         let state_trie = self.open_locked_state_trie(state_root)?;
         let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
@@ -2358,6 +2951,17 @@ impl Store {
             .open_locked_storage_trie(hashed_address, state_root, storage_root)?
             .into_iter();
         iter.advance(starting_slot.0.to_vec())?;
+        #[cfg(feature = "ethrex-db")]
+        {
+            let items: Vec<(H256, U256)> = iter
+                .content()
+                .map_while(|(path, value)| {
+                    Some((H256::from_slice(&path), U256::decode(&value).ok()?))
+                })
+                .collect();
+            Ok(Some(items.into_iter()))
+        }
+        #[cfg(not(feature = "ethrex-db"))]
         Ok(Some(iter.content().map_while(|(path, value)| {
             Some((H256::from_slice(&path), U256::decode(&value).ok()?))
         })))
@@ -2379,6 +2983,29 @@ impl Store {
         starting_hash: H256,
         last_hash: Option<H256>,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self
+                .ethrex_db_blockchain()
+                .ok_or(StoreError::Custom(
+                    "ethrex-db blockchain handle missing".into(),
+                ))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+
+            let finalized_root = bc.state_root();
+            if state_root.0 != finalized_root {
+                return Err(StoreError::Custom(
+                    "ethrex-db proofs only available for finalized state root".into(),
+                ));
+            }
+
+            let mut proof = bc.generate_account_proof(&starting_hash.0);
+            if let Some(last) = last_hash {
+                proof.extend(bc.generate_account_proof(&last.0));
+            }
+            return Ok(proof);
+        }
+
         let state_trie = self.open_state_trie(state_root)?;
         let mut proof = state_trie.get_proof(starting_hash.as_bytes())?;
         if let Some(last_hash) = last_hash {
@@ -2394,6 +3021,34 @@ impl Store {
         starting_hash: H256,
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self
+                .ethrex_db_blockchain()
+                .ok_or(StoreError::Custom(
+                    "ethrex-db blockchain handle missing".into(),
+                ))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+
+            let finalized_root = bc.state_root();
+            if state_root.0 != finalized_root {
+                return Err(StoreError::Custom(
+                    "ethrex-db proofs only available for finalized state root".into(),
+                ));
+            }
+
+            let mut proof = bc
+                .generate_storage_proof(&hashed_address.0, &starting_hash.0)
+                .unwrap_or_default();
+            if let Some(last) = last_hash
+                && let Some(last_proof) =
+                    bc.generate_storage_proof(&hashed_address.0, &last.0)
+            {
+                proof.extend(last_proof);
+            }
+            return Ok(Some(proof));
+        }
+
         let state_trie = self.open_state_trie(state_root)?;
         let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
@@ -2419,6 +3074,54 @@ impl Store {
         paths: Vec<Vec<u8>>,
         byte_limit: u64,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self
+                .ethrex_db_blockchain()
+                .ok_or(StoreError::Custom(
+                    "ethrex-db blockchain handle missing".into(),
+                ))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+
+            let finalized_root = bc.state_root();
+            if state_root.0 != finalized_root {
+                return Err(StoreError::Custom(
+                    "ethrex-db trie nodes only available for finalized state root".into(),
+                ));
+            }
+
+            let Some(account_path) = paths.first() else {
+                return Ok(vec![]);
+            };
+
+            // State Trie Nodes Request
+            if paths.len() == 1 {
+                if let Some(node) = bc.get_account_trie_node(account_path) {
+                    return Ok(vec![node]);
+                }
+                return Ok(vec![]);
+            }
+
+            // Storage Trie Nodes Request
+            // The first path must be 32 bytes (hashed account address)
+            let Ok(addr_hash): Result<[u8; 32], _> = account_path.clone().try_into() else {
+                return Ok(vec![]);
+            };
+
+            let mut nodes = vec![];
+            let mut bytes_used = 0u64;
+            for path in paths.iter().skip(1) {
+                if bytes_used >= byte_limit {
+                    break;
+                }
+                if let Some(node) = bc.get_storage_trie_node(&addr_hash, path) {
+                    bytes_used += node.len() as u64;
+                    nodes.push(node);
+                }
+            }
+            return Ok(nodes);
+        }
+
         let Some(account_path) = paths.first() else {
             return Ok(vec![]);
         };
@@ -2629,6 +3332,16 @@ impl Store {
         if state_root == *EMPTY_TRIE_HASH {
             return Ok(true);
         }
+
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            let bc = self.ethrex_db_blockchain()
+                .ok_or(StoreError::Custom("ethrex-db blockchain handle missing".into()))?;
+            let bc = bc.read().map_err(|_| StoreError::LockError)?;
+            let finalized_root = bc.state_root();
+            return Ok(state_root.0 == finalized_root);
+        }
+
         let trie = self.open_state_trie(state_root)?;
         // NOTE: here we hash the root because the trie doesn't check the state root is correct
         let Some(root) = trie.db().get(Nibbles::default())? else {
@@ -2658,6 +3371,12 @@ impl Store {
     }
 
     pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        // ethrex-db has flat state built-in; no-op.
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            return Ok(());
+        }
+
         self.flatkeyvalue_control_tx
             .send(FKVGeneratorControlMessage::Continue)
             .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
@@ -2731,6 +3450,12 @@ impl Store {
     }
 
     pub fn last_written(&self) -> Result<Vec<u8>, StoreError> {
+        // ethrex-db has flat state built-in; report FKV as complete.
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db() {
+            return Ok(vec![0xff; 64]);
+        }
+
         let last_computed_flatkeyvalue = self
             .last_computed_flatkeyvalue
             .read()
