@@ -65,6 +65,21 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
+        // FAST PATH: precompile calls skip EIP-7702 code lookup and is_empty DB check.
+        // Precompiles cannot have delegation designations and are never empty accounts.
+        if precompiles::is_precompile(&callee, self.env.config.fork, self.vm_type) {
+            return self.precompile_call(
+                gas,
+                callee,
+                value,
+                current_memory_size,
+                args_offset,
+                args_size,
+                return_data_offset,
+                return_data_size,
+            );
+        }
+
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, callee)?;
@@ -918,6 +933,92 @@ impl<'a> VM<'a> {
                 }
             }
         }
+    }
+
+    /// Fast path for CALL to precompile addresses. Skips EIP-7702 code lookup
+    /// and the `is_empty` DB check (precompiles are never empty accounts).
+    /// Gas accounting is identical to the slow path with `account_is_empty = false`
+    /// and `eip7702_gas_consumed = 0`.
+    #[allow(clippy::too_many_arguments)]
+    fn precompile_call(
+        &mut self,
+        gas: U256,
+        callee: Address,
+        value: U256,
+        current_memory_size: usize,
+        args_offset: usize,
+        args_size: usize,
+        return_data_offset: usize,
+        return_data_size: usize,
+    ) -> Result<OpcodeResult, VMError> {
+        // Warm/cold check — still needed for gas accounting
+        let address_was_cold = !self.substate.add_accessed_address(callee);
+
+        // Memory expansion
+        let new_memory_size_for_args = calculate_memory_size(args_offset, args_size)?;
+        let new_memory_size_for_return_data =
+            calculate_memory_size(return_data_offset, return_data_size)?;
+        let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
+
+        let gas_left = self.current_call_frame.gas_remaining as u64;
+
+        // BAL recording for precompile (no delegation, no EIP-7702)
+        let value_cost = if !value.is_zero() {
+            gas_cost::CALL_POSITIVE_VALUE
+        } else {
+            0
+        };
+        // account_is_empty is always false for precompiles, so create_cost = 0
+        self.record_bal_call_touch(
+            callee,
+            callee, // code_address == callee for precompiles
+            false,  // is_delegation_7702
+            0,      // eip7702_gas_consumed
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            value_cost,
+            0, // create_cost (precompiles are never empty)
+        );
+
+        // Gas computation — same as gas_cost::call with account_is_empty=false, eip7702_gas_consumed=0
+        let (cost, gas_limit) = gas_cost::call(
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            false, // account_is_empty: precompiles are never empty
+            value,
+            gas,
+            gas_left,
+        )?;
+
+        let callframe = &mut self.current_call_frame;
+        callframe.increase_consumed_gas(cost)?;
+        callframe.memory.resize(new_memory_size)?;
+
+        // Load calldata and set up call context
+        let from = callframe.to;
+        let to = callee;
+        let is_static = callframe.is_static;
+        let data = self.get_calldata(args_offset, args_size)?;
+
+        self.tracer.enter(CALL, from, to, value, gas_limit, &data);
+
+        // Execute precompile inline via generic_call (which will hit the precompile branch)
+        self.generic_call(
+            gas_limit,
+            value,
+            from,
+            to,
+            callee, // code_address == callee for precompiles
+            true,   // should_transfer_value
+            is_static,
+            data,
+            return_data_offset,
+            return_data_size,
+            Code::default(), // precompiles have no bytecode
+            false,           // is_delegation_7702
+        )
     }
 
     /// This (should) be the only function where gas is used as a
