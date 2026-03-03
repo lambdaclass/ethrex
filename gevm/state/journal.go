@@ -297,6 +297,7 @@ func (j *Journal) CommitTx() {
 	j.TransactionID++
 	j.Logs = j.Logs[:0]
 	j.SelfdestructedAddresses = j.SelfdestructedAddresses[:0]
+	j.slotCacheLen = 0
 }
 
 // DiscardTx discards the current transaction by reverting all journal entries.
@@ -312,6 +313,7 @@ func (j *Journal) DiscardTx() {
 	j.TransactionID++
 	j.Entries = j.Entries[:0]
 	j.WarmAddresses.ClearCoinbaseAndAccessList()
+	j.slotCacheLen = 0
 }
 
 // Finalize takes the EvmState and resets the journal to initial state.

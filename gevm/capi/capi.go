@@ -125,6 +125,7 @@ import "C"
 
 import (
 	"fmt"
+	"runtime/cgo"
 	"unsafe"
 
 	"github.com/Giulio2002/gevm/host"
@@ -259,36 +260,9 @@ func addrFromCBytes(p *C.uint8_t) types.Address {
 	return types.Address(*(*[20]byte)(unsafe.Pointer(p)))
 }
 
-//export gevm_execute
-func gevm_execute(
-	forkID C.uint8_t,
-	block *C.GevmBlockEnv,
-	cfg *C.GevmCfgEnv,
-	tx *C.GevmTxInput,
-	dbHandle unsafe.Pointer,
-	basicFn C.gevm_basic_fn,
-	codeByHashFn C.gevm_code_by_hash_fn,
-	storageFn C.gevm_storage_fn,
-	hasStorageFn C.gevm_has_storage_fn,
-	blockHashFn C.gevm_block_hash_fn,
-) *C.GevmExecResult {
-	// Build the fork ID.
-	fid, err := spec.ForkIDFromByte(uint8(forkID))
-	if err != nil {
-		return allocErrorResult(fmt.Sprintf("invalid fork id: %v", err))
-	}
+// ======================== Shared Helpers ========================
 
-	// Build the database.
-	db := &callbackDatabase{
-		handle:       dbHandle,
-		basicFn:      basicFn,
-		codeByHashFn: codeByHashFn,
-		storageFn:    storageFn,
-		hasStorageFn: hasStorageFn,
-		blockHashFn:  blockHashFn,
-	}
-
-	// Build BlockEnv.
+func parseBlockEnv(block *C.GevmBlockEnv) host.BlockEnv {
 	blockEnv := host.BlockEnv{
 		Beneficiary:  addrFromCBytes(&block.beneficiary[0]),
 		Timestamp:    u256FromCBytes(&block.timestamp[0]),
@@ -301,13 +275,16 @@ func gevm_execute(
 		pr := u256FromCBytes(&block.prevrandao[0])
 		blockEnv.Prevrandao = &pr
 	}
+	return blockEnv
+}
 
-	// Build CfgEnv.
-	cfgEnv := host.CfgEnv{
+func parseCfgEnv(cfg *C.GevmCfgEnv) host.CfgEnv {
+	return host.CfgEnv{
 		ChainId: u256FromCBytes(&cfg.chain_id[0]),
 	}
+}
 
-	// Build Transaction.
+func parseTxInput(tx *C.GevmTxInput) *host.Transaction {
 	goTx := &host.Transaction{
 		Kind:                 host.TxKind(tx.kind),
 		TxType:               host.TxType(tx.tx_type),
@@ -336,7 +313,6 @@ func gevm_execute(
 				Address: addrFromCBytes(&e.address[0]),
 			}
 			if e.n_keys > 0 && e.storage_keys != nil {
-				// Each key is 32 bytes; storage_keys points to n_keys*32 bytes.
 				keyBytes := (*[1 << 28]C.uint8_t)(unsafe.Pointer(e.storage_keys))[:e.n_keys*32 : e.n_keys*32]
 				item.StorageKeys = make([]types.Uint256, e.n_keys)
 				for k := C.uintptr_t(0); k < e.n_keys; k++ {
@@ -380,16 +356,10 @@ func gevm_execute(
 		}
 	}
 
-	// Execute.
-	evm := host.NewEvm(db, fid, blockEnv, cfgEnv)
-	result := evm.Transact(goTx)
+	return goTx
+}
 
-	// Build account updates from journal state BEFORE releasing the EVM
-	// (ReleaseEvm clears the journal).
-	updates := buildAccountUpdates(evm, result)
-	evm.ReleaseEvm()
-
-	// Allocate the result struct.
+func buildCResult(result host.ExecutionResult, updates []accountUpdate) *C.GevmExecResult {
 	res := (*C.GevmExecResult)(C.calloc(1, C.size_t(unsafe.Sizeof(C.GevmExecResult{}))))
 
 	// Status: 0 = success, 1 = revert, 2 = halt.
@@ -481,6 +451,120 @@ func gevm_execute(
 	return res
 }
 
+// ======================== Single-shot API ========================
+
+//export gevm_execute
+func gevm_execute(
+	forkID C.uint8_t,
+	block *C.GevmBlockEnv,
+	cfg *C.GevmCfgEnv,
+	tx *C.GevmTxInput,
+	dbHandle unsafe.Pointer,
+	basicFn C.gevm_basic_fn,
+	codeByHashFn C.gevm_code_by_hash_fn,
+	storageFn C.gevm_storage_fn,
+	hasStorageFn C.gevm_has_storage_fn,
+	blockHashFn C.gevm_block_hash_fn,
+) *C.GevmExecResult {
+	fid, err := spec.ForkIDFromByte(uint8(forkID))
+	if err != nil {
+		return allocErrorResult(fmt.Sprintf("invalid fork id: %v", err))
+	}
+
+	db := &callbackDatabase{
+		handle:       dbHandle,
+		basicFn:      basicFn,
+		codeByHashFn: codeByHashFn,
+		storageFn:    storageFn,
+		hasStorageFn: hasStorageFn,
+		blockHashFn:  blockHashFn,
+	}
+
+	blockEnv := parseBlockEnv(block)
+	cfgEnv := parseCfgEnv(cfg)
+	goTx := parseTxInput(tx)
+
+	evm := host.NewEvm(db, fid, blockEnv, cfgEnv)
+	result := evm.Transact(goTx)
+	updates := buildAccountUpdates(evm, result)
+	evm.ReleaseEvm()
+
+	return buildCResult(result, updates)
+}
+
+// ======================== Persistent Context API ========================
+
+// GevmContext holds a persistent Go EVM across multiple transactions.
+type GevmContext struct {
+	evm *host.Evm
+}
+
+//export gevm_create_context
+func gevm_create_context(
+	forkID C.uint8_t,
+	block *C.GevmBlockEnv,
+	cfg *C.GevmCfgEnv,
+	dbHandle unsafe.Pointer,
+	basicFn C.gevm_basic_fn,
+	codeByHashFn C.gevm_code_by_hash_fn,
+	storageFn C.gevm_storage_fn,
+	hasStorageFn C.gevm_has_storage_fn,
+	blockHashFn C.gevm_block_hash_fn,
+) C.uintptr_t {
+	fid, err := spec.ForkIDFromByte(uint8(forkID))
+	if err != nil {
+		return 0
+	}
+
+	db := &callbackDatabase{
+		handle:       dbHandle,
+		basicFn:      basicFn,
+		codeByHashFn: codeByHashFn,
+		storageFn:    storageFn,
+		hasStorageFn: hasStorageFn,
+		blockHashFn:  blockHashFn,
+	}
+
+	blockEnv := parseBlockEnv(block)
+	cfgEnv := parseCfgEnv(cfg)
+
+	evm := host.NewEvm(db, fid, blockEnv, cfgEnv)
+	ctx := &GevmContext{evm: evm}
+	h := cgo.NewHandle(ctx)
+	return C.uintptr_t(h)
+}
+
+//export gevm_context_transact
+func gevm_context_transact(handle C.uintptr_t, tx *C.GevmTxInput) *C.GevmExecResult {
+	h := cgo.Handle(handle)
+	ctx := h.Value().(*GevmContext)
+
+	goTx := parseTxInput(tx)
+	result := ctx.evm.Transact(goTx)
+
+	// Extract per-tx account updates BEFORE CommitTx/DiscardTx
+	// (OriginalInfo resets on next cold load, so we must capture now).
+	updates := buildAccountUpdates(ctx.evm, result)
+
+	if result.ValidationError {
+		ctx.evm.Journal.DiscardTx()
+	} else {
+		ctx.evm.Journal.CommitTx()
+	}
+
+	return buildCResult(result, updates)
+}
+
+//export gevm_free_context
+func gevm_free_context(handle C.uintptr_t) {
+	h := cgo.Handle(handle)
+	ctx := h.Value().(*GevmContext)
+	ctx.evm.ReleaseEvm()
+	h.Delete()
+}
+
+// ======================== Result Freeing ========================
+
 //export gevm_free_result
 func gevm_free_result(res *C.GevmExecResult) {
 	if res == nil {
@@ -516,6 +600,8 @@ func gevm_free_result(res *C.GevmExecResult) {
 	C.free(unsafe.Pointer(res))
 }
 
+// ======================== Internal Helpers ========================
+
 // accountUpdate is a Go-side representation of a modified account.
 type accountUpdate struct {
 	address  types.Address
@@ -534,11 +620,9 @@ type storageEntry struct {
 }
 
 // buildAccountUpdates inspects the journal state and constructs account updates.
-// It uses the journal that was already released via ReleaseEvm, so we must call
-// this before ReleaseEvm. Since we cannot hold the journal after release, we
-// access evm.Journal directly before releasing.
 //
-// NOTE: This function is called with the journal still alive (before ReleaseEvm).
+// NOTE: This function must be called with the journal still alive (before
+// ReleaseEvm or CommitTx/DiscardTx).
 func buildAccountUpdates(evm *host.Evm, _ host.ExecutionResult) []accountUpdate {
 	journal := evm.Journal
 	if journal == nil {
@@ -548,16 +632,6 @@ func buildAccountUpdates(evm *host.Evm, _ host.ExecutionResult) []accountUpdate 
 	var updates []accountUpdate
 
 	for addr, acc := range journal.State {
-		// Skip accounts that were only loaded but not meaningfully changed.
-		// An account is "modified" if:
-		//   1. It is selfdestructed (removed).
-		//   2. Its Info differs from OriginalInfo.
-		//   3. Any storage slot differs from its original value.
-		//
-		// Use IsSelfdestructedLocally() to detect accounts destroyed in this tx:
-		//   - Pre-Cancun: always marks as selfdestructed locally.
-		//   - Cancun+ (EIP-6780): only marks if created in the same tx;
-		//     pre-existing contracts just transfer balance and keep code.
 		if acc.IsSelfdestructedLocally() {
 			updates = append(updates, accountUpdate{
 				address: addr,

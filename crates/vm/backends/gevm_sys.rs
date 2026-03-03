@@ -151,4 +151,21 @@ unsafe extern "C" {
     ) -> *mut GevmExecResult;
 
     pub fn gevm_free_result(result: *mut GevmExecResult);
+
+    // Persistent context API: create once per block, transact per tx, free at end.
+    pub fn gevm_create_context(
+        fork_id: u8,
+        block_env: *const GevmBlockEnv,
+        cfg_env: *const GevmCfgEnv,
+        db_handle: *mut c_void,
+        basic_cb: GevmBasicFn,
+        code_by_hash_cb: GevmCodeByHashFn,
+        storage_cb: GevmStorageFn,
+        has_storage_cb: GevmHasStorageFn,
+        block_hash_cb: GevmBlockHashFn,
+    ) -> usize;
+
+    pub fn gevm_context_transact(ctx: usize, tx: *const GevmTxInput) -> *mut GevmExecResult;
+
+    pub fn gevm_free_context(ctx: usize);
 }

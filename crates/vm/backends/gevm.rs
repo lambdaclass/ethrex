@@ -4,7 +4,8 @@
 use super::BlockExecutionResult;
 use super::gevm_sys::{
     GevmAccessListEntry, GevmAuthorization, GevmBlockEnv, GevmCfgEnv, GevmExecResult, GevmLog,
-    GevmTxInput, gevm_execute, gevm_free_result,
+    GevmTxInput, gevm_context_transact, gevm_create_context, gevm_execute, gevm_free_context,
+    gevm_free_result,
 };
 use super::levm::{LEVM, extract_all_requests_levm};
 use crate::EvmError;
@@ -614,6 +615,49 @@ impl BlockEnvCache {
     }
 }
 
+/// RAII wrapper for a persistent Go EVM context (one per block).
+/// Accounts loaded in tx N stay warm for tx N+1, avoiding redundant FFI callbacks.
+struct GevmContextHandle(usize);
+
+impl GevmContextHandle {
+    /// Create a persistent Go EVM context for a block.
+    fn new(env: &BlockEnvCache, db: &mut GeneralizedDatabase) -> Result<Self, EvmError> {
+        let db_handle = db as *mut GeneralizedDatabase as *mut c_void;
+        let handle = unsafe {
+            gevm_create_context(
+                env.fork_id,
+                &env.block_env,
+                &env.cfg_env,
+                db_handle,
+                basic_cb,
+                code_by_hash_cb,
+                storage_cb,
+                has_storage_cb,
+                block_hash_cb,
+            )
+        };
+        if handle == 0 {
+            return Err(EvmError::Custom(
+                "gevm_create_context returned null handle".to_string(),
+            ));
+        }
+        Ok(GevmContextHandle(handle))
+    }
+
+    /// Execute a transaction within the persistent context.
+    fn transact(&self, tx_c_data: &TxCData) -> *mut GevmExecResult {
+        unsafe { gevm_context_transact(self.0, &tx_c_data.tx_input) }
+    }
+}
+
+impl Drop for GevmContextHandle {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            unsafe { gevm_free_context(self.0) };
+        }
+    }
+}
+
 impl GEVM {
     pub fn execute_tx(
         tx: &Transaction,
@@ -690,6 +734,53 @@ impl GEVM {
         Ok(report)
     }
 
+    /// Execute a transaction using a persistent Go EVM context.
+    /// Same result processing as execute_tx_with_env but avoids per-tx EVM
+    /// creation, keeping warm account state across transactions.
+    fn execute_tx_with_context(
+        tx: &Transaction,
+        tx_sender: Address,
+        db: &mut GeneralizedDatabase,
+        env: &BlockEnvCache,
+        ctx: &GevmContextHandle,
+    ) -> Result<ExecutionReport, EvmError> {
+        let tx_c_data = build_tx_c_data(tx, tx_sender)?;
+        let result_ptr = ctx.transact(&tx_c_data);
+
+        if result_ptr.is_null() {
+            return Err(EvmError::Custom(
+                "gevm_context_transact returned null".to_string(),
+            ));
+        }
+
+        let result = unsafe { &*result_ptr };
+
+        // Check for validation errors
+        if result.is_validation_error != 0 {
+            let msg = if !result.error_msg.is_null() {
+                unsafe {
+                    std::ffi::CStr::from_ptr(result.error_msg)
+                        .to_string_lossy()
+                        .into_owned()
+                }
+            } else {
+                "validation error".to_string()
+            };
+            unsafe { gevm_free_result(result_ptr) };
+            return Err(EvmError::Transaction(msg));
+        }
+
+        let report = convert_result_to_report(result, env.is_amsterdam);
+        let apply_result = apply_account_updates(result, db);
+
+        unsafe { gevm_free_result(result_ptr) };
+
+        let report = report?;
+        apply_result?;
+
+        Ok(report)
+    }
+
     pub fn execute_block(
         block: &Block,
         db: &mut GeneralizedDatabase,
@@ -709,6 +800,14 @@ impl GEVM {
 
         // System calls still use LEVM
         LEVM::prepare_block(block, db, vm_type)?;
+
+        // Create persistent Go EVM context for the entire block.
+        // Accounts loaded in tx N stay warm for tx N+1, avoiding FFI callbacks.
+        let ctx = if use_gevm {
+            Some(GevmContextHandle::new(&env, db)?)
+        } else {
+            None
+        };
 
         let transactions_with_sender =
             block.body.get_transactions_with_sender().map_err(|error| {
@@ -743,8 +842,8 @@ impl GEVM {
                 }
             }
 
-            let report = if use_gevm {
-                Self::execute_tx_with_env(tx, tx_sender, db, &env)?
+            let report = if let Some(ref ctx) = ctx {
+                Self::execute_tx_with_context(tx, tx_sender, db, &env, ctx)?
             } else {
                 LEVM::execute_tx(tx, tx_sender, &block.header, db, vm_type)?
             };
