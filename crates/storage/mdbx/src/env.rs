@@ -35,7 +35,7 @@ impl Default for EnvConfig {
             page_size: 8192,                           // 8 KB
             max_dbs: 32,
             max_readers: 256,
-            env_flags: ffi::MDBX_NORDAHEAD | ffi::MDBX_WRITEMAP,
+            env_flags: ffi::MDBX_NORDAHEAD | ffi::MDBX_WRITEMAP | ffi::MDBX_NOSTICKYTHREADS,
             mode: 0o664,
         }
     }

@@ -80,6 +80,7 @@ pub const MDBX_RDONLY: MDBX_env_flags_t = 0x20000;
 pub const MDBX_EXCLUSIVE: MDBX_env_flags_t = 0x400000;
 pub const MDBX_WRITEMAP: MDBX_env_flags_t = 0x80000;
 pub const MDBX_NORDAHEAD: MDBX_env_flags_t = 0x800000;
+pub const MDBX_NOSTICKYTHREADS: MDBX_env_flags_t = 0x200000;
 pub const MDBX_NOMEMINIT: MDBX_env_flags_t = 0x1000000;
 pub const MDBX_COALESCE: MDBX_env_flags_t = 0x2000000;
 pub const MDBX_LIFORECLAIM: MDBX_env_flags_t = 0x4000000;
