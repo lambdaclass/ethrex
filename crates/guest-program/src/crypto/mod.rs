@@ -34,13 +34,15 @@ pub fn get_crypto_provider() -> Arc<dyn Crypto> {
     {
         return Arc::new(openvm::OpenVmCrypto);
     }
-    // When no zkVM feature is active (e.g. workspace check), this is unreachable at runtime.
-    // Actual guest binaries always have exactly one zkVM feature enabled.
+    // When no zkVM feature is active (e.g. exec prover backend or workspace check),
+    // fall back to native crypto.
     #[cfg(not(any(
         feature = "sp1",
         feature = "risc0",
         feature = "zisk",
         feature = "openvm"
     )))]
-    panic!("Guest programs must have a zkVM feature enabled (sp1, risc0, zisk, or openvm)")
+    {
+        return Arc::new(ethrex_crypto::NativeCrypto);
+    }
 }

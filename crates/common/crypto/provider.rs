@@ -571,6 +571,13 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         for (g1_bytes, g2_bytes) in pairs {
             let g1 = parse_bls12_g1(*g1_bytes)?;
             let g2 = parse_bls12_g2(*g2_bytes)?;
+            // EIP-2537: pairing requires subgroup membership
+            if !bool::from(g1.is_torsion_free()) {
+                return Err(CryptoError::InvalidPoint("G1 not in subgroup"));
+            }
+            if !bool::from(g2.is_torsion_free()) {
+                return Err(CryptoError::InvalidPoint("G2 not in subgroup"));
+            }
             points.push((g1, G2Prepared::from(g2)));
         }
 
@@ -627,7 +634,7 @@ fn parse_bls12_g1(
     g1_bytes[..48].copy_from_slice(&x_bytes);
     g1_bytes[48..].copy_from_slice(&y_bytes);
 
-    let affine = G1Affine::from_uncompressed(&g1_bytes)
+    let affine = G1Affine::from_uncompressed_unchecked(&g1_bytes)
         .into_option()
         .ok_or(CryptoError::InvalidPoint("invalid BLS12-381 G1 point"))?;
 
@@ -654,7 +661,7 @@ fn parse_bls12_g2(
     g2_bytes[96..144].copy_from_slice(&y1);
     g2_bytes[144..192].copy_from_slice(&y0);
 
-    let affine = G2Affine::from_uncompressed(&g2_bytes)
+    let affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
         .into_option()
         .ok_or(CryptoError::InvalidPoint("invalid BLS12-381 G2 point"))?;
 

@@ -524,6 +524,7 @@ impl LEVM {
     }
 
     // Like execute_tx but allows reusing the stack pool
+    #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
         tx: &Transaction,
