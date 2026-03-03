@@ -1161,6 +1161,10 @@ impl Store {
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
     /// For updating the state after block execution, use [`Self::store_block_updates`].
+    ///
+    /// NOTE: This method does not update the storage bloom filter. Slots written
+    /// through this path (e.g., snap sync) will be invisible to `might_contain`
+    /// after `enable()`. A backfill step is needed before enabling the bloom.
     pub async fn write_storage_trie_nodes_batch(
         &self,
         storage_trie_nodes: StorageUpdates,
@@ -1878,6 +1882,8 @@ impl Store {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    // TODO: call storage_bloom.insert(address, storage_key) here when
+                    // bloom is wired up, otherwise genesis-only slots become false negatives.
                 }
             }
 
