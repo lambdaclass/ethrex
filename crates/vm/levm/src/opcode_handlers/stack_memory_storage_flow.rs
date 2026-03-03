@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self, COST_PER_STATE_BYTE, STATE_BYTES_PER_STORAGE_SET, SSTORE_STIPEND},
+    gas_cost::{self, COST_PER_STATE_BYTE, SSTORE_STIPEND, STATE_BYTES_PER_STORAGE_SET},
     memory::calculate_memory_size,
     utils::u256_to_usize,
     vm::VM,

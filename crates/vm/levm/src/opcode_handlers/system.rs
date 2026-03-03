@@ -1,10 +1,8 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
+    constants::{AMSTERDAM_INIT_CODE_MAX_SIZE, FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
-    gas_cost::{
-        self, COST_PER_STATE_BYTE, STATE_BYTES_PER_NEW_ACCOUNT, max_message_call_gas,
-    },
+    gas_cost::{self, COST_PER_STATE_BYTE, STATE_BYTES_PER_NEW_ACCOUNT, max_message_call_gas},
     memory::{self, calculate_memory_size},
     precompiles,
     utils::{address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *},
@@ -791,7 +789,13 @@ impl<'a> VM<'a> {
     ) -> Result<OpcodeResult, VMError> {
         // Validations that can cause out of gas.
         // 1. [EIP-3860] - Cant exceed init code max size
-        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
+        //    [EIP-7954] - Amsterdam increases the limit
+        let init_code_max = if self.env.config.fork >= Fork::Amsterdam {
+            AMSTERDAM_INIT_CODE_MAX_SIZE
+        } else {
+            INIT_CODE_MAX_SIZE
+        };
+        if code_size_in_memory > init_code_max && self.env.config.fork >= Fork::Shanghai {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
@@ -1243,13 +1247,10 @@ impl<'a> VM<'a> {
                 // state_gas_used is about to be restored, so the spill becomes
                 // "orphaned" — in gas_used but in neither regular nor state
                 // counters. We track it to exclude from the regular dimension.
-                let child_state_gas = self
-                    .state_gas_used
-                    .saturating_sub(state_gas_used_snapshot);
-                let child_reservoir_consumed = reservoir_snapshot
-                    .saturating_sub(self.state_gas_reservoir);
-                let child_spill = child_state_gas
-                    .saturating_sub(child_reservoir_consumed);
+                let child_state_gas = self.state_gas_used.saturating_sub(state_gas_used_snapshot);
+                let child_reservoir_consumed =
+                    reservoir_snapshot.saturating_sub(self.state_gas_reservoir);
+                let child_spill = child_state_gas.saturating_sub(child_reservoir_consumed);
                 self.reverted_child_state_spill += child_spill;
 
                 self.state_gas_reservoir = reservoir_snapshot;
@@ -1304,13 +1305,10 @@ impl<'a> VM<'a> {
             }
             TxResult::Revert(err) => {
                 // EIP-8037: Track orphaned spill (same logic as handle_return_call)
-                let child_state_gas = self
-                    .state_gas_used
-                    .saturating_sub(state_gas_used_snapshot);
-                let child_reservoir_consumed = reservoir_snapshot
-                    .saturating_sub(self.state_gas_reservoir);
-                let child_spill = child_state_gas
-                    .saturating_sub(child_reservoir_consumed);
+                let child_state_gas = self.state_gas_used.saturating_sub(state_gas_used_snapshot);
+                let child_reservoir_consumed =
+                    reservoir_snapshot.saturating_sub(self.state_gas_reservoir);
+                let child_spill = child_state_gas.saturating_sub(child_reservoir_consumed);
                 self.reverted_child_state_spill += child_spill;
 
                 self.state_gas_reservoir = reservoir_snapshot;

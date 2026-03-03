@@ -7,9 +7,9 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
-        COLD_ADDRESS_ACCESS_COST, COST_PER_STATE_BYTE, CREATE_BASE_COST,
-        REGULAR_GAS_CREATE, STANDARD_TOKEN_COST, STATE_BYTES_PER_AUTH_TOTAL,
-        STATE_BYTES_PER_NEW_ACCOUNT, TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
+        COLD_ADDRESS_ACCESS_COST, COST_PER_STATE_BYTE, CREATE_BASE_COST, REGULAR_GAS_CREATE,
+        STANDARD_TOKEN_COST, STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT,
+        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     vm::{Substate, VM},
 };
@@ -426,7 +426,7 @@ impl<'a> VM<'a> {
             // 7. Refund if authority exists in the trie.
             // EIP-8037 (Amsterdam+): return STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
             // to the state gas reservoir (the new-account portion of the auth state charge).
-            // Pre-Amsterdam: add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST to global refund counter.
+            // Pre-Amsterdam: add REFUND_AUTH_PER_EXISTING_ACCOUNT (12500) to global refund counter.
             if !authority_info.is_empty() {
                 if self.env.config.fork >= Fork::Amsterdam {
                     let state_refund = STATE_BYTES_PER_NEW_ACCOUNT
@@ -436,11 +436,15 @@ impl<'a> VM<'a> {
                         .state_gas_reservoir
                         .checked_add(state_refund)
                         .ok_or(InternalError::Overflow)?;
-                    self.state_gas_used = self.state_gas_used.saturating_sub(state_refund);
+                    // Track as intrinsic state gas adjustment (matches EELS intrinsic_state_gas -= refund).
+                    // Do NOT reduce state_gas_used here — that would inflate regular_gas in block accounting.
+                    self.intrinsic_state_gas_refund = self
+                        .intrinsic_state_gas_refund
+                        .checked_add(state_refund)
+                        .ok_or(InternalError::Overflow)?;
                 } else {
-                    let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                     refunded_gas = refunded_gas
-                        .checked_add(refunded_gas_if_exists)
+                        .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
                         .ok_or(InternalError::Overflow)?;
                 }
             }
@@ -480,9 +484,7 @@ impl<'a> VM<'a> {
 
         let (regular_gas, state_gas) = self.get_intrinsic_gas()?;
 
-        let total_gas = regular_gas
-            .checked_add(state_gas)
-            .ok_or(OutOfGas)?;
+        let total_gas = regular_gas.checked_add(state_gas).ok_or(OutOfGas)?;
 
         self.current_call_frame
             .increase_consumed_gas(total_gas)
@@ -554,9 +556,7 @@ impl<'a> VM<'a> {
                     .ok_or(OutOfGas)?;
             } else {
                 // https://eips.ethereum.org/EIPS/eip-2#specification
-                regular_gas = regular_gas
-                    .checked_add(CREATE_BASE_COST)
-                    .ok_or(OutOfGas)?;
+                regular_gas = regular_gas.checked_add(CREATE_BASE_COST).ok_or(OutOfGas)?;
             }
 
             // https://eips.ethereum.org/EIPS/eip-3860
@@ -587,9 +587,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        regular_gas = regular_gas
-            .checked_add(access_lists_cost)
-            .ok_or(OutOfGas)?;
+        regular_gas = regular_gas.checked_add(access_lists_cost).ok_or(OutOfGas)?;
 
         // Authorization List Cost
         // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
@@ -607,17 +605,13 @@ impl<'a> VM<'a> {
             let regular_auth_cost = PER_AUTH_BASE_COST
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
-            regular_gas = regular_gas
-                .checked_add(regular_auth_cost)
-                .ok_or(OutOfGas)?;
+            regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
             let state_auth_cost = STATE_BYTES_PER_AUTH_TOTAL
                 .checked_mul(COST_PER_STATE_BYTE)
                 .ok_or(InternalError::Overflow)?
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
-            state_gas = state_gas
-                .checked_add(state_auth_cost)
-                .ok_or(OutOfGas)?;
+            state_gas = state_gas.checked_add(state_auth_cost).ok_or(OutOfGas)?;
         } else {
             let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
                 .checked_mul(amount_of_auth_tuples)

@@ -1,9 +1,7 @@
 use crate::{
     account::LevmAccount,
     constants::*,
-    errors::{
-        ContextResult, ExceptionalHalt, InternalError, TxResult, TxValidationError, VMError,
-    },
+    errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
@@ -35,18 +33,8 @@ impl Hook for DefaultHook {
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
-            // EIP-7825 (Prague to pre-Amsterdam): reject tx if gas_limit > TX_MAX_GAS_LIMIT_AMSTERDAM.
+            // EIP-7825 (Osaka to pre-Amsterdam): reject tx if gas_limit > POST_OSAKA_GAS_LIMIT_CAP.
             // Amsterdam removes this restriction (EIP-8037 reservoir model).
-            if vm.env.config.fork < Fork::Amsterdam
-                && vm.tx.gas_limit() > TX_MAX_GAS_LIMIT_AMSTERDAM
-            {
-                return Err(VMError::TxValidation(
-                    TxValidationError::TxMaxGasLimitExceeded {
-                        tx_hash: vm.tx.hash(),
-                        tx_gas_limit: vm.tx.gas_limit(),
-                    },
-                ));
-            }
             if vm.env.config.fork >= Fork::Osaka
                 && vm.env.config.fork < Fork::Amsterdam
                 && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
@@ -153,21 +141,11 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        // EIP-8037 (Amsterdam+): unused reservoir is returned to sender, not consumed.
-        // On exceptional halt (OOG, etc.), all gas including reservoir is consumed.
-        // On success or REVERT opcode, remaining reservoir is subtracted from gas_used.
+        // EIP-8037 (Amsterdam+): unused reservoir is always returned to sender.
+        // Per EELS, state_gas_left is preserved even on exceptional halt — only
+        // regular gas_left is burned.  The user does NOT pay for unspent reservoir.
         if vm.env.config.fork >= Fork::Amsterdam {
-            let exceptional_halt = match &ctx_result.result {
-                TxResult::Success => false,
-                TxResult::Revert(e) => !e.is_revert_opcode(),
-            };
-            if exceptional_halt {
-                vm.state_gas_reservoir = 0;
-            } else {
-                ctx_result.gas_used = ctx_result
-                    .gas_used
-                    .saturating_sub(vm.state_gas_reservoir);
-            }
+            ctx_result.gas_used = ctx_result.gas_used.saturating_sub(vm.state_gas_reservoir);
         }
 
         // Save pre-refund gas for EIP-7778 block accounting
@@ -220,7 +198,12 @@ pub fn refund_sender(
     if vm.env.config.fork >= Fork::Amsterdam {
         // EIP-7623 floor applies to the regular (non-state) gas component only.
         let floor = vm.get_min_gas_used()?;
-        let state_gas = vm.state_gas_used;
+        // Apply intrinsic state gas refund from existing authorities (EIP-7702/EIP-8037).
+        // This matches EELS where set_delegation permanently reduces tx_env.intrinsic_state_gas
+        // for existing authorities, regardless of execution outcome.
+        let state_gas = vm
+            .state_gas_used
+            .saturating_sub(vm.intrinsic_state_gas_refund);
         // Exclude state gas that was spilled into gas_left in child frames
         // that then reverted. This gas is consumed (user pays for it) but
         // is NOT regular gas — it was charged via charge_state_gas and the
@@ -362,7 +345,9 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
     let calldata = vm.current_call_frame.calldata.clone();
     let (regular_gas, state_gas) = vm.get_intrinsic_gas()?;
-    let intrinsic_gas: u64 = regular_gas.checked_add(state_gas).ok_or(ExceptionalHalt::OutOfGas)?;
+    let intrinsic_gas: u64 = regular_gas
+        .checked_add(state_gas)
+        .ok_or(ExceptionalHalt::OutOfGas)?;
 
     if vm.current_call_frame.gas_limit < intrinsic_gas {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
@@ -415,10 +400,16 @@ pub fn validate_max_fee_per_blob_gas(
 
 pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
     // [EIP-3860] - INITCODE_SIZE_EXCEEDED
+    // [EIP-7954] - Amsterdam increases the limit
     let code_size = vm.current_call_frame.calldata.len();
-    if code_size > INIT_CODE_MAX_SIZE && vm.env.config.fork >= Fork::Shanghai {
+    let max_size = if vm.env.config.fork >= Fork::Amsterdam {
+        AMSTERDAM_INIT_CODE_MAX_SIZE
+    } else {
+        INIT_CODE_MAX_SIZE
+    };
+    if code_size > max_size && vm.env.config.fork >= Fork::Shanghai {
         return Err(TxValidationError::InitcodeSizeExceeded {
-            max_size: INIT_CODE_MAX_SIZE,
+            max_size,
             actual_size: code_size,
         }
         .into());

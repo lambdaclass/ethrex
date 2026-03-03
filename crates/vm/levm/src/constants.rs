@@ -36,6 +36,9 @@ pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
 
 pub const MAX_CODE_SIZE: u64 = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
+// EIP-7954 (Amsterdam): increased limits
+pub const AMSTERDAM_MAX_CODE_SIZE: u64 = 0x8000;
+pub const AMSTERDAM_INIT_CODE_MAX_SIZE: usize = 2 * AMSTERDAM_MAX_CODE_SIZE as usize;
 
 // https://eips.ethereum.org/EIPS/eip-3541
 pub const EOF_PREFIX: u8 = 0xef;
@@ -88,6 +91,8 @@ pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 pub const PER_AUTH_BASE_COST: u64 = 7500;
 pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
+// EIP-7702: refund per existing authority (pre-Amsterdam)
+pub const REFUND_AUTH_PER_EXISTING_ACCOUNT: u64 = 12500;
 
 // Secp256r1 curve parameters
 // See https://eips.ethereum.org/EIPS/eip-7951

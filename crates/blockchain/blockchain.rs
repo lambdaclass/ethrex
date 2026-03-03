@@ -51,7 +51,10 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info, instrument, warn};
-use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
+use constants::{
+    AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE,
+    POST_OSAKA_GAS_LIMIT_CAP,
+};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -343,11 +346,7 @@ impl Blockchain {
                 bal,
                 block.body.transactions.len(),
             )?;
-            validate_block_access_list_size(
-                &block.header,
-                &chain_config,
-                bal,
-            )?;
+            validate_block_access_list_size(&block.header, &chain_config, bal)?;
         }
 
         Ok((execution_result, account_updates))
@@ -459,11 +458,7 @@ impl Blockchain {
                                 bal,
                                 block.body.transactions.len(),
                             )?;
-                            validate_block_access_list_size(
-                                &block.header,
-                                &chain_config,
-                                bal,
-                            )?;
+                            validate_block_access_list_size(&block.header, &chain_config, bal)?;
                         }
 
                         let exec_end_instant = Instant::now();
@@ -1262,11 +1257,7 @@ impl Blockchain {
                 bal,
                 block.body.transactions.len(),
             )?;
-            validate_block_access_list_size(
-                &block.header,
-                chain_config,
-                bal,
-            )?;
+            validate_block_access_list_size(&block.header, chain_config, bal)?;
         }
 
         Ok(execution_result)
@@ -2522,9 +2513,15 @@ impl Blockchain {
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
+        // [EIP-7954] - Amsterdam increases the limit
+        let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
+            AMSTERDAM_MAX_INITCODE_SIZE
+        } else {
+            MAX_INITCODE_SIZE
+        };
         if config.is_shanghai_activated(header.timestamp)
             && tx.is_contract_creation()
-            && tx.data().len() > MAX_INITCODE_SIZE as usize
+            && tx.data().len() > max_initcode_size as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }

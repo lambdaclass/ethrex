@@ -1,9 +1,7 @@
 use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
-    gas_cost::{
-        CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD, COST_PER_STATE_BYTE,
-    },
+    gas_cost::{CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD, COST_PER_STATE_BYTE},
     utils::create_eth_transfer_log,
     vm::VM,
 };
@@ -173,7 +171,13 @@ impl<'a> VM<'a> {
         }
 
         // 2. If the code_length > MAX_CODE_SIZE
-        if code_length > MAX_CODE_SIZE {
+        //    [EIP-7954] - Amsterdam increases the limit
+        let max_code_size = if fork >= Fork::Amsterdam {
+            AMSTERDAM_MAX_CODE_SIZE
+        } else {
+            MAX_CODE_SIZE
+        };
+        if code_length > max_code_size {
             return Err(ExceptionalHalt::ContractOutputTooBig.into());
         }
 
@@ -195,7 +199,8 @@ impl<'a> VM<'a> {
             (regular, 0u64)
         };
 
-        self.current_call_frame.increase_consumed_gas(regular_deposit)?;
+        self.current_call_frame
+            .increase_consumed_gas(regular_deposit)?;
         if state_deposit > 0 {
             self.increase_state_gas(state_deposit)?;
         }
