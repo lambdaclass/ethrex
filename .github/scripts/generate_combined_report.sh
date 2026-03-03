@@ -298,7 +298,9 @@ fmt_tput_row() {
 slack_text=""
 if [[ -n "$loc_text" ]]; then
   slack_text="*Lines of code*"$'\n'
-  slack_text+="${loc_text}"$'\n\n'
+  slack_text+='```'$'\n'
+  slack_text+="${loc_text}"$'\n'
+  slack_text+='```'$'\n\n'
 fi
 
 slack_text+="*Comparative performance report (24h average)*"$'\n'
