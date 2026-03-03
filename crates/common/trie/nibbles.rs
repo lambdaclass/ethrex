@@ -726,3 +726,109 @@ fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
     nibbles.push(16); // leaf terminator
     nibbles
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Scalar reference for expand_bytes_to_nibbles (no SIMD).
+    fn expand_bytes_scalar_ref(bytes: &[u8]) -> Vec<u8> {
+        bytes
+            .iter()
+            .flat_map(|&b| [b >> 4, b & 0x0F])
+            .collect()
+    }
+
+    /// Scalar reference for pack_nibble_pairs (no SIMD).
+    fn pack_nibble_pairs_scalar_ref(nibbles: &[u8]) -> Vec<u8> {
+        nibbles
+            .chunks_exact(2)
+            .map(|pair| (pair[0] << 4) | pair[1])
+            .collect()
+    }
+
+    #[test]
+    fn expand_bytes_to_nibbles_matches_scalar() {
+        // Test edge-case lengths: 0, 1, 15, 16, 17, 31, 32, 33, 64
+        for &len in &[0, 1, 2, 15, 16, 17, 31, 32, 33, 48, 64] {
+            let input: Vec<u8> = (0..len).map(|i| (i * 37 + 13) as u8).collect();
+            let expected = expand_bytes_scalar_ref(&input);
+
+            let mut actual = vec![0u8; input.len() * 2];
+            #[allow(unsafe_code)]
+            unsafe {
+                expand_bytes_to_nibbles(&input, actual.as_mut_ptr());
+            }
+            assert_eq!(actual, expected, "mismatch at input length {len}");
+        }
+    }
+
+    #[test]
+    fn pack_nibble_pairs_matches_scalar() {
+        // Test edge-case pair counts: 0, 2, 14, 16, 30, 32, 34, 64
+        for &nibble_count in &[0, 2, 4, 14, 16, 30, 32, 34, 48, 64] {
+            let input: Vec<u8> = (0..nibble_count).map(|i| (i % 16) as u8).collect();
+            let expected = pack_nibble_pairs_scalar_ref(&input);
+
+            let mut actual = vec![0u8; nibble_count / 2];
+            #[allow(unsafe_code)]
+            unsafe {
+                pack_nibble_pairs(&input, actual.as_mut_ptr());
+            }
+            assert_eq!(actual, expected, "mismatch at nibble count {nibble_count}");
+        }
+    }
+
+    #[test]
+    fn expand_then_pack_roundtrip() {
+        for &len in &[0, 1, 16, 32, 33] {
+            let input: Vec<u8> = (0..len).map(|i| (i * 53 + 7) as u8).collect();
+            let mut nibbles = vec![0u8; input.len() * 2];
+            #[allow(unsafe_code)]
+            unsafe {
+                expand_bytes_to_nibbles(&input, nibbles.as_mut_ptr());
+            }
+
+            let mut packed = vec![0u8; input.len()];
+            #[allow(unsafe_code)]
+            unsafe {
+                pack_nibble_pairs(&nibbles, packed.as_mut_ptr());
+            }
+            assert_eq!(packed, input, "roundtrip failed at length {len}");
+        }
+    }
+
+    #[test]
+    fn count_common_prefix_correctness() {
+        // Identical slices
+        let a = vec![1u8, 2, 3, 4, 5];
+        assert_eq!(count_common_prefix(&a, &a), 5);
+
+        // No common prefix
+        assert_eq!(count_common_prefix(&[1, 2, 3], &[4, 5, 6]), 0);
+
+        // Partial match
+        assert_eq!(count_common_prefix(&[1, 2, 3, 4], &[1, 2, 5, 6]), 2);
+
+        // Empty
+        assert_eq!(count_common_prefix(&[], &[1, 2]), 0);
+        assert_eq!(count_common_prefix(&[1, 2], &[]), 0);
+        assert_eq!(count_common_prefix(&[], &[]), 0);
+
+        // Long match crossing SIMD boundaries (>16 bytes)
+        let long_a: Vec<u8> = (0..33).collect();
+        let mut long_b = long_a.clone();
+        long_b[32] = 255;
+        assert_eq!(count_common_prefix(&long_a, &long_b), 32);
+    }
+
+    #[test]
+    fn from_raw_leaf_flag() {
+        let bytes = &[0xAB, 0xCD];
+        let with_leaf = Nibbles::from_raw(bytes, true);
+        let without_leaf = Nibbles::from_raw(bytes, false);
+
+        assert_eq!(with_leaf.data, vec![0x0A, 0x0B, 0x0C, 0x0D, 16]);
+        assert_eq!(without_leaf.data, vec![0x0A, 0x0B, 0x0C, 0x0D]);
+    }
+}
