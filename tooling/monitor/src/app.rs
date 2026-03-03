@@ -113,10 +113,9 @@ impl EthrexMonitor {
         );
         spawn_listener(
             ctx.clone(),
-            EventStream::new()
-                .filter_map(|result| async move {
-                    result.ok().map(|e| monitor_protocol::Event { event: e })
-                }),
+            EventStream::new().filter_map(|result| async move {
+                result.ok().map(|e| monitor_protocol::Event { event: e })
+            }),
         );
     }
 
