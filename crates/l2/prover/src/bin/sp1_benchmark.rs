@@ -49,7 +49,6 @@ use ethrex_guest_program::{
 use ethrex_rlp::encode::RLPEncode as _;
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use rkyv::rancor::Error as RkyvError;
-use secp256k1::{Message, SECP256K1, SecretKey};
 #[cfg(not(feature = "gpu"))]
 use sp1_sdk::CpuProver;
 #[cfg(feature = "gpu")]
@@ -89,7 +88,6 @@ const DEX_CONTRACT: Address = H160([0xDE; 20]);
 ///
 /// Then runs it through `ZkDexGuestProgram.serialize_input()` to produce
 /// `AppProgramInput` bytes (exercising the full Phase 3 pipeline).
-#[expect(clippy::indexing_slicing)]
 fn generate_zk_dex_input(transfer_count: u32) -> anyhow::Result<Vec<u8>> {
     use ethrex_guest_program::l2::ProgramInput;
 
@@ -128,7 +126,7 @@ fn generate_zk_dex_input(transfer_count: u32) -> anyhow::Result<Vec<u8>> {
         .root_node()
         .map_err(|e| anyhow::anyhow!("root_node: {e}"))?
         .map(Arc::unwrap_or_clone)
-        .unwrap_or_else(|| Node::default());
+        .unwrap_or_else(Node::default);
 
     // Build state trie with user accounts + DEX contract.
     let mut state_trie = Trie::empty_in_memory();
@@ -163,7 +161,7 @@ fn generate_zk_dex_input(transfer_count: u32) -> anyhow::Result<Vec<u8>> {
         .root_node()
         .map_err(|e| anyhow::anyhow!("root_node: {e}"))?
         .map(Arc::unwrap_or_clone)
-        .unwrap_or_else(|| Node::default());
+        .unwrap_or_else(Node::default);
 
     // Build transactions.
     let mut transactions = Vec::with_capacity(count);
@@ -293,7 +291,8 @@ fn generate_tokamon_input(action_count: u32) -> anyhow::Result<TokammonProgramIn
         player[4] = 0xAA;
 
         // Cycle through action types: 0,1,2,3,0,1,2,3,...
-        let action_type = action_types[(i % 4) as usize].clone();
+        let action_idx = usize::try_from(i % 4).expect("i % 4 fits in usize");
+        let action_type = action_types[action_idx].clone();
 
         // Generate valid payload per action type.
         let payload = match &action_type {
