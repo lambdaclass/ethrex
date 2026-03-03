@@ -19,12 +19,10 @@ use ratatui::{
 };
 use reqwest::Url;
 use spawned_concurrency::{
-    messages::Unused,
-    tasks::{
-        CastResponse, GenServer, GenServerHandle, InitResult, Success, send_interval,
-        spawn_listener,
-    },
+    error::ActorError,
+    tasks::{Actor, ActorStart as _, Context, Handler, send_interval, spawn_listener},
 };
+use spawned_macros::{actor, protocol};
 use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -73,15 +71,12 @@ pub struct EthrexMonitorWidget {
     pub osaka_activation_time: Option<u64>,
 }
 
-#[derive(Clone, Debug)]
-pub enum CastInMessage {
-    Tick,
-    Event(Event),
-}
+pub type MonitorRef = Arc<dyn MonitorProtocol>;
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum OutMessage {
-    Done,
+#[protocol]
+pub trait MonitorProtocol: Send + Sync {
+    fn tick(&self) -> Result<(), ActorError>;
+    fn terminal_event(&self, event: Event) -> Result<(), ActorError>;
 }
 
 pub struct EthrexMonitor {
@@ -90,6 +85,7 @@ pub struct EthrexMonitor {
     cancellation_token: CancellationToken,
 }
 
+#[actor(protocol = MonitorProtocol)]
 impl EthrexMonitor {
     pub async fn spawn(
         sequencer_state: SequencerState,
@@ -97,84 +93,77 @@ impl EthrexMonitor {
         rollup_store: StoreRollup,
         cfg: &MonitorConfig,
         cancellation_token: CancellationToken,
-    ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
+    ) -> Result<(), MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
-        let ethrex_monitor = EthrexMonitor {
+        let monitor = EthrexMonitor {
             widget,
             terminal: Arc::new(Mutex::new(setup_terminal()?)),
             cancellation_token,
         };
-        Ok(ethrex_monitor.start())
+        monitor.start();
+        Ok(())
     }
-}
 
-impl GenServer for EthrexMonitor {
-    type CallMsg = Unused;
-    type CastMsg = CastInMessage;
-    type OutMsg = OutMessage;
-    type Error = MonitorError;
-
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        // Tick handling
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
         send_interval(
             Duration::from_millis(self.widget.tick_rate),
-            handle.clone(),
-            Self::CastMsg::Tick,
+            ctx.clone(),
+            monitor_protocol::Tick,
         );
-        // Event handling
         spawn_listener(
-            handle.clone(),
+            ctx.clone(),
             EventStream::new()
-                .filter_map(|result| async move { result.ok().map(Self::CastMsg::Event) }),
+                .filter_map(|result| async move {
+                    result.ok().map(|e| monitor_protocol::TerminalEvent { event: e })
+                }),
         );
-        Ok(Success(self))
     }
 
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            // On event
-            CastInMessage::Event(event) => {
-                let widget = &mut self.widget;
-                if let Some(key) = event.as_key_press_event() {
-                    widget.on_key_event(key.code);
-                }
-                if let Some(mouse) = event.as_mouse_event() {
-                    widget.on_mouse_event(mouse.kind);
-                }
-            }
-            // Tick received
-            CastInMessage::Tick => {
-                let _ = self
-                    .widget
-                    .on_tick()
-                    .await
-                    .inspect_err(|err| error!("Monitor error: {err}"));
-            }
-        }
-
-        if !self.widget.should_quit {
-            let _ = self
-                .widget
-                .draw(&mut *self.terminal.lock().await)
-                .inspect_err(|err| error!("Render error: {err}"));
-            CastResponse::NoReply
-        } else {
-            CastResponse::Stop
-        }
-    }
-
-    async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
+    #[stopped]
+    async fn stopped(&mut self, _ctx: &Context<Self>) {
         let mut terminal = self.terminal.lock().await;
-        let _ = restore_terminal(&mut terminal).inspect_err(|err| {
-            error!("Error restoring terminal: {err}");
-        });
+        let _ = restore_terminal(&mut terminal)
+            .inspect_err(|err| error!("Error restoring terminal: {err}"));
         info!("Monitor has been cancelled");
         self.cancellation_token.cancel();
-        Ok(())
+    }
+
+    #[send_handler]
+    async fn handle_tick(&mut self, _msg: monitor_protocol::Tick, ctx: &Context<Self>) {
+        let _ = self
+            .widget
+            .on_tick()
+            .await
+            .inspect_err(|err| error!("Monitor error: {err}"));
+
+        if self.widget.should_quit {
+            ctx.stop();
+            return;
+        }
+        let _ = self
+            .widget
+            .draw(&mut *self.terminal.lock().await)
+            .inspect_err(|err| error!("Render error: {err}"));
+    }
+
+    #[send_handler]
+    async fn handle_event(&mut self, msg: monitor_protocol::TerminalEvent, ctx: &Context<Self>) {
+        if let Some(key) = msg.event.as_key_press_event() {
+            self.widget.on_key_event(key.code);
+        }
+        if let Some(mouse) = msg.event.as_mouse_event() {
+            self.widget.on_mouse_event(mouse.kind);
+        }
+
+        if self.widget.should_quit {
+            ctx.stop();
+            return;
+        }
+        let _ = self
+            .widget
+            .draw(&mut *self.terminal.lock().await)
+            .inspect_err(|err| error!("Render error: {err}"));
     }
 }
 

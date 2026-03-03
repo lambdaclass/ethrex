@@ -3859,8 +3859,8 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
- "spawned-concurrency",
- "spawned-rt",
+ "spawned-concurrency 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "tikv-jemallocator",
  "tokio",
@@ -4052,8 +4052,8 @@ dependencies = [
  "serde_json",
  "serde_with",
  "sp1-sdk",
- "spawned-concurrency",
- "spawned-rt",
+ "spawned-concurrency 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "tabwriter",
  "thiserror 2.0.18",
  "tokio",
@@ -4191,7 +4191,8 @@ dependencies = [
  "reqwest",
  "secp256k1",
  "serde",
- "spawned-concurrency",
+ "spawned-concurrency 0.4.5 (git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b)",
+ "spawned-macros",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -4239,8 +4240,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "snap",
- "spawned-concurrency",
- "spawned-rt",
+ "spawned-concurrency 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -4347,8 +4348,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "spawned-concurrency",
- "spawned-rt",
+ "spawned-concurrency 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -12678,9 +12679,32 @@ checksum = "4d3ec6b3c003075f7d1c4c6475308243e853c9a78149b84b1f8b64d5bed49d49"
 dependencies = [
  "futures",
  "pin-project-lite",
- "spawned-rt",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "spawned-concurrency"
+version = "0.4.5"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b#39b7df1adbcb466e15a8a9a330239ab87a6826b6"
+dependencies = [
+ "futures",
+ "pin-project-lite",
+ "spawned-macros",
+ "spawned-rt 0.4.5 (git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b)",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "spawned-macros"
+version = "0.4.5"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b#39b7df1adbcb466e15a8a9a330239ab87a6826b6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -12690,6 +12714,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cca60c56b1c60b94dd314edce5ea1a98b6037cca3b44d73828e647bad4dae46c"
 dependencies = [
  "crossbeam 0.7.3",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+]
+
+[[package]]
+name = "spawned-rt"
+version = "0.4.5"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b#39b7df1adbcb466e15a8a9a330239ab87a6826b6"
+dependencies = [
+ "crossbeam 0.7.3",
+ "ctrlc",
  "tokio",
  "tokio-stream",
  "tokio-util",
