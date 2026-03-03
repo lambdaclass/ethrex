@@ -228,12 +228,12 @@ pub struct BatchBlockProcessingFailure {
 fn increase_thread_priority() {
     use thread_priority::{ThreadPriority, ThreadPriorityValue};
     if let Err(err) = ThreadPriority::Max.set_for_current() {
-        tracing::debug!(?err, "failed to set max thread priority, trying moderate bump");
+        debug!(?err, "failed to set max thread priority, trying moderate bump");
         let fallback = ThreadPriority::Crossplatform(
             ThreadPriorityValue::try_from(62u8).expect("62 is within valid 0..100 range"),
         );
         if let Err(err) = fallback.set_for_current() {
-            tracing::debug!(?err, "failed to set moderate thread priority");
+            debug!(?err, "failed to set moderate thread priority");
         }
     }
 }
@@ -422,12 +422,9 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
-        let cancelled = Arc::new(AtomicBool::new(false));
-
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
-                let cancelled_warmer = cancelled.clone();
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
@@ -437,10 +434,10 @@ impl Blockchain {
                         let start = Instant::now();
                         if let Some(bal) = bal {
                             // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            let _ = LEVM::warm_block_from_bal(bal, caching_store, &cancelled_warmer);
+                            let _ = LEVM::warm_block_from_bal(bal, caching_store);
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            let _ = LEVM::warm_block(block, caching_store, vm_type, &cancelled_warmer);
+                            let _ = LEVM::warm_block(block, caching_store, vm_type);
                         }
                         start.elapsed()
                     })
@@ -449,15 +446,12 @@ impl Blockchain {
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
                 let (tx, rx) = channel();
-                let cancelled_exec = cancelled.clone();
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
                         increase_thread_priority();
                         let (execution_result, bal) =
                             vm.execute_block_pipeline(block, tx, queue_length_ref)?;
-
-                        cancelled_exec.store(true, Ordering::Relaxed);
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -513,20 +507,22 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
                     })?;
-                let execution_result = execution_handle.join().unwrap_or_else(|_| {
-                    Err(ChainError::Custom("execution thread panicked".to_string()))
-                });
-                let merkleization_result = merkleize_handle.join().unwrap_or_else(|_| {
-                    Err(StoreError::Custom(
-                        "merklization thread panicked".to_string(),
-                    ))
-                });
                 let warmer_duration = warm_handle
                     .join()
                     .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                     .ok()
                     .unwrap_or(Duration::ZERO);
-                Ok((execution_result, merkleization_result, warmer_duration))
+                Ok((
+                    execution_handle.join().unwrap_or_else(|_| {
+                        Err(ChainError::Custom("execution thread panicked".to_string()))
+                    }),
+                    merkleize_handle.join().unwrap_or_else(|_| {
+                        Err(StoreError::Custom(
+                            "merklization thread panicked".to_string(),
+                        ))
+                    }),
+                    warmer_duration,
+                ))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
