@@ -819,6 +819,8 @@ impl L1Committer {
                 )?;
 
                 // Include empty blocks in the blob for KZG proof consistency.
+                // We must also regenerate the blob bundle here so that
+                // `blobs_bundle` stays in sync with `last_added_block_number`.
                 if !self.validium {
                     let fee_config = self
                         .rollup_store
@@ -829,6 +831,26 @@ impl L1Committer {
                         ))?;
                     current_blocks.push(potential_batch_block.clone());
                     current_fee_configs.push(fee_config);
+
+                    let l1_fork =
+                        get_l1_active_fork(&self.eth_client, self.osaka_activation_time).await?;
+
+                    match generate_blobs_bundle(&current_blocks, &current_fee_configs, l1_fork) {
+                        Ok((bundle, _latest_blob_size)) => {
+                            blobs_bundle = bundle;
+                            metrics!(
+                                blob_size = _latest_blob_size;
+                            );
+                        }
+                        Err(_) => {
+                            // Blob capacity exceeded — undo the push and let
+                            // this block be part of the next batch.
+                            current_blocks.pop();
+                            current_fee_configs.pop();
+                            warn!("Batch size limit reached on empty block. Remaining blocks will be processed in the next batch.");
+                            break;
+                        }
+                    }
                 }
 
                 last_added_block_number += 1;
