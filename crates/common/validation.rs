@@ -187,41 +187,25 @@ pub fn validate_block_access_list_hash(
 }
 
 /// Validates that the block access list does not exceed the maximum allowed size (Amsterdam+).
-/// Per EIP-7928: bal_items * ITEM_COST <= available_gas + system_allowance
+/// Per EIP-7928: bal_items <= block_gas_limit // GAS_BLOCK_ACCESS_LIST_ITEM
 pub fn validate_block_access_list_size(
     header: &BlockHeader,
     chain_config: &ChainConfig,
     computed_bal: &crate::types::block_access_list::BlockAccessList,
-    transaction_count: usize,
 ) -> Result<(), InvalidBlockError> {
-    use crate::constants::{
-        BAL_ITEM_COST, BAL_TX_BASE_COST, MAX_CONSOLIDATION_REQUESTS_PER_BLOCK,
-        MAX_WITHDRAWAL_REQUESTS_PER_BLOCK,
-    };
+    use crate::constants::BAL_ITEM_COST;
 
     if !chain_config.is_amsterdam_activated(header.timestamp) {
         return Ok(());
     }
 
     let bal_items = computed_bal.item_count();
-    let tx_count = transaction_count as u64;
+    let max_items = header.gas_limit / BAL_ITEM_COST;
 
-    let available_gas = header
-        .gas_limit
-        .saturating_sub(tx_count.saturating_mul(BAL_TX_BASE_COST));
-
-    let system_allowance = (15
-        + 3 * (MAX_WITHDRAWAL_REQUESTS_PER_BLOCK + MAX_CONSOLIDATION_REQUESTS_PER_BLOCK))
-        * BAL_ITEM_COST;
-
-    let total_cost = bal_items.saturating_mul(BAL_ITEM_COST);
-    let max_allowed = available_gas.saturating_add(system_allowance);
-
-    if total_cost > max_allowed {
+    if bal_items > max_items {
         return Err(InvalidBlockError::BlockAccessListSizeExceeded {
             items: bal_items,
-            total_cost,
-            max_allowed,
+            max_items,
         });
     }
 

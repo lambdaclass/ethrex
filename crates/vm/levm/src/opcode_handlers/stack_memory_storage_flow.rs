@@ -255,17 +255,9 @@ impl<'a> VM<'a> {
 
         self.substate.refunded_gas = gas_refunds;
 
-        // Main gas check - if this fails, the storage read is already recorded above
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::sstore(
-                original_value,
-                current_value,
-                new_storage_slot_value,
-                storage_slot_was_cold,
-                fork,
-            )?)?;
-
-        // EIP-8037 (Amsterdam+): charge state gas for new storage slot creation (0 -> nonzero)
+        // EIP-8037 (Amsterdam+): charge state gas BEFORE regular gas per EELS ordering.
+        // State gas for new storage slot creation (0 -> nonzero) spills into gas_remaining
+        // when the reservoir is empty, which must happen before the regular gas charge.
         if fork >= Fork::Amsterdam
             && new_storage_slot_value != current_value
             && current_value == original_value
@@ -277,6 +269,16 @@ impl<'a> VM<'a> {
                 .ok_or(ExceptionalHalt::OutOfGas)?;
             self.increase_state_gas(state_gas)?;
         }
+
+        // Main gas check - if this fails, the storage read is already recorded above
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::sstore(
+                original_value,
+                current_value,
+                new_storage_slot_value,
+                storage_slot_was_cold,
+                fork,
+            )?)?;
 
         // Note: BAL read already recorded above (after stipend check, before gas check).
         // If value changes, update_account_storage will record the write.

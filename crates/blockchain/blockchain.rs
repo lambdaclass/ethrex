@@ -347,7 +347,6 @@ impl Blockchain {
                 &block.header,
                 &chain_config,
                 bal,
-                block.body.transactions.len(),
             )?;
         }
 
@@ -464,7 +463,6 @@ impl Blockchain {
                                 &block.header,
                                 &chain_config,
                                 bal,
-                                block.body.transactions.len(),
                             )?;
                         }
 
@@ -1268,7 +1266,6 @@ impl Blockchain {
                 &block.header,
                 chain_config,
                 bal,
-                block.body.transactions.len(),
             )?;
         }
 
