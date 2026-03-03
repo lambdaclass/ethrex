@@ -375,7 +375,8 @@ unsafe fn count_common_prefix_aarch64(a: &[u8], b: &[u8]) -> usize {
                 continue;
             }
             // Find first non-matching byte by scanning the 16-byte window.
-            let eq_arr: [u8; 16] = std::mem::transmute(eq);
+            let mut eq_arr = [0u8; 16];
+            vst1q_u8(eq_arr.as_mut_ptr(), eq);
             for (j, &byte) in eq_arr.iter().enumerate() {
                 if byte == 0 {
                     return i + j;
