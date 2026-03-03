@@ -7,9 +7,24 @@ runs:
     - name: Install RISC0
       shell: bash
       run: |
+        retry() {
+          local retries=5
+          local delay=10
+          for i in $(seq 1 $retries); do
+            if "$@"; then
+              return 0
+            fi
+            echo "Attempt $i/$retries failed. Retrying in ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+          done
+          echo "All $retries attempts failed."
+          return 1
+        }
+
         curl -L https://risczero.com/install | bash
-        ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-        ~/.risc0/bin/rzup install risc0-groth16
-        ~/.risc0/bin/rzup install rust
-        ~/.risc0/bin/rzup install cpp
-        ~/.risc0/bin/rzup install r0vm 3.0.3
+        retry ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+        retry ~/.risc0/bin/rzup install risc0-groth16
+        retry ~/.risc0/bin/rzup install rust
+        retry ~/.risc0/bin/rzup install cpp
+        retry ~/.risc0/bin/rzup install r0vm 3.0.3
