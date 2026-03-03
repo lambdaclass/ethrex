@@ -497,6 +497,9 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 
         for (point_bytes, scalar_bytes) in pairs {
             let point = parse_bls12_g1(*point_bytes)?;
+            if !bool::from(point.is_torsion_free()) {
+                return Err(CryptoError::InvalidPoint("G1 point not in subgroup"));
+            }
             let scalar = parse_bls12_scalar(scalar_bytes);
 
             if !bool::from(scalar.is_zero()) {
@@ -540,6 +543,9 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 
         for (point_bytes, scalar_bytes) in pairs {
             let point = parse_bls12_g2(*point_bytes)?;
+            if !bool::from(point.is_torsion_free()) {
+                return Err(CryptoError::InvalidPoint("G2 point not in subgroup"));
+            }
             let scalar = parse_bls12_scalar(scalar_bytes);
 
             if scalar != bls12_381::Scalar::zero() {
@@ -638,6 +644,10 @@ fn parse_bls12_g1(
         .into_option()
         .ok_or(CryptoError::InvalidPoint("invalid BLS12-381 G1 point"))?;
 
+    if !bool::from(affine.is_on_curve()) {
+        return Err(CryptoError::InvalidPoint("G1 point not on curve"));
+    }
+
     Ok(affine)
 }
 
@@ -664,6 +674,10 @@ fn parse_bls12_g2(
     let affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
         .into_option()
         .ok_or(CryptoError::InvalidPoint("invalid BLS12-381 G2 point"))?;
+
+    if !bool::from(affine.is_on_curve()) {
+        return Err(CryptoError::InvalidPoint("G2 point not on curve"));
+    }
 
     Ok(affine)
 }
