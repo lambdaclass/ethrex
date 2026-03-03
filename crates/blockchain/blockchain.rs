@@ -89,10 +89,10 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
+use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use rayon::ThreadPool;
 use std::sync::OnceLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
@@ -870,62 +870,61 @@ impl Blockchain {
                 let shared_results_ref = Arc::clone(&shared_results);
                 let stage_b_error_ref = Arc::clone(&stage_b_error);
                 scope.spawn(move |_| {
-                    let worker_result = (|| -> Result<Vec<(usize, H256, Vec<TrieNode>)>, StoreError> {
-                        let mut results: Vec<(usize, H256, Vec<TrieNode>)> = Vec::new();
-                        // Open one state trie per worker for storage root lookups
-                        let state_trie = self.storage.open_state_trie(parent_state_root)?;
-                        for idx in bin {
-                            let (hashed_address, update) = &accounts_ref[idx];
-                            let has_storage_changes = update.removed
-                                || update.removed_storage
-                                || !update.added_storage.is_empty();
-                            if !has_storage_changes {
-                                continue;
-                            }
-
-                            if update.removed {
-                                results.push((
-                                    idx,
-                                    *EMPTY_TRIE_HASH,
-                                    vec![(Nibbles::default(), vec![RLP_NULL])],
-                                ));
-                                continue;
-                            }
-
-                            let mut trie = if update.removed_storage {
-                                Trie::new_temp()
-                            } else {
-                                let storage_root =
-                                    match state_trie.get(hashed_address.as_bytes())? {
-                                        Some(rlp) => {
-                                            AccountState::decode(&rlp)?.storage_root
-                                        }
-                                        None => *EMPTY_TRIE_HASH,
-                                    };
-                                self.storage.open_storage_trie(
-                                    *hashed_address,
-                                    parent_state_root,
-                                    storage_root,
-                                )?
-                            };
-
-                            for (key, value) in &update.added_storage {
-                                let hashed_key = keccak(key);
-                                if value.is_zero() {
-                                    trie.remove(hashed_key.as_bytes())?;
-                                } else {
-                                    trie.insert(
-                                        hashed_key.as_bytes().to_vec(),
-                                        value.encode_to_vec(),
-                                    )?;
+                    let worker_result =
+                        (|| -> Result<Vec<(usize, H256, Vec<TrieNode>)>, StoreError> {
+                            let mut results: Vec<(usize, H256, Vec<TrieNode>)> = Vec::new();
+                            // Open one state trie per worker for storage root lookups
+                            let state_trie = self.storage.open_state_trie(parent_state_root)?;
+                            for idx in bin {
+                                let (hashed_address, update) = &accounts_ref[idx];
+                                let has_storage_changes = update.removed
+                                    || update.removed_storage
+                                    || !update.added_storage.is_empty();
+                                if !has_storage_changes {
+                                    continue;
                                 }
-                            }
 
-                            let (root_hash, nodes) = trie.collect_changes_since_last_hash();
-                            results.push((idx, root_hash, nodes));
-                        }
-                        Ok(results)
-                    })();
+                                if update.removed {
+                                    results.push((
+                                        idx,
+                                        *EMPTY_TRIE_HASH,
+                                        vec![(Nibbles::default(), vec![RLP_NULL])],
+                                    ));
+                                    continue;
+                                }
+
+                                let mut trie = if update.removed_storage {
+                                    Trie::new_temp()
+                                } else {
+                                    let storage_root =
+                                        match state_trie.get(hashed_address.as_bytes())? {
+                                            Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                                            None => *EMPTY_TRIE_HASH,
+                                        };
+                                    self.storage.open_storage_trie(
+                                        *hashed_address,
+                                        parent_state_root,
+                                        storage_root,
+                                    )?
+                                };
+
+                                for (key, value) in &update.added_storage {
+                                    let hashed_key = keccak(key);
+                                    if value.is_zero() {
+                                        trie.remove(hashed_key.as_bytes())?;
+                                    } else {
+                                        trie.insert(
+                                            hashed_key.as_bytes().to_vec(),
+                                            value.encode_to_vec(),
+                                        )?;
+                                    }
+                                }
+
+                                let (root_hash, nodes) = trie.collect_changes_since_last_hash();
+                                results.push((idx, root_hash, nodes));
+                            }
+                            Ok(results)
+                        })();
                     match worker_result {
                         Ok(results) => {
                             if let Ok(mut guard) = shared_results_ref.lock() {
@@ -984,7 +983,8 @@ impl Blockchain {
         //
         // Results are stored in a fixed-size array indexed by shard; the Option
         // is populated by each job and unwrapped after the scope completes.
-        type ShardResult = std::sync::Mutex<Option<Result<(Box<BranchNode>, Vec<TrieNode>), StoreError>>>;
+        type ShardResult =
+            std::sync::Mutex<Option<Result<(Box<BranchNode>, Vec<TrieNode>), StoreError>>>;
         let shard_results: Arc<Vec<ShardResult>> = Arc::new(
             (0..NUM_WORKERS)
                 .map(|_| std::sync::Mutex::new(None))
@@ -1031,8 +1031,7 @@ impl Blockchain {
                             // EIP-161: remove empty accounts (zero nonce, zero balance,
                             // empty code, empty storage) from the state trie.
                             if account_state != AccountState::default() {
-                                state_trie
-                                    .insert(path.to_vec(), account_state.encode_to_vec())?;
+                                state_trie.insert(path.to_vec(), account_state.encode_to_vec())?;
                             } else {
                                 state_trie.remove(path)?;
                             }
