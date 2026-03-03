@@ -227,7 +227,7 @@ unsafe fn pack_nibble_pairs_x86_64(nibbles: &[u8], output: *mut u8) {
     // Scalar tail (handles remaining pairs when n is not a multiple of 32,
     // or when SSSE3 is unavailable).
     unsafe {
-        while i < n {
+        while i + 2 <= n {
             *output.add(o) = (*nibbles.get_unchecked(i) << 4) | *nibbles.get_unchecked(i + 1);
             i += 2;
             o += 1;
@@ -258,7 +258,7 @@ unsafe fn pack_nibble_pairs_aarch64(nibbles: &[u8], output: *mut u8) {
             i += 32;
             o += 16;
         }
-        while i < n {
+        while i + 2 <= n {
             *output.add(o) = (*nibbles.get_unchecked(i) << 4) | *nibbles.get_unchecked(i + 1);
             i += 2;
             o += 1;
@@ -274,7 +274,7 @@ unsafe fn pack_nibble_pairs_scalar(nibbles: &[u8], output: *mut u8) {
         let mut o = 0usize;
         let mut i = 0usize;
         let n = nibbles.len();
-        while i < n {
+        while i + 2 <= n {
             *output.add(o) = (*nibbles.get_unchecked(i) << 4) | *nibbles.get_unchecked(i + 1);
             i += 2;
             o += 1;
