@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use bytes::{BufMut, Bytes};
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{
@@ -7,6 +5,7 @@ use ethrex_rlp::{
     encode::{RLPEncode, encode_length, list_length},
     structs,
 };
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -444,6 +443,89 @@ impl BlockAccessList {
         count
     }
 
+    /// Validates that the BAL has canonical ordering per EIP-7928.
+    /// - Accounts must be in strictly ascending order by address.
+    /// - Within each account: storage_changes by slot, storage_reads by slot value,
+    ///   slot_changes/balance_changes/nonce_changes/code_changes by block_access_index.
+    ///
+    /// Returns an error string describing the first violation found.
+    pub fn validate_ordering(&self) -> Result<(), String> {
+        let mut prev_addr = None;
+        for account in &self.inner {
+            if let Some(prev) = prev_addr
+                && prev >= account.address
+            {
+                return Err(format!(
+                    "Block access list accounts not in strictly ascending order: \
+                     {:#x} >= {:#x}",
+                    prev, account.address
+                ));
+            }
+            prev_addr = Some(account.address);
+
+            for window in account.storage_changes.windows(2) {
+                if window[0].slot >= window[1].slot {
+                    return Err(format!(
+                        "Block access list storage_changes not in strictly ascending order \
+                         for account {:#x}: {:#x} >= {:#x}",
+                        account.address, window[0].slot, window[1].slot
+                    ));
+                }
+            }
+            for slot_change in &account.storage_changes {
+                for window in slot_change.slot_changes.windows(2) {
+                    if window[0].block_access_index >= window[1].block_access_index {
+                        return Err(format!(
+                            "Block access list slot_changes not in strictly ascending order \
+                             for account {:#x} slot {:#x}: {} >= {}",
+                            account.address,
+                            slot_change.slot,
+                            window[0].block_access_index,
+                            window[1].block_access_index
+                        ));
+                    }
+                }
+            }
+            for window in account.storage_reads.windows(2) {
+                if window[0] >= window[1] {
+                    return Err(format!(
+                        "Block access list storage_reads not in strictly ascending order \
+                         for account {:#x}: {:#x} >= {:#x}",
+                        account.address, window[0], window[1]
+                    ));
+                }
+            }
+            for window in account.balance_changes.windows(2) {
+                if window[0].block_access_index >= window[1].block_access_index {
+                    return Err(format!(
+                        "Block access list balance_changes not in strictly ascending order \
+                         for account {:#x}: {} >= {}",
+                        account.address, window[0].block_access_index, window[1].block_access_index
+                    ));
+                }
+            }
+            for window in account.nonce_changes.windows(2) {
+                if window[0].block_access_index >= window[1].block_access_index {
+                    return Err(format!(
+                        "Block access list nonce_changes not in strictly ascending order \
+                         for account {:#x}: {} >= {}",
+                        account.address, window[0].block_access_index, window[1].block_access_index
+                    ));
+                }
+            }
+            for window in account.code_changes.windows(2) {
+                if window[0].block_access_index >= window[1].block_access_index {
+                    return Err(format!(
+                        "Block access list code_changes not in strictly ascending order \
+                         for account {:#x}: {} >= {}",
+                        account.address, window[0].block_access_index, window[1].block_access_index
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
     /// Use this when hashing a BAL constructed locally from execution.
     pub fn compute_hash(&self) -> H256 {
@@ -454,6 +536,117 @@ impl BlockAccessList {
         let buf = self.encode_to_vec();
         keccak(buf)
     }
+
+    /// Builds a validation index for fast per-tx BAL verification.
+    /// Call once per block before parallel execution.
+    pub fn build_validation_index(&self) -> BalAddressIndex {
+        let mut addr_to_idx =
+            FxHashMap::with_capacity_and_hasher(self.inner.len(), Default::default());
+        let mut tx_to_accounts: FxHashMap<u16, Vec<usize>> = FxHashMap::default();
+
+        for (i, acct) in self.inner.iter().enumerate() {
+            addr_to_idx.insert(acct.address, i);
+
+            // Collect all block_access_indices where this account has changes
+            let mut seen_indices = BTreeSet::new();
+            for bc in &acct.balance_changes {
+                seen_indices.insert(bc.block_access_index);
+            }
+            for nc in &acct.nonce_changes {
+                seen_indices.insert(nc.block_access_index);
+            }
+            for cc in &acct.code_changes {
+                seen_indices.insert(cc.block_access_index);
+            }
+            for sc in &acct.storage_changes {
+                for change in &sc.slot_changes {
+                    seen_indices.insert(change.block_access_index);
+                }
+            }
+
+            for idx in seen_indices {
+                tx_to_accounts.entry(idx).or_default().push(i);
+            }
+        }
+
+        BalAddressIndex {
+            addr_to_idx,
+            tx_to_accounts,
+        }
+    }
+}
+
+/// Pre-computed index for fast per-tx BAL validation lookups.
+/// Built once per block, shared read-only across parallel tx validations.
+pub struct BalAddressIndex {
+    /// Maps each address in the BAL to its index in `BlockAccessList.inner`.
+    pub addr_to_idx: FxHashMap<Address, usize>,
+    /// For each block_access_index, the BAL-inner indices with changes at that index.
+    pub tx_to_accounts: FxHashMap<u16, Vec<usize>>,
+}
+
+/// Binary search for exact match at `idx` in balance changes (sorted by block_access_index).
+pub fn find_exact_change_balance(changes: &[BalanceChange], idx: u16) -> Option<U256> {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    if pos < changes.len() && changes[pos].block_access_index == idx {
+        Some(changes[pos].post_balance)
+    } else {
+        None
+    }
+}
+
+/// Returns true if there is a balance change exactly at `idx`.
+pub fn has_exact_change_balance(changes: &[BalanceChange], idx: u16) -> bool {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    pos < changes.len() && changes[pos].block_access_index == idx
+}
+
+/// Binary search for exact match at `idx` in nonce changes.
+pub fn find_exact_change_nonce(changes: &[NonceChange], idx: u16) -> Option<u64> {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    if pos < changes.len() && changes[pos].block_access_index == idx {
+        Some(changes[pos].post_nonce)
+    } else {
+        None
+    }
+}
+
+/// Returns true if there is a nonce change exactly at `idx`.
+pub fn has_exact_change_nonce(changes: &[NonceChange], idx: u16) -> bool {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    pos < changes.len() && changes[pos].block_access_index == idx
+}
+
+/// Binary search for exact match at `idx` in code changes.
+pub fn find_exact_change_code(changes: &[CodeChange], idx: u16) -> Option<&Bytes> {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    if pos < changes.len() && changes[pos].block_access_index == idx {
+        Some(&changes[pos].new_code)
+    } else {
+        None
+    }
+}
+
+/// Returns true if there is a code change exactly at `idx`.
+pub fn has_exact_change_code(changes: &[CodeChange], idx: u16) -> bool {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    pos < changes.len() && changes[pos].block_access_index == idx
+}
+
+/// Binary search for exact match at `idx` in storage changes.
+pub fn find_exact_change_storage(changes: &[StorageChange], idx: u16) -> Option<U256> {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    if pos < changes.len() && changes[pos].block_access_index == idx {
+        Some(changes[pos].post_value)
+    } else {
+        None
+    }
+}
+
+/// Returns true if there is a storage change exactly at `idx`.
+pub fn has_exact_change_storage(changes: &[StorageChange], idx: u16) -> bool {
+    let pos = changes.partition_point(|c| c.block_access_index < idx);
+    pos < changes.len() && changes[pos].block_access_index == idx
 }
 
 impl RLPEncode for BlockAccessList {
