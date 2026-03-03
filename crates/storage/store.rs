@@ -1757,6 +1757,10 @@ impl Store {
         // Open the state trie from RocksDB (this is the healed trie from snap sync)
         let state_trie = self.open_direct_state_trie(state_root)?;
 
+        // Flush storage tries every N accounts to keep memory bounded.
+        // Storage tries accumulate in memory and can OOM on large state (261M+ slots).
+        const STORAGE_FLUSH_INTERVAL: u64 = 200_000;
+
         // Iterate all account leaves
         let mut account_count: u64 = 0;
         let mut storage_account_count: u64 = 0;
@@ -1798,19 +1802,33 @@ impl Store {
             }
 
             account_count += 1;
-            if account_count % 1_000_000 == 0 {
+
+            // Periodically flush storage tries to free memory
+            if account_count % STORAGE_FLUSH_INTERVAL == 0 {
+                let flushed = bc
+                    .read()
+                    .map_err(|_| StoreError::LockError)?
+                    .flush_storage_tries();
                 tracing::info!(
-                    "State transfer progress: {} accounts ({} with storage)",
+                    "State transfer progress: {} accounts ({} with storage, flushed {} storage tries)",
                     account_count,
                     storage_account_count,
+                    flushed,
                 );
             }
         }
 
+        // Final flush of remaining storage tries
+        let final_flushed = bc
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .flush_storage_tries();
+
         tracing::info!(
-            "State transfer complete: {} accounts ({} with storage). Persisting to ethrex-db...",
+            "State transfer complete: {} accounts ({} with storage, final flush: {} tries). Persisting to ethrex-db...",
             account_count,
             storage_account_count,
+            final_flushed,
         );
 
         // Persist the populated state trie to disk
