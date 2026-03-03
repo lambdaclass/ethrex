@@ -507,7 +507,7 @@ impl Blockchain {
                 });
                 let merkleization_result = merkleize_handle.join().unwrap_or_else(|_| {
                     Err(StoreError::Custom(
-                        "merklization thread panicked".to_string(),
+                        "merkleization thread panicked".to_string(),
                     ))
                 });
                 let warmer_duration = warm_handle
