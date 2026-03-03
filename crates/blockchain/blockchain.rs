@@ -436,15 +436,19 @@ impl Blockchain {
                 let max_queue_length_ref = &mut max_queue_length;
                 let (tx, rx) = channel();
                 let (encoder_tx, encoder_rx) = channel::<Receipt>();
+                let encoder_fork = chain_config.fork(block.header.timestamp);
+                let deposit_contract_address = chain_config.deposit_contract_address;
                 // Encoder thread: encodes block header/body, hashes txs, encodes receipts,
-                // builds receipt trie incrementally, and verifies receipts root — all
-                // concurrent with execution. Receipts are moved (not cloned) from the
-                // execution thread and returned here for later use.
+                // builds receipt trie incrementally, verifies receipts root, and extracts
+                // deposit requests — all concurrent with execution.
                 let encoder_handle = std::thread::Builder::new()
                     .name("block_executor_encoder".to_string())
                     .spawn_scoped(
                         s,
-                        move || -> Result<(PreEncodedBlockData, Vec<Receipt>), ChainError> {
+                        move || -> Result<
+                            (PreEncodedBlockData, Vec<Receipt>, Option<Requests>),
+                            ChainError,
+                        > {
                             // 1. Encode block header & body immediately (no receipt dependency)
                             let header_rlp = BlockHeaderRLP::from(block.header.clone()).into_vec();
                             let body_rlp = block.body.encode_to_vec();
@@ -458,6 +462,7 @@ impl Blockchain {
                             let mut encoded_receipts = Vec::new();
                             let mut receipts = Vec::new();
                             let mut trie = Trie::new_temp();
+                            let mut hash_buf = Vec::with_capacity(512);
                             for (idx, receipt) in encoder_rx.into_iter().enumerate() {
                                 // DB encoding
                                 encoded_receipts.push(receipt.encode_to_vec());
@@ -468,13 +473,37 @@ impl Blockchain {
                                     ChainError::Custom(format!("receipt trie insert: {e}"))
                                 })?;
                                 receipts.push(receipt);
+                                // Periodically memoize trie hashes so the final hash_no_commit
+                                // reuses cached subtree hashes instead of recomputing everything.
+                                // Every 64 receipts covers ~4 first-nibble groups of sequential
+                                // RLP keys, meaning several subtrees are fully finalized.
+                                if (idx + 1) % 64 == 0 {
+                                    trie.root.memoize_hashes(&mut hash_buf);
+                                }
                             }
 
-                            // 4. Verify receipts root
+                            // 4. Verify receipts root (reuses memoized subtree hashes)
                             let computed_root = trie.hash_no_commit();
                             if computed_root != block.header.receipts_root {
                                 return Err(InvalidBlockError::ReceiptsRootMismatch.into());
                             }
+
+                            // 5. Extract deposit requests from receipts (Prague+)
+                            let deposit_requests = if encoder_fork >= Fork::Prague {
+                                Some(
+                                    Requests::from_deposit_receipts(
+                                        deposit_contract_address,
+                                        &receipts,
+                                    )
+                                    .ok_or(ChainError::InvalidBlock(
+                                        InvalidBlockError::InvalidTransaction(
+                                            "Invalid deposit request layout".to_string(),
+                                        ),
+                                    ))?,
+                                )
+                            } else {
+                                None
+                            };
 
                             Ok((
                                 PreEncodedBlockData {
@@ -483,6 +512,7 @@ impl Blockchain {
                                     encoded_receipts,
                                 },
                                 receipts,
+                                deposit_requests,
                             ))
                         },
                     )
@@ -566,29 +596,19 @@ impl Blockchain {
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (mut execution_result, exec_end_instant) = execution_result?;
-        let (pre_encoded, encoder_receipts) = encoder_result?;
+        let (pre_encoded, encoder_receipts, deposit_requests) = encoder_result?;
 
         // Restore receipts from encoder (moved from execution thread for zero-copy)
         execution_result.receipts = encoder_receipts;
 
-        // Re-obtain chain_config (original was moved into scoped threads)
-        let chain_config = self.storage.get_chain_config();
-
-        // Add deposit requests if Prague+ (system call requests are already in execution_result)
-        let fork = chain_config.fork(block.header.timestamp);
-        if fork >= Fork::Prague {
-            let deposits = Requests::from_deposit_receipts(
-                chain_config.deposit_contract_address,
-                &execution_result.receipts,
-            )
-            .ok_or(ChainError::InvalidBlock(
-                InvalidBlockError::InvalidTransaction("Invalid deposit request layout".to_string()),
-            ))?;
-            // Deposits go first: [deposits, withdrawals, consolidation]
+        // Combine deposit requests (from encoder) with system call requests (from execution).
+        // Order: [deposits, withdrawals, consolidation]
+        if let Some(deposits) = deposit_requests {
             execution_result.requests.insert(0, deposits);
         }
 
-        // Validate requests hash (deferred from execution thread to here)
+        // Re-obtain chain_config (original was moved into scoped threads)
+        let chain_config = self.storage.get_chain_config();
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
 
         let exec_merkle_end_instant = Instant::now();
