@@ -281,14 +281,7 @@ fn analyze_zk_dex_transactions(
                         let smart_note = H256::from_slice(&data[292..324]);
                         let new_note = H256::from_slice(&data[356..388]);
                         storage_slots.insert((dex_contract, storage::note_state_slot(smart_note)));
-                        add_note_slots(
-                            &mut storage_slots,
-                            dex_contract,
-                            new_note,
-                            data,
-                            true,
-                            388,
-                        );
+                        add_note_slots(&mut storage_slots, dex_contract, new_note, data, true, 388);
                     } else if sel == make_order_sel && data.len() >= 420 {
                         // makeOrder: orders.length + order fields + maker note
                         let maker_note = H256::from_slice(&data[356..388]);

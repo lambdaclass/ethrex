@@ -847,7 +847,9 @@ impl L1Committer {
                             // this block be part of the next batch.
                             current_blocks.pop();
                             current_fee_configs.pop();
-                            warn!("Batch size limit reached on empty block. Remaining blocks will be processed in the next batch.");
+                            warn!(
+                                "Batch size limit reached on empty block. Remaining blocks will be processed in the next batch."
+                            );
                             break;
                         }
                     }
