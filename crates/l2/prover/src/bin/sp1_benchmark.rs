@@ -291,7 +291,7 @@ fn generate_tokamon_input(action_count: u32) -> anyhow::Result<TokammonProgramIn
         player[4] = 0xAA;
 
         // Cycle through action types: 0,1,2,3,0,1,2,3,...
-        let action_idx = usize::try_from(i % 4).expect("i % 4 fits in usize");
+        let action_idx = usize::try_from(i % 4).context("i % 4 fits in usize")?;
         let action_type = action_types[action_idx].clone();
 
         // Generate valid payload per action type.
