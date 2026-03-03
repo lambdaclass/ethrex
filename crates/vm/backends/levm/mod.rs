@@ -47,7 +47,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
 /// The struct implements the following functions:
@@ -992,7 +992,7 @@ impl LEVM {
         block: &Block,
         store: Arc<dyn Database>,
         vm_type: VMType,
-        cancelled: &std::sync::atomic::AtomicBool,
+        cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
@@ -1063,7 +1063,7 @@ impl LEVM {
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
-        cancelled: &std::sync::atomic::AtomicBool,
+        cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
         let accounts = bal.accounts();
         if accounts.is_empty() {
