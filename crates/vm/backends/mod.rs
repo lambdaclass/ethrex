@@ -1,6 +1,6 @@
+mod gevm;
 pub mod gevm_sys;
 pub mod levm;
-mod gevm;
 use gevm::GEVM;
 use levm::LEVM;
 
@@ -116,24 +116,22 @@ impl Evm {
         cumulative_gas_spent: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
-        let execution_report =
-            GEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
+        let report = GEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
 
         // Use gas_used (pre-refund for EIP-7778/Amsterdam+) for block gas accounting
-        *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
+        *remaining_gas = remaining_gas.saturating_sub(report.gas_used);
 
         // Track cumulative post-refund gas for receipt
-        *cumulative_gas_spent += execution_report.gas_spent;
+        *cumulative_gas_spent += report.gas_spent;
 
-        let receipt = Receipt::new(
-            tx.tx_type(),
-            execution_report.is_success(),
-            *cumulative_gas_spent,
-            execution_report.logs.clone(),
-        );
+        let is_success = report.is_success();
+        let gas_spent = report.gas_spent;
+
+        // Move logs instead of cloning
+        let receipt = Receipt::new(tx.tx_type(), is_success, *cumulative_gas_spent, report.logs);
 
         // Return gas_spent (post-refund) for block value calculation
-        Ok((receipt, execution_report.gas_spent))
+        Ok((receipt, gas_spent))
     }
 
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {

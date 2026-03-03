@@ -18,7 +18,7 @@ use ethrex_common::utils::{u256_from_big_endian_const, u256_to_big_endian};
 use ethrex_common::{Address, H256, U256};
 use ethrex_levm::EVMConfig;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::errors::{ExecutionReport, ExceptionalHalt, TxResult, VMError};
+use ethrex_levm::errors::{ExceptionalHalt, ExecutionReport, TxResult, VMError};
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use std::os::raw::c_void;
@@ -32,6 +32,12 @@ pub struct GEVM;
 
 fn u256_to_be32(v: U256) -> [u8; 32] {
     u256_to_big_endian(v)
+}
+
+fn u64_to_be32(v: u64) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    buf[24..32].copy_from_slice(&v.to_be_bytes());
+    buf
 }
 
 fn be32_to_u256(b: &[u8; 32]) -> U256 {
@@ -226,12 +232,13 @@ unsafe extern "C" fn block_hash_cb(
 
 /// Holds the allocated C-compatible data for a transaction so the memory
 /// stays alive for the duration of the FFI call.
+///
+/// SAFETY: `tx_input.input` points directly into the borrowed `Transaction`'s
+/// data buffer. The caller must ensure the `Transaction` outlives this struct.
 struct TxCData {
     // The actual input struct
     pub tx_input: GevmTxInput,
     // Buffers that are pointed to by tx_input - must outlive tx_input
-    #[allow(dead_code)]
-    pub input_data: Vec<u8>,
     #[allow(dead_code)]
     pub access_list_entries: Vec<GevmAccessListEntry>,
     // Storage key bytes: one flat Vec per access list entry
@@ -263,7 +270,9 @@ fn build_tx_c_data(tx: &Transaction, tx_sender: Address) -> Result<TxCData, EvmE
         TxKind::Create => [0u8; 20],
     };
 
-    let input_data: Vec<u8> = tx.data().to_vec();
+    // Zero-copy: point directly into tx.data() instead of copying.
+    // SAFETY: tx is borrowed and outlives TxCData + the FFI call.
+    let tx_data = tx.data();
 
     let gas_price = u256_to_be32(tx.gas_price());
     let max_fee_per_gas = u256_to_be32(
@@ -349,10 +358,10 @@ fn build_tx_c_data(tx: &Transaction, tx_sender: Address) -> Result<TxCData, EvmE
         blob_hashes_packed.as_ptr()
     };
 
-    let input_ptr = if input_data.is_empty() {
+    let input_ptr = if tx_data.is_empty() {
         std::ptr::null()
     } else {
-        input_data.as_ptr()
+        tx_data.as_ptr()
     };
 
     let tx_input = GevmTxInput {
@@ -362,7 +371,7 @@ fn build_tx_c_data(tx: &Transaction, tx_sender: Address) -> Result<TxCData, EvmE
         to,
         value: u256_to_be32(tx.value()),
         input: input_ptr,
-        input_len: input_data.len(),
+        input_len: tx_data.len(),
         gas_limit: tx.gas_limit(),
         gas_price,
         max_fee_per_gas,
@@ -379,7 +388,6 @@ fn build_tx_c_data(tx: &Transaction, tx_sender: Address) -> Result<TxCData, EvmE
 
     Ok(TxCData {
         tx_input,
-        input_data,
         access_list_entries,
         access_list_key_bufs,
         auth_list_entries,
@@ -394,8 +402,7 @@ fn convert_logs(result: &GevmExecResult) -> Vec<Log> {
         return Vec::new();
     }
 
-    let raw_logs: &[GevmLog] =
-        unsafe { std::slice::from_raw_parts(result.logs, result.n_logs) };
+    let raw_logs: &[GevmLog] = unsafe { std::slice::from_raw_parts(result.logs, result.n_logs) };
 
     raw_logs
         .iter()
@@ -409,9 +416,7 @@ fn convert_logs(result: &GevmExecResult) -> Vec<Log> {
 
             #[allow(clippy::cast_possible_truncation)]
             let n_topics = log.n_topics as usize;
-            let topics: Vec<H256> = (0..n_topics)
-                .map(|i| H256::from(log.topics[i]))
-                .collect();
+            let topics: Vec<H256> = (0..n_topics).map(|i| H256::from(log.topics[i])).collect();
 
             Log {
                 address: Address::from(log.address),
@@ -459,7 +464,11 @@ fn convert_result_to_report(
     // For block accounting (gas_used field):
     //   - Amsterdam+: PRE-REFUND (EIP-7778 changes block gas_used to exclude refunds)
     //   - Pre-Amsterdam: POST-REFUND (traditional semantics)
-    let gas_used = if is_amsterdam { gas_pre_refund } else { gas_post_refund };
+    let gas_used = if is_amsterdam {
+        gas_pre_refund
+    } else {
+        gas_post_refund
+    };
     let gas_spent = gas_post_refund;
 
     Ok(ExecutionReport {
@@ -482,8 +491,7 @@ fn apply_account_updates(
         return Ok(());
     }
 
-    let updates =
-        unsafe { std::slice::from_raw_parts(result.updates, result.n_updates) };
+    let updates = unsafe { std::slice::from_raw_parts(result.updates, result.n_updates) };
 
     for update in updates {
         let address = Address::from(update.address);
@@ -504,44 +512,41 @@ fn apply_account_updates(
             // get_state_transitions checks codes[new_code_hash] when code_hash changes.
             // We changed code_hash to EMPTY_KECCAK, so ensure it's in the codes map.
             use ethrex_common::types::Code;
-            db.codes
-                .entry(*EMPTY_KECCACK_HASH)
-                .or_insert_with(|| Code::from_bytecode_unchecked(Bytes::new(), *EMPTY_KECCACK_HASH));
+            db.codes.entry(*EMPTY_KECCACK_HASH).or_insert_with(|| {
+                Code::from_bytecode_unchecked(Bytes::new(), *EMPTY_KECCACK_HASH)
+            });
             continue;
         }
 
-        if update.has_info != 0 {
-            let acc = db.get_account_mut(address).map_err(|e| {
-                EvmError::DB(format!("Failed to get account {address}: {e}"))
-            })?;
-            acc.info.balance = be32_to_u256(&update.balance);
-            acc.info.nonce = update.nonce;
-            acc.info.code_hash = H256::from(update.code_hash);
+        let has_info = update.has_info != 0;
+        let has_storage = update.n_storage > 0 && !update.storage.is_null();
 
-            // If code is provided, insert into db.codes
-            if update.code_len > 0 && !update.code.is_null() {
-                let code_bytes =
-                    unsafe { std::slice::from_raw_parts(update.code, update.code_len) };
-                use ethrex_common::types::Code;
-                let code_hash = H256::from(update.code_hash);
-                let code = Code::from_bytecode_unchecked(
-                    Bytes::copy_from_slice(code_bytes),
-                    code_hash,
-                );
-                db.codes.insert(code_hash, code);
+        // Single get_account_mut call loads the account into both caches.
+        // Needed for both info updates and storage updates.
+        if has_info || has_storage {
+            let acc = db
+                .get_account_mut(address)
+                .map_err(|e| EvmError::DB(format!("Failed to get account {address}: {e}")))?;
+
+            if has_info {
+                acc.info.balance = be32_to_u256(&update.balance);
+                acc.info.nonce = update.nonce;
+                acc.info.code_hash = H256::from(update.code_hash);
             }
         }
 
-        // Apply storage updates
-        if update.n_storage > 0 && !update.storage.is_null() {
-            let storage =
-                unsafe { std::slice::from_raw_parts(update.storage, update.n_storage) };
+        // Insert code after releasing the mutable borrow on the account
+        if has_info && update.code_len > 0 && !update.code.is_null() {
+            let code_bytes = unsafe { std::slice::from_raw_parts(update.code, update.code_len) };
+            use ethrex_common::types::Code;
+            let code_hash = H256::from(update.code_hash);
+            let code = Code::from_bytecode_unchecked(Bytes::copy_from_slice(code_bytes), code_hash);
+            db.codes.insert(code_hash, code);
+        }
 
-            // Ensure account is loaded into both caches before modifying storage.
-            // get_account_mut loads it into initial_accounts_state on first call.
-            db.get_account_mut(address).map_err(|e| {
-                EvmError::DB(format!("Failed to get account {address} for storage: {e}"))
-            })?;
+        // Apply storage updates
+        if has_storage {
+            let storage = unsafe { std::slice::from_raw_parts(update.storage, update.n_storage) };
 
             for slot in storage {
                 let key = H256::from(slot.key);
@@ -555,12 +560,9 @@ fn apply_account_updates(
                 if db
                     .initial_accounts_state
                     .get(&address)
-                    .map_or(true, |a| !a.storage.contains_key(&key))
+                    .is_none_or(|a| !a.storage.contains_key(&key))
                 {
-                    let orig = db
-                        .store
-                        .get_storage_value(address, key)
-                        .unwrap_or_default();
+                    let orig = db.store.get_storage_value(address, key).unwrap_or_default();
                     if let Some(init_acc) = db.initial_accounts_state.get_mut(&address) {
                         init_acc.storage.insert(key, orig);
                     }
@@ -578,6 +580,40 @@ fn apply_account_updates(
 
 // ======================== GEVM Implementation ========================
 
+/// Pre-computed per-block environment for gevm execution.
+/// Computed once per block and reused across all transactions.
+struct BlockEnvCache {
+    fork_id: u8,
+    is_amsterdam: bool,
+    block_env: GevmBlockEnv,
+    cfg_env: GevmCfgEnv,
+}
+
+impl BlockEnvCache {
+    fn new(block_header: &BlockHeader, db: &GeneralizedDatabase) -> Result<Self, EvmError> {
+        let chain_config = db.store.get_chain_config()?;
+        let fork = chain_config.fork(block_header.timestamp);
+
+        Ok(BlockEnvCache {
+            fork_id: fork_to_gevm_id(fork),
+            is_amsterdam: chain_config.is_amsterdam_activated(block_header.timestamp),
+            block_env: GevmBlockEnv {
+                beneficiary: block_header.coinbase.0,
+                timestamp: u64_to_be32(block_header.timestamp),
+                block_number: u64_to_be32(block_header.number),
+                gas_limit: u64_to_be32(block_header.gas_limit),
+                base_fee: u256_to_be32(block_header.base_fee_per_gas.unwrap_or_default().into()),
+                has_prevrandao: 1,
+                prevrandao: block_header.prev_randao.0,
+                blob_gas_price: u256_to_be32(compute_blob_gas_price(block_header, db)),
+            },
+            cfg_env: GevmCfgEnv {
+                chain_id: u64_to_be32(chain_config.chain_id),
+            },
+        })
+    }
+}
+
 impl GEVM {
     pub fn execute_tx(
         tx: &Transaction,
@@ -586,32 +622,21 @@ impl GEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        // Disallow L2-specific behavior: delegate entirely to LEVM for L2
-        // (gevm doesn't know about L2 fee tokens etc.)
         if let VMType::L2(_) = vm_type {
             return LEVM::execute_tx(tx, tx_sender, block_header, db, vm_type);
         }
 
-        let chain_config = db.store.get_chain_config()?;
-        let fork = chain_config.fork(block_header.timestamp);
-        let fork_id = fork_to_gevm_id(fork);
-        let is_amsterdam = chain_config.is_amsterdam_activated(block_header.timestamp);
+        let env = BlockEnvCache::new(block_header, db)?;
+        Self::execute_tx_with_env(tx, tx_sender, db, &env)
+    }
 
-        let block_env = GevmBlockEnv {
-            beneficiary: block_header.coinbase.0,
-            timestamp: u256_to_be32(U256::from(block_header.timestamp)),
-            block_number: u256_to_be32(U256::from(block_header.number)),
-            gas_limit: u256_to_be32(U256::from(block_header.gas_limit)),
-            base_fee: u256_to_be32(block_header.base_fee_per_gas.unwrap_or_default().into()),
-            has_prevrandao: 1,
-            prevrandao: block_header.prev_randao.0,
-            blob_gas_price: u256_to_be32(compute_blob_gas_price(block_header, db)),
-        };
-
-        let cfg_env = GevmCfgEnv {
-            chain_id: u256_to_be32(U256::from(chain_config.chain_id)),
-        };
-
+    /// Inner tx execution using pre-computed block environment.
+    fn execute_tx_with_env(
+        tx: &Transaction,
+        tx_sender: Address,
+        db: &mut GeneralizedDatabase,
+        env: &BlockEnvCache,
+    ) -> Result<ExecutionReport, EvmError> {
         // Build the C-compatible tx data (keep alive for entire FFI call)
         let tx_c_data = build_tx_c_data(tx, tx_sender)?;
 
@@ -619,9 +644,9 @@ impl GEVM {
 
         let result_ptr = unsafe {
             gevm_execute(
-                fork_id,
-                &block_env,
-                &cfg_env,
+                env.fork_id,
+                &env.block_env,
+                &env.cfg_env,
                 &tx_c_data.tx_input,
                 db_handle,
                 basic_cb,
@@ -633,9 +658,7 @@ impl GEVM {
         };
 
         if result_ptr.is_null() {
-            return Err(EvmError::Custom(
-                "gevm_execute returned null".to_string(),
-            ));
+            return Err(EvmError::Custom("gevm_execute returned null".to_string()));
         }
 
         let result = unsafe { &*result_ptr };
@@ -655,7 +678,7 @@ impl GEVM {
             return Err(EvmError::Transaction(msg));
         }
 
-        let report = convert_result_to_report(result, is_amsterdam);
+        let report = convert_result_to_report(result, env.is_amsterdam);
         let apply_result = apply_account_updates(result, db);
 
         // Always free the result, even on error paths
@@ -672,8 +695,12 @@ impl GEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
-        let chain_config = db.store.get_chain_config()?;
-        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
+        // Pre-compute per-block environment once for all transactions
+        let env = BlockEnvCache::new(&block.header, db)?;
+        let record_bal = env.is_amsterdam;
+
+        // For L2, delegate entirely to LEVM
+        let use_gevm = !matches!(vm_type, VMType::L2(_));
 
         if record_bal {
             db.enable_bal_recording();
@@ -683,14 +710,15 @@ impl GEVM {
         // System calls still use LEVM
         LEVM::prepare_block(block, db, vm_type)?;
 
-        let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0_u64;
-        let mut block_gas_used = 0_u64;
-
         let transactions_with_sender =
             block.body.get_transactions_with_sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
+
+        let tx_count = transactions_with_sender.len();
+        let mut receipts = Vec::with_capacity(tx_count);
+        let mut cumulative_gas_used = 0_u64;
+        let mut block_gas_used = 0_u64;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Check gas limit before executing
@@ -715,7 +743,11 @@ impl GEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = if use_gevm {
+                Self::execute_tx_with_env(tx, tx_sender, db, &env)?
+            } else {
+                LEVM::execute_tx(tx, tx_sender, &block.header, db, vm_type)?
+            };
 
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;

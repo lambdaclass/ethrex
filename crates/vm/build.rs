@@ -11,7 +11,13 @@ fn main() {
     let archive_path = format!("{out_dir}/libgevm.a");
 
     let status = Command::new("go")
-        .args(["build", "-buildmode=c-archive", "-o", &archive_path, "./capi/"])
+        .args([
+            "build",
+            "-buildmode=c-archive",
+            "-o",
+            &archive_path,
+            "./capi/",
+        ])
         .current_dir(&gevm_dir)
         .env("CGO_ENABLED", "1")
         // Remove any user-set GOROOT that may point to the wrong location;

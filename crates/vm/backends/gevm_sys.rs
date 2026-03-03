@@ -133,11 +133,8 @@ pub type GevmHasStorageFn = unsafe extern "C" fn(
     has_storage_out: *mut i32,
 ) -> i32;
 
-pub type GevmBlockHashFn = unsafe extern "C" fn(
-    handle: *mut c_void,
-    block_number: u64,
-    hash_out: *mut [u8; 32],
-) -> i32;
+pub type GevmBlockHashFn =
+    unsafe extern "C" fn(handle: *mut c_void, block_number: u64, hash_out: *mut [u8; 32]) -> i32;
 
 unsafe extern "C" {
     pub fn gevm_execute(
