@@ -1654,11 +1654,10 @@ impl Store {
         std::fs::create_dir_all(&ethrex_db_path)
             .map_err(|e| StoreError::Custom(format!("Failed to create ethrex-db dir: {e}")))?;
         let ethrex_db_file = ethrex_db_path.join("state.db");
-        // 32GB initial size (8M pages * 4KB) to fit full Ethereum state.
-        // The recursive fanout persistence requires ~2x the raw data size
-        // for the tree structure overhead.
+        // 16GB initial size (4M pages * 4KB) to fit full Ethereum state.
+        // Chained leaf pages keep overhead low (~3.5GB for 23.5M accounts).
         let paged_db =
-            ethrex_db::store::PagedDb::open_with_size(&ethrex_db_file, 8_000_000)
+            ethrex_db::store::PagedDb::open_with_size(&ethrex_db_file, 4_000_000)
                 .map_err(|e| StoreError::Custom(format!("ethrex-db open error: {e}")))?;
 
         // Create Blockchain manager over the PagedDb
