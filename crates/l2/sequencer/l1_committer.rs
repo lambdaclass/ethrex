@@ -1580,7 +1580,14 @@ impl L1Committer {
 
             let commit_time: u128 = self.commit_time_ms.into();
             let timer_expired = current_time - self.last_committed_batch_timestamp > commit_time;
-            let has_withdrawal = self.has_pending_withdrawals().await.unwrap_or(false);
+            // Skip the withdrawal scan in based mode: block production is
+            // L1-sequenced and forcing rapid tiny batches causes the prover
+            // to fall behind, stalling the pipeline.
+            let has_withdrawal = if self.based {
+                false
+            } else {
+                self.has_pending_withdrawals().await.unwrap_or(false)
+            };
             if has_withdrawal {
                 info!("Pending withdrawal detected, triggering early batch commit");
             }
