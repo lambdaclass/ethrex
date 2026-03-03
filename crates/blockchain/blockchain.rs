@@ -228,12 +228,12 @@ pub struct BatchBlockProcessingFailure {
 fn increase_thread_priority() {
     use thread_priority::{ThreadPriority, ThreadPriorityValue};
     if let Err(err) = ThreadPriority::Max.set_for_current() {
-        tracing::debug!(?err, "failed to set max thread priority, trying moderate bump");
+        debug!(?err, "failed to set max thread priority, trying moderate bump");
         let fallback = ThreadPriority::Crossplatform(
             ThreadPriorityValue::try_from(62u8).expect("62 is within valid 0..100 range"),
         );
         if let Err(err) = fallback.set_for_current() {
-            tracing::debug!(?err, "failed to set moderate thread priority");
+            debug!(?err, "failed to set moderate thread priority");
         }
     }
 }
