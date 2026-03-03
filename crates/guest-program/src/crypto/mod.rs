@@ -43,6 +43,6 @@ pub fn get_crypto_provider() -> Arc<dyn Crypto> {
         feature = "openvm"
     )))]
     {
-        return Arc::new(ethrex_crypto::NativeCrypto);
+        Arc::new(ethrex_crypto::NativeCrypto)
     }
 }

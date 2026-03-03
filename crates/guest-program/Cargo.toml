@@ -13,6 +13,7 @@ thiserror = "2.0.9"
 rkyv.workspace = true
 bytes.workspace = true
 
+ethereum-types.workspace = true
 ethrex-common = { path = "../common/", default-features = false }
 ethrex-crypto = { path = "../common/crypto", default-features = false }
 ethrex-vm = { path = "../vm", default-features = false }

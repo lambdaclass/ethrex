@@ -4002,6 +4002,7 @@ name = "ethrex-guest-program"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
