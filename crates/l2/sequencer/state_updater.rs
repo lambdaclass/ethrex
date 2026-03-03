@@ -265,7 +265,6 @@ impl StateUpdater {
 
         Ok(())
     }
-
 }
 
 #[actor(protocol = StateUpdaterProtocol)]

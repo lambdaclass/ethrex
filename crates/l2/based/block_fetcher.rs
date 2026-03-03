@@ -337,11 +337,7 @@ impl BlockFetcher {
     }
 
     #[send_handler]
-    async fn handle_fetch(
-        &mut self,
-        _msg: block_fetcher_protocol::Fetch,
-        ctx: &Context<Self>,
-    ) {
+    async fn handle_fetch(&mut self, _msg: block_fetcher_protocol::Fetch, ctx: &Context<Self>) {
         if let SequencerStatus::Syncing = self.sequencer_state.status() {
             let _ = self.do_fetch().await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");

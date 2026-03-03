@@ -534,7 +534,11 @@ impl L1Watcher {
             self.watch_l1().await;
         }
         let check_interval = random_duration(self.check_interval);
-        send_after(check_interval, ctx.clone(), l1_watcher_protocol::WatchLogsL1);
+        send_after(
+            check_interval,
+            ctx.clone(),
+            l1_watcher_protocol::WatchLogsL1,
+        );
     }
 
     #[send_handler]
@@ -548,7 +552,11 @@ impl L1Watcher {
             self.watch_l2s().await;
         }
         let check_interval = random_duration(self.check_interval);
-        send_after(check_interval, ctx.clone(), l1_watcher_protocol::WatchLogsL2);
+        send_after(
+            check_interval,
+            ctx.clone(),
+            l1_watcher_protocol::WatchLogsL2,
+        );
     }
 
     #[send_handler]
@@ -594,7 +602,11 @@ impl L1Watcher {
         l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
 
         let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
-        send_after(interval, ctx.clone(), l1_watcher_protocol::UpdateL1BlobBaseFee);
+        send_after(
+            interval,
+            ctx.clone(),
+            l1_watcher_protocol::UpdateL1BlobBaseFee,
+        );
     }
 
     #[request_handler]

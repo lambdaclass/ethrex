@@ -120,7 +120,6 @@ impl MetricsGatherer {
         debug!("L2 Metrics Gathered");
         Ok(())
     }
-
 }
 
 #[actor(protocol = MetricsGathererProtocol)]
@@ -130,8 +129,7 @@ impl MetricsGatherer {
         rollup_store: StoreRollup,
         l2_url: Url,
     ) -> Result<ActorRef<MetricsGatherer>, MetricsGathererError> {
-        let metrics =
-            Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)?;
+        let metrics = Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)?;
         let actor_ref = metrics.start();
         actor_ref
             .send(metrics_gatherer_protocol::Gather)
@@ -149,7 +147,11 @@ impl MetricsGatherer {
             .gather_metrics()
             .await
             .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
-        send_after(self.check_interval, ctx.clone(), metrics_gatherer_protocol::Gather);
+        send_after(
+            self.check_interval,
+            ctx.clone(),
+            metrics_gatherer_protocol::Gather,
+        );
     }
 
     #[request_handler]

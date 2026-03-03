@@ -621,7 +621,6 @@ impl L1ProofSender {
 
         Ok(())
     }
-
 }
 
 #[actor(protocol = L1ProofSenderProtocol)]
@@ -664,7 +663,11 @@ impl L1ProofSender {
                 .inspect_err(|err| error!("L1 Proof Sender: {err}"));
         }
         let check_interval = random_duration(self.proof_send_interval_ms);
-        send_after(check_interval, ctx.clone(), l1_proof_sender_protocol::SendProof);
+        send_after(
+            check_interval,
+            ctx.clone(),
+            l1_proof_sender_protocol::SendProof,
+        );
     }
 
     #[request_handler]

@@ -185,10 +185,7 @@ async fn health(
     Ok(Json::from(response))
 }
 
-pub async fn actor_health<A, M>(
-    actor_ref: Option<ActorRef<A>>,
-    health_msg: M,
-) -> Value
+pub async fn actor_health<A, M>(actor_ref: Option<ActorRef<A>>, health_msg: M) -> Value
 where
     A: spawned_concurrency::tasks::Actor + spawned_concurrency::tasks::Handler<M>,
     M: Message,
@@ -196,11 +193,9 @@ where
 {
     if let Some(actor_ref) = actor_ref {
         match actor_ref.request(health_msg).await {
-            Ok(health) => {
-                serde_json::to_value(health).unwrap_or_else(|err| {
-                    Value::String(format!("Failed to serialize health message {err}"))
-                })
-            }
+            Ok(health) => serde_json::to_value(health).unwrap_or_else(|err| {
+                Value::String(format!("Failed to serialize health message {err}"))
+            }),
             Err(err) => Value::String(format!("Actor health returned an error {err}")),
         }
     } else {

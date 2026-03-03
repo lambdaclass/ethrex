@@ -1354,7 +1354,9 @@ impl L1Committer {
         let actor_ref = state.start_with_backend(Backend::Blocking);
         let first_wake_up = cfg.l1_committer.first_wake_up_time_ms;
         match actor_ref
-            .request(l1_committer_protocol::StartCommitter { delay: first_wake_up })
+            .request(l1_committer_protocol::StartCommitter {
+                delay: first_wake_up,
+            })
             .await?
         {
             CommitterActionResult::Error(reason) => Err(CommitterError::UnexpectedError(format!(
@@ -1365,11 +1367,7 @@ impl L1Committer {
     }
 
     #[send_handler]
-    async fn handle_commit(
-        &mut self,
-        _msg: l1_committer_protocol::Commit,
-        ctx: &Context<Self>,
-    ) {
+    async fn handle_commit(&mut self, _msg: l1_committer_protocol::Commit, ctx: &Context<Self>) {
         if let SequencerStatus::Sequencing = self.sequencer_state.status() {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
@@ -1420,11 +1418,7 @@ impl L1Committer {
     }
 
     #[send_handler]
-    async fn handle_abort(
-        &mut self,
-        _msg: l1_committer_protocol::Abort,
-        ctx: &Context<Self>,
-    ) {
+    async fn handle_abort(&mut self, _msg: l1_committer_protocol::Abort, ctx: &Context<Self>) {
         if let Some(ct) = self.cancellation_token.take() {
             ct.cancel()
         };
@@ -1455,7 +1449,10 @@ impl L1Committer {
     ) -> CommitterActionResult {
         if self.cancellation_token.is_none() {
             self.do_schedule_commit(msg.delay, ctx.clone());
-            info!("L1 committer restarted next commit will be sent in {}ms", msg.delay);
+            info!(
+                "L1 committer restarted next commit will be sent in {}ms",
+                msg.delay
+            );
             CommitterActionResult::Ok
         } else {
             warn!("L1 committer received start command but it is already running");

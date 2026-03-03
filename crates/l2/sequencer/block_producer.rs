@@ -335,11 +335,7 @@ impl BlockProducer {
     }
 
     #[send_handler]
-    async fn handle_abort(
-        &mut self,
-        _msg: block_producer_protocol::Abort,
-        ctx: &Context<Self>,
-    ) {
+    async fn handle_abort(&mut self, _msg: block_producer_protocol::Abort, ctx: &Context<Self>) {
         ctx.stop();
     }
 
