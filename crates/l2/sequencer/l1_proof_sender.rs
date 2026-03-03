@@ -233,10 +233,10 @@ impl L1ProofSender {
             .get_l2_in_message_rolling_hashes_by_batch(batch_to_send)
             .await?;
         let is_truly_empty = non_priv_count == Some(0)
-            && l1_in_hash.map_or(true, |h| h == H256::zero())
-            && l1_out_msgs.as_ref().map_or(true, |v| v.is_empty())
-            && balance_diffs.as_ref().map_or(true, |v| v.is_empty())
-            && l2_in_msgs.as_ref().map_or(true, |v| v.is_empty());
+            && l1_in_hash.is_none_or(|h| h == H256::zero())
+            && l1_out_msgs.as_ref().is_none_or(|v| v.is_empty())
+            && balance_diffs.as_ref().is_none_or(|v| v.is_empty())
+            && l2_in_msgs.as_ref().is_none_or(|v| v.is_empty());
         if is_truly_empty {
             info!(
                 batch_number = batch_to_send,

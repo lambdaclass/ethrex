@@ -152,21 +152,21 @@ impl AppCircuit for DexCircuit {
         let sel = &data[..4];
 
         if sel == transfer_selector() {
-            self.parse_transfer(&data)
+            self.parse_transfer(data)
         } else if sel == mint_selector() {
-            self.parse_mint(&data)
+            self.parse_mint(data)
         } else if sel == spend_selector() {
-            self.parse_spend(&data)
+            self.parse_spend(data)
         } else if sel == liquidate_selector() {
-            self.parse_liquidate(&data)
+            self.parse_liquidate(data)
         } else if sel == convert_note_selector() {
-            self.parse_convert_note(&data)
+            self.parse_convert_note(data)
         } else if sel == make_order_selector() {
-            self.parse_make_order(&data)
+            self.parse_make_order(data)
         } else if sel == take_order_selector() {
-            self.parse_take_order(&data)
+            self.parse_take_order(data)
         } else if sel == settle_order_selector() {
-            self.parse_settle_order(&data)
+            self.parse_settle_order(data)
         } else {
             Err(AppCircuitError::UnknownTransaction)
         }
@@ -491,7 +491,7 @@ impl DexCircuit {
     /// - [4..36]     orderId
     /// - [36..292]   Groth16 proof (ignored)
     /// - [292..484]  input[6]: [output, parentNote, parentNoteType,
-    ///                          stakeNote, stakeParentHash, stakeNoteType]
+    ///   stakeNote, stakeParentHash, stakeNoteType]
     /// - [484..516]  offset for encryptedStakingNote
     ///
     /// Params: orderId(32) + parentNote(32) + stakeNote(32) + encryptedStakingNote(var)
@@ -526,9 +526,9 @@ impl DexCircuit {
     /// - [4..36]     orderId
     /// - [36..292]   Groth16 proof (ignored)
     /// - [292..740]  input[14]: [output, makerNote, makerType,
-    ///                           takerStake, takerType, rewardNote, rewardParent,
-    ///                           rewardType, paymentNote, paymentParent, paymentType,
-    ///                           changeNote, changeType, price]
+    ///   takerStake, takerType, rewardNote, rewardParent,
+    ///   rewardType, paymentNote, paymentParent, paymentType,
+    ///   changeNote, changeType, price]
     /// - [740..772]  offset for encDatas
     ///
     /// Params: orderId(32) + rewardNote(32) + paymentNote(32) + changeNote(32) + encDatas(var)

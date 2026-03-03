@@ -73,7 +73,7 @@ pub fn orders_length_slot() -> H256 {
 pub fn order_field_slot(order_index: U256, field_offset: u64) -> H256 {
     let mut slot_word = [0u8; 32];
     slot_word[24..32].copy_from_slice(&ORDERS_SLOT.to_be_bytes());
-    let base = U256::from_big_endian(&keccak_hash(&slot_word));
+    let base = U256::from_big_endian(&keccak_hash(slot_word));
 
     let slot = base + order_index * U256::from(7) + U256::from(field_offset);
     u256_to_h256(slot)
@@ -126,7 +126,7 @@ pub fn write_encrypted_note(
         let data_start = encrypted_note_data_start(length_slot);
         let data_start_u256 = h256_to_u256(data_start);
 
-        let chunks = (data.len() + 31) / 32;
+        let chunks = data.len().div_ceil(32);
         for i in 0..chunks {
             let start = i * 32;
             let end = std::cmp::min(start + 32, data.len());
@@ -151,7 +151,7 @@ pub fn encrypted_note_slots(note_hash: H256, data_len: usize) -> Vec<H256> {
     if data_len >= 32 {
         let data_start = encrypted_note_data_start(length_slot);
         let data_start_u256 = h256_to_u256(data_start);
-        let chunks = (data_len + 31) / 32;
+        let chunks = data_len.div_ceil(32);
         for i in 0..chunks {
             slots.push(u256_to_h256(data_start_u256 + U256::from(i)));
         }
@@ -168,7 +168,7 @@ fn mapping_slot(key: H256, base_slot: u64) -> H256 {
     preimage[0..32].copy_from_slice(key.as_bytes());
     // base_slot as uint256 big-endian (last 8 bytes of the 32-byte word).
     preimage[56..64].copy_from_slice(&base_slot.to_be_bytes());
-    H256::from(keccak_hash(&preimage))
+    H256::from(keccak_hash(preimage))
 }
 
 fn h256_to_u256(h: H256) -> U256 {

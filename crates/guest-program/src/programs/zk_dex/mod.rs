@@ -75,7 +75,7 @@ impl GuestProgram for ZkDexGuestProgram {
 
             let bytes = rkyv::to_bytes::<RkyvError>(&app_input)
                 .map_err(|e| GuestProgramError::Serialization(e.to_string()))?;
-            return Ok(bytes.to_vec());
+            Ok(bytes.to_vec())
         }
 
         #[cfg(not(feature = "l2"))]
@@ -228,7 +228,7 @@ fn analyze_zk_dex_transactions(
                     let sel = &data[..4];
                     accounts.insert(dex_contract);
 
-                    if sel == &transfer_sel && data.len() >= 4 + 96 {
+                    if sel == transfer_sel && data.len() >= 4 + 96 {
                         // transfer(address to, address token, uint256 amount)
                         let transfer_to = ethrex_common::Address::from_slice(&data[4 + 12..4 + 32]);
                         let token = ethrex_common::Address::from_slice(&data[4 + 32 + 12..4 + 64]);
@@ -238,18 +238,18 @@ fn analyze_zk_dex_transactions(
                             dex_contract,
                             circuit::balance_storage_slot(token, transfer_to),
                         ));
-                    } else if sel == &mint_sel && data.len() >= 420 {
+                    } else if sel == mint_sel && data.len() >= 420 {
                         // mint: notes[noteHash] + encryptedNotes[noteHash]
                         let note_hash = H256::from_slice(&data[292..324]);
                         add_note_slots(
                             &mut storage_slots,
                             dex_contract,
                             note_hash,
-                            &data,
+                            data,
                             true,
                             388,
                         );
-                    } else if sel == &spend_sel && data.len() >= 484 {
+                    } else if sel == spend_sel && data.len() >= 484 {
                         // spend: up to 4 note slots + 2 encrypted notes
                         for i in 0..4 {
                             let offset = 292 + i * 32;
@@ -264,19 +264,19 @@ fn analyze_zk_dex_transactions(
                                         &mut storage_slots,
                                         dex_contract,
                                         hash,
-                                        &data,
+                                        data,
                                         enc_offset_pos,
                                     );
                                 }
                             }
                         }
-                    } else if sel == &liquidate_sel && data.len() >= 420 {
+                    } else if sel == liquidate_sel && data.len() >= 420 {
                         // liquidate: note + recipient account
                         let to = ethrex_common::Address::from_slice(&data[4 + 12..4 + 32]);
                         let note_hash = H256::from_slice(&data[324..356]);
                         accounts.insert(to);
                         storage_slots.insert((dex_contract, storage::note_state_slot(note_hash)));
-                    } else if sel == &convert_note_sel && data.len() >= 420 {
+                    } else if sel == convert_note_sel && data.len() >= 420 {
                         // convertNote: smartNote + newNote + encryptedNotes[newNote]
                         let smart_note = H256::from_slice(&data[292..324]);
                         let new_note = H256::from_slice(&data[356..388]);
@@ -285,11 +285,11 @@ fn analyze_zk_dex_transactions(
                             &mut storage_slots,
                             dex_contract,
                             new_note,
-                            &data,
+                            data,
                             true,
                             388,
                         );
-                    } else if sel == &make_order_sel && data.len() >= 420 {
+                    } else if sel == make_order_sel && data.len() >= 420 {
                         // makeOrder: orders.length + order fields + maker note
                         let maker_note = H256::from_slice(&data[356..388]);
                         storage_slots.insert((dex_contract, storage::note_state_slot(maker_note)));
@@ -304,7 +304,7 @@ fn analyze_zk_dex_transactions(
                             ));
                         }
                         make_order_offset += 1;
-                    } else if sel == &take_order_sel && data.len() >= 516 {
+                    } else if sel == take_order_sel && data.len() >= 516 {
                         // takeOrder: 2 notes + order fields + encrypted staking note
                         let order_id = U256::from_big_endian(&data[4..36]);
                         let parent_note = H256::from_slice(&data[324..356]);
@@ -314,12 +314,12 @@ fn analyze_zk_dex_transactions(
                             &mut storage_slots,
                             dex_contract,
                             stake_note,
-                            &data,
+                            data,
                             true,
                             484,
                         );
                         add_order_field_slots(&mut storage_slots, dex_contract, order_id);
-                    } else if sel == &settle_order_sel && data.len() >= 772 {
+                    } else if sel == settle_order_sel && data.len() >= 772 {
                         // settleOrder: 3 new notes + 3 old notes (from order) + order state
                         let order_id = U256::from_big_endian(&data[4..36]);
                         let reward_note = H256::from_slice(&data[452..484]);
@@ -339,7 +339,7 @@ fn analyze_zk_dex_transactions(
                             reward_note,
                             payment_note,
                             change_note,
-                            &data,
+                            data,
                         );
 
                         // Order fields (to read makerNote, parentNote, takerNoteToMaker)
