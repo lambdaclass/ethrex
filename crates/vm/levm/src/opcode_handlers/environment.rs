@@ -85,6 +85,7 @@ impl<'a> VM<'a> {
     }
 
     // CALLDATALOAD operation
+    #[inline]
     pub fn op_calldataload(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;

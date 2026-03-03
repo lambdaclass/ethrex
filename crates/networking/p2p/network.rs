@@ -3,8 +3,11 @@ use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[cfg(not(feature = "l2"))]
 #[derive(Clone, Debug)]
 pub struct P2PBasedContext;
+#[cfg(feature = "experimental-discv5")]
+use crate::discv5::server::{DiscoveryServer as Discv5Server, DiscoveryServerError as Discv5Error};
 use crate::{
-    discovery_server::{DiscoveryServer, DiscoveryServerError},
+    discovery::{DiscoveryConfig, DiscoveryMultiplexer},
+    discv4::server::{DiscoveryServer as Discv4Server, DiscoveryServerError as Discv4Error},
     metrics::{CurrentStepValue, METRICS},
     peer_table::{PeerData, PeerTable},
     rlpx::{
@@ -98,32 +101,88 @@ impl P2PContext {
 
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {
-    #[error("Failed to start discovery server: {0}")]
-    DiscoveryServerError(#[from] DiscoveryServerError),
+    #[error("Failed to start discv4 server: {0}")]
+    Discv4Error(#[from] Discv4Error),
+    #[cfg(feature = "experimental-discv5")]
+    #[error("Failed to start discv5 server: {0}")]
+    Discv5Error(#[from] Discv5Error),
     #[error("Failed to start Tx Broadcaster: {0}")]
     TxBroadcasterError(#[from] TxBroadcasterError),
     #[error("Failed to bind UDP socket: {0}")]
     UdpSocketError(std::io::Error),
 }
 
-pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
-    let udp_socket = UdpSocket::bind(context.local_node.udp_addr())
-        .await
-        .map_err(NetworkError::UdpSocketError)?;
+pub async fn start_network(
+    context: P2PContext,
+    bootnodes: Vec<Node>,
+    config: DiscoveryConfig,
+) -> Result<(), NetworkError> {
+    let udp_socket = Arc::new(
+        UdpSocket::bind(context.local_node.udp_addr())
+            .await
+            .map_err(NetworkError::UdpSocketError)?,
+    );
 
-    DiscoveryServer::spawn(
-        context.storage.clone(),
-        context.local_node.clone(),
-        context.signer,
+    // Warn if discv5 was requested but the feature is not compiled in
+    #[cfg(not(feature = "experimental-discv5"))]
+    if config.discv5_enabled {
+        tracing::warn!(
+            "discv5 was enabled via --p2p.discv5 but the 'experimental-discv5' feature is not compiled in; discv5 will not run"
+        );
+    }
+
+    // Start protocol servers first to get their handles
+    let discv4_handle = if config.discv4_enabled {
+        Some(
+            Discv4Server::spawn(
+                context.storage.clone(),
+                context.local_node.clone(),
+                context.signer,
+                udp_socket.clone(),
+                context.table.clone(),
+                bootnodes.clone(),
+                context.initial_lookup_interval,
+            )
+            .await
+            .inspect_err(|e| {
+                error!("Failed to start discv4 server: {e}");
+            })?,
+        )
+    } else {
+        None
+    };
+
+    #[cfg(feature = "experimental-discv5")]
+    let discv5_handle = if config.discv5_enabled {
+        Some(
+            Discv5Server::spawn(
+                context.storage.clone(),
+                context.local_node.clone(),
+                context.signer,
+                udp_socket.clone(),
+                context.table.clone(),
+                bootnodes.clone(),
+                context.initial_lookup_interval,
+            )
+            .await
+            .inspect_err(|e| {
+                error!("Failed to start discv5 server: {e}");
+            })?,
+        )
+    } else {
+        None
+    };
+
+    // Start multiplexer GenServer with handles to protocol servers
+    DiscoveryMultiplexer::new(
         udp_socket,
-        context.table.clone(),
-        bootnodes,
-        context.initial_lookup_interval,
+        context.local_node.node_id(),
+        config,
+        discv4_handle,
+        #[cfg(feature = "experimental-discv5")]
+        discv5_handle,
     )
-    .await
-    .inspect_err(|e| {
-        error!("Failed to start discovery server: {e}");
-    })?;
+    .start();
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
