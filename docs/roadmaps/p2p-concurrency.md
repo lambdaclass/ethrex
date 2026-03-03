@@ -29,7 +29,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 |----------|------|----------|--------|
 | P0 | ~~Merge rate limit WHOAREYOU packets (discv5)~~ | [#5909](https://github.com/lambdaclass/ethrex/pull/5909) | **Merged** (Feb 9) |
 | P0 | Bound whoareyou_rate_limit map with LRU cache | [#6125](https://github.com/lambdaclass/ethrex/issues/6125) | Open issue |
-| P0 | Merge dual discovery protocol support (discv4+discv5) | [#5962](https://github.com/lambdaclass/ethrex/pull/5962) | Approved (2 approvals) |
+| P0 | ~~Merge dual discovery protocol support (discv4+discv5)~~ | [#5962](https://github.com/lambdaclass/ethrex/pull/5962) | **Merged** (Feb 25) |
 | P0 | Remove experimental-discv5 feature flag | [#6015](https://github.com/lambdaclass/ethrex/pull/6015), [#5971](https://github.com/lambdaclass/ethrex/issues/5971) | Open |
 | P1 | Unify discovery GenServers into single DiscoveryServer | [#5990](https://github.com/lambdaclass/ethrex/issues/5990) | Open issue |
 | P2 | Move discovery tests to dedicated folders | [#5992](https://github.com/lambdaclass/ethrex/issues/5992) | Open issue |
@@ -48,6 +48,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | P1 | ~~Request updated ENR when PONG enr_seq differs~~ | [#5910](https://github.com/lambdaclass/ethrex/pull/5910), [#5850](https://github.com/lambdaclass/ethrex/issues/5850) | **Merged** (Feb 11) |
 | P1 | ~~Update existing contact ENR on NODES response~~ | [#6172](https://github.com/lambdaclass/ethrex/pull/6172) | **Merged** (Feb 19) |
 | P1 | ~~Detect external IP via PONG recipient_addr voting~~ | [#5914](https://github.com/lambdaclass/ethrex/pull/5914), [#5851](https://github.com/lambdaclass/ethrex/issues/5851) | **Merged** (Feb 24) |
+| P1 | ~~Add anti-amplification check to discv5 handle_find_node~~ | [#6200](https://github.com/lambdaclass/ethrex/pull/6200) | **Merged** (Feb 23) |
 
 **Branches:** `discv5-server-external-ip-detection`
 
@@ -69,10 +70,11 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 |----------|------|----------|--------|
 | P0 | Reintroduce proper Kademlia table implementation | [#4245](https://github.com/lambdaclass/ethrex/issues/4245) | Open (Milestone: Syncing) |
 | P1 | Improve peer scoring and load balancing | [#4861](https://github.com/lambdaclass/ethrex/issues/4861) | Open issue |
+| P1 | ~~Allow min-score peers to handle 1 concurrent request~~ | [#6272](https://github.com/lambdaclass/ethrex/pull/6272) | **Merged** (Feb 27) |
 | P1 | Detect performance degradation with large contact tables | [#5972](https://github.com/lambdaclass/ethrex/issues/5972) | Open issue |
 | P1 | Fix running out of peers mid-syncing | [#3050](https://github.com/lambdaclass/ethrex/issues/3050) | Open issue |
-| P2 | Avoid collect in peer table get_contact functions | [#5641](https://github.com/lambdaclass/ethrex/pull/5641) | Open |
-| P2 | Avoid iterating whole table on FINDNODE | [#5644](https://github.com/lambdaclass/ethrex/pull/5644) | Draft |
+| P2 | ~~Avoid collect in peer table get_contact functions~~ | [#5641](https://github.com/lambdaclass/ethrex/pull/5641) | **Closed** |
+| P2 | ~~Avoid iterating whole table on FINDNODE~~ | [#5644](https://github.com/lambdaclass/ethrex/pull/5644) | **Closed** |
 
 **Branches:** `feature/enhanced-peer-scoring`, `fix-deadlock-discv4`
 
@@ -83,10 +85,12 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
 | P1 | ~~Avoid extra allocations in RLPx handshake~~ | [#5531](https://github.com/lambdaclass/ethrex/pull/5531) | **Merged** (Feb 23) |
-| P1 | Avoid double authdata allocation in discv5 header | [#5811](https://github.com/lambdaclass/ethrex/pull/5811) | Open |
+| P1 | ~~Avoid double authdata allocation in discv5 header~~ | [#5811](https://github.com/lambdaclass/ethrex/pull/5811) | **Merged** (Mar 2) |
 | P1 | Compute RLPx capability message ID dynamically | [#4545](https://github.com/lambdaclass/ethrex/issues/4545) | Open issue |
 | P2 | Remove magic numbers in rlpx/connection | [#4123](https://github.com/lambdaclass/ethrex/issues/4123) | Open issue |
 | P2 | Enable TCP_NODELAY on P2P TCP socket | [#5042](https://github.com/lambdaclass/ethrex/issues/5042) | Open issue |
+| P1 | ~~Fix consistent encoding for blob tx size in NewPooledTransactionHashes~~ | [#6256](https://github.com/lambdaclass/ethrex/pull/6256) | **Merged** (Feb 24) |
+| P1 | ~~Fix broadcast_pool race and offload tx pool insertion~~ | [#6253](https://github.com/lambdaclass/ethrex/pull/6253) | **Merged** (Feb 24) |
 | P2 | Improve transaction broadcasting mechanism | [#3388](https://github.com/lambdaclass/ethrex/issues/3388) | Open issue |
 
 **Branches:** `rlpx-console`, `ethrex_rlpx_console`
@@ -143,6 +147,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 |----------|------|----------|--------|
 | P0 | ~~Merge parallel storage trie merkelization~~ | [#6079](https://github.com/lambdaclass/ethrex/pull/6079) | **Merged** (Feb 5) |
 | P1 | ~~Parallel account range requests with adaptive chunking~~ | [#6101](https://github.com/lambdaclass/ethrex/pull/6101) | **Closed** |
+| P1 | ~~Speed up snap sync validation with parallelism and deduplication~~ | [#6191](https://github.com/lambdaclass/ethrex/pull/6191) | **Merged** (Feb 25) |
 | P1 | Parallelize header download with state download | [#6059](https://github.com/lambdaclass/ethrex/pull/6059) | Open |
 | P1 | Parallelize merkelization of storage slots | [#5482](https://github.com/lambdaclass/ethrex/issues/5482) | Open issue |
 | P2 | Reduce allocations in account range verification | [#6072](https://github.com/lambdaclass/ethrex/pull/6072) | Open |
@@ -193,13 +198,13 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 ### Immediate (Merge Ready)
 1. ~~[#5909](https://github.com/lambdaclass/ethrex/pull/5909) - WHOAREYOU rate limiting~~ **Merged**
-2. [#5962](https://github.com/lambdaclass/ethrex/pull/5962) - Dual discovery protocol
+2. ~~[#5962](https://github.com/lambdaclass/ethrex/pull/5962) - Dual discovery protocol~~ **Merged**
 3. ~~[#5975](https://github.com/lambdaclass/ethrex/pull/5975) - Snap sync reorganization~~ **Merged**
 4. [#6113](https://github.com/lambdaclass/ethrex/pull/6113) - Async disk I/O
 5. ~~[#6079](https://github.com/lambdaclass/ethrex/pull/6079) - Parallel storage merkelization~~ **Merged**
 
 ### Short-term (Next 2-4 weeks)
-1. Complete Phase 1 of P2P (dual discovery [#5962](https://github.com/lambdaclass/ethrex/pull/5962), remove feature flag [#6015](https://github.com/lambdaclass/ethrex/pull/6015))
+1. Complete Phase 1 of P2P (~~dual discovery [#5962](https://github.com/lambdaclass/ethrex/pull/5962)~~ **Merged**, remove feature flag [#6015](https://github.com/lambdaclass/ethrex/pull/6015))
 2. Complete remaining Concurrency Phase 1 (async disk I/O [#6113](https://github.com/lambdaclass/ethrex/pull/6113))
 3. Address LRU cache for rate limiting [#6125](https://github.com/lambdaclass/ethrex/issues/6125)
 4. ~~Complete remaining discv5 security (ENR from handshake [#6109](https://github.com/lambdaclass/ethrex/pull/6109), external IP [#5914](https://github.com/lambdaclass/ethrex/pull/5914))~~ **Merged**
@@ -237,16 +242,16 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Category | Open Issues | Open PRs | Draft PRs | Merged |
 |----------|-------------|----------|-----------|--------|
-| Discovery Protocol | 8 | 5 | 1 | 1 (#5909) |
-| Discovery Security | 2 | 0 | 0 | 5 (#6055, #5910, #6172, #6109, #5914) |
-| Peer Management | 5 | 2 | 1 | 0 |
-| RLPx/Protocol | 4 | 1 | 0 | 1 (#5531) |
+| Discovery Protocol | 8 | 4 | 1 | 2 (#5909, #5962) |
+| Discovery Security | 2 | 0 | 0 | 6 (#6055, #5910, #6172, #6109, #5914, #6200) |
+| Peer Management | 5 | 0 | 0 | 1 (#6272) |
+| RLPx/Protocol | 4 | 0 | 0 | 4 (#5531, #5811, #6256, #6253) |
 | Network Config | 3 | 0 | 0 | 0 |
 | Snap Sync | 2 | 4 | 1 | 1 (#5975) |
-| Parallel Operations | 2 | 4 | 1 | 1 (#6079) |
+| Parallel Operations | 2 | 3 | 1 | 2 (#6079, #6191) |
 | GenServer Migration | 5 | 1 | 0 | 0 |
 | Blocking/Performance | 3 | 1 | 1 | 0 |
-| **Total** | **34** | **18** | **5** | **9** |
+| **Total** | **34** | **13** | **4** | **16** |
 
 ---
 
