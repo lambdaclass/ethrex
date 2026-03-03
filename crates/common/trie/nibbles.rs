@@ -463,8 +463,8 @@ impl Nibbles {
         let extra = usize::from(is_leaf);
         let mut data = Vec::with_capacity(bytes.len() * 2 + extra);
 
-        // SAFETY: we just allocated `bytes.len() * 2` capacity, and we set_len
-        // to exactly that many bytes after the SIMD kernel fills them.
+        // SAFETY: we allocated at least `bytes.len() * 2` capacity (plus `extra`),
+        // and we set_len to exactly `bytes.len() * 2` after the SIMD kernel fills them.
         #[allow(unsafe_code)]
         unsafe {
             expand_bytes_to_nibbles(bytes, data.as_mut_ptr());
