@@ -2191,7 +2191,7 @@ impl Store {
                     nonce: account.nonce,
                     balance: u256_to_db(&account.balance),
                     code_hash: h256_to_db(&code.hash),
-                    storage_root: primitive_types::H256::zero(),
+                    storage_root: primitive_types::H256::from(ethrex_db::merkle::EMPTY_ROOT),
                 };
                 block.set_account(addr_key, db_account);
 
