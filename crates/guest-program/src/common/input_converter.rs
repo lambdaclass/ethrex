@@ -245,6 +245,7 @@ mod tests {
             fee_configs: vec![],
             blob_commitment: [0u8; 48],
             blob_proof: [0u8; 48],
+            native_token_scale_factor: None,
         }
     }
 
