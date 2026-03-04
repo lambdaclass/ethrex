@@ -576,15 +576,17 @@ impl Blockchain {
         }
 
         // Spawn 16 unified workers (each gets clone of all 16 senders)
+        let mut worker_handles = Vec::with_capacity(16);
         for (i, rx) in workers_rx.into_iter().enumerate() {
             let all_senders = workers_tx.clone();
             let storage_clone = self.storage.clone();
-            std::thread::Builder::new()
+            let handle = std::thread::Builder::new()
                 .name(format!("block_executor_shard_{i}"))
                 .spawn(move || {
                     handle_subtrie(storage_clone, rx, parent_state_root, i as u8, all_senders)
                 })
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}")))?;
+            worker_handles.push(handle);
         }
 
         let mut code_updates: Vec<(H256, Code)> = vec![];
@@ -711,6 +713,14 @@ impl Blockchain {
         };
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+
+        // Join workers to surface any errors (workers already exited after
+        // sending CollectedStateMsg, so this is ~instant).
+        for handle in worker_handles {
+            handle
+                .join()
+                .map_err(|_| StoreError::Custom("shard worker panicked".into()))??;
+        }
 
         Ok((
             AccountUpdatesList {
