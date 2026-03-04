@@ -15,6 +15,7 @@ use crate::{
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
+            block_access_lists::{BlockAccessLists, GetBlockAccessLists},
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts68, Receipts69},
             status::{StatusMessage68, StatusMessage69},
@@ -527,6 +528,7 @@ where
     let version = match &state.negotiated_eth_capability {
         Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
+        Some(cap) if cap == &Capability::eth(71) => EthCapVersion::V71,
         _ => EthCapVersion::default(),
     };
     *eth_version
@@ -998,6 +1000,22 @@ async fn handle_incoming_message(
             };
             send(state, Message::BlockBodies(response)).await?;
         }
+        Message::GetBlockAccessLists(GetBlockAccessLists { id, block_hashes })
+            if peer_supports_eth =>
+        {
+            let mut block_access_lists = Vec::with_capacity(block_hashes.len());
+            for hash in &block_hashes {
+                match state.storage.get_block_access_list(*hash) {
+                    Ok(bal) => block_access_lists.push(bal),
+                    Err(err) => {
+                        error!("Error accessing DB while building BAL response for peer: {err}");
+                        block_access_lists.push(None);
+                    }
+                }
+            }
+            let response = BlockAccessLists::new(id, block_access_lists);
+            send(state, Message::BlockAccessLists(response)).await?;
+        }
         Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
             if let Some(eth) = &state.negotiated_eth_capability {
                 let mut receipts = Vec::new();
@@ -1146,7 +1164,8 @@ async fn handle_incoming_message(
         | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts68(_)
-        | message @ Message::Receipts69(_) => {
+        | message @ Message::Receipts69(_)
+        | message @ Message::BlockAccessLists(_) => {
             if let Some((_, tx)) = message
                 .request_id()
                 .and_then(|id| state.current_requests.remove(&id))

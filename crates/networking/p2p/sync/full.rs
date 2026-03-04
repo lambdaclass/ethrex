@@ -8,7 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
-use ethrex_common::{H256, types::Block};
+use ethrex_common::{
+    H256,
+    types::{Block, block_access_list::BlockAccessList},
+};
 use ethrex_storage::Store;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -154,6 +157,7 @@ pub async fn sync_cycle_full(
                 blocks,
                 final_batch,
                 store.clone(),
+                peers,
             )
             .await?;
         }
@@ -173,6 +177,7 @@ pub async fn sync_cycle_full(
             pending_blocks,
             true,
             store.clone(),
+            peers,
         )
         .await?;
     }
@@ -187,6 +192,7 @@ async fn add_blocks_in_batch(
     blocks: Vec<Block>,
     final_batch: bool,
     store: Store,
+    peers: &mut PeerHandler,
 ) -> Result<(), SyncError> {
     let execution_start = Instant::now();
     // Copy some values for later
@@ -204,10 +210,34 @@ async fn add_blocks_in_batch(
         .cloned()
         .ok_or(SyncError::InvalidRangeReceived)?;
 
+    // Fetch BALs for Amsterdam+ blocks (eth/71). If unavailable, fall back to None per block.
+    let chain_config = store.get_chain_config();
+    let bals: Vec<Option<BlockAccessList>> = {
+        let block_hashes: Vec<H256> = blocks.iter().map(|b| b.hash()).collect();
+        // Only attempt BAL fetch if at least one block is Amsterdam+
+        let any_amsterdam = blocks
+            .iter()
+            .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
+        if any_amsterdam {
+            match peers.request_block_access_lists(&block_hashes).await {
+                Ok(Some(bals)) if bals.len() == blocks.len() => bals,
+                _ => {
+                    // Peer doesn't support eth/71 or BAL unavailable — fall back to None
+                    debug!(
+                        "[SYNCING] BAL fetch unavailable or failed, proceeding without BALs"
+                    );
+                    vec![None; blocks.len()]
+                }
+            }
+        } else {
+            vec![None; blocks.len()]
+        }
+    };
+
     let blocks_hashes = blocks.iter().map(|block| block.hash()).collect::<Vec<_>>();
     // Run the batch
     if let Err((err, batch_failure)) =
-        add_blocks(blockchain.clone(), blocks, final_batch, cancel_token).await
+        add_blocks(blockchain.clone(), blocks, bals, final_batch, cancel_token).await
     {
         if let Some(batch_failure) = batch_failure {
             warn!("Failed to add block during FullSync: {err}");
@@ -267,6 +297,7 @@ async fn add_blocks_in_batch(
 async fn add_blocks(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
+    bals: Vec<Option<BlockAccessList>>,
     sync_head_found: bool,
     cancel_token: CancellationToken,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
@@ -274,17 +305,19 @@ async fn add_blocks(
     if sync_head_found {
         tokio::task::spawn_blocking(move || {
             let mut last_valid_hash = H256::default();
-            for block in blocks {
+            for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
                 let block_hash = block.hash();
-                blockchain.add_block_pipeline(block, None).map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
+                blockchain
+                    .add_block_pipeline(block, bal.as_ref())
+                    .map_err(|e| {
+                        (
+                            e,
+                            Some(BatchBlockProcessingFailure {
+                                last_valid_hash,
+                                failed_block_hash: block_hash,
+                            }),
+                        )
+                    })?;
                 last_valid_hash = block_hash;
             }
             Ok(())

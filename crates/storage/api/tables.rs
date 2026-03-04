@@ -102,7 +102,12 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+/// Block access lists column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = `block_hash.as_bytes().to_vec()`
+/// - [`Vec<u8>`] = RLP-encoded `BlockAccessList`
+pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
+
+pub const TABLES: [&str; 20] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -122,4 +127,5 @@ pub const TABLES: [&str; 19] = [
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
+    BLOCK_ACCESS_LISTS,
 ];

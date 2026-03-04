@@ -7,6 +7,7 @@ use crate::rlpx::snap::{
     StorageRanges, TrieNodes,
 };
 
+use super::eth::block_access_lists::{BlockAccessLists, GetBlockAccessLists};
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts68, Receipts69};
 use super::eth::status::{StatusMessage68, StatusMessage69};
@@ -25,14 +26,17 @@ use ethrex_rlp::encode::RLPEncode;
 const ETH_CAPABILITY_OFFSET: u8 = 0x10;
 const SNAP_CAPABILITY_OFFSET_ETH_68: u8 = 0x21;
 const SNAP_CAPABILITY_OFFSET_ETH_69: u8 = 0x22;
+const SNAP_CAPABILITY_OFFSET_ETH_71: u8 = 0x24;
 const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
 const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
+const BASED_CAPABILITY_OFFSET_ETH_71: u8 = 0x33;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EthCapVersion {
     #[default]
     V68,
     V69,
+    V71,
 }
 
 impl EthCapVersion {
@@ -44,6 +48,7 @@ impl EthCapVersion {
         match self {
             EthCapVersion::V68 => SNAP_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => SNAP_CAPABILITY_OFFSET_ETH_69,
+            EthCapVersion::V71 => SNAP_CAPABILITY_OFFSET_ETH_71,
         }
     }
 
@@ -51,6 +56,7 @@ impl EthCapVersion {
         match self {
             EthCapVersion::V68 => BASED_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
+            EthCapVersion::V71 => BASED_CAPABILITY_OFFSET_ETH_71,
         }
     }
 }
@@ -84,6 +90,8 @@ pub enum Message {
     Receipts68(Receipts68),
     Receipts69(Receipts69),
     BlockRangeUpdate(BlockRangeUpdate),
+    GetBlockAccessLists(GetBlockAccessLists),
+    BlockAccessLists(BlockAccessLists),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
     GetAccountRange(GetAccountRange),
@@ -133,6 +141,12 @@ impl Message {
             Message::Receipts69(_) => eth_version.eth_capability_offset() + Receipts69::CODE,
             Message::BlockRangeUpdate(_) => {
                 eth_version.eth_capability_offset() + BlockRangeUpdate::CODE
+            }
+            Message::GetBlockAccessLists(_) => {
+                eth_version.eth_capability_offset() + GetBlockAccessLists::CODE
+            }
+            Message::BlockAccessLists(_) => {
+                eth_version.eth_capability_offset() + BlockAccessLists::CODE
             }
             // snap capability
             Message::GetAccountRange(_) => {
@@ -210,6 +224,14 @@ impl Message {
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
+                GetBlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => {
+                    Ok(Message::GetBlockAccessLists(GetBlockAccessLists::decode(
+                        data,
+                    )?))
+                }
+                BlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => Ok(
+                    Message::BlockAccessLists(BlockAccessLists::decode(data)?),
+                ),
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else if msg_id < eth_version.based_capability_offset() {
@@ -276,6 +298,8 @@ impl Message {
             Message::Receipts68(msg) => msg.encode(buf),
             Message::Receipts69(msg) => msg.encode(buf),
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
+            Message::GetBlockAccessLists(msg) => msg.encode(buf),
+            Message::BlockAccessLists(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
             Message::GetStorageRanges(msg) => msg.encode(buf),
@@ -311,6 +335,8 @@ impl Message {
             Message::StorageRanges(message) => Some(message.id),
             Message::ByteCodes(message) => Some(message.id),
             Message::TrieNodes(message) => Some(message.id),
+            Message::GetBlockAccessLists(message) => Some(message.id),
+            Message::BlockAccessLists(message) => Some(message.id),
             // The rest of the message types does not have a request id.
             Message::Hello(_)
             | Message::Disconnect(_)
@@ -348,6 +374,8 @@ impl Display for Message {
             Message::Receipts68(_) => "eth:Receipts(68)".fmt(f),
             Message::Receipts69(_) => "eth:Receipts(69)".fmt(f),
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
+            Message::GetBlockAccessLists(_) => "eth:GetBlockAccessLists".fmt(f),
+            Message::BlockAccessLists(_) => "eth:BlockAccessLists".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
             Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),
