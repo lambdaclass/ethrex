@@ -316,6 +316,10 @@ impl<'a> VM<'a> {
             recorder.record_touched_address(address);
         }
 
+        // Ensure the account is loaded even for size=0, so that access tracking
+        // (used by parallel BAL validation) records this address.
+        let _ = self.db.get_account(address)?;
+
         if size == 0 {
             return Ok(OpcodeResult::Continue);
         }

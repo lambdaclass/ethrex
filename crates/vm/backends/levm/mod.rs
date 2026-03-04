@@ -45,7 +45,7 @@ use ethrex_levm::{
     vm::VM,
 };
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -232,16 +232,17 @@ impl LEVM {
             LEVM::get_state_transitions_tx(db)?;
             let system_seed = Arc::new(std::mem::take(&mut db.initial_accounts_state));
 
-            let (receipts, block_gas_used) = Self::execute_block_parallel(
-                block,
-                &transactions_with_sender,
-                db,
-                vm_type,
-                bal,
-                &merkleizer,
-                queue_length,
-                system_seed,
-            )?;
+            let (receipts, block_gas_used, mut unread_storage_reads, mut unaccessed_pure_accounts) =
+                Self::execute_block_parallel(
+                    block,
+                    &transactions_with_sender,
+                    db,
+                    vm_type,
+                    bal,
+                    &merkleizer,
+                    queue_length,
+                    system_seed,
+                )?;
 
             // Seed main db with post-tx state (excluding withdrawal effects) so
             // request extraction system calls see user-queued requests on predeploys.
@@ -268,6 +269,47 @@ impl LEVM {
             #[allow(clippy::cast_possible_truncation)]
             let withdrawal_idx = (block.body.transactions.len() as u16) + 1;
             Self::validate_bal_withdrawal_index(db, bal, withdrawal_idx)?;
+
+            // Mark storage_reads that occurred during the withdrawal/request phase.
+            if !unread_storage_reads.is_empty() {
+                for (addr, acct) in &db.current_accounts_state {
+                    for key in acct.storage.keys() {
+                        unread_storage_reads.remove(&(*addr, *key));
+                    }
+                }
+            }
+
+            // Mark pure-access accounts touched during the withdrawal/request phase.
+            // All withdrawal recipients (including 0-amount) are marked because the
+            // BAL recorder calls extend_touched_addresses for them, even though
+            // process_withdrawals only calls get_account_mut for amount > 0.
+            if !unaccessed_pure_accounts.is_empty() {
+                if let Some(withdrawals) = &block.body.withdrawals {
+                    for w in withdrawals {
+                        unaccessed_pure_accounts.remove(&w.address);
+                    }
+                }
+                for addr in db.current_accounts_state.keys() {
+                    unaccessed_pure_accounts.remove(addr);
+                }
+            }
+
+            // Any remaining unread storage_reads are extraneous BAL entries.
+            if let Some((addr, key)) = unread_storage_reads.iter().next() {
+                let slot = ethrex_common::BigEndianHash::into_uint(key);
+                return Err(EvmError::Custom(format!(
+                    "BAL validation failed: storage_read for account {addr:?} slot \
+                     {slot} was never actually read during block execution"
+                )));
+            }
+
+            // Any remaining pure-access accounts were never accessed during execution.
+            if let Some(addr) = unaccessed_pure_accounts.iter().next() {
+                return Err(EvmError::Custom(format!(
+                    "BAL validation failed: account {addr:?} has no mutations \
+                     and no storage reads but was never accessed during block execution"
+                )));
+            }
 
             return Ok((
                 BlockExecutionResult {
@@ -690,7 +732,7 @@ impl LEVM {
     /// Each tx runs independently on its own database pre-seeded with BAL
     /// intermediate state (geth-style). State for the merkleizer comes from
     /// `bal_to_account_updates`, not from tx execution.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn execute_block_parallel(
         block: &Block,
         txs_with_sender: &[(&Transaction, Address)],
@@ -700,7 +742,7 @@ impl LEVM {
         merkleizer: &Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
-    ) -> Result<(Vec<Receipt>, u64), EvmError> {
+    ) -> Result<(Vec<Receipt>, u64, FxHashSet<(Address, H256)>, FxHashSet<Address>), EvmError> {
         let store = db.store.clone();
         let header = &block.header;
         let n_txs = txs_with_sender.len();
@@ -716,8 +758,43 @@ impl LEVM {
         // Build validation index once — shared read-only across parallel tx validations.
         let validation_index = bal.build_validation_index();
 
+        // Build a checklist of all BAL storage_reads. Entries are removed as they
+        // are actually read during execution phases. Anything left over is extraneous.
+        let mut unread_storage_reads: FxHashSet<(Address, H256)> = FxHashSet::default();
+        // Build a checklist of BAL "pure-access" accounts: entries with no mutations
+        // and no storage reads. These must be accessed via load_account during execution.
+        let mut unaccessed_pure_accounts: FxHashSet<Address> = FxHashSet::default();
+        for acct in bal.accounts() {
+            for &slot in &acct.storage_reads {
+                let key = ethrex_common::utils::u256_to_h256(slot);
+                unread_storage_reads.insert((acct.address, key));
+            }
+            let is_pure = acct.storage_changes.is_empty()
+                && acct.storage_reads.is_empty()
+                && acct.balance_changes.is_empty()
+                && acct.nonce_changes.is_empty()
+                && acct.code_changes.is_empty();
+            if is_pure {
+                unaccessed_pure_accounts.insert(acct.address);
+            }
+        }
+
         // Validate BAL entries at index 0 (system calls) against actual prepare_block effects.
         Self::validate_bal_index_zero(bal, &validation_index, &system_seed, &store)?;
+
+        // Mark pure-access accounts that were touched during system calls.
+        for addr in system_seed.keys() {
+            unaccessed_pure_accounts.remove(addr);
+        }
+
+        // Mark storage reads that occurred during system calls (prepare_block).
+        for &(addr, key) in &unread_storage_reads.clone() {
+            if let Some(acct) = system_seed.get(&addr)
+                && acct.storage.contains_key(&key)
+            {
+                unread_storage_reads.remove(&(addr, key));
+            }
+        }
 
         // Pre-compute capacity hint for per-tx DBs from BAL account count.
         let bal_account_count = bal.accounts().len();
@@ -731,6 +808,7 @@ impl LEVM {
             ExecutionReport,
             FxHashMap<Address, LevmAccount>,
             FxHashMap<H256, ethrex_common::types::Code>,
+            FxHashSet<Address>, // accessed_accounts tracker
         );
         let t_exec = std::time::Instant::now();
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
@@ -753,6 +831,9 @@ impl LEVM {
                 #[allow(clippy::cast_possible_truncation)]
                 Self::seed_db_from_bal(&mut tx_db, bal, tx_idx as u16)?;
 
+                // Enable accessed_accounts tracker for BAL pure-access validation.
+                tx_db.accessed_accounts = Some(FxHashSet::default());
+
                 let report = LEVM::execute_tx_in_block(
                     tx,
                     *sender,
@@ -765,7 +846,8 @@ impl LEVM {
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
                 let codes = std::mem::take(&mut tx_db.codes);
-                Ok((tx_idx, tx.tx_type(), report, current_state, codes))
+                let tracked = tx_db.accessed_accounts.take().unwrap_or_default();
+                Ok((tx_idx, tx.tx_type(), report, current_state, codes, tracked))
             })
             .collect();
 
@@ -773,7 +855,7 @@ impl LEVM {
         let mut exec_results = exec_results?;
 
         // Sort so gas accounting and validation happen in tx order.
-        exec_results.sort_unstable_by_key(|(idx, _, _, _, _)| *idx);
+        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _)| *idx);
 
         // 3. Gas limit check — must happen BEFORE BAL validation so that blocks
         //    exceeding the gas limit produce GAS_USED_OVERFLOW instead of a BAL
@@ -781,7 +863,7 @@ impl LEVM {
         //    balance in the BAL won't match execution that ran all txs).
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
-        for (tx_idx, _, report, _, _) in &exec_results {
+        for (tx_idx, _, report, _, _, _) in &exec_results {
             // Prospective check: same logic as sequential check_gas_limit.
             // Rejects tx if running_gas + tx.gas_limit() > block_limit,
             // even if actual usage would fit. This matches sequential behavior.
@@ -810,7 +892,8 @@ impl LEVM {
         let block_gas_used = block_regular_gas_used.max(block_state_gas_used);
 
         // 4. Per-tx BAL validation — now safe to run after gas limit is confirmed OK.
-        for (tx_idx, _, _, current_state, codes) in &exec_results {
+        //    Also mark off storage_reads that appear in per-tx execution state.
+        for (tx_idx, _, _, current_state, codes, tracked_accounts) in &exec_results {
             #[allow(clippy::cast_possible_truncation)]
             let bal_idx = (*tx_idx + 1) as u16;
             #[allow(clippy::cast_possible_truncation)]
@@ -828,12 +911,45 @@ impl LEVM {
             .map_err(|e| {
                 EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
             })?;
+
+            // Mark storage_reads that were actually loaded during this tx.
+            // storage_reads slots are NOT in storage_changes (conflict check ensures this),
+            // so they're not seeded. If a slot appears in the per-tx state's storage,
+            // the tx genuinely read it via SLOAD.
+            // Special case: selfdestruct clears storage from the final state, so reads
+            // that happened before destruction are no longer visible. For destroyed
+            // accounts, mark ALL their BAL storage_reads as satisfied.
+            if !unread_storage_reads.is_empty() {
+                for (addr, acct) in current_state {
+                    if matches!(
+                        acct.status,
+                        AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                    ) {
+                        unread_storage_reads.retain(|&(a, _)| a != *addr);
+                    } else {
+                        for key in acct.storage.keys() {
+                            unread_storage_reads.remove(&(*addr, *key));
+                        }
+                    }
+                }
+            }
+
+            // Mark pure-access accounts that were accessed during this tx.
+            // The coinbase is always accessed during fee finalization (geth's
+            // readerTracker records it), even when the miner fee is zero and
+            // ethrex skips the load_account call.
+            if !unaccessed_pure_accounts.is_empty() {
+                unaccessed_pure_accounts.remove(&header.coinbase);
+                for addr in tracked_accounts {
+                    unaccessed_pure_accounts.remove(addr);
+                }
+            }
         }
 
         // 5. Build receipts in tx order.
         let mut receipts = Vec::with_capacity(n_txs);
         let mut cumulative_gas_used = 0_u64;
-        for (_, tx_type, report, _, _) in exec_results {
+        for (_, tx_type, report, _, _, _) in exec_results {
             cumulative_gas_used += report.gas_spent;
             let receipt = Receipt::new(
                 tx_type,
@@ -844,14 +960,7 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        ::tracing::debug!(
-            "[PARALLEL] block {} | {} txs | exec: {:.1}ms",
-            block.header.number,
-            n_txs,
-            exec_ms,
-        );
-
-        Ok((receipts, block_gas_used))
+        Ok((receipts, block_gas_used, unread_storage_reads, unaccessed_pure_accounts))
     }
 
     /// Validates that a tx's post-execution state matches BAL claims.
