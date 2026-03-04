@@ -693,10 +693,12 @@ impl Store {
         };
         let bytes = Bytes::from_owner(bytes);
         let (bytecode_slice, targets) = decode_bytes(&bytes)?;
-        let bytecode = bytes.slice_ref(bytecode_slice);
 
         let jump_targets = <Vec<_>>::decode(targets)?;
-        let code = Code::from_parts(bytecode, code_hash, jump_targets);
+        // Pre-allocate with padding room so from_parts can resize without reallocating.
+        let mut bytecode_buf = Vec::with_capacity(bytecode_slice.len() + 33);
+        bytecode_buf.extend_from_slice(bytecode_slice);
+        let code = Code::from_parts(bytecode_buf, code_hash, jump_targets);
 
         // insert into cache and evict if needed
         self.account_code_cache

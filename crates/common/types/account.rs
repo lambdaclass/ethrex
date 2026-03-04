@@ -68,13 +68,15 @@ impl Code {
         }
     }
 
-    /// Construct from bytecode, hash, and pre-computed jump targets.
-    /// Used when deserializing from storage where jump_targets are already available.
-    pub fn from_parts(code: Bytes, hash: H256, jump_targets: Vec<u32>) -> Self {
+    /// Construct from a mutable bytecode buffer, hash, and pre-computed jump targets.
+    /// Pads the buffer in-place (extending it with 33 zero bytes) to avoid a copy.
+    /// Used when deserializing from storage where the caller owns the buffer.
+    pub fn from_parts(mut code: Vec<u8>, hash: H256, jump_targets: Vec<u32>) -> Self {
         let code_len = code.len();
+        code.resize(code_len + BYTECODE_PADDING, 0);
         Self {
             hash,
-            bytecode: Self::pad_bytecode(&code),
+            bytecode: Bytes::from(code),
             code_len,
             jump_targets,
         }
