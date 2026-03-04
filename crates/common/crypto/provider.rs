@@ -107,6 +107,11 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 
     // ── Hashing ────────────────────────────────────────────────────────
 
+    /// Keccak-256 hash. Used by the KECCAK256 opcode (0x20) and address derivation.
+    fn keccak256(&self, input: &[u8]) -> [u8; 32] {
+        crate::keccak::keccak_hash(input)
+    }
+
     /// SHA-256 hash. Used by SHA2-256 precompile (0x02) and KZG point evaluation.
     fn sha256(&self, input: &[u8]) -> [u8; 32] {
         sha2::Sha256::digest(input).into()

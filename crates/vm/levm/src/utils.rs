@@ -203,7 +203,6 @@ pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
     crypto: &dyn ethrex_crypto::Crypto,
 ) -> Result<Option<Address>, VMError> {
-    use ethrex_crypto::keccak::keccak_hash;
     use ethrex_rlp::encode::RLPEncode;
 
     if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
@@ -219,7 +218,7 @@ pub fn eip7702_recover_address(
     let mut rlp_buf = Vec::with_capacity(128);
     rlp_buf.push(MAGIC);
     (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
-    let msg = keccak_hash(&rlp_buf);
+    let msg = crypto.keccak256(&rlp_buf);
 
     let y_parity: u8 =
         TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?;
