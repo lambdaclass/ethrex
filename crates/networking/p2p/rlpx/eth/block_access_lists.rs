@@ -12,6 +12,9 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
+/// Maximum number of BALs to serve per request (same as block bodies limit in geth).
+pub const BLOCK_ACCESS_LIST_LIMIT: usize = 1024;
+
 // https://eips.ethereum.org/EIPS/eip-8159 (eth/71 BAL exchange)
 #[derive(Debug, Clone)]
 pub struct GetBlockAccessLists {
@@ -201,10 +204,11 @@ impl RLPxMessage for BlockAccessLists {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        // The remaining data in the decoder is the bals list
-        // We need to decode the rest manually
-        let remaining = decoder.finish()?;
-        let (block_access_lists, _) = decode_optional_bal_list(remaining)?;
+        // The BAL list is the second field in the outer RLP list.
+        // Extract its raw encoded bytes from the payload, then decode manually.
+        let (encoded_bals, decoder) = decoder.get_encoded_item_ref()?;
+        let (block_access_lists, _) = decode_optional_bal_list(encoded_bals)?;
+        decoder.finish()?;
         Ok(Self::new(id, block_access_lists))
     }
 }

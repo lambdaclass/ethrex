@@ -1003,6 +1003,7 @@ async fn handle_incoming_message(
         Message::GetBlockAccessLists(GetBlockAccessLists { id, block_hashes })
             if peer_supports_eth =>
         {
+            use crate::rlpx::eth::block_access_lists::BLOCK_ACCESS_LIST_LIMIT;
             let mut block_access_lists = Vec::with_capacity(block_hashes.len());
             for hash in &block_hashes {
                 match state.storage.get_block_access_list(*hash) {
@@ -1011,6 +1012,9 @@ async fn handle_incoming_message(
                         error!("Error accessing DB while building BAL response for peer: {err}");
                         block_access_lists.push(None);
                     }
+                }
+                if block_access_lists.len() >= BLOCK_ACCESS_LIST_LIMIT {
+                    break;
                 }
             }
             let response = BlockAccessLists::new(id, block_access_lists);

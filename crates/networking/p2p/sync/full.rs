@@ -210,16 +210,17 @@ async fn add_blocks_in_batch(
         .cloned()
         .ok_or(SyncError::InvalidRangeReceived)?;
 
+    let blocks_hashes: Vec<H256> = blocks.iter().map(|b| b.hash()).collect();
+
     // Fetch BALs for Amsterdam+ blocks (eth/71). If unavailable, fall back to None per block.
     let chain_config = store.get_chain_config();
     let bals: Vec<Option<BlockAccessList>> = {
-        let block_hashes: Vec<H256> = blocks.iter().map(|b| b.hash()).collect();
         // Only attempt BAL fetch if at least one block is Amsterdam+
         let any_amsterdam = blocks
             .iter()
             .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
         if any_amsterdam {
-            match peers.request_block_access_lists(&block_hashes).await {
+            match peers.request_block_access_lists(&blocks_hashes).await {
                 Ok(Some(bals)) if bals.len() == blocks.len() => bals,
                 _ => {
                     // Peer doesn't support eth/71 or BAL unavailable — fall back to None
@@ -233,8 +234,6 @@ async fn add_blocks_in_batch(
             vec![None; blocks.len()]
         }
     };
-
-    let blocks_hashes = blocks.iter().map(|block| block.hash()).collect::<Vec<_>>();
     // Run the batch
     if let Err((err, batch_failure)) =
         add_blocks(blockchain.clone(), blocks, bals, final_batch, cancel_token).await
