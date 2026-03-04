@@ -284,43 +284,49 @@ fn decode_enc_datas(data: &[u8]) -> Result<Vec<Vec<u8>>, AppCircuitError> {
 /// Decode an RLP list prefix, returning the inner data and total consumed bytes.
 fn decode_rlp_list(data: &[u8]) -> Result<(&[u8], usize), AppCircuitError> {
     if data.is_empty() {
-        return Err(AppCircuitError::InvalidParams("RLP list: empty input".into()));
+        return Err(AppCircuitError::InvalidParams(
+            "RLP list: empty input".into(),
+        ));
     }
 
     let prefix = data[0];
     if prefix <= 0xbf {
-        return Err(AppCircuitError::InvalidParams(
-            format!("RLP list: expected list prefix (0xc0..0xff), got 0x{prefix:02x}"),
-        ));
+        return Err(AppCircuitError::InvalidParams(format!(
+            "RLP list: expected list prefix (0xc0..0xff), got 0x{prefix:02x}"
+        )));
     }
 
     if prefix <= 0xf7 {
         // Short list: length in prefix byte.
         let len = (prefix - 0xc0) as usize;
         if data.len() < 1 + len {
-            return Err(AppCircuitError::InvalidParams(
-                format!("RLP list: short list needs {} bytes, have {}", 1 + len, data.len()),
-            ));
+            return Err(AppCircuitError::InvalidParams(format!(
+                "RLP list: short list needs {} bytes, have {}",
+                1 + len,
+                data.len()
+            )));
         }
         Ok((&data[1..1 + len], 1 + len))
     } else {
         // Long list: length of length follows.
         let len_bytes = (prefix - 0xf7) as usize;
         if data.len() < 1 + len_bytes {
-            return Err(AppCircuitError::InvalidParams(
-                format!("RLP list: insufficient data for length prefix ({len_bytes} bytes needed)"),
-            ));
+            return Err(AppCircuitError::InvalidParams(format!(
+                "RLP list: insufficient data for length prefix ({len_bytes} bytes needed)"
+            )));
         }
         let mut len = 0usize;
         for &b in &data[1..1 + len_bytes] {
-            len = len.checked_shl(8).ok_or_else(|| AppCircuitError::InvalidParams(
-                "RLP list: length overflow".into(),
-            ))? | (b as usize);
+            len = len.checked_shl(8).ok_or_else(|| {
+                AppCircuitError::InvalidParams("RLP list: length overflow".into())
+            })? | (b as usize);
         }
         if data.len() < 1 + len_bytes + len {
-            return Err(AppCircuitError::InvalidParams(
-                format!("RLP list: length exceeds data bounds ({} needed, {} available)", 1 + len_bytes + len, data.len()),
-            ));
+            return Err(AppCircuitError::InvalidParams(format!(
+                "RLP list: length exceeds data bounds ({} needed, {} available)",
+                1 + len_bytes + len,
+                data.len()
+            )));
         }
         Ok((
             &data[1 + len_bytes..1 + len_bytes + len],
@@ -332,7 +338,9 @@ fn decode_rlp_list(data: &[u8]) -> Result<(&[u8], usize), AppCircuitError> {
 /// Decode an RLP byte string, returning the data and total consumed bytes.
 fn decode_rlp_bytes(data: &[u8]) -> Result<(Vec<u8>, usize), AppCircuitError> {
     if data.is_empty() {
-        return Err(AppCircuitError::InvalidParams("RLP bytes: empty input".into()));
+        return Err(AppCircuitError::InvalidParams(
+            "RLP bytes: empty input".into(),
+        ));
     }
 
     let prefix = data[0];
@@ -344,38 +352,42 @@ fn decode_rlp_bytes(data: &[u8]) -> Result<(Vec<u8>, usize), AppCircuitError> {
         // Short string: length in prefix byte.
         let len = (prefix - 0x80) as usize;
         if data.len() < 1 + len {
-            return Err(AppCircuitError::InvalidParams(
-                format!("RLP bytes: short string needs {} bytes, have {}", 1 + len, data.len()),
-            ));
+            return Err(AppCircuitError::InvalidParams(format!(
+                "RLP bytes: short string needs {} bytes, have {}",
+                1 + len,
+                data.len()
+            )));
         }
         Ok((data[1..1 + len].to_vec(), 1 + len))
     } else if prefix <= 0xbf {
         // Long string: length of length follows.
         let len_bytes = (prefix - 0xb7) as usize;
         if data.len() < 1 + len_bytes {
-            return Err(AppCircuitError::InvalidParams(
-                format!("RLP bytes: insufficient data for length prefix ({len_bytes} bytes needed)"),
-            ));
+            return Err(AppCircuitError::InvalidParams(format!(
+                "RLP bytes: insufficient data for length prefix ({len_bytes} bytes needed)"
+            )));
         }
         let mut len = 0usize;
         for &b in &data[1..1 + len_bytes] {
-            len = len.checked_shl(8).ok_or_else(|| AppCircuitError::InvalidParams(
-                "RLP bytes: length overflow".into(),
-            ))? | (b as usize);
+            len = len.checked_shl(8).ok_or_else(|| {
+                AppCircuitError::InvalidParams("RLP bytes: length overflow".into())
+            })? | (b as usize);
         }
         if data.len() < 1 + len_bytes + len {
-            return Err(AppCircuitError::InvalidParams(
-                format!("RLP bytes: length exceeds data bounds ({} needed, {} available)", 1 + len_bytes + len, data.len()),
-            ));
+            return Err(AppCircuitError::InvalidParams(format!(
+                "RLP bytes: length exceeds data bounds ({} needed, {} available)",
+                1 + len_bytes + len,
+                data.len()
+            )));
         }
         Ok((
             data[1 + len_bytes..1 + len_bytes + len].to_vec(),
             1 + len_bytes + len,
         ))
     } else {
-        Err(AppCircuitError::InvalidParams(
-            format!("RLP bytes: unexpected list prefix 0x{prefix:02x} in byte string context"),
-        ))
+        Err(AppCircuitError::InvalidParams(format!(
+            "RLP bytes: unexpected list prefix 0x{prefix:02x} in byte string context"
+        )))
     }
 }
 
