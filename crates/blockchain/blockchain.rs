@@ -424,12 +424,16 @@ impl Blockchain {
                         let start = Instant::now();
                         if let Some(bal) = bal {
                             // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            if let Err(e) = LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref) {
+                            if let Err(e) =
+                                LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
+                            {
                                 debug!("BAL warming failed (non-fatal): {e}");
                             }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            if let Err(e) = LEVM::warm_block(block, caching_store, vm_type, cancelled_ref) {
+                            if let Err(e) =
+                                LEVM::warm_block(block, caching_store, vm_type, cancelled_ref)
+                            {
                                 debug!("Block warming failed (non-fatal): {e}");
                             }
                         }
@@ -443,8 +447,7 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let result =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
+                        let result = vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;
 
