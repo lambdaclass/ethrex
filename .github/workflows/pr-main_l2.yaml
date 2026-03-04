@@ -949,21 +949,23 @@ jobs:
         integration-test-shared-bridge,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.uniswap-swap.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() }}
     steps:
       - name: Check if any job failed
         run: |
-          if [ "${{ needs.integration-test.result }}" != "success" ]; then
+          # Allow skipped jobs (when matrix is empty due to all items excluded)
+          # Only fail if job ran and failed
+          if [ "${{ needs.integration-test.result }}" == "failure" ]; then
             echo "Job Integration Tests failed"
             exit 1
           fi
 
-          if [ "${{ needs.state-diff-test.result }}" != "success" ]; then
+          if [ "${{ needs.state-diff-test.result }}" == "failure" ]; then
             echo "Job State Reconstruction Tests failed"
             exit 1
           fi
 
-          if [ "${{ needs.uniswap-swap.result }}" != "success" ]; then
+          if [ "${{ needs.uniswap-swap.result }}" == "failure" ]; then
             echo "Job Uniswap Swap Token Flow failed"
             exit 1
           fi
