@@ -2710,8 +2710,41 @@ impl Store {
                 return Ok(Some(u256_from_db(&value)));
             }
             drop(bc);
-            // Storage tries are not persisted in ethrex-db, fall back to
-            // the RocksDB trie tables which have the snap sync data.
+            // Storage tries are not persisted in ethrex-db after restart.
+            // Fall back to the RocksDB trie tables (snap sync data).
+            // Use all-zeros last_written to bypass FKV optimization, since
+            // ethrex-db reports FKV as complete but the flat KV tables are empty.
+            let account_hash = hash_address_fixed(&address);
+            let read_view = self.backend.begin_read()?;
+            let cache = self
+                .trie_cache
+                .read()
+                .map_err(|_| StoreError::LockError)?
+                .clone();
+            let no_fkv = vec![0u8; 64];
+            let state_trie = self.open_state_trie_shared(
+                state_root,
+                read_view.clone(),
+                cache.clone(),
+                no_fkv.clone(),
+            )?;
+            let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
+                return Ok(None);
+            };
+            let account = AccountState::decode(&encoded_account)?;
+            let storage_trie = self.open_storage_trie_shared(
+                account_hash,
+                state_root,
+                account.storage_root,
+                read_view,
+                cache,
+                no_fkv,
+            )?;
+            let hashed_key = hash_key_fixed(&storage_key);
+            return storage_trie
+                .get(&hashed_key)?
+                .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+                .transpose();
         }
 
         let account_hash = hash_address_fixed(&address);
