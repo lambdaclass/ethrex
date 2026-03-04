@@ -71,8 +71,8 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
-    get_total_blob_gas, validate_block, validate_block_access_list_hash, validate_gas_used,
-    validate_receipts_root, validate_requests_hash,
+    get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
+    validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
@@ -118,9 +118,10 @@ type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
     Option<Vec<AccountUpdate>>,
-    usize,        // max queue length
-    [Instant; 6], // timing instants
-    Duration,     // warmer duration
+    Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
+    usize,                   // max queue length
+    [Instant; 6],            // timing instants
+    Duration,                // warmer duration
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -323,7 +324,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
@@ -392,7 +393,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -420,10 +421,14 @@ impl Blockchain {
                         let start = Instant::now();
                         if let Some(bal) = bal {
                             // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            let _ = LEVM::warm_block_from_bal(bal, caching_store);
+                            if let Err(e) = LEVM::warm_block_from_bal(bal, caching_store) {
+                                debug!("BAL warming failed (non-fatal): {e}");
+                            }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            let _ = LEVM::warm_block(block, caching_store, vm_type);
+                            if let Err(e) = LEVM::warm_block(block, caching_store, vm_type) {
+                                debug!("Block warming failed (non-fatal): {e}");
+                            }
                         }
                         start.elapsed()
                     })
@@ -435,8 +440,8 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, bal) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                        let (execution_result, produced_bal) =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal)?;
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -446,7 +451,7 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
-                        if let Some(bal) = &bal {
+                        if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
                                 &chain_config,
@@ -456,7 +461,7 @@ impl Blockchain {
                         }
 
                         let exec_end_instant = Instant::now();
-                        Ok((execution_result, exec_end_instant))
+                        Ok((execution_result, produced_bal, exec_end_instant))
                     })
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
@@ -509,7 +514,7 @@ impl Blockchain {
                 ))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
-        let (execution_result, exec_end_instant) = execution_result?;
+        let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
         let exec_merkle_end_instant = Instant::now();
 
@@ -517,6 +522,7 @@ impl Blockchain {
             execution_result,
             account_updates_list,
             accumulated_updates,
+            produced_bal,
             max_queue_length,
             [
                 start_instant,
@@ -1238,7 +1244,7 @@ impl Blockchain {
         vm: &mut Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
-        validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -1910,6 +1916,34 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(), ChainError> {
+        let (_, result) = self.add_block_pipeline_inner(block, bal)?;
+        result
+    }
+
+    /// Same as [`add_block_pipeline`] but also returns the BAL produced during execution.
+    /// On Amsterdam+ blocks the returned value is `Some(bal)`, otherwise `None`.
+    pub fn add_block_pipeline_bal(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<Option<BlockAccessList>, ChainError> {
+        let (produced_bal, result) = self.add_block_pipeline_inner(block, bal)?;
+        result?;
+        Ok(produced_bal)
+    }
+
+    /// Runs the full block pipeline (execute + merkleize + store).
+    ///
+    /// Returns a two-level Result:
+    /// - Outer `Err`: pipeline couldn't start (e.g. parent header not found).
+    /// - Inner `Result`: block storage outcome. The produced BAL is returned
+    ///   regardless of whether storage succeeded, so callers like
+    ///   `add_block_pipeline_bal` can retrieve it even on storage failure.
+    fn add_block_pipeline_inner(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1948,10 +1982,11 @@ impl Blockchain {
             res,
             account_updates_list,
             accumulated_updates,
+            produced_bal,
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
+        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1998,7 +2033,7 @@ impl Blockchain {
             );
         }
 
-        result
+        Ok((produced_bal, result))
     }
 
     #[allow(clippy::too_many_arguments)]
