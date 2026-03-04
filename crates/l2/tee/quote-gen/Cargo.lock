@@ -1351,6 +1351,7 @@ dependencies = [
  "lazy_static",
  "malachite",
  "p256",
+ "rayon",
  "ripemd",
  "rustc-hash",
  "serde 1.0.228",
