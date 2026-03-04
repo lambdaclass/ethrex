@@ -1,53 +1,64 @@
+//! # Stack push operations
+//!
+//! Includes the following opcodes:
+//!   - `PUSH0`
+//!   - `PUSH1` to `PUSH32`
+
 use crate::{
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
+    opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use ethrex_common::{U256, utils::u256_from_big_endian_const};
+use ethrex_common::U256;
 
-// Push Operations
-// Opcodes: PUSH0, PUSH1 ... PUSH32
+/// Implementation for the `PUSH0` opcode.
+pub struct OpPush0Handler;
+impl OpcodeHandler for OpPush0Handler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::PUSH0)?;
 
-impl<'a> VM<'a> {
-    // Generic PUSH operation, optimized at compile time for the given N.
-    #[inline]
-    pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let call_frame = &mut self.current_call_frame;
-        call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
-
-        // Check to avoid multiple checks.
-        let Some(new_pc) = call_frame.pc.checked_add(N) else {
-            return Err(InternalError::Overflow.into());
-        };
-
-        let value = if let Some(slice) = call_frame.bytecode.bytecode.get(call_frame.pc..new_pc) {
-            u256_from_big_endian_const(
-                // SAFETY: If the get succeeded, we got N elements so the cast is safe.
-                #[expect(unsafe_code)]
-                unsafe {
-                    *slice.as_ptr().cast::<[u8; N]>()
-                },
-            )
-        } else {
-            // NOTE: this isn't exactly correct, since a PUSHN with insufficient bytes should pad with zeros,
-            // but if we're out of bytes, the next instruction will halt, discarding the stack anyway.
-            U256::zero()
-        };
-
-        call_frame.stack.push(value)?;
-
-        // Advance the PC by the number of bytes in this instruction's payload.
-        call_frame.pc = new_pc;
+        vm.current_call_frame.stack.push_zero()?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // PUSH0
-    #[inline]
-    pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::PUSH0)?;
-        self.current_call_frame.stack.push_zero()?;
+/// Implementation for the `PUSHn` opcode.
+pub struct OpPushHandler<const N: usize>;
+impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let literal_offset = vm.current_call_frame.pc;
+        vm.current_call_frame.pc = vm
+            .current_call_frame
+            .pc
+            .checked_add(N)
+            .ok_or(InternalError::Overflow)?;
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::PUSHN)?;
+
+        #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
+        vm.current_call_frame.stack.push(
+            match vm
+                .current_call_frame
+                .bytecode
+                .bytecode
+                .get(literal_offset..)
+            {
+                Some(data) if data.len() >= N => U256::from_big_endian(&data[..N]),
+                Some(data) => {
+                    let mut bytes = [0; 32];
+                    bytes[..data.len()].copy_from_slice(data);
+                    U256::from_big_endian(&bytes)
+                }
+                None => U256::zero(),
+            },
+        )?;
+
         Ok(OpcodeResult::Continue)
     }
 }
