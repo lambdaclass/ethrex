@@ -198,8 +198,6 @@ pub struct LegacyTransaction {
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
     pub sender_cache: OnceCell<Address>,
-    #[rkyv(with=rkyv::with::Skip)]
-    pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -819,7 +817,6 @@ impl RLPDecode for LegacyTransaction {
         let (s, decoder) = decoder.decode_field("s")?;
         let inner_hash = OnceCell::new();
         let sender_cache = OnceCell::new();
-        let cached_canonical = OnceCell::new();
 
         let tx = LegacyTransaction {
             nonce,
@@ -833,7 +830,6 @@ impl RLPDecode for LegacyTransaction {
             s,
             inner_hash,
             sender_cache,
-            cached_canonical,
         };
         Ok((tx, decoder.finish()?))
     }
