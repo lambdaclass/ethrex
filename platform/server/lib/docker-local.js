@@ -53,6 +53,11 @@ async function buildImages(projectName, composeFile, env = {}) {
   return runCompose(projectName, composeFile, ["build"], { env });
 }
 
+/** Pull pre-built Docker images from registry */
+async function pullImages(projectName, composeFile, env = {}) {
+  return runCompose(projectName, composeFile, ["pull"], { env, timeout: 300000 });
+}
+
 /** Start L1 service */
 async function startL1(projectName, composeFile, env = {}) {
   return runCompose(projectName, composeFile, ["up", "-d", "tokamak-app-l1"], { env });
@@ -170,6 +175,52 @@ function streamLogs(projectName, composeFile, service) {
   return spawn(cmd, cmdArgs, { cwd: ETHREX_ROOT, stdio: "pipe" });
 }
 
+/** Check if a local Docker image exists */
+function imageExists(imageName) {
+  try {
+    const result = execSync(`docker image inspect ${imageName}`, {
+      stdio: "pipe",
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Build platform images using platform/Dockerfile (multi-target) */
+async function buildPlatformImages() {
+  const platformDir = path.resolve(__dirname, "../..");
+  const dockerfile = path.join(platformDir, "Dockerfile");
+
+  // Build L1 and L2 images sequentially
+  for (const { target, tag } of [
+    { target: "l1", tag: "tokamak-app-l1:latest" },
+    { target: "l2", tag: "tokamak-app-l2:latest" },
+  ]) {
+    await new Promise((resolve, reject) => {
+      const proc = spawn("docker", [
+        "build", "-f", dockerfile, "--target", target, "-t", tag, ETHREX_ROOT,
+      ], {
+        cwd: ETHREX_ROOT,
+        stdio: "pipe",
+      });
+
+      let stderr = "";
+      if (proc.stderr) proc.stderr.on("data", (d) => (stderr += d));
+
+      proc.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(`docker build ${target} failed (code ${code}): ${stderr.slice(-500)}`));
+        } else {
+          resolve();
+        }
+      });
+      proc.on("error", reject);
+    });
+  }
+}
+
 /** Check if Docker daemon is available */
 function isDockerAvailable() {
   try {
@@ -182,6 +233,9 @@ function isDockerAvailable() {
 
 module.exports = {
   buildImages,
+  pullImages,
+  buildPlatformImages,
+  imageExists,
   startL1,
   deployContracts,
   extractEnv,

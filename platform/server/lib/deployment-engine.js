@@ -63,15 +63,19 @@ async function provision(deployment) {
     throw new Error("Docker daemon is not running. Please start Docker first.");
   }
 
-  // Parse config for custom deploy directory
+  // Parse config
   let deployDir = null;
+  let strategy = "pull"; // default: use pre-built images
   try {
     const config = deployment.config ? JSON.parse(deployment.config) : {};
     deployDir = config.deployDir || null;
+    if (config.strategy === "build") strategy = "build";
   } catch {}
 
   const { l1Port, l2Port, proofCoordPort } = getNextAvailablePorts();
   const projectName = `tokamak-${id.slice(0, 8)}`;
+
+  const initialPhase = strategy === "build" ? "building" : "pulling";
 
   updateDeployment(id, {
     docker_project: projectName,
@@ -79,18 +83,28 @@ async function provision(deployment) {
     l2_port: l2Port,
     proof_coord_port: proofCoordPort,
     deploy_dir: deployDir,
-    phase: "building",
+    phase: initialPhase,
     error_message: null,
   });
 
-  emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration..." });
+  emit(id, "phase", { phase: initialPhase, message: "Generating Docker Compose configuration..." });
 
   try {
-    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, projectName });
+    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, projectName, strategy });
     const composeFile = writeComposeFile(id, composeContent, deployDir);
 
-    emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
-    await docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    if (strategy === "build") {
+      emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
+      await docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    } else {
+      // Check if local images exist; if not, build them automatically
+      if (!docker.imageExists("tokamak-app-l2:latest")) {
+        emit(id, "phase", { phase: "building", message: "Building platform images (first time only)..." });
+        updateDeployment(id, { phase: "building" });
+        await docker.buildPlatformImages();
+      }
+      emit(id, "phase", { phase: "pulling", message: "Images ready" });
+    }
 
     emit(id, "phase", { phase: "l1_starting", message: "Starting L1 node..." });
     updateDeployment(id, { phase: "l1_starting" });

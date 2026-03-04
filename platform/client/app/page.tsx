@@ -25,8 +25,14 @@ export default function Home() {
         </p>
         <div className="mt-8 flex gap-4 justify-center">
           <Link
-            href="/store"
+            href="/launch"
             className="px-6 py-3 bg-blue-600 text-white rounded-lg text-lg font-medium hover:bg-blue-700"
+          >
+            Create L2
+          </Link>
+          <Link
+            href="/store"
+            className="px-6 py-3 bg-white text-gray-700 border border-gray-300 rounded-lg text-lg font-medium hover:bg-gray-50"
           >
             Explore Store
           </Link>

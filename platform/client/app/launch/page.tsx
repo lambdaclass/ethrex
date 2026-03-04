@@ -537,8 +537,8 @@ function LaunchPageContent() {
                   <div className="bg-green-50 rounded-lg p-4 text-sm text-green-800 border border-green-200">
                     <p className="font-medium mb-1">Docker deployment</p>
                     <p>
-                      Clicking &quot;Deploy L2&quot; will build Docker images and start L1 + L2 + Prover containers automatically.
-                      This may take several minutes on the first run.
+                      Uses local Docker images. If images haven't been built yet,
+                      they will be built automatically on first deployment.
                     </p>
                   </div>
                 </div>
