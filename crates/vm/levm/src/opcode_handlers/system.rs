@@ -157,6 +157,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            false, // is_known_precompile
         )
     }
 
@@ -272,6 +273,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            false, // is_known_precompile
         )
     }
 
@@ -402,6 +404,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            false, // is_known_precompile
         )
     }
 
@@ -508,6 +511,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            false, // is_known_precompile
         )
     }
 
@@ -1018,6 +1022,7 @@ impl<'a> VM<'a> {
             return_data_size,
             Code::default(), // precompiles have no bytecode
             false,           // is_delegation_7702
+            true,            // is_known_precompile
         )
     }
 
@@ -1043,6 +1048,7 @@ impl<'a> VM<'a> {
         ret_size: usize,
         bytecode: Code,
         is_delegation_7702: bool,
+        is_known_precompile: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
         self.current_call_frame.sub_return_data.clear();
@@ -1067,7 +1073,8 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
+        if (is_known_precompile
+            || precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type))
             && !is_delegation_7702
         {
             // Record precompile address touch for BAL per EIP-7928
