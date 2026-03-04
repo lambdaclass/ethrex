@@ -60,6 +60,7 @@ pub struct StateUpdater {
     based: bool,
 }
 
+#[actor(protocol = StateUpdaterProtocol)]
 impl StateUpdater {
     pub fn new(
         sequencer_cfg: SequencerConfig,
@@ -93,7 +94,52 @@ impl StateUpdater {
         })
     }
 
-    // spawn is in the #[actor] impl block below
+    pub async fn spawn(
+        sequencer_cfg: SequencerConfig,
+        sequencer_state: SequencerState,
+        blockchain: Arc<Blockchain>,
+        store: Store,
+        rollup_store: StoreRollup,
+    ) -> Result<ActorRef<StateUpdater>, StateUpdaterError> {
+        let state_updater = Self::new(
+            sequencer_cfg,
+            sequencer_state,
+            blockchain,
+            store,
+            rollup_store,
+        )?;
+        let actor_ref = state_updater.start();
+        actor_ref
+            .send(state_updater_protocol::UpdateState)
+            .map_err(StateUpdaterError::InternalError)?;
+        Ok(actor_ref)
+    }
+
+    #[send_handler]
+    async fn handle_update_state(
+        &mut self,
+        _msg: state_updater_protocol::UpdateState,
+        ctx: &Context<Self>,
+    ) {
+        let _ = self
+            .update_state()
+            .await
+            .inspect_err(|err| error!("State Updater Error: {err}"));
+        send_after(
+            Duration::from_millis(self.check_interval_ms),
+            ctx.clone(),
+            state_updater_protocol::UpdateState,
+        );
+    }
+
+    #[request_handler]
+    async fn handle_stop_at(
+        &mut self,
+        msg: state_updater_protocol::StopAt,
+        _ctx: &Context<Self>,
+    ) -> () {
+        self.stop_at = Some(msg.block_number);
+    }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
         let current_state = self.sequencer_state.status();
@@ -264,56 +310,6 @@ impl StateUpdater {
             .await?;
 
         Ok(())
-    }
-}
-
-#[actor(protocol = StateUpdaterProtocol)]
-impl StateUpdater {
-    pub async fn spawn(
-        sequencer_cfg: SequencerConfig,
-        sequencer_state: SequencerState,
-        blockchain: Arc<Blockchain>,
-        store: Store,
-        rollup_store: StoreRollup,
-    ) -> Result<ActorRef<StateUpdater>, StateUpdaterError> {
-        let state_updater = Self::new(
-            sequencer_cfg,
-            sequencer_state,
-            blockchain,
-            store,
-            rollup_store,
-        )?;
-        let actor_ref = state_updater.start();
-        actor_ref
-            .send(state_updater_protocol::UpdateState)
-            .map_err(StateUpdaterError::InternalError)?;
-        Ok(actor_ref)
-    }
-
-    #[send_handler]
-    async fn handle_update_state(
-        &mut self,
-        _msg: state_updater_protocol::UpdateState,
-        ctx: &Context<Self>,
-    ) {
-        let _ = self
-            .update_state()
-            .await
-            .inspect_err(|err| error!("State Updater Error: {err}"));
-        send_after(
-            Duration::from_millis(self.check_interval_ms),
-            ctx.clone(),
-            state_updater_protocol::UpdateState,
-        );
-    }
-
-    #[request_handler]
-    async fn handle_stop_at(
-        &mut self,
-        msg: state_updater_protocol::StopAt,
-        _ctx: &Context<Self>,
-    ) -> () {
-        self.stop_at = Some(msg.block_number);
     }
 }
 

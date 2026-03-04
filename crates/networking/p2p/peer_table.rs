@@ -326,6 +326,7 @@ struct PeerTableServer {
     store: Store,
 }
 
+#[actor(protocol = PeerTableServerProtocol)]
 impl PeerTableServer {
     pub(crate) fn new(target_peers: usize, store: Store) -> Self {
         Self {
@@ -338,331 +339,6 @@ impl PeerTableServer {
         }
     }
 
-    // Weighting function used to select best peer
-    fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
-        score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
-    }
-
-    // Returns if the peer has room for more connections given the current score
-    // and amount of inflight requests
-    fn can_try_more_requests(&self, score: &i64, requests: &i64) -> bool {
-        let score_ratio = (score - MIN_SCORE) as f64 / (MAX_SCORE - MIN_SCORE) as f64;
-        let max_requests = (MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio).max(1.0);
-        (*requests as f64) < max_requests
-    }
-
-    fn do_get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
-        self.peers
-            .iter()
-            .filter_map(|(id, peer_data)| {
-                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
-                    || !capabilities
-                        .iter()
-                        .any(|cap| peer_data.supported_capabilities.contains(cap))
-                {
-                    None
-                } else {
-                    let connection = peer_data.connection.clone()?;
-                    Some((*id, peer_data.score, peer_data.requests, connection))
-                }
-            })
-            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
-            .map(|(k, _, _, v)| (k, v))
-    }
-
-    fn prune(&mut self) {
-        let disposable_contacts = self
-            .contacts
-            .iter()
-            .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
-            .collect::<Vec<_>>();
-
-        for contact_to_discard_id in disposable_contacts {
-            self.contacts.swap_remove(&contact_to_discard_id);
-            self.discarded_contacts.insert(contact_to_discard_id);
-        }
-    }
-
-    fn do_get_contact_to_initiate(&mut self) -> Option<Contact> {
-        for contact in self.contacts.values() {
-            let node_id = contact.node.node_id();
-            if !self.peers.contains_key(&node_id)
-                && !self.already_tried_peers.contains(&node_id)
-                && contact.knows_us
-                && !contact.unwanted
-                && contact.is_fork_id_valid != Some(false)
-            {
-                self.already_tried_peers.insert(node_id);
-                return Some(contact.clone());
-            }
-        }
-        tracing::trace!("Resetting list of tried peers.");
-        self.already_tried_peers.clear();
-        None
-    }
-
-    fn do_get_contact_for_lookup(&self, protocol: DiscoveryProtocol) -> Option<Contact> {
-        self.contacts
-            .values()
-            .filter(|c| {
-                c.supports_protocol(protocol)
-                    && c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
-                    && !c.disposable
-            })
-            .collect::<Vec<_>>()
-            .choose(&mut rand::rngs::OsRng)
-            .cloned()
-            .cloned()
-    }
-
-    /// Get contact for ENR lookup (discv4 only)
-    fn do_get_contact_for_enr_lookup(&mut self) -> Option<Contact> {
-        self.contacts
-            .values()
-            .filter(|c| {
-                c.is_discv4
-                    && c.was_validated()
-                    && !c.has_pending_enr_request()
-                    && c.record.is_none()
-                    && !c.disposable
-            })
-            .collect::<Vec<_>>()
-            .choose(&mut rand::rngs::OsRng)
-            .cloned()
-            .cloned()
-    }
-
-    fn do_get_contacts_to_revalidate(
-        &self,
-        revalidation_interval: Duration,
-        protocol: DiscoveryProtocol,
-    ) -> Vec<Contact> {
-        self.contacts
-            .values()
-            .filter(|c| {
-                c.supports_protocol(protocol)
-                    && Self::is_validation_needed(c, revalidation_interval)
-            })
-            .cloned()
-            .collect()
-    }
-
-    fn do_validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> ContactValidation {
-        let Some(contact) = self.contacts.get(&node_id) else {
-            return ContactValidation::UnknownContact;
-        };
-        if !contact.was_validated() {
-            return ContactValidation::InvalidContact;
-        }
-
-        // Check that the IP address from which we receive the request matches the one we have stored
-        // to prevent amplification attacks.
-        if sender_ip != contact.node.ip {
-            return ContactValidation::IpMismatch;
-        }
-        ContactValidation::Valid(Box::new(contact.clone()))
-    }
-
-    /// Get closest nodes for discv4 (returns Vec<Node>)
-    fn do_get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
-        let mut nodes: Vec<(Node, usize)> = vec![];
-
-        for (contact_id, contact) in &self.contacts {
-            let dist = Self::distance(&node_id, contact_id);
-            if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
-                nodes.push((contact.node.clone(), dist));
-            } else {
-                for (i, (_, d)) in &mut nodes.iter().enumerate() {
-                    if dist < *d {
-                        nodes[i] = (contact.node.clone(), dist);
-                        break;
-                    }
-                }
-            }
-        }
-        nodes.into_iter().map(|(node, _)| node).collect()
-    }
-
-    /// Get nodes at distances for discv5 (returns Vec<NodeRecord>)
-    fn do_get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
-        self.contacts
-            .iter()
-            .filter_map(|(contact_id, contact)| {
-                let d = distance(&local_node_id, contact_id) as u32;
-                if distances.contains(&d) {
-                    contact.record.clone()
-                } else {
-                    None
-                }
-            })
-            .take(MAX_ENRS_PER_FINDNODE_RESPONSE)
-            .collect()
-    }
-
-    async fn do_new_contacts(
-        &mut self,
-        nodes: Vec<Node>,
-        local_node_id: H256,
-        protocol: DiscoveryProtocol,
-    ) {
-        for node in nodes {
-            let node_id = node.node_id();
-            if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
-                continue;
-            }
-            match self.contacts.entry(node_id) {
-                Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(Contact::new(node, protocol));
-                    METRICS.record_new_discovery().await;
-                }
-                Entry::Occupied(mut occupied_entry) => {
-                    // Contact already exists, just add the protocol
-                    occupied_entry.get_mut().add_protocol(protocol);
-                }
-            }
-        }
-    }
-
-    async fn do_new_contact_records(&mut self, node_records: Vec<NodeRecord>, local_node_id: H256) {
-        for node_record in node_records {
-            if !node_record.verify_signature() {
-                continue;
-            }
-            if let Ok(node) = Node::from_enr(&node_record) {
-                let node_id = node.node_id();
-                if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
-                    continue;
-                }
-                match self.contacts.entry(node_id) {
-                    Entry::Vacant(vacant_entry) => {
-                        let is_fork_id_valid =
-                            Self::evaluate_fork_id(&node_record, &self.store).await;
-                        let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
-                        contact.is_fork_id_valid = is_fork_id_valid;
-                        contact.record = Some(node_record);
-                        vacant_entry.insert(contact);
-                        METRICS.record_new_discovery().await;
-                    }
-                    Entry::Occupied(mut occupied_entry) => {
-                        let should_update = match occupied_entry.get().record.as_ref() {
-                            None => true,
-                            Some(r) => node_record.seq > r.seq,
-                        };
-                        let contact = occupied_entry.get_mut();
-                        contact.add_protocol(DiscoveryProtocol::Discv5);
-                        if should_update {
-                            let is_fork_id_valid =
-                                Self::evaluate_fork_id(&node_record, &self.store).await;
-                            if contact.node.ip != node.ip || contact.node.udp_port != node.udp_port
-                            {
-                                contact.validation_timestamp = None;
-                                contact.ping_id = None;
-                            }
-                            contact.node = node;
-                            contact.record = Some(node_record);
-                            contact.is_fork_id_valid = is_fork_id_valid;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
-        if let Some(remote_fork_id) = record.decode_pairs().eth {
-            backend::is_fork_id_valid(store, &remote_fork_id)
-                .await
-                .ok()
-                .or(Some(false))
-        } else {
-            Some(false)
-        }
-    }
-
-    fn do_peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> usize {
-        self.peers
-            .iter()
-            .filter_map(|(node_id, peer_data)| {
-                if !capabilities
-                    .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
-                {
-                    None
-                } else {
-                    Some(*node_id)
-                }
-            })
-            .collect::<Vec<_>>()
-            .len()
-    }
-
-    fn do_get_peer_connections(
-        &self,
-        capabilities: Vec<Capability>,
-    ) -> Vec<(H256, PeerConnection)> {
-        self.peers
-            .iter()
-            .filter_map(|(peer_id, peer_data)| {
-                if !capabilities
-                    .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
-                {
-                    return None;
-                }
-                peer_data
-                    .connection
-                    .clone()
-                    .map(|connection| (*peer_id, connection))
-            })
-            .collect()
-    }
-
-    fn do_get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
-        let peers: Vec<(H256, PeerConnection)> = self
-            .peers
-            .iter()
-            .filter_map(|(node_id, peer_data)| {
-                if !capabilities
-                    .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
-                {
-                    return None;
-                }
-                peer_data
-                    .connection
-                    .clone()
-                    .map(|connection| (*node_id, connection))
-            })
-            .collect();
-        peers.choose(&mut rand::rngs::OsRng).cloned()
-    }
-
-    fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
-        let xor = node_id_1 ^ node_id_2;
-        let dist = U256::from_big_endian(xor.as_bytes());
-        dist.bits().saturating_sub(1)
-    }
-
-    fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
-        let sent_ping_ttl = Duration::from_secs(30);
-
-        let validation_is_stale = !contact.was_validated()
-            || contact
-                .validation_timestamp
-                .map(|ts| Instant::now().saturating_duration_since(ts) > revalidation_interval)
-                .unwrap_or(false);
-
-        let sent_ping_is_stale = contact
-            .validation_timestamp
-            .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
-            .unwrap_or(false);
-
-        !contact.disposable && (validation_is_stale || sent_ping_is_stale)
-    }
-}
-
-#[actor(protocol = PeerTableServerProtocol)]
-impl PeerTableServer {
     #[started]
     async fn started(&mut self, ctx: &Context<Self>) {
         send_message_on(
@@ -1117,6 +793,330 @@ impl PeerTableServer {
         _ctx: &Context<Self>,
     ) -> Option<(H256, PeerConnection)> {
         self.do_get_random_peer(msg.capabilities)
+    }
+
+    // === Private helper methods ===
+
+    // Weighting function used to select best peer
+    fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
+        score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
+    }
+
+    // Returns if the peer has room for more connections given the current score
+    // and amount of inflight requests
+    fn can_try_more_requests(&self, score: &i64, requests: &i64) -> bool {
+        let score_ratio = (score - MIN_SCORE) as f64 / (MAX_SCORE - MIN_SCORE) as f64;
+        let max_requests = (MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio).max(1.0);
+        (*requests as f64) < max_requests
+    }
+
+    fn do_get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
+        self.peers
+            .iter()
+            .filter_map(|(id, peer_data)| {
+                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                    || !capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    None
+                } else {
+                    let connection = peer_data.connection.clone()?;
+                    Some((*id, peer_data.score, peer_data.requests, connection))
+                }
+            })
+            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
+            .map(|(k, _, _, v)| (k, v))
+    }
+
+    fn prune(&mut self) {
+        let disposable_contacts = self
+            .contacts
+            .iter()
+            .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
+            .collect::<Vec<_>>();
+
+        for contact_to_discard_id in disposable_contacts {
+            self.contacts.swap_remove(&contact_to_discard_id);
+            self.discarded_contacts.insert(contact_to_discard_id);
+        }
+    }
+
+    fn do_get_contact_to_initiate(&mut self) -> Option<Contact> {
+        for contact in self.contacts.values() {
+            let node_id = contact.node.node_id();
+            if !self.peers.contains_key(&node_id)
+                && !self.already_tried_peers.contains(&node_id)
+                && contact.knows_us
+                && !contact.unwanted
+                && contact.is_fork_id_valid != Some(false)
+            {
+                self.already_tried_peers.insert(node_id);
+                return Some(contact.clone());
+            }
+        }
+        tracing::trace!("Resetting list of tried peers.");
+        self.already_tried_peers.clear();
+        None
+    }
+
+    fn do_get_contact_for_lookup(&self, protocol: DiscoveryProtocol) -> Option<Contact> {
+        self.contacts
+            .values()
+            .filter(|c| {
+                c.supports_protocol(protocol)
+                    && c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
+                    && !c.disposable
+            })
+            .collect::<Vec<_>>()
+            .choose(&mut rand::rngs::OsRng)
+            .cloned()
+            .cloned()
+    }
+
+    /// Get contact for ENR lookup (discv4 only)
+    fn do_get_contact_for_enr_lookup(&mut self) -> Option<Contact> {
+        self.contacts
+            .values()
+            .filter(|c| {
+                c.is_discv4
+                    && c.was_validated()
+                    && !c.has_pending_enr_request()
+                    && c.record.is_none()
+                    && !c.disposable
+            })
+            .collect::<Vec<_>>()
+            .choose(&mut rand::rngs::OsRng)
+            .cloned()
+            .cloned()
+    }
+
+    fn do_get_contacts_to_revalidate(
+        &self,
+        revalidation_interval: Duration,
+        protocol: DiscoveryProtocol,
+    ) -> Vec<Contact> {
+        self.contacts
+            .values()
+            .filter(|c| {
+                c.supports_protocol(protocol)
+                    && Self::is_validation_needed(c, revalidation_interval)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn do_validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> ContactValidation {
+        let Some(contact) = self.contacts.get(&node_id) else {
+            return ContactValidation::UnknownContact;
+        };
+        if !contact.was_validated() {
+            return ContactValidation::InvalidContact;
+        }
+
+        // Check that the IP address from which we receive the request matches the one we have stored
+        // to prevent amplification attacks.
+        if sender_ip != contact.node.ip {
+            return ContactValidation::IpMismatch;
+        }
+        ContactValidation::Valid(Box::new(contact.clone()))
+    }
+
+    /// Get closest nodes for discv4 (returns Vec<Node>)
+    fn do_get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
+        let mut nodes: Vec<(Node, usize)> = vec![];
+
+        for (contact_id, contact) in &self.contacts {
+            let dist = Self::distance(&node_id, contact_id);
+            if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
+                nodes.push((contact.node.clone(), dist));
+            } else {
+                for (i, (_, d)) in &mut nodes.iter().enumerate() {
+                    if dist < *d {
+                        nodes[i] = (contact.node.clone(), dist);
+                        break;
+                    }
+                }
+            }
+        }
+        nodes.into_iter().map(|(node, _)| node).collect()
+    }
+
+    /// Get nodes at distances for discv5 (returns Vec<NodeRecord>)
+    fn do_get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
+        self.contacts
+            .iter()
+            .filter_map(|(contact_id, contact)| {
+                let d = distance(&local_node_id, contact_id) as u32;
+                if distances.contains(&d) {
+                    contact.record.clone()
+                } else {
+                    None
+                }
+            })
+            .take(MAX_ENRS_PER_FINDNODE_RESPONSE)
+            .collect()
+    }
+
+    async fn do_new_contacts(
+        &mut self,
+        nodes: Vec<Node>,
+        local_node_id: H256,
+        protocol: DiscoveryProtocol,
+    ) {
+        for node in nodes {
+            let node_id = node.node_id();
+            if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+                continue;
+            }
+            match self.contacts.entry(node_id) {
+                Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(Contact::new(node, protocol));
+                    METRICS.record_new_discovery().await;
+                }
+                Entry::Occupied(mut occupied_entry) => {
+                    // Contact already exists, just add the protocol
+                    occupied_entry.get_mut().add_protocol(protocol);
+                }
+            }
+        }
+    }
+
+    async fn do_new_contact_records(&mut self, node_records: Vec<NodeRecord>, local_node_id: H256) {
+        for node_record in node_records {
+            if !node_record.verify_signature() {
+                continue;
+            }
+            if let Ok(node) = Node::from_enr(&node_record) {
+                let node_id = node.node_id();
+                if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+                    continue;
+                }
+                match self.contacts.entry(node_id) {
+                    Entry::Vacant(vacant_entry) => {
+                        let is_fork_id_valid =
+                            Self::evaluate_fork_id(&node_record, &self.store).await;
+                        let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
+                        contact.is_fork_id_valid = is_fork_id_valid;
+                        contact.record = Some(node_record);
+                        vacant_entry.insert(contact);
+                        METRICS.record_new_discovery().await;
+                    }
+                    Entry::Occupied(mut occupied_entry) => {
+                        let should_update = match occupied_entry.get().record.as_ref() {
+                            None => true,
+                            Some(r) => node_record.seq > r.seq,
+                        };
+                        let contact = occupied_entry.get_mut();
+                        contact.add_protocol(DiscoveryProtocol::Discv5);
+                        if should_update {
+                            let is_fork_id_valid =
+                                Self::evaluate_fork_id(&node_record, &self.store).await;
+                            if contact.node.ip != node.ip || contact.node.udp_port != node.udp_port
+                            {
+                                contact.validation_timestamp = None;
+                                contact.ping_id = None;
+                            }
+                            contact.node = node;
+                            contact.record = Some(node_record);
+                            contact.is_fork_id_valid = is_fork_id_valid;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
+        if let Some(remote_fork_id) = record.decode_pairs().eth {
+            backend::is_fork_id_valid(store, &remote_fork_id)
+                .await
+                .ok()
+                .or(Some(false))
+        } else {
+            Some(false)
+        }
+    }
+
+    fn do_peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> usize {
+        self.peers
+            .iter()
+            .filter_map(|(node_id, peer_data)| {
+                if !capabilities
+                    .iter()
+                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    None
+                } else {
+                    Some(*node_id)
+                }
+            })
+            .collect::<Vec<_>>()
+            .len()
+    }
+
+    fn do_get_peer_connections(
+        &self,
+        capabilities: Vec<Capability>,
+    ) -> Vec<(H256, PeerConnection)> {
+        self.peers
+            .iter()
+            .filter_map(|(peer_id, peer_data)| {
+                if !capabilities
+                    .iter()
+                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    return None;
+                }
+                peer_data
+                    .connection
+                    .clone()
+                    .map(|connection| (*peer_id, connection))
+            })
+            .collect()
+    }
+
+    fn do_get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
+        let peers: Vec<(H256, PeerConnection)> = self
+            .peers
+            .iter()
+            .filter_map(|(node_id, peer_data)| {
+                if !capabilities
+                    .iter()
+                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    return None;
+                }
+                peer_data
+                    .connection
+                    .clone()
+                    .map(|connection| (*node_id, connection))
+            })
+            .collect();
+        peers.choose(&mut rand::rngs::OsRng).cloned()
+    }
+
+    fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
+        let xor = node_id_1 ^ node_id_2;
+        let dist = U256::from_big_endian(xor.as_bytes());
+        dist.bits().saturating_sub(1)
+    }
+
+    fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
+        let sent_ping_ttl = Duration::from_secs(30);
+
+        let validation_is_stale = !contact.was_validated()
+            || contact
+                .validation_timestamp
+                .map(|ts| Instant::now().saturating_duration_since(ts) > revalidation_interval)
+                .unwrap_or(false);
+
+        let sent_ping_is_stale = contact
+            .validation_timestamp
+            .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
+            .unwrap_or(false);
+
+        !contact.disposable && (validation_is_stale || sent_ping_is_stale)
     }
 }
 

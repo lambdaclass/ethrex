@@ -86,6 +86,7 @@ pub struct DiscoveryServer {
     initial_lookup_interval: f64,
 }
 
+#[actor(protocol = Discv4ServerProtocol)]
 impl DiscoveryServer {
     /// Spawn the discv4 discovery server.
     ///
@@ -140,6 +141,104 @@ impl DiscoveryServer {
         }
 
         Ok(discovery_server.start())
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        send_interval(
+            REVALIDATION_CHECK_INTERVAL,
+            ctx.clone(),
+            discv4_server_protocol::Revalidate,
+        );
+        send_interval(PRUNE_INTERVAL, ctx.clone(), discv4_server_protocol::Prune);
+        send_interval(
+            CHANGE_FIND_NODE_MESSAGE_INTERVAL,
+            ctx.clone(),
+            discv4_server_protocol::ChangeFindNodeMessage,
+        );
+        let _ = ctx.send(discv4_server_protocol::Lookup);
+        let _ = ctx.send(discv4_server_protocol::EnrLookup);
+        send_message_on(
+            ctx.clone(),
+            tokio::signal::ctrl_c(),
+            discv4_server_protocol::Shutdown,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_recv_message(
+        &mut self,
+        msg: discv4_server_protocol::RecvMessage,
+        _ctx: &Context<Self>,
+    ) {
+        let _ = self.process_message(*msg.message).await.inspect_err(
+            |e| error!(protocol = "discv4", err=?e, "Error Handling Discovery message"),
+        );
+    }
+
+    #[send_handler]
+    async fn handle_revalidate(
+        &mut self,
+        _msg: discv4_server_protocol::Revalidate,
+        _ctx: &Context<Self>,
+    ) {
+        trace!(protocol = "discv4", received = "Revalidate");
+        let _ = self.revalidate_peers().await.inspect_err(
+            |e| error!(protocol = "discv4", err=?e, "Error revalidating discovered peers"),
+        );
+    }
+
+    #[send_handler]
+    async fn handle_lookup(&mut self, _msg: discv4_server_protocol::Lookup, ctx: &Context<Self>) {
+        trace!(protocol = "discv4", received = "Lookup");
+        let _ = self.do_lookup().await.inspect_err(
+            |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
+        );
+
+        let interval = self.get_lookup_interval().await;
+        send_after(interval, ctx.clone(), discv4_server_protocol::Lookup);
+    }
+
+    #[send_handler]
+    async fn handle_enr_lookup(
+        &mut self,
+        _msg: discv4_server_protocol::EnrLookup,
+        ctx: &Context<Self>,
+    ) {
+        trace!(protocol = "discv4", received = "EnrLookup");
+        let _ = self.do_enr_lookup().await.inspect_err(
+            |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
+        );
+
+        let interval = self.get_lookup_interval().await;
+        send_after(interval, ctx.clone(), discv4_server_protocol::EnrLookup);
+    }
+
+    #[send_handler]
+    async fn handle_prune(&mut self, _msg: discv4_server_protocol::Prune, _ctx: &Context<Self>) {
+        trace!(protocol = "discv4", received = "Prune");
+        let _ = self
+            .do_prune()
+            .await
+            .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error Pruning peer table"));
+    }
+
+    #[send_handler]
+    async fn handle_change_find_node_message(
+        &mut self,
+        _msg: discv4_server_protocol::ChangeFindNodeMessage,
+        _ctx: &Context<Self>,
+    ) {
+        self.find_node_message = Self::random_message(&self.signer);
+    }
+
+    #[send_handler]
+    async fn handle_shutdown(
+        &mut self,
+        _msg: discv4_server_protocol::Shutdown,
+        ctx: &Context<Self>,
+    ) {
+        ctx.stop();
     }
 
     async fn process_message(
@@ -653,107 +752,6 @@ impl DiscoveryServer {
             METRICS.record_new_discarded_node();
         }
         Ok(H256::from(message_hash))
-    }
-}
-
-#[actor(protocol = Discv4ServerProtocol)]
-impl DiscoveryServer {
-    #[started]
-    async fn started(&mut self, ctx: &Context<Self>) {
-        send_interval(
-            REVALIDATION_CHECK_INTERVAL,
-            ctx.clone(),
-            discv4_server_protocol::Revalidate,
-        );
-        send_interval(PRUNE_INTERVAL, ctx.clone(), discv4_server_protocol::Prune);
-        send_interval(
-            CHANGE_FIND_NODE_MESSAGE_INTERVAL,
-            ctx.clone(),
-            discv4_server_protocol::ChangeFindNodeMessage,
-        );
-        let _ = ctx.send(discv4_server_protocol::Lookup);
-        let _ = ctx.send(discv4_server_protocol::EnrLookup);
-        send_message_on(
-            ctx.clone(),
-            tokio::signal::ctrl_c(),
-            discv4_server_protocol::Shutdown,
-        );
-    }
-
-    #[send_handler]
-    async fn handle_recv_message(
-        &mut self,
-        msg: discv4_server_protocol::RecvMessage,
-        _ctx: &Context<Self>,
-    ) {
-        let _ = self.process_message(*msg.message).await.inspect_err(
-            |e| error!(protocol = "discv4", err=?e, "Error Handling Discovery message"),
-        );
-    }
-
-    #[send_handler]
-    async fn handle_revalidate(
-        &mut self,
-        _msg: discv4_server_protocol::Revalidate,
-        _ctx: &Context<Self>,
-    ) {
-        trace!(protocol = "discv4", received = "Revalidate");
-        let _ = self.revalidate_peers().await.inspect_err(
-            |e| error!(protocol = "discv4", err=?e, "Error revalidating discovered peers"),
-        );
-    }
-
-    #[send_handler]
-    async fn handle_lookup(&mut self, _msg: discv4_server_protocol::Lookup, ctx: &Context<Self>) {
-        trace!(protocol = "discv4", received = "Lookup");
-        let _ = self.do_lookup().await.inspect_err(
-            |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
-        );
-
-        let interval = self.get_lookup_interval().await;
-        send_after(interval, ctx.clone(), discv4_server_protocol::Lookup);
-    }
-
-    #[send_handler]
-    async fn handle_enr_lookup(
-        &mut self,
-        _msg: discv4_server_protocol::EnrLookup,
-        ctx: &Context<Self>,
-    ) {
-        trace!(protocol = "discv4", received = "EnrLookup");
-        let _ = self.do_enr_lookup().await.inspect_err(
-            |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
-        );
-
-        let interval = self.get_lookup_interval().await;
-        send_after(interval, ctx.clone(), discv4_server_protocol::EnrLookup);
-    }
-
-    #[send_handler]
-    async fn handle_prune(&mut self, _msg: discv4_server_protocol::Prune, _ctx: &Context<Self>) {
-        trace!(protocol = "discv4", received = "Prune");
-        let _ = self
-            .do_prune()
-            .await
-            .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error Pruning peer table"));
-    }
-
-    #[send_handler]
-    async fn handle_change_find_node_message(
-        &mut self,
-        _msg: discv4_server_protocol::ChangeFindNodeMessage,
-        _ctx: &Context<Self>,
-    ) {
-        self.find_node_message = Self::random_message(&self.signer);
-    }
-
-    #[send_handler]
-    async fn handle_shutdown(
-        &mut self,
-        _msg: discv4_server_protocol::Shutdown,
-        ctx: &Context<Self>,
-    ) {
-        ctx.stop();
     }
 }
 

@@ -110,7 +110,109 @@ pub struct TxBroadcaster {
     tx_broadcasting_time_interval: u64,
 }
 
+pub async fn send_tx_hashes(
+    txs: Vec<MempoolTransaction>,
+    capabilities: Vec<Capability>,
+    connection: &mut PeerConnection,
+    peer_id: H256,
+    blockchain: &Arc<Blockchain>,
+) -> Result<(), TxBroadcasterError> {
+    if SUPPORTED_ETH_CAPABILITIES
+        .iter()
+        .any(|cap| capabilities.contains(cap))
+    {
+        for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+            let tx_count = tx_chunk.len();
+            let mut txs_to_send = Vec::with_capacity(tx_count);
+            for tx in tx_chunk {
+                txs_to_send.push((**tx).clone());
+            }
+            let hashes_message = Message::NewPooledTransactionHashes(
+                NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
+            );
+            connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
+                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
+            });
+        }
+    }
+    Ok(())
+}
+
+#[actor(protocol = TxBroadcasterProtocol)]
 impl TxBroadcaster {
+    pub fn spawn(
+        kademlia: PeerTable,
+        blockchain: Arc<Blockchain>,
+        tx_broadcasting_time_interval: u64,
+    ) -> Result<ActorRef<TxBroadcaster>, TxBroadcasterError> {
+        info!("Starting Transaction Broadcaster");
+
+        let state = TxBroadcaster {
+            peer_table: kademlia,
+            blockchain,
+            known_txs: HashMap::new(),
+            peer_indexer: HashMap::new(),
+            next_peer_idx: 0,
+            tx_broadcasting_time_interval,
+        };
+
+        Ok(state.start())
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        send_interval(
+            Duration::from_millis(self.tx_broadcasting_time_interval),
+            ctx.clone(),
+            tx_broadcaster_protocol::BroadcastTxs,
+        );
+
+        send_interval(
+            Duration::from_secs(PRUNE_INTERVAL_SECS),
+            ctx.clone(),
+            tx_broadcaster_protocol::PruneTxs,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_broadcast_txs(
+        &mut self,
+        _msg: tx_broadcaster_protocol::BroadcastTxs,
+        _ctx: &Context<Self>,
+    ) {
+        trace!(received = "BroadcastTxs");
+
+        let _ = self.do_broadcast_txs().await.inspect_err(|_| {
+            error!("Failed to broadcast transactions");
+        });
+    }
+
+    #[send_handler]
+    async fn handle_add_txs(&mut self, msg: tx_broadcaster_protocol::AddTxs, _ctx: &Context<Self>) {
+        debug!(received = "AddTxs", tx_count = msg.tx_hashes.len());
+        self.do_add_txs(msg.tx_hashes, msg.peer_id);
+    }
+
+    #[send_handler]
+    async fn handle_prune_txs(
+        &mut self,
+        _msg: tx_broadcaster_protocol::PruneTxs,
+        _ctx: &Context<Self>,
+    ) {
+        debug!(received = "PruneTxs");
+        let now = Instant::now();
+        let before = self.known_txs.len();
+        let prune_window = Duration::from_secs(PRUNE_WAIT_TIME_SECS);
+
+        self.known_txs
+            .retain(|_, record| now.duration_since(record.last_sent) < prune_window);
+        debug!(
+            before = before,
+            after = self.known_txs.len(),
+            "Pruned old broadcasted transactions"
+        );
+    }
+
     // Get or assign a unique index to the peer_id
     #[inline]
     fn peer_index(&mut self, peer_id: H256) -> u32 {
@@ -246,110 +348,6 @@ impl TxBroadcaster {
             &self.blockchain,
         )
         .await
-    }
-}
-
-pub async fn send_tx_hashes(
-    txs: Vec<MempoolTransaction>,
-    capabilities: Vec<Capability>,
-    connection: &mut PeerConnection,
-    peer_id: H256,
-    blockchain: &Arc<Blockchain>,
-) -> Result<(), TxBroadcasterError> {
-    if SUPPORTED_ETH_CAPABILITIES
-        .iter()
-        .any(|cap| capabilities.contains(cap))
-    {
-        for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-            let tx_count = tx_chunk.len();
-            let mut txs_to_send = Vec::with_capacity(tx_count);
-            for tx in tx_chunk {
-                txs_to_send.push((**tx).clone());
-            }
-            let hashes_message = Message::NewPooledTransactionHashes(
-                NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
-            );
-            connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
-            });
-        }
-    }
-    Ok(())
-}
-
-#[actor(protocol = TxBroadcasterProtocol)]
-impl TxBroadcaster {
-    pub fn spawn(
-        kademlia: PeerTable,
-        blockchain: Arc<Blockchain>,
-        tx_broadcasting_time_interval: u64,
-    ) -> Result<ActorRef<TxBroadcaster>, TxBroadcasterError> {
-        info!("Starting Transaction Broadcaster");
-
-        let state = TxBroadcaster {
-            peer_table: kademlia,
-            blockchain,
-            known_txs: HashMap::new(),
-            peer_indexer: HashMap::new(),
-            next_peer_idx: 0,
-            tx_broadcasting_time_interval,
-        };
-
-        Ok(state.start())
-    }
-
-    #[started]
-    async fn started(&mut self, ctx: &Context<Self>) {
-        send_interval(
-            Duration::from_millis(self.tx_broadcasting_time_interval),
-            ctx.clone(),
-            tx_broadcaster_protocol::BroadcastTxs,
-        );
-
-        send_interval(
-            Duration::from_secs(PRUNE_INTERVAL_SECS),
-            ctx.clone(),
-            tx_broadcaster_protocol::PruneTxs,
-        );
-    }
-
-    #[send_handler]
-    async fn handle_broadcast_txs(
-        &mut self,
-        _msg: tx_broadcaster_protocol::BroadcastTxs,
-        _ctx: &Context<Self>,
-    ) {
-        trace!(received = "BroadcastTxs");
-
-        let _ = self.do_broadcast_txs().await.inspect_err(|_| {
-            error!("Failed to broadcast transactions");
-        });
-    }
-
-    #[send_handler]
-    async fn handle_add_txs(&mut self, msg: tx_broadcaster_protocol::AddTxs, _ctx: &Context<Self>) {
-        debug!(received = "AddTxs", tx_count = msg.tx_hashes.len());
-        self.do_add_txs(msg.tx_hashes, msg.peer_id);
-    }
-
-    #[send_handler]
-    async fn handle_prune_txs(
-        &mut self,
-        _msg: tx_broadcaster_protocol::PruneTxs,
-        _ctx: &Context<Self>,
-    ) {
-        debug!(received = "PruneTxs");
-        let now = Instant::now();
-        let before = self.known_txs.len();
-        let prune_window = Duration::from_secs(PRUNE_WAIT_TIME_SECS);
-
-        self.known_txs
-            .retain(|_, record| now.duration_since(record.last_sent) < prune_window);
-        debug!(
-            before = before,
-            after = self.known_txs.len(),
-            "Pruned old broadcasted transactions"
-        );
     }
 }
 

@@ -476,9 +476,7 @@ impl PeerConnectionServer {
             error!("Connection not yet established");
         }
     }
-}
 
-impl PeerConnectionServer {
     fn process_cast_error(
         state: &ConnectionState,
         result: Result<(), PeerConnectionError>,

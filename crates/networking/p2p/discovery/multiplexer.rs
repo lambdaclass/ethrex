@@ -67,6 +67,27 @@ pub struct DiscoveryMultiplexer {
     discv5_handle: Option<ActorRef<Discv5Server>>,
 }
 
+#[derive(Debug, Error)]
+pub enum DiscoveryMultiplexerError {
+    #[error("Internal actor error: {0}")]
+    ActorError(#[from] ActorError),
+}
+
+/// Check if a packet is a discv4 packet by verifying the hash.
+/// DiscV4 packets have structure: hash (32 bytes) || signature (65 bytes) || type (1 byte) || data
+/// where hash == keccak256(rest_of_packet)
+pub fn is_discv4_packet(data: &[u8]) -> bool {
+    if data.len() < DISCV4_MIN_PACKET_SIZE {
+        return false;
+    }
+
+    let packet_hash = &data[0..32];
+    let computed_hash = keccak(&data[32..]);
+
+    packet_hash == computed_hash.as_bytes()
+}
+
+#[actor(protocol = DiscoveryMultiplexerProtocol)]
 impl DiscoveryMultiplexer {
     /// Create a new discovery multiplexer.
     #[allow(unused_variables)]
@@ -91,30 +112,7 @@ impl DiscoveryMultiplexer {
     pub fn start_actor(self) -> ActorRef<Self> {
         self.start()
     }
-}
 
-#[derive(Debug, Error)]
-pub enum DiscoveryMultiplexerError {
-    #[error("Internal actor error: {0}")]
-    ActorError(#[from] ActorError),
-}
-
-/// Check if a packet is a discv4 packet by verifying the hash.
-/// DiscV4 packets have structure: hash (32 bytes) || signature (65 bytes) || type (1 byte) || data
-/// where hash == keccak256(rest_of_packet)
-pub fn is_discv4_packet(data: &[u8]) -> bool {
-    if data.len() < DISCV4_MIN_PACKET_SIZE {
-        return false;
-    }
-
-    let packet_hash = &data[0..32];
-    let computed_hash = keccak(&data[32..]);
-
-    packet_hash == computed_hash.as_bytes()
-}
-
-#[actor(protocol = DiscoveryMultiplexerProtocol)]
-impl DiscoveryMultiplexer {
     #[started]
     async fn started(&mut self, ctx: &Context<Self>) {
         let local_addr = self.udp_socket.local_addr();
@@ -167,9 +165,7 @@ impl DiscoveryMultiplexer {
     ) {
         ctx.stop();
     }
-}
 
-impl DiscoveryMultiplexer {
     /// Route a packet to the appropriate protocol handler.
     async fn route_packet(&mut self, data: &[u8], from: SocketAddr) {
         if is_discv4_packet(data) {

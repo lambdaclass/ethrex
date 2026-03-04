@@ -71,6 +71,52 @@ pub struct L1WatcherHealth {
     pub bridge_address: Address,
 }
 
+pub async fn filter_verified_messages(
+    bridge_address: Address,
+    l1_client: &EthClient,
+    l2_client: &L2Client,
+    logs: Vec<RpcLog>,
+) -> Result<Vec<(L2Message, u64, u64)>, L1WatcherError> {
+    let mut verified_logs = Vec::new();
+    debug!("Filtering L2 messages");
+
+    // Check if the transaction is marked as pending in the contract.
+    let pending_l2_messages =
+        get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
+
+    debug!("Pending l2 messages {:?}", pending_l2_messages);
+
+    for rpc_log in logs {
+        let log = Log {
+            address: rpc_log.log.address,
+            topics: rpc_log.log.topics.clone(),
+            data: rpc_log.log.data.clone(),
+        };
+
+        let Some(l2_message) = L2Message::from_log(&log, l2_client.chain_id) else {
+            return Err(L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse L2Message from log".to_owned(),
+            ));
+        };
+
+        debug!("l2 message parsed from log: {:?}", l2_message);
+
+        let message_hash = get_l2_message_hash(&l2_message);
+        if !pending_l2_messages.contains(&message_hash) {
+            info!("L2 message not found in pending messages: {message_hash:#x}");
+            // Message not verified.
+            // Given that logs are fetched in block order, we can stop here.
+            break;
+        }
+        info!("L2 message verified: {message_hash:#x}");
+
+        verified_logs.push((l2_message, rpc_log.block_number, l2_client.chain_id));
+    }
+
+    Ok(verified_logs)
+}
+
+#[actor(protocol = L1WatcherProtocol)]
 impl L1Watcher {
     pub fn new(
         store: Store,
@@ -130,7 +176,140 @@ impl L1Watcher {
         })
     }
 
-    // spawn is in the #[actor] impl block below
+    pub fn spawn(
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        cfg: SequencerConfig,
+        sequencer_state: SequencerState,
+        l2_url: Url,
+    ) -> Result<ActorRef<L1Watcher>, L1WatcherError> {
+        let state = Self::new(
+            store,
+            blockchain,
+            &cfg.eth,
+            &cfg.l1_watcher,
+            sequencer_state,
+            l2_url,
+        )?;
+        Ok(state.start())
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(l1_watcher_protocol::WatchLogsL1)
+            .inspect_err(|e| error!("Failed to send initial WatchLogsL1: {e}"));
+        let _ = ctx
+            .send(l1_watcher_protocol::WatchLogsL2)
+            .inspect_err(|e| error!("Failed to send initial WatchLogsL2: {e}"));
+        let _ = ctx
+            .send(l1_watcher_protocol::UpdateL1BlobBaseFee)
+            .inspect_err(|e| error!("Failed to send initial UpdateL1BlobBaseFee: {e}"));
+    }
+
+    #[send_handler]
+    async fn handle_watch_logs_l1(
+        &mut self,
+        _msg: l1_watcher_protocol::WatchLogsL1,
+        ctx: &Context<Self>,
+    ) {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
+            self.watch_l1().await;
+        }
+        let check_interval = random_duration(self.check_interval);
+        send_after(
+            check_interval,
+            ctx.clone(),
+            l1_watcher_protocol::WatchLogsL1,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_watch_logs_l2(
+        &mut self,
+        _msg: l1_watcher_protocol::WatchLogsL2,
+        ctx: &Context<Self>,
+    ) {
+        info!("Watching L2 logs");
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
+            self.watch_l2s().await;
+        }
+        let check_interval = random_duration(self.check_interval);
+        send_after(
+            check_interval,
+            ctx.clone(),
+            l1_watcher_protocol::WatchLogsL2,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_update_l1_blob_base_fee(
+        &mut self,
+        _msg: l1_watcher_protocol::UpdateL1BlobBaseFee,
+        ctx: &Context<Self>,
+    ) {
+        info!("Updating L1 blob base fee");
+        let Ok(blob_base_fee) = self
+            .eth_client
+            .get_blob_base_fee(BlockIdentifier::Tag(BlockTag::Latest))
+            .await
+            .inspect_err(|e| {
+                error!("Failed to fetch L1 blob base fee: {e}");
+            })
+        else {
+            return;
+        };
+
+        info!("Fetched L1 blob base fee: {blob_base_fee}");
+
+        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
+            error!("Invalid blockchain type. Expected L2.");
+            return;
+        };
+
+        let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
+            error!("Fee config lock was poisoned when updating L1 blob base fee");
+            return;
+        };
+
+        let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_mut() else {
+            warn!("L1 fee config is not set. Skipping L1 blob base fee update.");
+            return;
+        };
+
+        info!(
+            "Updating L1 blob base fee from {} to {}",
+            l1_fee_config.l1_fee_per_blob_gas, blob_base_fee
+        );
+
+        l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
+
+        let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
+        send_after(
+            interval,
+            ctx.clone(),
+            l1_watcher_protocol::UpdateL1BlobBaseFee,
+        );
+    }
+
+    #[request_handler]
+    async fn handle_health(
+        &mut self,
+        _msg: l1_watcher_protocol::Health,
+        _ctx: &Context<Self>,
+    ) -> L1WatcherHealth {
+        let l1_rpc_healthcheck = self.eth_client.test_urls().await;
+
+        L1WatcherHealth {
+            l1_rpc_healthcheck,
+            max_block_step: self.max_block_step.to_string(),
+            last_block_fetched: self.last_block_fetched_l1.to_string(),
+            check_interval: self.check_interval,
+            l1_block_delay: self.l1_block_delay,
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
+            bridge_address: self.bridge_address,
+        }
+    }
 
     async fn watch_l1(&mut self) {
         let Ok(logs) = self
@@ -443,188 +622,5 @@ impl L1Watcher {
             .iter()
             .map(|(msg, _, chain_id)| (msg.clone(), *chain_id))
             .collect())
-    }
-}
-
-pub async fn filter_verified_messages(
-    bridge_address: Address,
-    l1_client: &EthClient,
-    l2_client: &L2Client,
-    logs: Vec<RpcLog>,
-) -> Result<Vec<(L2Message, u64, u64)>, L1WatcherError> {
-    let mut verified_logs = Vec::new();
-    debug!("Filtering L2 messages");
-
-    // Check if the transaction is marked as pending in the contract.
-    let pending_l2_messages =
-        get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
-
-    debug!("Pending l2 messages {:?}", pending_l2_messages);
-
-    for rpc_log in logs {
-        let log = Log {
-            address: rpc_log.log.address,
-            topics: rpc_log.log.topics.clone(),
-            data: rpc_log.log.data.clone(),
-        };
-
-        let Some(l2_message) = L2Message::from_log(&log, l2_client.chain_id) else {
-            return Err(L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse L2Message from log".to_owned(),
-            ));
-        };
-
-        debug!("l2 message parsed from log: {:?}", l2_message);
-
-        let message_hash = get_l2_message_hash(&l2_message);
-        if !pending_l2_messages.contains(&message_hash) {
-            info!("L2 message not found in pending messages: {message_hash:#x}");
-            // Message not verified.
-            // Given that logs are fetched in block order, we can stop here.
-            break;
-        }
-        info!("L2 message verified: {message_hash:#x}");
-
-        verified_logs.push((l2_message, rpc_log.block_number, l2_client.chain_id));
-    }
-
-    Ok(verified_logs)
-}
-
-#[actor(protocol = L1WatcherProtocol)]
-impl L1Watcher {
-    pub fn spawn(
-        store: Store,
-        blockchain: Arc<Blockchain>,
-        cfg: SequencerConfig,
-        sequencer_state: SequencerState,
-        l2_url: Url,
-    ) -> Result<ActorRef<L1Watcher>, L1WatcherError> {
-        let state = Self::new(
-            store,
-            blockchain,
-            &cfg.eth,
-            &cfg.l1_watcher,
-            sequencer_state,
-            l2_url,
-        )?;
-        Ok(state.start())
-    }
-
-    #[started]
-    async fn started(&mut self, ctx: &Context<Self>) {
-        let _ = ctx
-            .send(l1_watcher_protocol::WatchLogsL1)
-            .inspect_err(|e| error!("Failed to send initial WatchLogsL1: {e}"));
-        let _ = ctx
-            .send(l1_watcher_protocol::WatchLogsL2)
-            .inspect_err(|e| error!("Failed to send initial WatchLogsL2: {e}"));
-        let _ = ctx
-            .send(l1_watcher_protocol::UpdateL1BlobBaseFee)
-            .inspect_err(|e| error!("Failed to send initial UpdateL1BlobBaseFee: {e}"));
-    }
-
-    #[send_handler]
-    async fn handle_watch_logs_l1(
-        &mut self,
-        _msg: l1_watcher_protocol::WatchLogsL1,
-        ctx: &Context<Self>,
-    ) {
-        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
-            self.watch_l1().await;
-        }
-        let check_interval = random_duration(self.check_interval);
-        send_after(
-            check_interval,
-            ctx.clone(),
-            l1_watcher_protocol::WatchLogsL1,
-        );
-    }
-
-    #[send_handler]
-    async fn handle_watch_logs_l2(
-        &mut self,
-        _msg: l1_watcher_protocol::WatchLogsL2,
-        ctx: &Context<Self>,
-    ) {
-        info!("Watching L2 logs");
-        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
-            self.watch_l2s().await;
-        }
-        let check_interval = random_duration(self.check_interval);
-        send_after(
-            check_interval,
-            ctx.clone(),
-            l1_watcher_protocol::WatchLogsL2,
-        );
-    }
-
-    #[send_handler]
-    async fn handle_update_l1_blob_base_fee(
-        &mut self,
-        _msg: l1_watcher_protocol::UpdateL1BlobBaseFee,
-        ctx: &Context<Self>,
-    ) {
-        info!("Updating L1 blob base fee");
-        let Ok(blob_base_fee) = self
-            .eth_client
-            .get_blob_base_fee(BlockIdentifier::Tag(BlockTag::Latest))
-            .await
-            .inspect_err(|e| {
-                error!("Failed to fetch L1 blob base fee: {e}");
-            })
-        else {
-            return;
-        };
-
-        info!("Fetched L1 blob base fee: {blob_base_fee}");
-
-        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
-            error!("Invalid blockchain type. Expected L2.");
-            return;
-        };
-
-        let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
-            error!("Fee config lock was poisoned when updating L1 blob base fee");
-            return;
-        };
-
-        let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_mut() else {
-            warn!("L1 fee config is not set. Skipping L1 blob base fee update.");
-            return;
-        };
-
-        info!(
-            "Updating L1 blob base fee from {} to {}",
-            l1_fee_config.l1_fee_per_blob_gas, blob_base_fee
-        );
-
-        l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
-
-        let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
-        send_after(
-            interval,
-            ctx.clone(),
-            l1_watcher_protocol::UpdateL1BlobBaseFee,
-        );
-    }
-
-    #[request_handler]
-    async fn handle_health(
-        &mut self,
-        _msg: l1_watcher_protocol::Health,
-        _ctx: &Context<Self>,
-    ) -> L1WatcherHealth {
-        let l1_rpc_healthcheck = self.eth_client.test_urls().await;
-
-        L1WatcherHealth {
-            l1_rpc_healthcheck,
-            max_block_step: self.max_block_step.to_string(),
-            last_block_fetched: self.last_block_fetched_l1.to_string(),
-            check_interval: self.check_interval,
-            l1_block_delay: self.l1_block_delay,
-            sequencer_state: format!("{:?}", self.sequencer_state.status()),
-            bridge_address: self.bridge_address,
-        }
     }
 }

@@ -125,6 +125,7 @@ pub struct DiscoveryServer {
     first_ip_vote_round_completed: bool,
 }
 
+#[actor(protocol = Discv5ServerProtocol)]
 impl DiscoveryServer {
     /// Spawn the discv5 discovery server.
     ///
@@ -177,6 +178,79 @@ impl DiscoveryServer {
         Ok(discovery_server.start())
     }
 
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        send_interval(
+            REVALIDATION_CHECK_INTERVAL,
+            ctx.clone(),
+            discv5_server_protocol::Revalidate,
+        );
+        send_interval(PRUNE_INTERVAL, ctx.clone(), discv5_server_protocol::Prune);
+        let _ = ctx.send(discv5_server_protocol::Lookup);
+        send_message_on(
+            ctx.clone(),
+            tokio::signal::ctrl_c(),
+            discv5_server_protocol::Shutdown,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_message_msg(
+        &mut self,
+        msg: discv5_server_protocol::RecvMessage,
+        _ctx: &Context<Self>,
+    ) {
+        let _ = self
+            .handle_packet(*msg.message)
+            .await
+            // log level trace as we don't want to spam decoding errors from bad peers.
+            .inspect_err(
+                |e| trace!(protocol = "discv5", err=%e, "Error Handling Discovery message"),
+            );
+    }
+
+    #[send_handler]
+    async fn handle_revalidate(
+        &mut self,
+        _msg: discv5_server_protocol::Revalidate,
+        _ctx: &Context<Self>,
+    ) {
+        trace!(protocol = "discv5", received = "Revalidate");
+        let _ = self.do_revalidate().await.inspect_err(
+            |e| error!(protocol = "discv5", err=%e, "Error revalidating discovered peers"),
+        );
+    }
+
+    #[send_handler]
+    async fn handle_lookup(&mut self, _msg: discv5_server_protocol::Lookup, ctx: &Context<Self>) {
+        trace!(protocol = "discv5", received = "Lookup");
+        let _ = self.do_lookup().await.inspect_err(
+            |e| error!(protocol = "discv5", err=%e, "Error performing Discovery lookup"),
+        );
+
+        let interval = self.get_lookup_interval().await;
+        send_after(interval, ctx.clone(), discv5_server_protocol::Lookup);
+    }
+
+    #[send_handler]
+    async fn handle_prune(&mut self, _msg: discv5_server_protocol::Prune, _ctx: &Context<Self>) {
+        trace!(protocol = "discv5", received = "Prune");
+        let _ = self
+            .do_prune()
+            .await
+            .inspect_err(|e| error!(protocol = "discv5", err=?e, "Error Pruning peer table"));
+        self.cleanup_stale_entries();
+    }
+
+    #[send_handler]
+    async fn handle_shutdown(
+        &mut self,
+        _msg: discv5_server_protocol::Shutdown,
+        ctx: &Context<Self>,
+    ) {
+        ctx.stop();
+    }
+
     async fn handle_packet(
         &mut self,
         Discv5Message { packet, from }: Discv5Message,
@@ -192,6 +266,7 @@ impl DiscoveryServer {
             }
         }
     }
+
     async fn handle_ordinary(
         &mut self,
         packet: Packet,
@@ -942,82 +1017,6 @@ impl DiscoveryServer {
             Message::Ticket(_ticket_message) => (),
         }
         Ok(())
-    }
-}
-
-#[actor(protocol = Discv5ServerProtocol)]
-impl DiscoveryServer {
-    #[started]
-    async fn started(&mut self, ctx: &Context<Self>) {
-        send_interval(
-            REVALIDATION_CHECK_INTERVAL,
-            ctx.clone(),
-            discv5_server_protocol::Revalidate,
-        );
-        send_interval(PRUNE_INTERVAL, ctx.clone(), discv5_server_protocol::Prune);
-        let _ = ctx.send(discv5_server_protocol::Lookup);
-        send_message_on(
-            ctx.clone(),
-            tokio::signal::ctrl_c(),
-            discv5_server_protocol::Shutdown,
-        );
-    }
-
-    #[send_handler]
-    async fn handle_message_msg(
-        &mut self,
-        msg: discv5_server_protocol::RecvMessage,
-        _ctx: &Context<Self>,
-    ) {
-        let _ = self
-            .handle_packet(*msg.message)
-            .await
-            // log level trace as we don't want to spam decoding errors from bad peers.
-            .inspect_err(
-                |e| trace!(protocol = "discv5", err=%e, "Error Handling Discovery message"),
-            );
-    }
-
-    #[send_handler]
-    async fn handle_revalidate(
-        &mut self,
-        _msg: discv5_server_protocol::Revalidate,
-        _ctx: &Context<Self>,
-    ) {
-        trace!(protocol = "discv5", received = "Revalidate");
-        let _ = self.do_revalidate().await.inspect_err(
-            |e| error!(protocol = "discv5", err=%e, "Error revalidating discovered peers"),
-        );
-    }
-
-    #[send_handler]
-    async fn handle_lookup(&mut self, _msg: discv5_server_protocol::Lookup, ctx: &Context<Self>) {
-        trace!(protocol = "discv5", received = "Lookup");
-        let _ = self.do_lookup().await.inspect_err(
-            |e| error!(protocol = "discv5", err=%e, "Error performing Discovery lookup"),
-        );
-
-        let interval = self.get_lookup_interval().await;
-        send_after(interval, ctx.clone(), discv5_server_protocol::Lookup);
-    }
-
-    #[send_handler]
-    async fn handle_prune(&mut self, _msg: discv5_server_protocol::Prune, _ctx: &Context<Self>) {
-        trace!(protocol = "discv5", received = "Prune");
-        let _ = self
-            .do_prune()
-            .await
-            .inspect_err(|e| error!(protocol = "discv5", err=?e, "Error Pruning peer table"));
-        self.cleanup_stale_entries();
-    }
-
-    #[send_handler]
-    async fn handle_shutdown(
-        &mut self,
-        _msg: discv5_server_protocol::Shutdown,
-        ctx: &Context<Self>,
-    ) {
-        ctx.stop();
     }
 }
 

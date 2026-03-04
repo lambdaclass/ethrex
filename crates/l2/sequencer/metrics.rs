@@ -42,6 +42,7 @@ pub struct MetricsGathererHealth {
     pub check_interval: Duration,
 }
 
+#[actor(protocol = MetricsGathererProtocol)]
 impl MetricsGatherer {
     pub fn new(
         rollup_store: StoreRollup,
@@ -60,7 +61,52 @@ impl MetricsGatherer {
         })
     }
 
-    // spawn is in the #[actor] impl block below
+    pub async fn spawn(
+        cfg: &SequencerConfig,
+        rollup_store: StoreRollup,
+        l2_url: Url,
+    ) -> Result<ActorRef<MetricsGatherer>, MetricsGathererError> {
+        let metrics = Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)?;
+        let actor_ref = metrics.start();
+        actor_ref
+            .send(metrics_gatherer_protocol::Gather)
+            .map_err(MetricsGathererError::InternalError)?;
+        Ok(actor_ref)
+    }
+
+    #[send_handler]
+    async fn handle_gather(
+        &mut self,
+        _msg: metrics_gatherer_protocol::Gather,
+        ctx: &Context<Self>,
+    ) {
+        let _ = self
+            .gather_metrics()
+            .await
+            .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
+        send_after(
+            self.check_interval,
+            ctx.clone(),
+            metrics_gatherer_protocol::Gather,
+        );
+    }
+
+    #[request_handler]
+    async fn handle_health(
+        &mut self,
+        _msg: metrics_gatherer_protocol::Health,
+        _ctx: &Context<Self>,
+    ) -> MetricsGathererHealth {
+        let l1_rpc_healthcheck = self.l1_eth_client.test_urls().await;
+        let l2_rpc_healthcheck = self.l2_eth_client.test_urls().await;
+
+        MetricsGathererHealth {
+            l1_rpc_healthcheck,
+            l2_rpc_healthcheck,
+            on_chain_proposer_address: self.on_chain_proposer_address,
+            check_interval: self.check_interval,
+        }
+    }
 
     async fn gather_metrics(&self) -> Result<(), MetricsGathererError> {
         let last_committed_batch =
@@ -119,55 +165,5 @@ impl MetricsGatherer {
 
         debug!("L2 Metrics Gathered");
         Ok(())
-    }
-}
-
-#[actor(protocol = MetricsGathererProtocol)]
-impl MetricsGatherer {
-    pub async fn spawn(
-        cfg: &SequencerConfig,
-        rollup_store: StoreRollup,
-        l2_url: Url,
-    ) -> Result<ActorRef<MetricsGatherer>, MetricsGathererError> {
-        let metrics = Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)?;
-        let actor_ref = metrics.start();
-        actor_ref
-            .send(metrics_gatherer_protocol::Gather)
-            .map_err(MetricsGathererError::InternalError)?;
-        Ok(actor_ref)
-    }
-
-    #[send_handler]
-    async fn handle_gather(
-        &mut self,
-        _msg: metrics_gatherer_protocol::Gather,
-        ctx: &Context<Self>,
-    ) {
-        let _ = self
-            .gather_metrics()
-            .await
-            .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
-        send_after(
-            self.check_interval,
-            ctx.clone(),
-            metrics_gatherer_protocol::Gather,
-        );
-    }
-
-    #[request_handler]
-    async fn handle_health(
-        &mut self,
-        _msg: metrics_gatherer_protocol::Health,
-        _ctx: &Context<Self>,
-    ) -> MetricsGathererHealth {
-        let l1_rpc_healthcheck = self.l1_eth_client.test_urls().await;
-        let l2_rpc_healthcheck = self.l2_eth_client.test_urls().await;
-
-        MetricsGathererHealth {
-            l1_rpc_healthcheck,
-            l2_rpc_healthcheck,
-            on_chain_proposer_address: self.on_chain_proposer_address,
-            check_interval: self.check_interval,
-        }
     }
 }

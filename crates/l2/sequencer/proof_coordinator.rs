@@ -52,6 +52,7 @@ pub struct ProofCoordinator {
     prover_timeout: Duration,
 }
 
+#[actor(protocol = ProofCoordinatorProtocol)]
 impl ProofCoordinator {
     pub fn new(
         config: &SequencerConfig,
@@ -95,7 +96,30 @@ impl ProofCoordinator {
         })
     }
 
-    // spawn is in the #[actor] impl block below
+    pub async fn spawn(
+        rollup_store: StoreRollup,
+        cfg: SequencerConfig,
+        needed_proof_types: Vec<ProverType>,
+    ) -> Result<(), ProofCoordinatorError> {
+        let state = Self::new(&cfg, rollup_store, needed_proof_types)?;
+        let listener =
+            Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
+        let actor_ref = state.start();
+        actor_ref
+            .send(proof_coordinator_protocol::Listen { listener })
+            .map_err(|e| ProofCoordinatorError::InternalError(e.to_string()))?;
+        Ok(())
+    }
+
+    #[send_handler]
+    async fn handle_listen(
+        &mut self,
+        msg: proof_coordinator_protocol::Listen,
+        ctx: &Context<Self>,
+    ) {
+        self.handle_listens(msg.listener).await;
+        ctx.stop();
+    }
 
     async fn handle_listens(&self, listener: Arc<TcpListener>) {
         info!("Starting TCP server at {}:{}.", self.listen_ip, self.port);
@@ -338,34 +362,6 @@ impl ProofCoordinator {
     }
 }
 
-#[actor(protocol = ProofCoordinatorProtocol)]
-impl ProofCoordinator {
-    pub async fn spawn(
-        rollup_store: StoreRollup,
-        cfg: SequencerConfig,
-        needed_proof_types: Vec<ProverType>,
-    ) -> Result<(), ProofCoordinatorError> {
-        let state = Self::new(&cfg, rollup_store, needed_proof_types)?;
-        let listener =
-            Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
-        let actor_ref = state.start();
-        actor_ref
-            .send(proof_coordinator_protocol::Listen { listener })
-            .map_err(|e| ProofCoordinatorError::InternalError(e.to_string()))?;
-        Ok(())
-    }
-
-    #[send_handler]
-    async fn handle_listen(
-        &mut self,
-        msg: proof_coordinator_protocol::Listen,
-        ctx: &Context<Self>,
-    ) {
-        self.handle_listens(msg.listener).await;
-        ctx.stop();
-    }
-}
-
 pub type ConnectionHandlerRef = std::sync::Arc<dyn ConnectionHandlerProtocol>;
 
 #[protocol]
@@ -378,9 +374,39 @@ struct ConnectionHandler {
     proof_coordinator: ProofCoordinator,
 }
 
+#[actor(protocol = ConnectionHandlerProtocol)]
 impl ConnectionHandler {
     fn new(proof_coordinator: ProofCoordinator) -> Self {
         Self { proof_coordinator }
+    }
+
+    async fn spawn(
+        proof_coordinator: ProofCoordinator,
+        stream: TcpStream,
+        addr: SocketAddr,
+    ) -> Result<(), ConnectionHandlerError> {
+        let connection_handler = Self::new(proof_coordinator);
+        let actor_ref = connection_handler.start();
+        actor_ref
+            .send(connection_handler_protocol::Connection {
+                stream: Arc::new(stream),
+                addr,
+            })
+            .map_err(ConnectionHandlerError::InternalError)
+    }
+
+    #[send_handler]
+    async fn handle_connection_msg(
+        &mut self,
+        msg: connection_handler_protocol::Connection,
+        ctx: &Context<Self>,
+    ) {
+        if let Err(err) = self.handle_connection(msg.stream).await {
+            error!("Error handling connection from {}: {err}", msg.addr);
+        } else {
+            debug!("Connection from {} handled successfully", msg.addr);
+        }
+        ctx.stop();
     }
 
     async fn handle_connection(
@@ -443,38 +469,6 @@ impl ConnectionHandler {
             error!("Unable to use stream");
         }
         Ok(())
-    }
-}
-
-#[actor(protocol = ConnectionHandlerProtocol)]
-impl ConnectionHandler {
-    async fn spawn(
-        proof_coordinator: ProofCoordinator,
-        stream: TcpStream,
-        addr: SocketAddr,
-    ) -> Result<(), ConnectionHandlerError> {
-        let connection_handler = Self::new(proof_coordinator);
-        let actor_ref = connection_handler.start();
-        actor_ref
-            .send(connection_handler_protocol::Connection {
-                stream: Arc::new(stream),
-                addr,
-            })
-            .map_err(ConnectionHandlerError::InternalError)
-    }
-
-    #[send_handler]
-    async fn handle_connection_msg(
-        &mut self,
-        msg: connection_handler_protocol::Connection,
-        ctx: &Context<Self>,
-    ) {
-        if let Err(err) = self.handle_connection(msg.stream).await {
-            error!("Error handling connection from {}: {err}", msg.addr);
-        } else {
-            debug!("Connection from {} handled successfully", msg.addr);
-        }
-        ctx.stop();
     }
 }
 

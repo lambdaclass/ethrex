@@ -92,6 +92,7 @@ pub struct L1ProofSenderHealth {
     network: String,
 }
 
+#[actor(protocol = L1ProofSenderProtocol)]
 impl L1ProofSender {
     #[expect(clippy::too_many_arguments)]
     async fn new(
@@ -152,7 +153,75 @@ impl L1ProofSender {
         Ok(vk)
     }
 
-    // spawn is in the #[actor] impl block below
+    pub async fn spawn(
+        cfg: SequencerConfig,
+        sequencer_state: SequencerState,
+        rollup_store: StoreRollup,
+        needed_proof_types: Vec<ProverType>,
+        checkpoints_dir: PathBuf,
+    ) -> Result<ActorRef<L1ProofSender>, ProofSenderError> {
+        let state = Self::new(
+            &cfg.proof_coordinator,
+            &cfg.l1_committer,
+            &cfg.eth,
+            sequencer_state,
+            &cfg.aligned,
+            rollup_store,
+            needed_proof_types,
+            checkpoints_dir,
+        )
+        .await?;
+        let actor_ref = state.start();
+        actor_ref
+            .send(l1_proof_sender_protocol::SendProof)
+            .map_err(ProofSenderError::InternalError)?;
+        Ok(actor_ref)
+    }
+
+    #[send_handler]
+    async fn handle_send_proof(
+        &mut self,
+        _msg: l1_proof_sender_protocol::SendProof,
+        ctx: &Context<Self>,
+    ) {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
+            let _ = self
+                .verify_and_send_proofs()
+                .await
+                .inspect_err(|err| error!("L1 Proof Sender: {err}"));
+        }
+        let check_interval = random_duration(self.proof_send_interval_ms);
+        send_after(
+            check_interval,
+            ctx.clone(),
+            l1_proof_sender_protocol::SendProof,
+        );
+    }
+
+    #[request_handler]
+    async fn handle_health(
+        &mut self,
+        _msg: l1_proof_sender_protocol::Health,
+        _ctx: &Context<Self>,
+    ) -> Box<L1ProofSenderHealth> {
+        let rpc_healthcheck = self.eth_client.test_urls().await;
+        let signer_status = self.signer.health().await;
+
+        Box::new(L1ProofSenderHealth {
+            rpc_healthcheck,
+            signer_status,
+            on_chain_proposer_address: self.on_chain_proposer_address,
+            needed_proof_types: self
+                .needed_proof_types
+                .iter()
+                .map(|proof_type| format!("{:?}", proof_type))
+                .collect(),
+            proof_send_interval_ms: self.proof_send_interval_ms,
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
+            l1_chain_id: self.l1_chain_id,
+            network: format!("{:?}", self.network),
+        })
+    }
 
     async fn verify_and_send_proofs(&self) -> Result<(), ProofSenderError> {
         let last_verified_batch =
@@ -620,78 +689,5 @@ impl L1ProofSender {
         );
 
         Ok(())
-    }
-}
-
-#[actor(protocol = L1ProofSenderProtocol)]
-impl L1ProofSender {
-    pub async fn spawn(
-        cfg: SequencerConfig,
-        sequencer_state: SequencerState,
-        rollup_store: StoreRollup,
-        needed_proof_types: Vec<ProverType>,
-        checkpoints_dir: PathBuf,
-    ) -> Result<ActorRef<L1ProofSender>, ProofSenderError> {
-        let state = Self::new(
-            &cfg.proof_coordinator,
-            &cfg.l1_committer,
-            &cfg.eth,
-            sequencer_state,
-            &cfg.aligned,
-            rollup_store,
-            needed_proof_types,
-            checkpoints_dir,
-        )
-        .await?;
-        let actor_ref = state.start();
-        actor_ref
-            .send(l1_proof_sender_protocol::SendProof)
-            .map_err(ProofSenderError::InternalError)?;
-        Ok(actor_ref)
-    }
-
-    #[send_handler]
-    async fn handle_send_proof(
-        &mut self,
-        _msg: l1_proof_sender_protocol::SendProof,
-        ctx: &Context<Self>,
-    ) {
-        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
-            let _ = self
-                .verify_and_send_proofs()
-                .await
-                .inspect_err(|err| error!("L1 Proof Sender: {err}"));
-        }
-        let check_interval = random_duration(self.proof_send_interval_ms);
-        send_after(
-            check_interval,
-            ctx.clone(),
-            l1_proof_sender_protocol::SendProof,
-        );
-    }
-
-    #[request_handler]
-    async fn handle_health(
-        &mut self,
-        _msg: l1_proof_sender_protocol::Health,
-        _ctx: &Context<Self>,
-    ) -> Box<L1ProofSenderHealth> {
-        let rpc_healthcheck = self.eth_client.test_urls().await;
-        let signer_status = self.signer.health().await;
-
-        Box::new(L1ProofSenderHealth {
-            rpc_healthcheck,
-            signer_status,
-            on_chain_proposer_address: self.on_chain_proposer_address,
-            needed_proof_types: self
-                .needed_proof_types
-                .iter()
-                .map(|proof_type| format!("{:?}", proof_type))
-                .collect(),
-            proof_send_interval_ms: self.proof_send_interval_ms,
-            sequencer_state: format!("{:?}", self.sequencer_state.status()),
-            l1_chain_id: self.l1_chain_id,
-            network: format!("{:?}", self.network),
-        })
     }
 }
