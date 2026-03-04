@@ -135,7 +135,8 @@ PR [#6009] merged — Amsterdam hive test support.
 ### BAL Optimizations ✅
 All three BAL optimization issues are now closed:
 - [x] **Parallel block execution** — [#6233] merged (Mar 3)
-- [x] **Batched state reads + parallel state root** — [#6227] merged (Feb 23)
+- [x] **Parallel state root calculation** — [#6227] merged (Feb 23)
+- [x] **Batched state reads** — [#6227] merged (Feb 23)
 
 ### Next Priorities
 - [ ] Merge PR [#6293] (bal-devnet-3 support)
