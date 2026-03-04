@@ -37,17 +37,23 @@ impl RLPxInitiator {
     }
 
     pub fn spawn(context: P2PContext) -> ActorRef<RLPxInitiator> {
-        info!("Starting RLPx Initiator");
-        let state = RLPxInitiator::new(context);
-        let actor_ref = state.start();
-        let _ = actor_ref.send(rlpx_initiator_protocol::LookForPeer);
-        actor_ref
+        Self::spawn_with_backend(context, None)
     }
 
     pub fn spawn_on_thread(context: P2PContext) -> ActorRef<RLPxInitiator> {
-        info!("Starting RLPx Initiator (on thread)");
+        Self::spawn_with_backend(context, Some(Backend::Thread))
+    }
+
+    fn spawn_with_backend(
+        context: P2PContext,
+        backend: Option<Backend>,
+    ) -> ActorRef<RLPxInitiator> {
+        info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(context);
-        let actor_ref = state.start_with_backend(Backend::Thread);
+        let actor_ref = match backend {
+            Some(b) => state.start_with_backend(b),
+            None => state.start(),
+        };
         let _ = actor_ref.send(rlpx_initiator_protocol::LookForPeer);
         actor_ref
     }

@@ -477,8 +477,6 @@ impl L1Watcher {
         &mut self,
         l2_txs: Vec<(L2Message, u64)>,
     ) -> Result<(), L1WatcherError> {
-        let mut privileged_txs = Vec::new();
-
         let gas_price = self.this_l2_client.get_gas_price().await?;
         // Avoid panicking when using as_u64()
         let gas_price: u64 = gas_price
@@ -530,7 +528,6 @@ impl L1Watcher {
             };
 
             info!("L2 Mint transaction added to mempool {hash:#x}",);
-            privileged_txs.push(hash);
         }
         Ok(())
     }

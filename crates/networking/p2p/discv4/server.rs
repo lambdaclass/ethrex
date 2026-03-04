@@ -734,6 +734,7 @@ impl DiscoveryServer {
             error!(protocol = "discv4", sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
             self.peer_table.set_disposable(&node.node_id())?;
             METRICS.record_new_discarded_node();
+            return Err(e.into());
         }
         Ok(H256::from(message_hash))
     }

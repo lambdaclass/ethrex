@@ -148,7 +148,7 @@ impl DiscoveryMultiplexer {
         msg: discovery_multiplexer_protocol::RawPacket,
         _ctx: &Context<Self>,
     ) {
-        self.route_packet(&msg.data, msg.from).await;
+        self.route_packet(&msg.data, msg.from);
     }
 
     #[send_handler]
@@ -161,7 +161,7 @@ impl DiscoveryMultiplexer {
     }
 
     /// Route a packet to the appropriate protocol handler.
-    async fn route_packet(&mut self, data: &[u8], from: SocketAddr) {
+    fn route_packet(&mut self, data: &[u8], from: SocketAddr) {
         if is_discv4_packet(data) {
             self.route_to_discv4(data, from);
         } else {
