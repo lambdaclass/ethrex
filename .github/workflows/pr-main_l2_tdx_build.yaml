@@ -3,8 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["**"]
+  # Disabled: not needed for app chain
+  # pull_request:
+  #   branches: ["**"]
 
 permissions:
   contents: read
