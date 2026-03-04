@@ -241,7 +241,7 @@ fn increase_thread_priority() {
             "failed to set max thread priority, trying moderate bump"
         );
         let fallback = ThreadPriority::Crossplatform(
-            ThreadPriorityValue::try_from(62u8).expect("62 is within valid 0..100 range"),
+            ThreadPriorityValue::try_from(62u8).expect("62 is within valid 0..=99 range"),
         );
         if let Err(err) = fallback.set_for_current() {
             debug!(?err, "failed to set moderate thread priority");
