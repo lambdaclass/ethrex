@@ -225,6 +225,14 @@ pub struct BatchBlockProcessingFailure {
     pub failed_block_hash: H256,
 }
 
+/// Best-effort thread priority elevation for block-pipeline threads.
+///
+/// On Linux, `ThreadPriority::Max` attempts `SCHED_FIFO` at priority 99
+/// (requires `CAP_SYS_NICE` or root). The fallback value 62 maps to
+/// approximately `nice -5`, which also needs elevated privileges.
+/// In a typical unprivileged deployment both attempts will fail silently.
+/// Grant `CAP_SYS_NICE` to the ethrex binary for effective priority
+/// elevation.
 fn increase_thread_priority() {
     use thread_priority::{ThreadPriority, ThreadPriorityValue};
     if let Err(err) = ThreadPriority::Max.set_for_current() {
