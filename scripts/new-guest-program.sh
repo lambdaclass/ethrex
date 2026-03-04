@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Portable sed in-place: macOS needs '' arg, GNU sed does not
+if [[ "$(uname)" == "Darwin" ]]; then
+    sed_inplace() { sed -i '' "$@"; }
+else
+    sed_inplace() { sed -i "$@"; }
+fi
+
 # Guest Program Scaffold Generator
 # Usage: ./scripts/new-guest-program.sh <program-name>
 # Example: ./scripts/new-guest-program.sh my-program
@@ -362,14 +369,14 @@ if ! grep -q "mod ${SNAKE_NAME};" "$MOD_FILE"; then
     if [ -z "$LAST_MOD_LINE" ]; then
         LAST_MOD_LINE=$(grep -n "^mod " "$MOD_FILE" | tail -1 | cut -d: -f1)
     fi
-    sed -i '' "${LAST_MOD_LINE}a\\
+    sed_inplace "${LAST_MOD_LINE}a\\
 pub mod ${SNAKE_NAME};" "$MOD_FILE"
     echo "  Added: pub mod ${SNAKE_NAME}; to $MOD_FILE"
 fi
 
 if ! grep -q "pub use ${SNAKE_NAME}::${PASCAL_NAME}GuestProgram;" "$MOD_FILE"; then
     LAST_USE_LINE=$(grep -n "^pub use " "$MOD_FILE" | tail -1 | cut -d: -f1)
-    sed -i '' "${LAST_USE_LINE}a\\
+    sed_inplace "${LAST_USE_LINE}a\\
 pub use ${SNAKE_NAME}::${PASCAL_NAME}GuestProgram;" "$MOD_FILE"
     echo "  Added: pub use ${SNAKE_NAME}::${PASCAL_NAME}GuestProgram; to $MOD_FILE"
 fi

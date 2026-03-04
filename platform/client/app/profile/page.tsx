@@ -170,10 +170,10 @@ export default function ProfilePage() {
         )}
       </div>
 
-      {/* Deployments Summary */}
+      {/* L2s Summary */}
       <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">My Deployments</h2>
+          <h2 className="text-lg font-semibold">My L2s</h2>
           <Link href="/deployments" className="text-blue-600 text-sm hover:underline">
             View All
           </Link>
@@ -224,8 +224,14 @@ export default function ProfilePage() {
         <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
         <div className="flex flex-wrap gap-3">
           <Link
-            href="/creator/new"
+            href="/launch"
             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
+          >
+            Launch L2
+          </Link>
+          <Link
+            href="/creator/new"
+            className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
           >
             Create New Program
           </Link>
@@ -239,7 +245,7 @@ export default function ProfilePage() {
             href="/deployments"
             className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
           >
-            My Deployments
+            My L2s
           </Link>
         </div>
       </div>

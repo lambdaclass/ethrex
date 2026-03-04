@@ -143,6 +143,27 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
         );
     }
 
+    /// @notice Registers a verification key for a guest program on the OnChainProposer.
+    /// @dev Used during deployment to set up VKs for custom guest programs (e.g., zk-dex).
+    /// @param commit_hash The git commit hash identifying the build version.
+    /// @param programTypeId The on-chain program type identifier (e.g., 2 for zk-dex).
+    /// @param verifierId The verifier type (e.g., 1 for SP1).
+    /// @param new_vk The verification key derived from the program ELF.
+    /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
+    function upgradeVerificationKey(
+        bytes32 commit_hash,
+        uint8 programTypeId,
+        uint8 verifierId,
+        bytes32 new_vk
+    ) external onlyRole(SECURITY_COUNCIL) {
+        onChainProposer.upgradeVerificationKey(
+            commit_hash,
+            programTypeId,
+            verifierId,
+            new_vk
+        );
+    }
+
     /// @notice Executes an operation immediately, bypassing the timelock delay.
     /// @dev Intended for emergency use by the Security Council.
     /// @param target The address to call.

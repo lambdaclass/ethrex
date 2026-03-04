@@ -1,7 +1,9 @@
 name: Perf Changelog
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  # Disabled: not needed for app chain
+  # pull_request:
+  #   types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  workflow_dispatch:
 
 permissions:
   contents: read

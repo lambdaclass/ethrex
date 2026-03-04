@@ -196,39 +196,39 @@ mod tests {
     }
 
     #[test]
-    fn zk_dex_execution_through_registry() {
-        use ethrex_guest_program::programs::zk_dex::execution::execution_program;
-        use ethrex_guest_program::programs::zk_dex::types::{DexProgramInput, DexTransfer};
+    fn zk_dex_circuit_through_registry() {
+        use ethrex_guest_program::common::app_execution::{AppCircuit, AppOperation};
+        use ethrex_guest_program::programs::zk_dex::circuit::{
+            DexCircuit, OP_TOKEN_TRANSFER, TOKEN_TRANSFER_GAS,
+        };
 
         let reg = test_registry();
         let prog = reg.get("zk-dex").expect("zk-dex registered");
 
         // Verify the program provides correct metadata.
         assert_eq!(prog.program_id(), "zk-dex");
+        assert_eq!(prog.program_type_id(), 2);
 
-        // Execute a batch of transfers using the domain-specific logic.
-        let input = DexProgramInput {
-            initial_state_root: [0xAA; 32],
-            transfers: vec![DexTransfer {
-                from: [1u8; 20],
-                to: [2u8; 20],
-                token: [3u8; 20],
-                amount: 100,
-                nonce: 0,
-            }],
+        // Verify DexCircuit implements AppCircuit correctly.
+        let circuit = DexCircuit {
+            contract_address: ethrex_common::H160([0xDE; 20]),
         };
-        let output = execution_program(input).expect("should succeed");
-        assert_eq!(output.transfer_count, 1);
-        assert_ne!(output.final_state_root, output.initial_state_root);
 
-        // Verify output encoding produces expected length.
-        let encoded = output.encode();
-        assert_eq!(encoded.len(), 72); // 32 + 32 + 8
+        // Verify gas cost for token transfer operation.
+        let op = AppOperation {
+            op_type: OP_TOKEN_TRANSFER,
+            params: vec![0; 96],
+        };
+        assert_eq!(circuit.gas_cost(&op), TOKEN_TRANSFER_GAS);
+        assert_eq!(circuit.gas_cost(&op), 65_000);
 
-        // Verify serialize_input pass-through.
+        // serialize_input now converts ProgramInput → AppProgramInput,
+        // so arbitrary bytes will fail deserialization.
         let raw = b"some bytes";
-        let serialized = prog.serialize_input(raw).expect("serialize_input");
-        assert_eq!(serialized, raw);
+        assert!(
+            prog.serialize_input(raw).is_err(),
+            "serialize_input should reject invalid rkyv bytes"
+        );
     }
 
     #[test]
@@ -268,30 +268,6 @@ mod tests {
 
         let encoded = output.encode();
         assert_eq!(encoded.len(), 88); // 32 + 32 + 8 + 8 + 8
-    }
-
-    #[test]
-    fn rkyv_roundtrip_through_registry_zk_dex() {
-        use ethrex_guest_program::programs::zk_dex::types::{DexProgramInput, DexTransfer};
-
-        let input = DexProgramInput {
-            initial_state_root: [0xDD; 32],
-            transfers: vec![DexTransfer {
-                from: [1u8; 20],
-                to: [2u8; 20],
-                token: [3u8; 20],
-                amount: 500,
-                nonce: 42,
-            }],
-        };
-
-        // Serialize → deserialize roundtrip (simulates zkVM stdin flow).
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input).expect("serialize");
-        let restored: DexProgramInput =
-            rkyv::from_bytes::<DexProgramInput, rkyv::rancor::Error>(&bytes).expect("deserialize");
-        assert_eq!(restored.initial_state_root, input.initial_state_root);
-        assert_eq!(restored.transfers[0].amount, 500);
-        assert_eq!(restored.transfers[0].nonce, 42);
     }
 
     #[test]

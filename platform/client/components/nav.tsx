@@ -20,11 +20,14 @@ export function Nav() {
               </Link>
               {user && (
                 <>
+                  <Link href="/launch" className="text-gray-600 hover:text-gray-900">
+                    Launch L2
+                  </Link>
                   <Link href="/creator" className="text-gray-600 hover:text-gray-900">
                     My Programs
                   </Link>
                   <Link href="/deployments" className="text-gray-600 hover:text-gray-900">
-                    Deployments
+                    My L2s
                   </Link>
                 </>
               )}

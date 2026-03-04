@@ -447,16 +447,15 @@ mod tests {
         );
     }
 
-    /// Verify that serialize_input and encode_output never panic on
-    /// arbitrary byte inputs.  All three programs use pass-through
-    /// implementations, so we expect Ok for any input.
+    /// Verify that serialize_input never panics on arbitrary byte inputs.
+    ///
+    /// Pass-through programs (evm-l2, tokamon) should return Ok with identity.
+    /// ZkDexGuestProgram performs ProgramInput→AppProgramInput conversion, so
+    /// it returns Err on arbitrary bytes (which are not valid rkyv ProgramInput).
     #[test]
     fn serialize_input_never_panics_on_arbitrary_bytes() {
-        let programs: Vec<Box<dyn GuestProgram>> = vec![
-            Box::new(EvmL2GuestProgram),
-            Box::new(ZkDexGuestProgram),
-            Box::new(TokammonGuestProgram),
-        ];
+        let passthrough_programs: Vec<Box<dyn GuestProgram>> =
+            vec![Box::new(EvmL2GuestProgram), Box::new(TokammonGuestProgram)];
 
         // Test with various edge-case inputs.
         let all_bytes: Vec<u8> = (0..=255).collect();
@@ -470,9 +469,9 @@ mod tests {
             &all_bytes,          // all byte values
         ];
 
-        for prog in &programs {
+        // Pass-through programs: Ok with identity.
+        for prog in &passthrough_programs {
             for input in &inputs {
-                // Must not panic; result is always Ok for pass-through.
                 let result = prog.serialize_input(input);
                 assert!(
                     result.is_ok(),
@@ -480,6 +479,18 @@ mod tests {
                     prog.program_id()
                 );
                 assert_eq!(result.unwrap(), *input);
+            }
+        }
+
+        // ZkDexGuestProgram: must not panic, but returns Err on invalid input.
+        // Only testable with the "l2" feature (without it, serialize_input is
+        // a pass-through that returns Ok).
+        #[cfg(feature = "l2")]
+        {
+            let zk_dex = ZkDexGuestProgram;
+            for input in &inputs {
+                let result = zk_dex.serialize_input(input);
+                assert!(result.is_err(), "zk-dex should reject arbitrary bytes");
             }
         }
     }

@@ -31,7 +31,10 @@ ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
+ethrex-trie.workspace = true
+ethrex-crypto.workspace = true
 ethrex-blockchain.workspace = true
+secp256k1.workspace = true
 
 # l2
 ethrex-l2 = { path = "../", default-features = false }
@@ -61,6 +64,11 @@ tempfile.workspace = true
 [lib]
 name = "ethrex_prover_lib"
 path = "src/lib.rs"
+
+[[bin]]
+name = "sp1_benchmark"
+path = "src/bin/sp1_benchmark.rs"
+required-features = ["sp1"]
 
 [features]
 # TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct

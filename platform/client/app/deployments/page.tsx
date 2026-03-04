@@ -25,7 +25,7 @@ export default function DeploymentsPage() {
       <div className="max-w-4xl mx-auto px-4 py-16 text-center">
         <h1 className="text-xl font-bold mb-4">Login Required</h1>
         <Link href="/login" className="text-blue-600 hover:underline">
-          Login to view your deployments
+          Login to view your L2s
         </Link>
       </div>
     );
@@ -42,20 +42,20 @@ export default function DeploymentsPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">My Deployments</h1>
+        <h1 className="text-2xl font-bold">My L2s</h1>
         <Link
-          href="/store"
+          href="/launch"
           className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
         >
-          Browse Programs
+          Launch New L2
         </Link>
       </div>
 
       {deployments.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-xl border">
-          <p className="text-gray-500 mb-4">No deployments yet.</p>
-          <Link href="/store" className="text-blue-600 hover:underline">
-            Browse the Store to get started
+          <p className="text-gray-500 mb-4">No L2s launched yet.</p>
+          <Link href="/launch" className="text-blue-600 hover:underline">
+            Launch your first L2
           </Link>
         </div>
       ) : (

@@ -36,7 +36,7 @@ fn main() {
 
     if programs.contains(&"zk-dex".to_string()) {
         #[cfg(all(not(clippy), feature = "sp1"))]
-        build_sp1_zk_dex();
+        build_sp1_guest_program("sp1-zk-dex");
     } else {
         // Ensure placeholder ELF exists so `include_bytes!` doesn't fail
         // when zk-dex isn't in the build list.
@@ -45,7 +45,7 @@ fn main() {
 
     if programs.contains(&"tokamon".to_string()) {
         #[cfg(all(not(clippy), feature = "sp1"))]
-        build_sp1_tokamon();
+        build_sp1_guest_program("sp1-tokamon");
     } else {
         // Ensure placeholder ELF exists so `include_bytes!` doesn't fail
         // when tokamon isn't in the build list.
@@ -271,15 +271,19 @@ fn build_openvm_program() {
 }
 
 #[cfg(all(not(clippy), feature = "sp1"))]
-fn build_sp1_zk_dex() {
+fn build_sp1_guest_program(name: &str) {
     use hex;
     use sp1_sdk::{HashableKey, ProverClient};
 
+    let bin_dir = format!("./bin/{name}");
+    let out_dir = format!("{bin_dir}/out");
+    let elf_name = "riscv32im-succinct-zkvm-elf";
+
     sp1_build::build_program_with_args(
-        "./bin/sp1-zk-dex",
+        &bin_dir,
         sp1_build::BuildArgs {
-            output_directory: Some("./bin/sp1-zk-dex/out".to_string()),
-            elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
+            output_directory: Some(out_dir.clone()),
+            elf_name: Some(elf_name.to_string()),
             docker: option_env!("PROVER_REPRODUCIBLE_BUILD").is_some(),
             tag: "v5.0.8".to_string(),
             workspace_directory: Some(format!("{}/../../../", env!("CARGO_MANIFEST_DIR"))),
@@ -287,55 +291,21 @@ fn build_sp1_zk_dex() {
         },
     );
 
-    let elf = std::fs::read("./bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-elf")
-        .expect("could not read SP1 ZK-DEX elf file");
+    let elf_path = format!("{out_dir}/{elf_name}");
+    let elf = std::fs::read(&elf_path).unwrap_or_else(|_| panic!("could not read {name} elf file"));
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
 
     std::fs::write(
-        "./bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-vk-bn254",
+        format!("{out_dir}/riscv32im-succinct-zkvm-vk-bn254"),
         format!("{}\n", vk.vk.bytes32()),
     )
-    .expect("could not write SP1 ZK-DEX vk-bn254 to file");
+    .unwrap_or_else(|_| panic!("could not write {name} vk-bn254 to file"));
     std::fs::write(
-        "./bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-vk-u32",
+        format!("{out_dir}/riscv32im-succinct-zkvm-vk-u32"),
         format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
     )
-    .expect("could not write SP1 ZK-DEX vk-u32 to file");
-}
-
-#[cfg(all(not(clippy), feature = "sp1"))]
-fn build_sp1_tokamon() {
-    use hex;
-    use sp1_sdk::{HashableKey, ProverClient};
-
-    sp1_build::build_program_with_args(
-        "./bin/sp1-tokamon",
-        sp1_build::BuildArgs {
-            output_directory: Some("./bin/sp1-tokamon/out".to_string()),
-            elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
-            docker: option_env!("PROVER_REPRODUCIBLE_BUILD").is_some(),
-            tag: "v5.0.8".to_string(),
-            workspace_directory: Some(format!("{}/../../../", env!("CARGO_MANIFEST_DIR"))),
-            ..Default::default()
-        },
-    );
-
-    let elf = std::fs::read("./bin/sp1-tokamon/out/riscv32im-succinct-zkvm-elf")
-        .expect("could not read SP1 Tokamon elf file");
-    let prover = ProverClient::from_env();
-    let (_, vk) = prover.setup(&elf);
-
-    std::fs::write(
-        "./bin/sp1-tokamon/out/riscv32im-succinct-zkvm-vk-bn254",
-        format!("{}\n", vk.vk.bytes32()),
-    )
-    .expect("could not write SP1 Tokamon vk-bn254 to file");
-    std::fs::write(
-        "./bin/sp1-tokamon/out/riscv32im-succinct-zkvm-vk-u32",
-        format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
-    )
-    .expect("could not write SP1 Tokamon vk-u32 to file");
+    .unwrap_or_else(|_| panic!("could not write {name} vk-u32 to file"));
 }
 
 #[cfg(all(not(clippy), feature = "zisk"))]

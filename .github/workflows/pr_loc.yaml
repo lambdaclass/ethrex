@@ -1,8 +1,10 @@
 name: PR Lines of Code Analysis
 
 on:
-  pull_request:
-    branches: ["**"]
+  # Disabled: not needed for app chain
+  # pull_request:
+  #   branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read

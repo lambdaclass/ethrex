@@ -1,11 +1,12 @@
 name: Benchmark LEVM vs REVM
 
 on:
-  pull_request:
-    branches: ["**"]
-    paths:
-      - "crates/vm/levm/**"
-      - ".github/workflows/pr_perf_levm.yaml"
+  # Disabled: not needed for app chain
+  # pull_request:
+  #   branches: ["**"]
+  #   paths:
+  #     - "crates/vm/levm/**"
+  #     - ".github/workflows/pr_perf_levm.yaml"
   workflow_dispatch:
 
 permissions:

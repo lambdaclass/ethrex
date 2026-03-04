@@ -10,7 +10,7 @@ router.use(requireAuth);
 // POST /api/deployments — create a new deployment (use a program)
 router.post("/", (req, res) => {
   try {
-    const { programId, name, chainId, rpcUrl } = req.body;
+    const { programId, name, chainId, rpcUrl, config } = req.body;
     if (!programId || !name) {
       return res.status(400).json({ error: "programId and name are required" });
     }
@@ -26,6 +26,7 @@ router.post("/", (req, res) => {
       name: name.trim(),
       chainId: chainId || null,
       rpcUrl: rpcUrl || null,
+      config: config || null,
     });
 
     // Increment program usage count

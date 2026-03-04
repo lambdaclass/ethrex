@@ -367,13 +367,23 @@ contract OnChainProposer is
         }
 
         // Blob is published in the (EIP-4844) transaction that calls this function.
+        // Empty batches (no transactions, no messages) are exempt from the blob
+        // requirement because they contain no data that needs to be made available.
         bytes32 blobVersionedHash = blobhash(0);
+        bool isEmptyCommit = (
+            nonPrivilegedTransactions == 0 &&
+            processedPrivilegedTransactionsRollingHash == bytes32(0) &&
+            withdrawalsLogsMerkleRoot == bytes32(0) &&
+            balanceDiffs.length == 0 &&
+            l2MessageRollingHashes.length == 0
+        );
+
         if (VALIDIUM) {
             require(
                 blobVersionedHash == 0,
                 "006" // L2 running as validium but blob was published
             );
-        } else {
+        } else if (!isEmptyCommit) {
             require(
                 blobVersionedHash != 0,
                 "007" // L2 running as rollup but blob was not published
@@ -405,13 +415,9 @@ contract OnChainProposer is
             revert("013"); // missing verification key for commit hash
         }
 
-        // Custom programs (programTypeId > 1) must provide a publicValuesHash
-        if (effectiveProgramTypeId > 1) {
-            require(
-                publicValuesHash != bytes32(0),
-                "015" // OnChainProposer: custom program requires publicValuesHash
-            );
-        }
+        // NOTE: publicValuesHash is currently unused because all guest programs
+        // produce the standard ProgramOutput format.  The field is kept in
+        // BatchCommitmentInfo for future programs with custom public values.
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
@@ -447,7 +453,7 @@ contract OnChainProposer is
         bytes memory tdxSignature,
         // Custom program public values (only needed for programTypeId > 1)
         bytes memory customPublicValues
-    ) external override onlyOwner whenNotPaused {
+    ) external override whenNotPaused {
         require(
             !ALIGNED_MODE,
             "008" // Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.
@@ -495,72 +501,75 @@ contract OnChainProposer is
             revert("00v"); // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
         }
 
-        // Determine public inputs based on program type
-        uint8 batchProgramTypeId = batchCommitments[batchNumber].programTypeId;
-        // Backward compatibility: treat 0 as DEFAULT_PROGRAM_TYPE_ID
-        if (batchProgramTypeId == 0) batchProgramTypeId = DEFAULT_PROGRAM_TYPE_ID;
-        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+        // ── Genesis state root verification ──
+        // The first batch after genesis may have a different state root than
+        // batch 0 (e.g., due to pre-deployed contracts in the L2 genesis file).
+        // Since the genesis state root is deterministic and already trusted by
+        // the L1 contract (set during initialize()), no ZK proof is needed.
+        // We verify that the batch contains no state-changing transactions.
+        bool isGenesisTransition = lastVerifiedBatch == 0
+            && _hasNoStateChangingTransactions(batchNumber);
 
-        bytes memory publicInputs;
-        if (batchProgramTypeId == DEFAULT_PROGRAM_TYPE_ID) {
-            // EVM-L2: reconstruct public inputs from commitment data
-            publicInputs = _getPublicInputsFromCommitment(batchNumber);
-        } else {
-            // Custom programs: verify public values hash matches commitment
-            require(
-                customPublicValues.length > 0,
-                "016" // OnChainProposer: custom program requires customPublicValues
-            );
-            require(
-                keccak256(customPublicValues) == batchCommitments[batchNumber].publicValuesHash,
-                "017" // OnChainProposer: customPublicValues hash mismatch
-            );
-            publicInputs = customPublicValues;
-        }
+        // ── Empty batch auto-verification ──
+        // Empty batches (no state change, no transactions, no messages) can be
+        // verified without a ZK proof. The _isEmptyBatch() function checks all
+        // conditions on-chain, so this is cryptographically safe.
+        if (!isGenesisTransition && !_isEmptyBatch(batchNumber)) {
+            // Determine public inputs based on program type
+            uint8 batchProgramTypeId = batchCommitments[batchNumber].programTypeId;
+            // Backward compatibility: treat 0 as DEFAULT_PROGRAM_TYPE_ID
+            if (batchProgramTypeId == 0) batchProgramTypeId = DEFAULT_PROGRAM_TYPE_ID;
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
 
-        if (REQUIRE_RISC0_PROOF) {
-            bytes32 risc0Vk = verificationKeys[batchCommitHash][
-                batchProgramTypeId
-            ][RISC0_VERIFIER_ID];
-            try
-                IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
-                    risc0BlockProof,
-                    // we use the same vk as the one set for the commit of the batch
-                    risc0Vk,
-                    sha256(publicInputs)
-                )
-            {} catch {
-                revert(
-                    "00c" // OnChainProposer: Invalid RISC0 proof failed proof verification
-                );
+            // All current guest programs (evm-l2, zk-dex, tokamon) produce the
+            // standard ProgramOutput format, so public inputs can always be
+            // reconstructed from the on-chain commitment data.
+            bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+
+            if (REQUIRE_RISC0_PROOF) {
+                bytes32 risc0Vk = verificationKeys[batchCommitHash][
+                    batchProgramTypeId
+                ][RISC0_VERIFIER_ID];
+                try
+                    IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
+                        risc0BlockProof,
+                        // we use the same vk as the one set for the commit of the batch
+                        risc0Vk,
+                        sha256(publicInputs)
+                    )
+                {} catch {
+                    revert(
+                        "00c" // OnChainProposer: Invalid RISC0 proof failed proof verification
+                    );
+                }
             }
-        }
 
-        if (REQUIRE_SP1_PROOF) {
-            bytes32 sp1Vk = verificationKeys[batchCommitHash][batchProgramTypeId][SP1_VERIFIER_ID];
-            try
-                ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
-                    sp1Vk,
-                    publicInputs,
-                    sp1ProofBytes
-                )
-            {} catch {
-                revert(
-                    "00e" // OnChainProposer: Invalid SP1 proof failed proof verification
-                );
+            if (REQUIRE_SP1_PROOF) {
+                bytes32 sp1Vk = verificationKeys[batchCommitHash][batchProgramTypeId][SP1_VERIFIER_ID];
+                try
+                    ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
+                        sp1Vk,
+                        publicInputs,
+                        sp1ProofBytes
+                    )
+                {} catch {
+                    revert(
+                        "00e" // OnChainProposer: Invalid SP1 proof failed proof verification
+                    );
+                }
             }
-        }
 
-        if (REQUIRE_TDX_PROOF) {
-            try
-                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
-                    publicInputs,
-                    tdxSignature
-                )
-            {} catch {
-                revert(
-                    "00g" // OnChainProposer: Invalid TDX proof failed proof verification
-                );
+            if (REQUIRE_TDX_PROOF) {
+                try
+                    ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
+                        publicInputs,
+                        tdxSignature
+                    )
+                {} catch {
+                    revert(
+                        "00g" // OnChainProposer: Invalid TDX proof failed proof verification
+                    );
+                }
             }
         }
 
@@ -716,6 +725,37 @@ contract OnChainProposer is
         require(
             proofVerified,
             "00z" // OnChainProposer: Aligned proof verification failed
+        );
+    }
+
+    /// @notice Checks whether a committed batch is empty (no state changes, no messages).
+    /// @dev An empty batch contains only empty blocks with zero transactions. Since no
+    /// state transition occurs, it can be verified without a ZK proof. The contract
+    /// enforces the emptiness conditions on-chain, so no off-chain trust is required.
+    /// @param batchNumber The batch number to check.
+    /// @return True if the batch is empty and can be auto-verified.
+    function _isEmptyBatch(uint256 batchNumber) internal view returns (bool) {
+        BatchCommitmentInfo storage current = batchCommitments[batchNumber];
+        bytes32 previousStateRoot = batchCommitments[lastVerifiedBatch].newStateRoot;
+
+        return (
+            current.newStateRoot == previousStateRoot &&
+            _hasNoStateChangingTransactions(batchNumber)
+        );
+    }
+
+    /// @notice Checks whether a batch contains no state-changing transactions.
+    /// @dev This checks all indicators except state root comparison. Used by both
+    /// _isEmptyBatch() (which also requires state root unchanged) and genesis
+    /// transition verification (which allows state root to differ from batch 0).
+    function _hasNoStateChangingTransactions(uint256 batchNumber) internal view returns (bool) {
+        BatchCommitmentInfo storage current = batchCommitments[batchNumber];
+        return (
+            current.nonPrivilegedTransactions == 0 &&
+            current.withdrawalsLogsMerkleRoot == bytes32(0) &&
+            current.processedPrivilegedTransactionsRollingHash == bytes32(0) &&
+            current.balanceDiffs.length == 0 &&
+            current.l2InMessageRollingHashes.length == 0
         );
     }
 

@@ -1,27 +1,18 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import { storeApi, deploymentsApi } from "@/lib/api";
+import { storeApi } from "@/lib/api";
 import { Program } from "@/lib/types";
 import { useAuth } from "@/components/auth-provider";
 
 export default function ProgramDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const { user } = useAuth();
   const [program, setProgram] = useState<Program | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  // "Use This Program" modal state
-  const [showModal, setShowModal] = useState(false);
-  const [deployName, setDeployName] = useState("");
-  const [chainId, setChainId] = useState("");
-  const [rpcUrl, setRpcUrl] = useState("");
-  const [deploying, setDeploying] = useState(false);
-  const [deployError, setDeployError] = useState("");
 
   useEffect(() => {
     if (!params.id) return;
@@ -31,28 +22,6 @@ export default function ProgramDetailPage() {
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load program"))
       .finally(() => setLoading(false));
   }, [params.id]);
-
-  const handleUseProgram = async () => {
-    if (!deployName.trim()) {
-      setDeployError("Deployment name is required");
-      return;
-    }
-    setDeploying(true);
-    setDeployError("");
-    try {
-      await deploymentsApi.create({
-        programId: program!.id,
-        name: deployName.trim(),
-        chainId: chainId ? parseInt(chainId) : undefined,
-        rpcUrl: rpcUrl || undefined,
-      });
-      router.push("/deployments");
-    } catch (err) {
-      setDeployError(err instanceof Error ? err.message : "Failed to create deployment");
-    } finally {
-      setDeploying(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -143,15 +112,12 @@ export default function ProgramDetailPage() {
 
         <div className="border-t pt-6">
           {user ? (
-            <button
-              onClick={() => {
-                setDeployName(`${program.name} Deployment`);
-                setShowModal(true);
-              }}
-              className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
+            <Link
+              href={`/launch?program=${program.id}`}
+              className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 inline-block"
             >
-              Use This Program
-            </button>
+              Launch L2 with This Program
+            </Link>
           ) : (
             <Link
               href="/login"
@@ -162,79 +128,6 @@ export default function ProgramDetailPage() {
           )}
         </div>
       </div>
-
-      {/* Use This Program Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <h2 className="text-xl font-bold mb-4">Configure Deployment</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Set up <strong>{program.name}</strong> for your L2 chain.
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Deployment Name *
-                </label>
-                <input
-                  type="text"
-                  value={deployName}
-                  onChange={(e) => setDeployName(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="My L2 Deployment"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Chain ID (optional)
-                </label>
-                <input
-                  type="number"
-                  value={chainId}
-                  onChange={(e) => setChainId(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="e.g. 12345"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  L1 RPC URL (optional)
-                </label>
-                <input
-                  type="text"
-                  value={rpcUrl}
-                  onChange={(e) => setRpcUrl(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="https://..."
-                />
-              </div>
-
-              {deployError && (
-                <p className="text-sm text-red-600">{deployError}</p>
-              )}
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowModal(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleUseProgram}
-                disabled={deploying}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                {deploying ? "Creating..." : "Create Deployment"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

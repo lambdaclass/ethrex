@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TokamakAppL2 ZK-DEX Localnet</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --surface-2: #1a1a26;
+      --surface-3: #222233;
+      --border: #2a2a3a;
+      --text: #e0e0e8;
+      --text-dim: #8888a0;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --l1-color: #3b82f6;
+      --l2-color: #8b5cf6;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .header {
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header-left { display: flex; align-items: center; gap: 16px; }
+    .logo {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .logo span { color: var(--accent); }
+    .badge {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .header-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+    .status-dot.online { background: var(--success); box-shadow: 0 0 6px rgba(34, 197, 94, 0.4); }
+    .status-dot.offline { background: var(--error); }
+    .status-dot.checking { background: var(--warning); animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .container { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+
+    /* Quick Links */
+    .quick-links {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .quick-link {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      background: linear-gradient(145deg, var(--surface-2), var(--surface));
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 12px;
+      text-decoration: none;
+      color: var(--text);
+      transition: all 0.25s ease;
+      box-shadow: 4px 4px 8px rgba(0,0,0,0.4), -2px -2px 6px rgba(255,255,255,0.03);
+    }
+    .quick-link:hover {
+      border-color: var(--accent);
+      background: linear-gradient(145deg, var(--surface-3), var(--surface-2));
+      transform: translateY(-4px) scale(1.02);
+      box-shadow: 6px 8px 16px rgba(0,0,0,0.5), -2px -2px 8px rgba(255,255,255,0.04);
+    }
+    .quick-link-icon {
+      font-size: 28px;
+      line-height: 1;
+    }
+    .quick-link-label { font-size: 13px; font-weight: 500; }
+    .quick-link-sub { font-size: 11px; color: var(--text-dim); }
+    .quick-link.ql-bridge { border-top: 3px solid var(--accent); }
+    .quick-link.ql-bridge .quick-link-icon { color: var(--accent); }
+    .quick-link.ql-withdraw { border-top: 3px solid var(--l2-color); }
+    .quick-link.ql-withdraw .quick-link-icon { color: var(--l2-color); }
+    .quick-link.ql-l1 { border-top: 3px solid var(--l1-color); }
+    .quick-link.ql-l1 .quick-link-icon { color: var(--l1-color); }
+    .quick-link.ql-l2 { border-top: 3px solid var(--l2-color); }
+    .quick-link.ql-l2 .quick-link-icon { color: var(--l2-color); }
+    .quick-link.ql-metrics { border-top: 3px solid var(--success); }
+    .quick-link.ql-metrics .quick-link-icon { color: var(--success); }
+
+    /* Section titles */
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+
+    /* Service Cards */
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .service-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .service-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .service-name { font-size: 14px; font-weight: 600; }
+    .service-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+    .service-status .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+    .service-status.online .dot { background: var(--success); }
+    .service-status.online { color: var(--success); }
+    .service-status.offline .dot { background: var(--error); }
+    .service-status.offline { color: var(--error); }
+    .service-status.checking .dot { background: var(--warning); animation: pulse 1s infinite; }
+    .service-status.checking { color: var(--warning); }
+    .service-details { display: flex; flex-direction: column; gap: 6px; }
+    .service-detail {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+    .service-detail .label { color: var(--text-dim); }
+    .service-detail .value {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--text);
+    }
+    .service-detail .value a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .service-detail .value a:hover { text-decoration: underline; }
+
+    /* Chain Stats Row */
+    .chain-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .chain-stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .chain-stat-card.l1 { border-top: 2px solid var(--l1-color); }
+    .chain-stat-card.l2 { border-top: 2px solid var(--l2-color); }
+    .chain-stat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .chain-stat-title { font-size: 15px; font-weight: 600; }
+    .chain-stat-title.l1 { color: var(--l1-color); }
+    .chain-stat-title.l2 { color: var(--l2-color); }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .stat-label {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .stat-value {
+      font-size: 18px;
+      font-weight: 600;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    /* Contract Addresses */
+    .contracts-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 32px;
+    }
+    .contract-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .contract-row:last-child { border-bottom: none; }
+    .contract-name { font-size: 13px; font-weight: 500; }
+    .contract-addr {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .contract-addr a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .contract-addr a:hover { text-decoration: underline; }
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .copy-btn:hover { color: var(--accent); background: var(--surface-2); }
+
+    /* Network config */
+    .network-configs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .network-config-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .network-config-card h4 { font-size: 13px; margin-bottom: 10px; }
+    .config-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 12px;
+    }
+    .config-row .label { color: var(--text-dim); }
+    .config-row .value { font-family: 'SF Mono', 'Fira Code', monospace; }
+    .btn-add-network {
+      margin-top: 10px;
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    .btn-add-network:hover { border-color: var(--accent); color: var(--accent); }
+
+    .footer {
+      text-align: center;
+      padding: 24px;
+      font-size: 12px;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+      margin-top: 24px;
+    }
+    .footer a { color: var(--accent); text-decoration: none; }
+
+    @media (max-width: 720px) {
+      .quick-links { grid-template-columns: repeat(2, 1fr); }
+      .services-grid { grid-template-columns: 1fr; }
+      .chain-stats { grid-template-columns: 1fr; }
+      .network-configs { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="logo"><span>TokamakAppL2</span> ZK-DEX</div>
+      <span class="badge">Localnet</span>
+    </div>
+    <div class="header-status" id="overallStatus">
+      <div class="status-dot checking"></div>
+      <span>Checking...</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- Quick Links -->
+    <div class="quick-links">
+      <a class="quick-link ql-bridge" href="/bridge.html">
+        <div class="quick-link-icon">&#8644;</div>
+        <div class="quick-link-label">Bridge</div>
+        <div class="quick-link-sub">L1 &harr; L2 Transfer</div>
+      </a>
+      <a class="quick-link ql-withdraw" href="/withdraw-status.html">
+        <div class="quick-link-icon">&#9202;</div>
+        <div class="quick-link-label">Withdrawal Tracker</div>
+        <div class="quick-link-sub">L2 &rarr; L1 Status</div>
+      </a>
+      <a class="quick-link ql-l1" href="http://localhost:8083" target="_blank" id="linkL1Explorer">
+        <div class="quick-link-icon">&#9635;</div>
+        <div class="quick-link-label">L1 Explorer</div>
+        <div class="quick-link-sub">Blockscout :8083</div>
+      </a>
+      <a class="quick-link ql-l2" href="http://localhost:8082" target="_blank" id="linkL2Explorer">
+        <div class="quick-link-icon">&#9635;</div>
+        <div class="quick-link-label">L2 Explorer</div>
+        <div class="quick-link-sub">Blockscout :8082</div>
+      </a>
+      <a class="quick-link ql-metrics" href="http://localhost:3702/metrics" target="_blank">
+        <div class="quick-link-icon">&#9636;</div>
+        <div class="quick-link-label">Metrics</div>
+        <div class="quick-link-sub">Prometheus :3702</div>
+      </a>
+    </div>
+
+    <!-- Chain Stats -->
+    <div class="section-title">Chain Status</div>
+    <div class="chain-stats">
+      <div class="chain-stat-card l1">
+        <div class="chain-stat-header">
+          <div class="chain-stat-title l1">L1 (Chain ID: 9)</div>
+          <div class="service-status checking" id="l1ChainStatus">
+            <div class="dot"></div>
+            <span>checking</span>
+          </div>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-item">
+            <div class="stat-label">Block</div>
+            <div class="stat-value" id="l1Block">-</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Gas Price</div>
+            <div class="stat-value" id="l1Gas">-</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">RPC</div>
+            <div class="stat-value" style="font-size:12px;">localhost:8545</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Peers</div>
+            <div class="stat-value" id="l1Peers">-</div>
+          </div>
+        </div>
+      </div>
+      <div class="chain-stat-card l2">
+        <div class="chain-stat-header">
+          <div class="chain-stat-title l2">L2 (Chain ID: 65536999)</div>
+          <div class="service-status checking" id="l2ChainStatus">
+            <div class="dot"></div>
+            <span>checking</span>
+          </div>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-item">
+            <div class="stat-label">Block</div>
+            <div class="stat-value" id="l2Block">-</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Gas Price</div>
+            <div class="stat-value" id="l2Gas">-</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">RPC</div>
+            <div class="stat-value" style="font-size:12px;">localhost:1729</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Coordinator</div>
+            <div class="stat-value" style="font-size:12px;">:3900</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Services -->
+    <div class="section-title">Services</div>
+    <div class="services-grid">
+      <div class="service-card">
+        <div class="service-header">
+          <div class="service-name">L1 Blockscout Explorer</div>
+          <div class="service-status checking" id="svcL1Blockscout">
+            <div class="dot"></div>
+            <span>checking</span>
+          </div>
+        </div>
+        <div class="service-details">
+          <div class="service-detail">
+            <span class="label">URL</span>
+            <span class="value"><a href="http://localhost:8083" target="_blank">localhost:8083</a></span>
+          </div>
+          <div class="service-detail">
+            <span class="label">Backend API</span>
+            <span class="value">:8083/api</span>
+          </div>
+        </div>
+      </div>
+      <div class="service-card">
+        <div class="service-header">
+          <div class="service-name">L2 Blockscout Explorer</div>
+          <div class="service-status checking" id="svcL2Blockscout">
+            <div class="dot"></div>
+            <span>checking</span>
+          </div>
+        </div>
+        <div class="service-details">
+          <div class="service-detail">
+            <span class="label">URL</span>
+            <span class="value"><a href="http://localhost:8082" target="_blank">localhost:8082</a></span>
+          </div>
+          <div class="service-detail">
+            <span class="label">Backend API</span>
+            <span class="value">:8082/api</span>
+          </div>
+        </div>
+      </div>
+      <div class="service-card">
+        <div class="service-header">
+          <div class="service-name">Bridge UI</div>
+          <div class="service-status online" id="svcBridge">
+            <div class="dot"></div>
+            <span>available</span>
+          </div>
+        </div>
+        <div class="service-details">
+          <div class="service-detail">
+            <span class="label">URL</span>
+            <span class="value"><a href="/bridge.html">localhost:3000/bridge.html</a></span>
+          </div>
+          <div class="service-detail">
+            <span class="label">Type</span>
+            <span class="value">L1 &harr; L2 ETH Bridge</span>
+          </div>
+        </div>
+      </div>
+      <div class="service-card">
+        <div class="service-header">
+          <div class="service-name">Prometheus Metrics</div>
+          <div class="service-status checking" id="svcMetrics">
+            <div class="dot"></div>
+            <span>checking</span>
+          </div>
+        </div>
+        <div class="service-details">
+          <div class="service-detail">
+            <span class="label">URL</span>
+            <span class="value"><a href="http://localhost:3702/metrics" target="_blank">localhost:3702</a></span>
+          </div>
+          <div class="service-detail">
+            <span class="label">Type</span>
+            <span class="value">L2 Metrics</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- L1 Deployed Contract Addresses (dynamically populated) -->
+    <div class="section-title">L1 Deployed Contracts</div>
+    <div class="contracts-card" id="contractsSection">
+      <div style="color:var(--text-dim);font-size:13px;padding:8px 0;">Loading deployed addresses...</div>
+    </div>
+
+    <!-- L2 Genesis Contract Addresses -->
+    <div class="section-title">L2 Genesis Contracts (System)</div>
+    <div class="contracts-card" id="genesisSystemSection"></div>
+
+    <div class="section-title">L2 Genesis Contracts (ZK-DEX)</div>
+    <div class="contracts-card" id="genesisZkDexSection"></div>
+
+    <!-- Test Accounts -->
+    <div class="section-title">Test Accounts (1B ETH each)</div>
+    <div class="contracts-card">
+      <div style="font-size:12px;color:var(--text-dim);padding:0 0 10px;border-bottom:1px solid var(--border);margin-bottom:4px;">
+        All accounts are pre-funded with 1,000,000,000 ETH on L1 genesis. Import into MetaMask via private key.
+      </div>
+      <div class="contract-row">
+        <div>
+          <div class="contract-name">L1 Deployer</div>
+          <div class="contract-addr" style="margin-top:2px;">
+            <a href="http://localhost:8083/address/0x3d1e15a1a55578f7c920884a9943b3b35d0d885b" target="_blank">0x3d1e15a1a55578f7c920884a9943b3b35d0d885b</a>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="contract-addr" style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924">0x385c...b74924</span>
+          <button class="copy-btn" onclick="copyAddr('0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924')">key</button>
+        </div>
+      </div>
+      <div class="contract-row">
+        <div>
+          <div class="contract-name">Bridge Owner / L2 Owner</div>
+          <div class="contract-addr" style="margin-top:2px;">
+            <a href="http://localhost:8083/address/0x4417092b70a3e5f10dc504d0947dd256b965fc62" target="_blank">0x4417092b70a3e5f10dc504d0947dd256b965fc62</a>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="contract-addr" style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e">0x941e...4e2e</span>
+          <button class="copy-btn" onclick="copyAddr('0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e')">key</button>
+        </div>
+      </div>
+      <div class="contract-row">
+        <div>
+          <div class="contract-name">Test Account #1</div>
+          <div class="contract-addr" style="margin-top:2px;">
+            <a href="http://localhost:8083/address/0x8943545177806ed17b9f23f0a21ee5948ecaa776" target="_blank">0x8943545177806ed17b9f23f0a21ee5948ecaa776</a>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="contract-addr" style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31">0xbcdf...bbe31</span>
+          <button class="copy-btn" onclick="copyAddr('0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31')">key</button>
+        </div>
+      </div>
+      <div class="contract-row">
+        <div>
+          <div class="contract-name">Test Account #2</div>
+          <div class="contract-addr" style="margin-top:2px;">
+            <a href="http://localhost:8083/address/0xe25583099ba105d9ec0a67f5ae86d90e50036425" target="_blank">0xe25583099ba105d9ec0a67f5ae86d90e50036425</a>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="contract-addr" style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d">0x3972...e76d</span>
+          <button class="copy-btn" onclick="copyAddr('0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d')">key</button>
+        </div>
+      </div>
+      <div class="contract-row">
+        <div>
+          <div class="contract-name">Test Account #3</div>
+          <div class="contract-addr" style="margin-top:2px;">
+            <a href="http://localhost:8083/address/0x614561d2d143621e126e87831aef287678b442b8" target="_blank">0x614561d2d143621e126e87831aef287678b442b8</a>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="contract-addr" style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="0x53321db7c1e331d93a11a41d16f004d7ff63972ec8ec7c25db329728ceeb1710">0x5332...1710</span>
+          <button class="copy-btn" onclick="copyAddr('0x53321db7c1e331d93a11a41d16f004d7ff63972ec8ec7c25db329728ceeb1710')">key</button>
+        </div>
+      </div>
+      <div class="contract-row">
+        <div>
+          <div class="contract-name">Test Account #4</div>
+          <div class="contract-addr" style="margin-top:2px;">
+            <a href="http://localhost:8083/address/0xf93ee4cf8c6c40b329b0c0626f28333c132cf241" target="_blank">0xf93ee4cf8c6c40b329b0c0626f28333c132cf241</a>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="contract-addr" style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="0xab63b23eb7941c1251757e24b3d2350d2bc05c3c388d06f8fe6feafefb1e8c70">0xab63...8c70</span>
+          <button class="copy-btn" onclick="copyAddr('0xab63b23eb7941c1251757e24b3d2350d2bc05c3c388d06f8fe6feafefb1e8c70')">key</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MetaMask Network Config -->
+    <div class="section-title">MetaMask Network Config</div>
+    <div class="network-configs">
+      <div class="network-config-card">
+        <h4 style="color: var(--l1-color);">L1 Network</h4>
+        <div class="config-row">
+          <span class="label">Network Name</span>
+          <span class="value">TokamakAppL2 L1 Local</span>
+        </div>
+        <div class="config-row">
+          <span class="label">RPC URL</span>
+          <span class="value">http://localhost:8545</span>
+        </div>
+        <div class="config-row">
+          <span class="label">Chain ID</span>
+          <span class="value">9</span>
+        </div>
+        <div class="config-row">
+          <span class="label">Currency</span>
+          <span class="value">ETH</span>
+        </div>
+        <div class="config-row">
+          <span class="label">Explorer</span>
+          <span class="value">http://localhost:8083</span>
+        </div>
+        <button class="btn-add-network" onclick="addNetwork(9, 'http://localhost:8545', 'TokamakAppL2 L1 Local', 'http://localhost:8083')">
+          Add to MetaMask
+        </button>
+      </div>
+      <div class="network-config-card">
+        <h4 style="color: var(--l2-color);">L2 Network</h4>
+        <div class="config-row">
+          <span class="label">Network Name</span>
+          <span class="value">TokamakAppL2 L2 Local</span>
+        </div>
+        <div class="config-row">
+          <span class="label">RPC URL</span>
+          <span class="value">http://localhost:1729</span>
+        </div>
+        <div class="config-row">
+          <span class="label">Chain ID</span>
+          <span class="value">65536999</span>
+        </div>
+        <div class="config-row">
+          <span class="label">Currency</span>
+          <span class="value">ETH</span>
+        </div>
+        <div class="config-row">
+          <span class="label">Explorer</span>
+          <span class="value">http://localhost:8082</span>
+        </div>
+        <button class="btn-add-network" onclick="addNetwork(65536999, 'http://localhost:1729', 'TokamakAppL2 L2 Local', 'http://localhost:8082')">
+          Add to MetaMask
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    TokamakAppL2 ZK-DEX Localnet Dashboard &middot; <a href="https://github.com/lambdaclass/ethrex" target="_blank">GitHub</a>
+  </div>
+
+  <script>
+    const L1_RPC = 'http://localhost:8545';
+    const L2_RPC = 'http://localhost:1729';
+    let CONFIG = null;
+
+    function setStatus(elId, status, label) {
+      const el = document.getElementById(elId);
+      if (!el) return;
+      el.className = 'service-status ' + status;
+      el.querySelector('span').textContent = label || status;
+    }
+
+    function setOverallStatus(status, label) {
+      const el = document.getElementById('overallStatus');
+      el.querySelector('.status-dot').className = 'status-dot ' + status;
+      el.querySelector('span').textContent = label;
+    }
+
+    async function rpcCall(url, method, params) {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', method, params: params || [], id: 1 })
+      });
+      const data = await resp.json();
+      return data.result;
+    }
+
+    function shortenAddr(addr) {
+      if (!addr) return '?';
+      return addr.slice(0, 6) + '...' + addr.slice(-4);
+    }
+
+    // Load deployed config and render contract addresses dynamically
+    async function loadConfig() {
+      try {
+        const resp = await fetch('/config.json');
+        if (resp.ok) {
+          CONFIG = await resp.json();
+          console.log('Config loaded:', CONFIG);
+        }
+      } catch (err) {
+        console.warn('Failed to load config.json:', err);
+      }
+      renderContracts();
+    }
+
+    function renderContractRows(contracts) {
+      let html = '';
+      for (const c of contracts) {
+        html += `
+          <div class="contract-row">
+            <div>
+              <div class="contract-name">${c.name}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="contract-addr">
+                <a href="${c.explorer}/address/${c.address}" target="_blank">${c.address}</a>
+              </span>
+              <button class="copy-btn" onclick="copyAddr('${c.address}')">copy</button>
+            </div>
+          </div>`;
+      }
+      return html;
+    }
+
+    function renderContracts() {
+      const l1Explorer = CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083';
+      const l2Explorer = CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082';
+
+      // --- L1 Deployed Contracts ---
+      const l1Section = document.getElementById('contractsSection');
+      const l1Contracts = [];
+
+      if (CONFIG && CONFIG.bridge_address) {
+        l1Contracts.push({ name: 'CommonBridge', address: CONFIG.bridge_address, explorer: l1Explorer });
+      }
+      if (CONFIG && CONFIG.on_chain_proposer_address) {
+        l1Contracts.push({ name: 'OnChainProposer', address: CONFIG.on_chain_proposer_address, explorer: l1Explorer });
+      }
+      if (CONFIG && CONFIG.timelock_address) {
+        l1Contracts.push({ name: 'Timelock', address: CONFIG.timelock_address, explorer: l1Explorer });
+      }
+      if (CONFIG && CONFIG.sp1_verifier_address && CONFIG.sp1_verifier_address !== '0x0000000000000000000000000000000000000000') {
+        l1Contracts.push({ name: 'SP1 Verifier', address: CONFIG.sp1_verifier_address, explorer: l1Explorer });
+      }
+
+      if (l1Contracts.length === 0) {
+        l1Section.innerHTML = '<div style="color:var(--warning);font-size:13px;padding:8px 0;">L1 deployed addresses not loaded. Make sure localnet is running and config.json is generated.</div>';
+      } else {
+        l1Section.innerHTML = renderContractRows(l1Contracts);
+      }
+
+      // --- L2 Genesis System Contracts ---
+      const systemSection = document.getElementById('genesisSystemSection');
+      const systemContracts = [
+        { name: 'CommonBridgeL2', address: '0x000000000000000000000000000000000000ffff', explorer: l2Explorer },
+        { name: 'L2ToL1Messenger', address: '0x000000000000000000000000000000000000fffe', explorer: l2Explorer },
+        { name: 'WETH9', address: '0x000000000000000000000000000000000000fffd', explorer: l2Explorer },
+        { name: 'FeeTokenRegistry', address: '0x000000000000000000000000000000000000fffc', explorer: l2Explorer },
+        { name: 'FeeTokenRatioPricer', address: '0x000000000000000000000000000000000000fffb', explorer: l2Explorer },
+      ];
+      systemSection.innerHTML = renderContractRows(systemContracts);
+
+      // --- L2 Genesis ZK-DEX Contracts ---
+      const zkDexSection = document.getElementById('genesisZkDexSection');
+      const zkDexContracts = [
+        { name: 'ZkDex (Main)', address: '0xDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDE', explorer: l2Explorer },
+        { name: 'Verifier 1 - Deposit', address: '0xDE00000000000000000000000000000000000001', explorer: l2Explorer },
+        { name: 'Verifier 2 - Withdrawal', address: '0xDE00000000000000000000000000000000000002', explorer: l2Explorer },
+        { name: 'Verifier 3 - Mint', address: '0xDE00000000000000000000000000000000000003', explorer: l2Explorer },
+        { name: 'Verifier 4 - Spend', address: '0xDE00000000000000000000000000000000000004', explorer: l2Explorer },
+        { name: 'Verifier 5 - MakeOrder', address: '0xDE00000000000000000000000000000000000005', explorer: l2Explorer },
+        { name: 'Verifier 6 - SettleOrder', address: '0xDE00000000000000000000000000000000000006', explorer: l2Explorer },
+      ];
+      zkDexSection.innerHTML = renderContractRows(zkDexContracts);
+    }
+
+    async function updateChainStats() {
+      // L1
+      try {
+        const [blockHex, gasPriceHex] = await Promise.all([
+          rpcCall(L1_RPC, 'eth_blockNumber'),
+          rpcCall(L1_RPC, 'eth_gasPrice')
+        ]);
+        const block = parseInt(blockHex, 16);
+        const gasGwei = (parseInt(gasPriceHex, 16) / 1e9).toFixed(1);
+        document.getElementById('l1Block').textContent = block.toLocaleString();
+        document.getElementById('l1Gas').textContent = gasGwei + ' Gwei';
+        document.getElementById('l1Peers').textContent = 'dev';
+        setStatus('l1ChainStatus', 'online', 'online');
+      } catch {
+        setStatus('l1ChainStatus', 'offline', 'offline');
+      }
+
+      // L2
+      try {
+        const [blockHex, gasPriceHex] = await Promise.all([
+          rpcCall(L2_RPC, 'eth_blockNumber'),
+          rpcCall(L2_RPC, 'eth_gasPrice')
+        ]);
+        const block = parseInt(blockHex, 16);
+        const gasGwei = (parseInt(gasPriceHex, 16) / 1e9).toFixed(1);
+        document.getElementById('l2Block').textContent = block.toLocaleString();
+        document.getElementById('l2Gas').textContent = gasGwei + ' Gwei';
+        setStatus('l2ChainStatus', 'online', 'online');
+      } catch {
+        setStatus('l2ChainStatus', 'offline', 'offline');
+      }
+    }
+
+    async function updateServiceStatus() {
+      // L1 Blockscout
+      try {
+        const resp = await fetch('http://localhost:8083/api/v2/stats');
+        if (resp.ok) {
+          setStatus('svcL1Blockscout', 'online', 'online');
+        } else {
+          setStatus('svcL1Blockscout', 'offline', 'starting');
+        }
+      } catch {
+        setStatus('svcL1Blockscout', 'offline', 'offline');
+      }
+
+      // L2 Blockscout
+      try {
+        const resp = await fetch('http://localhost:8082/api/v2/stats');
+        if (resp.ok) {
+          setStatus('svcL2Blockscout', 'online', 'online');
+        } else {
+          setStatus('svcL2Blockscout', 'offline', 'starting');
+        }
+      } catch {
+        setStatus('svcL2Blockscout', 'offline', 'offline');
+      }
+
+      // Prometheus Metrics
+      try {
+        await fetch('http://localhost:3702/metrics', { mode: 'no-cors' });
+        setStatus('svcMetrics', 'online', 'online');
+      } catch {
+        setStatus('svcMetrics', 'offline', 'offline');
+      }
+    }
+
+    async function updateAll() {
+      await Promise.all([updateChainStats(), updateServiceStatus()]);
+
+      // Overall status
+      const l1Status = document.getElementById('l1ChainStatus').classList.contains('online');
+      const l2Status = document.getElementById('l2ChainStatus').classList.contains('online');
+
+      if (l1Status && l2Status) {
+        setOverallStatus('online', 'All systems online');
+      } else if (l1Status || l2Status) {
+        setOverallStatus('checking', 'Partial');
+      } else {
+        setOverallStatus('offline', 'Offline');
+      }
+    }
+
+    function copyAddr(addr) {
+      navigator.clipboard.writeText(addr).then(() => {});
+    }
+
+    async function addNetwork(chainId, rpcUrl, chainName, explorerUrl) {
+      if (!window.ethereum) {
+        alert('MetaMask is not installed');
+        return;
+      }
+      try {
+        await window.ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: '0x' + chainId.toString(16),
+            chainName: chainName,
+            nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+            rpcUrls: [rpcUrl],
+            blockExplorerUrls: [explorerUrl]
+          }]
+        });
+      } catch (err) {
+        console.error('Failed to add network:', err);
+      }
+    }
+
+    // Initialize
+    loadConfig();
+    updateAll();
+    setInterval(updateAll, 5000);
+  </script>
+</body>
+</html>

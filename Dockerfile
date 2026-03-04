@@ -59,12 +59,16 @@ COPY cmd ./cmd
 COPY metrics ./metrics
 COPY tooling ./tooling
 COPY fixtures/genesis ./fixtures/genesis
-COPY .git ./.git
 COPY Cargo.* ./
 COPY fixtures ./fixtures
 COPY .cargo/ ./.cargo
 
 ENV COMPILE_CONTRACTS=true
+
+# Fallback git info for Docker builds without .git directory.
+# vergen build scripts check these env vars before trying to open .git.
+ENV VERGEN_GIT_SHA=docker-build
+ENV VERGEN_GIT_BRANCH=docker-build
 
 RUN cargo build --profile $PROFILE $BUILD_FLAGS
 

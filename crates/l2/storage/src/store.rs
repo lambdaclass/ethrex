@@ -411,6 +411,15 @@ impl Store {
             .await
     }
 
+    pub async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        self.engine
+            .get_non_privileged_transactions_by_batch(batch_number)
+            .await
+    }
+
     /// Reverts to a previous batch, discarding operations in them
     pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.engine.revert_to_batch(batch_number).await

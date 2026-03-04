@@ -1,0 +1,131 @@
+# Dockerfile.sp1 — SP1 ZK-DEX prover image with GPU support
+#
+# Extends the standard ethrex Dockerfile with SP1 toolchain installation
+# for building and proving with real ZK proofs.
+#
+# Build:
+#   docker build -f Dockerfile.sp1 -t ethrex:sp1 .
+#
+# Build args:
+#   GUEST_PROGRAMS: Comma-separated guest programs (default: evm-l2,zk-dex)
+
+FROM rust:1.90 AS chef
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    clang \
+    libclang-dev \
+    libc6 \
+    libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN cargo install cargo-chef
+
+WORKDIR /ethrex
+
+
+# --- Planner Stage ---
+FROM chef AS planner
+
+COPY benches ./benches
+COPY crates ./crates
+COPY metrics ./metrics
+COPY cmd ./cmd
+COPY test ./test
+COPY tooling ./tooling
+COPY Cargo.* .
+COPY .cargo/ ./.cargo
+
+RUN cargo chef prepare --recipe-path recipe.json
+
+
+# --- Builder Stage ---
+FROM chef AS builder
+
+ARG PROFILE="release"
+ARG BUILD_FLAGS="--features l2,l2-sql,sp1"
+ARG GUEST_PROGRAMS="evm-l2,zk-dex"
+
+# Install SP1 toolchain (succinct)
+ENV SP1_DIR=/root/.sp1
+RUN curl -L https://sp1.succinct.xyz | bash \
+    && ${SP1_DIR}/bin/sp1up
+
+# Add succinct toolchain to PATH
+ENV PATH="${SP1_DIR}/bin:${PATH}"
+ENV RUSTUP_TOOLCHAIN=succinct
+
+# Dependency cache
+COPY --from=planner /ethrex/recipe.json recipe.json
+RUN RUSTUP_TOOLCHAIN=stable cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS
+
+# Install solc 0.8.31
+RUN SOLC_URL="https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux"; \
+    if [ "$(uname -m)" = "aarch64" ]; then SOLC_URL="${SOLC_URL}-arm"; fi; \
+    curl -L -o /usr/bin/solc "$SOLC_URL" && chmod +x /usr/bin/solc
+
+# Copy source
+COPY benches ./benches
+COPY crates ./crates
+COPY cmd ./cmd
+COPY metrics ./metrics
+COPY tooling ./tooling
+COPY fixtures/genesis ./fixtures/genesis
+COPY Cargo.* ./
+COPY fixtures ./fixtures
+COPY .cargo/ ./.cargo
+
+ENV COMPILE_CONTRACTS=true
+ENV GUEST_PROGRAMS=${GUEST_PROGRAMS}
+
+# Fallback git info for Docker builds without .git directory.
+# vergen build scripts check these env vars before trying to open .git.
+ENV VERGEN_GIT_SHA=docker-build
+ENV VERGEN_GIT_BRANCH=docker-build
+
+# Build with SP1 features and guest programs
+# RUSTUP_TOOLCHAIN=stable ensures the host build uses stable,
+# while sp1_build internally uses the succinct toolchain for guest programs
+RUN RUSTUP_TOOLCHAIN=stable cargo build --profile $PROFILE $BUILD_FLAGS
+
+RUN mkdir -p /ethrex/bin && \
+    cp /ethrex/target/${PROFILE}/ethrex /ethrex/bin/ethrex
+
+
+# --- Final Image ---
+FROM ubuntu:24.04
+WORKDIR /usr/local/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI (needed by SP1 Groth16 gnark wrapper)
+RUN curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.5.1.tgz \
+    | tar xz --strip-components=1 -C /usr/local/bin docker/docker
+
+COPY cmd/ethrex/networks ./cmd/ethrex/networks
+COPY --from=builder /ethrex/bin/ethrex .
+
+# Copy guest program VK files so the deployer can register them on L1.
+# The deployer resolves VK paths via canonicalize() on:
+#   env!("CARGO_MANIFEST_DIR")/../../crates/guest-program/bin/sp1-zk-dex/out/...
+# where CARGO_MANIFEST_DIR = /ethrex/cmd/ethrex (baked at compile time).
+# We need /ethrex/cmd/ethrex/ to exist for canonicalize() to resolve "../..".
+RUN mkdir -p /ethrex/cmd/ethrex
+COPY --from=builder /ethrex/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-* \
+    /ethrex/crates/guest-program/bin/sp1/out/
+COPY --from=builder /ethrex/crates/guest-program/bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-vk-* \
+    /ethrex/crates/guest-program/bin/sp1-zk-dex/out/
+
+EXPOSE 8545
+EXPOSE 8551
+EXPOSE 30303/tcp
+EXPOSE 30303/udp
+EXPOSE 9090
+EXPOSE 1729
+EXPOSE 3900
+
+ENTRYPOINT [ "./ethrex" ]

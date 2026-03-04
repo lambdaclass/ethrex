@@ -122,7 +122,7 @@ export const deploymentsApi = {
     const data = await apiFetch(`/api/deployments/${id}`);
     return data.deployment;
   },
-  create: async (body: { programId: string; name: string; chainId?: number; rpcUrl?: string }) => {
+  create: async (body: { programId: string; name: string; chainId?: number; rpcUrl?: string; config?: Record<string, unknown> }) => {
     const data = await apiFetch("/api/deployments", { method: "POST", body: JSON.stringify(body) });
     return data.deployment;
   },

@@ -161,10 +161,16 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
         Store::new(datadir, EngineType::InMemory)
     } else {
         #[cfg(feature = "rocksdb")]
-        let engine_type = EngineType::RocksDB;
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+        {
+            #[cfg(feature = "metrics")]
+            ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
+            Store::new(datadir, EngineType::RocksDB)
+        }
+        #[cfg(not(feature = "rocksdb"))]
+        {
+            let _ = datadir;
+            compile_error!("Database feature must be enabled (Available: `rocksdb`).");
+        }
     }
 }
 

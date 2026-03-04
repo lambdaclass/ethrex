@@ -107,7 +107,7 @@ export default function AdminPage() {
           </div>
           <div className="bg-white rounded-xl shadow-sm border p-6">
             <p className="text-2xl font-bold text-blue-600">{stats.deployments}</p>
-            <p className="text-sm text-gray-500">Deployments</p>
+            <p className="text-sm text-gray-500">L2s</p>
           </div>
         </div>
       )}

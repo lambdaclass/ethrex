@@ -424,16 +424,13 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/lambdaclass/bls12_381-patch/?branch=expose-fp-struct#f2242f78b2b5fc10d9168a810c04ab8728ac6804"
+source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct#219174187bd78154cec35b0809799fc2c991a579"
 dependencies = [
- "cfg-if",
  "digest",
  "ff 0.13.1",
  "group 0.13.0",
- "hex",
  "pairing 0.23.0",
  "rand_core",
- "sp1-lib 5.2.4",
  "subtle",
 ]
 
@@ -3740,8 +3737,3 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 name = "secp256k1"
 version = "0.30.0"
 source = "git+https://github.com/sp1-patches/rust-secp256k1?tag=patch-0.30.0-sp1-5.0.0#04d87db04bcc2dc5dd8e1ab3f046cc655440d07a"
-
-[[patch.unused]]
-name = "substrate-bn"
-version = "0.6.0"
-source = "git+https://github.com/sp1-patches/bn?tag=patch-0.6.0-sp1-5.0.0#e0d67f219b2ad6a1887e3275b7ba09ada4b1afb6"

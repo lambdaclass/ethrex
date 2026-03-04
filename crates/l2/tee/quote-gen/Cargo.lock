@@ -1301,6 +1301,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-rlp",
+ "ethrex-trie",
  "ethrex-vm",
  "hex",
  "rkyv",

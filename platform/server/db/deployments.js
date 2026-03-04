@@ -14,7 +14,12 @@ function createDeployment({ userId, programId, name, chainId, rpcUrl, config }) 
 
 function getDeploymentById(id) {
   const db = getDb();
-  return db.prepare("SELECT * FROM deployments WHERE id = ?").get(id);
+  return db.prepare(
+    `SELECT d.*, p.name as program_name, p.program_id as program_slug, p.category
+     FROM deployments d
+     JOIN programs p ON d.program_id = p.id
+     WHERE d.id = ?`
+  ).get(id);
 }
 
 function getDeploymentsByUser(userId) {
