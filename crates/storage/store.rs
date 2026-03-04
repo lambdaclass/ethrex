@@ -695,11 +695,8 @@ impl Store {
         let (bytecode_slice, targets) = decode_bytes(&bytes)?;
         let bytecode = bytes.slice_ref(bytecode_slice);
 
-        let code = Code {
-            hash: code_hash,
-            bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
-        };
+        let jump_targets = <Vec<_>>::decode(targets)?;
+        let code = Code::from_parts(bytecode, code_hash, jump_targets);
 
         // insert into cache and evict if needed
         self.account_code_cache
@@ -773,7 +770,7 @@ impl Store {
                 return Ok(None);
             };
             let metadata = CodeMetadata {
-                length: code.bytecode.len() as u64,
+                length: code.code_len as u64,
             };
 
             // Write metadata for future use (async, fire and forget)
@@ -808,7 +805,7 @@ impl Store {
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
-        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+        let metadata_buf = (code.code_len as u64).to_be_bytes();
 
         // Write both code and metadata atomically
         let backend = self.backend.clone();
@@ -1189,7 +1186,7 @@ impl Store {
 
         for (code_hash, code) in account_codes {
             let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+            let metadata_buf = (code.code_len as u64).to_be_bytes().to_vec();
             code_batch_items.push((code_hash.as_bytes().to_vec(), buf));
             metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
         }
@@ -1413,7 +1410,7 @@ impl Store {
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+            let metadata_buf = (code.code_len as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
@@ -3084,10 +3081,11 @@ fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
+    let unpadded = code.unpadded_bytecode();
     let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
+        6 + unpadded.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
     );
-    code.bytecode.encode(&mut buf);
+    unpadded.encode(&mut buf);
     code.jump_targets.encode(&mut buf);
     buf
 }

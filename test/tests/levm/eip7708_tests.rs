@@ -88,7 +88,7 @@ impl Database for TestDatabase {
         for acc in self.accounts.values() {
             if acc.info.code_hash == code_hash {
                 return Ok(CodeMetadata {
-                    length: acc.code.bytecode.len() as u64,
+                    length: acc.code.code_len as u64,
                 });
             }
         }

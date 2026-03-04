@@ -5,7 +5,6 @@ use crate::{
     memory,
 };
 use ExceptionalHalt::OutOfGas;
-use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_common::{U256, types::Fork};
 use malachite::base::num::logic::traits::*;
@@ -572,22 +571,31 @@ pub fn selfdestruct(
         .ok_or(OutOfGas.into())
 }
 
-pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
+pub fn tx_calldata(calldata: &[u8]) -> Result<u64, VMError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-    let mut calldata_cost: u64 = 0;
-    for byte in calldata {
-        calldata_cost = if *byte != 0 {
-            calldata_cost
-                .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
-                .ok_or(OutOfGas)?
-        } else {
-            calldata_cost
-                .checked_add(CALLDATA_COST_ZERO_BYTE)
-                .ok_or(OutOfGas)?
-        }
-    }
-    Ok(calldata_cost)
+    //
+    // Compute in bulk: count non-zero bytes once, then derive the cost.
+    // cost = non_zero_count * 16 + zero_count * 4
+    //      = non_zero_count * 16 + (total - non_zero_count) * 4
+    //      = non_zero_count * 12 + total * 4
+    let total_len = u64::try_from(calldata.len()).map_err(|_| OutOfGas)?;
+    let non_zero_count = calldata.iter().filter(|&&b| b != 0).count();
+    let non_zero_count = u64::try_from(non_zero_count).map_err(|_| OutOfGas)?;
+
+    let zero_cost = total_len
+        .checked_mul(CALLDATA_COST_ZERO_BYTE)
+        .ok_or(OutOfGas)?;
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "CALLDATA_COST_NON_ZERO_BYTE > CALLDATA_COST_ZERO_BYTE, and non_zero_count <= total_len"
+    )]
+    let extra_non_zero_cost =
+        non_zero_count * (CALLDATA_COST_NON_ZERO_BYTE - CALLDATA_COST_ZERO_BYTE);
+
+    zero_cost
+        .checked_add(extra_non_zero_cost)
+        .ok_or(OutOfGas.into())
 }
 
 fn address_access_cost(

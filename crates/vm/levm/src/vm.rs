@@ -583,8 +583,7 @@ impl<'a> VM<'a> {
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
         loop {
-            let opcode = self.current_call_frame.next_opcode();
-            self.advance_pc(1)?;
+            let opcode = self.current_call_frame.next_opcode_and_advance();
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();

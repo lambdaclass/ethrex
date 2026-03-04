@@ -828,10 +828,9 @@ impl LEVM {
                 if let Some(expected_code) = find_exact_change_code(&acct.code_changes, bal_idx) {
                     match actual {
                         Some(a) => {
-                            let actual_code = codes
+                            let actual_code: Bytes = codes
                                 .get(&a.info.code_hash)
-                                .map(|c| &c.bytecode)
-                                .cloned()
+                                .map(|c| Bytes::copy_from_slice(c.unpadded_bytecode()))
                                 .unwrap_or_default();
                             if actual_code != *expected_code {
                                 return Err(format!(
@@ -1473,7 +1472,7 @@ pub fn generic_system_contract_levm(
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .any(|contract| contract.address == contract_address)
-        && db.get_account_code(contract_address)?.bytecode.is_empty()
+        && db.get_account_code(contract_address)?.code_len == 0
     {
         return Err(EvmError::SystemContractCallFailed(format!(
             "System contract: {contract_address} has no code after deployment"
@@ -1948,6 +1947,6 @@ mod bal_tests {
         assert_eq!(updates.len(), 1);
         let u = &updates[0];
         assert_eq!(u.info.as_ref().unwrap().code_hash, expected_hash);
-        assert_eq!(u.code.as_ref().unwrap().bytecode, code);
+        assert_eq!(u.code.as_ref().unwrap().unpadded_bytecode(), code.as_ref());
     }
 }

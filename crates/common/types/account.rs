@@ -28,34 +28,72 @@ pub struct Code {
     // We use a bogus H256::zero() value for initcodes as there is no way for the VM or
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
+    /// The bytecode buffer, padded with 33 zero bytes at the end.
+    ///
+    /// The padding eliminates bounds checks in the hot interpreter loop:
+    /// - `next_opcode()` returns STOP (0x00) naturally past the end
+    /// - PUSH1-PUSH32 can read their literal bytes without bounds checks
+    ///
+    /// Use `code_len` for the real bytecode length (e.g. CODESIZE, CODECOPY).
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
-    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
-    // this does not apply to previous forks. This is tested in the EEST tests, which would
-    // panic in debug mode.
+    /// The length of the original bytecode before padding.
+    pub code_len: usize,
     pub jump_targets: Vec<u32>,
 }
 
+/// Number of zero bytes appended to bytecode for bounds-check elimination.
+/// 33 = 32 (max PUSH literal size) + 1 (for next_opcode past the last PUSH).
+const BYTECODE_PADDING: usize = 33;
+
 impl Code {
+    /// Pad bytecode with 33 zero bytes so the interpreter loop can skip bounds checks.
+    fn pad_bytecode(code: &Bytes) -> Bytes {
+        let mut padded = Vec::with_capacity(code.len() + BYTECODE_PADDING);
+        padded.extend_from_slice(code);
+        padded.resize(code.len() + BYTECODE_PADDING, 0);
+        Bytes::from(padded)
+    }
+
     // SAFETY: hash will be stored as-is, so it either needs to match
     // the real code hash (i.e. it was precomputed and we're reusing)
     // or never be read (e.g. for initcode).
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
+        let code_len = code.len();
         Self {
             hash,
-            bytecode: code,
+            bytecode: Self::pad_bytecode(&code),
+            code_len,
+            jump_targets,
+        }
+    }
+
+    /// Construct from bytecode, hash, and pre-computed jump targets.
+    /// Used when deserializing from storage where jump_targets are already available.
+    pub fn from_parts(code: Bytes, hash: H256, jump_targets: Vec<u32>) -> Self {
+        let code_len = code.len();
+        Self {
+            hash,
+            bytecode: Self::pad_bytecode(&code),
+            code_len,
             jump_targets,
         }
     }
 
     pub fn from_bytecode(code: Bytes) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
+        let code_len = code.len();
         Self {
             hash: keccak(code.as_ref()),
-            bytecode: code,
+            bytecode: Self::pad_bytecode(&code),
+            code_len,
             jump_targets,
         }
+    }
+
+    /// Returns a slice of the original bytecode without the padding.
+    pub fn unpadded_bytecode(&self) -> &[u8] {
+        &self.bytecode[..self.code_len]
     }
 
     fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
@@ -164,7 +202,8 @@ impl Default for AccountState {
 impl Default for Code {
     fn default() -> Self {
         Self {
-            bytecode: Bytes::new(),
+            bytecode: Bytes::from_static(&[0u8; BYTECODE_PADDING]),
+            code_len: 0,
             hash: *EMPTY_KECCACK_HASH,
             jump_targets: Vec::new(),
         }

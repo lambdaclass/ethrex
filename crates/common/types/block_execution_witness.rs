@@ -453,7 +453,7 @@ impl GuestProgramState {
         }
         match self.codes_hashed.get(&code_hash) {
             Some(code) => Ok(CodeMetadata {
-                length: code.bytecode.len() as u64,
+                length: code.code_len as u64,
             }),
             None => {
                 // Same as get_account_code - default to empty for missing bytecode

@@ -379,15 +379,39 @@ impl CallFrame {
         }
     }
 
+    /// Reads the current opcode and advances the program counter by one.
+    ///
+    /// This combines the former `next_opcode()` + `advance_pc(1)` into a single
+    /// method to reduce overhead in the hot interpreter loop.
+    ///
+    /// # Safety guarantee
+    /// Bytecode is padded with 33 zero bytes (BYTECODE_PADDING). The maximum
+    /// PC advance per step is 33 (PUSH32 = 1 opcode + 32 data bytes). Any
+    /// valid execution path keeps `pc` within the padded buffer, and reading
+    /// past `code_len` returns 0x00 = STOP, which halts the VM.
+    #[inline(always)]
+    pub fn next_opcode_and_advance(&mut self) -> u8 {
+        let pc = self.pc;
+        self.pc = pc.wrapping_add(1);
+        #[expect(
+            unsafe_code,
+            reason = "bytecode is padded with 33 zero bytes past code_len"
+        )]
+        unsafe {
+            *self.bytecode.bytecode.get_unchecked(pc)
+        }
+    }
+
+    /// Reads the current opcode without advancing the program counter.
+    /// Used by code that needs to peek at the current opcode.
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        if self.pc < self.bytecode.bytecode.len() {
-            #[expect(unsafe_code, reason = "bounds checked above")]
-            unsafe {
-                *self.bytecode.bytecode.get_unchecked(self.pc)
-            }
-        } else {
-            0
+        #[expect(
+            unsafe_code,
+            reason = "bytecode is padded with 33 zero bytes past code_len"
+        )]
+        unsafe {
+            *self.bytecode.bytecode.get_unchecked(self.pc)
         }
     }
 

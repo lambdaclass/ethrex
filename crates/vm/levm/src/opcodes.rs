@@ -432,8 +432,8 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::SSTORE as usize] = OpCodeFn::new::<OpSStoreHandler>();
         opcode_table[Opcode::MSIZE as usize] = OpCodeFn::new::<OpMSizeHandler>();
         opcode_table[Opcode::GAS as usize] = OpCodeFn::new::<OpGasHandler>();
-        opcode_table[Opcode::PUSH1 as usize] = OpCodeFn::new::<OpPushHandler<1>>();
-        opcode_table[Opcode::PUSH2 as usize] = OpCodeFn::new::<OpPushHandler<2>>();
+        opcode_table[Opcode::PUSH1 as usize] = OpCodeFn::new::<OpPush1Handler>();
+        opcode_table[Opcode::PUSH2 as usize] = OpCodeFn::new::<OpPush2Handler>();
         opcode_table[Opcode::PUSH3 as usize] = OpCodeFn::new::<OpPushHandler<3>>();
         opcode_table[Opcode::PUSH4 as usize] = OpCodeFn::new::<OpPushHandler<4>>();
         opcode_table[Opcode::PUSH5 as usize] = OpCodeFn::new::<OpPushHandler<5>>();

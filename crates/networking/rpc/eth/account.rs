@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use serde_json::Value;
 use tracing::debug;
 
@@ -99,7 +100,7 @@ impl RpcHandler for GetCodeRequest {
             .storage
             .get_code_by_account_address(block_number, self.address)
             .await?
-            .map(|c| c.bytecode)
+            .map(|c| Bytes::copy_from_slice(c.unpadded_bytecode()))
             .unwrap_or_default();
 
         serde_json::to_value(format!("0x{code:x}"))

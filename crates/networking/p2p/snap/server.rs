@@ -113,7 +113,10 @@ pub async fn process_byte_codes_request(
         let mut codes = vec![];
         let mut bytes_used = 0;
         for code_hash in request.hashes {
-            if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.bytecode) {
+            if let Some(code) = store
+                .get_account_code(code_hash)?
+                .map(|c| Bytes::copy_from_slice(c.unpadded_bytecode()))
+            {
                 bytes_used += code.len() as u64;
                 codes.push(code);
             }

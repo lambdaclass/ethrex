@@ -20,7 +20,7 @@ use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
     types::{Account, Code, Fork, Transaction, fake_exponential, tx_fields::*},
-    utils::{keccak, u256_to_big_endian},
+    utils::keccak,
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
@@ -168,13 +168,27 @@ pub fn calculate_blob_gas_cost(
 }
 
 // ==================== Word related functions =======================
+/// Convert a U256 to an Address by extracting the low 20 bytes.
+///
+/// This avoids creating a full 32-byte big-endian temporary, instead extracting
+/// the address bytes directly from the U256 limbs.
+#[inline]
 pub fn word_to_address(word: U256) -> Address {
-    Address::from_slice(&u256_to_big_endian(word)[12..])
+    // U256 limbs are [u64; 4] in little-endian order.
+    // In big-endian layout: [limb3, limb2, limb1, limb0].
+    // Address is the last 20 bytes = bytes 12..32 of the big-endian representation.
+    // That's: last 4 bytes of limb2 (bytes 12..16) + limb1 (bytes 16..24) + limb0 (bytes 24..32).
+    let mut addr = [0u8; 20];
+    let limb2_be = word.0[2].to_be_bytes();
+    addr[..4].copy_from_slice(&limb2_be[4..]);
+    addr[4..12].copy_from_slice(&word.0[1].to_be_bytes());
+    addr[12..20].copy_from_slice(&word.0[0].to_be_bytes());
+    Address::from(addr)
 }
 
 // ================== EIP-7702 related functions =====================
 
-pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
+pub fn code_has_delegation(code: &[u8]) -> Result<bool, VMError> {
     if code.len() == EIP7702_DELEGATED_CODE_LEN {
         let first_3_bytes = &code.get(..3).ok_or(InternalError::Slicing)?;
         return Ok(*first_3_bytes == SET_CODE_DELEGATION_BYTES);
@@ -184,9 +198,9 @@ pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
 
 /// Gets the address inside the bytecode if it has been
 /// delegated as the EIP7702 determines.
-pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError> {
+pub fn get_authorized_address_from_code(code: &[u8]) -> Result<Address, VMError> {
     if code_has_delegation(code)? {
-        let address_bytes = &code
+        let address_bytes = code
             .get(SET_CODE_DELEGATION_BYTES.len()..)
             .ok_or(InternalError::Slicing)?;
         // It shouldn't panic when doing Address::from_slice()
@@ -346,13 +360,13 @@ pub fn eip7702_get_code(
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !code_has_delegation(&bytecode.bytecode)? {
+    if !code_has_delegation(bytecode.unpadded_bytecode())? {
         return Ok((false, 0, address, bytecode.clone()));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
+    let auth_address = get_authorized_address_from_code(bytecode.unpadded_bytecode())?;
 
     let access_cost = if accrued_substate.add_accessed_address(auth_address) {
         COLD_ADDRESS_ACCESS_COST
@@ -400,8 +414,8 @@ impl<'a> VM<'a> {
 
             // 5. Verify the code of authority is either empty or already delegated.
             // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
-            let empty_or_delegated = authority_code.bytecode.is_empty()
-                || code_has_delegation(&authority_code.bytecode)?;
+            let empty_or_delegated = authority_code.code_len == 0
+                || code_has_delegation(authority_code.unpadded_bytecode())?;
 
             // Record authority as touched for BAL per EIP-7928, even if validation fails later.
             // This ensures authority appears in BAL with empty change set when:
@@ -550,7 +564,7 @@ impl<'a> VM<'a> {
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create()? {
-            &self.current_call_frame.bytecode.bytecode
+            self.current_call_frame.bytecode.unpadded_bytecode()
         } else {
             &self.current_call_frame.calldata
         };

@@ -236,7 +236,7 @@ impl OpcodeHandler for OpCodeSizeHandler {
 
         vm.current_call_frame
             .stack
-            .push(vm.current_call_frame.bytecode.bytecode.len().into())?;
+            .push(vm.current_call_frame.bytecode.code_len.into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -259,12 +259,8 @@ impl OpcodeHandler for OpCodeCopyHandler {
             )?)?;
 
         if len > 0 {
-            let data = vm
-                .current_call_frame
-                .bytecode
-                .bytecode
-                .get(src_offset..)
-                .unwrap_or_default();
+            let code = vm.current_call_frame.bytecode.unpadded_bytecode();
+            let data = code.get(src_offset..).unwrap_or_default();
             let data = data.get(..len).unwrap_or(data);
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;

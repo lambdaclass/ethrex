@@ -6,10 +6,7 @@ use crate::{
 };
 use ExceptionalHalt::OutOfBounds;
 use bytes::Bytes;
-use ethrex_common::{
-    U256,
-    utils::{u256_from_big_endian_const, u256_to_big_endian},
-};
+use ethrex_common::U256;
 
 /// A cheaply clonable callframe-shared memory buffer.
 ///
@@ -142,11 +139,29 @@ impl Memory {
         }
     }
 
-    /// Load a word from at the given offset.
+    /// Load a word from the given offset.
+    ///
+    /// Reads U256 limbs directly from the buffer in big-endian order, avoiding
+    /// an intermediate `[u8; 32]` temporary and the `u256_from_big_endian_const` call.
     #[inline(always)]
     pub fn load_word(&mut self, offset: usize) -> Result<U256, VMError> {
-        let value: [u8; 32] = self.load_range_const(offset)?;
-        Ok(u256_from_big_endian_const(value))
+        let new_size = offset.checked_add(32).ok_or(OutOfBounds)?;
+        self.resize(new_size)?;
+
+        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
+
+        let buf = self.buffer.borrow();
+        // SAFETY: resize ensures true_offset..true_offset+32 is within bounds.
+        #[expect(unsafe_code)]
+        unsafe {
+            let src = buf.as_ptr().add(true_offset);
+            Ok(U256([
+                u64::from_be_bytes(*src.add(24).cast::<[u8; 8]>()),
+                u64::from_be_bytes(*src.add(16).cast::<[u8; 8]>()),
+                u64::from_be_bytes(*src.add(8).cast::<[u8; 8]>()),
+                u64::from_be_bytes(*src.cast::<[u8; 8]>()),
+            ]))
+        }
     }
 
     /// Stores the given data and data size at the given offset.
@@ -233,6 +248,9 @@ impl Memory {
     }
 
     /// Stores a word at the given offset, resizing memory if needed.
+    ///
+    /// Writes U256 limbs directly to the buffer in big-endian order, avoiding
+    /// an intermediate `[u8; 32]` temporary allocation.
     #[inline(always)]
     pub fn store_word(&mut self, offset: usize, word: U256) -> Result<(), VMError> {
         let new_size: usize = offset
@@ -240,7 +258,22 @@ impl Memory {
             .ok_or(OutOfBounds)?;
 
         self.resize(new_size)?;
-        self.store(&u256_to_big_endian(word), offset, WORD_SIZE_IN_BYTES_USIZE)?;
+
+        let real_offset = self.current_base.wrapping_add(offset);
+        let mut buffer = self.buffer.borrow_mut();
+
+        // SAFETY: resize ensures real_offset..real_offset+32 is within bounds.
+        #[expect(unsafe_code)]
+        unsafe {
+            let dst = buffer.as_mut_ptr().add(real_offset);
+            // U256 stores limbs in little-endian order (limb 0 = least significant).
+            // We write them in big-endian order: limb 3 first, limb 0 last.
+            dst.cast::<[u8; 8]>().write(word.0[3].to_be_bytes());
+            dst.add(8).cast::<[u8; 8]>().write(word.0[2].to_be_bytes());
+            dst.add(16).cast::<[u8; 8]>().write(word.0[1].to_be_bytes());
+            dst.add(24).cast::<[u8; 8]>().write(word.0[0].to_be_bytes());
+        }
+
         Ok(())
     }
 

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
@@ -227,7 +228,7 @@ impl GeneralizedDatabase {
                         }
                     };
 
-                    code.bytecode.len() as u64
+                    code.code_len as u64
                 };
 
                 let metadata = CodeMetadata {
@@ -619,12 +620,15 @@ impl<'a> VM<'a> {
                 .current_accounts_state
                 .get(&address)
                 .and_then(|account| self.db.codes.get(&account.info.code_hash))
-                .map(|c| c.bytecode.clone())
+                .map(|c| Bytes::copy_from_slice(c.unpadded_bytecode()))
                 .unwrap_or_default();
             let has_code = !current_code_bytes.is_empty();
             recorder.capture_initial_code_presence(address, has_code);
             recorder.set_initial_code(address, current_code_bytes);
-            recorder.record_code_change(address, new_bytecode.bytecode.clone());
+            recorder.record_code_change(
+                address,
+                Bytes::copy_from_slice(new_bytecode.unpadded_bytecode()),
+            );
         }
 
         let acc = self.get_account_mut(address)?;

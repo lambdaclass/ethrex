@@ -8,7 +8,6 @@ use crate::{
     vm::VM,
 };
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{Code, Fork},
@@ -99,7 +98,7 @@ impl Hook for DefaultHook {
 
         // (9) SENDER_NOT_EOA
         let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, &code.bytecode)?;
+        validate_sender(sender_address, code)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -471,8 +470,8 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.eip7702_set_access_code()
 }
 
-pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMError> {
-    if !code.is_empty() && !code_has_delegation(code)? {
+pub fn validate_sender(sender_address: Address, code: &Code) -> Result<(), VMError> {
+    if code.code_len != 0 && !code_has_delegation(code.unpadded_bytecode())? {
         return Err(TxValidationError::SenderNotEOA(sender_address).into());
     }
     Ok(())

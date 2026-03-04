@@ -5,7 +5,7 @@
 //!   - `PUSH1` to `PUSH32`
 
 use crate::{
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
     opcode_handlers::OpcodeHandler,
     vm::VM,
@@ -26,38 +26,91 @@ impl OpcodeHandler for OpPush0Handler {
     }
 }
 
-/// Implementation for the `PUSHn` opcode.
-pub struct OpPushHandler<const N: usize>;
-impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
+/// Specialized handler for `PUSH1`, the most common push opcode.
+///
+/// Avoids the overhead of `U256::from_big_endian` by directly constructing
+/// a U256 from a single byte. Safe because bytecode has 33 bytes of zero padding.
+pub struct OpPush1Handler;
+impl OpcodeHandler for OpPush1Handler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let literal_offset = vm.current_call_frame.pc;
-        vm.current_call_frame.pc = vm
-            .current_call_frame
-            .pc
-            .checked_add(N)
-            .ok_or(InternalError::Overflow)?;
+        let pc = vm.current_call_frame.pc;
+        vm.current_call_frame.pc = pc.wrapping_add(1);
 
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::PUSHN)?;
 
-        #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
-        vm.current_call_frame.stack.push(
-            match vm
-                .current_call_frame
-                .bytecode
-                .bytecode
-                .get(literal_offset..)
-            {
-                Some(data) if data.len() >= N => U256::from_big_endian(&data[..N]),
-                Some(data) => {
-                    let mut bytes = [0; 32];
-                    bytes[..data.len()].copy_from_slice(data);
-                    U256::from_big_endian(&bytes)
-                }
-                None => U256::zero(),
-            },
-        )?;
+        #[expect(
+            unsafe_code,
+            reason = "bytecode is padded with 33 zero bytes past code_len"
+        )]
+        let byte = unsafe { *vm.current_call_frame.bytecode.bytecode.get_unchecked(pc) };
+
+        vm.current_call_frame
+            .stack
+            .push(U256::from(u64::from(byte)))?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Specialized handler for `PUSH2`, a very common push opcode.
+///
+/// Avoids the overhead of generic `U256::from_big_endian` by constructing
+/// a U256 directly from two bytes. Safe because bytecode has 33 bytes of zero padding.
+pub struct OpPush2Handler;
+impl OpcodeHandler for OpPush2Handler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let pc = vm.current_call_frame.pc;
+        vm.current_call_frame.pc = pc.wrapping_add(2);
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::PUSHN)?;
+
+        #[expect(
+            unsafe_code,
+            reason = "bytecode is padded with 33 zero bytes past code_len"
+        )]
+        let (b0, b1) = unsafe {
+            let bytecode = &vm.current_call_frame.bytecode.bytecode;
+            (
+                *bytecode.get_unchecked(pc),
+                *bytecode.get_unchecked(pc.wrapping_add(1)),
+            )
+        };
+        let value = (u64::from(b0) << 8) | u64::from(b1);
+
+        vm.current_call_frame.stack.push(U256::from(value))?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `PUSHn` opcode (PUSH3 through PUSH32).
+///
+/// Safe to use unchecked indexing because bytecode is padded with 33 zero bytes,
+/// which is >= the maximum N (32).
+pub struct OpPushHandler<const N: usize>;
+impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let pc = vm.current_call_frame.pc;
+        vm.current_call_frame.pc = pc.wrapping_add(N);
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::PUSHN)?;
+
+        #[expect(
+            unsafe_code,
+            reason = "bytecode is padded with 33 zero bytes past code_len, N <= 32"
+        )]
+        let data = unsafe {
+            core::slice::from_raw_parts(vm.current_call_frame.bytecode.bytecode.as_ptr().add(pc), N)
+        };
+        vm.current_call_frame
+            .stack
+            .push(U256::from_big_endian(data))?;
 
         Ok(OpcodeResult::Continue)
     }
