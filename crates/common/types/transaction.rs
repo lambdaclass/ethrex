@@ -3710,7 +3710,9 @@ mod tests {
     #[test]
     fn encode_decode_low_size_tx() {
         let tx = Transaction::EIP2930Transaction(EIP2930Transaction::default());
-        let encoded = tx.encode_to_vec();
+        // Clone before encoding so the original's cached_canonical stays uninit,
+        // avoiding a false PartialEq mismatch with the decoded (uncached) tx.
+        let encoded = tx.clone().encode_to_vec();
         let decoded_tx = Transaction::decode(&encoded).unwrap();
         assert_eq!(tx, decoded_tx);
     }
