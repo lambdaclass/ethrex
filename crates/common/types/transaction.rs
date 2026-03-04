@@ -2211,7 +2211,7 @@ mod serde_impl {
 
         let deser = serde::de::value::StringDeserializer::<E>::new(data_str);
         crate::serde_utils::bytes::deserialize(deser)
-            .map_err(|_| E::custom("Invalid hex format in 'input' field"))
+            .map_err(|e| E::custom(e))
     }
 
     fn deserialize_field<'de, T, D>(
