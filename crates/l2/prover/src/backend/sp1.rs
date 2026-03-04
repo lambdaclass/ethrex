@@ -1,9 +1,9 @@
-use ethrex_guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput};
+use ethrex_guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput, traits::backends};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
-use rkyv::rancor::Error;
+use sha2::{Digest, Sha256};
 use sp1_prover::components::CpuProverComponents;
 #[cfg(not(feature = "gpu"))]
 use sp1_sdk::CpuProver;
@@ -14,8 +14,9 @@ use sp1_sdk::{
     SP1VerifyingKey,
 };
 use std::{
+    collections::HashMap,
     fmt::Debug,
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 use url::Url;
@@ -31,6 +32,11 @@ pub struct ProverSetup {
 
 /// Global prover setup - initialized once and reused.
 pub static PROVER_SETUP: OnceLock<ProverSetup> = OnceLock::new();
+
+/// Cache of (SP1ProvingKey, SP1VerifyingKey) keyed by SHA-256(elf).
+/// Used by `prove_with_elf` to avoid re-running `client.setup(elf)` on every call.
+static ELF_KEY_CACHE: OnceLock<Mutex<HashMap<[u8; 32], (SP1ProvingKey, SP1VerifyingKey)>>> =
+    OnceLock::new();
 
 pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
     #[cfg(feature = "gpu")]
@@ -97,6 +103,22 @@ impl Sp1Backend {
         PROVER_SETUP.get_or_init(|| init_prover_setup(None))
     }
 
+    /// Returns cached (pk, vk) for the given ELF, running `client.setup(elf)` only on
+    /// the first call per unique ELF (identified by SHA-256 hash).
+    fn get_or_setup_keys(&self, elf: &[u8]) -> (SP1ProvingKey, SP1VerifyingKey) {
+        let hash: [u8; 32] = Sha256::digest(elf).into();
+        let cache = ELF_KEY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        #[expect(clippy::expect_used)]
+        let mut guard = cache.lock().expect("ELF_KEY_CACHE lock poisoned");
+        if let Some((pk, vk)) = guard.get(&hash) {
+            return (pk.clone(), vk.clone());
+        }
+        let setup = self.get_setup();
+        let (pk, vk) = setup.client.setup(elf);
+        guard.insert(hash, (pk.clone(), vk.clone()));
+        (pk, vk)
+    }
+
     fn convert_format(format: ProofFormat) -> SP1ProofMode {
         match format {
             ProofFormat::Compressed => SP1ProofMode::Compressed,
@@ -147,10 +169,14 @@ impl ProverBackend for Sp1Backend {
         ProverType::SP1
     }
 
+    fn backend_name(&self) -> &'static str {
+        backends::SP1
+    }
+
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
         let mut stdin = SP1Stdin::new();
-        let bytes = rkyv::to_bytes::<Error>(input).map_err(BackendError::serialization)?;
-        stdin.write_slice(bytes.as_slice());
+        let bytes = self.serialize_raw(input)?;
+        stdin.write_slice(&bytes);
         Ok(stdin)
     }
 
@@ -211,5 +237,34 @@ impl ProverBackend for Sp1Backend {
         let start = Instant::now();
         let proof = self.prove_with_stdin(&stdin, format)?;
         Ok((proof, start.elapsed()))
+    }
+
+    fn execute_with_elf(&self, elf: &[u8], serialized_input: &[u8]) -> Result<(), BackendError> {
+        let setup = self.get_setup();
+        let mut stdin = SP1Stdin::new();
+        stdin.write_slice(serialized_input);
+        setup
+            .client
+            .execute(elf, &stdin)
+            .map_err(BackendError::execution)?;
+        Ok(())
+    }
+
+    fn prove_with_elf(
+        &self,
+        elf: &[u8],
+        serialized_input: &[u8],
+        format: ProofFormat,
+    ) -> Result<Self::ProofOutput, BackendError> {
+        let setup = self.get_setup();
+        let mut stdin = SP1Stdin::new();
+        stdin.write_slice(serialized_input);
+        let (pk, vk) = self.get_or_setup_keys(elf);
+        let sp1_format = Self::convert_format(format);
+        let proof = setup
+            .client
+            .prove(&pk, &stdin, sp1_format)
+            .map_err(BackendError::proving)?;
+        Ok(Sp1ProveOutput::new(proof, vk))
     }
 }

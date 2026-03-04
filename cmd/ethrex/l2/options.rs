@@ -215,6 +215,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .proof_coordinator_tdx_private_key,
                 qpl_tool_path: opts.proof_coordinator_opts.proof_coordinator_qpl_tool_path,
                 validium: opts.validium,
+                guest_program_id: opts.proof_coordinator_opts.guest_program_id,
             },
             based: BasedConfig {
                 enabled: opts.based,
@@ -775,6 +776,15 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
+    #[arg(
+        long = "proof-coordinator.guest-program-id",
+        default_value = "evm-l2",
+        value_name = "PROGRAM_ID",
+        env = "ETHREX_GUEST_PROGRAM_ID",
+        help = "Which guest program to assign to batches (e.g. evm-l2, zk-dex, tokamon).",
+        help_heading = "Proof coordinator options"
+    )]
+    pub guest_program_id: String,
 }
 
 impl Default for ProofCoordinatorOptions {
@@ -794,6 +804,7 @@ impl Default for ProofCoordinatorOptions {
             proof_coordinator_qpl_tool_path: Some(
                 DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH.to_string(),
             ),
+            guest_program_id: "evm-l2".to_string(),
         }
     }
 }
@@ -1098,6 +1109,14 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub sp1_server: Option<Url>,
+    #[arg(
+        long = "programs-config",
+        value_name = "PATH",
+        env = "ETHREX_PROGRAMS_CONFIG",
+        help = "Path to a TOML file that configures which guest programs to load.",
+        help_heading = "Prover client options"
+    )]
+    pub programs_config: Option<String>,
 }
 
 impl From<ProverClientOptions> for ProverConfig {
@@ -1109,6 +1128,7 @@ impl From<ProverClientOptions> for ProverConfig {
             timed: config.timed,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: config.sp1_server,
+            programs_config_path: config.programs_config,
         }
     }
 }
@@ -1125,6 +1145,7 @@ impl Default for ProverClientOptions {
             timed: false,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
+            programs_config: None,
         }
     }
 }

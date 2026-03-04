@@ -196,4 +196,15 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<FeeConfig>, RollupStoreError>;
+
+    async fn store_program_id_by_batch(
+        &self,
+        batch_number: u64,
+        program_id: &str,
+    ) -> Result<(), RollupStoreError>;
+
+    async fn get_program_id_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<String>, RollupStoreError>;
 }

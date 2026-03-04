@@ -88,6 +88,9 @@ GEMINI.md
 dev_ethrex_l1/
 dev_ethrex_l2/
 
+# ZK-DEX localnet runtime directory
+.zk-dex-localnet/
+
 # Logs
 logs/
 
@@ -137,17 +140,22 @@ core.*
 
 __pycache__/
 
-# Next.js build artifacts
+# Next.js build output
 .next/
 
-# SP1 guest program build artifacts
-crates/guest-program/bin/sp1/out/
-crates/guest-program/bin/sp1-tokamon/
-crates/guest-program/bin/sp1-zk-dex/
+# SP1 guest program build artifacts (ELF/VK binaries)
+crates/guest-program/bin/*/out/
 
-# Local L2 config files
+# SP1 guest program lock files (generated per build)
+crates/guest-program/bin/sp1-tokamon/Cargo.lock
+crates/guest-program/bin/sp1-zk-dex/Cargo.lock
+
+# Platform local SQLite WAL/SHM files
+platform/server/db/*.sqlite-shm
+platform/server/db/*.sqlite-wal
+
+# Generated L2 config files
 zk-dex-l2-*.toml
 
 # Platform build artifacts
 # platform/
-

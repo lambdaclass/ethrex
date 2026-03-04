@@ -1,18 +1,12 @@
 name: PR Status
 
 on:
-  pull_request:
-    types:
-      [
-        opened,
-        reopened,
-        synchronize,
-        edited,
-        ready_for_review,
-        converted_to_draft,
-      ]
-  pull_request_review:
-    types: [submitted]
+  # Disabled: lambdaclass project status tracking
+  # pull_request:
+  #   types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft]
+  # pull_request_review:
+  #   types: [submitted]
+  workflow_dispatch:
 
 permissions:
   contents: read

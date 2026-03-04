@@ -1301,11 +1301,13 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-rlp",
+ "ethrex-trie",
  "ethrex-vm",
  "hex",
  "rkyv",
  "serde 1.0.228",
  "serde_with",
+ "sha2",
  "thiserror 2.0.18",
 ]
 

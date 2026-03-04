@@ -29,13 +29,26 @@ interface IOnChainProposer {
     /// @dev Event emitted when a batch is reverted.
     event BatchReverted(bytes32 indexed newStateRoot);
 
-    /// @notice A verification key has been upgraded.
-    /// @dev Event emitted when a verification key is upgraded.
+    /// @notice A verification key has been upgraded (legacy event with verifier name).
+    /// @dev Event emitted when a verification key is upgraded via the SP1/RISC0 specific functions.
     /// @param verifier The name of the verifier whose key was upgraded.
     /// @param commitHash The git commit hash associated to the verification key.
     /// @param newVerificationKey The new verification key.
     event VerificationKeyUpgraded(
         string verifier,
+        bytes32 commitHash,
+        bytes32 newVerificationKey
+    );
+
+    /// @notice A verification key has been upgraded (generic event with program type).
+    /// @dev Event emitted when a verification key is upgraded via the generic function.
+    /// @param programTypeId The program type for which the key was upgraded.
+    /// @param verifierId The verifier ID for which the key was upgraded.
+    /// @param commitHash The git commit hash associated to the verification key.
+    /// @param newVerificationKey The new verification key.
+    event VerificationKeyUpgraded(
+        uint8 programTypeId,
+        uint8 verifierId,
         bytes32 commitHash,
         bytes32 newVerificationKey
     );
@@ -56,6 +69,18 @@ interface IOnChainProposer {
         bytes32 new_vk
     ) external;
 
+    /// @notice Upgrades a verification key for any program type and verifier combination.
+    /// @param commit_hash git commit hash that produced the new verification key
+    /// @param programTypeId the guest program type (1=EVM-L2, etc.)
+    /// @param verifierId the verifier ID (1=SP1, 2=RISC0)
+    /// @param new_vk new verification key
+    function upgradeVerificationKey(
+        bytes32 commit_hash,
+        uint8 programTypeId,
+        uint8 verifierId,
+        bytes32 new_vk
+    ) external;
+
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
     /// and to publish withdrawals if any.
@@ -68,6 +93,9 @@ interface IOnChainProposer {
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
     /// @param nonPrivilegedTransactions the number of non-privileged transactions in the batch to be committed.
     /// @param commitHash git commit hash that produced the verifier keys for this batch.
+    /// @param programTypeId the guest program type (1=EVM-L2, etc.). 0 defaults to EVM-L2.
+    /// @param publicValuesHash keccak256 hash of proof public values for custom programs (programTypeId > 1).
+    ///        Must be bytes32(0) for EVM-L2 (programTypeId == 1).
     /// @param balanceDiffs the balance diffs of the batch to be committed.
     /// @param l2MessageRollingHashes the L2 message rolling hashes of the batch to be committed.
     function commitBatch(
@@ -78,6 +106,8 @@ interface IOnChainProposer {
         bytes32 lastBlockHash,
         uint256 nonPrivilegedTransactions,
         bytes32 commitHash,
+        uint8 programTypeId,
+        bytes32 publicValuesHash,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external;
@@ -99,7 +129,9 @@ interface IOnChainProposer {
         //sp1
         bytes memory sp1ProofBytes,
         //tdx
-        bytes memory tdxSignature
+        bytes memory tdxSignature,
+        // Custom program public values (only needed for programTypeId > 1)
+        bytes memory customPublicValues
     ) external;
 
     // TODO: imageid, programvkey and riscvvkey should be constants

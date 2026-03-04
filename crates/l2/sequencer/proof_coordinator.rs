@@ -51,6 +51,8 @@ pub struct ProofCoordinator {
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
     qpl_tool_path: Option<String>,
+    /// Which guest program to assign to batches.
+    guest_program_id: String,
 }
 
 impl ProofCoordinator {
@@ -93,6 +95,7 @@ impl ProofCoordinator {
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
             qpl_tool_path: config.proof_coordinator.qpl_tool_path.clone(),
+            guest_program_id: config.proof_coordinator.guest_program_id.clone(),
         })
     }
 
@@ -142,6 +145,7 @@ impl ProofCoordinator {
         stream: &mut TcpStream,
         commit_hash: String,
         prover_type: ProverType,
+        supported_programs: &[String],
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received from {prover_type} prover");
 
@@ -194,17 +198,27 @@ impl ProofCoordinator {
 
         // Step 5: The batch exists, so its public input must also exist (they are
         // stored atomically). Try to retrieve it for the prover's version.
-        // If not found, the batch was created with a different code version.
+        // If not found, either:
+        //   (a) The batch was sealed without prover input (empty/genesis batch), or
+        //   (b) The batch was created with a different code version.
         let Some(input) = self
             .rollup_store
             .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
             .await?
         else {
-            info!(
-                "Batch {batch_to_prove} exists but has no input for prover version ({commit_hash}), \
-                 version mismatch"
-            );
-            send_response(stream, &ProofData::version_mismatch()).await?;
+            // Check if this is an empty/genesis batch (sealed without prover input).
+            // These batches are auto-verified on L1 without a ZK proof, so the prover
+            // should skip them rather than report a version mismatch.
+            if commit_hash == self.git_commit_hash {
+                info!("Batch {batch_to_prove} has no prover input (empty/genesis batch), skipping");
+                send_response(stream, &ProofData::empty_batch_response()).await?;
+            } else {
+                info!(
+                    "Batch {batch_to_prove} exists but has no input for prover version ({commit_hash}), \
+                     version mismatch"
+                );
+                send_response(stream, &ProofData::version_mismatch()).await?;
+            }
             return Ok(());
         };
 
@@ -224,7 +238,33 @@ impl ProofCoordinator {
             lock.entry(batch_to_prove).or_insert(SystemTime::now());
         );
 
-        let response = ProofData::batch_response(batch_to_prove, input, format);
+        let program_id = self.guest_program_id.clone();
+
+        // Check if the prover supports this program.  An empty list means the
+        // prover accepts any program (legacy / pre-modularization prover).
+        if !supported_programs.is_empty() && !supported_programs.contains(&program_id) {
+            debug!(
+                "Prover does not support program '{program_id}' \
+                 (supported: {supported_programs:?}), skipping"
+            );
+            send_response(stream, &ProofData::empty_batch_response()).await?;
+            return Ok(());
+        }
+
+        // Store program_id early so the L1 committer can look it up before
+        // the proof is submitted.  Previously this was only stored on proof
+        // submission, which caused a race: the committer would fall back to
+        // "evm-l2" because the program_id hadn't been persisted yet.
+        if let Err(e) = self
+            .rollup_store
+            .store_program_id_by_batch(batch_to_prove, &program_id)
+            .await
+        {
+            warn!("Failed to store program_id early for batch {batch_to_prove}: {e}");
+        }
+
+        let response =
+            ProofData::batch_response_with_program(batch_to_prove, input, format, program_id);
         send_response(stream, &response).await?;
         info!("BatchResponse sent for batch number: {batch_to_prove}");
 
@@ -236,8 +276,9 @@ impl ProofCoordinator {
         stream: &mut TcpStream,
         batch_number: u64,
         batch_proof: BatchProof,
+        program_id: &str,
     ) -> Result<(), ProofCoordinatorError> {
-        info!("ProofSubmit received for batch number: {batch_number}");
+        info!("ProofSubmit received for batch number: {batch_number} (program: {program_id})");
 
         // Check if we have a proof for this batch and prover type
         let prover_type = batch_proof.prover_type();
@@ -271,6 +312,9 @@ impl ProofCoordinator {
             // If not, store it
             self.rollup_store
                 .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)
+                .await?;
+            self.rollup_store
+                .store_program_id_by_batch(batch_number, program_id)
                 .await?;
         }
         let response = ProofData::proof_submit_ack(batch_number);
@@ -389,10 +433,11 @@ impl ConnectionHandler {
                 Ok(ProofData::BatchRequest {
                     commit_hash,
                     prover_type,
+                    supported_programs,
                 }) => {
                     if let Err(e) = self
                         .proof_coordinator
-                        .handle_request(&mut stream, commit_hash, prover_type)
+                        .handle_request(&mut stream, commit_hash, prover_type, &supported_programs)
                         .await
                     {
                         error!("Failed to handle BatchRequest: {e}");
@@ -401,10 +446,11 @@ impl ConnectionHandler {
                 Ok(ProofData::ProofSubmit {
                     batch_number,
                     batch_proof,
+                    program_id,
                 }) => {
                     if let Err(e) = self
                         .proof_coordinator
-                        .handle_submit(&mut stream, batch_number, batch_proof)
+                        .handle_submit(&mut stream, batch_number, batch_proof, &program_id)
                         .await
                     {
                         error!("Failed to handle ProofSubmit: {e}");

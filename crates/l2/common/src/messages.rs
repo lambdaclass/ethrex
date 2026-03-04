@@ -166,7 +166,17 @@ pub fn get_block_l2_out_messages(receipts: &[Receipt], source_chain_id: u64) -> 
         .collect()
 }
 
-pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
+/// Computes balance diffs from L2 messages for publishing to L1.
+///
+/// `native_token_scale_factor`: If `Some`, the `value` field of each message is divided
+/// by this factor to convert from L2 18-decimal units to L1 token units.
+/// The resulting `BalanceDiff.value` is in L1 units, matching what L1's
+/// `publishL2Messages()` expects for `deposits[NATIVE_TOKEN_L1][NATIVE_TOKEN_L1] -= bd.value`.
+/// If `None` (ETH mode), values are used as-is.
+pub fn get_balance_diffs(
+    messages: &[L2Message],
+    native_token_scale_factor: Option<U256>,
+) -> Vec<BalanceDiff> {
     let mut balance_diffs: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
     for message in messages {
         let mut offset = 4;
@@ -208,6 +218,10 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 // This is the mint transaction, ignore the value
                 value = U256::zero();
             }
+            // Scale down to L1 units if using custom native token
+            if let Some(scale_factor) = native_token_scale_factor {
+                value /= scale_factor;
+            }
             (value, None)
         };
         let entry = balance_diffs
@@ -233,4 +247,124 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
         entry.message_hashes.push(get_l2_message_hash(message));
     }
     balance_diffs.into_values().collect()
+}
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    fn make_l2_message(value: U256, dest_chain_id: U256) -> L2Message {
+        L2Message {
+            dest_chain_id,
+            source_chain_id: 1,
+            from: Address::from_low_u64_be(0x1234),
+            to: Address::from_low_u64_be(0x5678),
+            value,
+            gas_limit: U256::from(21000),
+            tx_id: U256::zero(),
+            data: Bytes::new(),
+        }
+    }
+
+    #[test]
+    fn balance_diffs_no_scaling_eth_mode() {
+        let value = U256::from(1_000_000_000_000_000_000u64); // 1 ETH (18 decimals)
+        let messages = vec![make_l2_message(value, U256::from(2))];
+
+        let diffs = get_balance_diffs(&messages, None);
+
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].value, value);
+        assert_eq!(diffs[0].chain_id, U256::from(2));
+    }
+
+    #[test]
+    fn balance_diffs_with_scale_factor_6_decimals() {
+        // 1 token in L2 (18 decimals) = 1_000_000_000_000_000_000
+        // scale_factor for 6-decimal token = 10^12
+        // Expected L1 value = 1_000_000_000_000_000_000 / 10^12 = 1_000_000 (6 decimals)
+        let l2_value = U256::from(1_000_000_000_000_000_000u64);
+        let scale_factor = U256::from(10u64).pow(U256::from(12));
+        let messages = vec![make_l2_message(l2_value, U256::from(2))];
+
+        let diffs = get_balance_diffs(&messages, Some(scale_factor));
+
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].value, U256::from(1_000_000u64));
+    }
+
+    #[test]
+    fn balance_diffs_with_scale_factor_aggregates() {
+        // Two messages to the same chain should aggregate
+        let scale_factor = U256::from(10u64).pow(U256::from(12)); // 6-decimal token
+        let messages = vec![
+            make_l2_message(U256::from(2_000_000_000_000_000_000u64), U256::from(3)), // 2 tokens
+            make_l2_message(U256::from(3_000_000_000_000_000_000u64), U256::from(3)), // 3 tokens
+        ];
+
+        let diffs = get_balance_diffs(&messages, Some(scale_factor));
+
+        assert_eq!(diffs.len(), 1);
+        // (2_000_000_000_000_000_000 / 10^12) + (3_000_000_000_000_000_000 / 10^12)
+        // = 2_000_000 + 3_000_000 = 5_000_000
+        assert_eq!(diffs[0].value, U256::from(5_000_000u64));
+    }
+
+    #[test]
+    fn balance_diffs_different_chains() {
+        let messages = vec![
+            make_l2_message(U256::from(100), U256::from(2)),
+            make_l2_message(U256::from(200), U256::from(3)),
+        ];
+
+        let diffs = get_balance_diffs(&messages, None);
+
+        assert_eq!(diffs.len(), 2);
+        // BTreeMap iteration is sorted by key (chain_id)
+        assert_eq!(diffs[0].chain_id, U256::from(2));
+        assert_eq!(diffs[0].value, U256::from(100));
+        assert_eq!(diffs[1].chain_id, U256::from(3));
+        assert_eq!(diffs[1].value, U256::from(200));
+    }
+
+    #[test]
+    fn balance_diffs_bridge_to_bridge_ignored() {
+        // Messages from BRIDGE_ADDRESS to BRIDGE_ADDRESS (mint txs) should have value zeroed
+        let msg = L2Message {
+            dest_chain_id: U256::from(2),
+            source_chain_id: 1,
+            from: BRIDGE_ADDRESS,
+            to: BRIDGE_ADDRESS,
+            value: U256::from(1_000_000),
+            gas_limit: U256::from(21000),
+            tx_id: U256::zero(),
+            data: Bytes::new(),
+        };
+
+        let diffs = get_balance_diffs(&[msg], None);
+
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].value, U256::zero());
+    }
+
+    #[test]
+    fn balance_diffs_scale_factor_1_no_change() {
+        // 18-decimal token: scale_factor = 10^0 = 1
+        let value = U256::from(999);
+        let messages = vec![make_l2_message(value, U256::from(2))];
+
+        let diffs = get_balance_diffs(&messages, Some(U256::from(1)));
+
+        assert_eq!(diffs[0].value, value);
+    }
+
+    #[test]
+    fn balance_diffs_empty_messages() {
+        let diffs = get_balance_diffs(&[], None);
+        assert!(diffs.is_empty());
+
+        let diffs = get_balance_diffs(&[], Some(U256::from(1_000_000)));
+        assert!(diffs.is_empty());
+    }
 }

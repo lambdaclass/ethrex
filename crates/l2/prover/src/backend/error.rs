@@ -18,6 +18,9 @@ pub enum BackendError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    #[error("Resource limit exceeded: {0}")]
+    ResourceLimitExceeded(String),
 }
 
 impl BackendError {
@@ -47,5 +50,9 @@ impl BackendError {
 
     pub fn verify_not_supported() -> Self {
         Self::NotImplemented("Verify not implemented for this backend".to_string())
+    }
+
+    pub fn resource_limit(msg: impl Into<String>) -> Self {
+        Self::ResourceLimitExceeded(msg.into())
     }
 }

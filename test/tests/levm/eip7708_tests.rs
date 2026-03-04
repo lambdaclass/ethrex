@@ -199,7 +199,6 @@ impl TestBuilder {
             tx_nonce: 0,
             block_gas_limit: GAS_LIMIT * 2,
             is_privileged: false,
-            fee_token: None,
         };
 
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction {

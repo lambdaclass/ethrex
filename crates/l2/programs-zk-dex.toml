@@ -1,0 +1,12 @@
+# Guest Program Registry Configuration — ZK-DEX E2E
+#
+# Used by the prover when running ZK-DEX end-to-end.
+# The proof coordinator assigns "zk-dex" as the guest_program_id
+# (via --proof-coordinator.guest-program-id zk-dex), and the
+# prover must have it registered here.
+
+# The program used when no specific program_id is requested.
+default_program = "zk-dex"
+
+# Only the ZK-DEX program is needed for this configuration.
+enabled_programs = ["zk-dex"]

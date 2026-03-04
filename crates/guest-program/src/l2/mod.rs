@@ -1,8 +1,8 @@
-mod blobs;
+pub(crate) mod blobs;
 mod error;
 mod input;
-mod messages;
-mod output;
+pub(crate) mod messages;
+pub(crate) mod output;
 mod program;
 
 pub use error::L2ExecutionError;

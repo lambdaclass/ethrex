@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TokamakAppL2 ZK-DEX Bridge</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --surface-2: #1a1a26;
+      --border: #2a2a3a;
+      --text: #e0e0e8;
+      --text-dim: #8888a0;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --l1-color: #3b82f6;
+      --l2-color: #8b5cf6;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .header {
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header h1 { font-size: 18px; font-weight: 600; }
+    .header h1 span { color: var(--accent); }
+    .nav-links { display: flex; gap: 16px; align-items: center; }
+    .nav-links a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 13px;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .container { max-width: 520px; margin: 40px auto; padding: 0 16px; }
+
+    .connect-section { text-align: center; margin-bottom: 24px; }
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-full { width: 100%; padding: 14px; font-size: 15px; }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
+    .wallet-info {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+    .wallet-addr {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    .balances {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .balance-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .balance-card.l1 { border-top: 2px solid var(--l1-color); }
+    .balance-card.l2 { border-top: 2px solid var(--l2-color); }
+    .balance-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .balance-value {
+      font-size: 20px;
+      font-weight: 600;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .balance-unit { font-size: 13px; color: var(--text-dim); font-weight: 400; }
+
+    .bridge-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .bridge-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-bottom: 1px solid var(--border);
+    }
+    .bridge-tab {
+      padding: 14px;
+      text-align: center;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-dim);
+      background: none;
+      border: none;
+      transition: all 0.2s;
+      border-bottom: 2px solid transparent;
+    }
+    .bridge-tab.active {
+      color: var(--text);
+      border-bottom-color: var(--accent);
+      background: var(--surface-2);
+    }
+    .bridge-tab:hover { color: var(--text); }
+
+    .bridge-form { padding: 20px; }
+    .form-group { margin-bottom: 16px; }
+    .form-label {
+      display: block;
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+    .form-input {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      color: var(--text);
+      font-size: 16px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-input:focus { border-color: var(--accent); }
+    .form-input::placeholder { color: var(--text-dim); opacity: 0.5; }
+    .max-btn {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--accent);
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .input-wrapper { position: relative; }
+
+    .direction-indicator {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+    .direction-indicator .arrow { color: var(--accent); font-size: 16px; }
+    .direction-indicator .chain { font-weight: 500; }
+    .direction-indicator .chain.l1 { color: var(--l1-color); }
+    .direction-indicator .chain.l2 { color: var(--l2-color); }
+
+    .tx-status {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      display: none;
+    }
+    .tx-status.pending {
+      display: block;
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      color: var(--warning);
+    }
+    .tx-status.success {
+      display: block;
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.2);
+      color: var(--success);
+    }
+    .tx-status.error {
+      display: block;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      color: var(--error);
+    }
+    .tx-hash {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      word-break: break-all;
+      margin-top: 4px;
+    }
+    .tx-hash a { color: inherit; text-decoration: underline; }
+
+    .info-section {
+      margin-top: 24px;
+      padding: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    .info-section h3 {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      font-size: 13px;
+    }
+    .info-row .label { color: var(--text-dim); }
+    .info-row .value {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+    }
+
+    .not-connected {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-dim);
+    }
+    .not-connected p { margin-bottom: 20px; font-size: 14px; }
+
+    .loading-config {
+      text-align: center;
+      padding: 40px;
+      color: var(--warning);
+      font-size: 14px;
+    }
+
+    @media (max-width: 540px) {
+      .balances { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1><span>TokamakAppL2</span> ZK-DEX Bridge</h1>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/withdraw-status.html">Withdrawals</a>
+      <a href="http://localhost:8083" target="_blank" id="navL1Explorer">L1 Explorer</a>
+      <a href="http://localhost:8082" target="_blank" id="navL2Explorer">L2 Explorer</a>
+    </div>
+  </div>
+
+  <div class="container">
+    <div id="loadingConfig" class="loading-config">Loading configuration...</div>
+
+    <div id="mainContent" style="display:none;">
+      <div class="connect-section">
+        <button id="connectBtn" class="btn" onclick="connectWallet()">Connect MetaMask</button>
+      </div>
+
+      <div id="walletSection" style="display:none;">
+        <div class="wallet-info">
+          <div class="wallet-addr" id="walletAddr"></div>
+        </div>
+
+        <div class="balances">
+          <div class="balance-card l1">
+            <div class="balance-label">L1 Balance</div>
+            <div class="balance-value" id="l1Balance">-</div>
+            <div class="balance-unit">ETH</div>
+          </div>
+          <div class="balance-card l2">
+            <div class="balance-label">L2 Balance</div>
+            <div class="balance-value" id="l2Balance">-</div>
+            <div class="balance-unit">ETH</div>
+          </div>
+        </div>
+
+        <div class="bridge-card">
+          <div class="bridge-tabs">
+            <button class="bridge-tab active" id="tabDeposit" onclick="switchTab('deposit')">Deposit</button>
+            <button class="bridge-tab" id="tabWithdraw" onclick="switchTab('withdraw')">Withdraw</button>
+          </div>
+
+          <div class="bridge-form">
+            <div id="directionDeposit" class="direction-indicator">
+              <span class="chain l1">L1</span>
+              <span class="arrow">&rarr;</span>
+              <span class="chain l2">L2</span>
+            </div>
+            <div id="directionWithdraw" class="direction-indicator" style="display:none;">
+              <span class="chain l2">L2</span>
+              <span class="arrow">&rarr;</span>
+              <span class="chain l1">L1</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Amount (ETH)</label>
+              <div class="input-wrapper">
+                <input type="text" class="form-input" id="amount" placeholder="0.0" autocomplete="off">
+                <button class="max-btn" onclick="setMax()">MAX</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Recipient (optional, defaults to connected wallet)</label>
+              <input type="text" class="form-input" id="recipient" placeholder="0x...">
+            </div>
+
+            <button id="bridgeBtn" class="btn btn-full" onclick="executeBridge()" disabled>
+              Switch to L1 Network
+            </button>
+
+            <div id="txStatus" class="tx-status"></div>
+          </div>
+        </div>
+
+        <div class="info-section">
+          <h3>Contract Addresses</h3>
+          <div class="info-row">
+            <span class="label">CommonBridge (L1)</span>
+            <span class="value" id="infoBridgeAddr">loading...</span>
+          </div>
+          <div class="info-row">
+            <span class="label">CommonBridgeL2</span>
+            <span class="value">0x0000...ffff</span>
+          </div>
+          <div class="info-row">
+            <span class="label">L1 RPC</span>
+            <span class="value">localhost:8545</span>
+          </div>
+          <div class="info-row">
+            <span class="label">L2 RPC</span>
+            <span class="value">localhost:1729</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="notConnected" class="not-connected">
+        <p>Connect your MetaMask wallet to bridge ETH between L1 and L2</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Dynamic config — loaded from /config.json (generated by entrypoint.sh from deployed addresses)
+    let CONFIG = null;
+
+    // Fallback constants (used only if config.json fails to load)
+    const COMMON_BRIDGE_L2 = '0x000000000000000000000000000000000000ffff';
+    const L1_CHAIN_ID = 9;
+    const L2_CHAIN_ID = 65536999;
+    const L1_RPC = 'http://localhost:8545';
+    const L2_RPC = 'http://localhost:1729';
+
+    let currentTab = 'deposit';
+    let connectedAddress = null;
+    let l1Provider = null;
+    let l2Provider = null;
+
+    function getBridgeAddress() {
+      return CONFIG ? CONFIG.bridge_address : '';
+    }
+
+    function getL1Explorer() {
+      return CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083';
+    }
+
+    function getL2Explorer() {
+      return CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082';
+    }
+
+    async function loadConfig() {
+      try {
+        const resp = await fetch('/config.json');
+        if (resp.ok) {
+          CONFIG = await resp.json();
+          console.log('Config loaded:', CONFIG);
+        } else {
+          console.warn('config.json not found, using defaults');
+        }
+      } catch (err) {
+        console.warn('Failed to load config.json:', err);
+      }
+
+      // Update UI with config
+      if (CONFIG && CONFIG.bridge_address) {
+        const addr = CONFIG.bridge_address;
+        document.getElementById('infoBridgeAddr').textContent =
+          addr.slice(0, 6) + '...' + addr.slice(-4);
+      } else {
+        document.getElementById('infoBridgeAddr').textContent = 'not configured';
+        document.getElementById('infoBridgeAddr').style.color = '#ef4444';
+      }
+
+      // Update nav links
+      if (CONFIG) {
+        document.getElementById('navL1Explorer').href = CONFIG.l1_explorer || 'http://localhost:8083';
+        document.getElementById('navL2Explorer').href = CONFIG.l2_explorer || 'http://localhost:8082';
+      }
+
+      document.getElementById('loadingConfig').style.display = 'none';
+      document.getElementById('mainContent').style.display = '';
+    }
+
+    function getReadProviders() {
+      const l1Rpc = CONFIG ? CONFIG.l1_rpc : L1_RPC;
+      const l2Rpc = CONFIG ? CONFIG.l2_rpc : L2_RPC;
+      if (!l1Provider) l1Provider = new ethers.JsonRpcProvider(l1Rpc);
+      if (!l2Provider) l2Provider = new ethers.JsonRpcProvider(l2Rpc);
+      return { l1: l1Provider, l2: l2Provider };
+    }
+
+    async function connectWallet() {
+      if (!window.ethereum) {
+        alert('MetaMask is not installed. Please install MetaMask to use the bridge.');
+        return;
+      }
+
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        connectedAddress = accounts[0];
+        document.getElementById('connectBtn').textContent = shortenAddr(connectedAddress);
+        document.getElementById('connectBtn').classList.add('btn-outline');
+        document.getElementById('walletAddr').textContent = connectedAddress;
+        document.getElementById('walletSection').style.display = '';
+        document.getElementById('notConnected').style.display = 'none';
+
+        await updateBalances();
+        updateBridgeButton();
+
+        window.ethereum.on('accountsChanged', (accs) => {
+          if (accs.length === 0) {
+            location.reload();
+          } else {
+            connectedAddress = accs[0];
+            document.getElementById('connectBtn').textContent = shortenAddr(connectedAddress);
+            document.getElementById('walletAddr').textContent = connectedAddress;
+            updateBalances();
+          }
+        });
+        window.ethereum.on('chainChanged', () => {
+          updateBridgeButton();
+          updateBalances();
+        });
+      } catch (err) {
+        console.error('Connection failed:', err);
+      }
+    }
+
+    function shortenAddr(addr) {
+      return addr.slice(0, 6) + '...' + addr.slice(-4);
+    }
+
+    async function updateBalances() {
+      if (!connectedAddress) return;
+      const { l1, l2 } = getReadProviders();
+      try {
+        const [l1Bal, l2Bal] = await Promise.all([
+          l1.getBalance(connectedAddress),
+          l2.getBalance(connectedAddress)
+        ]);
+        document.getElementById('l1Balance').textContent = parseFloat(ethers.formatEther(l1Bal)).toFixed(4);
+        document.getElementById('l2Balance').textContent = parseFloat(ethers.formatEther(l2Bal)).toFixed(4);
+      } catch (err) {
+        console.error('Balance fetch error:', err);
+      }
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.getElementById('tabDeposit').classList.toggle('active', tab === 'deposit');
+      document.getElementById('tabWithdraw').classList.toggle('active', tab === 'withdraw');
+      document.getElementById('directionDeposit').style.display = tab === 'deposit' ? '' : 'none';
+      document.getElementById('directionWithdraw').style.display = tab === 'withdraw' ? '' : 'none';
+      updateBridgeButton();
+      clearStatus();
+    }
+
+    async function getCurrentChainId() {
+      const chainIdHex = await window.ethereum.request({ method: 'eth_chainId' });
+      return parseInt(chainIdHex, 16);
+    }
+
+    async function updateBridgeButton() {
+      const btn = document.getElementById('bridgeBtn');
+      if (!connectedAddress) {
+        btn.textContent = 'Connect Wallet';
+        btn.disabled = true;
+        return;
+      }
+
+      if (!getBridgeAddress()) {
+        btn.textContent = 'Bridge not configured';
+        btn.disabled = true;
+        return;
+      }
+
+      try {
+        const chainId = await getCurrentChainId();
+        const requiredChain = currentTab === 'deposit' ? L1_CHAIN_ID : L2_CHAIN_ID;
+
+        if (chainId !== requiredChain) {
+          const label = currentTab === 'deposit' ? 'L1' : 'L2';
+          btn.textContent = `Switch to ${label} Network`;
+          btn.disabled = false;
+        } else {
+          btn.textContent = currentTab === 'deposit' ? 'Deposit to L2' : 'Withdraw to L1';
+          btn.disabled = false;
+        }
+      } catch {
+        btn.textContent = currentTab === 'deposit' ? 'Deposit to L2' : 'Withdraw to L1';
+        btn.disabled = false;
+      }
+    }
+
+    async function switchNetwork(chainId, rpcUrl, chainName) {
+      try {
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: '0x' + chainId.toString(16) }]
+        });
+      } catch (switchError) {
+        if (switchError.code === 4902) {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: '0x' + chainId.toString(16),
+              chainName: chainName,
+              nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+              rpcUrls: [rpcUrl]
+            }]
+          });
+        } else {
+          throw switchError;
+        }
+      }
+    }
+
+    async function executeBridge() {
+      if (!connectedAddress) return;
+
+      const chainId = await getCurrentChainId();
+      const requiredChain = currentTab === 'deposit' ? L1_CHAIN_ID : L2_CHAIN_ID;
+
+      if (chainId !== requiredChain) {
+        try {
+          if (currentTab === 'deposit') {
+            await switchNetwork(L1_CHAIN_ID, L1_RPC, 'ethrex L1 Local');
+          } else {
+            await switchNetwork(L2_CHAIN_ID, L2_RPC, 'ethrex L2 Local');
+          }
+          await updateBridgeButton();
+          return;
+        } catch (err) {
+          showStatus('error', 'Failed to switch network: ' + err.message);
+          return;
+        }
+      }
+
+      const amountStr = document.getElementById('amount').value.trim();
+      if (!amountStr || isNaN(parseFloat(amountStr)) || parseFloat(amountStr) <= 0) {
+        showStatus('error', 'Enter a valid amount');
+        return;
+      }
+
+      const amount = ethers.parseEther(amountStr);
+      const recipient = document.getElementById('recipient').value.trim() || connectedAddress;
+
+      if (!ethers.isAddress(recipient)) {
+        showStatus('error', 'Invalid recipient address');
+        return;
+      }
+
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+
+        if (currentTab === 'deposit') {
+          await doDeposit(signer, recipient, amount);
+        } else {
+          await doWithdraw(signer, recipient, amount);
+        }
+      } catch (err) {
+        if (err.code === 'ACTION_REJECTED') {
+          showStatus('error', 'Transaction rejected by user');
+        } else {
+          showStatus('error', 'Transaction failed: ' + (err.reason || err.message));
+        }
+      }
+    }
+
+    async function doDeposit(signer, recipient, amount) {
+      showStatus('pending', 'Sending deposit transaction...');
+
+      // deposit(address l2Recipient) - selector 0xf340fa01
+      const data = '0xf340fa01' + ethers.AbiCoder.defaultAbiCoder().encode(['address'], [recipient]).slice(2);
+
+      const tx = await signer.sendTransaction({
+        to: getBridgeAddress(),
+        value: amount,
+        data: data,
+        gasLimit: 200000n
+      });
+
+      showStatus('pending', 'Waiting for confirmation...', tx.hash, 'l1');
+      await tx.wait();
+      showStatus('success', 'Deposit confirmed! Funds will appear on L2 shortly.', tx.hash, 'l1');
+
+      setTimeout(updateBalances, 3000);
+    }
+
+    async function doWithdraw(signer, recipient, amount) {
+      showStatus('pending', 'Sending withdraw transaction...');
+
+      // withdraw(address _receiverOnL1) - selector 0x51cff8d9
+      const data = '0x51cff8d9' + ethers.AbiCoder.defaultAbiCoder().encode(['address'], [recipient]).slice(2);
+
+      const tx = await signer.sendTransaction({
+        to: COMMON_BRIDGE_L2,
+        value: amount,
+        data: data,
+        gasLimit: 200000n
+      });
+
+      showStatus('pending', 'Waiting for confirmation...', tx.hash, 'l2');
+      await tx.wait();
+      showStatus('success', 'Withdrawal initiated! Claim on L1 after batch verification.', tx.hash, 'l2');
+
+      setTimeout(updateBalances, 3000);
+    }
+
+    function setMax() {
+      const balEl = currentTab === 'deposit'
+        ? document.getElementById('l1Balance')
+        : document.getElementById('l2Balance');
+      const bal = parseFloat(balEl.textContent);
+      if (!isNaN(bal) && bal > 0) {
+        const max = Math.max(0, bal - 0.01);
+        document.getElementById('amount').value = max.toFixed(4);
+      }
+    }
+
+    function showStatus(type, message, txHash, chain) {
+      const el = document.getElementById('txStatus');
+      el.className = 'tx-status ' + type;
+      let html = message;
+      if (txHash) {
+        const explorerBase = chain === 'l1' ? getL1Explorer() : getL2Explorer();
+        html += `<div class="tx-hash"><a href="${explorerBase}/tx/${txHash}" target="_blank">${txHash}</a></div>`;
+      }
+      el.innerHTML = html;
+    }
+
+    function clearStatus() {
+      const el = document.getElementById('txStatus');
+      el.className = 'tx-status';
+      el.innerHTML = '';
+    }
+
+    // Initialize: load config then start
+    loadConfig();
+
+    // Refresh balances every 10s
+    setInterval(() => {
+      if (connectedAddress) updateBalances();
+    }, 10000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# ZK-DEX GPU Override — NVIDIA GPU acceleration for SP1 prover
+#
+# Requires: NVIDIA GPU + nvidia-container-toolkit
+#
+# Usage:
+#   docker compose -f docker-compose.yaml \
+#     -f docker-compose-zk-dex.overrides.yaml \
+#     -f docker-compose-zk-dex-gpu.overrides.yaml \
+#     up --detach --build
+
+services:
+  tokamak-app-prover:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

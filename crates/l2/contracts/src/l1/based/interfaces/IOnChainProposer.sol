@@ -62,7 +62,10 @@ interface IOnChainProposer {
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
     /// @param nonPrivilegedTransactions the number of non-privileged transactions in the batch.
     /// @param commitHash git commit hash that produced the verifier keys for this batch.
+    /// @param programTypeId the guest program type (1=EVM-L2, etc.). 0 defaults to EVM-L2.
     /// @param _rlpEncodedBlocks the list of RLP-encoded blocks in the batch.
+    /// @param publicValuesHash keccak256 hash of proof public values for custom programs (programTypeId > 1).
+    ///        Must be bytes32(0) for EVM-L2 (programTypeId == 1).
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
@@ -71,6 +74,8 @@ interface IOnChainProposer {
         bytes32 lastBlockHash,
         uint256 nonPrivilegedTransactions,
         bytes32 commitHash,
+        uint8 programTypeId,
+        bytes32 publicValuesHash,
         bytes[] calldata _rlpEncodedBlocks
     ) external;
 
@@ -91,7 +96,9 @@ interface IOnChainProposer {
         //sp1
         bytes memory sp1ProofBytes,
         //tdx
-        bytes memory tdxSignature
+        bytes memory tdxSignature,
+        // Custom program public values (only needed for programTypeId > 1)
+        bytes memory customPublicValues
     ) external;
 
     // TODO: imageid, programvkey and riscvvkey should be constants
