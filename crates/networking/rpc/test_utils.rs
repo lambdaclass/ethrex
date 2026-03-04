@@ -31,7 +31,7 @@ use ethrex_p2p::{
 use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::{GenServer, GenServerHandle};
+use spawned_concurrency::tasks::ActorRef;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -321,12 +321,10 @@ pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
     PeerHandler::new(peer_table.clone(), dummy_gen_server(peer_table).await)
 }
 
-/// Creates a dummy GenServer for tests
+/// Creates a dummy RLPx initiator actor for tests
 /// This should only be used in tests
-pub async fn dummy_gen_server(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
-    info!("Starting RLPx Initiator");
-    let state = RLPxInitiator::new(dummy_p2p_context(peer_table).await);
-    RLPxInitiator::start_on_thread(state)
+pub async fn dummy_gen_server(peer_table: PeerTable) -> ActorRef<RLPxInitiator> {
+    RLPxInitiator::spawn_on_thread(dummy_p2p_context(peer_table).await)
 }
 
 /// Creates a dummy P2PContext for tests

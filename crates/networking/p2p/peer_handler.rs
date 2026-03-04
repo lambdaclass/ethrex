@@ -17,7 +17,7 @@ use ethrex_common::{
     H256,
     types::{BlockBody, BlockHeader, validate_block_body},
 };
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::tasks::ActorRef;
 use std::{
     collections::{HashSet, VecDeque},
     sync::atomic::Ordering,
@@ -39,7 +39,7 @@ pub use crate::snap::{DumpError, RequestMetadata, RequestStorageTrieNodesError, 
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: PeerTable,
-    pub initiator: GenServerHandle<RLPxInitiator>,
+    pub initiator: ActorRef<RLPxInitiator>,
 }
 
 pub enum BlockRequestOrder {
@@ -96,7 +96,7 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTable, initiator: GenServerHandle<RLPxInitiator>) -> PeerHandler {
+    pub fn new(peer_table: PeerTable, initiator: ActorRef<RLPxInitiator>) -> PeerHandler {
         Self {
             peer_table,
             initiator,

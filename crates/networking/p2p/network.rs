@@ -22,7 +22,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::tasks::ActorRef;
 use std::{
     io,
     net::SocketAddr,
@@ -47,7 +47,7 @@ pub struct P2PContext {
     pub client_version: String,
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
-    pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
+    pub tx_broadcaster: ActorRef<TxBroadcaster>,
     pub initial_lookup_interval: f64,
 }
 
@@ -173,7 +173,7 @@ pub async fn start_network(
         None
     };
 
-    // Start multiplexer GenServer with handles to protocol servers
+    // Start multiplexer actor with handles to protocol servers
     DiscoveryMultiplexer::new(
         udp_socket,
         context.local_node.node_id(),
@@ -182,7 +182,7 @@ pub async fn start_network(
         #[cfg(feature = "experimental-discv5")]
         discv5_handle,
     )
-    .start();
+    .start_actor();
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 

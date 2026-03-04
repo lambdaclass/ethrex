@@ -266,7 +266,7 @@ pub async fn init_l2(
             opts.node_opts.lookup_interval,
         )
         .expect("P2P context could not be created");
-        let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+        let initiator = RLPxInitiator::spawn(p2p_context.clone());
         let peer_handler = PeerHandler::new(peer_table, initiator);
 
         // Create SyncManager

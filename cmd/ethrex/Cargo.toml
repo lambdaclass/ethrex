@@ -58,8 +58,8 @@ tracing-appender = "0.2"
 pprof = { version = "0.15", features = ["cpp", "prost-codec", "frame-pointer"], optional = true }
 
 spawned-rt.workspace = true
-spawned-concurrency = { git = "https://github.com/lambdaclass/spawned.git", branch = "feat/approach-b" }
-spawned-macros = { git = "https://github.com/lambdaclass/spawned.git", branch = "feat/approach-b" }
+spawned-concurrency.workspace = true
+spawned-macros.workspace = true
 
 # L2 external dependencies
 

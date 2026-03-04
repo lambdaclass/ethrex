@@ -3,9 +3,12 @@ use crate::peer_table::PeerTableError;
 use crate::types::Node;
 use crate::{metrics::METRICS, network::P2PContext, rlpx::connection::server::PeerConnection};
 use spawned_concurrency::{
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, InitResult, send_after, send_message_on},
+    error::ActorError,
+    tasks::{
+        Actor, ActorRef, ActorStart as _, Backend, Context, Handler, send_after, send_message_on,
+    },
 };
+use spawned_macros::{actor, protocol};
 use std::time::Duration;
 use tracing::{debug, error, info};
 
@@ -13,6 +16,15 @@ use tracing::{debug, error, info};
 pub enum RLPxInitiatorError {
     #[error(transparent)]
     PeerTableError(#[from] PeerTableError),
+}
+
+pub type RlpxInitiatorRef = std::sync::Arc<dyn RlpxInitiatorProtocol>;
+
+#[protocol]
+pub trait RlpxInitiatorProtocol: Send + Sync {
+    fn look_for_peer(&self) -> Result<(), ActorError>;
+    fn initiate(&self, node: Node) -> Result<(), ActorError>;
+    fn shutdown(&self) -> Result<(), ActorError>;
 }
 
 #[derive(Debug, Clone)]
@@ -25,15 +37,7 @@ impl RLPxInitiator {
         Self { context }
     }
 
-    pub async fn spawn(context: P2PContext) -> GenServerHandle<RLPxInitiator> {
-        info!("Starting RLPx Initiator");
-        let state = RLPxInitiator::new(context);
-        let mut server = RLPxInitiator::start(state.clone());
-        let _ = server.cast(InMessage::LookForPeer).await;
-        server
-    }
-
-    async fn look_for_peer(&mut self) -> Result<(), RLPxInitiatorError> {
+    async fn do_look_for_peer(&mut self) -> Result<(), RLPxInitiatorError> {
         if !self.context.table.target_peers_reached().await? {
             if let Some(contact) = self.context.table.get_contact_to_initiate().await? {
                 PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node);
@@ -61,55 +65,67 @@ impl RLPxInitiator {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum InMessage {
-    LookForPeer,
-    Initiate { node: Node },
-    Shutdown,
-}
-
-#[derive(Debug, Clone)]
-pub enum OutMessage {
-    Done,
-}
-
-impl GenServer for RLPxInitiator {
-    type CallMsg = Unused;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-    type Error = std::convert::Infallible;
-
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
-        Ok(InitResult::Success(self))
+#[actor(protocol = RlpxInitiatorProtocol)]
+impl RLPxInitiator {
+    pub fn spawn(context: P2PContext) -> ActorRef<RLPxInitiator> {
+        info!("Starting RLPx Initiator");
+        let state = RLPxInitiator::new(context);
+        let actor_ref = state.start();
+        let _ = actor_ref.send(rlpx_initiator_protocol::LookForPeer);
+        actor_ref
     }
 
-    async fn handle_cast(
+    pub fn spawn_on_thread(context: P2PContext) -> ActorRef<RLPxInitiator> {
+        info!("Starting RLPx Initiator (on thread)");
+        let state = RLPxInitiator::new(context);
+        let actor_ref = state.start_with_backend(Backend::Thread);
+        let _ = actor_ref.send(rlpx_initiator_protocol::LookForPeer);
+        actor_ref
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        send_message_on(
+            ctx.clone(),
+            tokio::signal::ctrl_c(),
+            rlpx_initiator_protocol::Shutdown,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_look_for_peer(
         &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            Self::CastMsg::LookForPeer => {
-                let _ = self
-                    .look_for_peer()
-                    .await
-                    .inspect_err(|e| error!(err=?e, "Error looking for peers"));
+        _msg: rlpx_initiator_protocol::LookForPeer,
+        ctx: &Context<Self>,
+    ) {
+        let _ = self
+            .do_look_for_peer()
+            .await
+            .inspect_err(|e| error!(err=?e, "Error looking for peers"));
 
-                send_after(
-                    self.get_lookup_interval().await,
-                    handle.clone(),
-                    Self::CastMsg::LookForPeer,
-                );
+        send_after(
+            self.get_lookup_interval().await,
+            ctx.clone(),
+            rlpx_initiator_protocol::LookForPeer,
+        );
+    }
 
-                CastResponse::NoReply
-            }
-            Self::CastMsg::Initiate { node } => {
-                PeerConnection::spawn_as_initiator(self.context.clone(), &node);
-                METRICS.record_new_rlpx_conn_attempt().await;
-                CastResponse::NoReply
-            }
-            Self::CastMsg::Shutdown => CastResponse::Stop,
-        }
+    #[send_handler]
+    async fn handle_initiate(
+        &mut self,
+        msg: rlpx_initiator_protocol::Initiate,
+        _ctx: &Context<Self>,
+    ) {
+        PeerConnection::spawn_as_initiator(self.context.clone(), &msg.node);
+        METRICS.record_new_rlpx_conn_attempt().await;
+    }
+
+    #[send_handler]
+    async fn handle_shutdown(
+        &mut self,
+        _msg: rlpx_initiator_protocol::Shutdown,
+        ctx: &Context<Self>,
+    ) {
+        ctx.stop();
     }
 }

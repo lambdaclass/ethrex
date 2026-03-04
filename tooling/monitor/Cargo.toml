@@ -26,8 +26,8 @@ ratatui = "0.29.0"
 reqwest.workspace = true
 secp256k1.workspace = true
 serde.workspace = true
-spawned-concurrency = { git = "https://github.com/lambdaclass/spawned.git", branch = "feat/approach-b" }
-spawned-macros = { git = "https://github.com/lambdaclass/spawned.git", branch = "feat/approach-b" }
+spawned-concurrency.workspace = true
+spawned-macros.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
