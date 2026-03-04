@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use aligned_sdk::{
     blockchain::{
@@ -33,7 +34,10 @@ use crate::{
 use super::{
     configs::AlignedConfig,
     errors::SequencerError,
-    utils::{ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR, send_verify_tx, sleep_random},
+    utils::{
+        ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR, batch_checkpoint_name, send_verify_tx,
+        sleep_random,
+    },
 };
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
@@ -43,6 +47,7 @@ pub async fn start_l1_proof_verifier(
     cfg: SequencerConfig,
     rollup_store: StoreRollup,
     needed_proof_types: Vec<ProverType>,
+    checkpoints_dir: PathBuf,
 ) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
         cfg.proof_coordinator,
@@ -51,6 +56,7 @@ pub async fn start_l1_proof_verifier(
         &cfg.aligned,
         rollup_store,
         needed_proof_types,
+        checkpoints_dir,
     )
     .await?;
     l1_proof_verifier.run().await;
@@ -68,6 +74,7 @@ struct L1ProofVerifier {
     rollup_store: StoreRollup,
     needed_proof_types: Vec<ProverType>,
     from_block: Option<u64>,
+    checkpoints_dir: PathBuf,
 }
 
 impl L1ProofVerifier {
@@ -78,6 +85,7 @@ impl L1ProofVerifier {
         aligned_cfg: &AlignedConfig,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
+        checkpoints_dir: PathBuf,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_config(
             eth_cfg.rpc_url.clone(),
@@ -101,6 +109,7 @@ impl L1ProofVerifier {
             rollup_store,
             needed_proof_types,
             from_block: aligned_cfg.from_block,
+            checkpoints_dir,
         })
     }
 
@@ -273,6 +282,21 @@ impl L1ProofVerifier {
             self.rollup_store
                 .store_verify_tx_by_batch(batch_number, verify_tx_hash)
                 .await?;
+        }
+
+        // Advance main cursor now that on-chain verification succeeded
+        self.rollup_store
+            .set_latest_sent_batch_proof(last_batch_number)
+            .await?;
+
+        // Clean up checkpoint directories for verified batches
+        for bn in first_batch_number..=last_batch_number {
+            let cp = self.checkpoints_dir.join(batch_checkpoint_name(bn - 1));
+            if cp.exists() {
+                let _ = std::fs::remove_dir_all(&cp).inspect_err(|e| {
+                    error!("Failed to remove checkpoint {cp:?}: {e}");
+                });
+            }
         }
 
         Ok(Some(verify_tx_hash))

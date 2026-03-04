@@ -233,6 +233,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
                 from_block: opts.aligned_opts.from_block,
+                resubmission_timeout_secs: opts.aligned_opts.resubmission_timeout_secs,
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -880,6 +881,15 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub from_block: Option<u64>,
+    #[arg(
+        long = "aligned.resubmission-timeout",
+        default_value = "300",
+        value_name = "SECONDS",
+        env = "ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS",
+        help = "Timeout in seconds before resending a proof not yet verified on-chain.",
+        help_heading = "Aligned options"
+    )]
+    pub resubmission_timeout_secs: u64,
 }
 
 impl Default for AlignedOptions {
@@ -890,6 +900,7 @@ impl Default for AlignedOptions {
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             from_block: None,
+            resubmission_timeout_secs: 300,
         }
     }
 }

@@ -73,6 +73,10 @@ impl Store {
             // If not set, we initialize it to 0
             self.set_latest_sent_batch_proof(0).await?;
         };
+        // Initialize the aligned cursor if not set
+        if self.get_latest_sent_to_aligned().await.is_err() {
+            self.set_latest_sent_to_aligned(0, 0).await?;
+        };
         Ok(())
     }
 
@@ -367,6 +371,22 @@ impl Store {
         batch_number: u64,
     ) -> Result<(), RollupStoreError> {
         self.engine.set_latest_sent_batch_proof(batch_number).await
+    }
+
+    /// Returns `(batch_number, timestamp_secs)` for the latest proof sent to Aligned gateway.
+    pub async fn get_latest_sent_to_aligned(&self) -> Result<(u64, u64), RollupStoreError> {
+        self.engine.get_latest_sent_to_aligned().await
+    }
+
+    /// Records that `batch_number` was sent to Aligned at `timestamp` (unix secs).
+    pub async fn set_latest_sent_to_aligned(
+        &self,
+        batch_number: u64,
+        timestamp: u64,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .set_latest_sent_to_aligned(batch_number, timestamp)
+            .await
     }
 
     /// Returns the account updates yielded from executing a block

@@ -141,6 +141,16 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 
+    /// Returns `(batch_number, timestamp_secs)` for the latest proof sent to Aligned gateway.
+    async fn get_latest_sent_to_aligned(&self) -> Result<(u64, u64), RollupStoreError>;
+
+    /// Records that `batch_number` was sent to Aligned at `timestamp` (unix secs).
+    async fn set_latest_sent_to_aligned(
+        &self,
+        batch_number: u64,
+        timestamp: u64,
+    ) -> Result<(), RollupStoreError>;
+
     async fn get_account_updates_by_block_number(
         &self,
         block_number: BlockNumber,

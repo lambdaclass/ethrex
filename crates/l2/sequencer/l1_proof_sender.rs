@@ -81,6 +81,8 @@ pub struct L1ProofSender {
     /// Directory where checkpoints are stored.
     checkpoints_dir: PathBuf,
     aligned_mode: bool,
+    /// Timeout in seconds before resending a proof not yet verified on-chain (aligned mode).
+    resubmission_timeout_secs: u64,
     /// Cached SP1 verifying key for aligned mode
     #[cfg(feature = "sp1")]
     sp1_vk: Option<SP1VerifyingKey>,
@@ -144,6 +146,7 @@ impl L1ProofSender {
             network: aligned_cfg.network.clone(),
             checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
+            resubmission_timeout_secs: aligned_cfg.resubmission_timeout_secs,
             #[cfg(feature = "sp1")]
             sp1_vk,
         })
@@ -190,7 +193,40 @@ impl L1ProofSender {
         let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
 
         if self.aligned_mode {
-            let batch_to_send = std::cmp::max(latest_sent_batch_db, last_verified_batch) + 1;
+            let (latest_sent_to_aligned, sent_at) =
+                self.rollup_store.get_latest_sent_to_aligned().await?;
+
+            // Sync aligned cursor if on-chain verification advanced past it
+            if latest_sent_to_aligned < last_verified_batch {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
+                    .as_secs();
+                self.rollup_store
+                    .set_latest_sent_to_aligned(last_verified_batch, now)
+                    .await?;
+            }
+
+            // Time-based resubmission: if we sent a proof but verification hasn't
+            // advanced after the timeout, reset cursor to resend
+            if latest_sent_to_aligned > last_verified_batch && sent_at > 0 {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
+                    .as_secs();
+                if now.saturating_sub(sent_at) > self.resubmission_timeout_secs {
+                    warn!(
+                        latest_sent_to_aligned,
+                        last_verified_batch,
+                        elapsed_secs = now - sent_at,
+                        "Aligned verification timed out, resending proof"
+                    );
+                    let batch_to_send = last_verified_batch + 1;
+                    return self.verify_and_send_proofs_aligned(batch_to_send).await;
+                }
+            }
+
+            let batch_to_send = std::cmp::max(latest_sent_to_aligned, last_verified_batch) + 1;
             return self.verify_and_send_proofs_aligned(batch_to_send).await;
         }
 
@@ -275,7 +311,15 @@ impl L1ProofSender {
         if missing_proof_types.is_empty() {
             self.send_proof_to_aligned(batch_to_send, proofs.values())
                 .await?;
-            self.finalize_batch_proof(batch_to_send).await?;
+            // Only advance the aligned cursor, NOT the main cursor.
+            // Main cursor is advanced by the verifier after on-chain verification.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
+                .as_secs();
+            self.rollup_store
+                .set_latest_sent_to_aligned(batch_to_send, now)
+                .await?;
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
                 .iter()
