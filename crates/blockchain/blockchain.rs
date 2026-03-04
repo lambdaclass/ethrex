@@ -57,6 +57,7 @@ use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
 // Re-export stateless validation functions for backwards compatibility
+use crossbeam::channel::{self as cb, TryRecvError, select};
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -566,28 +567,66 @@ impl Blockchain {
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
-        // Create 16 worker channels
+        // Create 16 worker channels (crossbeam for select! support)
         let mut workers_tx = Vec::with_capacity(16);
         let mut workers_rx = Vec::with_capacity(16);
         for _ in 0..16 {
-            let (tx, rx) = channel();
+            let (tx, rx) = cb::unbounded();
             workers_tx.push(tx);
             workers_rx.push(rx);
         }
+
+        // Shutdown channel: dropping shutdown_tx signals all workers to exit.
+        let (shutdown_tx, shutdown_rx) = cb::bounded::<()>(0);
+        // Done channel: workers report completion status.
+        let (done_tx, done_rx) = cb::unbounded::<Result<(), StoreError>>();
 
         // Spawn 16 unified workers (each gets clone of all 16 senders)
         let mut worker_handles = Vec::with_capacity(16);
         for (i, rx) in workers_rx.into_iter().enumerate() {
             let all_senders = workers_tx.clone();
             let storage_clone = self.storage.clone();
+            let shutdown_rx = shutdown_rx.clone();
+            let done_tx = done_tx.clone();
             let handle = std::thread::Builder::new()
                 .name(format!("block_executor_shard_{i}"))
                 .spawn(move || {
-                    handle_subtrie(storage_clone, rx, parent_state_root, i as u8, all_senders)
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        handle_subtrie(
+                            storage_clone,
+                            rx,
+                            parent_state_root,
+                            i as u8,
+                            all_senders,
+                            shutdown_rx,
+                        )
+                    }));
+                    let result = match result {
+                        Ok(r) => r,
+                        Err(_) => Err(StoreError::Custom(format!("shard worker {i} panicked"))),
+                    };
+                    let _ = done_tx.send(result);
                 })
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}")))?;
             worker_handles.push(handle);
         }
+        drop(done_tx); // Only workers hold senders
+        drop(shutdown_rx); // Only workers hold receivers
+
+        // Watcher thread: drops shutdown_tx on first worker error to signal
+        // all remaining workers, preventing deadlock on gatherer_rx.
+        let watcher = std::thread::Builder::new()
+            .name("shard_watcher".to_string())
+            .spawn(move || -> Option<StoreError> {
+                let _shutdown = shutdown_tx;
+                for result in done_rx {
+                    if let Err(e) = result {
+                        return Some(e); // Drops _shutdown, signaling all workers
+                    }
+                }
+                None
+            })
+            .map_err(|e| StoreError::Custom(format!("spawn watcher failed: {e:?}")))?;
 
         let mut code_updates: Vec<(H256, Code)> = vec![];
         let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
@@ -714,12 +753,16 @@ impl Blockchain {
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
-        // Join workers to surface any errors (workers already exited after
-        // sending CollectedStateMsg, so this is ~instant).
+        // Join watcher to surface any worker errors (panics or StoreErrors).
+        if let Some(err) = watcher
+            .join()
+            .map_err(|_| StoreError::Custom("shard watcher panicked".into()))?
+        {
+            return Err(err);
+        }
+        // Join workers for cleanup (catch_unwind means threads don't panic).
         for handle in worker_handles {
-            handle
-                .join()
-                .map_err(|_| StoreError::Custom("shard worker panicked".into()))??;
+            let _ = handle.join();
         }
 
         Ok((
@@ -2574,10 +2617,11 @@ fn get_or_open_storage_trie<'a>(
 
 fn handle_subtrie(
     storage: Store,
-    rx: Receiver<WorkerRequest>,
+    rx: cb::Receiver<WorkerRequest>,
     parent_state_root: H256,
     index: u8,
-    worker_senders: Vec<Sender<WorkerRequest>>,
+    worker_senders: Vec<cb::Sender<WorkerRequest>>,
+    shutdown_rx: cb::Receiver<()>,
 ) -> Result<(), StoreError> {
     let mut state_trie = storage.open_state_trie(parent_state_root)?;
     let mut storage_nodes: Vec<(H256, Vec<TrieNode>)> = vec![];
@@ -2592,7 +2636,7 @@ fn handle_subtrie(
     let mut pre_collected_storage: FxHashMap<H256, Vec<TrieNode>> = Default::default();
 
     // Held until collection finishes to keep cross-worker channels open.
-    let mut worker_senders: Option<Vec<Sender<WorkerRequest>>> = Some(worker_senders);
+    let mut worker_senders: Option<Vec<cb::Sender<WorkerRequest>>> = Some(worker_senders);
     let mut dirty = false;
     // When active, we finalize one storage trie per loop iteration,
     // interleaving with incoming StorageShard messages.
@@ -2648,7 +2692,12 @@ fn handle_subtrie(
         let msg = if collecting_storages || dirty {
             match rx.try_recv() {
                 Ok(msg) => msg,
-                Err(_) => {
+                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => {
+                    // Check for shutdown signal from watcher
+                    if matches!(shutdown_rx.try_recv(), Err(TryRecvError::Disconnected)) {
+                        return Err(StoreError::Custom("shard worker shutdown".into()));
+                    }
                     if dirty {
                         // Pre-collect state trie — safe during storage
                         // collection too, since StorageShard resolution only
@@ -2675,9 +2724,14 @@ fn handle_subtrie(
                 }
             }
         } else {
-            match rx.recv() {
-                Ok(msg) => msg,
-                Err(_) => break,
+            select! {
+                recv(rx) -> msg => match msg {
+                    Ok(msg) => msg,
+                    Err(_) => break,
+                },
+                recv(shutdown_rx) -> _ => {
+                    return Err(StoreError::Custom("shard worker shutdown".into()));
+                }
             }
         };
 
