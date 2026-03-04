@@ -48,6 +48,7 @@ impl Default for DiscoveryConfig {
 }
 
 #[protocol]
+#[allow(dead_code)]
 pub trait DiscoveryMultiplexerProtocol: Send + Sync {
     fn raw_packet(&self, data: BytesMut, from: SocketAddr) -> Result<(), ActorError>;
     fn shutdown(&self) -> Result<(), ActorError>;
