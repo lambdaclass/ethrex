@@ -119,6 +119,8 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_common::EcdsaError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error("FeeToken transactions (type 0x7d) are no longer supported")]
+    FeeTokenTxNotSupported,
 }
 
 #[derive(Debug)]

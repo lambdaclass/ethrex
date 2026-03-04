@@ -20,6 +20,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2Executi
         fee_configs,
         blob_commitment,
         blob_proof,
+        native_token_scale_factor,
     } = input;
 
     // Execute blocks using the common execution logic
@@ -48,7 +49,8 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2Executi
     // Extract and process messages
     let batch_messages = get_batch_messages(&blocks, &receipts, chain_id);
     let message_digests = compute_message_digests(&batch_messages)?;
-    let balance_diffs = get_balance_diffs(&batch_messages.l2_out_messages);
+    let balance_diffs =
+        get_balance_diffs(&batch_messages.l2_out_messages, native_token_scale_factor);
 
     // Verify blob proof
     let blob_versioned_hash = verify_blob(&blocks, &fee_configs, blob_commitment, blob_proof)?;

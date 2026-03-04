@@ -600,6 +600,11 @@ impl RpcHandler for SendRawTransactionRequest {
         if matches!(transaction, SendRawTransactionRequest::PrivilegedL2(_)) {
             return Err(RpcErr::BadParams("Invalid transaction type".to_string()));
         }
+        if matches!(transaction, SendRawTransactionRequest::FeeToken(_)) {
+            return Err(RpcErr::BadParams(
+                "FeeToken transactions (type 0x7d) are no longer supported".to_string(),
+            ));
+        }
 
         Ok(transaction)
     }

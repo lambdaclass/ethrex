@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use ethrex_common::U256;
 use ethrex_common::types::{
     Block, blobs_bundle, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
 };
@@ -20,6 +21,11 @@ pub struct ProverInputData {
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
     pub fee_configs: Vec<FeeConfig>,
+    /// Scale factor for custom native token decimal conversion (10^(18 - l1_decimals)).
+    /// None when using ETH as native token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[rkyv(with = ethrex_common::rkyv_utils::OptionU256Wrapper)]
+    pub native_token_scale_factor: Option<U256>,
 }
 
 /// Enum used to identify the different proving systems.

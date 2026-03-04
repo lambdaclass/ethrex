@@ -155,5 +155,5 @@ platform/server/db/*.sqlite-shm
 platform/server/db/*.sqlite-wal
 
 # Generated L2 config files
-zk-dex-l2-l2-config.toml
+zk-dex-l2-*.toml
 

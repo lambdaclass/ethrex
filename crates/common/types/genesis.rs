@@ -272,6 +272,17 @@ pub struct ChainConfig {
 
     #[serde(default)]
     pub enable_verkle_at_genesis: bool,
+
+    /// L1 ERC-20 address of the custom native gas token.
+    /// If None (default), ETH is used as the native token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[rkyv(with = rkyv_utils::OptionH160Wrapper)]
+    pub native_token_l1_address: Option<Address>,
+
+    /// Decimal precision of the L1 native token (default 18).
+    /// Used to compute the scale factor: 10^(18 - l1_decimals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_token_l1_decimals: Option<u8>,
 }
 
 lazy_static::lazy_static! {
@@ -405,6 +416,36 @@ impl ChainConfig {
 
     pub fn is_eip155_activated(&self, block_number: BlockNumber) -> bool {
         self.eip155_block.is_some_and(|num| num <= block_number)
+    }
+
+    /// Returns true if a custom native gas token is configured (not ETH).
+    pub fn uses_custom_native_token(&self) -> bool {
+        self.native_token_l1_address.is_some()
+    }
+
+    /// Returns the L1 decimals for the native token (defaults to 18).
+    pub fn native_token_l1_decimals(&self) -> u8 {
+        self.native_token_l1_decimals.unwrap_or(18)
+    }
+
+    /// Computes the scale factor: 10^(18 - l1_decimals).
+    /// Returns None if using ETH (no scaling needed).
+    /// The scale factor converts L1 token amounts to L2 18-decimal amounts:
+    ///   l2_amount = l1_amount * scale_factor
+    ///
+    /// # Panics
+    /// Panics if `native_token_l1_decimals > 18`. Tokens with more than 18
+    /// decimals are not supported as native gas tokens.
+    pub fn native_token_scale_factor(&self) -> Option<U256> {
+        self.native_token_l1_address.map(|_| {
+            let decimals = self.native_token_l1_decimals();
+            assert!(
+                decimals <= 18,
+                "Native token L1 decimals ({decimals}) exceeds 18. Tokens with more than 18 decimals are not supported."
+            );
+            let exponent = 18 - decimals;
+            U256::from(10u64).pow(U256::from(exponent))
+        })
     }
 
     pub fn display_config(&self) -> String {
@@ -1132,5 +1173,130 @@ mod tests {
 
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("missing field `depositContractAddress`"),);
+    }
+
+    #[test]
+    fn native_token_defaults_to_eth() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: H160::zero(),
+            ..Default::default()
+        };
+        assert!(!config.uses_custom_native_token());
+        assert_eq!(config.native_token_l1_decimals(), 18);
+        assert_eq!(config.native_token_scale_factor(), None);
+    }
+
+    #[test]
+    fn native_token_18_decimals() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: H160::zero(),
+            native_token_l1_address: Some(
+                H160::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            ),
+            native_token_l1_decimals: Some(18),
+            ..Default::default()
+        };
+        assert!(config.uses_custom_native_token());
+        assert_eq!(config.native_token_l1_decimals(), 18);
+        // 10^(18-18) = 10^0 = 1
+        assert_eq!(config.native_token_scale_factor(), Some(U256::from(1)));
+    }
+
+    #[test]
+    fn native_token_6_decimals() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: H160::zero(),
+            native_token_l1_address: Some(
+                H160::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            ),
+            native_token_l1_decimals: Some(6),
+            ..Default::default()
+        };
+        assert!(config.uses_custom_native_token());
+        assert_eq!(config.native_token_l1_decimals(), 6);
+        // 10^(18-6) = 10^12
+        let expected = U256::from(10u64).pow(U256::from(12));
+        assert_eq!(config.native_token_scale_factor(), Some(expected));
+    }
+
+    #[test]
+    fn native_token_no_decimals_defaults_to_18() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: H160::zero(),
+            native_token_l1_address: Some(
+                H160::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            ),
+            native_token_l1_decimals: None,
+            ..Default::default()
+        };
+        assert!(config.uses_custom_native_token());
+        assert_eq!(config.native_token_l1_decimals(), 18);
+        assert_eq!(config.native_token_scale_factor(), Some(U256::from(1)));
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds 18")]
+    fn native_token_decimals_above_18_panics() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: H160::zero(),
+            native_token_l1_address: Some(
+                H160::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            ),
+            native_token_l1_decimals: Some(24),
+            ..Default::default()
+        };
+        // This should panic because decimals > 18 is not supported
+        config.native_token_scale_factor();
+    }
+
+    #[test]
+    fn deserialize_chain_config_with_native_token() {
+        let json = r#"
+            {
+                "chainId": 123,
+                "depositContractAddress": "0x4242424242424242424242424242424242424242",
+                "nativeTokenL1Address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                "nativeTokenL1Decimals": 6
+            }
+            "#;
+        let config: ChainConfig = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(config.chain_id, 123);
+        assert!(config.uses_custom_native_token());
+        assert_eq!(
+            config.native_token_l1_address,
+            Some(H160::from_str("0xdac17f958d2ee523a2206206994597c13d831ec7").unwrap())
+        );
+        assert_eq!(config.native_token_l1_decimals(), 6);
+    }
+
+    #[test]
+    fn deserialize_chain_config_without_native_token() {
+        let json = r#"
+            {
+                "chainId": 123,
+                "depositContractAddress": "0x4242424242424242424242424242424242424242"
+            }
+            "#;
+        let config: ChainConfig = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(!config.uses_custom_native_token());
+        assert_eq!(config.native_token_l1_address, None);
+        assert_eq!(config.native_token_l1_decimals, None);
+    }
+
+    #[test]
+    fn serialize_chain_config_omits_none_native_token() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: H160::zero(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains("nativeTokenL1Address"));
+        assert!(!json.contains("nativeTokenL1Decimals"));
     }
 }
