@@ -1411,6 +1411,23 @@ impl Store {
             }
 
             tx.commit()?;
+
+            // Persist the ethrex-db state trie to disk so changes survive restarts.
+            if let Some(last_block) = update_batch.blocks.last() {
+                let bc = self
+                    .ethrex_db_blockchain()
+                    .ok_or(StoreError::Custom(
+                        "ethrex-db blockchain handle missing".into(),
+                    ))?;
+                let bc = bc.read().map_err(|_| StoreError::LockError)?;
+                let block_number = last_block.header.number;
+                let block_hash = h256_to_db(&last_block.hash());
+                bc.persist_state_trie(block_number, block_hash)
+                    .map_err(|e| {
+                        StoreError::Custom(format!("Failed to persist ethrex-db state: {e}"))
+                    })?;
+            }
+
             return Ok(());
         }
 
