@@ -42,6 +42,7 @@ if [[ -f "$LOC_JSON" ]]; then
 
   pct() {
     # Integer percentage: pct numerator denominator
+    [[ "$2" -eq 0 ]] && { printf "0"; return; }
     printf "%d" $(( ($1 * 100 + $2 / 2) / $2 ))
   }
 
@@ -79,9 +80,13 @@ if [[ -f "$LOC_JSON" ]]; then
   # Build as array of lines for proper newline handling
   l1_crates_text=""
   while IFS=$'\t' read -r crate_name crate_loc; do
-    old_crate_loc=$(jq -r --arg n "$crate_name" '
-      (.ethrex_crates[] | select(.[0] == $n) | .[1]) // 0
-    ' "${LOC_OLD_JSON:-/dev/null}" 2>/dev/null || echo 0)
+    if [[ -f "$LOC_OLD_JSON" ]]; then
+      old_crate_loc=$(jq -r --arg n "$crate_name" \
+        '(.ethrex_crates[] | select(.[0] == $n) | .[1]) // 0' \
+        "$LOC_OLD_JSON" 2>/dev/null || echo 0)
+    else
+      old_crate_loc="$crate_loc"
+    fi
     [[ -z "$old_crate_loc" || "$old_crate_loc" == "null" ]] && old_crate_loc=0
     l1_crates_text+="$(fmt_sub_row "$crate_name" "$crate_loc" "$old_crate_loc" "$loc_l1")"$'\n'
   done < <(jq -r '
@@ -109,12 +114,10 @@ BLOCK_TIME_RANGE="${BLOCK_TIME_PROMETHEUS_RANGE:-24h}"
 
 # Build auth args (same Prometheus instance for both queries)
 auth_args=()
-if [[ -n "${PERF_PROMETHEUS_BEARER_TOKEN:-}" ]]; then
-  auth_args+=(-H "Authorization: Bearer $PERF_PROMETHEUS_BEARER_TOKEN")
-fi
-if [[ -n "${PERF_PROMETHEUS_BASIC_AUTH:-}" ]]; then
-  auth_args+=(-u "$PERF_PROMETHEUS_BASIC_AUTH")
-fi
+_bearer="${PERF_PROMETHEUS_BEARER_TOKEN:-${BLOCK_TIME_PROMETHEUS_BEARER_TOKEN:-${PROMETHEUS_BEARER_TOKEN:-}}}"
+_basic="${PERF_PROMETHEUS_BASIC_AUTH:-${BLOCK_TIME_PROMETHEUS_BASIC_AUTH:-${PROMETHEUS_BASIC_AUTH:-}}}"
+if [[ -n "$_bearer" ]]; then auth_args+=(-H "Authorization: Bearer $_bearer"); fi
+if [[ -n "$_basic"  ]]; then auth_args+=(-u "$_basic"); fi
 
 prometheus_query() {
   local query="$1"
@@ -227,6 +230,7 @@ for row in "${raw_perf[@]}"; do
     nethermind:mean) nether_tput="$series_value" ;;
     geth:p50)        geth_tput_p50="$series_value" ;;
     geth:p99.9)      geth_tput_p999="$series_value" ;;
+    *) echo "WARNING: unmatched series ${series_name}:${qualifier} (instance: ${series_instance})" >&2 ;;
   esac
 done
 
@@ -270,6 +274,7 @@ for row in "${raw_bt[@]}"; do
     geth:p50)        geth_bt_p50="$series_value" ;;
     geth:p99.9)      geth_bt_p999="$series_value" ;;
     nethermind:mean) nether_bt="$series_value" ;;
+    *) echo "WARNING: unmatched series ${series_name}:${qualifier} (instance: ${series_instance})" >&2 ;;
   esac
 done
 
