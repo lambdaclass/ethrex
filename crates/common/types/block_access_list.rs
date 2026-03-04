@@ -495,6 +495,21 @@ impl BlockAccessList {
                     ));
                 }
             }
+            // Check no slot is in both storage_changes and storage_reads
+            for sr_slot in &account.storage_reads {
+                let pos = account
+                    .storage_changes
+                    .partition_point(|sc| sc.slot < *sr_slot);
+                if pos < account.storage_changes.len()
+                    && account.storage_changes[pos].slot == *sr_slot
+                {
+                    return Err(format!(
+                        "Block access list slot {:#x} is in both storage_changes and \
+                         storage_reads for account {:#x}",
+                        sr_slot, account.address
+                    ));
+                }
+            }
             for window in account.balance_changes.windows(2) {
                 if window[0].block_access_index >= window[1].block_access_index {
                     return Err(format!(
