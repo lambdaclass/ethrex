@@ -3,7 +3,7 @@ use std::{
     sync::RwLock,
 };
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     constants::{
@@ -18,12 +18,11 @@ use ethrex_common::{
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
 };
 use ethrex_storage::error::StoreError;
-use std::collections::HashSet;
 use tracing::warn;
 
 #[derive(Debug, Default)]
 struct MempoolInner {
-    broadcast_pool: HashSet<H256>,
+    broadcast_pool: FxHashSet<H256>,
     transaction_pool: FxHashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
