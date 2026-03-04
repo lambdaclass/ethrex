@@ -6,9 +6,6 @@ on:
       - main
     paths:
       - "docs/**"
-  pull_request:
-    paths:
-      - "docs/**"
   workflow_dispatch:
 
 permissions:
