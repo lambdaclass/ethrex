@@ -68,6 +68,22 @@ impl Hash for ArchivedH160Wrapper {
 }
 
 #[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Option<U256>)]
+pub enum OptionU256Wrapper {
+    Some(#[rkyv(with = U256Wrapper)] U256),
+    None,
+}
+
+impl From<OptionU256Wrapper> for Option<U256> {
+    fn from(value: OptionU256Wrapper) -> Self {
+        match value {
+            OptionU256Wrapper::Some(x) => Some(x),
+            OptionU256Wrapper::None => None,
+        }
+    }
+}
+
+#[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = Option<H160>)]
 pub enum OptionH160Wrapper {
     Some(#[rkyv(with = H160Wrapper)] H160),

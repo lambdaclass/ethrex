@@ -2082,6 +2082,10 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
+        // FeeToken transactions (type 0x7d) are no longer supported
+        if matches!(transaction, Transaction::FeeTokenTransaction(_)) {
+            return Err(MempoolError::FeeTokenTxNotSupported);
+        }
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);

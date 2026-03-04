@@ -100,10 +100,8 @@ contract CommonBridge is
     /// @notice Deadline for the sequencer to include the transaction.
     mapping(bytes32 => uint256) public privilegedTxDeadline;
 
-    /// @dev Deprecated variable.
-    /// @notice The L1 token address that is treated as the one to be bridged to the L2.
-    /// @dev If set to address(0), ETH is considered the native token.
-    /// Otherwise, this address is used for native token deposits and withdrawals.
+    /// @notice The L1 ERC-20 token address used as the native gas token on L2.
+    /// @dev If set to address(0), ETH is the native token.
     address public NATIVE_TOKEN_L1;
 
     /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
@@ -122,6 +120,11 @@ contract CommonBridge is
     /// @notice Mapping of chain ID to index of the first unprocessed message hash in the array.
     mapping(uint256 chainId => uint256 index)
         public pendingMessagesIndexPerChain;
+
+    /// @notice Scale factor for converting between L1 token decimals and L2 18-decimal amounts.
+    /// @dev NATIVE_TOKEN_SCALE_FACTOR = 10^(18 - l1_decimals).
+    /// L2 amount = L1 amount * NATIVE_TOKEN_SCALE_FACTOR.
+    uint256 public NATIVE_TOKEN_SCALE_FACTOR;
 
     modifier onlyOnChainProposer() {
         require(
@@ -142,7 +145,9 @@ contract CommonBridge is
         address onChainProposer,
         uint256 inclusionMaxWait,
         address _sharedBridgeRouter,
-        uint256 chainId
+        uint256 chainId,
+        address nativeTokenL1,
+        uint256 nativeTokenScaleFactor
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -157,6 +162,17 @@ contract CommonBridge is
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
         SHARED_BRIDGE_ROUTER = _sharedBridgeRouter;
+
+        NATIVE_TOKEN_L1 = nativeTokenL1;
+        if (nativeTokenL1 != address(0)) {
+            require(
+                nativeTokenScaleFactor >= 1 && nativeTokenScaleFactor <= 1e18,
+                "CommonBridge: scale factor out of range (must be 1 to 1e18)"
+            );
+            NATIVE_TOKEN_SCALE_FACTOR = nativeTokenScaleFactor;
+        } else {
+            NATIVE_TOKEN_SCALE_FACTOR = 1;
+        }
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -289,6 +305,38 @@ contract CommonBridge is
 
     receive() external payable whenNotPaused {
         deposit(msg.sender);
+    }
+
+    /// @notice Deposits a custom native token (ERC-20) to L2.
+    /// @dev The caller must approve this contract to spend at least `l1Amount` of NATIVE_TOKEN_L1.
+    /// @param l2Recipient the address on L2 that will receive the deposit.
+    /// @param l1Amount the amount of the L1 ERC-20 token to deposit (in L1 decimals).
+    function depositNativeToken(
+        address l2Recipient,
+        uint256 l1Amount
+    ) external whenNotPaused {
+        require(
+            NATIVE_TOKEN_L1 != address(0),
+            "CommonBridge: native token not configured"
+        );
+        require(l1Amount > 0, "CommonBridge: amount to deposit is zero");
+
+        IERC20(NATIVE_TOKEN_L1).safeTransferFrom(msg.sender, address(this), l1Amount);
+        deposits[NATIVE_TOKEN_L1][NATIVE_TOKEN_L1] += l1Amount;
+
+        uint256 l2Amount = l1Amount * NATIVE_TOKEN_SCALE_FACTOR;
+
+        bytes memory callData = abi.encodeCall(
+            ICommonBridgeL2.mintNativeToken,
+            (l2Recipient, msg.sender)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_BRIDGE_ADDRESS,
+            gasLimit: 21000 * 5,
+            value: l2Amount,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
     function depositERC20(
@@ -460,11 +508,28 @@ contract CommonBridge is
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer nonReentrant {
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            // Send ETH value if any
-            IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{
-                value: balanceDiffs[i].value
-            }(balanceDiffs[i].chainId);
-            deposits[ETH_TOKEN][ETH_TOKEN] -= balanceDiffs[i].value;
+            // Send value (ETH or native token) if any
+            if (balanceDiffs[i].value > 0) {
+                if (NATIVE_TOKEN_L1 != address(0)) {
+                    // Native token mode: send as ERC-20 via router
+                    // balanceDiffs[i].value is already in L1 units
+                    deposits[NATIVE_TOKEN_L1][NATIVE_TOKEN_L1] -= balanceDiffs[i].value;
+                    IERC20(NATIVE_TOKEN_L1).forceApprove(SHARED_BRIDGE_ROUTER, balanceDiffs[i].value);
+                    IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
+                        CHAIN_ID,
+                        balanceDiffs[i].chainId,
+                        NATIVE_TOKEN_L1,
+                        NATIVE_TOKEN_L1,
+                        balanceDiffs[i].value
+                    );
+                } else {
+                    // ETH mode: send ETH via router
+                    IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{
+                        value: balanceDiffs[i].value
+                    }(balanceDiffs[i].chainId);
+                    deposits[ETH_TOKEN][ETH_TOKEN] -= balanceDiffs[i].value;
+                }
+            }
 
             // Send ERC20 values if any
             for (uint j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
@@ -529,6 +594,23 @@ contract CommonBridge is
         deposits[tokenL1][tokenL2] += amount;
     }
 
+    /// @notice Receives native token (ERC-20) from the shared bridge router.
+    /// @dev Called by the router when another chain sends native tokens to this chain.
+    /// @param amount The amount of the native token received (in L1 units).
+    function receiveNativeTokenFromSharedBridge(
+        uint256 amount
+    ) external {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+        require(
+            NATIVE_TOKEN_L1 != address(0),
+            "CommonBridge: native token not configured"
+        );
+        deposits[NATIVE_TOKEN_L1][NATIVE_TOKEN_L1] += amount;
+    }
+
     /// @inheritdoc ICommonBridge
     function claimWithdrawal(
         uint256 claimedAmount,
@@ -570,6 +652,39 @@ contract CommonBridge is
             "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
         );
         IERC20(tokenL1).safeTransfer(msg.sender, claimedAmount);
+    }
+
+    /// @notice Claims a native token withdrawal from L2.
+    /// @dev The claimed L2 amount (in 18 decimals) is scaled down to L1 units.
+    /// @dev Dust amounts (not evenly divisible by NATIVE_TOKEN_SCALE_FACTOR) are rejected.
+    /// @param claimedL2Amount the L2-side amount (18 decimals) being claimed.
+    /// @param withdrawalBatchNumber the batch number where the withdrawal was emitted.
+    /// @param withdrawalMessageId the message index within the batch.
+    /// @param withdrawalProof the merkle proof for the withdrawal.
+    function claimNativeTokenWithdrawal(
+        uint256 claimedL2Amount,
+        uint256 withdrawalBatchNumber,
+        uint256 withdrawalMessageId,
+        bytes32[] calldata withdrawalProof
+    ) public whenNotPaused nonReentrant {
+        require(
+            NATIVE_TOKEN_L1 != address(0),
+            "CommonBridge: native token not configured"
+        );
+        require(
+            claimedL2Amount % NATIVE_TOKEN_SCALE_FACTOR == 0,
+            "CommonBridge: dust amount not claimable"
+        );
+        uint256 l1Amount = claimedL2Amount / NATIVE_TOKEN_SCALE_FACTOR;
+        _claimWithdrawal(
+            NATIVE_TOKEN_L1,
+            NATIVE_TOKEN_L1,
+            l1Amount,
+            withdrawalBatchNumber,
+            withdrawalMessageId,
+            withdrawalProof
+        );
+        IERC20(NATIVE_TOKEN_L1).safeTransfer(msg.sender, l1Amount);
     }
 
     function _claimWithdrawal(

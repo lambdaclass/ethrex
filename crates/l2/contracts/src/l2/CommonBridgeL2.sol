@@ -16,7 +16,21 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
+    /// @notice L1 ERC-20 address of the custom native gas token.
+    /// @dev address(0) means ETH is the native token.
+    address public immutable NATIVE_TOKEN_L1;
+
+    /// @notice Scale factor for L1-to-L2 decimal conversion: 10^(18 - l1_decimals).
+    uint256 public immutable NATIVE_TOKEN_SCALE_FACTOR;
+
     mapping(uint256 chainId => uint256 txId) public transactionIds;
+
+    constructor(address nativeTokenL1, uint256 nativeTokenScaleFactor) {
+        NATIVE_TOKEN_L1 = nativeTokenL1;
+        NATIVE_TOKEN_SCALE_FACTOR = nativeTokenScaleFactor > 0
+            ? nativeTokenScaleFactor
+            : 1;
+    }
 
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
     modifier onlySelf() {
@@ -48,6 +62,57 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             this.withdraw{value: msg.value}(to);
         }
         emit DepositProcessed(to, msg.value);
+    }
+
+    /// @notice Transfers native token to the given address.
+    /// @dev Called via privileged transaction. msg.value is in L2 18-decimal units.
+    /// @dev If the transfer fails, a withdrawal is initiated to the original depositor on L1,
+    /// @dev not to the L2 recipient, since the same address on L1 may belong to a different entity.
+    /// @param to the L2 recipient address
+    /// @param depositor the original depositor address on L1 (for fallback withdrawal)
+    function mintNativeToken(
+        address to,
+        address depositor
+    ) external payable onlySelf {
+        (bool success, ) = to.call{value: msg.value}("");
+        if (!success) {
+            this.withdrawNativeToken{value: msg.value}(depositor);
+        }
+        emit DepositProcessed(to, msg.value);
+    }
+
+    /// @notice Initiates withdrawal of native token to L1.
+    /// @dev Burns the native token on L2 and emits a withdrawal message.
+    /// @dev The message hash uses L1 units (scaled down by NATIVE_TOKEN_SCALE_FACTOR).
+    function withdrawNativeToken(address _receiverOnL1) external payable {
+        require(msg.value > 0, "Withdrawal amount must be positive");
+        require(
+            NATIVE_TOKEN_L1 != address(0),
+            "CommonBridgeL2: native token not configured"
+        );
+        require(
+            msg.value % NATIVE_TOKEN_SCALE_FACTOR == 0,
+            "CommonBridgeL2: dust amount not withdrawable"
+        );
+
+        (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
+        require(success, "Failed to burn native token");
+
+        // Scale down to L1 units for the withdrawal message hash
+        uint256 l1Amount = msg.value / NATIVE_TOKEN_SCALE_FACTOR;
+
+        emit WithdrawalInitiated(msg.sender, _receiverOnL1, msg.value);
+
+        IMessenger(L1_MESSENGER).sendMessageToL1(
+            keccak256(
+                abi.encodePacked(
+                    NATIVE_TOKEN_L1,
+                    NATIVE_TOKEN_L1,
+                    _receiverOnL1,
+                    l1Amount
+                )
+            )
+        );
     }
 
     function mintERC20(
@@ -148,6 +213,10 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     ) external payable override {
         _burnGas(destGasLimit);
         if (msg.value > 0) {
+            // Use mintNativeToken if custom native token is configured, otherwise mintETH
+            bytes memory mintCallData = NATIVE_TOKEN_L1 != address(0)
+                ? abi.encodeCall(ICommonBridgeL2.mintNativeToken, (msg.sender, msg.sender))
+                : abi.encodeCall(ICommonBridgeL2.mintETH, (msg.sender));
             IMessenger(L1_MESSENGER).sendMessageToL2(
                 chainId,
                 address(this),
@@ -155,7 +224,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
                 destGasLimit,
                 transactionIds[chainId],
                 msg.value,
-                abi.encodeCall(ICommonBridgeL2.mintETH, (msg.sender))
+                mintCallData
             );
             transactionIds[chainId] += 1;
         }
@@ -170,7 +239,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         );
         transactionIds[chainId] += 1;
         (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
-        require(success, "Failed to burn Ether");
+        require(success, "Failed to burn native token");
     }
 
     /// Burns at least {amount} gas
