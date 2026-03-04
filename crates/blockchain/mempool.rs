@@ -37,7 +37,10 @@ impl MempoolInner {
     fn new(max_mempool_size: usize) -> Self {
         MempoolInner {
             txs_order: VecDeque::with_capacity(max_mempool_size * 2),
-            transaction_pool: FxHashMap::with_capacity_and_hasher(max_mempool_size, Default::default()),
+            transaction_pool: FxHashMap::with_capacity_and_hasher(
+                max_mempool_size,
+                Default::default(),
+            ),
             max_mempool_size,
             mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
             ..Default::default()

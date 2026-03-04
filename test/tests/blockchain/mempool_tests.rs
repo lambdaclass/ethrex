@@ -7,7 +7,7 @@ use ethrex_blockchain::constants::{
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
     BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
@@ -375,7 +375,10 @@ fn test_filter_mempool_transactions() {
         .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx)
         .unwrap();
     let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
-    assert_eq!(txs, HashMap::from([(blob_tx.sender(), vec![blob_tx])]));
+    assert_eq!(
+        txs,
+        FxHashMap::from_iter([(blob_tx.sender(), vec![blob_tx])])
+    );
 }
 
 #[test]
