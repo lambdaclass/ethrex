@@ -348,7 +348,7 @@ pub fn execute_app_circuit<C: AppCircuit>(
     let message_digests = compute_message_digests(&batch_messages)
         .map_err(|e| AppCircuitError::MessageDigest(e.to_string()))?;
     let balance_diffs =
-        ethrex_l2_common::messages::get_balance_diffs(&batch_messages.l2_out_messages);
+        ethrex_l2_common::messages::get_balance_diffs(&batch_messages.l2_out_messages, None);
 
     // 6. Compute blob versioned hash.
     //
