@@ -50,6 +50,11 @@ pub mod payload;
 pub mod tracing;
 pub mod vm;
 
+/// Gas threshold below which prewarming is skipped.
+/// Prewarming overhead (thread spawn, state provider setup, EVM creation)
+/// exceeds the benefit for blocks under this threshold (~23% of mainnet blocks).
+const SMALL_BLOCK_GAS_THRESHOLD: u64 = 20_000_000;
+
 use ::tracing::{debug, info, instrument, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
@@ -412,24 +417,32 @@ impl Blockchain {
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
-                let warm_handle = std::thread::Builder::new()
-                    .name("block_executor_warmer".to_string())
-                    .spawn_scoped(s, move || {
-                        // Warming uses the same caching store, sharing cached state with execution.
-                        // Precompile cache lives inside CachingDatabase, shared automatically.
-                        let start = Instant::now();
-                        if let Some(bal) = bal {
-                            // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            let _ = LEVM::warm_block_from_bal(bal, caching_store);
-                        } else {
-                            // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            let _ = LEVM::warm_block(block, caching_store, vm_type);
-                        }
-                        start.elapsed()
-                    })
-                    .map_err(|e| {
-                        ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
-                    })?;
+                let skip_warming = block.header.gas_used > 0
+                    && block.header.gas_used < SMALL_BLOCK_GAS_THRESHOLD;
+                let warm_handle = if skip_warming {
+                    None
+                } else {
+                    Some(
+                        std::thread::Builder::new()
+                            .name("block_executor_warmer".to_string())
+                            .spawn_scoped(s, move || {
+                                // Warming uses the same caching store, sharing cached state with execution.
+                                // Precompile cache lives inside CachingDatabase, shared automatically.
+                                let start = Instant::now();
+                                if let Some(bal) = bal {
+                                    // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
+                                    let _ = LEVM::warm_block_from_bal(bal, caching_store);
+                                } else {
+                                    // Pre-Amsterdam / P2P sync: speculative tx re-execution
+                                    let _ = LEVM::warm_block(block, caching_store, vm_type);
+                                }
+                                start.elapsed()
+                            })
+                            .map_err(|e| {
+                                ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
+                            })?,
+                    )
+                };
                 let max_queue_length_ref = &mut max_queue_length;
                 let (tx, rx) = channel();
                 let execution_handle = std::thread::Builder::new()
@@ -491,11 +504,14 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
                     })?;
-                let warmer_duration = warm_handle
-                    .join()
-                    .inspect_err(|e| warn!("Warming thread error: {e:?}"))
-                    .ok()
-                    .unwrap_or(Duration::ZERO);
+                let warmer_duration = match warm_handle {
+                    Some(handle) => handle
+                        .join()
+                        .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                        .ok()
+                        .unwrap_or(Duration::ZERO),
+                    None => Duration::ZERO,
+                };
                 Ok((
                     execution_handle.join().unwrap_or_else(|_| {
                         Err(ChainError::Custom("execution thread panicked".to_string()))
@@ -565,6 +581,7 @@ impl Blockchain {
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
         let mut code_updates: Vec<(H256, Code)> = vec![];
         let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
+        let mut hashed_key_cache: FxHashMap<H256, H256> = Default::default();
 
         // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
@@ -622,7 +639,9 @@ impl Blockchain {
                     }
                 }
                 for (key, value) in update.added_storage {
-                    let hashed_key = keccak(key);
+                    let hashed_key = *hashed_key_cache
+                        .entry(key)
+                        .or_insert_with(|| keccak(key));
                     let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
                     workers_tx[bucket as usize]
                         .send(MerklizationRequest::MerklizeStorage {
@@ -846,6 +865,7 @@ impl Blockchain {
                                 s,
                                 move || -> Result<Vec<(usize, H256, Vec<TrieNode>)>, StoreError> {
                                     let mut results: Vec<(usize, H256, Vec<TrieNode>)> = Vec::new();
+                                    let mut hashed_key_cache: FxHashMap<H256, H256> = FxHashMap::default();
                                     // Open one state trie per worker for storage root lookups
                                     let state_trie =
                                         self.storage.open_state_trie(parent_state_root)?;
