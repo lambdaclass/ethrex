@@ -56,8 +56,8 @@ use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
-// Re-export stateless validation functions for backwards compatibility
 use crossbeam::channel::{self as cb, TryRecvError, select};
+// Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -260,6 +260,7 @@ enum WorkerRequest {
         removed: bool,
         removed_storage: bool,
     },
+    // From main thread (broadcast to all workers)
     FinishRouting,
     MerklizeAccounts {
         accounts: Vec<H256>,
@@ -2512,6 +2513,7 @@ impl Blockchain {
     }
 }
 
+/// Open a state trie or storage trie depending on whether `prefix` is given.
 fn load_trie(
     storage: &Store,
     parent_state_root: H256,
@@ -2530,6 +2532,8 @@ fn load_trie(
     })
 }
 
+/// Collapse a root branch node into an extension or leaf if it has only one valid child.
+/// Returns `None` if there are no valid children.
 fn collapse_root_node(
     storage: &Store,
     parent_state_root: H256,
