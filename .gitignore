@@ -149,5 +149,5 @@ crates/guest-program/bin/sp1-zk-dex/
 zk-dex-l2-*.toml
 
 # Platform build artifacts
-platform/
+# platform/
 
