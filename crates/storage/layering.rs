@@ -1,5 +1,5 @@
 use ethrex_common::H256;
-use fastbloom::AtomicBloomFilter;
+use fastbloom::{AtomicBloomFilter, BloomFilter};
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{fmt, sync::Arc};
@@ -9,11 +9,24 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// Per-layer bloom filter to skip HashMap lookups for keys not in this layer.
+    bloom: BloomFilter<FxBuildHasher>,
     parent: H256,
     id: usize,
+}
+
+impl fmt::Debug for TrieLayer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TrieLayer")
+            .field("nodes", &self.nodes)
+            .field("bloom", &"BloomFilter")
+            .field("parent", &self.parent)
+            .field("id", &self.id)
+            .finish()
+    }
 }
 
 #[derive(Clone)]
@@ -80,8 +93,10 @@ impl TrieLayerCache {
         let mut current_state_root = state_root;
 
         while let Some(layer) = self.layers.get(&current_state_root) {
-            if let Some(value) = layer.nodes.get(key) {
-                return Some(value.clone());
+            if layer.bloom.contains(key) {
+                if let Some(value) = layer.nodes.get(key) {
+                    return Some(value.clone());
+                }
             }
             current_state_root = layer.parent;
             if current_state_root == state_root {
@@ -140,9 +155,17 @@ impl TrieLayerCache {
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
 
+        let mut layer_bloom = BloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
+            .hasher(FxBuildHasher)
+            .expected_items(nodes.len().max(1));
+        for key in nodes.keys() {
+            layer_bloom.insert(key);
+        }
+
         self.last_id += 1;
         let entry = TrieLayer {
             nodes,
+            bloom: layer_bloom,
             parent,
             id: self.last_id,
         };
