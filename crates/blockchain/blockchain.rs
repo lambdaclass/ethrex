@@ -234,7 +234,9 @@ pub struct BatchBlockProcessingFailure {
 /// Grant `CAP_SYS_NICE` to the ethrex binary for effective priority
 /// elevation.
 fn increase_thread_priority() {
+    use std::sync::Once;
     use thread_priority::{ThreadPriority, ThreadPriorityValue};
+    static WARN_ONCE: Once = Once::new();
     if let Err(err) = ThreadPriority::Max.set_for_current() {
         debug!(
             ?err,
@@ -244,6 +246,9 @@ fn increase_thread_priority() {
             ThreadPriorityValue::try_from(62u8).expect("62 is within valid 0..=99 range"),
         );
         if let Err(err) = fallback.set_for_current() {
+            WARN_ONCE.call_once(|| {
+                warn!("thread priority elevation unavailable; consider granting CAP_SYS_NICE");
+            });
             debug!(?err, "failed to set moderate thread priority");
         }
     }
