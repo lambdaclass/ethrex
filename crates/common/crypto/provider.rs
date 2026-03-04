@@ -335,8 +335,14 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
             ethereum_types::U256::zero()
         } else {
             let product = a.full_mul(b);
-            let (_, rem) = product.div_mod(m.into());
-            rem.try_into().unwrap_or(ethereum_types::U256::zero())
+            let m512 = ethereum_types::U512::from(m);
+            if product < m512 {
+                // Product fits below modulus — no division needed.
+                product.try_into().unwrap_or(ethereum_types::U256::zero())
+            } else {
+                let (_, rem) = product.div_mod(m512);
+                rem.try_into().unwrap_or(ethereum_types::U256::zero())
+            }
         };
 
         result.to_big_endian()

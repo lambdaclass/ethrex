@@ -404,7 +404,7 @@ impl Substate {
 /// # Example
 ///
 /// ```ignore
-/// let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+/// let mut vm = VM::new(env, db, &tx, tracer, vm_type, &NativeCrypto);
 /// let report = vm.execute()?;
 /// if report.is_success() {
 ///     println!("Gas used: {}, Output: {:?}", report.gas_used, report.output);
