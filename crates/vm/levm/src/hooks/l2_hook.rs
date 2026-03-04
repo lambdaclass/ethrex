@@ -234,7 +234,7 @@ fn validate_sufficient_max_fee_per_gas_l2(
     let total_fee = vm
         .env
         .base_fee_per_gas
-        .checked_add(U256::from(fee_config.operator_fee_per_gas))
+        .checked_add(fee_config.operator_fee_per_gas.into())
         .ok_or(TxValidationError::InsufficientMaxFeePerGas)?;
 
     if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee {
