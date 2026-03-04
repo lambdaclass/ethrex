@@ -38,6 +38,7 @@ pub const MAX_CODE_SIZE: u64 = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
 // EIP-7954 (Amsterdam): increased limits
 pub const AMSTERDAM_MAX_CODE_SIZE: u64 = 0x8000;
+#[allow(clippy::as_conversions)]
 pub const AMSTERDAM_INIT_CODE_MAX_SIZE: usize = 2 * AMSTERDAM_MAX_CODE_SIZE as usize;
 
 // https://eips.ethereum.org/EIPS/eip-3541

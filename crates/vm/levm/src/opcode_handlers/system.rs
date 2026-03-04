@@ -888,7 +888,8 @@ impl<'a> VM<'a> {
             // but per EELS escrow mechanism it doesn't count as regular gas.
             // Without this, derived regular = gas_used - state_gas includes the
             // huge reserved gas, inflating block_gas_used.
-            self.reverted_child_state_spill += gas_limit;
+            self.reverted_child_state_spill =
+                self.reverted_child_state_spill.saturating_add(gas_limit);
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
@@ -1251,7 +1252,8 @@ impl<'a> VM<'a> {
                 let child_reservoir_consumed =
                     reservoir_snapshot.saturating_sub(self.state_gas_reservoir);
                 let child_spill = child_state_gas.saturating_sub(child_reservoir_consumed);
-                self.reverted_child_state_spill += child_spill;
+                self.reverted_child_state_spill =
+                    self.reverted_child_state_spill.saturating_add(child_spill);
 
                 self.state_gas_reservoir = reservoir_snapshot;
                 self.state_gas_used = state_gas_used_snapshot;
@@ -1309,7 +1311,8 @@ impl<'a> VM<'a> {
                 let child_reservoir_consumed =
                     reservoir_snapshot.saturating_sub(self.state_gas_reservoir);
                 let child_spill = child_state_gas.saturating_sub(child_reservoir_consumed);
-                self.reverted_child_state_spill += child_spill;
+                self.reverted_child_state_spill =
+                    self.reverted_child_state_spill.saturating_add(child_spill);
 
                 self.state_gas_reservoir = reservoir_snapshot;
                 self.state_gas_used = state_gas_used_snapshot;
