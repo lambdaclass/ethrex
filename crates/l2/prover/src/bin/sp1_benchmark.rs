@@ -247,6 +247,7 @@ fn generate_zk_dex_input(transfer_count: u32) -> anyhow::Result<Vec<u8>> {
         fee_configs: vec![],
         blob_commitment: [0u8; 48],
         blob_proof: [0u8; 48],
+        native_token_scale_factor: 1,
     };
 
     // Serialize ProgramInput via rkyv.
