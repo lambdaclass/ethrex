@@ -85,12 +85,12 @@ contract NativeRollup {
         _locked = false;
     }
 
-    constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee, address _relayer, address _advancer) {
+    constructor(bytes32 _initialStateRoot, uint256 _blockGasLimit, uint256 _initialBaseFee, address _relayer, address _advancer, uint64 _chainId) {
         stateRoot = _initialStateRoot;
         blockGasLimit = _blockGasLimit;
         lastBaseFeePerGas = _initialBaseFee;
         lastGasUsed = 0;
-        CHAIN_ID = 0;
+        CHAIN_ID = _chainId;
         FINALITY_DELAY = 0;
         relayer = _relayer;
         advancer = _advancer;
