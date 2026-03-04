@@ -1944,6 +1944,14 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
+        // ethrex-db manages state internally; skip the full pipeline
+        // (merkleization, warming, etc.) and use the simpler add_block path
+        // which properly applies updates to ethrex-db finalized state.
+        if self.storage.is_ethrex_db() {
+            let result = self.add_block(block);
+            return Ok((None, result));
+        }
+
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
