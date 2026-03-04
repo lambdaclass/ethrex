@@ -211,6 +211,11 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: uniswap-swap
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -310,6 +315,7 @@ jobs:
     needs: [detect-changes, build-docker, build-docker-l2]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
+      fail-fast: true
       matrix:
         include:
           - name: "Vanilla"
@@ -339,6 +345,11 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: integration-test-${{ matrix.name }}
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -484,9 +495,9 @@ jobs:
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
-          docker logs --follow tokamak-app-l2 | grep -E "INFO|WARN|ERROR" &
-          docker logs --follow tokamak-app-l1 | grep -E "INFO|WARN|ERROR" &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture
           killall ethrex -s SIGINT
 
   integration-test-tdx:
@@ -504,6 +515,11 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: integration-test-tdx
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -618,8 +634,8 @@ jobs:
             -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap"
           tail -f tdx_prover.log &
           cd ../../
-          docker logs --follow tokamak-app-l2 | grep -E "INFO|WARN|ERROR" &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture
           pkill -9 -f ethrex_tdx_prover
 
   state-diff-test:
@@ -635,6 +651,11 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: state-diff-test
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
@@ -691,6 +712,7 @@ jobs:
     # Disabled: single app chain does not need shared bridge (L2-to-L2)
     if: ${{ vars.ENABLE_SHARED_BRIDGE_TEST == 'true' }}
     strategy:
+      fail-fast: true
       matrix:
         include:
           - name: "Normal"
@@ -703,6 +725,11 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: shared-bridge-${{ matrix.name }}
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -903,14 +930,14 @@ jobs:
           docker logs --follow tokamak-app-l1 | grep -E "INFO|WARN|ERROR" &
           cp ../../cmd/.env_l2a ../../cmd/.env
           export $(xargs < ../../cmd/.env_l2a)
-          cargo test -p ethrex-test test_shared_bridge --release --features l2 -- --nocapture --test-threads=1
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
+          cargo test -p ethrex-test test_shared_bridge --release --features l2 -- --nocapture
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture
           cp ../../cmd/.env_l2b ../../cmd/.env
           export $(xargs < ../../cmd/.env_l2b)
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture
           cp ../../cmd/.env_l2a ../../cmd/.env
           export $(xargs < ../../cmd/.env_l2a)
-          cargo test -p ethrex-test test_shared_bridge --release --features l2 -- --nocapture --test-threads=1
+          cargo test -p ethrex-test test_shared_bridge --release --features l2 -- --nocapture
           killall ethrex -s SIGINT
 
       - name: Run Forced Inclusion Test
@@ -926,7 +953,7 @@ jobs:
           docker logs --follow tokamak-app-l2-b | grep -E "INFO|WARN|ERROR" &
           docker logs --follow tokamak-app-l1 | grep -E "INFO|WARN|ERROR" &
           cp ../../cmd/.env_l2a ../../cmd/.env
-          cargo test -p ethrex-test forced_inclusion --release --features l2 -- --nocapture --test-threads=1
+          cargo test -p ethrex-test forced_inclusion --release --features l2 -- --nocapture
           killall ethrex -s SIGINT
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
@@ -970,3 +997,7 @@ jobs:
           #   echo "Job Integration test shared bridge failed"
           #   exit 1
           # fi
+ ]; then
+            echo "Job Integration test shared bridge failed"
+            exit 1
+          fi
