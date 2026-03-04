@@ -565,6 +565,7 @@ impl Blockchain {
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
         let mut code_updates: Vec<(H256, Code)> = vec![];
         let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
+        let mut hashed_key_cache: FxHashMap<H256, H256> = Default::default();
 
         // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
@@ -622,7 +623,9 @@ impl Blockchain {
                     }
                 }
                 for (key, value) in update.added_storage {
-                    let hashed_key = keccak(key);
+                    let hashed_key = *hashed_key_cache
+                        .entry(key)
+                        .or_insert_with(|| keccak(key));
                     let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
                     workers_tx[bucket as usize]
                         .send(MerklizationRequest::MerklizeStorage {
@@ -846,6 +849,8 @@ impl Blockchain {
                                 s,
                                 move || -> Result<Vec<(usize, H256, Vec<TrieNode>)>, StoreError> {
                                     let mut results: Vec<(usize, H256, Vec<TrieNode>)> = Vec::new();
+                                    let mut hashed_key_cache: FxHashMap<H256, H256> =
+                                        FxHashMap::default();
                                     // Open one state trie per worker for storage root lookups
                                     let state_trie =
                                         self.storage.open_state_trie(parent_state_root)?;
@@ -885,7 +890,9 @@ impl Blockchain {
                                         };
 
                                         for (key, value) in &update.added_storage {
-                                            let hashed_key = keccak(key);
+                                            let hashed_key = *hashed_key_cache
+                                                .entry(*key)
+                                                .or_insert_with(|| keccak(key));
                                             if value.is_zero() {
                                                 trie.remove(hashed_key.as_bytes())?;
                                             } else {
