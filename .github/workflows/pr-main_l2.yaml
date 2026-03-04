@@ -997,7 +997,3 @@ jobs:
           #   echo "Job Integration test shared bridge failed"
           #   exit 1
           # fi
- ]; then
-            echo "Job Integration test shared bridge failed"
-            exit 1
-          fi
