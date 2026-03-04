@@ -338,8 +338,18 @@ impl LEVM {
             sender_groups.entry(*sender).or_default().push(tx);
         }
 
+        // Sort sender groups by heaviest tx (highest gas_limit) descending,
+        // so rayon picks up groups with expensive transactions first,
+        // giving them more time to warm state before execution reaches them.
+        let mut groups: Vec<(Address, Vec<&Transaction>)> = sender_groups.into_iter().collect();
+        groups.sort_by(|a, b| {
+            let max_gas_a = a.1.iter().map(|tx| tx.gas_limit()).max().unwrap_or(0);
+            let max_gas_b = b.1.iter().map(|tx| tx.gas_limit()).max().unwrap_or(0);
+            max_gas_b.cmp(&max_gas_a)
+        });
+
         // Parallel across sender groups, sequential within each group
-        sender_groups.into_par_iter().for_each_with(
+        groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
                 // Each sender group gets its own db instance for state propagation
