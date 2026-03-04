@@ -1320,7 +1320,7 @@ impl L1Committer {
                 // coordinator hasn't stored the program_id for this batch yet.
                 std::env::var("ETHREX_GUEST_PROGRAM_ID").unwrap_or_else(|_| "evm-l2".to_string())
             });
-        let program_type_id: u8 = resolve_program_type_id(&program_id);
+        let program_type_id: u8 = ethrex_l2_common::resolve_program_type_id(&program_id);
 
         // For custom programs (programTypeId > 1), compute publicValuesHash.
         // For EVM-L2 (programTypeId == 1), use bytes32(0).
@@ -1730,15 +1730,6 @@ pub fn generate_blobs_bundle(
             .map_err(CommitterError::from)?,
         blob_size,
     ))
-}
-
-fn resolve_program_type_id(program_id: &str) -> u8 {
-    match program_id {
-        "evm-l2" => 1,
-        "zk-dex" => 2,
-        "tokamon" => 3,
-        _ => 1,
-    }
 }
 
 fn get_last_block_hash(

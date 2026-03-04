@@ -1578,7 +1578,7 @@ async fn initialize_contracts(
 
     // Register additional guest programs (e.g., zk-dex, tokamon) and their VKs.
     for program_id in &opts.register_guest_programs {
-        let program_type_id = resolve_deployer_program_type_id(program_id);
+        let program_type_id = ethrex_l2_common::resolve_program_type_id(program_id);
         if program_type_id <= 1 {
             warn!(program_id, "Skipping unknown or default program");
             continue;
@@ -1694,16 +1694,6 @@ async fn initialize_contracts(
 
     trace!("Contracts initialized");
     Ok(tx_hashes)
-}
-
-/// Maps a guest program ID string to its on-chain programTypeId.
-fn resolve_deployer_program_type_id(program_id: &str) -> u8 {
-    match program_id {
-        "evm-l2" => 1,
-        "zk-dex" => 2,
-        "tokamon" => 3,
-        _ => 0,
-    }
 }
 
 /// Reads the SP1 verification key for a guest program from its build output path.
