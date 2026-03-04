@@ -24,6 +24,107 @@ use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
 
+/// Payload sent from the execution thread to the diff thread.
+/// Contains the dirty accounts map, a snapshot of their initial state,
+/// and any codes needed for accounts whose code_hash changed.
+pub struct DiffPayload {
+    pub dirty: CacheDB,
+    pub initial_snapshot: CacheDB,
+    pub codes: FxHashMap<H256, Code>,
+}
+
+/// Compute `Vec<AccountUpdate>` from a `DiffPayload`.
+/// Performs the same diff logic as `get_state_transitions_tx` but operates on
+/// the extracted payload, intended to run on a dedicated diff thread.
+pub fn compute_state_transitions(payload: DiffPayload) -> Result<Vec<AccountUpdate>, VMError> {
+    let DiffPayload {
+        dirty,
+        initial_snapshot,
+        codes,
+    } = payload;
+    let mut account_updates: Vec<AccountUpdate> = vec![];
+    for (address, new_state_account) in dirty {
+        if new_state_account.is_unmodified() {
+            continue;
+        }
+        let initial_state_account = initial_snapshot.get(&address).ok_or_else(|| {
+            VMError::Internal(InternalError::Custom(format!(
+                "Failed to get account {address} from initial snapshot",
+            )))
+        })?;
+
+        let mut acc_info_updated = false;
+        let mut storage_updated = false;
+
+        if initial_state_account.info.balance != new_state_account.info.balance {
+            acc_info_updated = true;
+        }
+
+        if initial_state_account.info.nonce != new_state_account.info.nonce {
+            acc_info_updated = true;
+        }
+
+        let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+            acc_info_updated = true;
+            Some(
+                codes
+                    .get(&new_state_account.info.code_hash)
+                    .cloned()
+                    .ok_or_else(|| {
+                        VMError::Internal(InternalError::Custom(format!(
+                            "Failed to get code for account {address}"
+                        )))
+                    })?,
+            )
+        } else {
+            None
+        };
+
+        let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+        let removed_storage = was_destroyed && initial_state_account.has_storage;
+
+        let mut added_storage: FxHashMap<_, _> = Default::default();
+
+        for (key, new_value) in &new_state_account.storage {
+            let old_value = if !was_destroyed {
+                initial_state_account.storage.get(key).ok_or_else(|| {
+                    VMError::Internal(InternalError::Custom(format!(
+                        "Failed to get old value from account's initial storage for address: {address}"
+                    )))
+                })?
+            } else {
+                &ZERO_U256
+            };
+
+            if new_value != old_value {
+                added_storage.insert(*key, *new_value);
+                storage_updated = true;
+            }
+        }
+
+        let info = acc_info_updated.then(|| new_state_account.info.clone());
+
+        let was_empty = initial_state_account.is_empty();
+        let removed = new_state_account.is_empty() && !was_empty;
+
+        if !removed && !acc_info_updated && !storage_updated && !removed_storage {
+            continue;
+        }
+
+        let account_update = AccountUpdate {
+            address,
+            removed,
+            info,
+            code,
+            added_storage,
+            removed_storage,
+        };
+
+        account_updates.push(account_update);
+    }
+    Ok(account_updates)
+}
+
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
@@ -499,6 +600,47 @@ impl GeneralizedDatabase {
             account_updates.push(account_update);
         }
         Ok(account_updates)
+    }
+
+    /// Fast extraction of dirty state for the diff thread.
+    /// Does O(1) `mem::take` of `current_accounts_state`, then iterates only
+    /// modified accounts to update `initial_accounts_state` and collect codes.
+    /// The expensive diff computation is deferred to `compute_state_transitions`.
+    pub fn extract_dirty_state(&mut self) -> Result<DiffPayload, VMError> {
+        let dirty = std::mem::take(&mut self.current_accounts_state);
+        let mut initial_snapshot = CacheDB::default();
+        let mut codes = FxHashMap::default();
+
+        for (address, new_state) in &dirty {
+            if new_state.is_unmodified() {
+                continue;
+            }
+
+            // Extract code before overwriting initial state (code_hash comparison)
+            if let Some(initial) = self.initial_accounts_state.get(address)
+                && initial.info.code_hash != new_state.info.code_hash
+                && let Some(code) = self.codes.get(&new_state.info.code_hash)
+            {
+                codes.insert(new_state.info.code_hash, code.clone());
+            }
+
+            // Take old initial state for the diff thread; insert new state for next batch
+            if let Some(old_initial) =
+                self.initial_accounts_state.insert(*address, new_state.clone())
+            {
+                initial_snapshot.insert(*address, old_initial);
+            } else {
+                return Err(VMError::Internal(InternalError::Custom(format!(
+                    "Failed to get account {address} from immutable cache during extraction",
+                ))));
+            }
+        }
+
+        Ok(DiffPayload {
+            dirty,
+            initial_snapshot,
+            codes,
+        })
     }
 }
 

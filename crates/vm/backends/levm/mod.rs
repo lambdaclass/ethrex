@@ -31,6 +31,7 @@ use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
 };
 use ethrex_levm::db::Database;
+pub use ethrex_levm::db::gen_db::{DiffPayload, compute_state_transitions};
 use ethrex_levm::db::gen_db::{CacheDB, GeneralizedDatabase};
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
@@ -185,7 +186,8 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        merkleizer: Sender<Vec<AccountUpdate>>,
+        diff_sender: Sender<DiffPayload>,
+        merkle_sender: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         header_bal: Option<&BlockAccessList>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
@@ -206,13 +208,15 @@ impl LEVM {
             LEVM::get_state_transitions_tx(db)?;
             let system_seed = Arc::new(std::mem::take(&mut db.initial_accounts_state));
 
+            // BAL path sends pre-computed updates directly to merkleizer,
+            // bypassing the diff thread (no state diffing needed).
             let (receipts, block_gas_used) = Self::execute_block_parallel(
                 block,
                 &transactions_with_sender,
                 db,
                 vm_type,
                 bal,
-                &merkleizer,
+                &merkle_sender,
                 queue_length,
                 system_seed,
             )?;
@@ -294,7 +298,7 @@ impl LEVM {
                 false,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
-                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                LEVM::send_state_transitions_tx(&diff_sender, db, queue_length)?;
                 tx_since_last_flush = 0;
             } else {
                 tx_since_last_flush += 1;
@@ -327,7 +331,7 @@ impl LEVM {
         }
 
         if queue_length.load(Ordering::Relaxed) == 0 {
-            LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+            LEVM::send_state_transitions_tx(&diff_sender, db, queue_length)?;
         }
 
         // Set BAL index for post-execution phase (withdrawals, uint16)
@@ -352,7 +356,7 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2(_) => Default::default(),
         };
-        LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+        LEVM::send_state_transitions_tx(&diff_sender, db, queue_length)?;
 
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
@@ -1106,13 +1110,13 @@ impl LEVM {
     }
 
     fn send_state_transitions_tx(
-        merkleizer: &Sender<Vec<AccountUpdate>>,
+        diff_sender: &Sender<DiffPayload>,
         db: &mut GeneralizedDatabase,
         queue_length: &AtomicUsize,
     ) -> Result<(), EvmError> {
-        let transitions = LEVM::get_state_transitions_tx(db)?;
-        merkleizer
-            .send(transitions)
+        let payload = db.extract_dirty_state()?;
+        diff_sender
+            .send(payload)
             .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
         queue_length.fetch_add(1, Ordering::Relaxed);
         Ok(())
