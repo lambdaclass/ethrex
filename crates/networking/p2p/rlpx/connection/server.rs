@@ -477,6 +477,38 @@ impl PeerConnectionServer {
         }
     }
 
+    #[cfg(feature = "l2")]
+    #[send_handler]
+    async fn handle_l2_message(&mut self, msg: L2Message, ctx: &Context<Self>) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
+            let result = if peer_supports_l2 {
+                trace!(
+                    peer=%established_state.node,
+                    message=?msg.msg,
+                    "Handling cast for L2 msg"
+                );
+                match msg.msg {
+                    L2Cast::BatchBroadcast => {
+                        let res = l2_connection::send_sealed_batch(established_state).await;
+                        res.and(l2_connection::process_batches_on_queue(established_state).await)
+                    }
+                    L2Cast::BlockBroadcast => {
+                        let res = l2_connection::send_new_block(established_state).await;
+                        res.and(l2_connection::process_blocks_on_queue(established_state).await)
+                    }
+                }
+            } else {
+                Err(PeerConnectionError::MessageNotHandled(
+                    "Unknown message or capability not handled".to_string(),
+                ))
+            };
+            Self::process_cast_error(&self.state, result, ctx);
+        } else {
+            error!("Connection not yet established");
+        }
+    }
+
     fn process_cast_error(
         state: &ConnectionState,
         result: Result<(), PeerConnectionError>,
@@ -536,39 +568,6 @@ impl PeerConnectionServer {
                     }
                 }
             }
-        }
-    }
-}
-
-#[cfg(feature = "l2")]
-impl spawned_concurrency::tasks::Handler<L2Message> for PeerConnectionServer {
-    async fn handle(&mut self, msg: L2Message, ctx: &Context<Self>) {
-        if let ConnectionState::Established(ref mut established_state) = self.state {
-            let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
-            let result = if peer_supports_l2 {
-                trace!(
-                    peer=%established_state.node,
-                    message=?msg.msg,
-                    "Handling cast for L2 msg"
-                );
-                match msg.msg {
-                    L2Cast::BatchBroadcast => {
-                        let res = l2_connection::send_sealed_batch(established_state).await;
-                        res.and(l2_connection::process_batches_on_queue(established_state).await)
-                    }
-                    L2Cast::BlockBroadcast => {
-                        let res = l2_connection::send_new_block(established_state).await;
-                        res.and(l2_connection::process_blocks_on_queue(established_state).await)
-                    }
-                }
-            } else {
-                Err(PeerConnectionError::MessageNotHandled(
-                    "Unknown message or capability not handled".to_string(),
-                ))
-            };
-            Self::process_cast_error(&self.state, result, ctx);
-        } else {
-            error!("Connection not yet established");
         }
     }
 }
