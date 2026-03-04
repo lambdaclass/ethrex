@@ -1098,7 +1098,7 @@ mod tests {
 
         let value = result.unwrap();
         let ttd = value
-            .pointer("/protocols/eth/terminalTotalDifficulty")
+            .pointer("/protocols/eth/config/terminalTotalDifficulty")
             .expect("terminalTotalDifficulty should be present in response");
         // Serialized as a hex string to avoid serde_json Value::Number u64 limitation.
         assert_eq!(ttd.as_str().unwrap(), "0xc70d808a128d7380000");
