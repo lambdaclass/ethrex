@@ -42,6 +42,11 @@ pub enum IncrementalMptError {
 pub fn verify_state_proofs(state: &AppState) -> Result<(), IncrementalMptError> {
     let prev_root = state.prev_state_root();
 
+    // Nothing to verify when there are no proofs (e.g., empty batch).
+    if state.account_proofs().is_empty() {
+        return Ok(());
+    }
+
     // Build a partial state trie from account proofs and verify root.
     let state_trie = build_trie_from_proofs(
         prev_root,
@@ -125,8 +130,16 @@ pub fn verify_state_proofs(state: &AppState) -> Result<(), IncrementalMptError> 
 ///
 /// This builds partial tries from the proofs, applies the dirty changes,
 /// and recomputes the root hashes incrementally.
+///
+/// If there are no dirty accounts (e.g., empty blocks with zero transactions),
+/// the previous state root is returned unchanged.
 pub fn compute_new_state_root(state: &AppState) -> Result<H256, IncrementalMptError> {
     let prev_root = state.prev_state_root();
+
+    // Short-circuit: no changes means the state root is unchanged.
+    if state.dirty_accounts().peekable().peek().is_none() && state.account_proofs().is_empty() {
+        return Ok(prev_root);
+    }
 
     // 1. Build state trie from account proofs.
     let mut state_trie = build_trie_from_proofs(

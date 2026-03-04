@@ -198,17 +198,27 @@ impl ProofCoordinator {
 
         // Step 5: The batch exists, so its public input must also exist (they are
         // stored atomically). Try to retrieve it for the prover's version.
-        // If not found, the batch was created with a different code version.
+        // If not found, either:
+        //   (a) The batch was sealed without prover input (empty/genesis batch), or
+        //   (b) The batch was created with a different code version.
         let Some(input) = self
             .rollup_store
             .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
             .await?
         else {
-            info!(
-                "Batch {batch_to_prove} exists but has no input for prover version ({commit_hash}), \
-                 version mismatch"
-            );
-            send_response(stream, &ProofData::version_mismatch()).await?;
+            // Check if this is an empty/genesis batch (sealed without prover input).
+            // These batches are auto-verified on L1 without a ZK proof, so the prover
+            // should skip them rather than report a version mismatch.
+            if commit_hash == self.git_commit_hash {
+                info!("Batch {batch_to_prove} has no prover input (empty/genesis batch), skipping");
+                send_response(stream, &ProofData::empty_batch_response()).await?;
+            } else {
+                info!(
+                    "Batch {batch_to_prove} exists but has no input for prover version ({commit_hash}), \
+                     version mismatch"
+                );
+                send_response(stream, &ProofData::version_mismatch()).await?;
+            }
             return Ok(());
         };
 
@@ -239,6 +249,18 @@ impl ProofCoordinator {
             );
             send_response(stream, &ProofData::empty_batch_response()).await?;
             return Ok(());
+        }
+
+        // Store program_id early so the L1 committer can look it up before
+        // the proof is submitted.  Previously this was only stored on proof
+        // submission, which caused a race: the committer would fall back to
+        // "evm-l2" because the program_id hadn't been persisted yet.
+        if let Err(e) = self
+            .rollup_store
+            .store_program_id_by_batch(batch_to_prove, &program_id)
+            .await
+        {
+            warn!("Failed to store program_id early for batch {batch_to_prove}: {e}");
         }
 
         let response =

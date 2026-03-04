@@ -1,0 +1,105 @@
+# ZK-DEX E2E Docker Compose Overrides — SP1 real ZK proofs
+#
+# Runs the full ZK-DEX pipeline with real SP1 ZK proofs.
+# For GPU acceleration, add docker-compose-zk-dex-gpu.overrides.yaml
+#
+# Usage (CPU):
+#   DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+#   docker compose -f docker-compose.yaml -f docker-compose-zk-dex.overrides.yaml up --detach --build
+#
+# Usage (GPU):
+#   DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+#   docker compose -f docker-compose.yaml -f docker-compose-zk-dex.overrides.yaml -f docker-compose-zk-dex-gpu.overrides.yaml up --detach --build
+#
+# Or via Makefile:
+#   make zk-dex-docker          # auto-detect GPU
+#   make zk-dex-docker-no-gpu   # force CPU
+
+services:
+  # -------------------------------------------------------------------
+  # Contract deployer: Deploy with SP1 verifier + register ZK-DEX
+  # -------------------------------------------------------------------
+  tokamak-app-deployer:
+    image: "ethrex:sp1"
+    build:
+      context: ../../
+      dockerfile: Dockerfile.sp1
+      args:
+        - BUILD_FLAGS=--features l2,l2-sql,sp1
+        - GUEST_PROGRAMS=evm-l2,zk-dex
+    environment:
+      - ETHREX_L2_SP1=true
+      - ETHREX_REGISTER_GUEST_PROGRAMS=zk-dex
+      - GUEST_PROGRAMS=evm-l2,zk-dex
+      - ETHREX_DEPLOYER_DEPLOY_RICH=false
+      - ETHREX_DEPLOYER_GENESIS_L2_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2-zk-dex.json
+    volumes:
+      - ../../fixtures/genesis/l2-zk-dex.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2-zk-dex.json
+    command: >
+      --randomize-contract-deployment
+
+  # -------------------------------------------------------------------
+  # L2: Run with ZK-DEX guest program
+  # -------------------------------------------------------------------
+  tokamak-app-l2:
+    image: "ethrex:sp1"
+    build:
+      context: ../../
+      dockerfile: Dockerfile.sp1
+      args:
+        - BUILD_FLAGS=--features l2,l2-sql,sp1
+        - GUEST_PROGRAMS=evm-l2,zk-dex
+    ports:
+      - 127.0.0.1:3702:3702
+    environment:
+      - ETHREX_GUEST_PROGRAM_ID=zk-dex
+    volumes:
+      - ./programs-zk-dex.toml:/etc/ethrex/programs.toml
+      - ../../fixtures/genesis/l2-zk-dex.json:/genesis/l2-zk-dex.json
+    command: >
+      --network /genesis/l2-zk-dex.json
+      --http.addr 0.0.0.0
+      --http.port 1729
+      --authrpc.port 8552
+      --proof-coordinator.addr 0.0.0.0
+      --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
+      --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+      --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+      --no-monitor
+      --metrics
+      --metrics.port 3702
+      --metrics.addr 0.0.0.0
+
+  # -------------------------------------------------------------------
+  # Prover: SP1 backend (CPU by default, GPU via gpu override)
+  # -------------------------------------------------------------------
+  tokamak-app-prover:
+    image: "ethrex:sp1"
+    build:
+      context: ../../
+      dockerfile: Dockerfile.sp1
+      args:
+        - BUILD_FLAGS=--features l2,l2-sql,sp1
+        - GUEST_PROGRAMS=evm-l2,zk-dex
+    environment:
+      - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml
+      - PROVER_CLIENT_TIMED=true
+      # SP1 Groth16 proving needs Docker access
+      - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
+      # Match container HOME to host HOME so SP1's Docker volume
+      # mounts resolve correctly (Docker-in-Docker path alignment)
+      - HOME=${HOME}
+    volumes:
+      - ./programs-zk-dex.toml:/etc/ethrex/programs.toml
+      # Docker socket for SP1 Groth16 proving step
+      - /var/run/docker.sock:/var/run/docker.sock
+      # SP1 circuit artifacts — same path on host and container
+      # so docker run -v works with the host Docker daemon
+      - ${HOME}/.sp1:${HOME}/.sp1
+      # Temp dir for Groth16 witness/output files
+      - /tmp:/tmp
+    command: >
+      l2 prover
+      --backend sp1
+      --proof-coordinators tcp://tokamak-app-l2:3900
+      --programs-config /etc/ethrex/programs.toml

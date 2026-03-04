@@ -9,7 +9,7 @@ use aligned_sdk::gateway::provider::AggregationModeGatewayProvider;
 use aligned_sdk::gateway::provider::GatewayError;
 use aligned_sdk::types::Network;
 use alloy::signers::local::PrivateKeySigner;
-use ethrex_common::{Address, U256};
+use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
@@ -204,6 +204,62 @@ impl L1ProofSender {
         if last_committed_batch < batch_to_send {
             info!("Next batch to send ({batch_to_send}) is not yet committed");
             return Ok(());
+        }
+
+        // ── Empty batch auto-verification ──
+        // A truly empty batch has: 0 non-privileged transactions, no deposits
+        // (l1_in_messages_rolling_hash == zero), no withdrawals, no balance
+        // diffs, and no L2 messages. We check the key indicators here.
+        // If the contract rejects (batch isn't actually empty), we fall through
+        // to the normal proof-waiting path on the next iteration.
+        let non_priv_count = self
+            .rollup_store
+            .get_non_privileged_transactions_by_batch(batch_to_send)
+            .await?;
+        let l1_in_hash = self
+            .rollup_store
+            .get_l1_in_messages_rolling_hash_by_batch_number(batch_to_send)
+            .await?;
+        let l1_out_msgs = self
+            .rollup_store
+            .get_l1_out_message_hashes_by_batch(batch_to_send)
+            .await?;
+        let balance_diffs = self
+            .rollup_store
+            .get_balance_diffs_by_batch(batch_to_send)
+            .await?;
+        let l2_in_msgs = self
+            .rollup_store
+            .get_l2_in_message_rolling_hashes_by_batch(batch_to_send)
+            .await?;
+        let is_truly_empty = non_priv_count == Some(0)
+            && l1_in_hash.is_none_or(|h| h == H256::zero())
+            && l1_out_msgs.as_ref().is_none_or(|v| v.is_empty())
+            && balance_diffs.as_ref().is_none_or(|v| v.is_empty())
+            && l2_in_msgs.as_ref().is_none_or(|v| v.is_empty());
+        if is_truly_empty {
+            info!(
+                batch_number = batch_to_send,
+                "Empty batch detected, sending proof-free verification to L1"
+            );
+            match self
+                .send_proof_to_contract(batch_to_send, HashMap::new())
+                .await
+            {
+                Ok(()) => {
+                    self.rollup_store
+                        .set_latest_sent_batch_proof(batch_to_send)
+                        .await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(
+                        batch_number = batch_to_send,
+                        "Empty batch auto-verification failed, will wait for proof: {e}"
+                    );
+                    // Fall through to normal proof-waiting path
+                }
+            }
         }
 
         let mut proofs = HashMap::new();

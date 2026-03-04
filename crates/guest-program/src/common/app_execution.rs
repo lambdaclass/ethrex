@@ -10,7 +10,7 @@
 //! execute_app_circuit(circuit, input)
 //!   ├── For each tx:
 //!   │   ├── Privileged?     → handle_privileged_tx()     [common]
-//!   │   ├── ETH transfer?   → transfer_eth()             [common]
+//!   │   ├── ETH transfer?   → handle_eth_transfer()      [common]
 //!   │   ├── Withdrawal?     → handle_withdrawal()         [common]
 //!   │   ├── System call?    → handle_system_call()         [common]
 //!   │   └── App operation?  → circuit.execute_operation()  [app-specific]
@@ -20,44 +20,23 @@
 //! ```
 
 use ethrex_common::types::{Log, Receipt, Transaction, TxKind};
-use ethrex_common::{Address, H160, U256};
+use ethrex_common::{Address, U256};
 
 use crate::l2::ProgramOutput;
-use crate::l2::blobs::verify_blob;
 use crate::l2::messages::{compute_message_digests, get_batch_messages};
 
 use super::app_state::{AppState, AppStateError};
 use super::app_types::AppProgramInput;
+use super::handlers::{
+    constants::COMMON_BRIDGE_L2_ADDRESS, deposit, eth_transfer, gas_fee, system_call, withdrawal,
+};
 use super::incremental_mpt;
 
-// ── System contract addresses ─────────────────────────────────────
+// ── Re-exports for backward compatibility ────────────────────────
 
-/// CommonBridgeL2: 0x000000000000000000000000000000000000ffff
-pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0xff, 0xff,
-]);
-
-/// L2-to-L1 Messenger: 0x000000000000000000000000000000000000fffe
-pub const L2_TO_L1_MESSENGER_ADDRESS: Address = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0xff, 0xfe,
-]);
-
-/// Fee Token Registry: 0x000000000000000000000000000000000000fffc
-pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0xff, 0xfc,
-]);
-
-/// Fee Token Ratio: 0x000000000000000000000000000000000000fffb
-pub const FEE_TOKEN_RATIO_ADDRESS: Address = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0xff, 0xfb,
-]);
-
-/// Fixed gas cost for a simple ETH transfer (no calldata).
-pub const ETH_TRANSFER_GAS: u64 = 21_000;
+pub use super::handlers::constants::{
+    FEE_TOKEN_RATIO_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS,
+};
 
 // ── App Circuit trait ─────────────────────────────────────────────
 
@@ -183,18 +162,67 @@ pub fn execute_app_circuit<C: AppCircuit>(
     let mut all_receipts: Vec<Vec<Receipt>> = Vec::new();
     let mut non_privileged_count: u64 = 0;
 
-    for block in &input.blocks {
+    for (block_idx, block) in input.blocks.iter().enumerate() {
+        let fee_config = input
+            .fee_configs
+            .get(block_idx)
+            .cloned()
+            .unwrap_or_default();
         let mut block_receipts: Vec<Receipt> = Vec::new();
         let mut cumulative_gas: u64 = 0;
+
+        // Pre-compute per-tx gas from block header.
+        //
+        // The L2 sequencer places privileged and non-privileged transactions
+        // in separate blocks, so block.header.gas_used equals the total gas
+        // consumed by non-privileged txs alone (privileged blocks have their
+        // own gas that doesn't affect fee distribution).
+        //
+        // For blocks with exactly 1 non-privileged tx (the common case), the
+        // tx's gas == block.header.gas_used.  For multi-tx blocks we divide
+        // equally and assign any remainder to the last tx so the total is exact.
+        let non_priv_tx_count = block
+            .body
+            .transactions
+            .iter()
+            .filter(|tx| !tx.is_privileged())
+            .count() as u64;
+
+        let block_gas = block.header.gas_used;
+
+        // Per-tx gas allocation from the block header.
+        let per_tx_gas_base = if non_priv_tx_count > 0 {
+            block_gas / non_priv_tx_count
+        } else {
+            0
+        };
+        let per_tx_gas_remainder = if non_priv_tx_count > 0 {
+            block_gas % non_priv_tx_count
+        } else {
+            0
+        };
+
+        let mut non_priv_idx: u64 = 0;
 
         for tx in &block.body.transactions {
             // ── Privileged transactions (L2 deposits) ── common
             if tx.is_privileged() {
-                handle_privileged_tx(&mut state, tx)?;
+                deposit::handle_privileged_tx(&mut state, tx)?;
                 // Privileged txs don't produce standard receipts for our purposes.
                 // They are accounted for in message digests.
                 continue;
             }
+
+            non_priv_idx += 1;
+
+            // Use the actual gas from the block header instead of fixed constants
+            // so that gas fee distribution matches the EVM exactly.
+            let gas = if non_priv_idx == non_priv_tx_count {
+                // Last (or only) tx gets base + remainder to ensure exact total.
+                per_tx_gas_base + per_tx_gas_remainder
+            } else {
+                per_tx_gas_base
+            };
 
             // ── Signature verification ── common
             let sender = tx.sender().map_err(|_| AppCircuitError::InvalidSignature)?;
@@ -215,9 +243,17 @@ pub fn execute_app_circuit<C: AppCircuit>(
 
             // ── ETH transfer (no calldata) ── common
             if tx.data().is_empty() {
-                state.transfer_eth(sender, to_address, tx.value())?;
-                cumulative_gas += ETH_TRANSFER_GAS;
-                apply_gas_deduction(&mut state, sender, ETH_TRANSFER_GAS, &block.header)?;
+                let gas =
+                    eth_transfer::handle_eth_transfer(&mut state, sender, to_address, tx.value())?;
+                cumulative_gas += gas;
+                gas_fee::apply_gas_fee_distribution(
+                    &mut state,
+                    sender,
+                    tx,
+                    gas,
+                    &block.header,
+                    &fee_config,
+                )?;
                 block_receipts.push(Receipt {
                     tx_type: tx.tx_type(),
                     succeeded: true,
@@ -230,24 +266,38 @@ pub fn execute_app_circuit<C: AppCircuit>(
 
             // ── Withdrawal (CommonBridgeL2) ── common
             if to_address == COMMON_BRIDGE_L2_ADDRESS {
-                let gas = handle_withdrawal(&mut state, tx, sender)?;
+                let (gas, message_id) = withdrawal::handle_withdrawal(&mut state, tx, sender)?;
                 cumulative_gas += gas;
-                apply_gas_deduction(&mut state, sender, gas, &block.header)?;
+                gas_fee::apply_gas_fee_distribution(
+                    &mut state,
+                    sender,
+                    tx,
+                    gas,
+                    &block.header,
+                    &fee_config,
+                )?;
                 block_receipts.push(Receipt {
                     tx_type: tx.tx_type(),
                     succeeded: true,
                     cumulative_gas_used: cumulative_gas,
-                    logs: generate_withdrawal_logs(sender, tx),
+                    logs: withdrawal::generate_withdrawal_logs(sender, tx, message_id),
                 });
                 non_privileged_count += 1;
                 continue;
             }
 
             // ── System contract calls ── common
-            if is_system_contract(to_address) {
-                let gas = handle_system_call(&mut state, tx, sender, to_address)?;
+            if system_call::is_system_contract(to_address) {
+                let gas = system_call::handle_system_call(&mut state, tx, sender, to_address)?;
                 cumulative_gas += gas;
-                apply_gas_deduction(&mut state, sender, gas, &block.header)?;
+                gas_fee::apply_gas_fee_distribution(
+                    &mut state,
+                    sender,
+                    tx,
+                    gas,
+                    &block.header,
+                    &fee_config,
+                )?;
                 block_receipts.push(Receipt {
                     tx_type: tx.tx_type(),
                     succeeded: true,
@@ -260,7 +310,6 @@ pub fn execute_app_circuit<C: AppCircuit>(
 
             // ── App-specific operation ── delegated to circuit
             let op = circuit.classify_tx(tx)?;
-            let gas = circuit.gas_cost(&op);
             let result = circuit.execute_operation(&mut state, sender, &op)?;
 
             // Handle ETH value transfer if any.
@@ -269,7 +318,14 @@ pub fn execute_app_circuit<C: AppCircuit>(
             }
 
             cumulative_gas += gas;
-            apply_gas_deduction(&mut state, sender, gas, &block.header)?;
+            gas_fee::apply_gas_fee_distribution(
+                &mut state,
+                sender,
+                tx,
+                gas,
+                &block.header,
+                &fee_config,
+            )?;
 
             let logs = circuit.generate_logs(sender, &op, &result);
             block_receipts.push(Receipt {
@@ -294,14 +350,23 @@ pub fn execute_app_circuit<C: AppCircuit>(
     let balance_diffs =
         ethrex_l2_common::messages::get_balance_diffs(&batch_messages.l2_out_messages);
 
-    // 6. Verify blob proof.
-    let blob_versioned_hash = verify_blob(
-        &input.blocks,
-        &input.fee_configs,
-        input.blob_commitment,
-        input.blob_proof,
-    )
-    .map_err(|e| AppCircuitError::Blob(e.to_string()))?;
+    // 6. Compute blob versioned hash.
+    //
+    // App-specific circuits skip KZG proof verification because:
+    //   - The L1 OnChainProposer already verifies blob KZG proofs
+    //   - kzg-rs's BLS12-381 operations are expensive in the zkVM
+    //   - The app circuit only needs the versioned hash for ProgramOutput
+    //
+    // For validium mode (commitment = [0; 48]), the hash is H256::zero().
+    let blob_versioned_hash = {
+        use ethrex_common::types::kzg_commitment_to_versioned_hash;
+        let is_validium = input.blob_commitment == [0u8; 48] && input.blob_proof == [0u8; 48];
+        if is_validium {
+            ethrex_common::H256::zero()
+        } else {
+            kzg_commitment_to_versioned_hash(&input.blob_commitment)
+        }
+    };
 
     // 7. Build output (same format as evm-l2 ProgramOutput).
     let last_block_hash = input
@@ -325,97 +390,15 @@ pub fn execute_app_circuit<C: AppCircuit>(
     })
 }
 
-// ── Common transaction handlers ───────────────────────────────────
-
-/// Handle a privileged (deposit) transaction.
-///
-/// Privileged transactions are L1→L2 deposits. The sender (bridge contract)
-/// can mint ETH, so we simply credit the recipient's balance.
-fn handle_privileged_tx(state: &mut AppState, tx: &Transaction) -> Result<(), AppCircuitError> {
-    let value = tx.value();
-    if !value.is_zero()
-        && let TxKind::Call(to) = tx.to()
-    {
-        // Credit the recipient. For deposits via bridge, the balance
-        // is minted (not transferred from sender).
-        state.credit_balance(to, value)?;
-    }
-    Ok(())
-}
-
-/// Handle a withdrawal (L2→L1) transaction via CommonBridgeL2.
-///
-/// The withdrawal burns ETH on L2 and creates an L1 message.
-/// Returns the fixed gas cost for this operation.
-fn handle_withdrawal(
-    state: &mut AppState,
-    tx: &Transaction,
-    sender: Address,
-) -> Result<u64, AppCircuitError> {
-    let value = tx.value();
-    if !value.is_zero() {
-        state.debit_balance(sender, value)?;
-    }
-    // Fixed gas for withdrawal operation.
-    // TODO: Measure actual EVM gas for CommonBridgeL2.withdraw().
-    Ok(100_000)
-}
-
-/// Handle a system contract call (L1Messenger, FeeTokenRegistry, etc.).
-///
-/// Returns the fixed gas cost for this operation.
-fn handle_system_call(
-    _state: &mut AppState,
-    _tx: &Transaction,
-    _sender: Address,
-    _target: Address,
-) -> Result<u64, AppCircuitError> {
-    // TODO: Implement system contract logic per contract.
-    // For now, just charge a fixed gas cost.
-    Ok(50_000)
-}
-
-/// Check if an address is a known system contract.
-fn is_system_contract(address: Address) -> bool {
-    address == COMMON_BRIDGE_L2_ADDRESS
-        || address == L2_TO_L1_MESSENGER_ADDRESS
-        || address == FEE_TOKEN_REGISTRY_ADDRESS
-        || address == FEE_TOKEN_RATIO_ADDRESS
-}
-
-/// Apply gas deduction to the sender's balance.
-///
-/// In app-specific circuits, gas costs are fixed per operation type
-/// and the fee is calculated as `gas_used * base_fee_per_gas`.
-/// Unlike EVM L2, priority fees are not applicable here since
-/// all operations have predetermined gas costs.
-fn apply_gas_deduction(
-    state: &mut AppState,
-    sender: Address,
-    gas_used: u64,
-    block_header: &ethrex_common::types::BlockHeader,
-) -> Result<(), AppCircuitError> {
-    let base_fee = block_header.base_fee_per_gas.unwrap_or(0);
-    let gas_price = U256::from(base_fee);
-    let fee = gas_price * U256::from(gas_used);
-    if !fee.is_zero() {
-        state.debit_balance(sender, fee)?;
-    }
-    Ok(())
-}
-
-/// Generate logs for a withdrawal transaction.
-///
-/// The withdrawal event follows a fixed pattern since the bridge contract
-/// always emits the same events.
-fn generate_withdrawal_logs(_sender: Address, _tx: &Transaction) -> Vec<Log> {
-    // TODO: Generate exact withdrawal logs matching the EVM output.
-    vec![]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::handlers::constants::{
+        COMMON_BRIDGE_L2_ADDRESS, FEE_TOKEN_RATIO_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS,
+        L2_TO_L1_MESSENGER_ADDRESS,
+    };
+    use crate::common::handlers::system_call::is_system_contract;
+    use ethrex_common::H160;
 
     #[test]
     fn is_system_contract_checks() {

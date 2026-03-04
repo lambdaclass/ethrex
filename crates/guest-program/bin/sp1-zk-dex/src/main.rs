@@ -1,6 +1,6 @@
 #![no_main]
 
-use ethrex_common::{Address, H160};
+use ethrex_common::Address;
 use ethrex_guest_program::common::app_execution::execute_app_circuit;
 use ethrex_guest_program::common::app_types::AppProgramInput;
 use ethrex_guest_program::programs::zk_dex::circuit::DexCircuit;
@@ -9,7 +9,7 @@ use rkyv::rancor::Error;
 sp1_zkvm::entrypoint!(main);
 
 /// DEX contract address on the L2 (build-time placeholder).
-const DEX_CONTRACT_ADDRESS: Address = H160([0xDE; 20]);
+const DEX_CONTRACT_ADDRESS: Address = Address([0xDE; 20]);
 
 pub fn main() {
     println!("cycle-tracker-report-start: read_input");

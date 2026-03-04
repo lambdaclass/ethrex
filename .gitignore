@@ -88,6 +88,9 @@ GEMINI.md
 dev_ethrex_l1/
 dev_ethrex_l2/
 
+# ZK-DEX localnet runtime directory
+.zk-dex-localnet/
+
 # Logs
 logs/
 

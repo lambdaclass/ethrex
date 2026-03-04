@@ -372,6 +372,23 @@ pub struct DeployerOptions {
         help = "This address will be registered as an initial fee token"
     )]
     pub initial_fee_token: Option<Address>,
+    #[arg(
+        long = "register-guest-programs",
+        value_delimiter = ',',
+        value_name = "PROGRAM_IDS",
+        env = "ETHREX_REGISTER_GUEST_PROGRAMS",
+        help_heading = "Deployer options",
+        help = "Guest programs to register on L1 (e.g., zk-dex,tokamon). Registers in GuestProgramRegistry and sets up verification keys."
+    )]
+    pub register_guest_programs: Vec<String>,
+    #[arg(
+        long = "zk-dex-sp1-vk",
+        value_name = "PATH",
+        env = "ETHREX_ZK_DEX_SP1_VK",
+        help_heading = "Deployer options",
+        help = "Path to the ZK-DEX SP1 verification key. Defaults to build output path."
+    )]
+    pub zk_dex_sp1_vk_path: Option<String>,
 }
 
 impl Default for DeployerOptions {
@@ -453,6 +470,8 @@ impl Default for DeployerOptions {
             router: None,
             deploy_router: false,
             initial_fee_token: None,
+            register_guest_programs: Vec::new(),
+            zk_dex_sp1_vk_path: None,
         }
     }
 }
@@ -564,6 +583,10 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,a
 const ROUTER_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address)";
 const GUEST_PROGRAM_REGISTRY_INITIALIZER_SIGNATURE: &str = "initialize(address)";
+const GUEST_PROGRAM_REGISTRY_REGISTER_OFFICIAL_SIGNATURE: &str =
+    "registerOfficialProgram(string,string,address,uint8)";
+const UPGRADE_VERIFICATION_KEY_SIGNATURE: &str =
+    "upgradeVerificationKey(bytes32,uint8,uint8,bytes32)";
 
 // Gas limit for deploying and initializing contracts
 // Needed to avoid estimating gas of initializations when the
@@ -1545,8 +1568,168 @@ async fn initialize_contracts(
     // GuestProgramRegistry is linked to OnChainProposer via the initialize() parameter,
     // so no separate setGuestProgramRegistry() call is needed.
 
+    // Register additional guest programs (e.g., zk-dex, tokamon) and their VKs.
+    for program_id in &opts.register_guest_programs {
+        let program_type_id = resolve_deployer_program_type_id(program_id);
+        if program_type_id <= 1 {
+            warn!(program_id, "Skipping unknown or default program");
+            continue;
+        }
+
+        // 1. Register official program in GuestProgramRegistry.
+        info!(program_id, program_type_id, "Registering guest program");
+        let register_nonce = eth_client
+            .get_nonce(deployer_address, BlockIdentifier::Tag(BlockTag::Pending))
+            .await?;
+        let register_calldata = encode_calldata(
+            GUEST_PROGRAM_REGISTRY_REGISTER_OFFICIAL_SIGNATURE,
+            &[
+                Value::String(program_id.clone()),
+                Value::String(format!("{program_id} guest program")),
+                Value::Address(deployer_address),
+                Value::Uint(U256::from(program_type_id)),
+            ],
+        )?;
+        let register_tx = build_generic_tx(
+            eth_client,
+            TxType::EIP1559,
+            contract_addresses.guest_program_registry_address,
+            deployer_address,
+            register_calldata.into(),
+            Overrides {
+                nonce: Some(register_nonce),
+                gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
+        )
+        .await?;
+        let register_tx_hash =
+            send_generic_transaction(eth_client, register_tx, initializer).await?;
+        info!(
+            tx_hash = %format!("{register_tx_hash:#x}"),
+            program_id,
+            "Guest program registered in GuestProgramRegistry"
+        );
+        tx_hashes.push(register_tx_hash);
+
+        // 2. Register VK for this program if SP1 is enabled.
+        // OnChainProposer.upgradeVerificationKey() is onlyOwner (owner = Timelock).
+        // We call Timelock.upgradeVerificationKey() which forwards to OnChainProposer.
+        // Requires SECURITY_COUNCIL role (= bridge_owner / on_chain_proposer_owner).
+        if opts.sp1 {
+            let vk = get_vk_for_program(program_id, opts)?;
+            if vk.is_empty() {
+                warn!(program_id, "No SP1 VK found, skipping VK registration");
+                continue;
+            }
+
+            let timelock_address =
+                contract_addresses
+                    .timelock_address
+                    .ok_or(DeployerError::InternalError(
+                        "Timelock address required for VK registration".to_string(),
+                    ))?;
+
+            let security_council_pk =
+                opts.bridge_owner_pk
+                    .ok_or(DeployerError::ConfigValueNotSet(
+                        "--bridge-owner-pk (needed as security council for VK registration)"
+                            .to_string(),
+                    ))?;
+            let security_council_signer: Signer = LocalSigner::new(security_council_pk).into();
+
+            const SP1_VERIFIER_ID: u8 = 1;
+            let vk_calldata = encode_calldata(
+                UPGRADE_VERIFICATION_KEY_SIGNATURE,
+                &[
+                    Value::FixedBytes(commit_hash.0.to_vec().into()),
+                    Value::Uint(U256::from(program_type_id)),
+                    Value::Uint(U256::from(SP1_VERIFIER_ID)),
+                    Value::FixedBytes(vk.to_vec().into()),
+                ],
+            )?;
+
+            let sc_nonce = eth_client
+                .get_nonce(
+                    security_council_signer.address(),
+                    BlockIdentifier::Tag(BlockTag::Pending),
+                )
+                .await?;
+            let vk_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                timelock_address,
+                security_council_signer.address(),
+                vk_calldata.into(),
+                Overrides {
+                    nonce: Some(sc_nonce),
+                    gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            let vk_tx_hash =
+                send_generic_transaction(eth_client, vk_tx, &security_council_signer).await?;
+            info!(
+                tx_hash = %format!("{vk_tx_hash:#x}"),
+                program_id,
+                program_type_id,
+                "SP1 verification key registered via Timelock"
+            );
+            tx_hashes.push(vk_tx_hash);
+        }
+    }
+
     trace!("Contracts initialized");
     Ok(tx_hashes)
+}
+
+/// Maps a guest program ID string to its on-chain programTypeId.
+fn resolve_deployer_program_type_id(program_id: &str) -> u8 {
+    match program_id {
+        "evm-l2" => 1,
+        "zk-dex" => 2,
+        "tokamon" => 3,
+        _ => 0,
+    }
+}
+
+/// Reads the SP1 verification key for a guest program from its build output path.
+fn get_vk_for_program(program_id: &str, opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
+    match program_id {
+        "zk-dex" => {
+            if let Some(ref path) = opts.zk_dex_sp1_vk_path {
+                read_vk(path)
+            } else {
+                let path = format!(
+                    "{}/../../crates/guest-program/bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-vk-bn254",
+                    env!("CARGO_MANIFEST_DIR")
+                );
+                match std::fs::canonicalize(&path) {
+                    Ok(canonical) => read_vk(
+                        canonical
+                            .to_str()
+                            .ok_or(DeployerError::FailedToGetStringFromPath)?,
+                    ),
+                    Err(e) => {
+                        warn!(
+                            program_id,
+                            path, "VK file not found, build with GUEST_PROGRAMS=zk-dex: {e}"
+                        );
+                        Ok(Bytes::new())
+                    }
+                }
+            }
+        }
+        _ => {
+            warn!(program_id, "No VK path configured for this program");
+            Ok(Bytes::new())
+        }
+    }
 }
 
 async fn register_chain(
