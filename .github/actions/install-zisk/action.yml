@@ -13,23 +13,7 @@ runs:
     - name: Install ZisK
       shell: bash
       run: |
-        retry() {
-          local retries=5
-          local delay=10
-          for i in $(seq 1 $retries); do
-            if "$@"; then
-              return 0
-            fi
-            if [ $i -lt $retries ]; then
-              echo "Attempt $i/$retries failed. Retrying in ${delay}s..."
-              sleep $delay
-              delay=$((delay * 2))
-            else
-              echo "All $retries attempts failed."
-            fi
-          done
-          return 1
-        }
+        source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
 
         retry curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh -o /tmp/zisk_install.sh
         bash /tmp/zisk_install.sh

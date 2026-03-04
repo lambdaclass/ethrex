@@ -7,23 +7,7 @@ runs:
     - name: Install SP1
       shell: bash
       run: |
-        retry() {
-          local retries=5
-          local delay=10
-          for i in $(seq 1 $retries); do
-            if "$@"; then
-              return 0
-            fi
-            if [ $i -lt $retries ]; then
-              echo "Attempt $i/$retries failed. Retrying in ${delay}s..."
-              sleep $delay
-              delay=$((delay * 2))
-            else
-              echo "All $retries attempts failed."
-            fi
-          done
-          return 1
-        }
+        source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
 
         retry curl -L https://sp1.succinct.xyz -o /tmp/sp1_install.sh
         bash /tmp/sp1_install.sh
