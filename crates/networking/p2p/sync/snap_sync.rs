@@ -662,7 +662,7 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_table.record_failure(&peer_id).await?;
+            peers.peer_table.record_failure(&peer_id)?;
             let peer_score = peers.peer_table.get_score(&peer_id).await?;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
@@ -671,7 +671,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_table.record_success(&peer_id).await?;
+        peers.peer_table.record_success(&peer_id)?;
         info!("Succesfully updated pivot");
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())

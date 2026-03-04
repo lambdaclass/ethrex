@@ -71,8 +71,6 @@ pub struct EthrexMonitorWidget {
     pub osaka_activation_time: Option<u64>,
 }
 
-pub type MonitorRef = Arc<dyn MonitorProtocol>;
-
 #[protocol]
 pub trait MonitorProtocol: Send + Sync {
     fn tick(&self) -> Result<(), ActorError>;

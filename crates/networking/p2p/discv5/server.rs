@@ -89,8 +89,6 @@ impl From<ethrex_rlp::error::RLPDecodeError> for DiscoveryServerError {
     }
 }
 
-pub type Discv5ServerRef = std::sync::Arc<dyn Discv5ServerProtocol>;
-
 #[protocol]
 pub trait Discv5ServerProtocol: Send + Sync {
     fn recv_message(&self, message: Box<Discv5Message>) -> Result<(), ActorError>;
@@ -171,9 +169,7 @@ impl DiscoveryServer {
             count = bootnodes.len(),
             "Adding bootnodes"
         );
-        peer_table
-            .new_contacts(bootnodes, local_node.node_id(), DiscoveryProtocol::Discv5)
-            .await?;
+        peer_table.new_contacts(bootnodes, local_node.node_id(), DiscoveryProtocol::Discv5)?;
 
         Ok(discovery_server.start())
     }
@@ -357,9 +353,7 @@ impl DiscoveryServer {
             &node.node_id(),
         );
 
-        self.peer_table
-            .set_session_info(node.node_id(), session)
-            .await?;
+        self.peer_table.set_session_info(node.node_id(), session)?;
 
         // Check enr-seq to decide if we have to send the local ENR in the handshake.
         let whoareyou = WhoAreYou::decode(&packet)?;
@@ -442,8 +436,7 @@ impl DiscoveryServer {
         // Add the peer to the peer table
         if let Some(record) = &authdata.record {
             self.peer_table
-                .new_contact_records(vec![record.clone()], self.local_node.node_id())
-                .await?;
+                .new_contact_records(vec![record.clone()], self.local_node.node_id())?;
         }
 
         // Derive session keys (we are the recipient, node B)
@@ -457,9 +450,7 @@ impl DiscoveryServer {
         );
 
         // Store the session
-        self.peer_table
-            .set_session_info(src_id, session.clone())
-            .await?;
+        self.peer_table.set_session_info(src_id, session.clone())?;
 
         // Decrypt and handle the contained message
         let mut encrypted = packet.encrypted_message.clone();
@@ -495,15 +486,12 @@ impl DiscoveryServer {
             let find_node_msg = self.get_random_find_node_message(&contact.node);
             if let Err(e) = self.send_ordinary(find_node_msg, &contact.node).await {
                 error!(protocol = "discv5", sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
-                self.peer_table
-                    .set_disposable(&contact.node.node_id())
-                    .await?;
+                self.peer_table.set_disposable(&contact.node.node_id())?;
                 METRICS.record_new_discarded_node();
             }
 
             self.peer_table
-                .increment_find_node_sent(&contact.node.node_id())
-                .await?;
+                .increment_find_node_sent(&contact.node.node_id())?;
         }
         Ok(())
     }
@@ -529,7 +517,7 @@ impl DiscoveryServer {
     }
 
     async fn do_prune(&mut self) -> Result<(), DiscoveryServerError> {
-        self.peer_table.prune().await?;
+        self.peer_table.prune()?;
         Ok(())
     }
 
@@ -578,8 +566,7 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         // Validate and record PONG (clears ping_req_id if matches)
         self.peer_table
-            .record_pong_received(&sender_id, pong_message.req_id)
-            .await?;
+            .record_pong_received(&sender_id, pong_message.req_id)?;
 
         // If sender's enr_seq is higher than our cached version, request updated ENR.
         if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
@@ -665,8 +652,7 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         // TODO(#3746): check that we requested neighbors from the node
         self.peer_table
-            .new_contact_records(nodes_message.nodes, self.local_node.node_id())
-            .await?;
+            .new_contact_records(nodes_message.nodes, self.local_node.node_id())?;
         Ok(())
     }
 
@@ -681,9 +667,7 @@ impl DiscoveryServer {
         self.send_ordinary(ping, node).await?;
 
         // Record ping sent for later PONG verification
-        self.peer_table
-            .record_ping_sent(&node.node_id(), req_id)
-            .await?;
+        self.peer_table.record_ping_sent(&node.node_id(), req_id)?;
 
         Ok(())
     }
@@ -1196,7 +1180,6 @@ mod tests {
         // Add the remote node as a contact with its ENR record
         peer_table
             .new_contact_records(vec![remote_record], local_node.node_id())
-            .await
             .unwrap();
 
         // Set up a session for the remote node (required for send_ordinary)
@@ -1206,7 +1189,6 @@ mod tests {
         };
         peer_table
             .set_session_info(remote_node_id, session)
-            .await
             .unwrap();
 
         let mut server = DiscoveryServer {

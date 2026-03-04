@@ -18,8 +18,6 @@ pub enum RLPxInitiatorError {
     PeerTableError(#[from] PeerTableError),
 }
 
-pub type RlpxInitiatorRef = std::sync::Arc<dyn RlpxInitiatorProtocol>;
-
 #[protocol]
 pub trait RlpxInitiatorProtocol: Send + Sync {
     fn look_for_peer(&self) -> Result<(), ActorError>;

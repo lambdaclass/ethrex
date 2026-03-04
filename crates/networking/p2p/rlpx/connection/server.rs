@@ -70,8 +70,6 @@ const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
-pub type PeerConnectionServerRef = std::sync::Arc<dyn PeerConnectionServerProtocol>;
-
 #[protocol]
 pub trait PeerConnectionServerProtocol: Send + Sync {
     fn incoming_message(&self, message: Message) -> Result<(), ActorError>;
@@ -263,7 +261,6 @@ impl PeerConnectionServer {
                             if let Err(e) = established_state
                                 .peer_table
                                 .set_unwanted(&established_state.node.node_id())
-                                .await
                             {
                                 debug!("Failed to set peer as unwanted: {e}");
                             }
@@ -330,7 +327,6 @@ impl PeerConnectionServer {
                 if let Err(e) = established_state
                     .peer_table
                     .remove_peer(established_state.node.node_id())
-                    .await
                 {
                     debug!("Failed to remove peer from table: {e}");
                 }
@@ -357,7 +353,7 @@ impl PeerConnectionServer {
             let result = handle_incoming_message(established_state, msg.message).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
-            error!("Connection not yet established");
+            debug!("Connection not yet established");
         }
     }
 
@@ -376,7 +372,7 @@ impl PeerConnectionServer {
             let result = handle_outgoing_message(established_state, msg.message).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
-            error!("Connection not yet established");
+            debug!("Connection not yet established");
         }
     }
 
@@ -401,7 +397,7 @@ impl PeerConnectionServer {
             .await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
-            error!("Connection not yet established");
+            debug!("Connection not yet established");
         }
     }
 
@@ -422,7 +418,7 @@ impl PeerConnectionServer {
                 );
             }
         } else {
-            error!("Connection not yet established");
+            debug!("Connection not yet established");
         }
     }
 
@@ -436,7 +432,7 @@ impl PeerConnectionServer {
             let result = send(established_state, Message::Ping(PingMessage {})).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
-            error!("Connection not yet established");
+            debug!("Connection not yet established");
         }
     }
 
@@ -454,7 +450,7 @@ impl PeerConnectionServer {
             let result = handle_block_range_update(established_state).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
-            error!("Connection not yet established");
+            debug!("Connection not yet established");
         }
     }
 
@@ -473,7 +469,7 @@ impl PeerConnectionServer {
             let result = handle_broadcast(established_state, (msg.task_id, msg.msg)).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
-            error!("Connection not yet established");
+            debug!("Connection not yet established");
         }
     }
 
@@ -505,7 +501,7 @@ impl PeerConnectionServer {
             };
             Self::process_cast_error(&self.state, result, ctx);
         } else {
-            error!("Connection not yet established");
+            debug!("Connection not yet established");
         }
     }
 
@@ -514,8 +510,9 @@ impl PeerConnectionServer {
         result: Result<(), PeerConnectionError>,
         ctx: &Context<Self>,
     ) {
-        if let Err(e) = result {
-            if let ConnectionState::Established(established_state) = state {
+        if let Err(e) = result
+            && let ConnectionState::Established(established_state) = state
+        {
                 match e {
                     PeerConnectionError::Disconnected
                     | PeerConnectionError::DisconnectReceived(_)
@@ -567,7 +564,6 @@ impl PeerConnectionServer {
                         );
                     }
                 }
-            }
         }
     }
 }
@@ -603,14 +599,11 @@ where
         handle: ctx.actor_ref(),
     };
 
-    state
-        .peer_table
-        .new_connected_peer(
-            state.node.clone(),
-            connection.clone(),
-            state.capabilities.clone(),
-        )
-        .await?;
+    state.peer_table.new_connected_peer(
+        state.node.clone(),
+        connection.clone(),
+        state.capabilities.clone(),
+    )?;
 
     trace!(peer=%state.node, "Peer connection initialized.");
 

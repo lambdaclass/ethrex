@@ -42,8 +42,6 @@ use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{blocks::METRICS_BLOCKS, transactions::METRICS_TX};
 
-pub type BlockProducerRef = Arc<dyn BlockProducerProtocol>;
-
 #[protocol]
 pub trait BlockProducerProtocol: Send + Sync {
     fn produce(&self) -> Result<(), ActorError>;
@@ -309,10 +307,14 @@ impl BlockProducer {
             router_address,
         )?;
         let actor_ref = block_producer.start_with_backend(Backend::Blocking);
-        actor_ref
-            .send(block_producer_protocol::Produce)
-            .map_err(BlockProducerError::InternalError)?;
         Ok(actor_ref)
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(block_producer_protocol::Produce)
+            .inspect_err(|e| error!("Failed to send initial Produce: {e}"));
     }
 
     #[send_handler]

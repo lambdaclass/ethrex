@@ -18,13 +18,13 @@ use tracing::{debug, info};
 use super::codec::DiscriminatingCodec;
 use crate::discv4::{
     messages::Packet as Discv4Packet,
-    server::{DiscoveryServer as Discv4Server, Discv4Message},
+    server::{DiscoveryServer as Discv4Server, Discv4Message, discv4_server_protocol},
 };
 
 #[cfg(feature = "experimental-discv5")]
 use crate::discv5::{
     messages::Packet as Discv5Packet,
-    server::{DiscoveryServer as Discv5Server, Discv5Message},
+    server::{DiscoveryServer as Discv5Server, Discv5Message, discv5_server_protocol},
 };
 
 /// Minimum packet size for a valid discv4 packet.
@@ -46,8 +46,6 @@ impl Default for DiscoveryConfig {
         }
     }
 }
-
-pub type DiscoveryMultiplexerRef = std::sync::Arc<dyn DiscoveryMultiplexerProtocol>;
 
 #[protocol]
 pub trait DiscoveryMultiplexerProtocol: Send + Sync {
@@ -193,11 +191,9 @@ impl DiscoveryMultiplexer {
         match Discv4Packet::decode(data) {
             Ok(packet) => {
                 let msg = Discv4Message::from(packet, from);
-                if let Err(e) =
-                    handle.send(crate::discv4::server::discv4_server_protocol::RecvMessage {
-                        message: Box::new(msg),
-                    })
-                {
+                if let Err(e) = handle.send(discv4_server_protocol::RecvMessage {
+                    message: Box::new(msg),
+                }) {
                     debug!(error=?e, "Failed to send discv4 message to handler");
                 }
             }
@@ -222,11 +218,9 @@ impl DiscoveryMultiplexer {
         match Discv5Packet::decode(&self.local_node_id, data) {
             Ok(packet) => {
                 let msg = Discv5Message::from(packet, from);
-                if let Err(e) =
-                    handle.send(crate::discv5::server::discv5_server_protocol::RecvMessage {
-                        message: Box::new(msg),
-                    })
-                {
+                if let Err(e) = handle.send(discv5_server_protocol::RecvMessage {
+                    message: Box::new(msg),
+                }) {
                     debug!(error=?e, "Failed to send discv5 message to handler");
                 }
             }

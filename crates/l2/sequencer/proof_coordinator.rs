@@ -25,8 +25,6 @@ use tracing::{debug, error, info, warn};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;
 
-pub type ProofCoordinatorRef = std::sync::Arc<dyn ProofCoordinatorProtocol>;
-
 #[protocol]
 pub trait ProofCoordinatorProtocol: Send + Sync {
     fn listen(&self, listener: Arc<TcpListener>) -> Result<(), ActorError>;
@@ -361,8 +359,6 @@ impl ProofCoordinator {
         Ok(())
     }
 }
-
-pub type ConnectionHandlerRef = std::sync::Arc<dyn ConnectionHandlerProtocol>;
 
 #[protocol]
 pub trait ConnectionHandlerProtocol: Send + Sync {

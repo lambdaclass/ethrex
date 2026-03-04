@@ -18,8 +18,6 @@ use spawned_macros::{actor, protocol};
 use std::{collections::BTreeMap, time::Duration};
 use tracing::{debug, error};
 
-pub type MetricsGathererRef = std::sync::Arc<dyn MetricsGathererProtocol>;
-
 #[protocol]
 pub trait MetricsGathererProtocol: Send + Sync {
     fn gather(&self) -> Result<(), ActorError>;

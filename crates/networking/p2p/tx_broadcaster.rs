@@ -38,8 +38,6 @@ const PRUNE_INTERVAL_SECS: u64 = 360; // 6 minutes
 // Amount of milliseconds between each broadcast
 pub const BROADCAST_INTERVAL_MS: u64 = 1000; // 1 second
 
-pub type TxBroadcasterRef = std::sync::Arc<dyn TxBroadcasterProtocol>;
-
 #[protocol]
 pub trait TxBroadcasterProtocol: Send + Sync {
     fn broadcast_txs(&self) -> Result<(), ActorError>;

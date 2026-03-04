@@ -27,8 +27,6 @@ use std::time::Duration;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-pub type L1WatcherRef = std::sync::Arc<dyn L1WatcherProtocol>;
-
 #[protocol]
 pub trait L1WatcherProtocol: Send + Sync {
     fn watch_logs_l1(&self) -> Result<(), ActorError>;
@@ -249,6 +247,35 @@ impl L1Watcher {
         ctx: &Context<Self>,
     ) {
         info!("Updating L1 blob base fee");
+        self.do_update_l1_blob_base_fee().await;
+        let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
+        send_after(
+            interval,
+            ctx.clone(),
+            l1_watcher_protocol::UpdateL1BlobBaseFee,
+        );
+    }
+
+    #[request_handler]
+    async fn handle_health(
+        &mut self,
+        _msg: l1_watcher_protocol::Health,
+        _ctx: &Context<Self>,
+    ) -> L1WatcherHealth {
+        let l1_rpc_healthcheck = self.eth_client.test_urls().await;
+
+        L1WatcherHealth {
+            l1_rpc_healthcheck,
+            max_block_step: self.max_block_step.to_string(),
+            last_block_fetched: self.last_block_fetched_l1.to_string(),
+            check_interval: self.check_interval,
+            l1_block_delay: self.l1_block_delay,
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
+            bridge_address: self.bridge_address,
+        }
+    }
+
+    async fn do_update_l1_blob_base_fee(&mut self) {
         let Ok(blob_base_fee) = self
             .eth_client
             .get_blob_base_fee(BlockIdentifier::Tag(BlockTag::Latest))
@@ -283,32 +310,6 @@ impl L1Watcher {
         );
 
         l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
-
-        let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
-        send_after(
-            interval,
-            ctx.clone(),
-            l1_watcher_protocol::UpdateL1BlobBaseFee,
-        );
-    }
-
-    #[request_handler]
-    async fn handle_health(
-        &mut self,
-        _msg: l1_watcher_protocol::Health,
-        _ctx: &Context<Self>,
-    ) -> L1WatcherHealth {
-        let l1_rpc_healthcheck = self.eth_client.test_urls().await;
-
-        L1WatcherHealth {
-            l1_rpc_healthcheck,
-            max_block_step: self.max_block_step.to_string(),
-            last_block_fetched: self.last_block_fetched_l1.to_string(),
-            check_interval: self.check_interval,
-            l1_block_delay: self.l1_block_delay,
-            sequencer_state: format!("{:?}", self.sequencer_state.status()),
-            bridge_address: self.bridge_address,
-        }
     }
 
     async fn watch_l1(&mut self) {

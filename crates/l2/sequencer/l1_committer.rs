@@ -76,13 +76,7 @@ const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,byt
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
-#[derive(Clone)]
-pub enum CommitterActionResult {
-    Ok,
-    Error(String),
-}
-
-pub type L1CommitterRef = std::sync::Arc<dyn L1CommitterProtocol>;
+pub type CommitterActionResult = Result<(), String>;
 
 #[protocol]
 pub trait L1CommitterProtocol: Send + Sync {
@@ -260,10 +254,10 @@ impl L1Committer {
             })
             .await?
         {
-            CommitterActionResult::Error(reason) => Err(CommitterError::UnexpectedError(format!(
+            Err(reason) => Err(CommitterError::UnexpectedError(format!(
                 "Failed to send first wake up message to committer {reason}"
             ))),
-            CommitterActionResult::Ok => Ok(actor_ref),
+            Ok(()) => Ok(actor_ref),
         }
     }
 
@@ -339,10 +333,10 @@ impl L1Committer {
         if let Some(token) = self.cancellation_token.take() {
             token.cancel();
             info!("L1 committer stopped");
-            CommitterActionResult::Ok
+            Ok(())
         } else {
             warn!("L1 committer received stop command but it is already stopped");
-            CommitterActionResult::Error("Already stopped".to_string())
+            Err("Already stopped".to_string())
         }
     }
 
@@ -358,10 +352,10 @@ impl L1Committer {
                 "L1 committer restarted next commit will be sent in {}ms",
                 msg.delay
             );
-            CommitterActionResult::Ok
+            Ok(())
         } else {
             warn!("L1 committer received start command but it is already running");
-            CommitterActionResult::Error("Already started".to_string())
+            Err("Already started".to_string())
         }
     }
 

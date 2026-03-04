@@ -1,5 +1,5 @@
 use crate::sequencer::block_producer::BlockProducer;
-use crate::sequencer::l1_committer::{CommitterActionResult, L1Committer};
+use crate::sequencer::l1_committer::L1Committer;
 use crate::sequencer::l1_proof_sender::L1ProofSender;
 use crate::sequencer::l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
@@ -128,8 +128,8 @@ async fn start_committer(
         .request(l1_committer_protocol::StartCommitter { delay })
         .await
     {
-        Ok(CommitterActionResult::Ok) => Ok(Json::from(Value::String("ok".into()))),
-        Ok(CommitterActionResult::Error(err)) => Err(AdminErrorResponse::MessageError(err)),
+        Ok(Ok(())) => Ok(Json::from(Value::String("ok".into()))),
+        Ok(Err(err)) => Err(AdminErrorResponse::MessageError(err)),
         Err(err) => Err(AdminErrorResponse::ActorError(err)),
     }
 }
@@ -143,8 +143,8 @@ async fn stop_committer(State(admin): State<Admin>) -> Result<Json<Value>, Admin
         .request(l1_committer_protocol::StopCommitter)
         .await
     {
-        Ok(CommitterActionResult::Ok) => Ok(Json::from(Value::String("ok".into()))),
-        Ok(CommitterActionResult::Error(err)) => Err(AdminErrorResponse::MessageError(err)),
+        Ok(Ok(())) => Ok(Json::from(Value::String("ok".into()))),
+        Ok(Err(err)) => Err(AdminErrorResponse::MessageError(err)),
         Err(err) => Err(AdminErrorResponse::ActorError(err)),
     }
 }

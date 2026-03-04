@@ -63,8 +63,6 @@ pub enum BlockFetcherError {
     CalculationError(String),
 }
 
-pub type BlockFetcherRef = Arc<dyn BlockFetcherProtocol>;
-
 #[protocol]
 pub trait BlockFetcherProtocol: Send + Sync {
     fn fetch(&self) -> Result<(), ActorError>;
@@ -329,11 +327,15 @@ impl BlockFetcher {
         sequencer_state: SequencerState,
     ) -> Result<(), BlockFetcherError> {
         let state = Self::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
-        let actor_ref = state.start();
-        actor_ref
-            .send(block_fetcher_protocol::Fetch)
-            .map_err(BlockFetcherError::InternalError)?;
+        let _actor_ref = state.start();
         Ok(())
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(block_fetcher_protocol::Fetch)
+            .inspect_err(|e| error!("Failed to send initial Fetch: {e}"));
     }
 
     #[send_handler]

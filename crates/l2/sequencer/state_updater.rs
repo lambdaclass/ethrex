@@ -36,8 +36,6 @@ pub enum StateUpdaterError {
     MissingData(String),
 }
 
-pub type StateUpdaterRef = std::sync::Arc<dyn StateUpdaterProtocol>;
-
 #[protocol]
 pub trait StateUpdaterProtocol: Send + Sync {
     fn update_state(&self) -> Result<(), ActorError>;
@@ -109,10 +107,14 @@ impl StateUpdater {
             rollup_store,
         )?;
         let actor_ref = state_updater.start();
-        actor_ref
-            .send(state_updater_protocol::UpdateState)
-            .map_err(StateUpdaterError::InternalError)?;
         Ok(actor_ref)
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(state_updater_protocol::UpdateState)
+            .inspect_err(|e| error!("Failed to send initial UpdateState: {e}"));
     }
 
     #[send_handler]
@@ -133,11 +135,7 @@ impl StateUpdater {
     }
 
     #[request_handler]
-    async fn handle_stop_at(
-        &mut self,
-        msg: state_updater_protocol::StopAt,
-        _ctx: &Context<Self>,
-    ) -> () {
+    async fn handle_stop_at(&mut self, msg: state_updater_protocol::StopAt, _ctx: &Context<Self>) {
         self.stop_at = Some(msg.block_number);
     }
 

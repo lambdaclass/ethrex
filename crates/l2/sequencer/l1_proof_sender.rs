@@ -53,8 +53,6 @@ use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
 const VERIFY_BATCHES_FUNCTION_SIGNATURE: &str = "verifyBatches(uint256,bytes[],bytes[],bytes[])";
 
-pub type L1ProofSenderRef = std::sync::Arc<dyn L1ProofSenderProtocol>;
-
 #[protocol]
 pub trait L1ProofSenderProtocol: Send + Sync {
     fn send_proof(&self) -> Result<(), ActorError>;
@@ -172,10 +170,14 @@ impl L1ProofSender {
         )
         .await?;
         let actor_ref = state.start();
-        actor_ref
-            .send(l1_proof_sender_protocol::SendProof)
-            .map_err(ProofSenderError::InternalError)?;
         Ok(actor_ref)
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(l1_proof_sender_protocol::SendProof)
+            .inspect_err(|e| error!("Failed to send initial SendProof: {e}"));
     }
 
     #[send_handler]

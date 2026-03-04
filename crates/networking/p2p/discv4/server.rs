@@ -59,8 +59,6 @@ pub enum DiscoveryServerError {
     Store(#[from] StoreError),
 }
 
-pub type Discv4ServerRef = std::sync::Arc<dyn Discv4ServerProtocol>;
-
 #[protocol]
 pub trait Discv4ServerProtocol: Send + Sync {
     fn recv_message(&self, message: Box<Discv4Message>) -> Result<(), ActorError>;
@@ -97,7 +95,7 @@ impl DiscoveryServer {
         local_node: Node,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
-        mut peer_table: PeerTable,
+        peer_table: PeerTable,
         bootnodes: Vec<Node>,
         initial_lookup_interval: f64,
     ) -> Result<ActorRef<Self>, DiscoveryServerError> {
@@ -128,13 +126,11 @@ impl DiscoveryServer {
             "Adding bootnodes"
         );
 
-        peer_table
-            .new_contacts(
-                bootnodes.clone(),
-                local_node.node_id(),
-                DiscoveryProtocol::Discv4,
-            )
-            .await?;
+        peer_table.new_contacts(
+            bootnodes.clone(),
+            local_node.node_id(),
+            DiscoveryProtocol::Discv4,
+        )?;
 
         for bootnode in &bootnodes {
             discovery_server.send_ping(bootnode).await?;
@@ -357,21 +353,18 @@ impl DiscoveryServer {
                 .await
             {
                 error!(protocol = "discv4", sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
-                self.peer_table
-                    .set_disposable(&contact.node.node_id())
-                    .await?;
+                self.peer_table.set_disposable(&contact.node.node_id())?;
                 METRICS.record_new_discarded_node();
             }
 
             self.peer_table
-                .increment_find_node_sent(&contact.node.node_id())
-                .await?;
+                .increment_find_node_sent(&contact.node.node_id())?;
         }
         Ok(())
     }
 
     async fn do_prune(&mut self) -> Result<(), DiscoveryServerError> {
-        self.peer_table.prune().await?;
+        self.peer_table.prune()?;
         Ok(())
     }
 
@@ -413,9 +406,7 @@ impl DiscoveryServer {
         trace!(protocol = "discv4", sent = "Ping", to = %format!("{:#x}", node.public_key));
         METRICS.record_ping_sent().await;
         let ping_id = Bytes::copy_from_slice(ping_hash.as_bytes());
-        self.peer_table
-            .record_ping_sent(&node.node_id(), ping_id)
-            .await?;
+        self.peer_table.record_ping_sent(&node.node_id(), ping_id)?;
         Ok(())
     }
 
@@ -462,8 +453,7 @@ impl DiscoveryServer {
         let enr_request_hash = self.send_else_dispose(enr_request, node).await?;
 
         self.peer_table
-            .record_enr_request_sent(&node.node_id(), enr_request_hash)
-            .await?;
+            .record_enr_request_sent(&node.node_id(), enr_request_hash)?;
         Ok(())
     }
 
@@ -527,9 +517,7 @@ impl DiscoveryServer {
         };
 
         let ping_id = Bytes::copy_from_slice(message.ping_hash.as_bytes());
-        self.peer_table
-            .record_pong_received(&node_id, ping_id)
-            .await?;
+        self.peer_table.record_pong_received(&node_id, ping_id)?;
 
         let stored_enr_seq = contact.record.map(|r| r.seq);
         let received_enr_seq = message.enr_seq;
@@ -568,9 +556,11 @@ impl DiscoveryServer {
         neighbors_message: NeighborsMessage,
     ) -> Result<(), DiscoveryServerError> {
         let nodes = neighbors_message.nodes.clone();
-        self.peer_table
-            .new_contacts(nodes, self.local_node.node_id(), DiscoveryProtocol::Discv4)
-            .await?;
+        self.peer_table.new_contacts(
+            nodes,
+            self.local_node.node_id(),
+            DiscoveryProtocol::Discv4,
+        )?;
         for node in neighbors_message.nodes {
             self.send_ping(&node).await?;
         }
@@ -597,7 +587,7 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        self.peer_table.knows_us(&node_id).await?;
+        self.peer_table.knows_us(&node_id)?;
         Ok(())
     }
 
@@ -617,13 +607,11 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        self.peer_table
-            .record_enr_response_received(
-                &node_id,
-                enr_response_message.request_hash,
-                enr_response_message.node_record.clone(),
-            )
-            .await?;
+        self.peer_table.record_enr_response_received(
+            &node_id,
+            enr_response_message.request_hash,
+            enr_response_message.node_record.clone(),
+        )?;
 
         self.validate_enr_fork_id(node_id, sender_public_key, enr_response_message.node_record)
             .await?;
@@ -641,9 +629,7 @@ impl DiscoveryServer {
         let pairs = node_record.decode_pairs();
 
         let Some(remote_fork_id) = pairs.eth else {
-            self.peer_table
-                .set_is_fork_id_valid(&node_id, false)
-                .await?;
+            self.peer_table.set_is_fork_id_valid(&node_id, false)?;
             debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "missing fork id in ENR response, skipping");
             return Ok(());
         };
@@ -667,15 +653,13 @@ impl DiscoveryServer {
         );
 
         if !backend::is_fork_id_valid(&self.store, &remote_fork_id).await? {
-            self.peer_table
-                .set_is_fork_id_valid(&node_id, false)
-                .await?;
+            self.peer_table.set_is_fork_id_valid(&node_id, false)?;
             debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "fork id mismatch in ENR response, skipping");
             return Ok(());
         }
 
         debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "valid fork id in ENR found");
-        self.peer_table.set_is_fork_id_valid(&node_id, true).await?;
+        self.peer_table.set_is_fork_id_valid(&node_id, true)?;
 
         Ok(())
     }
@@ -748,7 +732,7 @@ impl DiscoveryServer {
             .expect("first 32 bytes are the message hash");
         if let Err(e) = self.udp_socket.send_to(&buf, node.udp_addr()).await {
             error!(protocol = "discv4", sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
-            self.peer_table.set_disposable(&node.node_id()).await?;
+            self.peer_table.set_disposable(&node.node_id())?;
             METRICS.record_new_discarded_node();
         }
         Ok(H256::from(message_hash))

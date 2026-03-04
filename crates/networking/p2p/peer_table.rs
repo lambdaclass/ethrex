@@ -227,8 +227,6 @@ pub enum ContactValidation {
     IpMismatch,
 }
 
-pub type PeerTableServerRef = std::sync::Arc<dyn PeerTableServerProtocol>;
-
 #[protocol]
 pub trait PeerTableServerProtocol: Send + Sync {
     // Send (cast) methods
@@ -1136,7 +1134,7 @@ impl PeerTable {
 
     /// We received a list of Nodes to contact. No connection has been established yet.
     /// The protocol parameter indicates which discovery protocol found these contacts.
-    pub async fn new_contacts(
+    pub fn new_contacts(
         &self,
         nodes: Vec<Node>,
         local_node_id: H256,
@@ -1148,7 +1146,7 @@ impl PeerTable {
 
     /// We received a list of NodeRecords to contact. No connection has been established yet.
     /// Used by discv5 which receives ENRs directly.
-    pub async fn new_contact_records(
+    pub fn new_contact_records(
         &self,
         node_records: Vec<NodeRecord>,
         local_node_id: H256,
@@ -1159,7 +1157,7 @@ impl PeerTable {
     }
 
     /// We have established a connection with the remote peer.
-    pub async fn new_connected_peer(
+    pub fn new_connected_peer(
         &self,
         node: Node,
         connection: PeerConnection,
@@ -1171,63 +1169,55 @@ impl PeerTable {
     }
 
     /// Set or update discv5 Session info.
-    pub async fn set_session_info(
-        &self,
-        node_id: H256,
-        session: Session,
-    ) -> Result<(), PeerTableError> {
+    pub fn set_session_info(&self, node_id: H256, session: Session) -> Result<(), PeerTableError> {
         self.handle.set_session_info(node_id, session)?;
         Ok(())
     }
 
     /// Remove from list of connected peers.
-    pub async fn remove_peer(&self, node_id: H256) -> Result<(), PeerTableError> {
+    pub fn remove_peer(&self, node_id: H256) -> Result<(), PeerTableError> {
         self.handle.remove_peer(node_id)?;
         Ok(())
     }
 
     /// Increment the number of ongoing requests for this peer
-    pub async fn inc_requests(&self, node_id: H256) -> Result<(), PeerTableError> {
+    pub fn inc_requests(&self, node_id: H256) -> Result<(), PeerTableError> {
         self.handle.inc_requests(node_id)?;
         Ok(())
     }
 
     /// Decrement the number of ongoing requests for this peer
-    pub async fn dec_requests(&self, node_id: H256) -> Result<(), PeerTableError> {
+    pub fn dec_requests(&self, node_id: H256) -> Result<(), PeerTableError> {
         self.handle.dec_requests(node_id)?;
         Ok(())
     }
 
     /// Mark node as not wanted
-    pub async fn set_unwanted(&self, node_id: &H256) -> Result<(), PeerTableError> {
+    pub fn set_unwanted(&self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle.set_unwanted(*node_id)?;
         Ok(())
     }
 
     /// Set whether the contact fork id is valid.
-    pub async fn set_is_fork_id_valid(
-        &self,
-        node_id: &H256,
-        valid: bool,
-    ) -> Result<(), PeerTableError> {
+    pub fn set_is_fork_id_valid(&self, node_id: &H256, valid: bool) -> Result<(), PeerTableError> {
         self.handle.set_is_fork_id_valid(*node_id, valid)?;
         Ok(())
     }
 
     /// Record a successful connection, used to score peers
-    pub async fn record_success(&self, node_id: &H256) -> Result<(), PeerTableError> {
+    pub fn record_success(&self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle.record_success(*node_id)?;
         Ok(())
     }
 
     /// Record a failed connection, used to score peers
-    pub async fn record_failure(&self, node_id: &H256) -> Result<(), PeerTableError> {
+    pub fn record_failure(&self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle.record_failure(*node_id)?;
         Ok(())
     }
 
     /// Record a critical failure for connection, used to score peers
-    pub async fn record_critical_failure(&self, node_id: &H256) -> Result<(), PeerTableError> {
+    pub fn record_critical_failure(&self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle.record_critical_failure(*node_id)?;
         Ok(())
     }
@@ -1236,17 +1226,13 @@ impl PeerTable {
     /// Protocol adaptation:
     /// - discv4: convert H256 hash to Bytes via `Bytes::copy_from_slice(hash.as_bytes())`
     /// - discv5: use Bytes request ID directly
-    pub async fn record_ping_sent(
-        &self,
-        node_id: &H256,
-        ping_id: Bytes,
-    ) -> Result<(), PeerTableError> {
+    pub fn record_ping_sent(&self, node_id: &H256, ping_id: Bytes) -> Result<(), PeerTableError> {
         self.handle.record_ping_sent(*node_id, ping_id)?;
         Ok(())
     }
 
     /// Record a pong received. Check previously saved ping_id and reset it if it matches.
-    pub async fn record_pong_received(
+    pub fn record_pong_received(
         &self,
         node_id: &H256,
         ping_id: Bytes,
@@ -1256,7 +1242,7 @@ impl PeerTable {
     }
 
     /// Record request sent, store the request hash for later check
-    pub async fn record_enr_request_sent(
+    pub fn record_enr_request_sent(
         &self,
         node_id: &H256,
         request_hash: H256,
@@ -1267,7 +1253,7 @@ impl PeerTable {
     }
 
     /// Record a response received. Check previously saved hash and reset it if it matches
-    pub async fn record_enr_response_received(
+    pub fn record_enr_response_received(
         &self,
         node_id: &H256,
         request_hash: H256,
@@ -1279,25 +1265,25 @@ impl PeerTable {
     }
 
     /// Set peer as disposable
-    pub async fn set_disposable(&self, node_id: &H256) -> Result<(), PeerTableError> {
+    pub fn set_disposable(&self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle.set_disposable(*node_id)?;
         Ok(())
     }
 
     /// Increment FindNode message counter for peer
-    pub async fn increment_find_node_sent(&self, node_id: &H256) -> Result<(), PeerTableError> {
+    pub fn increment_find_node_sent(&self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle.increment_find_node_sent(*node_id)?;
         Ok(())
     }
 
     /// Set flag for peer that tells that it knows us
-    pub async fn knows_us(&self, node_id: &H256) -> Result<(), PeerTableError> {
+    pub fn knows_us(&self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle.mark_knows_us(*node_id)?;
         Ok(())
     }
 
     /// Remove from list of contacts the ones marked as disposable
-    pub async fn prune(&self) -> Result<(), PeerTableError> {
+    pub fn prune(&self) -> Result<(), PeerTableError> {
         self.handle.prune_table()?;
         Ok(())
     }

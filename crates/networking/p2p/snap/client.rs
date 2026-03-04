@@ -202,10 +202,10 @@ pub async fn request_account_range(
                 completed_tasks += 1;
             }
             if accounts.is_empty() {
-                peers.peer_table.record_failure(&peer_id).await?;
+                peers.peer_table.record_failure(&peer_id)?;
                 continue;
             }
-            peers.peer_table.record_success(&peer_id).await?;
+            peers.peer_table.record_success(&peer_id)?;
 
             downloaded_count += accounts.len() as u64;
 
@@ -400,13 +400,13 @@ pub async fn request_bytecodes(
                 completed_tasks += 1;
             }
             if bytecodes.is_empty() {
-                peers.peer_table.record_failure(&peer_id).await?;
+                peers.peer_table.record_failure(&peer_id)?;
                 continue;
             }
 
             downloaded_count += bytecodes.len() as u64;
 
-            peers.peer_table.record_success(&peer_id).await?;
+            peers.peer_table.record_success(&peer_id)?;
             for (i, bytecode) in bytecodes.into_iter().enumerate() {
                 all_bytecodes[start_index + i] = bytecode;
             }
@@ -878,7 +878,7 @@ pub async fn request_storage_ranges(
             }
 
             if account_storages.is_empty() {
-                peers.peer_table.record_failure(&peer_id).await?;
+                peers.peer_table.record_failure(&peer_id)?;
                 continue;
             }
             if let Some(hash_end) = hash_end {
@@ -888,7 +888,7 @@ pub async fn request_storage_ranges(
                 }
             }
 
-            peers.peer_table.record_success(&peer_id).await?;
+            peers.peer_table.record_success(&peer_id)?;
 
             let n_storages = account_storages.len();
             let n_slots = account_storages
