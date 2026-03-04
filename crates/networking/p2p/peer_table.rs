@@ -65,17 +65,7 @@ pub enum DiscoveryProtocol {
 
 /// Session information for discv5 protocol.
 /// Contains symmetric keys derived from ECDH for message encryption/decryption.
-/// When experimental-discv5 feature is enabled, this is the actual Session type
-/// from the discv5 module. Otherwise, it's a placeholder type.
-#[cfg(feature = "experimental-discv5")]
 pub use crate::discv5::session::Session;
-
-#[cfg(not(feature = "experimental-discv5"))]
-#[derive(Debug, Clone)]
-pub struct Session {
-    pub outbound_key: [u8; 16],
-    pub inbound_key: [u8; 16],
-}
 
 #[derive(Debug, Clone)]
 pub struct Contact {
