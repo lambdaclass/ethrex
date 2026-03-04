@@ -2151,6 +2151,49 @@ impl Store {
             .transpose()
     }
 
+    /// Gets storage value when the account hash and storage root are already known.
+    ///
+    /// This skips the state-trie account lookup and account RLP decode done by
+    /// [`Self::get_storage_at_root`], and directly opens the account storage trie.
+    pub fn get_storage_at_root_with_known_storage_root(
+        &self,
+        state_root: H256,
+        account_hash: H256,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+        // When FKV is active the real storage root is in the flatkeyvalue store,
+        // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
+        // so open_storage_trie_shared falls through to the FKV path.
+        let storage_root =
+            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
+                *EMPTY_TRIE_HASH
+            } else {
+                storage_root
+            };
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
+
+        let hashed_key = hash_key_fixed(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
     pub fn get_chain_config(&self) -> ChainConfig {
         self.chain_config
     }

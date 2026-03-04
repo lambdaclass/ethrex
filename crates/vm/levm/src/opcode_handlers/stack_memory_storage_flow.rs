@@ -180,8 +180,8 @@ impl<'a> VM<'a> {
         // Note: access_storage_slot does NOT record to BAL per EIP-7928.
         // BAL recording happens AFTER the SSTORE_STIPEND check but BEFORE the main gas check.
         let key = u256_to_h256(storage_slot_key);
-        let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
-        let original_value = self.get_original_storage(to, key)?;
+        let (current_value, original_value, storage_slot_was_cold) =
+            self.access_storage_slot_for_sstore(to, key)?;
 
         // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
         // Per EIP-7928 test_bal_sstore_and_oog: if SSTORE passes the stipend check but fails the
