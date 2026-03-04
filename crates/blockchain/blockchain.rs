@@ -523,7 +523,7 @@ impl Blockchain {
                     }),
                     merkleize_handle.join().unwrap_or_else(|_| {
                         Err(StoreError::Custom(
-                            "merklization thread panicked".to_string(),
+                            "merkleization thread panicked".to_string(),
                         ))
                     }),
                     warmer_duration,
