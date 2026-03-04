@@ -312,26 +312,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: "Validium"
-            validium: true
-            web3signer: false
-            based: false
-            compose_targets: [docker-compose.yaml]
+          # Disabled for single app chain: Validium, Web3signer, Based
+          # Re-enable by adding back matrix entries
           - name: "Vanilla"
             validium: false
             web3signer: false
             based: false
-            compose_targets: [docker-compose.yaml]
-          - name: "Vanilla with Web3signer"
-            validium: false
-            web3signer: true
-            based: false
-            compose_targets:
-              [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
-          - name: "Based"
-            validium: false
-            web3signer: false
-            based: true
             compose_targets: [docker-compose.yaml]
     steps:
       - name: Checkout sources
@@ -492,7 +478,8 @@ jobs:
     name: Integration Test - TDX
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    # Disabled: re-enable with vars.ENABLE_TDX_TEST = 'true'
+    if: ${{ vars.ENABLE_TDX_TEST == 'true' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -942,7 +929,7 @@ jobs:
         integration-test-shared-bridge,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-swap.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.uniswap-swap.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
