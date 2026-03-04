@@ -134,7 +134,7 @@ impl DiscoveryServer {
         local_node: Node,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
-        mut peer_table: PeerTable,
+        peer_table: PeerTable,
         bootnodes: Vec<Node>,
         initial_lookup_interval: f64,
     ) -> Result<ActorRef<Self>, DiscoveryServerError> {
@@ -960,11 +960,11 @@ impl DiscoveryServer {
             return;
         };
         // Preserve fork_id if present
-        if let Some(fork_id) = self.local_node_record.decode_pairs().eth {
-            if new_record.set_fork_id(fork_id, &self.signer).is_err() {
-                error!(%new_ip, "Failed to set fork_id in new ENR, aborting IP update");
-                return;
-            }
+        if let Some(fork_id) = self.local_node_record.decode_pairs().eth
+            && new_record.set_fork_id(fork_id, &self.signer).is_err()
+        {
+            error!(%new_ip, "Failed to set fork_id in new ENR, aborting IP update");
+            return;
         }
         self.local_node.ip = new_ip;
         self.local_node_record = new_record;

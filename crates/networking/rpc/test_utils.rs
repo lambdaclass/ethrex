@@ -35,7 +35,6 @@ use spawned_concurrency::tasks::ActorRef;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::info;
 // Base price for each test transaction.
 pub const BASE_PRICE_IN_WEI: u64 = 10_u64.pow(9);
 pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
