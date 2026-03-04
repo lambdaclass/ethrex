@@ -2682,7 +2682,9 @@ impl Store {
             if let Some(value) = bc.get_finalized_storage_by_hash(&addr_hash.0, &key_hash) {
                 return Ok(Some(u256_from_db(&value)));
             }
-            return Ok(Some(U256::zero()));
+            drop(bc);
+            // Storage tries are not persisted in ethrex-db, fall back to
+            // the RocksDB trie tables which have the snap sync data.
         }
 
         match self.get_block_header(block_number)? {
@@ -2707,7 +2709,9 @@ impl Store {
             if let Some(value) = bc.get_finalized_storage_by_hash(&addr_hash.0, &key_hash) {
                 return Ok(Some(u256_from_db(&value)));
             }
-            return Ok(Some(U256::zero()));
+            drop(bc);
+            // Storage tries are not persisted in ethrex-db, fall back to
+            // the RocksDB trie tables which have the snap sync data.
         }
 
         let account_hash = hash_address_fixed(&address);
