@@ -687,7 +687,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
     # Disabled: single app chain does not need shared bridge (L2-to-L2)
-    if: false
+    if: ${{ false }}
     strategy:
       matrix:
         include:
