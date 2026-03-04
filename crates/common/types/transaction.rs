@@ -441,6 +441,20 @@ impl Transaction {
             None
         }
     }
+
+    /// Returns a reference to the `cached_canonical` cell for non-legacy
+    /// transaction types, or `None` for legacy transactions.
+    fn cached_canonical_cell(&self) -> Option<&OnceCell<Vec<u8>>> {
+        match self {
+            Transaction::LegacyTransaction(_) => None,
+            Transaction::EIP2930Transaction(t) => Some(&t.cached_canonical),
+            Transaction::EIP1559Transaction(t) => Some(&t.cached_canonical),
+            Transaction::EIP4844Transaction(t) => Some(&t.cached_canonical),
+            Transaction::EIP7702Transaction(t) => Some(&t.cached_canonical),
+            Transaction::PrivilegedL2Transaction(t) => Some(&t.cached_canonical),
+            Transaction::FeeTokenTransaction(t) => Some(&t.cached_canonical),
+        }
+    }
 }
 
 impl RLPEncode for Transaction {
@@ -451,22 +465,8 @@ impl RLPEncode for Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         match self {
             Transaction::LegacyTransaction(t) => t.encode(buf),
-            tx => {
-                // Use the cached canonical encoding to avoid redundant serialization.
-                let cached = match tx {
-                    Transaction::LegacyTransaction(_) => unreachable!(),
-                    Transaction::EIP2930Transaction(t) => &t.cached_canonical,
-                    Transaction::EIP1559Transaction(t) => &t.cached_canonical,
-                    Transaction::EIP4844Transaction(t) => &t.cached_canonical,
-                    Transaction::EIP7702Transaction(t) => &t.cached_canonical,
-                    Transaction::PrivilegedL2Transaction(t) => &t.cached_canonical,
-                    Transaction::FeeTokenTransaction(t) => &t.cached_canonical,
-                };
-                let canonical = cached.get_or_init(|| {
-                    let mut v = Vec::new();
-                    tx.encode_canonical(&mut v);
-                    v
-                });
+            _ => {
+                let canonical = self.encode_canonical_to_vec();
                 <[u8] as RLPEncode>::encode(canonical.as_slice(), buf)
             }
         };
@@ -1717,6 +1717,15 @@ mod canonic_encoding {
         /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
         /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
         pub fn encode_canonical_to_vec(&self) -> Vec<u8> {
+            if let Some(cell) = self.cached_canonical_cell() {
+                return cell
+                    .get_or_init(|| {
+                        let mut buf = Vec::new();
+                        self.encode_canonical(&mut buf);
+                        buf
+                    })
+                    .clone();
+            }
             let mut buf = Vec::new();
             self.encode_canonical(&mut buf);
             buf
