@@ -722,9 +722,21 @@ impl LEVM {
                 )
                 .map_err(|e| {
                     let state_addrs: Vec<_> = tx_db.current_accounts_state.keys().collect();
+                    // Collect addresses with BAL changes at this tx's index
+                    let bal_active: Vec<_> = if let Some(active) =
+                        validation_index.tx_to_accounts.get(&bal_idx)
+                    {
+                        active
+                            .iter()
+                            .map(|&i| bal.accounts()[i].address)
+                            .collect()
+                    } else {
+                        vec![]
+                    };
                     EvmError::Custom(format!(
                         "BAL validation failed for tx {tx_idx} (sender={sender:?}, \
-                         result={:?}, state_addrs={state_addrs:?}): {e}",
+                         result={:?}, bal_active_at_{bal_idx}={bal_active:?}, \
+                         state_addrs={state_addrs:?}): {e}",
                         report.result
                     ))
                 })?;
@@ -868,9 +880,36 @@ impl LEVM {
                             // will catch any true discrepancy.
                             let seeded = Self::seeded_balance(seed_idx, acct, system_seed, store);
                             if expected != seeded {
+                                // Dump full BAL entry for diagnosis
+                                let all_bal_indices: Vec<u16> = acct
+                                    .balance_changes
+                                    .iter()
+                                    .map(|c| c.block_access_index)
+                                    .collect();
+                                let all_nonce_indices: Vec<u16> = acct
+                                    .nonce_changes
+                                    .iter()
+                                    .map(|c| c.block_access_index)
+                                    .collect();
+                                let all_storage_indices: Vec<(u16, u64)> = acct
+                                    .storage_changes
+                                    .iter()
+                                    .flat_map(|sc| {
+                                        sc.slot_changes
+                                            .iter()
+                                            .map(|c| (c.block_access_index, sc.slot.low_u64()))
+                                    })
+                                    .collect();
+                                let code_indices: Vec<u16> = acct
+                                    .code_changes
+                                    .iter()
+                                    .map(|c| c.block_access_index)
+                                    .collect();
                                 return Err(format!(
                                     "account {addr:?} has BAL balance change at {bal_idx} \
-                                     but not in execution state (expected={expected}, pre={seeded})"
+                                     but not in execution state (expected={expected}, pre={seeded}, \
+                                     all_bal_idx={all_bal_indices:?}, nonce_idx={all_nonce_indices:?}, \
+                                     storage_idx={all_storage_indices:?}, code_idx={code_indices:?})"
                                 ));
                             }
                         }
