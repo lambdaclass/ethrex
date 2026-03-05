@@ -123,12 +123,14 @@ async function provision(deployment) {
     updateDeployment(id, { phase: "deploying_contracts" });
     await docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
 
+    // Stop the deployer to prevent restart: on-failure from overwriting /env/.env
+    await docker.stopService(projectName, composeFile, "tokamak-app-deployer");
+
     let envVars = {};
     try {
       envVars = await docker.extractEnv(projectName, composeFile);
     } catch (extractErr) {
       emit(id, "log", { message: `Warning: extractEnv failed: ${extractErr.message}, retrying...` });
-      // Retry once after a short delay
       await new Promise(r => setTimeout(r, 3000));
       try {
         envVars = await docker.extractEnv(projectName, composeFile);
@@ -139,8 +141,15 @@ async function provision(deployment) {
 
     const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
     const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
-    // Always update — clear stale addresses from previous deployments
-    updateDeployment(id, { bridge_address: bridgeAddress, proposer_address: proposerAddress });
+    console.log(`[deployment-engine] extractEnv for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}`);
+    emit(id, "log", { message: `extractEnv [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}` });
+    // Save with project ID and timestamp for consistency verification
+    updateDeployment(id, {
+      bridge_address: bridgeAddress,
+      proposer_address: proposerAddress,
+      env_project_id: projectName,
+      env_updated_at: Date.now(),
+    });
 
     emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed", bridgeAddress, proposerAddress });
 
@@ -155,9 +164,23 @@ async function provision(deployment) {
     await docker.startProver(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
 
     // Start support tools (Blockscout, Bridge UI, Dashboard)
+    // Re-read env volume to get the definitive addresses (L2 watcher uses these)
     emit(id, "phase", { phase: "starting_tools", message: "Starting support tools (Blockscout, Bridge UI, Dashboard)..." });
     updateDeployment(id, { phase: "starting_tools" });
     try {
+      const freshEnv = await docker.extractEnv(projectName, composeFile);
+      const freshBridge = freshEnv.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+      const freshProposer = freshEnv.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
+      if (freshBridge && freshBridge !== bridgeAddress) {
+        console.log(`[deployment-engine] Bridge address changed after L2 start: ${bridgeAddress} -> ${freshBridge}`);
+        updateDeployment(id, {
+          bridge_address: freshBridge,
+          proposer_address: freshProposer,
+          env_project_id: projectName,
+          env_updated_at: Date.now(),
+        });
+        envVars = freshEnv;
+      }
       await docker.startTools(envVars, { toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l1Port, l2Port, toolsMetricsPort });
       emit(id, "phase", { phase: "starting_tools", message: "Support tools started" });
     } catch (toolsErr) {
@@ -356,8 +379,11 @@ async function destroyDeployment(deployment) {
   if (fs.existsSync(deployDir)) fs.rmSync(deployDir, { recursive: true, force: true });
   return updateDeployment(deployment.id, {
     phase: "configured", status: "configured",
-    docker_project: null, l1_port: null, l2_port: null,
+    docker_project: null, l1_port: null, l2_port: null, proof_coord_port: null,
     bridge_address: null, proposer_address: null, error_message: null, host_id: null,
+    tools_l1_explorer_port: null, tools_l2_explorer_port: null,
+    tools_bridge_ui_port: null, tools_db_port: null, tools_metrics_port: null,
+    env_project_id: null, env_updated_at: null,
   });
 }
 
@@ -391,8 +417,11 @@ async function destroyDeploymentRemote(deployment) {
   if (fs.existsSync(deployDir)) fs.rmSync(deployDir, { recursive: true, force: true });
   return updateDeployment(deployment.id, {
     phase: "configured", status: "configured",
-    docker_project: null, l1_port: null, l2_port: null,
+    docker_project: null, l1_port: null, l2_port: null, proof_coord_port: null,
     bridge_address: null, proposer_address: null, error_message: null, host_id: null,
+    tools_l1_explorer_port: null, tools_l2_explorer_port: null,
+    tools_bridge_ui_port: null, tools_db_port: null, tools_metrics_port: null,
+    env_project_id: null, env_updated_at: null,
   });
 }
 

@@ -35,7 +35,7 @@ function getDeploymentsByUser(userId) {
 
 function updateDeployment(id, fields) {
   const db = getDb();
-  const allowed = ["name", "chain_id", "rpc_url", "status", "config", "docker_project", "l1_port", "l2_port", "proof_coord_port", "phase", "bridge_address", "proposer_address", "error_message", "host_id", "deploy_dir", "tools_l1_explorer_port", "tools_l2_explorer_port", "tools_bridge_ui_port", "tools_db_port", "tools_metrics_port"];
+  const allowed = ["name", "chain_id", "rpc_url", "status", "config", "docker_project", "l1_port", "l2_port", "proof_coord_port", "phase", "bridge_address", "proposer_address", "error_message", "host_id", "deploy_dir", "tools_l1_explorer_port", "tools_l2_explorer_port", "tools_bridge_ui_port", "tools_db_port", "tools_metrics_port", "env_project_id", "env_updated_at"];
   const updates = [];
   const values = [];
   for (const [key, value] of Object.entries(fields)) {

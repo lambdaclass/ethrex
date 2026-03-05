@@ -108,25 +108,32 @@ async function extractEnv(projectName, composeFile) {
     );
 
     const envContent = fs.readFileSync(path.join(tempDir, ".env"), "utf-8");
+    console.log(`[extractEnv] Volume ${volumeName} content:\n${envContent}`);
     const parsed = {};
     for (const line of envContent.split("\n")) {
       const match = line.match(/^([^=]+)=(.*)$/);
       if (match) parsed[match[1].trim()] = match[2].trim();
     }
+    console.log(`[extractEnv] Parsed BRIDGE_ADDRESS: ${parsed.ETHREX_WATCHER_BRIDGE_ADDRESS || 'NOT FOUND'}`);
     return parsed;
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
-/** Start L2 service */
+/** Start L2 service (--no-deps: don't restart deployer) */
 async function startL2(projectName, composeFile, env = {}) {
-  return runCompose(projectName, composeFile, ["up", "-d", "tokamak-app-l2"], { env });
+  return runCompose(projectName, composeFile, ["up", "-d", "--no-deps", "tokamak-app-l2"], { env });
 }
 
-/** Start prover service */
+/** Start prover service (--no-deps: don't restart deployer or L2) */
 async function startProver(projectName, composeFile, env = {}) {
-  return runCompose(projectName, composeFile, ["up", "-d", "tokamak-app-prover"], { env });
+  return runCompose(projectName, composeFile, ["up", "-d", "--no-deps", "tokamak-app-prover"], { env });
+}
+
+/** Stop a single service */
+async function stopService(projectName, composeFile, service) {
+  return runCompose(projectName, composeFile, ["stop", service], { ignoreError: true });
 }
 
 /** Stop all services (keep volumes) */
@@ -398,6 +405,7 @@ module.exports = {
   startL1,
   deployContracts,
   extractEnv,
+  stopService,
   startL2,
   startProver,
   stop,

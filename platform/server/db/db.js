@@ -41,6 +41,8 @@ function runMigrations(database) {
     { name: "tools_bridge_ui_port", type: "INTEGER" },
     { name: "tools_db_port", type: "INTEGER" },
     { name: "tools_metrics_port", type: "INTEGER" },
+    { name: "env_project_id", type: "TEXT" },
+    { name: "env_updated_at", type: "INTEGER" },
   ];
   for (const col of newCols) {
     if (!colNames.includes(col.name)) {

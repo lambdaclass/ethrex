@@ -276,9 +276,28 @@ router.post("/:id/restart-tools", async (req, res) => {
       return res.status(400).json({ error: "Deployment has not been provisioned yet" });
     }
 
-    const envVars = {};
-    if (deployment.bridge_address) envVars.ETHREX_WATCHER_BRIDGE_ADDRESS = deployment.bridge_address;
-    if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
+    // Read addresses from env volume (source of truth) and verify against DB
+    let envVars = {};
+    try {
+      const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
+      const volumeEnv = await docker.extractEnv(deployment.docker_project, composeFile);
+      const volumeBridge = volumeEnv.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+      if (volumeBridge && volumeBridge !== deployment.bridge_address) {
+        console.log(`[restart-tools] Bridge address mismatch: DB=${deployment.bridge_address}, volume=${volumeBridge}. Using volume.`);
+        updateDeployment(deployment.id, {
+          bridge_address: volumeBridge,
+          proposer_address: volumeEnv.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || deployment.proposer_address,
+          env_project_id: deployment.docker_project,
+          env_updated_at: Date.now(),
+        });
+      }
+      if (volumeEnv.ETHREX_WATCHER_BRIDGE_ADDRESS) envVars.ETHREX_WATCHER_BRIDGE_ADDRESS = volumeEnv.ETHREX_WATCHER_BRIDGE_ADDRESS;
+      if (volumeEnv.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = volumeEnv.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS;
+    } catch {
+      // Fallback to DB values
+      if (deployment.bridge_address) envVars.ETHREX_WATCHER_BRIDGE_ADDRESS = deployment.bridge_address;
+      if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
+    }
 
     const toolsPorts = {
       toolsL1ExplorerPort: deployment.tools_l1_explorer_port,

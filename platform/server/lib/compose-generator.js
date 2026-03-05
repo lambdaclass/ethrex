@@ -108,11 +108,8 @@ function generateComposeFile(opts) {
   // L1 build
   const l1Build = `    build: ${ETHREX_ROOT}`;
 
-  // Deployer env vars
+  // Deployer env vars (ETHREX_L2_SP1 is set in the base template from profile.sp1Enabled)
   let deployerExtraEnv = "";
-  if (profile.sp1Enabled) {
-    deployerExtraEnv += `      - ETHREX_L2_SP1=true\n`;
-  }
   if (profile.registerGuestPrograms) {
     deployerExtraEnv += `      - ETHREX_REGISTER_GUEST_PROGRAMS=${profile.registerGuestPrograms}\n`;
   }
@@ -128,12 +125,12 @@ function generateComposeFile(opts) {
   }
 
   // L2 extra config
+  // Note: genesis volume is always mounted in the base template via profile.genesisFile,
+  // so we only add the programs.toml volume here (no duplicate genesis mount).
   let l2ExtraVolumes = "";
-  let l2Genesis = "/genesis/l2.json";
-  if (profile.genesisFile !== "l2.json") {
-    l2ExtraVolumes = `      - ${ETHREX_ROOT}/fixtures/genesis/${profile.genesisFile}:/genesis/${profile.genesisFile}\n`;
-    l2Genesis = `/genesis/${profile.genesisFile}`;
-  }
+  let l2Genesis = profile.genesisFile !== "l2.json"
+    ? `/genesis/${profile.genesisFile}`
+    : "/genesis/l2.json";
   if (profile.programsToml) {
     l2ExtraVolumes += `      - ${ETHREX_ROOT}/crates/l2/${profile.programsToml}:/etc/ethrex/programs.toml\n`;
   }
@@ -197,7 +194,7 @@ ${deployerExtraVolumes}    environment:
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=${profile.deployRich}
       - ETHREX_L2_RISC0=false
-      - ETHREX_L2_SP1=\${ETHREX_L2_SP1:-false}
+      - ETHREX_L2_SP1=${profile.sp1Enabled}
       - ETHREX_L2_TDX=false
       - ETHREX_DEPLOYER_ALIGNED=false
       - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
@@ -235,6 +232,7 @@ ${buildSection}
       - ETHREX_BASED=false
       - ETHREX_COMMITTER_COMMIT_TIME=\${ETHREX_COMMITTER_COMMIT_TIME:-60000}
       - ETHREX_WATCHER_WATCH_INTERVAL=\${ETHREX_WATCHER_WATCH_INTERVAL:-12000}
+      - ETHREX_OSAKA_ACTIVATION_TIME=\${ETHREX_OSAKA_ACTIVATION_TIME:-1761677592}
       - ETHREX_GUEST_PROGRAM_ID=${programSlug}
       - ETHREX_LOG_LEVEL
     volumes:
@@ -316,9 +314,8 @@ function generateRemoteComposeFile(opts) {
     ? `/genesis/${profile.genesisFile}`
     : "/genesis/l2.json";
 
-  // Deployer extra env
+  // Deployer extra env (ETHREX_L2_SP1 is set in the base template from profile.sp1Enabled)
   let deployerExtraEnv = "";
-  if (profile.sp1Enabled) deployerExtraEnv += `      - ETHREX_L2_SP1=true\n`;
   if (profile.registerGuestPrograms) deployerExtraEnv += `      - ETHREX_REGISTER_GUEST_PROGRAMS=${profile.registerGuestPrograms}\n`;
   if (profile.guestPrograms) deployerExtraEnv += `      - GUEST_PROGRAMS=${profile.guestPrograms}\n`;
   deployerExtraEnv += `      - ETHREX_DEPLOYER_GENESIS_L2_PATH=${workdir}/fixtures/genesis/${profile.genesisFile}\n`;
@@ -371,7 +368,7 @@ services:
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=true
       - ETHREX_L2_RISC0=false
-      - ETHREX_L2_SP1=\${ETHREX_L2_SP1:-false}
+      - ETHREX_L2_SP1=${profile.sp1Enabled}
       - ETHREX_L2_TDX=false
       - ETHREX_DEPLOYER_ALIGNED=false
       - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
@@ -407,6 +404,7 @@ ${deployerExtraEnv}    depends_on:
       - ETHREX_BASED=false
       - ETHREX_COMMITTER_COMMIT_TIME=60000
       - ETHREX_WATCHER_WATCH_INTERVAL=12000
+      - ETHREX_OSAKA_ACTIVATION_TIME=1761677592
       - ETHREX_GUEST_PROGRAM_ID=${programSlug}
       - ETHREX_LOG_LEVEL
     volumes:
