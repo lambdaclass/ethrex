@@ -586,9 +586,10 @@ impl L1ProofSender {
         batches: &[(u64, HashMap<ProverType, BatchProof>)],
     ) -> Result<(), ProofSenderError> {
         let batch_count = batches.len();
+        let last_batch = batches.last().map(|(n, _)| *n).unwrap_or(first_batch);
         info!(
             first_batch,
-            batch_count, "Sending batch verification transaction to L1"
+            last_batch, "Sending batch verification transaction to L1"
         );
 
         let batch_refs: Vec<(u64, &HashMap<ProverType, BatchProof>)> =
@@ -644,7 +645,7 @@ impl L1ProofSender {
 
         info!(
             first_batch,
-            batch_count,
+            last_batch,
             ?verify_tx_hash,
             "Sent batch verification transaction to L1"
         );
