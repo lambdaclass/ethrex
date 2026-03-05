@@ -770,7 +770,10 @@ impl StoreEngineRollup for SQLStore {
 
     async fn get_latest_sent_to_aligned(&self) -> Result<(u64, u64), RollupStoreError> {
         let mut rows = self
-            .query("SELECT batch, sent_at FROM latest_sent_to_aligned WHERE _id = 0", ())
+            .query(
+                "SELECT batch, sent_at FROM latest_sent_to_aligned WHERE _id = 0",
+                (),
+            )
             .await?;
         if let Some(row) = rows.next().await? {
             let batch = read_from_row_int(&row, 0)?;
