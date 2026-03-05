@@ -1162,6 +1162,7 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
             disable_balance_check: false,
+            disable_nonce_check: false,
         };
 
         Ok(env)
@@ -1222,6 +1223,7 @@ impl LEVM {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
         env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+        env.disable_nonce_check = true;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -1688,6 +1690,7 @@ fn env_from_generic(
         is_privileged: false,
         fee_token: tx.fee_token,
         disable_balance_check: false,
+        disable_nonce_check: false,
     })
 }
 
