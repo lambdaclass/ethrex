@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use ethrex_common::H256;
-use ethrex_common::{serde_utils, tracing::CallTraceFrame, types::BlockNumber};
+use ethrex_common::{serde_utils, tracing::CallTraceFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -18,7 +18,7 @@ pub struct TraceTransactionRequest {
 }
 
 pub struct TraceBlockByNumberRequest {
-    number: BlockNumber,
+    block: BlockIdentifier,
     trace_config: TraceConfig,
 }
 
@@ -142,22 +142,10 @@ impl RpcHandler for TraceBlockByNumberRequest {
             TraceConfig::default()
         };
 
-        // Parse block number: accept both plain integers (42) and hex strings ("0x2a")
-        // Blockscout sends hex strings like "0x13E"
-        let number = match BlockIdentifier::parse(params[0].clone(), 0) {
-            Ok(block_id) => match block_id {
-                BlockIdentifier::Number(n) => n,
-                BlockIdentifier::Tag(_) => {
-                    return Err(RpcErr::BadParams(
-                        "Block tags not supported for debug_traceBlockByNumber".to_owned(),
-                    ));
-                }
-            },
-            Err(_) => serde_json::from_value(params[0].clone())?,
-        };
+        let block = BlockIdentifier::parse(params[0].clone(), 0)?;
 
         Ok(TraceBlockByNumberRequest {
-            number,
+            block,
             trace_config,
         })
     }
@@ -166,9 +154,14 @@ impl RpcHandler for TraceBlockByNumberRequest {
         &self,
         context: crate::rpc::RpcApiContext,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+        let block_number = self
+            .block
+            .resolve_block_number(&context.storage)
+            .await?
+            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
         let block = context
             .storage
-            .get_block_by_number(self.number)
+            .get_block_by_number(block_number)
             .await?
             .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
         let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
