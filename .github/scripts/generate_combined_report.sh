@@ -386,3 +386,33 @@ jq -n --arg header "$header_text" --arg text "$slack_text" '{
     { "type": "section", "text": { "type": "mrkdwn", "text": $text } }
   ]
 }' >"${OUTPUT_DIR}/daily_report_slack.json"
+
+# --- Generate Telegram HTML report ---
+# Uses <pre> for code sections (monospace) and <b> for bold headers
+tg_text="<b>${header_text}</b>"$'\n\n'
+
+if [[ -n "$loc_text" ]]; then
+  tg_text+="<b>Lines of code</b>"$'\n'
+  tg_text+="<pre>"$'\n'
+  tg_text+="${loc_text}"$'\n'
+  tg_text+="</pre>"$'\n\n'
+fi
+
+tg_text+="<b>Comparative performance report (24h average)</b>"$'\n'
+tg_text+="Comparing ${comparing_line}"$'\n\n'
+
+tg_text+="<b>Block Time</b>"$'\n'
+tg_text+="<pre>"$'\n'
+while read -r _val client; do
+  tg_text+="$(fmt_bt_row "$client")"$'\n'
+done < <(printf '%s\n' "${bt_sort_entries[@]}" | LC_ALL=C sort -n)
+tg_text+="</pre>"$'\n\n'
+
+tg_text+="<b>Throughput</b>"$'\n'
+tg_text+="<pre>"$'\n'
+while read -r _val client; do
+  tg_text+="$(fmt_tput_row "$client")"$'\n'
+done < <(printf '%s\n' "${tput_sort_entries[@]}" | LC_ALL=C sort -rn)
+tg_text+="</pre>"
+
+printf "%s" "$tg_text" >"${OUTPUT_DIR}/daily_report_telegram.txt"
