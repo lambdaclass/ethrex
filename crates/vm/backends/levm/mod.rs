@@ -103,9 +103,6 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
-        // Post-refund accumulator for check_gas_limit (pre-refund would reject valid
-        // tightly-packed Amsterdam blocks when executing sequentially without BAL)
-        let mut gas_used_for_limit_check = 0_u64;
         let transactions_with_sender =
             block.body.get_transactions_with_sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
@@ -113,7 +110,7 @@ impl LEVM {
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             check_gas_limit(
-                gas_used_for_limit_check,
+                cumulative_gas_used,
                 tx.gas_limit(),
                 block.header.gas_limit,
             )?;
@@ -138,7 +135,6 @@ impl LEVM {
             // - gas_spent (POST-REFUND) for receipt cumulative_gas_used and limit check
             // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
             cumulative_gas_used += report.gas_spent;
-            gas_used_for_limit_check += report.gas_spent;
             block_gas_used += report.gas_used;
 
             let receipt = Receipt::new(
@@ -271,16 +267,13 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
-        // Post-refund accumulator for check_gas_limit (pre-refund would reject valid
-        // tightly-packed Amsterdam blocks when executing sequentially without BAL)
-        let mut gas_used_for_limit_check = 0_u64;
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             check_gas_limit(
-                gas_used_for_limit_check,
+                cumulative_gas_used,
                 tx.gas_limit(),
                 block.header.gas_limit,
             )?;
@@ -319,7 +312,6 @@ impl LEVM {
             // - gas_spent (POST-REFUND) for receipt cumulative_gas_used and limit check
             // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
             cumulative_gas_used += report.gas_spent;
-            gas_used_for_limit_check += report.gas_spent;
             block_gas_used += report.gas_used;
 
             let receipt = Receipt::new(
