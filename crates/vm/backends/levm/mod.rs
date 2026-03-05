@@ -910,8 +910,19 @@ impl LEVM {
                             }
                         }
                         None => {
-                            // Tolerate extraneous code entries when account is not
-                            // in execution state — state root catches real mismatches.
+                            // No-op check: compare against pre-state code.
+                            let pre_code = system_seed
+                                .get(&addr)
+                                .and_then(|a| {
+                                    codes.get(&a.info.code_hash).map(|c| c.bytecode.clone())
+                                })
+                                .unwrap_or_default();
+                            if *expected_code != pre_code {
+                                return Err(format!(
+                                    "account {addr:?} has BAL code change at {bal_idx} \
+                                     but not in execution state"
+                                ));
+                            }
                         }
                     }
                 }
@@ -925,10 +936,9 @@ impl LEVM {
                         let actual_value = actual.and_then(|a| a.storage.get(&key)).copied();
                         if actual_value != Some(expected_value) {
                             // If account not in execution state, check pre-state
-                            if actual.is_none() {
-                                let pre_value = store
-                                    .get_storage_value(addr, key)
-                                    .unwrap_or_default();
+                            if actual.is_none() || actual_value.is_none() {
+                                let pre_value =
+                                    store.get_storage_value(addr, key).unwrap_or_default();
                                 if expected_value == pre_value {
                                     continue; // Extraneous entry
                                 }
