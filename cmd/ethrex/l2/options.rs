@@ -36,7 +36,8 @@ pub struct Options {
         long = "sponsorable-addresses",
         value_name = "SPONSORABLE_ADDRESSES_PATH",
         help = "Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs",
-        help_heading = "L2 options"
+        help_heading = "L2 options",
+        env = "ETHREX_SPONSORABLE_ADDRESSES_PATH"
     )]
     pub sponsorable_addresses_file_path: Option<String>,
     //TODO: make optional when the the sponsored feature is complete
@@ -215,6 +216,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .proof_coordinator_tdx_private_key,
                 qpl_tool_path: opts.proof_coordinator_opts.proof_coordinator_qpl_tool_path,
                 validium: opts.validium,
+                prover_timeout_ms: opts.proof_coordinator_opts.prover_timeout_ms,
             },
             based: BasedConfig {
                 enabled: opts.based,
@@ -775,6 +777,15 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
+    #[arg(
+        long = "proof-coordinator.prover-timeout",
+        default_value = "600000",
+        value_name = "UINT64",
+        env = "ETHREX_PROOF_COORDINATOR_PROVER_TIMEOUT",
+        help = "Timeout in milliseconds before a batch assignment to a prover is considered stale.",
+        help_heading = "Proof coordinator options"
+    )]
+    pub prover_timeout_ms: u64,
 }
 
 impl Default for ProofCoordinatorOptions {
@@ -794,6 +805,7 @@ impl Default for ProofCoordinatorOptions {
             proof_coordinator_qpl_tool_path: Some(
                 DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH.to_string(),
             ),
+            prover_timeout_ms: 600_000,
         }
     }
 }
@@ -1076,6 +1088,7 @@ pub struct ProverClientOptions {
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
+        env = "PROVER_CLIENT_LOG_LEVEL",
         help = "The verbosity level used for logs.",
         long_help = "Possible values: info, debug, trace, warn, error",
         help_heading = "Prover client options"

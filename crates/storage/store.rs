@@ -710,6 +710,29 @@ impl Store {
         Ok(Some(code))
     }
 
+    /// Check if account code exists by its hash, without constructing the full `Code` struct.
+    /// More efficient than `get_account_code` for existence checks since it skips
+    /// RLP decoding and `Code` struct construction (no `jump_targets` deserialization).
+    /// Note: The underlying `get()` still reads the value from RocksDB (including blob files).
+    pub fn code_exists(&self, code_hash: H256) -> Result<bool, StoreError> {
+        // Check cache first
+        if self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        // Check DB without reading the full value
+        Ok(self
+            .backend
+            .begin_read()?
+            .get(ACCOUNT_CODES, code_hash.as_bytes())?
+            .is_some())
+    }
+
     /// Get code metadata (length) by its hash.
     ///
     /// Checks cache first, falls back to database. If metadata is missing,
@@ -2707,7 +2730,7 @@ impl Store {
         Ok(header)
     }
 
-    fn last_written(&self) -> Result<Vec<u8>, StoreError> {
+    pub fn last_written(&self) -> Result<Vec<u8>, StoreError> {
         let last_computed_flatkeyvalue = self
             .last_computed_flatkeyvalue
             .read()
