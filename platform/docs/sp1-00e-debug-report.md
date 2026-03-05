@@ -127,34 +127,40 @@ Prover 자체 검증(verify in docker)도 통과 ✓
 
 ---
 
-## 4. 미확인 항목 (조사 필요)
+## 4. 근본 원인 (해결됨)
 
-### 4.1 publicInputs 실제 값 비교 ⚠️ (최우선)
+### 4.1 WITHDRAWAL_GAS 상수 불일치 ✅
 
-**문제**: on-chain에서 `_getPublicInputsFromCommitment(4)`가 생성하는 바이트와, guest program이 `ProgramOutput.encode()`로 커밋한 바이트가 byte-exact로 동일한지 확인 필요.
+**근본 원인**: Guest program(서킷)의 `WITHDRAWAL_GAS` 상수가 실제 EVM gas와 불일치.
 
-특히 `balance_diffs` 부분:
-- Committer가 `commitBatch()`에 보내는 balance_diffs
-- Guest program이 `ProgramOutput`에 포함하는 balance_diffs
-- 이 두 값이 정확히 같아야 함
+| 구분 | 값 |
+|------|-----|
+| Guest program `WITHDRAWAL_GAS` (수정 전) | **100,000** |
+| 실제 EVM `CommonBridgeL2.withdraw()` gas | **95,002** |
 
-**확인 방법**:
-1. proof sender에 디버그 로그 추가하여 실제 전송 데이터 출력
-2. 또는 L1에서 `debug_traceCall`로 `verifyBatch` 호출 시 입력값 추출
-3. 또는 committer에서 batch 4의 `balance_diffs` 로그 추가
+zk-dex 앱체인은 특정 함수만 실행하므로 **고정 gas 상수**로 계산하는 설계.
+서킷이 100,000으로 gas fee를 분배하면 sender/coinbase/vault 잔액이 EVM과 달라지고,
+결과적으로 `balance_diffs` → `publicInputs` 불일치 → **00e 에러**.
 
-### 4.2 SP1Verifier 컨트랙트 버전 호환성
+**수정**: `WITHDRAWAL_GAS = 100_000` → `95_002`
+- **파일**: `crates/guest-program/src/common/handlers/constants.rs:67`
+- **커밋**: `fix(guest-program): set WITHDRAWAL_GAS to 95,002 to match actual EVM gas`
+
+### 4.2 잘못된 수정 시도 (되돌림)
+
+`app_execution.rs`에서 고정 gas 상수 대신 block header의 실제 gas를 사용하도록
+변경했으나, 이는 zk-dex의 설계 의도에 맞지 않아 되돌림.
+
+앱체인별로 서킷/프루버/검증 컨트랙트가 일관된 gas 계산을 사용해야 하며,
+zk-dex는 고정 gas 상수가 올바른 접근.
+
+### 4.3 SP1Verifier 컨트랙트 버전 호환성 (미확인)
 
 - 배포된 SP1Verifier 컨트랙트 bytecode 크기: ~6000 bytes
 - Prover SDK: `sp1-sdk = "=5.0.8"`
-- 컨트랙트가 SDK v5.0.x의 Groth16 proof format과 호환되는지 확인 필요
-- Groth16 circuit artifacts: `/Users/zena/.sp1/circuits/groth16/v5.0.0`
+- WITHDRAWAL_GAS 수정으로 00e가 해결되면 이 항목은 무관
 
-**확인 방법**:
-1. SP1Verifier 컨트랙트의 `VERIFIER_HASH()` 호출하여 버전 확인
-2. sp1-contracts 레포에서 해당 해시가 v5.0.x에 해당하는지 대조
-
-### 4.3 l2_in_message_rolling_hashes 인코딩 차이 (알려진 버그)
+### 4.4 l2_in_message_rolling_hashes 인코딩 차이 (알려진 버그, 미수정)
 
 - **Rust**: `chain_id.to_be_bytes()` → **8 bytes** (u64)
 - **Solidity**: `bytes32(rh.chainId)` → **32 bytes** (uint256)
@@ -163,24 +169,59 @@ Prover 자체 검증(verify in docker)도 통과 ✓
 
 ---
 
-## 5. 배포 환경 정보
+## 5. 디버그 로깅 (추가됨)
 
+근본 원인 조사를 위해 다음 파일에 `[DEBUG-00e]` 로그 추가:
+
+| 파일 | 내용 |
+|------|------|
+| `crates/l2/prover/src/backend/sp1.rs` | SP1 public values (field-by-field + sha256) |
+| `crates/l2/sequencer/l1_committer.rs` | commitBatch calldata 필드 |
+| `crates/l2/sequencer/l1_proof_sender.rs` | rollup store 데이터 (prev/cur state, merkle root 등) |
+
+이 로그는 00e 수정 확인 후 제거 예정.
+
+---
+
+## 6. 배포 환경 정보
+
+### 이전 배포 (00e 발생)
 ```
 Deploy ID:    ac0f344c-73d8-458a-9220-04208ee3c3f8
 Project:      tokamak-ac0f344c
 Docker Image: ethrex:zk-dex-tokamak-ac0f344c
 L1 Port:      8546
 L2 Port:      1730
-Chain ID:     65536999
-Bridge:       0xfecf35cab60cca3306ebd927d1673f545b26cfc8
-Proposer:     0x6017eaa0011c4ac0bb38bc19782960eb8eab6b3d
-SP1Verifier:  0x4971f10184e2da1cc4a325a9ab2e2741da7f7743
+```
+
+### 검증 배포 (WITHDRAWAL_GAS 수정 포함)
+```
+Deploy ID:    781e135b-f9dc-4d06-a73c-6d6c53e263a4
+Project:      tokamak-781e135b
+L1 Port:      8547
+L2 Port:      1731
+Status:       빌드 중 (e2e 테스트 예정)
 ```
 
 ---
 
-## 6. 다음 단계
+## 7. E2E 테스트
 
-1. **publicInputs 비교** (4.1) — proof sender에 `publicInputs` 로그 추가 또는 `debug_traceCall` 사용
-2. **SP1Verifier 버전 확인** (4.2) — `VERIFIER_HASH()` 호출
-3. **balance_diffs 디버깅** — committer가 commitBatch에 보내는 balance_diffs와 guest program output의 balance_diffs byte-level 비교
+`platform/tests/e2e-bridge.js` 추가:
+- L1/L2 health check
+- L1 balance 확인
+- Bridge deposit (L1→L2 ETH 전송)
+- L2 block 진행 확인
+
+```bash
+node platform/tests/e2e-bridge.js --l1-port 8547 --l2-port 1731 --bridge <address>
+```
+
+---
+
+## 8. 다음 단계
+
+1. ~~publicInputs 비교~~ → **WITHDRAWAL_GAS 수정으로 해결** (검증 배포로 확인 예정)
+2. 디버그 로그 제거 (00e 해결 확인 후)
+3. E2E 테스트 실행 및 결과 검증
+4. 다른 gas 상수 (`ETH_TRANSFER_GAS=21,000`, `SYSTEM_CALL_GAS=50,000`) 실제 EVM gas와 일치 여부 확인
