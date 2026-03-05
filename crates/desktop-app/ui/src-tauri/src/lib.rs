@@ -1,8 +1,10 @@
 mod appchain_manager;
 mod commands;
 mod process_manager;
+mod runner;
 
 use commands::*;
+use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -59,7 +61,8 @@ pub fn run() {
             }
         })
         .manage(process_manager::ProcessManager::new())
-        .manage(appchain_manager::AppchainManager::new())
+        .manage(Arc::new(appchain_manager::AppchainManager::new()))
+        .manage(Arc::new(runner::ProcessRunner::new()))
         .invoke_handler(tauri::generate_handler![
             get_all_status,
             start_node,
@@ -73,6 +76,7 @@ pub fn run() {
             delete_appchain,
             start_appchain_setup,
             get_setup_progress,
+            stop_appchain,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

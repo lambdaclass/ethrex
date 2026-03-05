@@ -78,56 +78,56 @@ export default function OpenL2View() {
 
   if (selectedL2) {
     return (
-      <div className="flex flex-col h-full bg-[var(--color-bg-chat)]">
+      <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
         {/* Detail Header */}
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
           <button
             onClick={() => setSelectedL2(null)}
-            className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] cursor-pointer"
+            className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] cursor-pointer"
           >
             ← {t('openl2.back', lang)}
           </button>
         </div>
 
         {/* Detail Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-[var(--color-border)] flex items-center justify-center text-3xl">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[var(--color-bg-sidebar)] flex items-center justify-center text-2xl border border-[var(--color-border)]">
               {selectedL2.icon}
             </div>
             <div>
-              <h1 className="text-xl font-bold">{selectedL2.name}</h1>
-              <div className="text-sm text-[var(--color-text-secondary)]">by {selectedL2.operator}</div>
-              <div className="flex items-center gap-2 mt-1">
+              <h1 className="text-base font-semibold">{selectedL2.name}</h1>
+              <div className="text-[11px] text-[var(--color-text-secondary)]">by {selectedL2.operator}</div>
+              <div className="flex items-center gap-2 mt-0.5">
                 <span className={`w-2 h-2 rounded-full ${selectedL2.status === 'online' ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-secondary)]'}`} />
-                <span className="text-xs text-[var(--color-text-secondary)]">
+                <span className="text-[11px] text-[var(--color-text-secondary)]">
                   {selectedL2.status === 'online' ? t('openl2.online', lang) : t('openl2.offline', lang)} · {selectedL2.members.toLocaleString()} {t('openl2.users', lang)}
                 </span>
               </div>
             </div>
           </div>
 
-          <p className="text-sm text-[var(--color-text-secondary)]">{selectedL2.description}</p>
+          <p className="text-[13px] text-[var(--color-text-secondary)]">{selectedL2.description}</p>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {selectedL2.hashtags.map(tag => (
-              <span key={tag} className="text-xs bg-[var(--color-tag-bg)] px-3 py-1 rounded-full text-[var(--color-tag-text)]">
+              <span key={tag} className="text-[11px] bg-[var(--color-tag-bg)] px-2 py-0.5 rounded text-[var(--color-tag-text)]">
                 #{tag}
               </span>
             ))}
           </div>
 
           {/* Connection Info */}
-          <section className="bg-[var(--color-bubble-ai)] rounded-xl p-5 space-y-3">
-            <h2 className="font-medium">{t('openl2.connectionInfo', lang)}</h2>
-            <div className="space-y-2 text-sm">
+          <section className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 space-y-2 border border-[var(--color-border)]">
+            <h2 className="text-[13px] font-medium">{t('openl2.connectionInfo', lang)}</h2>
+            <div className="space-y-1.5 text-[12px]">
               <div className="flex justify-between">
                 <span className="text-[var(--color-text-secondary)]">Chain ID</span>
                 <span className="font-mono">{selectedL2.chainId}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--color-text-secondary)]">RPC URL</span>
-                <span className="font-mono text-xs">{selectedL2.rpcUrl}</span>
+                <span className="font-mono text-[11px]">{selectedL2.rpcUrl}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--color-text-secondary)]">{t('openl2.lastActive', lang)}</span>
@@ -137,23 +137,23 @@ export default function OpenL2View() {
           </section>
 
           {/* Actions */}
-          <div className="grid grid-cols-2 gap-3">
-            <button className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-xl py-3 text-sm font-medium transition-colors cursor-pointer">
+          <div className="grid grid-cols-2 gap-2">
+            <button className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-xl py-2.5 text-[13px] font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]">
               {t('openl2.connect', lang)}
             </button>
-            <button className="bg-[var(--color-border)] hover:bg-[var(--color-bubble-ai)] rounded-xl py-3 text-sm font-medium transition-colors cursor-pointer">
+            <button className="bg-[var(--color-bg-sidebar)] hover:bg-[var(--color-border)] rounded-xl py-2.5 text-[13px] font-medium transition-colors cursor-pointer border border-[var(--color-border)]">
               {t('openl2.addDashboard', lang)}
             </button>
           </div>
 
           {/* AI Guide */}
-          <section className="bg-[var(--color-bubble-ai)] rounded-xl p-5 space-y-3">
-            <h2 className="font-medium">{t('openl2.aiGuide', lang)}</h2>
-            <p className="text-xs text-[var(--color-text-secondary)]">
+          <section className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 space-y-2 border border-[var(--color-border)]">
+            <h2 className="text-[13px] font-medium">{t('openl2.aiGuide', lang)}</h2>
+            <p className="text-[11px] text-[var(--color-text-secondary)]">
               {t('openl2.aiGuideDesc', lang)}
             </p>
-            <button className="bg-[var(--color-border)] hover:bg-[var(--color-accent)] hover:text-white rounded-lg px-4 py-2 text-sm transition-colors cursor-pointer">
-              🤖 {t('openl2.askAi', lang)}
+            <button className="bg-[var(--color-bg-main)] hover:bg-[var(--color-border)] rounded-lg px-3 py-1.5 text-[12px] transition-colors cursor-pointer border border-[var(--color-border)]">
+              {t('openl2.askAi', lang)}
             </button>
           </section>
         </div>
@@ -162,48 +162,46 @@ export default function OpenL2View() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-[var(--color-bg-chat)]">
-      {/* Header with Search */}
-      <div className="px-6 py-4 border-b border-[var(--color-border)] space-y-3">
+    <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold">{t('openl2.title', lang)}</h1>
-          <button className="bg-[var(--color-accent)] text-sm px-4 py-1.5 rounded-lg hover:bg-[var(--color-accent-hover)] transition-colors cursor-pointer">
+          <h1 className="text-base font-semibold">{t('openl2.title', lang)}</h1>
+          <button className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-xs font-medium px-3 py-1.5 rounded-lg transition-colors cursor-pointer text-[var(--color-accent-text)]">
             + {t('openl2.registerMyL2', lang)}
           </button>
         </div>
-        <div className="relative">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder={t('openl2.searchPlaceholder', lang)}
-            className="w-full bg-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm outline-none placeholder-[var(--color-text-secondary)] pl-9"
-          />
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]">🔍</span>
-        </div>
-      </div>
-
-      {/* Hashtag Filter Bar */}
-      <div className="px-6 py-2 border-b border-[var(--color-border)] flex gap-2 overflow-x-auto">
-        {popularTags.map(tag => (
-          <button
-            key={tag}
-            onClick={() => setSelectedTag(tag)}
-            className={`px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors cursor-pointer ${
-              selectedTag === tag
-                ? 'bg-[var(--color-accent)] text-[var(--color-accent-text)]'
-                : 'bg-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-            }`}
+        <div className="flex items-center gap-2 mt-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder={t('openl2.searchPlaceholder', lang)}
+              className="w-full bg-[var(--color-bg-sidebar)] rounded-lg px-3 py-2 text-[13px] outline-none placeholder-[var(--color-text-secondary)] border border-[var(--color-border)] pl-8"
+            />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </div>
+          <select
+            value={selectedTag}
+            onChange={e => setSelectedTag(e.target.value)}
+            className="bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-[13px] outline-none cursor-pointer"
           >
-            {tag === '전체' ? t('openl2.all', lang) : `#${tag}`}
-          </button>
-        ))}
+            {popularTags.map(tag => (
+              <option key={tag} value={tag}>
+                {tag === '전체' ? t('openl2.all', lang) : `#${tag}`}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* L2 List */}
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)] text-sm">
+          <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)] text-[13px]">
             {t('openl2.noResults', lang)}
           </div>
         ) : (
@@ -211,21 +209,18 @@ export default function OpenL2View() {
             <button
               key={l2.id}
               onClick={() => setSelectedL2(l2)}
-              className="w-full px-6 py-4 flex items-center gap-4 hover:bg-[var(--color-border)] transition-colors cursor-pointer border-b border-[var(--color-border)] text-left"
+              className="w-full px-4 py-3 flex items-center gap-3 hover:bg-[var(--color-bg-sidebar)] transition-colors cursor-pointer border-b border-[var(--color-border)] text-left"
             >
-              {/* Icon */}
-              <div className="w-12 h-12 rounded-xl bg-[var(--color-bubble-ai)] flex items-center justify-center text-2xl flex-shrink-0">
+              <div className="w-10 h-10 rounded-xl bg-[var(--color-bg-sidebar)] flex items-center justify-center text-xl flex-shrink-0">
                 {l2.icon}
               </div>
-
-              {/* Info */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium truncate">{l2.name}</span>
-                  <span className="text-xs text-[var(--color-text-secondary)]">{l2.members.toLocaleString()}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-medium truncate">{l2.name}</span>
+                  <span className="text-[11px] text-[var(--color-text-secondary)]">{l2.members.toLocaleString()}</span>
                   <span className={`w-2 h-2 rounded-full flex-shrink-0 ${l2.status === 'online' ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-secondary)]'}`} />
                 </div>
-                <div className="text-xs text-[var(--color-text-secondary)] truncate mt-0.5">
+                <div className="text-[11px] text-[var(--color-text-secondary)] truncate mt-0.5">
                   {l2.description}
                 </div>
                 <div className="flex gap-1 mt-1">
@@ -239,9 +234,7 @@ export default function OpenL2View() {
                   )}
                 </div>
               </div>
-
-              {/* Time */}
-              <div className="text-xs text-[var(--color-text-secondary)] flex-shrink-0">
+              <div className="text-[11px] text-[var(--color-text-secondary)] flex-shrink-0">
                 {l2.lastActive}
               </div>
             </button>

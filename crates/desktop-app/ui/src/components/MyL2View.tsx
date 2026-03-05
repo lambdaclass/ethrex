@@ -68,14 +68,24 @@ const statusDot = (status: string) => {
 
 interface MyL2ViewProps {
   initialNetwork?: NetworkMode
+  onNetworkConsumed?: () => void
 }
 
-export default function MyL2View({ initialNetwork }: MyL2ViewProps = {}) {
+export default function MyL2View({ initialNetwork, onNetworkConsumed }: MyL2ViewProps = {}) {
   const { lang } = useLang()
   const [l2s, setL2s] = useState<L2Config[]>([])
   const [selectedL2, setSelectedL2] = useState<L2Config | null>(null)
   const [showCreate, setShowCreate] = useState(!!initialNetwork)
   const [createNetwork, setCreateNetwork] = useState<NetworkMode | undefined>(initialNetwork)
+
+  // initialNetwork가 바뀌면 위자드 열기
+  useEffect(() => {
+    if (initialNetwork) {
+      setShowCreate(true)
+      setCreateNetwork(initialNetwork)
+      onNetworkConsumed?.()
+    }
+  }, [initialNetwork])
   const [setupChain, setSetupChain] = useState<{ id: string; name: string; icon: string } | null>(null)
 
   const loadAppchains = async () => {
@@ -140,12 +150,12 @@ export default function MyL2View({ initialNetwork }: MyL2ViewProps = {}) {
   }
 
   if (selectedL2) {
-    return <L2DetailView l2={selectedL2} onBack={() => setSelectedL2(null)} />
+    return <L2DetailView l2={selectedL2} onBack={() => setSelectedL2(null)} onRefresh={loadAppchains} />
   }
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)] flex items-center justify-between">
         <h1 className="text-base font-semibold">{t('myl2.title', lang)} <span className="text-[var(--color-text-secondary)] text-xs font-normal">{l2s.length}</span></h1>
         <button
           onClick={() => setShowCreate(true)}

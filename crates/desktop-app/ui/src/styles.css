@@ -22,19 +22,19 @@
 
 /* Dark Theme */
 .dark {
-  --color-bg-main: #1a1a2e;
-  --color-bg-sidebar: #16213e;
-  --color-bg-chat: #0f2b46;
+  --color-bg-main: #2a2a38;
+  --color-bg-sidebar: #363648;
+  --color-bg-chat: #263040;
   --color-accent: #fee500;
   --color-accent-hover: #ffd900;
   --color-accent-text: #191919;
   --color-tag-text: #fee500;
-  --color-tag-bg: #2a2a3a;
-  --color-text-primary: #eaeaea;
-  --color-text-secondary: #8899aa;
+  --color-tag-bg: #464436;
+  --color-text-primary: #f0f0f0;
+  --color-text-secondary: #9aa4b4;
   --color-bubble-user: #fee500;
-  --color-bubble-ai: #2a2a4a;
-  --color-border: #2a3a50;
+  --color-bubble-ai: #404056;
+  --color-border: #4e4e64;
   --color-success: #4ade80;
   --color-warning: #fbbf24;
   --color-error: #f87171;

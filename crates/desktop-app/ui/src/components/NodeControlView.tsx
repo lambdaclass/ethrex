@@ -47,20 +47,20 @@ export default function NodeControlView() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-[var(--color-bg-chat)]">
-      <div className="px-6 py-4 border-b border-[var(--color-border)]">
-        <h1 className="text-lg font-semibold">{t('nodes.title', lang)}</h1>
-        <p className="text-xs text-[var(--color-text-secondary)] mt-1">{t('nodes.subtitle', lang)}</p>
+    <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
+        <h1 className="text-base font-semibold">{t('nodes.title', lang)}</h1>
+        <p className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">{t('nodes.subtitle', lang)}</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {nodes.map(node => (
-          <div key={node.name} className="bg-[var(--color-bubble-ai)] rounded-xl p-5 flex items-center justify-between">
-            <div className="flex items-center gap-4">
+          <div key={node.name} className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 flex items-center justify-between border border-[var(--color-border)]">
+            <div className="flex items-center gap-3">
               <div className="w-3 h-3 rounded-full" style={{ backgroundColor: statusColor(node.status) }} />
               <div>
-                <div className="font-medium">{node.name}</div>
-                <div className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                <div className="text-[13px] font-medium">{node.name}</div>
+                <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
                   {statusText(node.status)} {node.pid ? `(PID: ${node.pid})` : ''}
                 </div>
               </div>

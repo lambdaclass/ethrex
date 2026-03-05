@@ -84,6 +84,7 @@ pub struct AppchainManager {
     pub config_dir: PathBuf,
 }
 
+
 impl AppchainManager {
     pub fn new() -> Self {
         let config_dir = dirs::home_dir()
@@ -270,6 +271,11 @@ impl AppchainManager {
         let mut map = self.setup_progress.lock().unwrap();
         if let Some(progress) = map.get_mut(id) {
             progress.logs.push(log);
+            // Keep only the last 500 log lines
+            if progress.logs.len() > 500 {
+                let drain_count = progress.logs.len() - 500;
+                progress.logs.drain(..drain_count);
+            }
         }
     }
 

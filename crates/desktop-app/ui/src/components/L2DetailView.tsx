@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useLang } from '../App'
 import { t } from '../i18n'
 import type { L2Config } from './MyL2View'
@@ -6,6 +7,7 @@ import type { L2Config } from './MyL2View'
 interface Props {
   l2: L2Config
   onBack: () => void
+  onRefresh?: () => void
 }
 
 type DetailTab = 'control' | 'logs' | 'config' | 'dashboard'
@@ -16,9 +18,18 @@ const statusColor = (status: string) => {
   return 'var(--color-text-secondary)'
 }
 
-export default function L2DetailView({ l2, onBack }: Props) {
+export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
   const { lang } = useLang()
   const [activeTab, setActiveTab] = useState<DetailTab>('control')
+
+  const handleStop = async () => {
+    try {
+      await invoke('stop_appchain', { id: l2.id })
+      onRefresh?.()
+    } catch (e) {
+      console.error('Failed to stop appchain:', e)
+    }
+  }
 
   const tabs: { id: DetailTab; labelKey: string }[] = [
     { id: 'control', labelKey: 'myl2.detail.control' },
@@ -34,21 +45,21 @@ export default function L2DetailView({ l2, onBack }: Props) {
   ]
 
   return (
-    <div className="flex flex-col h-full bg-[var(--color-bg-chat)]">
+    <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-[var(--color-border)]">
-        <div className="flex items-center gap-3 mb-3">
-          <button onClick={onBack} className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] cursor-pointer">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
+        <div className="flex items-center gap-3 mb-2">
+          <button onClick={onBack} className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] cursor-pointer">
             ← {t('openl2.back', lang)}
           </button>
         </div>
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[var(--color-bubble-ai)] flex items-center justify-center text-xl">
+          <div className="w-10 h-10 rounded-xl bg-[var(--color-bg-sidebar)] flex items-center justify-center text-xl border border-[var(--color-border)]">
             {l2.icon}
           </div>
           <div>
-            <div className="font-semibold">{l2.name}</div>
-            <div className="text-xs text-[var(--color-text-secondary)]">
+            <div className="text-[13px] font-semibold">{l2.name}</div>
+            <div className="text-[11px] text-[var(--color-text-secondary)]">
               Chain #{l2.chainId} · {l2.nativeToken}
               {l2.isPublic && <span className="ml-2 text-[var(--color-accent)]">{t('myl2.public', lang)}</span>}
             </div>
@@ -57,14 +68,14 @@ export default function L2DetailView({ l2, onBack }: Props) {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-[var(--color-border)] px-4">
+      <div className="flex border-b border-[var(--color-border)] px-2">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-3 text-sm transition-colors cursor-pointer border-b-2 ${
+            className={`px-3 py-2.5 text-[13px] transition-colors cursor-pointer border-b-2 ${
               activeTab === tab.id
-                ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+                ? 'border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-medium'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
             }`}
           >
@@ -74,30 +85,33 @@ export default function L2DetailView({ l2, onBack }: Props) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-4">
         {activeTab === 'control' && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {/* Quick Actions */}
-            <div className="grid grid-cols-3 gap-3">
-              <button className="bg-[var(--color-success)] text-black text-sm font-medium py-3 rounded-xl hover:opacity-80 transition-opacity cursor-pointer">
+            <div className="grid grid-cols-3 gap-2">
+              <button className="bg-[var(--color-success)] text-black text-xs font-medium py-2.5 rounded-xl hover:opacity-80 transition-opacity cursor-pointer">
                 {t('myl2.detail.startAll', lang)}
               </button>
-              <button className="bg-[var(--color-error)] text-white text-sm font-medium py-3 rounded-xl hover:opacity-80 transition-opacity cursor-pointer">
+              <button
+                onClick={handleStop}
+                className="bg-[var(--color-error)] text-white text-xs font-medium py-2.5 rounded-xl hover:opacity-80 transition-opacity cursor-pointer"
+              >
                 {t('myl2.detail.stopAll', lang)}
               </button>
-              <button className="bg-[var(--color-border)] text-sm font-medium py-3 rounded-xl hover:opacity-80 transition-opacity cursor-pointer">
+              <button className="bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] text-xs font-medium py-2.5 rounded-xl hover:bg-[var(--color-border)] transition-colors cursor-pointer">
                 {t('myl2.detail.restart', lang)}
               </button>
             </div>
 
             {/* Process List */}
             {processes.map(proc => (
-              <div key={proc.name} className="bg-[var(--color-bubble-ai)] rounded-xl p-5 flex items-center justify-between">
-                <div className="flex items-center gap-4">
+              <div key={proc.name} className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 flex items-center justify-between border border-[var(--color-border)]">
+                <div className="flex items-center gap-3">
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: statusColor(proc.status) }} />
                   <div>
-                    <div className="font-medium">{proc.name}</div>
-                    <div className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                    <div className="text-[13px] font-medium">{proc.name}</div>
+                    <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
                       {t(`myl2.status.${proc.status}`, lang)}
                     </div>
                   </div>
@@ -122,7 +136,7 @@ export default function L2DetailView({ l2, onBack }: Props) {
         )}
 
         {activeTab === 'logs' && (
-          <div className="bg-black rounded-xl p-4 font-mono text-xs text-green-400 h-full min-h-[400px] overflow-auto">
+          <div className="bg-black rounded-xl p-4 font-mono text-[11px] text-green-400 h-full min-h-[400px] overflow-auto border border-[var(--color-border)]">
             <div className="text-[var(--color-text-secondary)]">[{l2.name}] {t('myl2.detail.logsPlaceholder', lang)}</div>
             <div className="mt-2 text-gray-500">$ ethrex --chain-id {l2.chainId} --port {l2.rpcPort}</div>
             <div className="text-gray-500">INFO: Starting sequencer...</div>
@@ -134,7 +148,7 @@ export default function L2DetailView({ l2, onBack }: Props) {
         )}
 
         {activeTab === 'config' && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {[
               { label: t('myl2.detail.configName', lang), value: l2.name },
               { label: 'Chain ID', value: String(l2.chainId) },
@@ -143,20 +157,20 @@ export default function L2DetailView({ l2, onBack }: Props) {
               { label: t('myl2.detail.configPort', lang), value: String(l2.rpcPort) },
               { label: t('myl2.detail.configDesc', lang), value: l2.description },
             ].map(({ label, value }) => (
-              <div key={label} className="bg-[var(--color-bubble-ai)] rounded-xl p-4">
+              <div key={label} className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
                 <label className="text-xs text-[var(--color-text-secondary)] block mb-1">{label}</label>
                 <input
                   type="text"
                   defaultValue={value}
-                  className="w-full bg-[var(--color-border)] rounded-lg px-3 py-2 text-sm outline-none"
+                  className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-[13px] outline-none border border-[var(--color-border)]"
                 />
               </div>
             ))}
-            <div className="bg-[var(--color-bubble-ai)] rounded-xl p-4">
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
               <label className="text-xs text-[var(--color-text-secondary)] block mb-1">{t('myl2.detail.configHashtags', lang)}</label>
               <div className="flex flex-wrap gap-2 mt-1">
                 {l2.hashtags.map(tag => (
-                  <span key={tag} className="text-xs bg-[var(--color-border)] px-3 py-1 rounded-full text-[var(--color-accent)]">
+                  <span key={tag} className="text-[11px] bg-[var(--color-tag-bg)] px-2 py-0.5 rounded text-[var(--color-tag-text)]">
                     #{tag} ×
                   </span>
                 ))}
@@ -167,16 +181,16 @@ export default function L2DetailView({ l2, onBack }: Props) {
                 />
               </div>
             </div>
-            <div className="bg-[var(--color-bubble-ai)] rounded-xl p-4 flex items-center justify-between">
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)] flex items-center justify-between">
               <div>
-                <div className="text-sm font-medium">{t('myl2.detail.configPublic', lang)}</div>
-                <div className="text-xs text-[var(--color-text-secondary)]">{t('myl2.detail.configPublicDesc', lang)}</div>
+                <div className="text-[13px] font-medium">{t('myl2.detail.configPublic', lang)}</div>
+                <div className="text-[11px] text-[var(--color-text-secondary)]">{t('myl2.detail.configPublicDesc', lang)}</div>
               </div>
-              <div className={`w-12 h-6 rounded-full flex items-center px-1 cursor-pointer transition-colors ${l2.isPublic ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'}`}>
-                <div className={`w-4 h-4 bg-white rounded-full transition-transform ${l2.isPublic ? 'translate-x-6' : ''}`} />
+              <div className={`w-10 h-5 rounded-full flex items-center px-0.5 cursor-pointer transition-colors ${l2.isPublic ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'}`}>
+                <div className={`w-4 h-4 bg-white rounded-full transition-transform ${l2.isPublic ? 'translate-x-5' : ''}`} />
               </div>
             </div>
-            <button className="w-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-xl py-3 text-sm font-medium transition-colors cursor-pointer">
+            <button className="w-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-xl py-2.5 text-[13px] font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]">
               {t('settings.save', lang)}
             </button>
           </div>
@@ -185,12 +199,16 @@ export default function L2DetailView({ l2, onBack }: Props) {
         {activeTab === 'dashboard' && (
           <div className="flex items-center justify-center h-full min-h-[300px]">
             <div className="text-center space-y-3">
-              <div className="text-4xl">📊</div>
-              <div className="text-lg font-medium">{l2.name} {t('dashboard.title', lang)}</div>
-              <div className="text-sm text-[var(--color-text-secondary)]">
-                <code className="bg-[var(--color-border)] px-2 py-1 rounded">http://localhost:{l2.rpcPort + 1000}</code>
+              <div className="w-12 h-12 mx-auto rounded-xl bg-[var(--color-bg-sidebar)] flex items-center justify-center border border-[var(--color-border)]">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
+                  <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>
+                </svg>
               </div>
-              <p className="text-xs text-[var(--color-text-secondary)] whitespace-pre-line">
+              <div className="text-sm font-medium">{l2.name} {t('dashboard.title', lang)}</div>
+              <div className="text-[11px] text-[var(--color-text-secondary)]">
+                <code className="bg-[var(--color-bg-sidebar)] px-2 py-0.5 rounded text-[11px] border border-[var(--color-border)]">http://localhost:{l2.rpcPort + 1000}</code>
+              </div>
+              <p className="text-[11px] text-[var(--color-text-secondary)] whitespace-pre-line">
                 {t('dashboard.hint', lang)}
               </p>
             </div>

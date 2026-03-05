@@ -11,7 +11,7 @@ interface Props {
 }
 
 const networkPresets: Record<NetworkMode, { l1Rpc: string; chainId: string; proverType: string }> = {
-  local: { l1Rpc: 'http://localhost:8545', chainId: '17001', proverType: 'none' },
+  local: { l1Rpc: 'http://localhost:8545', chainId: '17001', proverType: 'sp1' },
   testnet: { l1Rpc: 'https://rpc.sepolia.org', chainId: '17001', proverType: 'sp1' },
   mainnet: { l1Rpc: 'https://eth.llamarpc.com', chainId: '17001', proverType: 'sp1' },
 }
@@ -172,11 +172,17 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
             </div>
             <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
               <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">{t('myl2.wizard.sequencerMode', lang)}</label>
-              <select value={config.sequencerMode} onChange={e => update('sequencerMode', e.target.value)}
-                className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm outline-none border border-[var(--color-border)]">
-                <option value="standalone">{t('myl2.wizard.standalone', lang)}</option>
-                <option value="shared">{t('myl2.wizard.shared', lang)}</option>
-              </select>
+              {networkMode === 'local' ? (
+                <div className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium">
+                  {t('myl2.wizard.standalone', lang)}
+                </div>
+              ) : (
+                <select value={config.sequencerMode} onChange={e => update('sequencerMode', e.target.value)}
+                  className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm outline-none border border-[var(--color-border)]">
+                  <option value="standalone">{t('myl2.wizard.standalone', lang)}</option>
+                  <option value="shared">{t('myl2.wizard.shared', lang)}</option>
+                </select>
+              )}
             </div>
           </>
         )}
@@ -185,35 +191,38 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
           <>
             <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
               <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">{t('myl2.detail.configToken', lang)}</label>
-              <input value={config.nativeToken} onChange={e => update('nativeToken', e.target.value)}
-                className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm outline-none border border-[var(--color-border)]" />
+              <div className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm border border-[var(--color-border)] text-[var(--color-text-primary)] flex items-center gap-2">
+                <span className="font-medium">TON</span>
+                <span className="text-[var(--color-text-secondary)] text-[11px]">(TOKAMAK)</span>
+              </div>
             </div>
             <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
               <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">{t('myl2.wizard.proverType', lang)}</label>
-              <select value={config.proverType} onChange={e => update('proverType', e.target.value)}
-                className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm outline-none border border-[var(--color-border)]">
-                <option value="sp1">SP1</option>
-                <option value="risc0">RISC Zero</option>
-                <option value="none">{t('myl2.wizard.noProver', lang)}</option>
-              </select>
-              {networkMode === 'local' && config.proverType === 'none' && (
-                <p className="text-[10px] text-[var(--color-text-secondary)] mt-1">로컬 체험에서는 프로버 없이도 동작합니다</p>
-              )}
+              <div className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium">
+                SP1
+              </div>
+              <p className="text-[10px] text-[var(--color-text-secondary)] mt-1">Succinct SP1 프로버가 사용됩니다</p>
             </div>
           </>
         )}
 
         {step === 3 && (
           <>
-            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)] flex items-center justify-between">
+            <div className={`bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)] flex items-center justify-between ${networkMode === 'local' ? 'opacity-40' : ''}`}>
               <div>
                 <div className="text-sm font-medium">{t('myl2.detail.configPublic', lang)}</div>
-                <div className="text-[11px] text-[var(--color-text-secondary)]">{t('myl2.detail.configPublicDesc', lang)}</div>
+                <div className="text-[11px] text-[var(--color-text-secondary)]">
+                  {networkMode === 'local'
+                    ? (lang === 'ko' ? '로컬 모드에서는 공개할 수 없습니다' : 'Cannot publish in local mode')
+                    : t('myl2.detail.configPublicDesc', lang)
+                  }
+                </div>
               </div>
               <button
-                onClick={() => update('isPublic', !config.isPublic)}
-                className={`w-12 h-6 rounded-full flex items-center px-1 cursor-pointer transition-colors ${config.isPublic ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'}`}>
-                <div className={`w-4 h-4 bg-white rounded-full transition-transform ${config.isPublic ? 'translate-x-6' : ''}`} />
+                onClick={() => networkMode !== 'local' && update('isPublic', !config.isPublic)}
+                disabled={networkMode === 'local'}
+                className={`w-12 h-6 rounded-full flex items-center px-1 transition-colors ${networkMode === 'local' ? 'bg-[var(--color-border)] cursor-not-allowed' : `cursor-pointer ${config.isPublic ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'}`}`}>
+                <div className={`w-4 h-4 bg-white rounded-full transition-transform ${config.isPublic && networkMode !== 'local' ? 'translate-x-6' : ''}`} />
               </button>
             </div>
             <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">

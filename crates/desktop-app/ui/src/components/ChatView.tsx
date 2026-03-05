@@ -44,7 +44,7 @@ export default function ChatView() {
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-bg-main)]">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-bg-sidebar)]">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 rounded-full bg-[var(--color-accent)] flex items-center justify-center text-sm">🤖</div>
           <div>

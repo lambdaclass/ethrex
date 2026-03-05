@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useLang } from '../App'
 import { t } from '../i18n'
@@ -28,6 +28,7 @@ export default function SetupProgressView({ chainId, chainName, chainIcon, onDon
   const { lang } = useLang()
   const [progress, setProgress] = useState<SetupProgress | null>(null)
   const [showLogs, setShowLogs] = useState(false)
+  const logEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const poll = setInterval(async () => {
@@ -40,6 +41,13 @@ export default function SetupProgressView({ chainId, chainName, chainIcon, onDon
     }, 1000)
     return () => clearInterval(poll)
   }, [chainId])
+
+  // Auto-scroll logs
+  useEffect(() => {
+    if (showLogs && logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [progress?.logs.length, showLogs])
 
   const stepIcon = (status: string) => {
     switch (status) {
@@ -76,7 +84,7 @@ export default function SetupProgressView({ chainId, chainName, chainIcon, onDon
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--color-border)]">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
         <h1 className="text-base font-semibold">{t('setup.title', lang)}</h1>
       </div>
 
@@ -136,6 +144,7 @@ export default function SetupProgressView({ chainId, chainName, chainIcon, onDon
             {(!progress?.logs.length) && (
               <div className="text-[11px] text-[var(--color-text-secondary)]">No logs yet...</div>
             )}
+            <div ref={logEndRef} />
           </div>
         )}
 

@@ -2,7 +2,9 @@ use crate::appchain_manager::{
     AppchainConfig, AppchainManager, AppchainStatus, NetworkMode, SetupProgress, StepStatus,
 };
 use crate::process_manager::{NodeInfo, ProcessManager, ProcessStatus};
+use crate::runner::ProcessRunner;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::State;
 
 // ============================================================================
@@ -97,7 +99,7 @@ pub struct CreateAppchainRequest {
 #[tauri::command]
 pub fn create_appchain(
     req: CreateAppchainRequest,
-    am: State<AppchainManager>,
+    am: State<Arc<AppchainManager>>,
 ) -> Result<AppchainConfig, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let network_mode = match req.network_mode.as_str() {
@@ -139,23 +141,30 @@ pub fn create_appchain(
 }
 
 #[tauri::command]
-pub fn list_appchains(am: State<AppchainManager>) -> Vec<AppchainConfig> {
+pub fn list_appchains(am: State<Arc<AppchainManager>>) -> Vec<AppchainConfig> {
     am.list_appchains()
 }
 
 #[tauri::command]
-pub fn get_appchain(id: String, am: State<AppchainManager>) -> Result<AppchainConfig, String> {
+pub fn get_appchain(
+    id: String,
+    am: State<Arc<AppchainManager>>,
+) -> Result<AppchainConfig, String> {
     am.get_appchain(&id)
         .ok_or(format!("Appchain not found: {id}"))
 }
 
 #[tauri::command]
-pub fn delete_appchain(id: String, am: State<AppchainManager>) -> Result<(), String> {
+pub fn delete_appchain(id: String, am: State<Arc<AppchainManager>>) -> Result<(), String> {
     am.delete_appchain(&id)
 }
 
 #[tauri::command]
-pub fn start_appchain_setup(id: String, am: State<AppchainManager>) -> Result<(), String> {
+pub async fn start_appchain_setup(
+    id: String,
+    am: State<'_, Arc<AppchainManager>>,
+    runner: State<'_, Arc<ProcessRunner>>,
+) -> Result<(), String> {
     let config = am
         .get_appchain(&id)
         .ok_or(format!("Appchain not found: {id}"))?;
@@ -169,21 +178,30 @@ pub fn start_appchain_setup(id: String, am: State<AppchainManager>) -> Result<()
     am.add_log(&id, format!("Config saved for '{}'", config.name));
     am.advance_step(&id);
 
-    // TODO: Phase 1A - Actually spawn ethrex processes here
-    // For now, simulate progress
     match config.network_mode {
         NetworkMode::Local => {
             am.update_step_status(&id, "dev", StepStatus::InProgress);
-            am.add_log(
-                &id,
-                "Starting ethrex l2 --dev ... (not yet implemented)".to_string(),
-            );
+            am.add_log(&id, "Starting ethrex l2 --dev ...".to_string());
+
+            // Clone Arc handles for the background task
+            let am_clone = am.inner().clone();
+            let runner_clone = runner.inner().clone();
+            let chain_id = id.clone();
+
+            // Spawn the actual process in background
+            tokio::spawn(async move {
+                ProcessRunner::start_local_dev(runner_clone, am_clone, chain_id).await;
+            });
         }
         _ => {
+            // Testnet/Mainnet - not yet implemented
             am.update_step_status(&id, "l1_check", StepStatus::InProgress);
             am.add_log(
                 &id,
-                format!("Checking L1 connection to {} ...", config.l1_rpc_url),
+                format!(
+                    "Checking L1 connection to {} ... (not yet implemented)",
+                    config.l1_rpc_url
+                ),
             );
         }
     }
@@ -194,8 +212,20 @@ pub fn start_appchain_setup(id: String, am: State<AppchainManager>) -> Result<()
 #[tauri::command]
 pub fn get_setup_progress(
     id: String,
-    am: State<AppchainManager>,
+    am: State<Arc<AppchainManager>>,
 ) -> Result<SetupProgress, String> {
     am.get_setup_progress(&id)
         .ok_or(format!("No setup in progress for: {id}"))
+}
+
+#[tauri::command]
+pub async fn stop_appchain(
+    id: String,
+    am: State<'_, Arc<AppchainManager>>,
+    runner: State<'_, Arc<ProcessRunner>>,
+) -> Result<(), String> {
+    runner.stop_chain(&id).await?;
+    am.update_status(&id, AppchainStatus::Stopped);
+    am.add_log(&id, "Appchain stopped by user.".to_string());
+    Ok(())
 }

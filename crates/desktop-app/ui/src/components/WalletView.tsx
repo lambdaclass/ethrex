@@ -52,15 +52,15 @@ export default function WalletView() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-[var(--color-bg-sidebar)]">
+    <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-main)]">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
         <h1 className="text-base font-semibold">{t('wallet.title', lang)}</h1>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {/* Address Card */}
-        <div className="m-4 rounded-2xl p-4 bg-[var(--color-accent)] text-[var(--color-accent-text)]">
+        <div className="rounded-xl p-4 bg-[var(--color-accent)] text-[var(--color-accent-text)]">
           {isEditing ? (
             <div className="flex gap-2 mb-2">
               <input
@@ -89,27 +89,27 @@ export default function WalletView() {
         </div>
 
         {/* Quick Actions */}
-        <div className="flex gap-2 mx-4 mb-4">
-          <button className="flex-1 bg-[var(--color-bg-main)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
+        <div className="flex gap-2">
+          <button className="flex-1 bg-[var(--color-bg-sidebar)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
               <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
             </svg>
             <span className="text-[11px]">{t('wallet.deposit', lang)}</span>
           </button>
-          <button className="flex-1 bg-[var(--color-bg-main)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
+          <button className="flex-1 bg-[var(--color-bg-sidebar)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
               <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
             </svg>
             <span className="text-[11px]">{t('wallet.withdraw', lang)}</span>
           </button>
-          <button className="flex-1 bg-[var(--color-bg-main)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
+          <button className="flex-1 bg-[var(--color-bg-sidebar)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
               <polyline points="7 17 2 12 7 7"/><polyline points="17 7 22 12 17 17"/><line x1="2" y1="12" x2="22" y2="12"/>
             </svg>
             <span className="text-[11px]">{t('wallet.bridge', lang)}</span>
           </button>
-          <button className="flex-1 bg-[var(--color-bg-main)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
+          <button className="flex-1 bg-[var(--color-bg-sidebar)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
               <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
             </svg>
             <span className="text-[11px]">{t('wallet.txHistory', lang)}</span>
@@ -117,12 +117,12 @@ export default function WalletView() {
         </div>
 
         {/* L1 Balances */}
-        <div className="mx-4 mb-2 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
+        <div className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
           {t('wallet.balanceBreakdown', lang)}
         </div>
-        <div className="mx-4 mb-4 bg-[var(--color-bg-main)] rounded-xl overflow-hidden border border-[var(--color-border)]">
+        <div className="bg-[var(--color-bg-sidebar)] rounded-xl overflow-hidden border border-[var(--color-border)]">
           {l1Tokens.map((token, i) => (
-            <div key={token.symbol} className={`flex items-center justify-between px-3.5 py-2.5 ${i < l1Tokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
+            <div key={token.symbol} className={`flex items-center justify-between px-4 py-2.5 ${i < l1Tokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
               <div className="flex items-center gap-2.5">
                 <div className={`w-8 h-8 rounded-lg ${token.iconBg} flex items-center justify-center text-sm font-bold text-gray-700`}>
                   {token.icon}
@@ -132,15 +132,13 @@ export default function WalletView() {
                   <div className="text-[10px] text-[var(--color-text-secondary)]">{token.name}</div>
                 </div>
               </div>
-              <div className="text-[13px] font-semibold text-right">
-                <div>{token.balance}</div>
-              </div>
+              <div className="text-[13px] font-semibold">{token.balance}</div>
             </div>
           ))}
         </div>
 
         {/* Bridge Allowed Tokens */}
-        <div className="mx-4 mb-2 flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <span className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
             {t('wallet.bridgeTokens', lang)}
           </span>
@@ -148,9 +146,9 @@ export default function WalletView() {
             {bridgeTokens.length}
           </span>
         </div>
-        <div className="mx-4 mb-4 bg-[var(--color-bg-main)] rounded-xl overflow-hidden border border-[var(--color-border)]">
+        <div className="bg-[var(--color-bg-sidebar)] rounded-xl overflow-hidden border border-[var(--color-border)]">
           {bridgeTokens.map((token, i) => (
-            <div key={token.symbol} className={`flex items-center justify-between px-3.5 py-2.5 ${i < bridgeTokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
+            <div key={token.symbol} className={`flex items-center justify-between px-4 py-2.5 ${i < bridgeTokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
               <div className="flex items-center gap-2.5">
                 <div className={`w-8 h-8 rounded-lg ${token.iconBg} flex items-center justify-center text-sm font-bold text-gray-700`}>
                   {token.icon}
@@ -166,13 +164,13 @@ export default function WalletView() {
         </div>
 
         {/* Appchain Balances */}
-        <div className="mx-4 mb-2 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
+        <div className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
           {t('wallet.appchainBalances', lang)}
         </div>
-        <div className="mx-4 mb-6 space-y-2">
+        <div className="space-y-2 pb-2">
           {appchainBalances.map(chain => (
-            <div key={chain.chainId} className="bg-[var(--color-bg-main)] rounded-xl overflow-hidden border border-[var(--color-border)]">
-              <div className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
+            <div key={chain.chainId} className="bg-[var(--color-bg-sidebar)] rounded-xl overflow-hidden border border-[var(--color-border)]">
+              <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-[var(--color-border)]">
                 <span className="text-base">{chain.icon}</span>
                 <div>
                   <div className="text-[12px] font-medium">{chain.name}</div>
@@ -180,7 +178,7 @@ export default function WalletView() {
                 </div>
               </div>
               {chain.tokens.map((token, i) => (
-                <div key={token.symbol} className={`flex items-center justify-between px-3.5 py-2 ${i < chain.tokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
+                <div key={token.symbol} className={`flex items-center justify-between px-4 py-2 ${i < chain.tokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
                   <span className="text-[12px] text-[var(--color-text-secondary)]">{token.symbol}</span>
                   <span className="text-[13px] font-semibold">{token.balance}</span>
                 </div>

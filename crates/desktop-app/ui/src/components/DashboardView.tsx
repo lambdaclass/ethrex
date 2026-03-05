@@ -17,7 +17,7 @@ export default function DashboardView() {
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
-      <div className="flex border-b border-[var(--color-border)] px-2 overflow-x-auto">
+      <div className="flex border-b border-[var(--color-border)] px-2 overflow-x-auto bg-[var(--color-bg-sidebar)]">
         {defaultTabs.map(tab => (
           <button
             key={tab.id}
