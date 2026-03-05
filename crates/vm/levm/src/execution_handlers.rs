@@ -1,7 +1,7 @@
 use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
-    gas_cost::CODE_DEPOSIT_COST,
+    gas_cost::{CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD, COST_PER_STATE_BYTE},
     utils::create_eth_transfer_log,
     vm::VM,
 };
@@ -156,31 +156,52 @@ impl<'a> VM<'a> {
 
     /// Validates that the contract creation was successful, otherwise it returns an ExceptionalHalt.
     fn validate_contract_creation(&mut self) -> Result<(), VMError> {
-        let callframe = &mut self.current_call_frame;
-        let code = &callframe.output;
+        let fork = self.env.config.fork;
+        let code = &self.current_call_frame.output;
 
         let code_length: u64 = code
             .len()
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?;
 
-        let code_deposit_cost: u64 = code_length
-            .checked_mul(CODE_DEPOSIT_COST)
-            .ok_or(InternalError::Overflow)?;
-
-        // Revert Scenarios
         // 1. If the first byte of code is 0xEF
         if code.first().is_some_and(|v| v == &EOF_PREFIX) {
             return Err(ExceptionalHalt::InvalidContractPrefix.into());
         }
 
-        // 2. If the code_length > MAX_CODE_SIZE
-        if code_length > MAX_CODE_SIZE {
-            return Err(ExceptionalHalt::ContractOutputTooBig.into());
-        }
+        // EIP-8037 (Amsterdam+): charge state gas BEFORE regular gas and size check.
+        // Per EELS process_create_message: charge_state_gas → charge_gas → size check.
+        // This ordering matters because on OOG, already-charged state gas must be
+        // reflected in state_gas_used even if the CREATE reverts.
+        if fork >= Fork::Amsterdam {
+            let words = code_length.div_ceil(32);
+            let regular = words
+                .checked_mul(CODE_DEPOSIT_REGULAR_COST_PER_WORD)
+                .ok_or(InternalError::Overflow)?;
+            let state = code_length
+                .checked_mul(COST_PER_STATE_BYTE)
+                .ok_or(InternalError::Overflow)?;
 
-        // 3. current_consumed_gas + code_deposit_cost > gas_limit
-        callframe.increase_consumed_gas(code_deposit_cost)?;
+            // State gas first (from reservoir), then regular gas (hash cost)
+            if state > 0 {
+                self.increase_state_gas(state)?;
+            }
+            self.current_call_frame.increase_consumed_gas(regular)?;
+
+            // Size check AFTER gas charges per EELS
+            if code_length > AMSTERDAM_MAX_CODE_SIZE {
+                return Err(ExceptionalHalt::ContractOutputTooBig.into());
+            }
+        } else {
+            // Pre-Amsterdam: size check first, then regular gas charge
+            if code_length > MAX_CODE_SIZE {
+                return Err(ExceptionalHalt::ContractOutputTooBig.into());
+            }
+            let regular = code_length
+                .checked_mul(CODE_DEPOSIT_COST)
+                .ok_or(InternalError::Overflow)?;
+            self.current_call_frame.increase_consumed_gas(regular)?;
+        }
 
         Ok(())
     }

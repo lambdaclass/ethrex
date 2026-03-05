@@ -51,7 +51,10 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info, instrument, warn};
-use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
+use constants::{
+    AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE,
+    POST_OSAKA_GAS_LIMIT_CAP,
+};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -64,15 +67,16 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
+    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction, validate_block_body,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
-    get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
-    validate_gas_used, validate_receipts_root, validate_requests_hash,
+    get_total_blob_gas, validate_block_access_list_hash, validate_block_access_list_size,
+    validate_block_pre_execution, validate_gas_used, validate_receipts_root,
+    validate_requests_hash,
 };
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
@@ -343,6 +347,7 @@ impl Blockchain {
                 bal,
                 block.body.transactions.len(),
             )?;
+            validate_block_access_list_size(&block.header, &chain_config, bal)?;
         }
 
         Ok((execution_result, account_updates))
@@ -394,6 +399,8 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_body(&block.header, &block.body)
+            .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -458,6 +465,7 @@ impl Blockchain {
                                 bal,
                                 block.body.transactions.len(),
                             )?;
+                            validate_block_access_list_size(&block.header, &chain_config, bal)?;
                         }
 
                         let exec_end_instant = Instant::now();
@@ -1257,6 +1265,7 @@ impl Blockchain {
                 bal,
                 block.body.transactions.len(),
             )?;
+            validate_block_access_list_size(&block.header, chain_config, bal)?;
         }
 
         Ok(execution_result)
@@ -1937,8 +1946,9 @@ impl Blockchain {
     /// Returns a two-level Result:
     /// - Outer `Err`: pipeline couldn't start (e.g. parent header not found).
     /// - Inner `Result`: block storage outcome. The produced BAL is returned
-    ///   regardless of whether storage succeeded, so callers like
-    ///   `add_block_pipeline_bal` can retrieve it even on storage failure.
+    ///   even when storage fails, so callers like `add_block_pipeline_bal` can
+    ///   retrieve it. Note: if *execution* itself fails (outer `Result`), the
+    ///   BAL is not available.
     fn add_block_pipeline_inner(
         &self,
         block: Block,
@@ -2541,9 +2551,15 @@ impl Blockchain {
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
+        // [EIP-7954] - Amsterdam increases the limit
+        let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
+            AMSTERDAM_MAX_INITCODE_SIZE
+        } else {
+            MAX_INITCODE_SIZE
+        };
         if config.is_shanghai_activated(header.timestamp)
             && tx.is_contract_creation()
-            && tx.data().len() > MAX_INITCODE_SIZE as usize
+            && tx.data().len() > max_initcode_size as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }

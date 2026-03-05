@@ -16,6 +16,7 @@ pub mod utils;
 
 pub use errors::{EcdsaError, InvalidBlockError};
 pub use validation::{
-    get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
-    validate_gas_used, validate_receipts_root, validate_requests_hash,
+    get_total_blob_gas, validate_block_access_list_hash, validate_block_access_list_size,
+    validate_block_pre_execution, validate_gas_used, validate_header_bal_indices,
+    validate_receipts_root, validate_requests_hash,
 };

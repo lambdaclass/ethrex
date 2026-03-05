@@ -149,7 +149,7 @@ run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
 AMSTERDAM_FIXTURES_URL ?= https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz
-AMSTERDAM_FIXTURES_BRANCH ?= devnets/bal/2
+AMSTERDAM_FIXTURES_BRANCH ?= devnets/bal/3
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*fork_Amsterdam.*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 

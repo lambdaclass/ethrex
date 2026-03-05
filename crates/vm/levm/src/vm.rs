@@ -436,6 +436,21 @@ pub struct VM<'a> {
     pub stack_pool: Vec<Stack>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
+    /// EIP-8037: Accumulated state gas for this transaction (Amsterdam+).
+    pub state_gas_used: u64,
+    /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
+    pub state_gas_reservoir: u64,
+    /// EIP-8037: Gas consumed from gas_left that should NOT be counted as regular
+    /// gas when deriving `regular = gas_used - state_gas`. This accounts for:
+    /// 1. State gas spilled into gas_left in child frames that then reverted
+    ///    (child halted, state_gas_used restored, but spill stays consumed).
+    /// 2. Reserved child gas consumed on CREATE collision (EELS escrow mechanism
+    ///    keeps this out of regular_gas_used; ethrex must exclude it manually).
+    pub reverted_child_state_spill: u64,
+    /// EIP-8037/EIP-7702: Reduction to intrinsic state gas when existing authorities
+    /// are found during set_delegation. Tracked separately because state_gas_used
+    /// must not be reduced (it would inflate regular_gas in block accounting).
+    pub intrinsic_state_gas_refund: u64,
 
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
@@ -469,6 +484,10 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
+            state_gas_used: 0,
+            state_gas_reservoir: 0,
+            reverted_child_state_spill: 0,
+            intrinsic_state_gas_refund: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -515,6 +534,36 @@ impl<'a> VM<'a> {
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
         self.hooks.push(Rc::new(RefCell::new(hook)));
+    }
+
+    /// EIP-8037: Charge state gas, drawing from reservoir first, spilling to gas_remaining if exhausted.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "arithmetic proven safe by min()"
+    )]
+    pub fn increase_state_gas(&mut self, gas: u64) -> Result<(), VMError> {
+        if self.env.config.fork >= Fork::Amsterdam {
+            // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted
+            let from_reservoir = self.state_gas_reservoir.min(gas);
+            // Safe: from_reservoir <= gas
+            let spill = gas - from_reservoir;
+            if spill > 0 {
+                // Charge spill from gas_remaining first — if OOG, return early
+                // without mutating reservoir or state_gas_used (matches EELS behavior)
+                self.current_call_frame.increase_consumed_gas(spill)?;
+            }
+            // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
+            self.state_gas_reservoir -= from_reservoir;
+        } else {
+            // Pre-Amsterdam: no reservoir, charge directly from gas_remaining
+            self.current_call_frame.increase_consumed_gas(gas)?;
+        }
+        // Only increment state_gas_used AFTER the charge succeeds
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_add(gas)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
@@ -681,6 +730,9 @@ impl<'a> VM<'a> {
             gas_used: ctx_result.gas_used,
             gas_spent: ctx_result.gas_spent,
             gas_refunded: self.substate.refunded_gas,
+            state_gas_used: self
+                .state_gas_used
+                .saturating_sub(self.intrinsic_state_gas_refund),
             output: std::mem::take(&mut ctx_result.output),
             logs,
         };

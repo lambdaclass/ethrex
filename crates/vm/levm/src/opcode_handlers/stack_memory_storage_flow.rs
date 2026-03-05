@@ -20,14 +20,14 @@
 use crate::{
     constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self, SSTORE_STIPEND},
+    gas_cost::{self, COST_PER_STATE_BYTE, SSTORE_STIPEND, STATE_BYTES_PER_STORAGE_SET},
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
     opcodes::Opcode,
     utils::{size_offset_to_usize, u256_to_usize},
     vm::VM,
 };
-use ethrex_common::{H256, U256};
+use ethrex_common::{H256, U256, types::Fork};
 use std::{mem, slice};
 
 /// Implementation for the `POP` opcode.
@@ -282,12 +282,30 @@ impl OpcodeHandler for OpSStoreHandler {
         // the slot MUST appear as a read because the implicit SLOAD has already happened.
         vm.record_storage_slot_to_bal(to, storage_slot_key);
 
+        let fork = vm.env.config.fork;
+
+        // EIP-8037 (Amsterdam+): charge state gas BEFORE regular gas per EELS ordering.
+        // State gas for new storage slot creation (0 -> nonzero) spills into gas_remaining
+        // when the reservoir is empty, which must happen before the regular gas charge.
+        if fork >= Fork::Amsterdam
+            && value != current_value
+            && current_value == original_value
+            && original_value.is_zero()
+            && !value.is_zero()
+        {
+            let state_gas = STATE_BYTES_PER_STORAGE_SET
+                .checked_mul(COST_PER_STATE_BYTE)
+                .ok_or(ExceptionalHalt::OutOfGas)?;
+            vm.increase_state_gas(state_gas)?;
+        }
+
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::sstore(
                 original_value,
                 current_value,
                 value,
                 vm.substate.add_accessed_slot(to, key),
+                fork,
             )?)?;
         if value != current_value {
             // EIP-2929
@@ -316,7 +334,24 @@ impl OpcodeHandler for OpSStoreHandler {
 
                 if value == original_value {
                     if original_value.is_zero() {
-                        delta += RESTORE_EMPTY_SLOT_COST;
+                        // EIP-8037 (Amsterdam+): restore_empty_slot_cost changes from 19900 to 2800
+                        // because the SSTORE creation cost changed from 20000 to 2900.
+                        // Also add state gas refund through the normal refund counter.
+                        if fork >= Fork::Amsterdam {
+                            delta += RESTORE_SLOT_COST; // 2800 instead of 19900
+                            #[expect(
+                                clippy::as_conversions,
+                                reason = "state gas constants fit i64"
+                            )]
+                            {
+                                delta += STATE_BYTES_PER_STORAGE_SET
+                                    .checked_mul(COST_PER_STATE_BYTE)
+                                    .ok_or(InternalError::Overflow)?
+                                    as i64;
+                            }
+                        } else {
+                            delta += RESTORE_EMPTY_SLOT_COST;
+                        }
                     } else {
                         delta += RESTORE_SLOT_COST;
                     }

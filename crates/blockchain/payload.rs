@@ -434,9 +434,25 @@ impl Blockchain {
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
-        self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
+        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
+        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        if context
+            .chain_config()
+            .is_amsterdam_activated(context.payload.header.timestamp)
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let post_tx_index = (context.payload.body.transactions.len() + 1) as u16;
+            context.vm.set_bal_index(post_tx_index);
+            // Record withdrawal recipients as touched addresses per EIP-7928
+            if let Some(recorder) = context.vm.db.bal_recorder_mut()
+                && let Some(withdrawals) = &context.payload.body.withdrawals
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
+        }
         self.extract_requests(&mut context)?;
+        self.apply_withdrawals(&mut context)?;
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
@@ -606,6 +622,13 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-7928: Snapshot BAL recorder before trying the tx.
+            // If the tx is rejected, restore so only included txs affect the BAL.
+            // TODO: This clones the entire recorder every tx. Add a tx-level
+            // checkpoint/restore that also undoes touched_addresses and storage_reads
+            // (the existing checkpoint only handles inner call reverts).
+            let bal_snapshot = context.vm.db.bal_recorder.clone();
+
             // Set BAL index for this transaction (1-indexed per EIP-7928)
             // Index is based on current transaction count + 1
             #[allow(clippy::cast_possible_truncation)]
@@ -631,6 +654,9 @@ impl Blockchain {
                 Err(e) => {
                     debug!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                    // Restore BAL recorder to pre-tx state so rejected txs
+                    // don't pollute the block access list.
+                    context.vm.db.bal_recorder = bal_snapshot;
                     txs.pop();
                     continue;
                 }

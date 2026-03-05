@@ -431,6 +431,18 @@ impl BlockAccessList {
         &self.inner
     }
 
+    /// Computes the number of BAL items per EIP-7928 size cap.
+    /// bal_items = addresses + storage_slots (unique slots, not individual operations)
+    pub fn item_count(&self) -> u64 {
+        let mut count: u64 = 0;
+        for account in &self.inner {
+            count += 1; // address
+            count += account.storage_reads.len() as u64;
+            count += account.storage_changes.len() as u64;
+        }
+        count
+    }
+
     /// Validates that the BAL has canonical ordering per EIP-7928.
     /// - Accounts must be in strictly ascending order by address.
     /// - Within each account: storage_changes by slot, storage_reads by slot value,
@@ -480,6 +492,21 @@ impl BlockAccessList {
                         "Block access list storage_reads not in strictly ascending order \
                          for account {:#x}: {:#x} >= {:#x}",
                         account.address, window[0], window[1]
+                    ));
+                }
+            }
+            // Check no slot is in both storage_changes and storage_reads
+            for sr_slot in &account.storage_reads {
+                let pos = account
+                    .storage_changes
+                    .partition_point(|sc| sc.slot < *sr_slot);
+                if pos < account.storage_changes.len()
+                    && account.storage_changes[pos].slot == *sr_slot
+                {
+                    return Err(format!(
+                        "Block access list slot {:#x} is in both storage_changes and \
+                         storage_reads for account {:#x}",
+                        sr_slot, account.address
                     ));
                 }
             }
