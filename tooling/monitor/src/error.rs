@@ -2,7 +2,7 @@ use ethrex_common::Address;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
-use spawned_concurrency::error::GenServerError;
+use spawned_concurrency::error::ActorError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MonitorError {
@@ -21,7 +21,7 @@ pub enum MonitorError {
     #[error("Block {0} not found in the store")]
     BlockNotFound(u64),
     #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
+    InternalError(#[from] ActorError),
     #[error("Failed to get logs topics {0}")]
     LogsTopics(usize),
     #[error("Failed to get logs data from {0}")]

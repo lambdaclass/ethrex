@@ -22,7 +22,7 @@ use ethrex_common::{
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, TARGET_PEERS},
+    peer_table::{PeerTable, PeerTableServer, TARGET_PEERS},
     rlpx::initiator::RLPxInitiator,
     sync::SyncMode,
     sync_manager::SyncManager,
@@ -31,11 +31,10 @@ use ethrex_p2p::{
 use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::{GenServer, GenServerHandle};
+use spawned_concurrency::tasks::ActorRef;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::info;
 // Base price for each test transaction.
 pub const BASE_PRICE_IN_WEI: u64 = 10_u64.pow(9);
 pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
@@ -317,16 +316,14 @@ pub async fn dummy_sync_manager() -> SyncManager {
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
 pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
-    let peer_table = PeerTable::spawn(TARGET_PEERS, store);
+    let peer_table = PeerTableServer::spawn(TARGET_PEERS, store);
     PeerHandler::new(peer_table.clone(), dummy_gen_server(peer_table).await)
 }
 
-/// Creates a dummy GenServer for tests
+/// Creates a dummy RLPx initiator actor for tests
 /// This should only be used in tests
-pub async fn dummy_gen_server(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
-    info!("Starting RLPx Initiator");
-    let state = RLPxInitiator::new(dummy_p2p_context(peer_table).await);
-    RLPxInitiator::start_on_thread(state)
+pub async fn dummy_gen_server(peer_table: PeerTable) -> ActorRef<RLPxInitiator> {
+    RLPxInitiator::spawn_on_thread(dummy_p2p_context(peer_table).await)
 }
 
 /// Creates a dummy P2PContext for tests

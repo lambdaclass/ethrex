@@ -1,20 +1,10 @@
-use crate::sequencer::block_producer::{
-    BlockProducer, CallMessage as BlockProducerCallMessage, OutMessage as BlockProducerOutMessage,
-};
-use crate::sequencer::l1_committer::{
-    CallMessage as CommitterCallMessage, L1Committer, OutMessage as CommitterOutMessage,
-};
-use crate::sequencer::l1_proof_sender::{
-    CallMessage as ProofSenderCallMessage, L1ProofSender, OutMessage as ProofSenderOutMessage,
-};
-use crate::sequencer::l1_watcher::{
-    CallMessage as WatcherCallMessage, L1Watcher, OutMessage as WatcherOutMessage,
-};
+use crate::sequencer::block_producer::BlockProducer;
+use crate::sequencer::l1_committer::L1Committer;
+use crate::sequencer::l1_proof_sender::L1ProofSender;
+use crate::sequencer::l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
-use crate::sequencer::metrics::{
-    CallMessage as MetricsCallMessage, MetricsGatherer, OutMessage as MetricsOutMessage,
-};
-use crate::sequencer::state_updater::{CallMessage as StateUpdaterCallMessage, StateUpdater};
+use crate::sequencer::metrics::MetricsGatherer;
+use crate::sequencer::state_updater::StateUpdater;
 use axum::extract::{Path, State};
 use axum::http::Uri;
 use axum::response::IntoResponse;
@@ -26,10 +16,19 @@ use axum::{
 };
 use serde::Serialize;
 use serde_json::{Map, Value};
-use spawned_concurrency::error::GenServerError;
-use spawned_concurrency::tasks::{GenServer, GenServerHandle};
+use spawned_concurrency::error::ActorError;
+use spawned_concurrency::message::Message;
+use spawned_concurrency::tasks::ActorRef;
 use thiserror::Error;
 use tokio::net::TcpListener;
+
+use crate::sequencer::block_producer::block_producer_protocol;
+use crate::sequencer::l1_committer::l1_committer_protocol;
+use crate::sequencer::l1_proof_sender::l1_proof_sender_protocol;
+use crate::sequencer::l1_watcher::l1_watcher_protocol;
+#[cfg(feature = "metrics")]
+use crate::sequencer::metrics::metrics_gatherer_protocol;
+use crate::sequencer::state_updater::state_updater_protocol;
 
 #[derive(Debug, Error)]
 pub enum AdminError {
@@ -39,32 +38,28 @@ pub enum AdminError {
 
 #[derive(Clone)]
 pub struct Admin {
-    pub l1_committer: Option<GenServerHandle<L1Committer>>,
-    pub l1_watcher: Option<GenServerHandle<L1Watcher>>,
-    pub l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
-    pub block_producer: Option<GenServerHandle<BlockProducer>>,
-    pub state_updater: Option<GenServerHandle<StateUpdater>>,
+    pub l1_committer: Option<ActorRef<L1Committer>>,
+    pub l1_watcher: Option<ActorRef<L1Watcher>>,
+    pub l1_proof_sender: Option<ActorRef<L1ProofSender>>,
+    pub block_producer: Option<ActorRef<BlockProducer>>,
+    pub state_updater: Option<ActorRef<StateUpdater>>,
     #[cfg(feature = "metrics")]
-    pub metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
+    pub metrics_gatherer: Option<ActorRef<MetricsGatherer>>,
 }
 
 pub enum AdminErrorResponse {
     MessageError(String),
-    UnexpectedResponse { component: String },
-    GenServerError(GenServerError),
+    ActorError(ActorError),
     NoHandle,
 }
 
 impl IntoResponse for AdminErrorResponse {
     fn into_response(self) -> axum::response::Response {
         let msg = match self {
-            AdminErrorResponse::UnexpectedResponse { component } => {
-                format!("Unexpected response from {component}")
-            }
             Self::MessageError(err) => err,
-            AdminErrorResponse::GenServerError(err) => err.to_string(),
+            AdminErrorResponse::ActorError(err) => err.to_string(),
             AdminErrorResponse::NoHandle => {
-                "Admin server does not have the genserver handle. Maybe its not running?".into()
+                "Admin server does not have the actor handle. Maybe its not running?".into()
             }
         };
 
@@ -76,12 +71,12 @@ impl IntoResponse for AdminErrorResponse {
 
 pub async fn start_api(
     http_addr: String,
-    l1_committer: Option<GenServerHandle<L1Committer>>,
-    l1_watcher: Option<GenServerHandle<L1Watcher>>,
-    l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
-    block_producer: Option<GenServerHandle<BlockProducer>>,
-    state_updater: Option<GenServerHandle<StateUpdater>>,
-    #[cfg(feature = "metrics")] metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
+    l1_committer: Option<ActorRef<L1Committer>>,
+    l1_watcher: Option<ActorRef<L1Watcher>>,
+    l1_proof_sender: Option<ActorRef<L1ProofSender>>,
+    block_producer: Option<ActorRef<BlockProducer>>,
+    state_updater: Option<ActorRef<StateUpdater>>,
+    #[cfg(feature = "metrics")] metrics_gatherer: Option<ActorRef<MetricsGatherer>>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
     let admin = Admin {
@@ -125,37 +120,32 @@ async fn start_committer(
     State(admin): State<Admin>,
     Path(delay): Path<u64>,
 ) -> Result<Json<Value>, AdminErrorResponse> {
-    let Some(mut l1_committer) = admin.l1_committer else {
+    let Some(l1_committer) = admin.l1_committer else {
         return Err(AdminErrorResponse::NoHandle);
     };
 
-    match l1_committer.call(CommitterCallMessage::Start(delay)).await {
-        Ok(ok) => match ok {
-            CommitterOutMessage::Started => Ok(Json::from(Value::String("ok".into()))),
-            CommitterOutMessage::Error(err) => Err(AdminErrorResponse::MessageError(err)),
-
-            _ => Err(AdminErrorResponse::UnexpectedResponse {
-                component: "l1_committer".into(),
-            }),
-        },
-        Err(err) => Err(AdminErrorResponse::GenServerError(err)),
+    match l1_committer
+        .request(l1_committer_protocol::StartCommitter { delay })
+        .await
+    {
+        Ok(Ok(())) => Ok(Json::from(Value::String("ok".into()))),
+        Ok(Err(err)) => Err(AdminErrorResponse::MessageError(err)),
+        Err(err) => Err(AdminErrorResponse::ActorError(err)),
     }
 }
 
 async fn stop_committer(State(admin): State<Admin>) -> Result<Json<Value>, AdminErrorResponse> {
-    let Some(mut l1_committer) = admin.l1_committer else {
+    let Some(l1_committer) = admin.l1_committer else {
         return Err(AdminErrorResponse::NoHandle);
     };
 
-    match l1_committer.call(CommitterCallMessage::Stop).await {
-        Ok(ok) => match ok {
-            CommitterOutMessage::Stopped => Ok(Json::from(Value::String("ok".into()))),
-            CommitterOutMessage::Error(err) => Err(AdminErrorResponse::MessageError(err)),
-            _ => Err(AdminErrorResponse::UnexpectedResponse {
-                component: "l1_committer".into(),
-            }),
-        },
-        Err(err) => Err(AdminErrorResponse::GenServerError(err)),
+    match l1_committer
+        .request(l1_committer_protocol::StopCommitter)
+        .await
+    {
+        Ok(Ok(())) => Ok(Json::from(Value::String("ok".into()))),
+        Ok(Err(err)) => Err(AdminErrorResponse::MessageError(err)),
+        Err(err) => Err(AdminErrorResponse::ActorError(err)),
     }
 }
 
@@ -166,98 +156,51 @@ async fn health(
 
     response.insert(
         "l1_committer".to_string(),
-        genserver_health(admin.l1_committer, CommitterCallMessage::Health, |msg| {
-            Some(match msg {
-                CommitterOutMessage::Health(h) => h,
-                _ => return None,
-            })
-        })
-        .await,
+        actor_health(admin.l1_committer, l1_committer_protocol::Health).await,
     );
 
     response.insert(
         "l1_watcher".to_string(),
-        genserver_health(admin.l1_watcher, WatcherCallMessage::Health, |msg| {
-            Some(match msg {
-                WatcherOutMessage::Health(h) => h,
-                _ => return None,
-            })
-        })
-        .await,
+        actor_health(admin.l1_watcher, l1_watcher_protocol::Health).await,
     );
 
     response.insert(
         "l1_proof_sender".to_string(),
-        genserver_health(
-            admin.l1_proof_sender,
-            ProofSenderCallMessage::Health,
-            |msg| {
-                Some(match msg {
-                    ProofSenderOutMessage::Health(h) => h,
-                    _ => return None,
-                })
-            },
-        )
-        .await,
+        actor_health(admin.l1_proof_sender, l1_proof_sender_protocol::Health).await,
     );
 
     response.insert(
         "block_producer".to_string(),
-        genserver_health(
-            admin.block_producer,
-            BlockProducerCallMessage::Health,
-            |msg| {
-                Some(match msg {
-                    BlockProducerOutMessage::Health(h) => h,
-                    _ => return None,
-                })
-            },
-        )
-        .await,
+        actor_health(admin.block_producer, block_producer_protocol::Health).await,
     );
 
     #[cfg(feature = "metrics")]
     {
         response.insert(
             "metrics_gatherer".to_string(),
-            genserver_health(admin.metrics_gatherer, MetricsCallMessage::Health, |msg| {
-                Some(match msg {
-                    MetricsOutMessage::Health(h) => h,
-                    _ => return None,
-                })
-            })
-            .await,
+            actor_health(admin.metrics_gatherer, metrics_gatherer_protocol::Health).await,
         );
     }
 
     Ok(Json::from(response))
 }
 
-pub async fn genserver_health<S, CallMsg, OutMsg, Health>(
-    mut genserver: Option<GenServerHandle<S>>,
-    health_msg: CallMsg,
-    extract: impl Fn(OutMsg) -> Option<Health>,
-) -> Value
+pub async fn actor_health<A, M>(actor_ref: Option<ActorRef<A>>, health_msg: M) -> Value
 where
-    S: GenServer<CallMsg = CallMsg, OutMsg = OutMsg>,
-    Health: Serialize,
+    A: spawned_concurrency::tasks::Actor + spawned_concurrency::tasks::Handler<M>,
+    M: Message,
+    M::Result: Serialize,
 {
-    if let Some(handle) = &mut genserver {
-        match handle.call(health_msg).await {
-            Ok(out) => {
-                if let Some(health) = extract(out) {
-                    serde_json::to_value(health).unwrap_or_else(|err| {
-                        Value::String(format!("Failed to serialize health message {err}"))
-                    })
-                } else {
-                    Value::String("Genserver returned an unexpected message".into())
-                }
-            }
-            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
+    if let Some(actor_ref) = actor_ref {
+        match actor_ref.request(health_msg).await {
+            Ok(health) => serde_json::to_value(health).unwrap_or_else(|err| {
+                Value::String(format!("Failed to serialize health message {err}"))
+            }),
+            Err(err) => Value::String(format!("Actor health returned an error {err}")),
         }
     } else {
         Value::String(
-            "Admin server does not have the genserver handle. Maybe it's not running?".to_string(),
+            "Admin server does not have the actor handle. Maybe it's not running?".to_string(),
         )
     }
 }
@@ -277,15 +220,15 @@ async fn set_sequencer_stop_at(
     State(admin): State<Admin>,
     Path(block_number): Path<u64>,
 ) -> Result<Json<Value>, AdminErrorResponse> {
-    let Some(mut state_updater) = admin.state_updater else {
+    let Some(state_updater) = admin.state_updater else {
         return Err(AdminErrorResponse::NoHandle);
     };
 
     match state_updater
-        .call(StateUpdaterCallMessage::StopAt(block_number))
+        .request(state_updater_protocol::StopAt { block_number })
         .await
     {
         Ok(_) => Ok(Json::from(Value::String("ok".into()))),
-        Err(err) => Err(AdminErrorResponse::GenServerError(err)),
+        Err(err) => Err(AdminErrorResponse::ActorError(err)),
     }
 }

@@ -5,7 +5,7 @@ use ethrex_common::H256;
 use ethrex_p2p::{
     peer_handler::PeerHandler,
     peer_table::PeerData,
-    rlpx::{initiator::InMessage, p2p::Capability},
+    rlpx::{initiator::RlpxInitiatorProtocol as _, p2p::Capability},
     types::Node,
 };
 use serde::Serialize;
@@ -123,15 +123,13 @@ pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Resu
     let Some(peer_handler) = context.peer_handler.as_mut() else {
         return Err(RpcErr::Internal("Peer handler not initialized".to_string()));
     };
-    let mut server = peer_handler.initiator.clone();
+    let server = peer_handler.initiator.clone();
     let node = parse(request)?;
 
     let start = Instant::now();
     let runtime = Duration::from_secs(10);
 
-    let cast_result = server
-        .cast(InMessage::Initiate { node: node.clone() })
-        .await;
+    let cast_result = server.initiate(node.clone());
     // This loop is necessary because connections are asynchronous, so to check if the connection with the peer was actually
     // established we need to wait.
     loop {

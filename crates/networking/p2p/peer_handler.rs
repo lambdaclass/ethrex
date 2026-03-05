@@ -1,7 +1,7 @@
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_table::{PeerData, PeerTable, PeerTableError},
+    peer_table::{PeerData, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
@@ -17,7 +17,7 @@ use ethrex_common::{
     H256,
     types::{BlockBody, BlockHeader, validate_block_body},
 };
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::{error::ActorError, tasks::ActorRef};
 use std::{
     collections::{HashSet, VecDeque},
     sync::atomic::Ordering,
@@ -39,7 +39,7 @@ pub use crate::snap::{DumpError, RequestMetadata, RequestStorageTrieNodesError, 
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: PeerTable,
-    pub initiator: GenServerHandle<RLPxInitiator>,
+    pub initiator: ActorRef<RLPxInitiator>,
 }
 
 pub enum BlockRequestOrder {
@@ -96,7 +96,7 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTable, initiator: GenServerHandle<RLPxInitiator>) -> PeerHandler {
+    pub fn new(peer_table: PeerTable, initiator: ActorRef<RLPxInitiator>) -> PeerHandler {
         Self {
             peer_table,
             initiator,
@@ -112,9 +112,9 @@ impl PeerHandler {
         message: RLPxMessage,
         timeout: Duration,
     ) -> Result<RLPxMessage, PeerConnectionError> {
-        peer_table.inc_requests(peer_id).await?;
+        peer_table.inc_requests(peer_id)?;
         let result = connection.outgoing_request(message, timeout).await;
-        peer_table.dec_requests(peer_id).await?;
+        peer_table.dec_requests(peer_id)?;
         result
     }
 
@@ -124,7 +124,10 @@ impl PeerHandler {
         &mut self,
         capabilities: &[Capability],
     ) -> Result<Option<(H256, PeerConnection)>, PeerHandlerError> {
-        return Ok(self.peer_table.get_random_peer(capabilities).await?);
+        Ok(self
+            .peer_table
+            .get_random_peer(capabilities.to_vec())
+            .await?)
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -158,7 +161,7 @@ impl PeerHandler {
             }
             let peer_connection = self
                 .peer_table
-                .get_peer_connections(&SUPPORTED_ETH_CAPABILITIES)
+                .get_peer_connections(SUPPORTED_ETH_CAPABILITIES.to_vec())
                 .await?;
 
             for (peer_id, mut connection) in peer_connection {
@@ -243,7 +246,7 @@ impl PeerHandler {
             {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
-                    self.peer_table.record_failure(&peer_id).await?;
+                    self.peer_table.record_failure(peer_id)?;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
@@ -285,12 +288,12 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
-                self.peer_table.record_success(&peer_id).await?;
+                self.peer_table.record_success(peer_id)?;
                 debug!("Downloader {peer_id} freed");
             }
             let Some((peer_id, mut connection)) = self
                 .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
                 .await?
             else {
                 // Log ~ once every 10 seconds
@@ -504,14 +507,14 @@ impl PeerHandler {
                 {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                        self.peer_table.record_success(&peer_id).await?;
+                        self.peer_table.record_success(peer_id)?;
                         return Ok(Some((block_bodies, peer_id)));
                     }
                 }
                 warn!(
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                 );
-                self.peer_table.record_failure(&peer_id).await?;
+                self.peer_table.record_failure(peer_id)?;
                 Ok(None)
             }
         }
@@ -542,7 +545,7 @@ impl PeerHandler {
                         "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
                     );
                     validation_success = false;
-                    self.peer_table.record_critical_failure(&peer_id).await?;
+                    self.peer_table.record_critical_failure(peer_id)?;
                     break;
                 }
                 res.push(body);
@@ -660,7 +663,7 @@ pub enum PeerHandlerError {
     #[error("No response from peer")]
     NoResponseFromPeer,
     #[error("Error in Peer Table: {0}")]
-    PeerTableError(#[from] PeerTableError),
+    PeerTableError(#[from] ActorError),
     #[error("Snap error: {0}")]
     Snap(#[from] SnapError),
 }

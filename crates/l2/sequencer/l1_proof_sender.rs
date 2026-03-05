@@ -25,8 +25,11 @@ use ethrex_rpc::{
 };
 use ethrex_storage_rollup::StoreRollup;
 use serde::Serialize;
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_after},
 };
 use tracing::{error, info, warn};
 
@@ -51,20 +54,10 @@ use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
 const VERIFY_BATCHES_FUNCTION_SIGNATURE: &str = "verifyBatches(uint256,bytes[],bytes[],bytes[])";
 
-#[derive(Clone)]
-pub enum InMessage {
-    Send,
-}
-
-#[derive(Clone)]
-pub enum OutMessage {
-    Done,
-    Health(Box<L1ProofSenderHealth>),
-}
-
-#[derive(Clone)]
-pub enum CallMessage {
-    Health,
+#[protocol]
+pub trait L1ProofSenderProtocol: Send + Sync {
+    fn send_proof(&self) -> Result<(), ActorError>;
+    fn health(&self) -> Response<Box<L1ProofSenderHealth>>;
 }
 
 pub struct L1ProofSender {
@@ -98,6 +91,7 @@ pub struct L1ProofSenderHealth {
     network: String,
 }
 
+#[actor(protocol = L1ProofSenderProtocol)]
 impl L1ProofSender {
     #[expect(clippy::too_many_arguments)]
     async fn new(
@@ -164,7 +158,7 @@ impl L1ProofSender {
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
         checkpoints_dir: PathBuf,
-    ) -> Result<GenServerHandle<L1ProofSender>, ProofSenderError> {
+    ) -> Result<ActorRef<L1ProofSender>, ProofSenderError> {
         let state = Self::new(
             &cfg.proof_coordinator,
             &cfg.l1_committer,
@@ -176,12 +170,60 @@ impl L1ProofSender {
             checkpoints_dir,
         )
         .await?;
-        let mut l1_proof_sender = L1ProofSender::start(state);
-        l1_proof_sender
-            .cast(InMessage::Send)
-            .await
-            .map_err(ProofSenderError::InternalError)?;
-        Ok(l1_proof_sender)
+        let actor_ref = state.start();
+        Ok(actor_ref)
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(l1_proof_sender_protocol::SendProof)
+            .inspect_err(|e| error!("Failed to send initial SendProof: {e}"));
+    }
+
+    #[send_handler]
+    async fn handle_send_proof(
+        &mut self,
+        _msg: l1_proof_sender_protocol::SendProof,
+        ctx: &Context<Self>,
+    ) {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
+            let _ = self
+                .verify_and_send_proofs()
+                .await
+                .inspect_err(|err| error!("L1 Proof Sender: {err}"));
+        }
+        let check_interval = random_duration(self.proof_send_interval_ms);
+        send_after(
+            check_interval,
+            ctx.clone(),
+            l1_proof_sender_protocol::SendProof,
+        );
+    }
+
+    #[request_handler]
+    async fn handle_health(
+        &mut self,
+        _msg: l1_proof_sender_protocol::Health,
+        _ctx: &Context<Self>,
+    ) -> Box<L1ProofSenderHealth> {
+        let rpc_healthcheck = self.eth_client.test_urls().await;
+        let signer_status = self.signer.health().await;
+
+        Box::new(L1ProofSenderHealth {
+            rpc_healthcheck,
+            signer_status,
+            on_chain_proposer_address: self.on_chain_proposer_address,
+            needed_proof_types: self
+                .needed_proof_types
+                .iter()
+                .map(|proof_type| format!("{:?}", proof_type))
+                .collect(),
+            proof_send_interval_ms: self.proof_send_interval_ms,
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
+            l1_chain_id: self.l1_chain_id,
+            network: format!("{:?}", self.network),
+        })
     }
 
     async fn verify_and_send_proofs(&self) -> Result<(), ProofSenderError> {
@@ -651,60 +693,5 @@ impl L1ProofSender {
         );
 
         Ok(())
-    }
-
-    async fn health(&self) -> CallResponse<Self> {
-        let rpc_healthcheck = self.eth_client.test_urls().await;
-        let signer_status = self.signer.health().await;
-
-        CallResponse::Reply(OutMessage::Health(Box::new(L1ProofSenderHealth {
-            rpc_healthcheck,
-            signer_status,
-            on_chain_proposer_address: self.on_chain_proposer_address,
-            needed_proof_types: self
-                .needed_proof_types
-                .iter()
-                .map(|proof_type| format!("{:?}", proof_type))
-                .collect(),
-            proof_send_interval_ms: self.proof_send_interval_ms,
-            sequencer_state: format!("{:?}", self.sequencer_state.status()),
-            l1_chain_id: self.l1_chain_id,
-            network: format!("{:?}", self.network),
-        })))
-    }
-}
-
-impl GenServer for L1ProofSender {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-
-    type Error = ProofSenderError;
-
-    async fn handle_cast(
-        &mut self,
-        _message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        // Right now we only have the Send message, so we ignore the message
-        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
-            let _ = self
-                .verify_and_send_proofs()
-                .await
-                .inspect_err(|err| error!("L1 Proof Sender: {err}"));
-        }
-        let check_interval = random_duration(self.proof_send_interval_ms);
-        send_after(check_interval, handle.clone(), Self::CastMsg::Send);
-        CastResponse::NoReply
-    }
-
-    async fn handle_call(
-        &mut self,
-        message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CallResponse<Self> {
-        match message {
-            CallMessage::Health => self.health().await,
-        }
     }
 }
