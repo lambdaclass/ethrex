@@ -45,6 +45,7 @@ async fn main() {
     run_test(&cmd_path, test_reorg_back_to_base_with_common_ancestor).await;
     run_test(&cmd_path, test_storage_slots_reorg).await;
     run_test(&cmd_path, test_many_blocks_reorg).await;
+    run_test(&cmd_path, test_storage_trie_branches_reorg).await;
 }
 
 async fn get_ethrex_version(cmd_path: &Path) -> String {
@@ -310,7 +311,8 @@ async fn test_many_blocks_reorg(simulator: Arc<Mutex<Simulator>>) {
 
 async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
-    // Initcode for deploying a contract that receives two `bytes32` parameters and sets `storage[param0] = param1`
+    // Initcode that deploys a contract whose runtime bytecode is: SSTORE(CALLDATALOAD(0), CALLDATALOAD(32))
+    // i.e. it receives two bytes32 params via calldata and sets storage[param0] = param1
     let contract_deploy_bytecode = hex::decode("656020355f35555f526006601af3").unwrap().into();
     let signer: Signer = LocalSigner::new(
         "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
@@ -410,4 +412,180 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
     assert_eq!(value_slot0, U256::zero());
     let value_slot1 = node0.get_storage_at(contract_address, slot_key1).await;
     assert_eq!(value_slot1, slot_value1);
+}
+
+/// Test for reth state root mismatch issue.
+/// See: https://github.com/lambdaclass/ethrex/issues/5657
+///
+/// This test creates storage slots that hash to the same prefix, causing branch nodes
+/// in the storage trie. Then it verifies that the state is correctly reverted after a reorg.
+///
+/// The slots are chosen so that:
+/// - slot0A and slot0B hash to the same 0x2b prefix
+/// - slot1A and slot1B hash to the same 0x83 prefix
+async fn test_storage_trie_branches_reorg(simulator: Arc<Mutex<Simulator>>) {
+    let mut simulator = simulator.lock().await;
+    // Initcode that deploys a contract whose runtime bytecode is: SSTORE(CALLDATALOAD(0), CALLDATALOAD(32))
+    // i.e. it receives two bytes32 params via calldata and sets storage[param0] = param1
+    let contract_deploy_bytecode = hex::decode("656020355f35555f526006601af3").unwrap().into();
+    let signer: Signer = LocalSigner::new(
+        "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+            .parse()
+            .unwrap(),
+    )
+    .into();
+
+    // These hash to the same 0x2b prefix, causing a branch in the storage trie
+    let slot0a = U256::from(15865164872778812924_u64);
+    let slot0b = U256::from(11566337052255443646_u64);
+
+    // These hash to the same 0x83 prefix, causing a branch in the storage trie
+    let slot1a = U256::from(5800641681667202032_u64);
+    let slot1b = U256::from(8343558256908705664_u64);
+
+    let value_a = U256::from(1111);
+    let value_b = U256::from(2222);
+
+    let node0 = simulator.start_node().await;
+    let node1 = simulator.start_node().await;
+
+    // Create a chain with a few empty blocks
+    let mut base_chain = simulator.get_base_chain();
+
+    // Deploy the contract
+    let contract_address = node0
+        .send_contract_deploy(&signer, contract_deploy_bytecode)
+        .await;
+
+    for _ in 0..10 {
+        let extended_base_chain = node0.build_payload(base_chain).await;
+        node0.notify_new_payload(&extended_base_chain).await;
+        node0.update_forkchoice(&extended_base_chain).await;
+
+        node1.notify_new_payload(&extended_base_chain).await;
+        node1.update_forkchoice(&extended_base_chain).await;
+        base_chain = extended_base_chain;
+    }
+
+    // Sanity check: all storage slots are initially empty
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0b).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1b).await,
+        U256::zero()
+    );
+
+    // Fork the chain
+    let mut side_chain = base_chain.fork();
+
+    // On the base chain: set slot0a and slot1a (creating branches in storage trie)
+    let calldata = [slot0a.to_big_endian(), value_a.to_big_endian()]
+        .concat()
+        .into();
+    node1.send_call(&signer, contract_address, calldata).await;
+    base_chain = node1.build_payload(base_chain).await;
+    node1.notify_new_payload(&base_chain).await;
+    node1.update_forkchoice(&base_chain).await;
+
+    let calldata = [slot1a.to_big_endian(), value_a.to_big_endian()]
+        .concat()
+        .into();
+    node1.send_call(&signer, contract_address, calldata).await;
+    base_chain = node1.build_payload(base_chain).await;
+    node1.notify_new_payload(&base_chain).await;
+    node1.update_forkchoice(&base_chain).await;
+
+    // On the side chain: set slot0b and slot1b (the sibling branches)
+    let calldata = [slot0b.to_big_endian(), value_b.to_big_endian()]
+        .concat()
+        .into();
+    node0.send_call(&signer, contract_address, calldata).await;
+    side_chain = node0.build_payload(side_chain).await;
+    node0.notify_new_payload(&side_chain).await;
+    node0.update_forkchoice(&side_chain).await;
+
+    let calldata = [slot1b.to_big_endian(), value_b.to_big_endian()]
+        .concat()
+        .into();
+    node0.send_call(&signer, contract_address, calldata).await;
+    side_chain = node0.build_payload(side_chain).await;
+    node0.notify_new_payload(&side_chain).await;
+    node0.update_forkchoice(&side_chain).await;
+
+    // Verify side chain state (node0)
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0b).await,
+        value_b
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1b).await,
+        value_b
+    );
+
+    // Verify base chain state (node1)
+    assert_eq!(
+        node1.get_storage_at(contract_address, slot0a).await,
+        value_a
+    );
+    assert_eq!(
+        node1.get_storage_at(contract_address, slot0b).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node1.get_storage_at(contract_address, slot1a).await,
+        value_a
+    );
+    assert_eq!(
+        node1.get_storage_at(contract_address, slot1b).await,
+        U256::zero()
+    );
+
+    // Make base chain longer (7 blocks) than side chain (2 blocks) so it becomes canonical
+    for _ in 0..5 {
+        base_chain = node1.build_payload(base_chain).await;
+        node1.notify_new_payload(&base_chain).await;
+        node1.update_forkchoice(&base_chain).await;
+    }
+
+    // Reorg node0 to the base chain
+    node0.notify_new_payload(&base_chain).await;
+    node0.update_forkchoice(&base_chain).await;
+
+    // After reorg, node0 should have the base chain state:
+    // - slot0a and slot1a should have value_a
+    // - slot0b and slot1b should be zero (reverted)
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0a).await,
+        value_a
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0b).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1a).await,
+        value_a
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1b).await,
+        U256::zero()
+    );
 }
