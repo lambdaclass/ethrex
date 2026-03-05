@@ -1,3 +1,4 @@
+mod appchain_manager;
 mod commands;
 mod process_manager;
 
@@ -58,6 +59,7 @@ pub fn run() {
             }
         })
         .manage(process_manager::ProcessManager::new())
+        .manage(appchain_manager::AppchainManager::new())
         .invoke_handler(tauri::generate_handler![
             get_all_status,
             start_node,
@@ -65,6 +67,12 @@ pub fn run() {
             get_node_status,
             get_logs,
             send_chat_message,
+            create_appchain,
+            list_appchains,
+            get_appchain,
+            delete_appchain,
+            start_appchain_setup,
+            get_setup_progress,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

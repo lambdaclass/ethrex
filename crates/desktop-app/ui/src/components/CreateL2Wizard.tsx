@@ -257,7 +257,7 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
           </button>
         ) : (
           <button
-            onClick={() => onCreate(config as unknown as Record<string, string>)}
+            onClick={() => onCreate({ ...config, networkMode: networkMode!, isPublic: String(config.isPublic) } as unknown as Record<string, string>)}
             className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-6 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]"
           >
             {t('myl2.wizard.create', lang)}
