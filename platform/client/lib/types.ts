@@ -48,6 +48,10 @@ export interface Deployment {
   bridge_address: string | null;
   proposer_address: string | null;
   error_message: string | null;
+  tools_l1_explorer_port: number | null;
+  tools_l2_explorer_port: number | null;
+  tools_bridge_ui_port: number | null;
+  tools_metrics_port: number | null;
   created_at: number;
 }
 

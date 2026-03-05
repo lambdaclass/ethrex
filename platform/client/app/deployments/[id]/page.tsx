@@ -53,6 +53,7 @@ export default function DeploymentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionLoading, setActionLoading] = useState("");
+  const [toolsLoading, setToolsLoading] = useState("");
 
   // Tabs
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -209,7 +210,7 @@ export default function DeploymentDetailPage() {
   const isRunning = deployment.phase === "running";
   const isStopped = deployment.phase === "stopped";
   const isError = deployment.phase === "error";
-  const isDeploying = ["building", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover"].includes(deployment.phase);
+  const isDeploying = ["checking_docker", "building", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover", "starting_tools"].includes(deployment.phase);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -336,7 +337,7 @@ export default function DeploymentDetailPage() {
           {isProvisioned && (
             <div className="bg-white rounded-xl border p-6">
               <h2 className="text-lg font-semibold mb-4">Endpoints</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="p-4 bg-gray-50 rounded-lg">
                   <div className="text-sm font-medium text-gray-700 mb-1">L1 RPC</div>
                   <code className="text-sm font-mono text-blue-600">
@@ -355,7 +356,97 @@ export default function DeploymentDetailPage() {
                     <span className="ml-2 text-xs text-green-600">Connected</span>
                   )}
                 </div>
+                {isRunning && (
+                  <>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-medium text-gray-700">L1 Block Explorer</span>
+                        <a href={`http://127.0.0.1:${deployment.tools_l1_explorer_port || 8083}`} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600" title="Open in new tab">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                        </a>
+                      </div>
+                      <a href={`http://127.0.0.1:${deployment.tools_l1_explorer_port || 8083}`} target="_blank" rel="noopener noreferrer" className="text-sm font-mono text-blue-600 hover:underline">
+                        {`http://127.0.0.1:${deployment.tools_l1_explorer_port || 8083}`}
+                      </a>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-medium text-gray-700">L2 Block Explorer</span>
+                        <a href={`http://127.0.0.1:${deployment.tools_l2_explorer_port || 8082}`} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600" title="Open in new tab">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                        </a>
+                      </div>
+                      <a href={`http://127.0.0.1:${deployment.tools_l2_explorer_port || 8082}`} target="_blank" rel="noopener noreferrer" className="text-sm font-mono text-blue-600 hover:underline">
+                        {`http://127.0.0.1:${deployment.tools_l2_explorer_port || 8082}`}
+                      </a>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-medium text-gray-700">Bridge UI / Dashboard</span>
+                        <a href={`http://127.0.0.1:${deployment.tools_bridge_ui_port || 3000}`} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600" title="Open in new tab">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                        </a>
+                      </div>
+                      <a href={`http://127.0.0.1:${deployment.tools_bridge_ui_port || 3000}`} target="_blank" rel="noopener noreferrer" className="text-sm font-mono text-blue-600 hover:underline">
+                        {`http://127.0.0.1:${deployment.tools_bridge_ui_port || 3000}`}
+                      </a>
+                    </div>
+                  </>
+                )}
               </div>
+              {isRunning && (
+                <div className="flex gap-2 mt-4 pt-4 border-t">
+                  <button
+                    onClick={async () => {
+                      setToolsLoading("build");
+                      try {
+                        await deploymentsApi.buildTools(deployment.id);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Failed to build tools");
+                      } finally {
+                        setToolsLoading("");
+                      }
+                    }}
+                    disabled={!!toolsLoading}
+                    className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    {toolsLoading === "build" ? "Building..." : "Build Tools"}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setToolsLoading("restart");
+                      try {
+                        await deploymentsApi.restartTools(deployment.id);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Failed to restart tools");
+                      } finally {
+                        setToolsLoading("");
+                      }
+                    }}
+                    disabled={!!toolsLoading}
+                    className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {toolsLoading === "restart" ? "Restarting..." : "Restart Tools"}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setToolsLoading("stop");
+                      try {
+                        await deploymentsApi.stopTools(deployment.id);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Failed to stop tools");
+                      } finally {
+                        setToolsLoading("");
+                      }
+                    }}
+                    disabled={!!toolsLoading}
+                    className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {toolsLoading === "stop" ? "Stopping..." : "Stop Tools"}
+                  </button>
+                  <span className="text-xs text-gray-400 self-center ml-2">Blockscout, Bridge UI, Dashboard</span>
+                </div>
+              )}
             </div>
           )}
 

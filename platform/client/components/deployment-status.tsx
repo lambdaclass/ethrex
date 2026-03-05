@@ -9,12 +9,14 @@ interface DeploymentStatusBadgeProps {
 
 const PHASE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   configured: { bg: "bg-gray-100", text: "text-gray-600", label: "Not deployed" },
+  checking_docker: { bg: "bg-yellow-100", text: "text-yellow-700", label: "Checking Docker" },
   building: { bg: "bg-yellow-100", text: "text-yellow-700", label: "Building" },
   pulling: { bg: "bg-yellow-100", text: "text-yellow-700", label: "Pulling Images" },
   l1_starting: { bg: "bg-yellow-100", text: "text-yellow-700", label: "Starting L1" },
   deploying_contracts: { bg: "bg-yellow-100", text: "text-yellow-700", label: "Deploying" },
   l2_starting: { bg: "bg-yellow-100", text: "text-yellow-700", label: "Starting L2" },
   starting_prover: { bg: "bg-yellow-100", text: "text-yellow-700", label: "Starting Prover" },
+  starting_tools: { bg: "bg-yellow-100", text: "text-yellow-700", label: "Starting Tools" },
   running: { bg: "bg-green-100", text: "text-green-700", label: "Running" },
   stopped: { bg: "bg-orange-100", text: "text-orange-700", label: "Stopped" },
   error: { bg: "bg-red-100", text: "text-red-700", label: "Error" },
@@ -22,7 +24,7 @@ const PHASE_STYLES: Record<string, { bg: string; text: string; label: string }> 
 
 export function DeploymentStatusBadge({ phase, className = "" }: DeploymentStatusBadgeProps) {
   const style = PHASE_STYLES[phase] || PHASE_STYLES.configured;
-  const isAnimating = ["building", "pulling", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover"].includes(phase);
+  const isAnimating = ["checking_docker", "building", "pulling", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover", "starting_tools"].includes(phase);
 
   return (
     <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium ${style.bg} ${style.text} ${className}`}>

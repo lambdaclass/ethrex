@@ -50,6 +50,10 @@ function LaunchPageContent() {
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState("");
 
+  // Docker status (local mode)
+  const [dockerAvailable, setDockerAvailable] = useState<boolean | null>(null);
+  const [dockerChecking, setDockerChecking] = useState(false);
+
   // Remote hosts
   const [hosts, setHosts] = useState<Host[]>([]);
   const [selectedHostId, setSelectedHostId] = useState<string>("");
@@ -81,6 +85,20 @@ function LaunchPageContent() {
       }
     });
   }, [searchParams]);
+
+  // Check Docker status when switching to local mode
+  useEffect(() => {
+    if (mode === "local") {
+      setDockerChecking(true);
+      deploymentsApi
+        .dockerStatus()
+        .then((res) => setDockerAvailable(res.available))
+        .catch(() => setDockerAvailable(false))
+        .finally(() => setDockerChecking(false));
+    } else {
+      setDockerAvailable(null);
+    }
+  }, [mode]);
 
   // Load remote hosts when switching to remote mode
   useEffect(() => {
@@ -534,13 +552,40 @@ function LaunchPageContent() {
                       <option value="reth">Reth</option>
                     </select>
                   </div>
-                  <div className="bg-green-50 rounded-lg p-4 text-sm text-green-800 border border-green-200">
-                    <p className="font-medium mb-1">Docker deployment</p>
-                    <p>
-                      Uses local Docker images. If images haven't been built yet,
-                      they will be built automatically on first deployment.
-                    </p>
-                  </div>
+                  {/* Docker status */}
+                  {dockerChecking ? (
+                    <div className="flex items-center gap-2 p-4 bg-gray-50 rounded-lg border border-gray-200 text-sm text-gray-600">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+                      Checking Docker status...
+                    </div>
+                  ) : dockerAvailable === true ? (
+                    <div className="flex items-center gap-2 p-4 bg-green-50 rounded-lg border border-green-200 text-sm text-green-800">
+                      <svg className="w-5 h-5 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Docker is running
+                    </div>
+                  ) : dockerAvailable === false ? (
+                    <div className="p-4 bg-red-50 rounded-lg border border-red-200 text-sm text-red-800">
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg className="w-5 h-5 text-red-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className="font-medium">Docker is not running</span>
+                      </div>
+                      <p className="ml-7">
+                        Docker Desktop is required for local deployment.{" "}
+                        <a
+                          href="https://www.docker.com/products/docker-desktop/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline font-medium hover:text-red-900"
+                        >
+                          Download Docker Desktop
+                        </a>
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               )}
 
@@ -595,8 +640,8 @@ function LaunchPageContent() {
 
               <button
                 onClick={handleLaunch}
-                disabled={launching}
-                className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
+                disabled={launching || (mode === "local" && dockerAvailable === false)}
+                className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {launching
                   ? "Deploying..."

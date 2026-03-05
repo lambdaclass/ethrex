@@ -137,6 +137,11 @@ export const deploymentsApi = {
     const data = await apiFetch(`/api/deployments/${id}/activate`, { method: "POST" });
     return data.deployment;
   },
+  // Docker status
+  dockerStatus: async () => {
+    const data = await apiFetch("/api/deployments/docker/status");
+    return data as { available: boolean };
+  },
   // Docker lifecycle
   provision: async (id: string, hostId?: string) => {
     const data = await apiFetch(`/api/deployments/${id}/provision`, {
@@ -156,6 +161,18 @@ export const deploymentsApi = {
   destroy: async (id: string) => {
     const data = await apiFetch(`/api/deployments/${id}/destroy`, { method: "POST" });
     return data.deployment;
+  },
+  buildTools: async (id: string) => {
+    const data = await apiFetch(`/api/deployments/${id}/build-tools`, { method: "POST" });
+    return data;
+  },
+  restartTools: async (id: string) => {
+    const data = await apiFetch(`/api/deployments/${id}/restart-tools`, { method: "POST" });
+    return data;
+  },
+  stopTools: async (id: string) => {
+    const data = await apiFetch(`/api/deployments/${id}/stop-tools`, { method: "POST" });
+    return data;
   },
   status: async (id: string) => {
     const data = await apiFetch(`/api/deployments/${id}/status`);

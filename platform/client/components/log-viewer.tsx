@@ -14,6 +14,11 @@ const SERVICES = [
   { value: "tokamak-app-l2", label: "L2 Node" },
   { value: "tokamak-app-prover", label: "Prover" },
   { value: "tokamak-app-deployer", label: "Deployer" },
+  { value: "bridge-ui", label: "Bridge UI" },
+  { value: "backend-l1", label: "Explorer L1 Backend" },
+  { value: "backend-l2", label: "Explorer L2 Backend" },
+  { value: "proxy", label: "Explorer Proxy" },
+  { value: "db", label: "Explorer DB" },
 ];
 
 export default function LogViewer({ deploymentId, initialService }: LogViewerProps) {
