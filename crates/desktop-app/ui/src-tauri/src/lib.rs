@@ -5,7 +5,7 @@ use commands::*;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager,
+    Manager, WindowEvent,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -43,18 +43,19 @@ pub fn run() {
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::Click { .. } = event {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
+                .on_tray_icon_event(|_tray, _event| {
+                    // Only open via menu "열기", not on tray icon click
                 })
                 .build(app)?;
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Hide instead of close, keep tray alive
+                let _ = window.hide();
+                api.prevent_close();
+            }
         })
         .manage(process_manager::ProcessManager::new())
         .invoke_handler(tauri::generate_handler![
