@@ -175,44 +175,14 @@ pub fn validate_block_access_list_hash(
         )?;
     }
 
-    let rlp_bytes = computed_bal.encode_to_vec();
-    let computed_hash = crate::utils::keccak(rlp_bytes.clone());
+    let computed_hash = computed_bal.compute_hash();
     let valid = header
         .block_access_list_hash
         .map(|expected_hash| expected_hash == computed_hash)
         .unwrap_or(false);
 
     if !valid {
-        tracing::warn!(
-            "DEBUG BAL EXEC: block={} expected={:?} computed={:?} entries={} txs={} rlp_len={}",
-            header.number,
-            header.block_access_list_hash,
-            computed_hash,
-            computed_bal.accounts().len(),
-            transaction_count,
-            rlp_bytes.len(),
-        );
-        for acct in computed_bal.accounts() {
-            tracing::warn!(
-                "DEBUG BAL EXEC entry: addr={:?} sc={} sr={} bc={:?} nc={:?} cc={}",
-                acct.address,
-                acct.storage_changes.len(),
-                acct.storage_reads.len(),
-                acct.balance_changes.iter().map(|c| (c.block_access_index, c.post_balance)).collect::<Vec<_>>(),
-                acct.nonce_changes.iter().map(|c| (c.block_access_index, c.post_nonce)).collect::<Vec<_>>(),
-                acct.code_changes.len(),
-            );
-        }
-        tracing::warn!("DEBUG BAL EXEC rlp_hex: {}", hex::encode(&rlp_bytes));
         return Err(InvalidBlockError::BlockAccessListHashMismatch);
-    } else {
-        tracing::warn!(
-            "DEBUG BAL EXEC OK: block={} hash={:?} entries={} txs={}",
-            header.number,
-            computed_hash,
-            computed_bal.accounts().len(),
-            transaction_count,
-        );
     }
 
     Ok(())

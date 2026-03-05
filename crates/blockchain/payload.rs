@@ -755,31 +755,7 @@ impl Blockchain {
 
         // Set BAL hash in block header (EIP-7928)
         context.payload.header.block_access_list_hash =
-            block_access_list.as_ref().map(|bal| {
-                let rlp_bytes = bal.encode_to_vec();
-                let hash = ethrex_common::utils::keccak(rlp_bytes.clone());
-                tracing::warn!(
-                    "DEBUG BAL BUILD: block={} hash={:?} entries={} txs={} rlp_len={}",
-                    context.payload.header.number,
-                    hash,
-                    bal.accounts().len(),
-                    context.payload.body.transactions.len(),
-                    rlp_bytes.len(),
-                );
-                for acct in bal.accounts() {
-                    tracing::warn!(
-                        "DEBUG BAL BUILD entry: addr={:?} sc={} sr={} bc={:?} nc={:?} cc={}",
-                        acct.address,
-                        acct.storage_changes.len(),
-                        acct.storage_reads.len(),
-                        acct.balance_changes.iter().map(|c| (c.block_access_index, c.post_balance)).collect::<Vec<_>>(),
-                        acct.nonce_changes.iter().map(|c| (c.block_access_index, c.post_nonce)).collect::<Vec<_>>(),
-                        acct.code_changes.len(),
-                    );
-                }
-                tracing::warn!("DEBUG BAL BUILD rlp_hex: {}", hex::encode(&rlp_bytes));
-                hash
-            });
+            block_access_list.as_ref().map(|bal| bal.compute_hash());
         context.block_access_list = block_access_list;
 
         let mut logs = vec![];
