@@ -40,7 +40,7 @@ use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
 use crate::{
     constants::{P256_P, VERSIONED_HASH_VERSION_KZG},
-    errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
+    errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
         BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
@@ -1855,12 +1855,7 @@ pub fn bls12_map_fp_to_g1(
 
     // PADDED_FIELD_ELEMENT_SIZE_IN_BYTES == BLS12_381_FP_VALID_INPUT_LENGTH, so this slice is ok.
     #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-    let coordinate_bytes = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
-    let fp = Fp::from_bytes(&coordinate_bytes)
-        .into_option()
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        ))?;
+    let fp = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
 
     // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
     // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
@@ -1895,22 +1890,12 @@ pub fn bls12_map_fp2_tp_g2(
     // slices are ok because of the previous len check.
     // Parse the input to two Fp and create a Fp2
     #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-    let c0 = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
+    let fp_0 = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
     #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-    let c1 = parse_coordinate(
+    let fp_1 = parse_coordinate(
         &calldata[PADDED_FIELD_ELEMENT_SIZE_IN_BYTES..BLS12_381_FP2_VALID_INPUT_LENGTH],
     )?;
-    let fp_0 = Fp::from_bytes(&c0)
-        .into_option()
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        ))?;
-    let fp_1 = Fp::from_bytes(&c1)
-        .into_option()
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        ))?;
-    if fp_0 == Fp::zero() && fp_1 == Fp::zero() {
+    if fp_0.is_zero().into() && fp_1.is_zero().into() {
         return Ok(Bytes::copy_from_slice(&FP2_ZERO_MAPPED_TO_G2));
     }
 
@@ -1937,10 +1922,14 @@ pub fn bls12_map_fp2_tp_g2(
     Ok(Bytes::from(padded_result))
 }
 
-/// coordinate raw bytes should have a len of 64
+/// Parses a 64-byte padded coordinate (16 zero bytes + 48-byte big-endian value)
+/// into a validated `Fp` field element.
+///
+/// `Fp::from_bytes` validates that the value is strictly less than the field modulus,
+/// which also prevents the top bits from being misinterpreted as BLS serialization flags.
 #[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
 #[inline]
-fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
+fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<Fp, VMError> {
     const SIXTEEN_ZEROES: [u8; 16] = [0; 16];
 
     if coordinate_raw_bytes.len() != 64 {
@@ -1951,28 +1940,16 @@ fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    // Validate that the coordinate is strictly less than the BLS12-381 field modulus.
-    // The bls12_381 crate's from_uncompressed interprets the top bits of the first
-    // byte as BLS serialization flags (compression, infinity, sort), masking them
-    // away. EIP-2537 uses a different encoding where all 48 bytes are pure coordinate
-    // data. Rejecting values >= p here prevents the crate from misinterpreting
-    // coordinate bits as flags.
-    let coord_value =
-        UnsignedInteger::<6>::from_bytes_be(&coordinate_raw_bytes[16..64]).unwrap_or_default();
-    if coord_value >= BLS12381FieldModulus::MODULUS {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
+    let bytes: [u8; 48] = coordinate_raw_bytes[16..64]
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
 
-    #[expect(
-        unsafe_code,
-        reason = "The bounds are confirmed to be correct due to the previous checks."
-    )]
-    unsafe {
-        Ok(coordinate_raw_bytes[16..64].try_into().unwrap_unchecked())
-    }
+    Fp::from_bytes(&bytes)
+        .into_option()
+        .ok_or(PrecompileError::ParsingInputError.into())
 }
 
-/// point_bytes must have atleast 128 bytes.
+/// Parses a 128-byte encoding into a G1 projective point.
 #[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
 fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, VMError> {
     if point_bytes.len() != 128 {
@@ -1982,100 +1959,53 @@ fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, V
     let x = parse_coordinate(&point_bytes[0..64])?;
     let y = parse_coordinate(&point_bytes[64..128])?;
 
-    const ALL_ZERO: [u8; 48] = [0; 48];
+    // (0,0) is interpreted as the point at infinity by convention.
+    if x.is_zero().into() && y.is_zero().into() {
+        return Ok(G1Projective::identity());
+    }
 
-    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let g1_point: G1Projective = if x == ALL_ZERO && y == ALL_ZERO {
-        G1Projective::identity()
-    } else {
-        let g1_bytes: [u8; 96] = [x, y]
-            .concat()
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
+    let g1_affine = G1Affine::new_unchecked(x, y);
 
-        if unchecked {
-            // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
-            // note that there is no subgroup check for the G1 addition precompile
-            let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes)
-                .into_option()
-                .ok_or(ExceptionalHalt::Precompile(
-                    PrecompileError::ParsingInputError,
-                ))?;
+    if !bool::from(g1_affine.is_on_curve()) {
+        return Err(PrecompileError::BLS12381G1PointNotInCurve.into());
+    }
 
-            // We still need to check if the point is on the curve
-            if !bool::from(g1_affine.is_on_curve()) {
-                return Err(ExceptionalHalt::Precompile(
-                    PrecompileError::BLS12381G1PointNotInCurve,
-                )
-                .into());
-            }
+    if !unchecked && !bool::from(g1_affine.is_torsion_free()) {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
 
-            G1Projective::from(g1_affine)
-        } else {
-            let g1_affine = G1Affine::from_uncompressed(&g1_bytes)
-                .into_option()
-                .ok_or(PrecompileError::ParsingInputError)?;
-
-            G1Projective::from(g1_affine)
-        }
-    };
-    Ok(g1_point)
+    Ok(G1Projective::from(g1_affine))
 }
 
-/// point_bytes always has atleast 256 bytes
+/// Parses a 256-byte encoding into a G2 projective point.
 #[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
 fn parse_g2_point(point_bytes: &[u8], unchecked: bool) -> Result<G2Projective, VMError> {
     if point_bytes.len() != 256 {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    const ALL_ZERO: [u8; 48] = [0; 48];
-
     let x_0 = parse_coordinate(&point_bytes[0..64])?;
     let x_1 = parse_coordinate(&point_bytes[64..128])?;
     let y_0 = parse_coordinate(&point_bytes[128..192])?;
     let y_1 = parse_coordinate(&point_bytes[192..256])?;
 
-    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let g2_point: G2Projective =
-        if x_0 == ALL_ZERO && x_1 == ALL_ZERO && y_0 == ALL_ZERO && y_1 == ALL_ZERO {
-            G2Projective::identity()
-        } else {
-            // The crate serialize the coordinates in a reverse order
-            // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
-            let mut g2_bytes: [u8; 192] = [0; 192];
-            g2_bytes[0..48].copy_from_slice(&x_1);
-            g2_bytes[48..96].copy_from_slice(&x_0);
-            g2_bytes[96..144].copy_from_slice(&y_1);
-            g2_bytes[144..192].copy_from_slice(&y_0);
+    // (0,0) is interpreted as the point at infinity by convention.
+    if x_0.is_zero().into() && x_1.is_zero().into() && y_0.is_zero().into() && y_1.is_zero().into()
+    {
+        return Ok(G2Projective::identity());
+    }
 
-            if unchecked {
-                // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
-                // note that there is no subgroup check for the G1 addition precompile
-                let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
-                    .into_option()
-                    .ok_or(ExceptionalHalt::Precompile(
-                        PrecompileError::ParsingInputError,
-                    ))?;
+    let g2_affine = G2Affine::new_unchecked(Fp2 { c0: x_0, c1: x_1 }, Fp2 { c0: y_0, c1: y_1 });
 
-                // We still need to check if the point is on the curve
-                if !bool::from(g2_affine.is_on_curve()) {
-                    return Err(ExceptionalHalt::Precompile(
-                        PrecompileError::BLS12381G2PointNotInCurve,
-                    )
-                    .into());
-                }
+    if !bool::from(g2_affine.is_on_curve()) {
+        return Err(PrecompileError::BLS12381G2PointNotInCurve.into());
+    }
 
-                G2Projective::from(g2_affine)
-            } else {
-                let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
-                    .into_option()
-                    .ok_or(PrecompileError::ParsingInputError)?;
+    if !unchecked && !bool::from(g2_affine.is_torsion_free()) {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
 
-                G2Projective::from(g2_affine)
-            }
-        };
-    Ok(g2_point)
+    Ok(G2Projective::from(g2_affine))
 }
 
 // coordinate_raw_bytes usually has 48 bytes
