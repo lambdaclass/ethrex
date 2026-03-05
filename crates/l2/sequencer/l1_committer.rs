@@ -1299,6 +1299,24 @@ impl L1Committer {
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
         let commit_hash_bytes = keccak(self.git_commit_hash.as_bytes());
 
+        // ── DEBUG: Log commitment fields for publicInputs comparison ──
+        info!(
+            batch_number = batch.number,
+            "[DEBUG-00e] commitBatch fields:"
+        );
+        info!("[DEBUG-00e]   newStateRoot:           0x{}", hex::encode(batch.state_root.0));
+        info!("[DEBUG-00e]   withdrawalsMerkleRoot:  0x{}", hex::encode(l1_messages_merkle_root.0));
+        info!("[DEBUG-00e]   privTxRollingHash:      0x{}", hex::encode(batch.l1_in_messages_rolling_hash.0));
+        info!("[DEBUG-00e]   lastBlockHash:          0x{}", hex::encode(last_block_hash.0));
+        info!("[DEBUG-00e]   nonPrivilegedTxs:       {}", batch.non_privileged_transactions);
+        info!("[DEBUG-00e]   commitHash:             0x{}", hex::encode(commit_hash_bytes.0));
+        info!("[DEBUG-00e]   l1_out_message_hashes:  {:?}", batch.l1_out_message_hashes.iter().map(|h| format!("0x{}", hex::encode(h.0))).collect::<Vec<_>>());
+        info!("[DEBUG-00e]   balance_diffs count:    {}", batch.balance_diffs.len());
+        info!("[DEBUG-00e]   l2_in_msg_hashes count: {}", batch.l2_in_message_rolling_hashes.len());
+        info!("[DEBUG-00e]   first_block:            {}", batch.first_block);
+        info!("[DEBUG-00e]   last_block:             {}", batch.last_block);
+        // ── END DEBUG ──
+
         let mut calldata_values = vec![
             Value::Uint(U256::from(batch.number)),
             Value::FixedBytes(batch.state_root.0.to_vec().into()),

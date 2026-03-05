@@ -209,11 +209,38 @@ impl ProverBackend for Sp1Backend {
         proof: Self::ProofOutput,
         format: ProofFormat,
     ) -> Result<BatchProof, BackendError> {
+        // ── DEBUG: Log SP1 public values (what the guest program committed) ──
+        let pv_bytes = proof.proof.public_values.to_vec();
+        let pv_hex = hex::encode(&pv_bytes);
+        tracing::info!(
+            pv_len = pv_bytes.len(),
+            "[DEBUG-00e] SP1 proof public_values ({} bytes): 0x{}",
+            pv_bytes.len(),
+            pv_hex
+        );
+        // Log field-by-field (each 32 bytes)
+        if pv_bytes.len() >= 256 {
+            tracing::info!("[DEBUG-00e] pv[  0.. 32] initial_state_hash    = 0x{}", hex::encode(&pv_bytes[0..32]));
+            tracing::info!("[DEBUG-00e] pv[ 32.. 64] final_state_hash      = 0x{}", hex::encode(&pv_bytes[32..64]));
+            tracing::info!("[DEBUG-00e] pv[ 64.. 96] l1_out_merkle_root    = 0x{}", hex::encode(&pv_bytes[64..96]));
+            tracing::info!("[DEBUG-00e] pv[ 96..128] l1_in_rolling_hash    = 0x{}", hex::encode(&pv_bytes[96..128]));
+            tracing::info!("[DEBUG-00e] pv[128..160] blob_versioned_hash   = 0x{}", hex::encode(&pv_bytes[128..160]));
+            tracing::info!("[DEBUG-00e] pv[160..192] last_block_hash       = 0x{}", hex::encode(&pv_bytes[160..192]));
+            tracing::info!("[DEBUG-00e] pv[192..224] chain_id              = 0x{}", hex::encode(&pv_bytes[192..224]));
+            tracing::info!("[DEBUG-00e] pv[224..256] non_privileged_count  = 0x{}", hex::encode(&pv_bytes[224..256]));
+        }
+        if pv_bytes.len() > 256 {
+            tracing::info!("[DEBUG-00e] pv[256..   ] variable fields       = 0x{}", hex::encode(&pv_bytes[256..]));
+        }
+        let pv_sha256 = Sha256::digest(&pv_bytes);
+        tracing::info!("[DEBUG-00e] sha256(public_values) = 0x{}", hex::encode(pv_sha256));
+        // ── END DEBUG ──
+
         let batch_proof = match format {
             ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
                 prover_type: ProverType::SP1,
                 proof: bincode::serialize(&proof.proof).map_err(BackendError::batch_proof)?,
-                public_values: proof.proof.public_values.to_vec(),
+                public_values: pv_bytes,
             }),
             ProofFormat::Groth16 => BatchProof::ProofCalldata(Self::to_calldata(&proof)),
         };
