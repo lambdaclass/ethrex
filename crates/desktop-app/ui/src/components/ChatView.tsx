@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { useLang } from '../App'
+import { t } from '../i18n'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -7,8 +9,9 @@ interface Message {
 }
 
 export default function ChatView() {
+  const { lang } = useLang()
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: 'Welcome to Tokamak Desktop! I can help you manage your L2 network.\n\nTry asking me to:\n- Start/stop nodes\n- Check node status\n- View dashboards\n\nAI provider connection coming in Phase 3.' }
+    { role: 'assistant', content: t('chat.welcome', lang) }
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -45,13 +48,12 @@ export default function ChatView() {
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-chat)]">
-      {/* Header */}
       <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-[var(--color-accent)] flex items-center justify-center">🤖</div>
           <div>
-            <div className="font-semibold">Tokamak AI Assistant</div>
-            <div className="text-xs text-[var(--color-text-secondary)]">Not connected - Configure in Settings</div>
+            <div className="font-semibold">{t('chat.title', lang)}</div>
+            <div className="text-xs text-[var(--color-text-secondary)]">{t('chat.notConnected', lang)}</div>
           </div>
         </div>
         <select className="bg-[var(--color-border)] text-sm rounded-lg px-3 py-1.5 outline-none">
@@ -61,7 +63,6 @@ export default function ChatView() {
         </select>
       </div>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -79,21 +80,20 @@ export default function ChatView() {
         {loading && (
           <div className="flex justify-start">
             <div className="bg-[var(--color-bubble-ai)] rounded-2xl rounded-bl-md px-4 py-3 text-sm">
-              <span className="animate-pulse">Thinking...</span>
+              <span className="animate-pulse">{t('chat.thinking', lang)}</span>
             </div>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
       <div className="px-6 py-4 border-t border-[var(--color-border)]">
         <div className="flex gap-3 items-end">
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type a message... (Enter to send)"
+            placeholder={t('chat.placeholder', lang)}
             rows={1}
             className="flex-1 bg-[var(--color-border)] rounded-xl px-4 py-3 text-sm outline-none resize-none max-h-32 placeholder-[var(--color-text-secondary)]"
           />
@@ -102,7 +102,7 @@ export default function ChatView() {
             disabled={loading || !input.trim()}
             className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 rounded-xl px-5 py-3 text-sm font-medium transition-colors cursor-pointer"
           >
-            Send
+            {t('chat.send', lang)}
           </button>
         </div>
       </div>

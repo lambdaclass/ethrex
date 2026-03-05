@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { useLang } from '../App'
+import { t } from '../i18n'
 
 interface NodeInfo {
   name: string
@@ -21,6 +23,7 @@ const statusText = (status: NodeInfo['status']) => {
 }
 
 export default function NodeControlView() {
+  const { lang } = useLang()
   const [nodes, setNodes] = useState<NodeInfo[]>([])
 
   const fetchStatus = async () => {
@@ -46,8 +49,8 @@ export default function NodeControlView() {
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-chat)]">
       <div className="px-6 py-4 border-b border-[var(--color-border)]">
-        <h1 className="text-lg font-semibold">Node Control</h1>
-        <p className="text-xs text-[var(--color-text-secondary)] mt-1">Manage your L1/L2 nodes, prover, and sequencer</p>
+        <h1 className="text-lg font-semibold">{t('nodes.title', lang)}</h1>
+        <p className="text-xs text-[var(--color-text-secondary)] mt-1">{t('nodes.subtitle', lang)}</p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -68,14 +71,14 @@ export default function NodeControlView() {
                 disabled={node.status === 'Running'}
                 className="bg-[var(--color-success)] text-black text-xs font-medium px-4 py-2 rounded-lg disabled:opacity-30 hover:opacity-80 transition-opacity cursor-pointer"
               >
-                Start
+                {t('nodes.start', lang)}
               </button>
               <button
                 onClick={() => handleAction(node.name, 'stop')}
                 disabled={node.status === 'Stopped'}
                 className="bg-[var(--color-error)] text-white text-xs font-medium px-4 py-2 rounded-lg disabled:opacity-30 hover:opacity-80 transition-opacity cursor-pointer"
               >
-                Stop
+                {t('nodes.stop', lang)}
               </button>
             </div>
           </div>

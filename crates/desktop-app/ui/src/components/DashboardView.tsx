@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useLang } from '../App'
+import { t } from '../i18n'
 
 const defaultTabs = [
   { id: 'l1', name: 'L1 Dashboard', url: 'http://localhost:3010' },
@@ -9,12 +11,12 @@ const defaultTabs = [
 ]
 
 export default function DashboardView() {
+  const { lang } = useLang()
   const [activeTab, setActiveTab] = useState(defaultTabs[0].id)
   const currentTab = defaultTabs.find(t => t.id === activeTab)
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-chat)]">
-      {/* Tab bar */}
       <div className="flex border-b border-[var(--color-border)] px-4">
         {defaultTabs.map(tab => (
           <button
@@ -31,17 +33,15 @@ export default function DashboardView() {
         ))}
       </div>
 
-      {/* WebView placeholder */}
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center space-y-3">
           <div className="text-4xl">📊</div>
           <div className="text-lg font-medium">{currentTab?.name}</div>
           <div className="text-sm text-[var(--color-text-secondary)]">
-            WebView will load: <code className="bg-[var(--color-border)] px-2 py-1 rounded">{currentTab?.url}</code>
+            {t('dashboard.webview', lang)}: <code className="bg-[var(--color-border)] px-2 py-1 rounded">{currentTab?.url}</code>
           </div>
-          <p className="text-xs text-[var(--color-text-secondary)] mt-4">
-            Dashboard integration coming in Phase 2.<br/>
-            Start the corresponding service first, then the dashboard will appear here.
+          <p className="text-xs text-[var(--color-text-secondary)] mt-4 whitespace-pre-line">
+            {t('dashboard.hint', lang)}
           </p>
         </div>
       </div>
