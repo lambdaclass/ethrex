@@ -89,10 +89,9 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
-        let record_bal = is_amsterdam;
 
         // Enable BAL recording for Amsterdam+ forks
-        if record_bal {
+        if is_amsterdam {
             db.enable_bal_recording();
             // Set index 0 for pre-execution phase (system contracts)
             db.set_bal_index(0);
@@ -117,7 +116,7 @@ impl LEVM {
             check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
-            if record_bal {
+            if is_amsterdam {
                 #[allow(clippy::cast_possible_truncation)]
                 db.set_bal_index((tx_idx + 1) as u16);
 
@@ -162,7 +161,7 @@ impl LEVM {
         }
 
         // Set BAL index for post-execution phase (withdrawals, uint16)
-        if record_bal {
+        if is_amsterdam {
             #[allow(clippy::cast_possible_truncation)]
             let withdrawal_index = (block.body.transactions.len() + 1) as u16;
             db.set_bal_index(withdrawal_index);
@@ -172,7 +171,7 @@ impl LEVM {
             // Record ALL withdrawal recipients for BAL per EIP-7928:
             // "Withdrawal recipients regardless of amount"
             // The amount filter only applies to balance_changes, not touched_addresses
-            if record_bal && let Some(recorder) = db.bal_recorder_mut() {
+            if is_amsterdam && let Some(recorder) = db.bal_recorder_mut() {
                 recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
             Self::process_withdrawals(db, withdrawals)?;
@@ -810,7 +809,7 @@ impl LEVM {
             FxHashMap<H256, ethrex_common::types::Code>,
             FxHashSet<Address>, // accessed_accounts tracker
         );
-        let t_exec = std::time::Instant::now();
+
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
@@ -851,7 +850,6 @@ impl LEVM {
             })
             .collect();
 
-        let exec_ms = t_exec.elapsed().as_secs_f64() * 1000.0;
         let mut exec_results = exec_results?;
 
         // Sort so gas accounting and validation happen in tx order.
