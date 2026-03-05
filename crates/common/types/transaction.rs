@@ -3,6 +3,8 @@ use std::{cmp::min, fmt::Display};
 use crate::{errors::EcdsaError, utils::keccak};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
+#[cfg(feature = "eip-8141")]
+use ethereum_types::H160;
 use hex_literal::hex;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -13,6 +15,16 @@ pub use serde_impl::{
 
 /// The serialized length of a default eip1559 transaction
 pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
+
+#[cfg(feature = "eip-8141")]
+pub const FRAME_TX_TYPE: u8 = 0x06;
+#[cfg(feature = "eip-8141")]
+pub const FRAME_TX_INTRINSIC_COST: u64 = 15_000;
+#[cfg(feature = "eip-8141")]
+// 0x00000000000000000000000000000000000000AA
+pub const ENTRY_POINT_ADDRESS: Address = H160(hex!("00000000000000000000000000000000000000AA"));
+#[cfg(feature = "eip-8141")]
+pub const MAX_FRAMES: usize = 1000;
 
 use ethrex_rlp::{
     constants::RLP_NULL,
@@ -43,6 +55,8 @@ pub enum Transaction {
     EIP7702Transaction(EIP7702Transaction),
     PrivilegedL2Transaction(PrivilegedL2Transaction),
     FeeTokenTransaction(FeeTokenTransaction),
+    #[cfg(feature = "eip-8141")]
+    EIP8141Transaction(EIP8141Transaction),
 }
 
 /// The same as a Transaction enum, only that blob transactions are in wrapped format, including
@@ -347,6 +361,8 @@ pub enum TxType {
     EIP4844 = 0x03,
     EIP7702 = 0x04,
     FeeToken = 0x7d,
+    #[cfg(feature = "eip-8141")]
+    EIP8141 = 0x06,
     // We take the same approach as Optimism to define the privileged tx prefix
     // https://github.com/ethereum-optimism/specs/blob/c6903a3b2cad575653e1f5ef472debb573d83805/specs/protocol/deposits.md#the-deposited-transaction-type
     Privileged = 0x7e,
@@ -361,6 +377,8 @@ impl From<TxType> for u8 {
             TxType::EIP4844 => 0x03,
             TxType::EIP7702 => 0x04,
             TxType::FeeToken => 0x7d,
+            #[cfg(feature = "eip-8141")]
+            TxType::EIP8141 => 0x06,
             TxType::Privileged => 0x7e,
         }
     }
@@ -376,6 +394,8 @@ impl Display for TxType {
             TxType::EIP7702 => write!(f, "EIP7702"),
             TxType::Privileged => write!(f, "Privileged"),
             TxType::FeeToken => write!(f, "FeeToken"),
+            #[cfg(feature = "eip-8141")]
+            TxType::EIP8141 => write!(f, "EIP8141"),
         }
     }
 }
@@ -390,6 +410,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => TxType::EIP7702,
             Transaction::FeeTokenTransaction(_) => TxType::FeeToken,
             Transaction::PrivilegedL2Transaction(_) => TxType::Privileged,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(_) => TxType::EIP8141,
         }
     }
 
@@ -414,6 +436,8 @@ impl Transaction {
             TxType::EIP7702 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::FeeToken => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::Privileged => Some(self.gas_price()),
+            #[cfg(feature = "eip-8141")]
+            TxType::EIP8141 => self.calc_effective_gas_price(base_fee_per_gas),
         }
     }
 
@@ -426,6 +450,8 @@ impl Transaction {
             TxType::EIP7702 => U256::from(self.max_fee_per_gas()?),
             TxType::FeeToken => U256::from(self.max_fee_per_gas()?),
             TxType::Privileged => self.gas_price(),
+            #[cfg(feature = "eip-8141")]
+            TxType::EIP8141 => U256::from(self.max_fee_per_gas()?),
         };
 
         Some(U256::saturating_add(
@@ -453,6 +479,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(t) => Some(&t.cached_canonical),
             Transaction::PrivilegedL2Transaction(t) => Some(&t.cached_canonical),
             Transaction::FeeTokenTransaction(t) => Some(&t.cached_canonical),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(_) => None,
         }
     }
 }
@@ -506,6 +534,9 @@ impl RLPDecode for Transaction {
                 // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode(tx_encoding)
                     .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
+                #[cfg(feature = "eip-8141")]
+                0x06 => EIP8141Transaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::EIP8141Transaction(tx), remainder)),
                 ty => Err(RLPDecodeError::Custom(format!(
                     "Invalid transaction type: {ty}"
                 ))),
@@ -686,6 +717,8 @@ impl PayloadRLPEncode for Transaction {
             Transaction::EIP7702Transaction(tx) => tx.encode_payload(buf),
             Transaction::PrivilegedL2Transaction(tx) => tx.encode_payload(buf),
             Transaction::FeeTokenTransaction(tx) => tx.encode_payload(buf),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => tx.encode(buf),
         }
     }
 }
@@ -1092,6 +1125,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.sender_cache,
             Transaction::PrivilegedL2Transaction(tx) => &tx.sender_cache,
             Transaction::FeeTokenTransaction(tx) => &tx.sender_cache,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => return Ok(tx.sender),
         };
         sender_cache
             .get_or_try_init(|| self.compute_sender())
@@ -1212,6 +1247,8 @@ impl Transaction {
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => Ok(tx.sender),
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
                 Encoder::new(&mut buf)
@@ -1244,6 +1281,8 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.gas,
             Transaction::PrivilegedL2Transaction(tx) => tx.gas_limit,
             Transaction::FeeTokenTransaction(tx) => tx.gas_limit,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => tx.frames.iter().map(|f| f.gas_limit).sum(),
         }
     }
 
@@ -1257,6 +1296,8 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => U256::from(tx.max_fee_per_gas),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => tx.max_fee_per_gas,
         }
     }
 
@@ -1269,6 +1310,12 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => TxKind::Call(tx.to),
             Transaction::PrivilegedL2Transaction(tx) => tx.to.clone(),
             Transaction::FeeTokenTransaction(tx) => tx.to.clone(),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => tx
+                .frames
+                .first()
+                .and_then(|f| f.target.map(TxKind::Call))
+                .unwrap_or(TxKind::Create),
         }
     }
 
@@ -1281,6 +1328,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => tx.value,
             Transaction::PrivilegedL2Transaction(tx) => tx.value,
             Transaction::FeeTokenTransaction(tx) => tx.value,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(_) => U256::zero(),
         }
     }
 
@@ -1293,6 +1342,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => Some(tx.max_priority_fee_per_gas),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => Some(tx.max_priority_fee_per_gas.as_u64()),
         }
     }
 
@@ -1305,6 +1356,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(tx.chain_id),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.chain_id),
             Transaction::FeeTokenTransaction(tx) => Some(tx.chain_id),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => Some(tx.chain_id),
         }
     }
 
@@ -1318,6 +1371,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.access_list,
             Transaction::PrivilegedL2Transaction(tx) => &tx.access_list,
             Transaction::FeeTokenTransaction(tx) => &tx.access_list,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(_) => &EMPTY_ACCESS_LIST,
         }
     }
     pub fn authorization_list(&self) -> Option<&AuthorizationList> {
@@ -1329,6 +1384,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(&tx.authorization_list),
             Transaction::PrivilegedL2Transaction(_) => None,
             Transaction::FeeTokenTransaction(_) => None,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(_) => None,
         }
     }
 
@@ -1341,6 +1398,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => tx.nonce,
             Transaction::PrivilegedL2Transaction(tx) => tx.nonce,
             Transaction::FeeTokenTransaction(tx) => tx.nonce,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => tx.nonce,
         }
     }
 
@@ -1353,6 +1412,11 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.data,
             Transaction::PrivilegedL2Transaction(tx) => &tx.data,
             Transaction::FeeTokenTransaction(tx) => &tx.data,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => {
+                static EMPTY_BYTES: Bytes = Bytes::new();
+                tx.frames.first().map(|f| &f.data).unwrap_or(&EMPTY_BYTES)
+            }
         }
     }
 
@@ -1365,6 +1429,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => Vec::new(),
             Transaction::PrivilegedL2Transaction(_) => Vec::new(),
             Transaction::FeeTokenTransaction(_) => Vec::new(),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => tx.blob_versioned_hashes.clone(),
         }
     }
 
@@ -1377,6 +1443,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => None,
             Transaction::PrivilegedL2Transaction(_) => None,
             Transaction::FeeTokenTransaction(_) => None,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => Some(tx.max_fee_per_blob_gas),
         }
     }
 
@@ -1389,6 +1457,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => false,
             Transaction::PrivilegedL2Transaction(t) => matches!(t.to, TxKind::Create),
             Transaction::FeeTokenTransaction(t) => matches!(t.to, TxKind::Create),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(_) => false,
         }
     }
 
@@ -1405,6 +1475,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => Some(tx.max_fee_per_gas),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(tx) => Some(tx.max_fee_per_gas.as_u64()),
         }
     }
 
@@ -1424,6 +1496,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
             Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
             Transaction::FeeTokenTransaction(tx) => &tx.inner_hash,
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(_) => return self.compute_hash(),
         };
 
         *inner_hash.get_or_init(|| self.compute_hash())
@@ -1567,6 +1641,8 @@ impl TxType {
             0x03 => Some(Self::EIP4844),
             0x04 => Some(Self::EIP7702),
             0x7d => Some(Self::FeeToken),
+            #[cfg(feature = "eip-8141")]
+            0x06 => Some(Self::EIP8141),
             0x7e => Some(Self::Privileged),
             _ => None,
         }
@@ -1635,6 +1711,168 @@ pub struct FeeTokenTransaction {
     pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
+#[cfg(feature = "eip-8141")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, RSerialize, RDeserialize, Archive)]
+pub enum FrameMode {
+    Default = 0,
+    Verify = 1,
+    Sender = 2,
+}
+
+#[cfg(feature = "eip-8141")]
+impl RLPEncode for FrameMode {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        (*self as u8).encode(buf);
+    }
+}
+
+#[cfg(feature = "eip-8141")]
+impl RLPDecode for FrameMode {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let (val, rest) = u8::decode_unfinished(rlp)?;
+        let mode = match val {
+            0 => FrameMode::Default,
+            1 => FrameMode::Verify,
+            2 => FrameMode::Sender,
+            other => {
+                return Err(RLPDecodeError::Custom(format!(
+                    "Invalid FrameMode: {other}"
+                )))
+            }
+        };
+        Ok((mode, rest))
+    }
+}
+
+#[cfg(feature = "eip-8141")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, RSerialize, RDeserialize, Archive)]
+pub struct Frame {
+    pub mode: FrameMode,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
+    pub target: Option<Address>,
+    pub gas_limit: u64,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub data: Bytes,
+}
+
+#[cfg(feature = "eip-8141")]
+impl RLPEncode for Frame {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let target = match self.target {
+            Some(addr) => TxKind::Call(addr),
+            None => TxKind::Create,
+        };
+        Encoder::new(buf)
+            .encode_field(&self.mode)
+            .encode_field(&target)
+            .encode_field(&self.gas_limit)
+            .encode_field(&self.data)
+            .finish();
+    }
+}
+
+#[cfg(feature = "eip-8141")]
+impl RLPDecode for Frame {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (mode, decoder) = decoder.decode_field("mode")?;
+        let (target, decoder): (TxKind, _) = decoder.decode_field("target")?;
+        let target = match target {
+            TxKind::Call(addr) => Some(addr),
+            TxKind::Create => None,
+        };
+        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let (data, decoder) = decoder.decode_field("data")?;
+        Ok((
+            Frame {
+                mode,
+                target,
+                gas_limit,
+                data,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+#[cfg(feature = "eip-8141")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, RSerialize, RDeserialize, Archive)]
+pub struct EIP8141Transaction {
+    pub chain_id: u64,
+    pub nonce: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    pub sender: Address,
+    pub frames: Vec<Frame>,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub max_priority_fee_per_gas: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub max_fee_per_gas: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub max_fee_per_blob_gas: U256,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
+    pub blob_versioned_hashes: Vec<H256>,
+}
+
+#[cfg(feature = "eip-8141")]
+impl RLPEncode for EIP8141Transaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.chain_id)
+            .encode_field(&self.nonce)
+            .encode_field(&self.sender)
+            .encode_field(&self.frames)
+            .encode_field(&self.max_priority_fee_per_gas)
+            .encode_field(&self.max_fee_per_gas)
+            .encode_field(&self.max_fee_per_blob_gas)
+            .encode_field(&self.blob_versioned_hashes)
+            .finish();
+    }
+}
+
+#[cfg(feature = "eip-8141")]
+impl RLPDecode for EIP8141Transaction {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
+        let (nonce, decoder) = decoder.decode_field("nonce")?;
+        let (sender, decoder) = decoder.decode_field("sender")?;
+        let (frames, decoder) = decoder.decode_field("frames")?;
+        let (max_priority_fee_per_gas, decoder) =
+            decoder.decode_field("max_priority_fee_per_gas")?;
+        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
+        let (max_fee_per_blob_gas, decoder) = decoder.decode_field("max_fee_per_blob_gas")?;
+        let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
+        Ok((
+            EIP8141Transaction {
+                chain_id,
+                nonce,
+                sender,
+                frames,
+                max_priority_fee_per_gas,
+                max_fee_per_gas,
+                max_fee_per_blob_gas,
+                blob_versioned_hashes,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+#[cfg(feature = "eip-8141")]
+impl EIP8141Transaction {
+    pub fn compute_sig_hash(&self) -> H256 {
+        let mut tx = self.clone();
+        for frame in &mut tx.frames {
+            if frame.mode == FrameMode::Verify {
+                frame.data = Bytes::new();
+            }
+        }
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        keccak(&buf)
+    }
+}
+
 /// Canonical Transaction Encoding
 /// Based on [EIP-2718]
 /// Transactions can be encoded in the following formats:
@@ -1679,6 +1917,9 @@ mod canonic_encoding {
                         // PrivilegedL2Transaction
                         0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                             .map(Transaction::PrivilegedL2Transaction),
+                        #[cfg(feature = "eip-8141")]
+                        0x06 => EIP8141Transaction::decode(tx_bytes)
+                            .map(Transaction::EIP8141Transaction),
                         ty => Err(RLPDecodeError::Custom(format!(
                             "Invalid transaction type: {ty}"
                         ))),
@@ -1708,6 +1949,8 @@ mod canonic_encoding {
                 Transaction::EIP7702Transaction(t) => t.encode(buf),
                 Transaction::FeeTokenTransaction(t) => t.encode(buf),
                 Transaction::PrivilegedL2Transaction(t) => t.encode(buf),
+                #[cfg(feature = "eip-8141")]
+                Transaction::EIP8141Transaction(t) => t.encode(buf),
             };
         }
 
@@ -2241,6 +2484,10 @@ mod serde_impl {
                             serde::de::Error::custom(format!("Couldn't Deserialize FeeToken {e}"))
                         })
                 }
+                #[cfg(feature = "eip-8141")]
+                TxType::EIP8141 => Err(serde::de::Error::custom(
+                    "EIP8141 transactions are not deserializable from JSON",
+                )),
             }
         }
     }
@@ -3007,6 +3254,8 @@ mod serde_impl {
                 Transaction::EIP7702Transaction(tx) => tx.into(),
                 Transaction::PrivilegedL2Transaction(tx) => tx.into(),
                 Transaction::FeeTokenTransaction(tx) => tx.into(),
+                #[cfg(feature = "eip-8141")]
+                Transaction::EIP8141Transaction(_tx) => GenericTransaction::default(),
             }
         }
     }

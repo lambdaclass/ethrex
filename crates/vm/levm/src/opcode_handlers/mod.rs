@@ -3,6 +3,8 @@ use crate::{
     vm::VM,
 };
 
+#[cfg(feature = "eip-8141")]
+pub mod frame;
 pub mod arithmetic;
 pub mod bitwise_comparison;
 pub mod block;

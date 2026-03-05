@@ -7,6 +7,10 @@ use crate::{
     },
     vm::VM,
 };
+#[cfg(feature = "eip-8141")]
+use crate::opcode_handlers::frame::{
+    OpApproveHandler, OpTxParamCopyHandler, OpTxParamLoadHandler, OpTxParamSizeHandler,
+};
 use ethrex_common::types::Fork;
 use std::cell::OnceCell;
 use strum::EnumString;
@@ -172,6 +176,15 @@ pub enum Opcode {
     LOG2 = 0xA2,
     LOG3 = 0xA3,
     LOG4 = 0xA4,
+    // EIP-8141
+    #[cfg(feature = "eip-8141")]
+    APPROVE = 0xAA,
+    #[cfg(feature = "eip-8141")]
+    TXPARAMLOAD = 0xB0,
+    #[cfg(feature = "eip-8141")]
+    TXPARAMSIZE = 0xB1,
+    #[cfg(feature = "eip-8141")]
+    TXPARAMCOPY = 0xB2,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -327,6 +340,13 @@ impl From<u8> for Opcode {
             table[0xA2] = Opcode::LOG2;
             table[0xA3] = Opcode::LOG3;
             table[0xA4] = Opcode::LOG4;
+            #[cfg(feature = "eip-8141")]
+            {
+                table[0xAA] = Opcode::APPROVE;
+                table[0xB0] = Opcode::TXPARAMLOAD;
+                table[0xB1] = Opcode::TXPARAMSIZE;
+                table[0xB2] = Opcode::TXPARAMCOPY;
+            }
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -623,6 +643,14 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::EXCHANGE as usize] = OpCodeFn::new::<OpExchangeHandler>();
         // EIP-7843 opcode
         opcode_table[Opcode::SLOTNUM as usize] = OpCodeFn::new::<OpSlotNumHandler>();
+        // EIP-8141 opcodes
+        #[cfg(feature = "eip-8141")]
+        {
+            opcode_table[Opcode::APPROVE as usize] = OpCodeFn::new::<OpApproveHandler>();
+            opcode_table[Opcode::TXPARAMLOAD as usize] = OpCodeFn::new::<OpTxParamLoadHandler>();
+            opcode_table[Opcode::TXPARAMSIZE as usize] = OpCodeFn::new::<OpTxParamSizeHandler>();
+            opcode_table[Opcode::TXPARAMCOPY as usize] = OpCodeFn::new::<OpTxParamCopyHandler>();
+        }
         opcode_table
     }
 }

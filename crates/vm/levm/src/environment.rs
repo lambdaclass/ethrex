@@ -3,6 +3,31 @@ use ethrex_common::{
     types::{BlockHeader, ChainConfig, Fork, ForkBlobSchedule},
 };
 
+#[cfg(feature = "eip-8141")]
+pub use ethrex_common::types::transaction::{
+    Frame, FrameMode, ENTRY_POINT_ADDRESS,
+};
+
+#[cfg(feature = "eip-8141")]
+#[derive(Clone, Debug)]
+pub struct FrameResult {
+    pub success: bool,
+    pub gas_used: u64,
+}
+
+#[cfg(feature = "eip-8141")]
+#[derive(Clone, Debug)]
+pub struct FrameExecutionContext {
+    pub frames: Vec<Frame>,
+    pub current_frame_index: usize,
+    pub sender: Address,
+    pub sender_approved: bool,
+    pub payer_approved: bool,
+    pub payer: Option<Address>,
+    pub frame_results: Vec<Option<FrameResult>>,
+    pub sig_hash: H256,
+}
+
 use crate::constants::{
     BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, MAX_BLOB_COUNT,
     MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
@@ -44,6 +69,8 @@ pub struct Environment {
     /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
     /// to avoid early reverts on insufficient balance so that warming touches more storage.
     pub disable_balance_check: bool,
+    #[cfg(feature = "eip-8141")]
+    pub frame_context: Option<FrameExecutionContext>,
 }
 
 /// This struct holds special configuration variables specific to the

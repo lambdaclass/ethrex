@@ -78,7 +78,33 @@ impl OpcodeHandler for OpBalanceHandler {
 pub struct OpOriginHandler;
 impl OpcodeHandler for OpOriginHandler {
     #[inline(always)]
+    // The method name `eval` is required by the OpcodeHandler trait
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        #[cfg(feature = "eip-8141")]
+        if let Some(ref ctx) = vm.env.frame_context {
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::ORIGIN)?;
+            let caller = if ctx
+                .frames
+                .get(ctx.current_frame_index)
+                .is_some_and(|f| {
+                    f.mode == crate::environment::FrameMode::Sender
+                })
+            {
+                ctx.sender
+            } else {
+                crate::environment::ENTRY_POINT_ADDRESS
+            };
+            #[expect(unsafe_code, reason = "safe")]
+            vm.current_call_frame.stack.push(U256(unsafe {
+                let mut bytes = [0u8; 32];
+                bytes[12..].copy_from_slice(&caller.0);
+                bytes.reverse();
+                mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
+            }))?;
+            return Ok(OpcodeResult::Continue);
+        }
+
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::ORIGIN)?;
 

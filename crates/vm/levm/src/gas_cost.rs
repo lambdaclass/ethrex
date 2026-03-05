@@ -92,6 +92,15 @@ pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const GASPRICE: u64 = 2;
 pub const CLZ: u64 = 5;
 
+#[cfg(feature = "eip-8141")]
+pub const APPROVE: u64 = 0;
+#[cfg(feature = "eip-8141")]
+pub const TXPARAMLOAD: u64 = 3;
+#[cfg(feature = "eip-8141")]
+pub const TXPARAMSIZE: u64 = 2;
+#[cfg(feature = "eip-8141")]
+pub const TXPARAMCOPY_STATIC: u64 = 3;
+
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
 pub const SELFDESTRUCT_REFUND: u64 = 24000;

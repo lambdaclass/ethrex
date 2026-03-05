@@ -284,6 +284,21 @@ impl LEVM {
                 }
             }
 
+            #[cfg(feature = "eip-8141")]
+            let report = if let Transaction::EIP8141Transaction(frame_tx) = tx {
+                Self::execute_frame_tx(frame_tx, tx_sender, &block.header, db, vm_type)?
+            } else {
+                Self::execute_tx_in_block(
+                    tx,
+                    tx_sender,
+                    &block.header,
+                    db,
+                    vm_type,
+                    &mut shared_stack_pool,
+                    false,
+                )?
+            };
+            #[cfg(not(feature = "eip-8141"))]
             let report = Self::execute_tx_in_block(
                 tx,
                 tx_sender,
@@ -1162,9 +1177,182 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
             disable_balance_check: false,
+            #[cfg(feature = "eip-8141")]
+            frame_context: None,
         };
 
         Ok(env)
+    }
+
+    #[cfg(feature = "eip-8141")]
+    fn execute_frame_tx(
+        tx: &ethrex_common::types::transaction::EIP8141Transaction,
+        _tx_sender: Address,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+    ) -> Result<ExecutionReport, EvmError> {
+        use ethrex_common::types::transaction::{FrameMode, ENTRY_POINT_ADDRESS, FRAME_TX_INTRINSIC_COST};
+        use ethrex_levm::environment::{FrameExecutionContext, FrameResult};
+
+        let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let block_excess_blob_gas = block_header.excess_blob_gas;
+
+        let base_fee = block_header.base_fee_per_gas.unwrap_or_default();
+        let priority_fee = std::cmp::min(
+            tx.max_priority_fee_per_gas,
+            tx.max_fee_per_gas.saturating_sub(U256::from(base_fee)),
+        );
+        let gas_price = U256::from(base_fee).saturating_add(priority_fee);
+
+        let sig_hash = tx.compute_sig_hash();
+
+        let mut sender_approved = false;
+        let mut payer_approved = false;
+        let mut all_logs = Vec::new();
+        let mut total_gas_used: u64 = FRAME_TX_INTRINSIC_COST;
+        let mut frame_results: Vec<Option<FrameResult>> = vec![None; tx.frames.len()];
+
+        for (i, frame) in tx.frames.iter().enumerate() {
+            let target = frame.target.unwrap_or(tx.sender);
+            let caller = match frame.mode {
+                FrameMode::Sender => {
+                    if !sender_approved {
+                        return Err(EvmError::Custom(
+                            "SENDER frame before sender approval".to_string(),
+                        ));
+                    }
+                    tx.sender
+                }
+                _ => ENTRY_POINT_ADDRESS,
+            };
+
+            let frame_ctx = FrameExecutionContext {
+                frames: tx.frames.clone(),
+                current_frame_index: i,
+                sender: tx.sender,
+                sender_approved,
+                payer_approved,
+                payer: None,
+                frame_results: frame_results.clone(),
+                sig_hash,
+            };
+
+            let env = Environment {
+                origin: caller,
+                gas_limit: frame.gas_limit,
+                config,
+                block_number: block_header.number,
+                coinbase: block_header.coinbase,
+                timestamp: block_header.timestamp,
+                prev_randao: Some(block_header.prev_randao),
+                slot_number: block_header
+                    .slot_number
+                    .map(U256::from)
+                    .unwrap_or(U256::zero()),
+                chain_id: chain_config.chain_id.into(),
+                base_fee_per_gas: U256::from(base_fee),
+                base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+                gas_price,
+                block_excess_blob_gas,
+                block_blob_gas_used: block_header.blob_gas_used,
+                tx_blob_hashes: tx.blob_versioned_hashes.clone(),
+                tx_max_priority_fee_per_gas: Some(tx.max_priority_fee_per_gas),
+                tx_max_fee_per_gas: Some(tx.max_fee_per_gas),
+                tx_max_fee_per_blob_gas: Some(tx.max_fee_per_blob_gas),
+                tx_nonce: tx.nonce,
+                block_gas_limit: block_header.gas_limit,
+                difficulty: block_header.difficulty,
+                is_privileged: false,
+                fee_token: None,
+                disable_balance_check: false,
+                frame_context: Some(frame_ctx),
+            };
+
+            // Use EIP1559 as carrier transaction for VM::new
+            let carrier_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+                chain_id: tx.chain_id,
+                nonce: tx.nonce,
+                max_priority_fee_per_gas: tx.max_priority_fee_per_gas.as_u64(),
+                max_fee_per_gas: tx.max_fee_per_gas.as_u64(),
+                gas_limit: frame.gas_limit,
+                to: TxKind::Call(target),
+                value: U256::zero(),
+                data: frame.data.clone(),
+                access_list: Vec::new(),
+                signature_y_parity: false,
+                signature_r: U256::zero(),
+                signature_s: U256::zero(),
+                inner_hash: Default::default(),
+                sender_cache: Default::default(),
+                cached_canonical: Default::default(),
+            });
+
+            let mut vm = VM::new(env, db, &carrier_tx, LevmCallTracer::disabled(), vm_type)?;
+            let result = vm.execute();
+
+            match result {
+                Ok(report) => {
+                    let success = matches!(report.result, TxResult::Success);
+                    #[allow(clippy::arithmetic_side_effects)]
+                    { total_gas_used += report.gas_spent; }
+                    all_logs.extend(report.logs);
+
+                    frame_results[i] = Some(FrameResult {
+                        success,
+                        gas_used: report.gas_spent,
+                    });
+
+                    // Check APPROVE state from the VM's frame_context
+                    if let Some(ref ctx) = vm.env.frame_context {
+                        if ctx.sender_approved {
+                            sender_approved = true;
+                        }
+                        if ctx.payer_approved {
+                            payer_approved = true;
+                        }
+                    }
+
+                    // VERIFY frames must have called APPROVE
+                    if frame.mode == FrameMode::Verify && !sender_approved {
+                        return Err(EvmError::Custom(
+                            "VERIFY frame completed without calling APPROVE".to_string(),
+                        ));
+                    }
+                }
+                Err(e) => {
+                    frame_results[i] = Some(FrameResult {
+                        success: false,
+                        gas_used: frame.gas_limit,
+                    });
+                    #[allow(clippy::arithmetic_side_effects)]
+                    { total_gas_used += frame.gas_limit; }
+
+                    if frame.mode == FrameMode::Verify {
+                        return Err(EvmError::Custom(format!(
+                            "VERIFY frame failed: {e}"
+                        )));
+                    }
+                    // Non-VERIFY frames can fail without invalidating the tx
+                }
+            }
+        }
+
+        if !payer_approved {
+            return Err(EvmError::Custom(
+                "Frame transaction completed without payer approval".to_string(),
+            ));
+        }
+
+        Ok(ExecutionReport {
+            result: TxResult::Success,
+            gas_used: total_gas_used,
+            gas_spent: total_gas_used,
+            output: Bytes::new(),
+            logs: all_logs,
+            gas_refunded: 0,
+        })
     }
 
     pub fn execute_tx(
@@ -1688,6 +1876,8 @@ fn env_from_generic(
         is_privileged: false,
         fee_token: tx.fee_token,
         disable_balance_check: false,
+        #[cfg(feature = "eip-8141")]
+        frame_context: None,
     })
 }
 

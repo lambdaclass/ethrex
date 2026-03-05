@@ -183,6 +183,8 @@ impl ReceiptWithBloom {
                     0x3 => TxType::EIP4844,
                     0x4 => TxType::EIP7702,
                     0x7d => TxType::FeeToken,
+                    #[cfg(feature = "eip-8141")]
+                    0x06 => TxType::EIP8141,
                     0x7e => TxType::Privileged,
                     ty => {
                         return Err(RLPDecodeError::Custom(format!(
@@ -246,6 +248,8 @@ impl RLPDecode for ReceiptWithBloom {
                 0x3 => TxType::EIP4844,
                 0x4 => TxType::EIP7702,
                 0x7d => TxType::FeeToken,
+                #[cfg(feature = "eip-8141")]
+                0x06 => TxType::EIP8141,
                 0x7e => TxType::Privileged,
                 ty => {
                     return Err(RLPDecodeError::Custom(format!(

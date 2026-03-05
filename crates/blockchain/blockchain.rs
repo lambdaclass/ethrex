@@ -2669,6 +2669,12 @@ impl Blockchain {
                 ));
             }
             Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
+            #[cfg(feature = "eip-8141")]
+            Transaction::EIP8141Transaction(_) => {
+                return Err(StoreError::Custom(
+                    "EIP-8141 Frame Transactions are not yet supported in P2P".to_string(),
+                ));
+            }
         };
 
         Ok(result)

@@ -44,6 +44,7 @@ openvm = ["ethrex-levm/openvm", "ethrex-common/openvm"]
 perf_opcode_timings = ["ethrex-levm/perf_opcode_timings"]
 
 debug = ["ethrex-levm/debug"]
+eip-8141 = ["ethrex-levm/eip-8141"]
 
 [lints.clippy]
 unwrap_used = "deny"
