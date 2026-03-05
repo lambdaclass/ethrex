@@ -223,6 +223,8 @@ pub struct EIP2930Transaction {
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
     pub sender_cache: OnceCell<Address>,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -248,6 +250,8 @@ pub struct EIP1559Transaction {
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
     pub sender_cache: OnceCell<Address>,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -278,6 +282,8 @@ pub struct EIP4844Transaction {
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
     pub sender_cache: OnceCell<Address>,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -305,6 +311,8 @@ pub struct EIP7702Transaction {
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
     pub sender_cache: OnceCell<Address>,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub cached_canonical: OnceCell<Vec<u8>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
@@ -326,6 +334,8 @@ pub struct PrivilegedL2Transaction {
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
     pub sender_cache: OnceCell<Address>,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -431,6 +441,20 @@ impl Transaction {
             None
         }
     }
+
+    /// Returns a reference to the `cached_canonical` cell for non-legacy
+    /// transaction types, or `None` for legacy transactions.
+    fn cached_canonical_cell(&self) -> Option<&OnceCell<Vec<u8>>> {
+        match self {
+            Transaction::LegacyTransaction(_) => None,
+            Transaction::EIP2930Transaction(t) => Some(&t.cached_canonical),
+            Transaction::EIP1559Transaction(t) => Some(&t.cached_canonical),
+            Transaction::EIP4844Transaction(t) => Some(&t.cached_canonical),
+            Transaction::EIP7702Transaction(t) => Some(&t.cached_canonical),
+            Transaction::PrivilegedL2Transaction(t) => Some(&t.cached_canonical),
+            Transaction::FeeTokenTransaction(t) => Some(&t.cached_canonical),
+        }
+    }
 }
 
 impl RLPEncode for Transaction {
@@ -441,7 +465,10 @@ impl RLPEncode for Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         match self {
             Transaction::LegacyTransaction(t) => t.encode(buf),
-            tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
+            _ => {
+                let canonical = self.encode_canonical_to_vec();
+                <[u8] as RLPEncode>::encode(canonical.as_slice(), buf)
+            }
         };
     }
 }
@@ -824,6 +851,7 @@ impl RLPDecode for EIP2930Transaction {
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
         let inner_hash = OnceCell::new();
         let sender_cache = OnceCell::new();
+        let cached_canonical = OnceCell::new();
 
         let tx = EIP2930Transaction {
             chain_id,
@@ -839,6 +867,7 @@ impl RLPDecode for EIP2930Transaction {
             signature_s,
             inner_hash,
             sender_cache,
+            cached_canonical,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -862,6 +891,7 @@ impl RLPDecode for EIP1559Transaction {
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
         let inner_hash = OnceCell::new();
         let sender_cache = OnceCell::new();
+        let cached_canonical = OnceCell::new();
 
         let tx = EIP1559Transaction {
             chain_id,
@@ -878,6 +908,7 @@ impl RLPDecode for EIP1559Transaction {
             signature_s,
             inner_hash,
             sender_cache,
+            cached_canonical,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -903,6 +934,7 @@ impl RLPDecode for EIP4844Transaction {
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
         let inner_hash = OnceCell::new();
         let sender_cache = OnceCell::new();
+        let cached_canonical = OnceCell::new();
 
         let tx = EIP4844Transaction {
             chain_id,
@@ -921,6 +953,7 @@ impl RLPDecode for EIP4844Transaction {
             signature_s,
             inner_hash,
             sender_cache,
+            cached_canonical,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -945,6 +978,7 @@ impl RLPDecode for EIP7702Transaction {
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
         let inner_hash = OnceCell::new();
         let sender_cache = OnceCell::new();
+        let cached_canonical = OnceCell::new();
 
         let tx = EIP7702Transaction {
             chain_id,
@@ -962,6 +996,7 @@ impl RLPDecode for EIP7702Transaction {
             signature_s,
             inner_hash,
             sender_cache,
+            cached_canonical,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -983,6 +1018,7 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (from, decoder) = decoder.decode_field("from")?;
         let inner_hash = OnceCell::new();
         let sender_cache = OnceCell::new();
+        let cached_canonical = OnceCell::new();
 
         let tx = PrivilegedL2Transaction {
             chain_id,
@@ -997,6 +1033,7 @@ impl RLPDecode for PrivilegedL2Transaction {
             from,
             inner_hash,
             sender_cache,
+            cached_canonical,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -1021,6 +1058,7 @@ impl RLPDecode for FeeTokenTransaction {
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
         let inner_hash = OnceCell::new();
         let sender_cache = OnceCell::new();
+        let cached_canonical = OnceCell::new();
 
         let tx = FeeTokenTransaction {
             chain_id,
@@ -1038,6 +1076,7 @@ impl RLPDecode for FeeTokenTransaction {
             signature_s,
             inner_hash,
             sender_cache,
+            cached_canonical,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -1504,6 +1543,8 @@ pub struct FeeTokenTransaction {
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
     pub sender_cache: OnceCell<Address>,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
 /// Canonical Transaction Encoding
@@ -1588,6 +1629,15 @@ mod canonic_encoding {
         /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
         /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
         pub fn encode_canonical_to_vec(&self) -> Vec<u8> {
+            if let Some(cell) = self.cached_canonical_cell() {
+                return cell
+                    .get_or_init(|| {
+                        let mut buf = Vec::new();
+                        self.encode_canonical(&mut buf);
+                        buf
+                    })
+                    .clone();
+            }
             let mut buf = Vec::new();
             self.encode_canonical(&mut buf);
             buf
@@ -3574,7 +3624,10 @@ mod tests {
     #[test]
     fn encode_decode_low_size_tx() {
         let tx = Transaction::EIP2930Transaction(EIP2930Transaction::default());
-        let encoded = tx.encode_to_vec();
+        // Encode a separate copy so the original's cached_canonical stays uninit,
+        // avoiding a false PartialEq mismatch with the decoded (uncached) tx.
+        let tx_to_encode = tx.clone();
+        let encoded = tx_to_encode.encode_to_vec();
         let decoded_tx = Transaction::decode(&encoded).unwrap();
         assert_eq!(tx, decoded_tx);
     }
