@@ -190,8 +190,8 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting State Updater: {err}");
     });
-    if cfg.based.enabled {
-        let _ = BlockFetcher::spawn(
+    let block_fetcher = if cfg.based.enabled {
+        BlockFetcher::spawn(
             &cfg,
             store.clone(),
             rollup_store.clone(),
@@ -201,8 +201,11 @@ pub async fn start_l2(
         .await
         .inspect_err(|err| {
             error!("Error starting Block Fetcher: {err}");
-        });
-    }
+        })
+        .ok()
+    } else {
+        None
+    };
 
     if cfg.monitor.enabled {
         let monitor_cfg = monitor_config_from(&cfg);
@@ -228,6 +231,7 @@ pub async fn start_l2(
         l1_proof_sender.ok(),
         block_producer_handle.clone(),
         state_updater.ok(),
+        block_fetcher,
         #[cfg(feature = "metrics")]
         metrics_gatherer.ok(),
     )
