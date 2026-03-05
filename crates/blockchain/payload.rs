@@ -624,6 +624,12 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-7928: Save BAL recorder state before trying the tx.
+            // If the tx fails and is skipped, we must undo BAL changes (touched
+            // addresses, index advancement, etc.) so the BAL only reflects
+            // transactions actually included in the block.
+            let bal_snapshot = context.vm.db.bal_recorder.clone();
+
             // Set BAL index for this transaction (1-indexed per EIP-7928)
             // Index is based on current transaction count + 1
             #[allow(clippy::cast_possible_truncation)]
@@ -649,6 +655,9 @@ impl Blockchain {
                 Err(e) => {
                     debug!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                    // Restore BAL recorder to pre-tx state so rejected txs
+                    // don't pollute the block access list.
+                    context.vm.db.bal_recorder = bal_snapshot;
                     txs.pop();
                     continue;
                 }
