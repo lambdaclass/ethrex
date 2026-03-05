@@ -153,10 +153,10 @@ impl LEVM {
             // Record ALL withdrawal recipients for BAL per EIP-7928:
             // "Withdrawal recipients regardless of amount"
             // The amount filter only applies to balance_changes, not touched_addresses
-            if let Some(withdrawals) = &block.body.withdrawals {
-                if let Some(recorder) = db.bal_recorder_mut() {
-                    recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
-                }
+            if let Some(withdrawals) = &block.body.withdrawals
+                && let Some(recorder) = db.bal_recorder_mut()
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
         }
 
@@ -342,10 +342,10 @@ impl LEVM {
             db.set_bal_index(post_tx_index);
 
             // Record ALL withdrawal recipients for BAL per EIP-7928
-            if let Some(withdrawals) = &block.body.withdrawals {
-                if let Some(recorder) = db.bal_recorder_mut() {
-                    recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
-                }
+            if let Some(withdrawals) = &block.body.withdrawals
+                && let Some(recorder) = db.bal_recorder_mut()
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
         }
 

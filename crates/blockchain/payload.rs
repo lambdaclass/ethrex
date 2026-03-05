@@ -445,10 +445,10 @@ impl Blockchain {
             let post_tx_index = (context.payload.body.transactions.len() + 1) as u16;
             context.vm.set_bal_index(post_tx_index);
             // Record withdrawal recipients as touched addresses per EIP-7928
-            if let Some(recorder) = context.vm.db.bal_recorder_mut() {
-                if let Some(withdrawals) = &context.payload.body.withdrawals {
-                    recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
-                }
+            if let Some(recorder) = context.vm.db.bal_recorder_mut()
+                && let Some(withdrawals) = &context.payload.body.withdrawals
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
         }
         self.extract_requests(&mut context)?;
