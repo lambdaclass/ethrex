@@ -109,11 +109,7 @@ impl LEVM {
             })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            check_gas_limit(
-                cumulative_gas_used,
-                tx.gas_limit(),
-                block.header.gas_limit,
-            )?;
+            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if record_bal {
@@ -272,11 +268,7 @@ impl LEVM {
         let mut tx_since_last_flush = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            check_gas_limit(
-                cumulative_gas_used,
-                tx.gas_limit(),
-                block.header.gas_limit,
-            )?;
+            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
