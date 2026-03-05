@@ -181,13 +181,11 @@ impl<B: ProverBackend> Prover<B> {
                                 Some(pb.public_values.clone())
                             }
                             ethrex_l2_common::prover::BatchProof::ProofCalldata(pc) => {
-                                pc.calldata.first().and_then(|v| {
-                                    if let ethrex_l2_common::calldata::Value::Bytes(b) = v {
-                                        Some(b.to_vec())
-                                    } else {
-                                        None
-                                    }
-                                })
+                                if pc.public_values.is_empty() {
+                                    None
+                                } else {
+                                    Some(pc.public_values.clone())
+                                }
                             }
                         };
                         if let Some(pv) = pv_bytes {

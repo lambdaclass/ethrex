@@ -38,6 +38,7 @@ impl Risc0Backend {
         Ok(ProofCalldata {
             prover_type: ProverType::RISC0,
             calldata,
+            public_values: vec![],
         })
     }
 

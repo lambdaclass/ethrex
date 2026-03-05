@@ -127,11 +127,13 @@ impl Sp1Backend {
     }
 
     fn to_calldata(proof: &Sp1ProveOutput) -> ProofCalldata {
+        let pv_bytes = proof.proof.public_values.to_vec();
         let calldata = vec![Value::Bytes(proof.proof.bytes().into())];
 
         ProofCalldata {
             prover_type: ProverType::SP1,
             calldata,
+            public_values: pv_bytes,
         }
     }
 
