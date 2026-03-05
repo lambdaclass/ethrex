@@ -24,6 +24,7 @@ use tracing::{debug, trace};
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata},
+    peer_table::PeerTableServerProtocol as _,
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     snap::{
         SnapError,
@@ -116,7 +117,7 @@ async fn heal_state_trie(
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
                 .peer_table
-                .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
+                .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
                 .await
                 .unwrap_or(0);
             last_update = Instant::now();
@@ -188,7 +189,7 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    peers.peer_table.record_success(&peer_id)?;
+                    peers.peer_table.record_success(peer_id)?;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -197,7 +198,7 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    peers.peer_table.record_failure(&peer_id)?;
+                    peers.peer_table.record_failure(peer_id)?;
                 }
             }
         }
@@ -216,7 +217,7 @@ async fn heal_state_trie(
                 );
                 let Some((peer_id, connection)) = peers
                     .peer_table
-                    .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                    .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
                     .await
                     .inspect_err(
                         |err| debug!(err=?err, "Error requesting a peer to perform state healing"),

@@ -8,7 +8,7 @@ use crate::{
     discovery::{DiscoveryConfig, DiscoveryMultiplexer},
     discv4::server::{DiscoveryServer as Discv4Server, DiscoveryServerError as Discv4Error},
     metrics::{CurrentStepValue, METRICS},
-    peer_table::{PeerData, PeerTable},
+    peer_table::{PeerData, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
         message::Message,

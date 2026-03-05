@@ -17,7 +17,7 @@ use spawned_macros::{actor, protocol};
 use tracing::{debug, error, info, trace};
 
 use crate::{
-    peer_table::{PeerTable, PeerTableError},
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         Message,
         connection::server::PeerConnection,
@@ -356,5 +356,5 @@ pub enum TxBroadcasterError {
     #[error(transparent)]
     StoreError(#[from] StoreError),
     #[error(transparent)]
-    PeerTableError(#[from] PeerTableError),
+    PeerTableError(#[from] ActorError),
 }

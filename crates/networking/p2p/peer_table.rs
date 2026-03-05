@@ -31,7 +31,6 @@ use std::{
     net::IpAddr,
     time::{Duration, Instant},
 };
-use thiserror::Error;
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
@@ -302,10 +301,11 @@ pub trait PeerTableServerProtocol: Send + Sync {
         &self,
         capabilities: Vec<Capability>,
     ) -> Response<Option<(H256, PeerConnection)>>;
+    fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
 }
 
 #[derive(Debug)]
-struct PeerTableServer {
+pub struct PeerTableServer {
     contacts: IndexMap<H256, Contact>,
     peers: IndexMap<H256, PeerData>,
     already_tried_peers: FxHashSet<H256>,
@@ -316,6 +316,10 @@ struct PeerTableServer {
 
 #[actor(protocol = PeerTableServerProtocol)]
 impl PeerTableServer {
+    pub fn spawn(target_peers: usize, store: Store) -> PeerTable {
+        PeerTableServer::new(target_peers, store).start()
+    }
+
     pub(crate) fn new(target_peers: usize, store: Store) -> Self {
         Self {
             contacts: Default::default(),
@@ -783,6 +787,17 @@ impl PeerTableServer {
         self.do_get_random_peer(msg.capabilities)
     }
 
+    #[request_handler]
+    async fn handle_get_session_info(
+        &mut self,
+        msg: peer_table_server_protocol::GetSessionInfo,
+        _ctx: &Context<Self>,
+    ) -> Option<Session> {
+        self.contacts
+            .get(&msg.node_id)
+            .and_then(|c| c.session.clone())
+    }
+
     // === Private helper methods ===
 
     // Weighting function used to select best peer
@@ -1102,344 +1117,4 @@ impl PeerTableServer {
     }
 }
 
-// === PeerTable wrapper ===
-
-#[derive(Clone, Debug)]
-pub struct PeerTable {
-    handle: ActorRef<PeerTableServer>,
-}
-
-impl PeerTable {
-    pub fn spawn(target_peers: usize, store: Store) -> PeerTable {
-        PeerTable {
-            handle: PeerTableServer::new(target_peers, store).start(),
-        }
-    }
-
-    /// We received a list of Nodes to contact. No connection has been established yet.
-    /// The protocol parameter indicates which discovery protocol found these contacts.
-    pub fn new_contacts(
-        &self,
-        nodes: Vec<Node>,
-        local_node_id: H256,
-        protocol: DiscoveryProtocol,
-    ) -> Result<(), PeerTableError> {
-        self.handle.new_contacts(nodes, local_node_id, protocol)?;
-        Ok(())
-    }
-
-    /// We received a list of NodeRecords to contact. No connection has been established yet.
-    /// Used by discv5 which receives ENRs directly.
-    pub fn new_contact_records(
-        &self,
-        node_records: Vec<NodeRecord>,
-        local_node_id: H256,
-    ) -> Result<(), PeerTableError> {
-        self.handle
-            .new_contact_records(node_records, local_node_id)?;
-        Ok(())
-    }
-
-    /// We have established a connection with the remote peer.
-    pub fn new_connected_peer(
-        &self,
-        node: Node,
-        connection: PeerConnection,
-        capabilities: Vec<Capability>,
-    ) -> Result<(), PeerTableError> {
-        self.handle
-            .new_connected_peer(node, connection, capabilities)?;
-        Ok(())
-    }
-
-    /// Set or update discv5 Session info.
-    pub fn set_session_info(&self, node_id: H256, session: Session) -> Result<(), PeerTableError> {
-        self.handle.set_session_info(node_id, session)?;
-        Ok(())
-    }
-
-    /// Remove from list of connected peers.
-    pub fn remove_peer(&self, node_id: H256) -> Result<(), PeerTableError> {
-        self.handle.remove_peer(node_id)?;
-        Ok(())
-    }
-
-    /// Increment the number of ongoing requests for this peer
-    pub fn inc_requests(&self, node_id: H256) -> Result<(), PeerTableError> {
-        self.handle.inc_requests(node_id)?;
-        Ok(())
-    }
-
-    /// Decrement the number of ongoing requests for this peer
-    pub fn dec_requests(&self, node_id: H256) -> Result<(), PeerTableError> {
-        self.handle.dec_requests(node_id)?;
-        Ok(())
-    }
-
-    /// Mark node as not wanted
-    pub fn set_unwanted(&self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle.set_unwanted(*node_id)?;
-        Ok(())
-    }
-
-    /// Set whether the contact fork id is valid.
-    pub fn set_is_fork_id_valid(&self, node_id: &H256, valid: bool) -> Result<(), PeerTableError> {
-        self.handle.set_is_fork_id_valid(*node_id, valid)?;
-        Ok(())
-    }
-
-    /// Record a successful connection, used to score peers
-    pub fn record_success(&self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle.record_success(*node_id)?;
-        Ok(())
-    }
-
-    /// Record a failed connection, used to score peers
-    pub fn record_failure(&self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle.record_failure(*node_id)?;
-        Ok(())
-    }
-
-    /// Record a critical failure for connection, used to score peers
-    pub fn record_critical_failure(&self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle.record_critical_failure(*node_id)?;
-        Ok(())
-    }
-
-    /// Record ping sent, store the ping identifier for later check.
-    /// Protocol adaptation:
-    /// - discv4: convert H256 hash to Bytes via `Bytes::copy_from_slice(hash.as_bytes())`
-    /// - discv5: use Bytes request ID directly
-    pub fn record_ping_sent(&self, node_id: &H256, ping_id: Bytes) -> Result<(), PeerTableError> {
-        self.handle.record_ping_sent(*node_id, ping_id)?;
-        Ok(())
-    }
-
-    /// Record a pong received. Check previously saved ping_id and reset it if it matches.
-    pub fn record_pong_received(
-        &self,
-        node_id: &H256,
-        ping_id: Bytes,
-    ) -> Result<(), PeerTableError> {
-        self.handle.record_pong_received(*node_id, ping_id)?;
-        Ok(())
-    }
-
-    /// Record request sent, store the request hash for later check
-    pub fn record_enr_request_sent(
-        &self,
-        node_id: &H256,
-        request_hash: H256,
-    ) -> Result<(), PeerTableError> {
-        self.handle
-            .record_enr_request_sent(*node_id, request_hash)?;
-        Ok(())
-    }
-
-    /// Record a response received. Check previously saved hash and reset it if it matches
-    pub fn record_enr_response_received(
-        &self,
-        node_id: &H256,
-        request_hash: H256,
-        record: NodeRecord,
-    ) -> Result<(), PeerTableError> {
-        self.handle
-            .record_enr_response_received(*node_id, request_hash, record)?;
-        Ok(())
-    }
-
-    /// Set peer as disposable
-    pub fn set_disposable(&self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle.set_disposable(*node_id)?;
-        Ok(())
-    }
-
-    /// Increment FindNode message counter for peer
-    pub fn increment_find_node_sent(&self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle.increment_find_node_sent(*node_id)?;
-        Ok(())
-    }
-
-    /// Set flag for peer that tells that it knows us
-    pub fn knows_us(&self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle.mark_knows_us(*node_id)?;
-        Ok(())
-    }
-
-    /// Remove from list of contacts the ones marked as disposable
-    pub fn prune(&self) -> Result<(), PeerTableError> {
-        self.handle.prune_table()?;
-        Ok(())
-    }
-
-    /// Return the amount of connected peers
-    pub async fn peer_count(&self) -> Result<usize, PeerTableError> {
-        Ok(self.handle.peer_count().await?)
-    }
-
-    /// Return the amount of connected peers that matches any of the given capabilities
-    pub async fn peer_count_by_capabilities(
-        &self,
-        capabilities: &[Capability],
-    ) -> Result<usize, PeerTableError> {
-        Ok(self
-            .handle
-            .peer_count_by_capabilities(capabilities.to_vec())
-            .await?)
-    }
-
-    /// Check if target number of contacts and connected peers is reached
-    pub async fn target_reached(&self) -> Result<bool, PeerTableError> {
-        Ok(self.handle.target_reached().await?)
-    }
-
-    /// Check if target number of connected peers is reached
-    pub async fn target_peers_reached(&self) -> Result<bool, PeerTableError> {
-        Ok(self.handle.target_peers_reached().await?)
-    }
-
-    /// Return rate of target peers completion
-    pub async fn target_peers_completion(&self) -> Result<f64, PeerTableError> {
-        Ok(self.handle.target_peers_completion().await?)
-    }
-
-    /// Provide a contact to initiate a connection
-    pub async fn get_contact_to_initiate(&self) -> Result<Option<Contact>, PeerTableError> {
-        Ok(self.handle.get_contact_to_initiate().await?.map(|c| *c))
-    }
-
-    /// Provide a contact to perform Discovery lookup for a specific protocol.
-    /// Only returns contacts discovered via that protocol.
-    pub async fn get_contact_for_lookup(
-        &self,
-        protocol: DiscoveryProtocol,
-    ) -> Result<Option<Contact>, PeerTableError> {
-        Ok(self
-            .handle
-            .get_contact_for_lookup(protocol)
-            .await?
-            .map(|c| *c))
-    }
-
-    /// Provide a contact to perform ENR lookup (discv4 only).
-    pub async fn get_contact_for_enr_lookup(&self) -> Result<Option<Contact>, PeerTableError> {
-        Ok(self.handle.get_contact_for_enr_lookup().await?.map(|c| *c))
-    }
-
-    /// Get a contact using node_id
-    pub async fn get_contact(&self, node_id: H256) -> Result<Option<Contact>, PeerTableError> {
-        Ok(self.handle.get_contact(node_id).await?.map(|c| *c))
-    }
-
-    /// Get discv5 Session info.
-    pub async fn get_session_info(&self, node_id: H256) -> Result<Option<Session>, PeerTableError> {
-        Ok(self
-            .handle
-            .get_contact(node_id)
-            .await?
-            .and_then(|c| c.session))
-    }
-
-    /// Get all contacts available to revalidate for a specific protocol.
-    pub async fn get_contacts_to_revalidate(
-        &self,
-        revalidation_interval: Duration,
-        protocol: DiscoveryProtocol,
-    ) -> Result<Vec<Contact>, PeerTableError> {
-        Ok(self
-            .handle
-            .get_contacts_to_revalidate(revalidation_interval, protocol)
-            .await?)
-    }
-
-    /// Returns the peer with the highest score and its peer channel.
-    pub async fn get_best_peer(
-        &self,
-        capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerConnection)>, PeerTableError> {
-        Ok(self.handle.get_best_peer(capabilities.to_vec()).await?)
-    }
-
-    /// Get peer score
-    pub async fn get_score(&self, node_id: &H256) -> Result<i64, PeerTableError> {
-        Ok(self.handle.get_score(*node_id).await?)
-    }
-
-    /// Get list of connected peers
-    pub async fn get_connected_nodes(&self) -> Result<Vec<Node>, PeerTableError> {
-        Ok(self.handle.get_connected_nodes().await?)
-    }
-
-    /// Get list of connected peers with their capabilities
-    pub async fn get_peers_with_capabilities(
-        &self,
-    ) -> Result<Vec<(H256, PeerConnection, Vec<Capability>)>, PeerTableError> {
-        Ok(self.handle.get_peers_with_capabilities().await?)
-    }
-
-    /// Get peer channels for communication. It returns a PeerConnection that implements
-    /// at least one of the required capabilities.
-    pub async fn get_peer_connections(
-        &self,
-        capabilities: &[Capability],
-    ) -> Result<Vec<(H256, PeerConnection)>, PeerTableError> {
-        Ok(self
-            .handle
-            .get_peer_connections(capabilities.to_vec())
-            .await?)
-    }
-
-    /// Insert new peer if it is new. Returns a boolean telling if it was new or not.
-    pub async fn insert_if_new(
-        &self,
-        node: &Node,
-        protocol: DiscoveryProtocol,
-    ) -> Result<bool, PeerTableError> {
-        Ok(self.handle.insert_if_new(node.clone(), protocol).await?)
-    }
-
-    /// Validate a contact
-    pub async fn validate_contact(
-        &self,
-        node_id: &H256,
-        sender_ip: IpAddr,
-    ) -> Result<ContactValidation, PeerTableError> {
-        Ok(self.handle.validate_contact(*node_id, sender_ip).await?)
-    }
-
-    /// Get closest nodes according to kademlia's distance (discv4 compatible).
-    pub async fn get_closest_nodes(&self, node_id: &H256) -> Result<Vec<Node>, PeerTableError> {
-        Ok(self.handle.get_closest_nodes(*node_id).await?)
-    }
-
-    /// Get nodes at specified distances from local node (discv5).
-    pub async fn get_nodes_at_distances(
-        &self,
-        local_node_id: H256,
-        distances: Vec<u32>,
-    ) -> Result<Vec<NodeRecord>, PeerTableError> {
-        Ok(self
-            .handle
-            .get_nodes_at_distances(local_node_id, distances)
-            .await?)
-    }
-
-    /// Get metadata associated to peer
-    pub async fn get_peers_data(&self) -> Result<Vec<PeerData>, PeerTableError> {
-        Ok(self.handle.get_peers_data().await?)
-    }
-
-    /// Retrieve a random peer.
-    pub async fn get_random_peer(
-        &self,
-        capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerConnection)>, PeerTableError> {
-        Ok(self.handle.get_random_peer(capabilities.to_vec()).await?)
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum PeerTableError {
-    #[error("Internal error: {0}")]
-    InternalError(#[from] ActorError),
-}
+pub type PeerTable = ActorRef<PeerTableServer>;

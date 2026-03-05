@@ -22,7 +22,7 @@ use ethrex_common::{
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, TARGET_PEERS},
+    peer_table::{PeerTable, PeerTableServer, TARGET_PEERS},
     rlpx::initiator::RLPxInitiator,
     sync::SyncMode,
     sync_manager::SyncManager,
@@ -316,7 +316,7 @@ pub async fn dummy_sync_manager() -> SyncManager {
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
 pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
-    let peer_table = PeerTable::spawn(TARGET_PEERS, store);
+    let peer_table = PeerTableServer::spawn(TARGET_PEERS, store);
     PeerHandler::new(peer_table.clone(), dummy_gen_server(peer_table).await)
 }
 

@@ -1,5 +1,5 @@
 use crate::discv4::server::{LOOKUP_INTERVAL_MS, lookup_interval_function};
-use crate::peer_table::PeerTableError;
+use crate::peer_table::PeerTableServerProtocol as _;
 use crate::types::Node;
 use crate::{metrics::METRICS, network::P2PContext, rlpx::connection::server::PeerConnection};
 use spawned_concurrency::{
@@ -15,7 +15,7 @@ use tracing::{debug, error, info};
 #[derive(Debug, thiserror::Error)]
 pub enum RLPxInitiatorError {
     #[error(transparent)]
-    PeerTableError(#[from] PeerTableError),
+    ActorError(#[from] ActorError),
 }
 
 #[protocol]

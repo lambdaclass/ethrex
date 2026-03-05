@@ -9,7 +9,7 @@ use crate::{
     backend,
     metrics::METRICS,
     network::P2PContext,
-    peer_table::PeerTable,
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         Message,
         connection::{codec::RLPxCodec, handshake},
@@ -260,7 +260,7 @@ impl PeerConnectionServer {
                         | PeerConnectionError::HandshakeError(_) => {
                             if let Err(e) = established_state
                                 .peer_table
-                                .set_unwanted(&established_state.node.node_id())
+                                .set_unwanted(established_state.node.node_id())
                             {
                                 debug!("Failed to set peer as unwanted: {e}");
                             }
@@ -511,57 +511,57 @@ impl PeerConnectionServer {
         if let Err(e) = result
             && let ConnectionState::Established(established_state) = state
         {
-                match e {
-                    PeerConnectionError::Disconnected
-                    | PeerConnectionError::DisconnectReceived(_)
-                    | PeerConnectionError::DisconnectSent(_)
-                    | PeerConnectionError::HandshakeError(_)
-                    | PeerConnectionError::NoMatchingCapabilities
-                    | PeerConnectionError::InvalidPeerId
-                    | PeerConnectionError::InvalidMessageLength
-                    | PeerConnectionError::StateError(_)
-                    | PeerConnectionError::InvalidRecoveryId => {
-                        trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
-                        ctx.stop();
-                    }
-                    PeerConnectionError::IoError(ref io_e)
-                        if io_e.kind() == std::io::ErrorKind::BrokenPipe =>
-                    {
-                        // TODO: we need to check if this message is ocurring commonly due to a problem
-                        // with our concurrency model
-                        debug!(peer=%established_state.node, "Broken pipe with peer, disconnected");
-                        ctx.stop();
-                    }
-                    PeerConnectionError::StoreError(StoreError::Trie(
-                        TrieError::InconsistentTree(_),
-                    )) => {
-                        if established_state.blockchain.is_synced() {
-                            // If we're responding with inconsistent trie while synced, our trie may be broken
-                            // If this error is non sporadic we should investigate
-                            error!(
-                                peer=%established_state.node,
-                                error=%e,
-                                "Error handling cast message",
-                            );
-                        } else {
-                            // If we're not synced, we expect to have inconsistent trie errors
-                            trace!(
-                                peer=%established_state.node,
-                                error=%e,
-                                "Error handling cast message",
-                            );
-                        }
-                    }
-                    _ => {
-                        // We should check why we're failling to handle the cast message
-                        debug!(
+            match e {
+                PeerConnectionError::Disconnected
+                | PeerConnectionError::DisconnectReceived(_)
+                | PeerConnectionError::DisconnectSent(_)
+                | PeerConnectionError::HandshakeError(_)
+                | PeerConnectionError::NoMatchingCapabilities
+                | PeerConnectionError::InvalidPeerId
+                | PeerConnectionError::InvalidMessageLength
+                | PeerConnectionError::StateError(_)
+                | PeerConnectionError::InvalidRecoveryId => {
+                    trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
+                    ctx.stop();
+                }
+                PeerConnectionError::IoError(ref io_e)
+                    if io_e.kind() == std::io::ErrorKind::BrokenPipe =>
+                {
+                    // TODO: we need to check if this message is ocurring commonly due to a problem
+                    // with our concurrency model
+                    debug!(peer=%established_state.node, "Broken pipe with peer, disconnected");
+                    ctx.stop();
+                }
+                PeerConnectionError::StoreError(StoreError::Trie(TrieError::InconsistentTree(
+                    _,
+                ))) => {
+                    if established_state.blockchain.is_synced() {
+                        // If we're responding with inconsistent trie while synced, our trie may be broken
+                        // If this error is non sporadic we should investigate
+                        error!(
                             peer=%established_state.node,
-                            capabilities=?established_state.capabilities,
+                            error=%e,
+                            "Error handling cast message",
+                        );
+                    } else {
+                        // If we're not synced, we expect to have inconsistent trie errors
+                        trace!(
+                            peer=%established_state.node,
                             error=%e,
                             "Error handling cast message",
                         );
                     }
                 }
+                _ => {
+                    // We should check why we're failling to handle the cast message
+                    debug!(
+                        peer=%established_state.node,
+                        capabilities=?established_state.capabilities,
+                        error=%e,
+                        "Error handling cast message",
+                    );
+                }
+            }
         }
     }
 }

@@ -10,7 +10,7 @@ use crate::{
         },
     },
     metrics::METRICS,
-    peer_table::{ContactValidation, DiscoveryProtocol, PeerTable, PeerTableError},
+    peer_table::{ContactValidation, DiscoveryProtocol, PeerTable, PeerTableServerProtocol as _},
     rlpx::utils::compress_pubkey,
     types::{Node, NodeRecord},
     utils::{distance, node_id},
@@ -74,7 +74,7 @@ pub enum DiscoveryServerError {
     #[error("Unknown or invalid contact")]
     InvalidContact,
     #[error(transparent)]
-    PeerTable(#[from] PeerTableError),
+    PeerTable(#[from] ActorError),
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error("Internal error {0}")]
@@ -486,12 +486,12 @@ impl DiscoveryServer {
             let find_node_msg = self.get_random_find_node_message(&contact.node);
             if let Err(e) = self.send_ordinary(find_node_msg, &contact.node).await {
                 error!(protocol = "discv5", sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
-                self.peer_table.set_disposable(&contact.node.node_id())?;
+                self.peer_table.set_disposable(contact.node.node_id())?;
                 METRICS.record_new_discarded_node();
             }
 
             self.peer_table
-                .increment_find_node_sent(&contact.node.node_id())?;
+                .increment_find_node_sent(contact.node.node_id())?;
         }
         Ok(())
     }
@@ -517,7 +517,7 @@ impl DiscoveryServer {
     }
 
     async fn do_prune(&mut self) -> Result<(), DiscoveryServerError> {
-        self.peer_table.prune()?;
+        self.peer_table.prune_table()?;
         Ok(())
     }
 
@@ -566,7 +566,7 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         // Validate and record PONG (clears ping_req_id if matches)
         self.peer_table
-            .record_pong_received(&sender_id, pong_message.req_id)?;
+            .record_pong_received(sender_id, pong_message.req_id)?;
 
         // If sender's enr_seq is higher than our cached version, request updated ENR.
         if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
@@ -606,7 +606,7 @@ impl DiscoveryServer {
         // response only goes to the address the packet actually came from.
         let contact = match self
             .peer_table
-            .validate_contact(&sender_id, sender_addr.ip())
+            .validate_contact(sender_id, sender_addr.ip())
             .await?
         {
             ContactValidation::Valid(contact) => *contact,
@@ -667,7 +667,7 @@ impl DiscoveryServer {
         self.send_ordinary(ping, node).await?;
 
         // Record ping sent for later PONG verification
-        self.peer_table.record_ping_sent(&node.node_id(), req_id)?;
+        self.peer_table.record_ping_sent(node.node_id(), req_id)?;
 
         Ok(())
     }
@@ -1039,7 +1039,7 @@ fn generate_req_id() -> Bytes {
 mod tests {
     use crate::{
         discv5::{messages::PongMessage, server::DiscoveryServer, session::Session},
-        peer_table::PeerTable,
+        peer_table::{PeerTable, PeerTableServer},
         types::{Node, NodeRecord},
     };
     use bytes::Bytes;
@@ -1068,7 +1068,7 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:30303").await.unwrap()),
-            peer_table: PeerTable::spawn(
+            peer_table: PeerTableServer::spawn(
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1103,7 +1103,7 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
+            peer_table: PeerTableServer::spawn(
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1172,7 +1172,7 @@ mod tests {
         let remote_node = Node::from_enr(&remote_record).expect("Should create node from record");
         let remote_node_id = remote_node.node_id();
 
-        let mut peer_table = PeerTable::spawn(
+        let mut peer_table = PeerTableServer::spawn(
             10,
             Store::new("", EngineType::InMemory).expect("Failed to create store"),
         );
@@ -1276,7 +1276,7 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
+            peer_table: PeerTableServer::spawn(
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1327,7 +1327,7 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
+            peer_table: PeerTableServer::spawn(
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1370,7 +1370,7 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
+            peer_table: PeerTableServer::spawn(
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1418,7 +1418,7 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
+            peer_table: PeerTableServer::spawn(
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1470,7 +1470,7 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
+            peer_table: PeerTableServer::spawn(
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1515,7 +1515,7 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
+            peer_table: PeerTableServer::spawn(
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),

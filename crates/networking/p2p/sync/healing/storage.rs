@@ -1,6 +1,7 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
+    peer_table::PeerTableServerProtocol as _,
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
@@ -181,7 +182,7 @@ pub async fn heal_storage_trie(
             state.last_update = Instant::now();
             let snap_peer_count = peers
                 .peer_table
-                .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
+                .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
                 .await
                 .unwrap_or(0);
             debug!(
@@ -310,7 +311,7 @@ pub async fn heal_storage_trie(
                 state
                     .download_queue
                     .extend(inflight_request.requests.clone());
-                peers.peer_table.record_failure(&inflight_request.peer_id)?;
+                peers.peer_table.record_failure(inflight_request.peer_id)?;
             }
         }
     }
@@ -331,7 +332,7 @@ async fn ask_peers_for_nodes(
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
             .await
             .inspect_err(|err| debug!(?err, "Error requesting a peer to perform storage healing"))
             .unwrap_or(None)
@@ -436,7 +437,7 @@ async fn zip_requeue_node_responses_score_peer(
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
         *failed_downloads += 1;
-        peer_handler.peer_table.record_failure(&request.peer_id)?;
+        peer_handler.peer_table.record_failure(request.peer_id)?;
 
         download_queue.extend(request.requests);
         return Ok(None);
@@ -450,7 +451,7 @@ async fn zip_requeue_node_responses_score_peer(
             "Peer responded with more trie nodes than requested"
         );
         *failed_downloads += 1;
-        peer_handler.peer_table.record_failure(&request.peer_id)?;
+        peer_handler.peer_table.record_failure(request.peer_id)?;
         download_queue.extend(request.requests);
         return Ok(None);
     }
@@ -491,11 +492,11 @@ async fn zip_requeue_node_responses_score_peer(
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
         *succesful_downloads += 1;
-        peer_handler.peer_table.record_success(&request.peer_id)?;
+        peer_handler.peer_table.record_success(request.peer_id)?;
         Ok(Some(nodes))
     } else {
         *failed_downloads += 1;
-        peer_handler.peer_table.record_failure(&request.peer_id)?;
+        peer_handler.peer_table.record_failure(request.peer_id)?;
         download_queue.extend(request.requests);
         Ok(None)
     }

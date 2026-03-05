@@ -25,6 +25,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
 use crate::peer_handler::PeerHandler;
+use crate::peer_table::PeerTableServerProtocol as _;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
     constants::{
@@ -641,7 +642,7 @@ pub async fn update_pivot(
     loop {
         let Some((peer_id, mut connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
             .await?
         else {
             // When we come here, we may be waiting for requests to timeout.
@@ -652,7 +653,7 @@ pub async fn update_pivot(
             continue;
         };
 
-        let peer_score = peers.peer_table.get_score(&peer_id).await?;
+        let peer_score = peers.peer_table.get_score(peer_id).await?;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -662,8 +663,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_table.record_failure(&peer_id)?;
-            let peer_score = peers.peer_table.get_score(&peer_id).await?;
+            peers.peer_table.record_failure(peer_id)?;
+            let peer_score = peers.peer_table.get_score(peer_id).await?;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -671,7 +672,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_table.record_success(&peer_id)?;
+        peers.peer_table.record_success(peer_id)?;
         info!("Succesfully updated pivot");
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
