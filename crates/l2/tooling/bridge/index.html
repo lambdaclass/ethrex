@@ -359,11 +359,11 @@
           </div>
           <div class="info-row">
             <span class="label">L1 RPC</span>
-            <span class="value">localhost:8545</span>
+            <span class="value" id="infoL1Rpc">localhost:8545</span>
           </div>
           <div class="info-row">
             <span class="label">L2 RPC</span>
-            <span class="value">localhost:1729</span>
+            <span class="value" id="infoL2Rpc">localhost:1729</span>
           </div>
         </div>
       </div>
@@ -425,10 +425,19 @@
         document.getElementById('infoBridgeAddr').style.color = '#ef4444';
       }
 
-      // Update nav links
+      // Update nav links and RPC info
       if (CONFIG) {
         document.getElementById('navL1Explorer').href = CONFIG.l1_explorer || 'http://localhost:8083';
         document.getElementById('navL2Explorer').href = CONFIG.l2_explorer || 'http://localhost:8082';
+        if (CONFIG.l1_rpc) {
+          try { document.getElementById('infoL1Rpc').textContent = new URL(CONFIG.l1_rpc).host; } catch {}
+        }
+        if (CONFIG.l2_rpc) {
+          try { document.getElementById('infoL2Rpc').textContent = new URL(CONFIG.l2_rpc).host; } catch {}
+        }
+        // Reset cached providers so they use the correct RPC URLs
+        l1Provider = null;
+        l2Provider = null;
       }
 
       document.getElementById('loadingConfig').style.display = 'none';
@@ -547,23 +556,28 @@
     }
 
     async function switchNetwork(chainId, rpcUrl, chainName) {
+      const chainIdHex = '0x' + chainId.toString(16);
+      const chainParams = {
+        chainId: chainIdHex,
+        chainName: chainName,
+        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+        rpcUrls: [rpcUrl]
+      };
+
+      // Always try addEthereumChain first — this adds OR updates the RPC URL and switches
       try {
         await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x' + chainId.toString(16) }]
+          method: 'wallet_addEthereumChain',
+          params: [chainParams]
         });
-      } catch (switchError) {
-        if (switchError.code === 4902) {
+      } catch (addError) {
+        // Some wallets reject add if chain exists; fall back to switch
+        try {
           await window.ethereum.request({
-            method: 'wallet_addEthereumChain',
-            params: [{
-              chainId: '0x' + chainId.toString(16),
-              chainName: chainName,
-              nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-              rpcUrls: [rpcUrl]
-            }]
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: chainIdHex }]
           });
-        } else {
+        } catch (switchError) {
           throw switchError;
         }
       }
@@ -578,12 +592,18 @@
       if (chainId !== requiredChain) {
         try {
           if (currentTab === 'deposit') {
-            await switchNetwork(L1_CHAIN_ID, L1_RPC, 'ethrex L1 Local');
+            await switchNetwork(L1_CHAIN_ID, CONFIG ? CONFIG.l1_rpc : L1_RPC, 'ethrex L1 Local');
           } else {
-            await switchNetwork(L2_CHAIN_ID, L2_RPC, 'ethrex L2 Local');
+            await switchNetwork(L2_CHAIN_ID, CONFIG ? CONFIG.l2_rpc : L2_RPC, 'ethrex L2 Local');
           }
           await updateBridgeButton();
-          return;
+          // Verify network was actually switched
+          const newChainId = await getCurrentChainId();
+          if (newChainId !== requiredChain) {
+            showStatus('error', 'Please switch to the correct network and try again');
+            return;
+          }
+          // Network switched successfully — continue to execute the transaction
         } catch (err) {
           showStatus('error', 'Failed to switch network: ' + err.message);
           return;

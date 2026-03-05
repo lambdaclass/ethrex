@@ -350,7 +350,7 @@
         <div class="quick-link-label">L2 Explorer</div>
         <div class="quick-link-sub">Blockscout :8082</div>
       </a>
-      <a class="quick-link ql-metrics" href="http://localhost:3702/metrics" target="_blank">
+      <a class="quick-link ql-metrics" href="http://localhost:3702/metrics" target="_blank" id="linkMetrics">
         <div class="quick-link-icon">&#9636;</div>
         <div class="quick-link-label">Metrics</div>
         <div class="quick-link-sub">Prometheus :3702</div>
@@ -601,7 +601,7 @@
         </div>
         <div class="config-row">
           <span class="label">RPC URL</span>
-          <span class="value">http://localhost:8545</span>
+          <span class="value" id="netL1Rpc">http://localhost:8545</span>
         </div>
         <div class="config-row">
           <span class="label">Chain ID</span>
@@ -613,9 +613,9 @@
         </div>
         <div class="config-row">
           <span class="label">Explorer</span>
-          <span class="value">http://localhost:8083</span>
+          <span class="value" id="netL1Explorer">http://localhost:8083</span>
         </div>
-        <button class="btn-add-network" onclick="addNetwork(9, 'http://localhost:8545', 'TokamakAppL2 L1 Local', 'http://localhost:8083')">
+        <button class="btn-add-network" id="btnAddL1" onclick="addNetwork(9, 'http://localhost:8545', 'TokamakAppL2 L1 Local', 'http://localhost:8083')">
           Add to MetaMask
         </button>
       </div>
@@ -627,7 +627,7 @@
         </div>
         <div class="config-row">
           <span class="label">RPC URL</span>
-          <span class="value">http://localhost:1729</span>
+          <span class="value" id="netL2Rpc">http://localhost:1729</span>
         </div>
         <div class="config-row">
           <span class="label">Chain ID</span>
@@ -639,9 +639,9 @@
         </div>
         <div class="config-row">
           <span class="label">Explorer</span>
-          <span class="value">http://localhost:8082</span>
+          <span class="value" id="netL2Explorer">http://localhost:8082</span>
         </div>
-        <button class="btn-add-network" onclick="addNetwork(65536999, 'http://localhost:1729', 'TokamakAppL2 L2 Local', 'http://localhost:8082')">
+        <button class="btn-add-network" id="btnAddL2" onclick="addNetwork(65536999, 'http://localhost:1729', 'TokamakAppL2 L2 Local', 'http://localhost:8082')">
           Add to MetaMask
         </button>
       </div>
@@ -653,8 +653,8 @@
   </div>
 
   <script>
-    const L1_RPC = 'http://localhost:8545';
-    const L2_RPC = 'http://localhost:1729';
+    let L1_RPC = 'http://localhost:8545';
+    let L2_RPC = 'http://localhost:1729';
     let CONFIG = null;
 
     function setStatus(elId, status, label) {
@@ -692,6 +692,87 @@
         if (resp.ok) {
           CONFIG = await resp.json();
           console.log('Config loaded:', CONFIG);
+
+          // Update RPC endpoints from config
+          if (CONFIG.l1_rpc) L1_RPC = CONFIG.l1_rpc;
+          if (CONFIG.l2_rpc) L2_RPC = CONFIG.l2_rpc;
+
+          // Update quick links
+          const l1Exp = CONFIG.l1_explorer || 'http://localhost:8083';
+          const l2Exp = CONFIG.l2_explorer || 'http://localhost:8082';
+          document.getElementById('linkL1Explorer').href = l1Exp;
+          document.getElementById('linkL1Explorer').querySelector('.quick-link-sub').textContent = 'Blockscout :' + new URL(l1Exp).port;
+          document.getElementById('linkL2Explorer').href = l2Exp;
+          document.getElementById('linkL2Explorer').querySelector('.quick-link-sub').textContent = 'Blockscout :' + new URL(l2Exp).port;
+
+          // Update service cards
+          const svcL1Link = document.querySelector('#svcL1Blockscout')?.closest('.service-card');
+          if (svcL1Link) {
+            const links = svcL1Link.querySelectorAll('.service-detail .value');
+            if (links[0]) links[0].innerHTML = '<a href="' + l1Exp + '" target="_blank">localhost:' + new URL(l1Exp).port + '</a>';
+            if (links[1]) links[1].textContent = ':' + new URL(l1Exp).port + '/api';
+          }
+          const svcL2Link = document.querySelector('#svcL2Blockscout')?.closest('.service-card');
+          if (svcL2Link) {
+            const links = svcL2Link.querySelectorAll('.service-detail .value');
+            if (links[0]) links[0].innerHTML = '<a href="' + l2Exp + '" target="_blank">localhost:' + new URL(l2Exp).port + '</a>';
+            if (links[1]) links[1].textContent = ':' + new URL(l2Exp).port + '/api';
+          }
+
+          // Update chain stat RPC display
+          const l1RpcPort = new URL(L1_RPC).port || '8545';
+          const l2RpcPort = new URL(L2_RPC).port || '1729';
+          document.querySelectorAll('.chain-stat-card.l1 .stat-value').forEach(el => {
+            if (el.textContent.includes('localhost:')) el.textContent = 'localhost:' + l1RpcPort;
+          });
+          document.querySelectorAll('.chain-stat-card.l2 .stat-value').forEach(el => {
+            if (el.textContent.includes('localhost:')) el.textContent = 'localhost:' + l2RpcPort;
+          });
+
+          // Update Bridge UI service card URL
+          const bridgePort = window.location.port || '3000';
+          const svcBridge = document.querySelector('#svcBridge')?.closest('.service-card');
+          if (svcBridge) {
+            const link = svcBridge.querySelector('.service-detail .value a');
+            if (link) link.textContent = 'localhost:' + bridgePort + '/bridge.html';
+          }
+
+          // Update MetaMask network config
+          document.getElementById('netL1Rpc').textContent = L1_RPC;
+          document.getElementById('netL1Explorer').textContent = l1Exp;
+          document.getElementById('btnAddL1').setAttribute('onclick', "addNetwork(9, '" + L1_RPC + "', 'TokamakAppL2 L1 Local', '" + l1Exp + "')");
+
+          document.getElementById('netL2Rpc').textContent = L2_RPC;
+          document.getElementById('netL2Explorer').textContent = l2Exp;
+          document.getElementById('btnAddL2').setAttribute('onclick', "addNetwork(65536999, '" + L2_RPC + "', 'TokamakAppL2 L2 Local', '" + l2Exp + "')");
+
+
+          // Update metrics links
+          if (CONFIG.metrics_url) {
+            const metricsPort = new URL(CONFIG.metrics_url).port || '3702';
+            const linkMetrics = document.getElementById('linkMetrics');
+            if (linkMetrics) {
+              linkMetrics.href = CONFIG.metrics_url;
+              const sub = linkMetrics.querySelector('.quick-link-sub');
+              if (sub) sub.textContent = 'Prometheus :' + metricsPort;
+            }
+            const svcMetrics = document.querySelector('#svcMetrics')?.closest('.service-card');
+            if (svcMetrics) {
+              const link = svcMetrics.querySelector('.service-detail .value a');
+              if (link) {
+                link.href = CONFIG.metrics_url;
+                link.textContent = 'localhost:' + metricsPort;
+              }
+            }
+          }
+
+          // Update test account explorer links
+          document.querySelectorAll('.contract-addr a').forEach(a => {
+            const href = a.getAttribute('href');
+            if (href && href.includes('localhost:8083')) {
+              a.setAttribute('href', href.replace('http://localhost:8083', l1Exp));
+            }
+          });
         }
       } catch (err) {
         console.warn('Failed to load config.json:', err);
@@ -804,9 +885,12 @@
     }
 
     async function updateServiceStatus() {
+      const l1Exp = CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083';
+      const l2Exp = CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082';
+
       // L1 Blockscout
       try {
-        const resp = await fetch('http://localhost:8083/api/v2/stats');
+        const resp = await fetch(l1Exp + '/api/v2/stats');
         if (resp.ok) {
           setStatus('svcL1Blockscout', 'online', 'online');
         } else {
@@ -818,7 +902,7 @@
 
       // L2 Blockscout
       try {
-        const resp = await fetch('http://localhost:8082/api/v2/stats');
+        const resp = await fetch(l2Exp + '/api/v2/stats');
         if (resp.ok) {
           setStatus('svcL2Blockscout', 'online', 'online');
         } else {
@@ -829,8 +913,9 @@
       }
 
       // Prometheus Metrics
+      const metricsUrl = CONFIG ? CONFIG.metrics_url : 'http://localhost:3702/metrics';
       try {
-        await fetch('http://localhost:3702/metrics', { mode: 'no-cors' });
+        await fetch(metricsUrl, { mode: 'no-cors' });
         setStatus('svcMetrics', 'online', 'online');
       } catch {
         setStatus('svcMetrics', 'offline', 'offline');
