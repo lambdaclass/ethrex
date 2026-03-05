@@ -8,10 +8,10 @@ interface SidebarProps {
 }
 
 const navItems: { view: ViewType; icon: string; labelKey: string }[] = [
+  { view: 'myl2', icon: '📦', labelKey: 'nav.myl2' },
   { view: 'chat', icon: '💬', labelKey: 'nav.chat' },
-  { view: 'nodes', icon: '⚡', labelKey: 'nav.nodes' },
-  { view: 'dashboard', icon: '📊', labelKey: 'nav.dashboard' },
   { view: 'openl2', icon: '🌐', labelKey: 'nav.openl2' },
+  { view: 'dashboard', icon: '📊', labelKey: 'nav.dashboard' },
   { view: 'wallet', icon: '💰', labelKey: 'nav.wallet' },
   { view: 'settings', icon: '⚙️', labelKey: 'nav.settings' },
 ]

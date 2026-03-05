@@ -6,9 +6,10 @@ import DashboardView from './components/DashboardView'
 import WalletView from './components/WalletView'
 import SettingsView from './components/SettingsView'
 import OpenL2View from './components/OpenL2View'
+import MyL2View from './components/MyL2View'
 import type { Lang } from './i18n'
 
-export type ViewType = 'chat' | 'nodes' | 'dashboard' | 'openl2' | 'wallet' | 'settings'
+export type ViewType = 'myl2' | 'chat' | 'nodes' | 'dashboard' | 'openl2' | 'wallet' | 'settings'
 
 interface LangContextType {
   lang: Lang
@@ -19,7 +20,7 @@ export const LangContext = createContext<LangContextType>({ lang: 'ko', setLang:
 export const useLang = () => useContext(LangContext)
 
 function App() {
-  const [activeView, setActiveView] = useState<ViewType>('chat')
+  const [activeView, setActiveView] = useState<ViewType>('myl2')
   const [lang, setLang] = useState<Lang>(() => {
     const saved = localStorage.getItem('tokamak-lang')
     return (saved as Lang) || 'ko'
@@ -32,6 +33,7 @@ function App() {
 
   const renderView = () => {
     switch (activeView) {
+      case 'myl2': return <MyL2View />
       case 'chat': return <ChatView />
       case 'nodes': return <NodeControlView />
       case 'dashboard': return <DashboardView />
