@@ -1299,23 +1299,67 @@ impl L1Committer {
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
         let commit_hash_bytes = keccak(self.git_commit_hash.as_bytes());
 
-        // ── DEBUG: Log commitment fields for publicInputs comparison ──
-        info!(
-            batch_number = batch.number,
-            "[DEBUG-00e] commitBatch fields:"
-        );
-        info!("[DEBUG-00e]   newStateRoot:           0x{}", hex::encode(batch.state_root.0));
-        info!("[DEBUG-00e]   withdrawalsMerkleRoot:  0x{}", hex::encode(l1_messages_merkle_root.0));
-        info!("[DEBUG-00e]   privTxRollingHash:      0x{}", hex::encode(batch.l1_in_messages_rolling_hash.0));
-        info!("[DEBUG-00e]   lastBlockHash:          0x{}", hex::encode(last_block_hash.0));
-        info!("[DEBUG-00e]   nonPrivilegedTxs:       {}", batch.non_privileged_transactions);
-        info!("[DEBUG-00e]   commitHash:             0x{}", hex::encode(commit_hash_bytes.0));
-        info!("[DEBUG-00e]   l1_out_message_hashes:  {:?}", batch.l1_out_message_hashes.iter().map(|h| format!("0x{}", hex::encode(h.0))).collect::<Vec<_>>());
-        info!("[DEBUG-00e]   balance_diffs count:    {}", batch.balance_diffs.len());
-        info!("[DEBUG-00e]   l2_in_msg_hashes count: {}", batch.l2_in_message_rolling_hashes.len());
-        info!("[DEBUG-00e]   first_block:            {}", batch.first_block);
-        info!("[DEBUG-00e]   last_block:             {}", batch.last_block);
-        // ── END DEBUG ──
+        // ── Fixture dump: save committer data for offline testing ──
+        // Set ETHREX_DUMP_FIXTURES to a directory path to enable.
+        // Committer saves its half; prover saves the other half.
+        // Use `merge-fixtures.sh` to combine into test-ready fixture JSON.
+        if let Ok(fixture_dir) = std::env::var("ETHREX_DUMP_FIXTURES") {
+            let program_id_for_fixture = self
+                .rollup_store
+                .get_program_id_by_batch(batch.number)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| {
+                    std::env::var("ETHREX_GUEST_PROGRAM_ID").unwrap_or_else(|_| "evm-l2".to_string())
+                });
+            let program_type_id: u8 = ethrex_l2_common::resolve_program_type_id(&program_id_for_fixture);
+            let chain_id = self.genesis.config.chain_id;
+
+            let dir = std::path::Path::new(&fixture_dir)
+                .join(&program_id_for_fixture)
+                .join(format!("batch_{}", batch.number));
+            if let Ok(()) = std::fs::create_dir_all(&dir) {
+                let balance_diffs_json: Vec<serde_json::Value> = batch.balance_diffs.iter().map(|bd| {
+                    serde_json::json!({
+                        "chain_id": format!("0x{}", hex::encode(bd.chain_id.to_big_endian())),
+                        "value": format!("0x{}", hex::encode(bd.value.to_big_endian())),
+                        "message_hashes": bd.message_hashes.iter()
+                            .map(|h| format!("0x{}", hex::encode(h.0)))
+                            .collect::<Vec<_>>(),
+                    })
+                }).collect();
+
+                let l2_in_hashes_json: Vec<serde_json::Value> = batch.l2_in_message_rolling_hashes
+                    .iter()
+                    .map(|(cid, h)| serde_json::json!([cid, format!("0x{}", hex::encode(h.0))]))
+                    .collect();
+
+                let fixture = serde_json::json!({
+                    "app": program_id_for_fixture,
+                    "batch_number": batch.number,
+                    "program_type_id": program_type_id,
+                    "chain_id": chain_id,
+                    "description": format!("auto-collected batch {}", batch.number),
+                    "committer": {
+                        "new_state_root": format!("0x{}", hex::encode(batch.state_root.0)),
+                        "withdrawals_merkle_root": format!("0x{}", hex::encode(l1_messages_merkle_root.0)),
+                        "priv_tx_rolling_hash": format!("0x{}", hex::encode(batch.l1_in_messages_rolling_hash.0)),
+                        "last_block_hash": format!("0x{}", hex::encode(last_block_hash.0)),
+                        "non_privileged_txs": batch.non_privileged_transactions,
+                        "balance_diffs": balance_diffs_json,
+                        "l2_in_message_rolling_hashes": l2_in_hashes_json,
+                    },
+                });
+                let path = dir.join("committer.json");
+                if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(&fixture).unwrap_or_default()) {
+                    warn!("Failed to write fixture {}: {e}", path.display());
+                } else {
+                    info!("Fixture saved: {}", path.display());
+                }
+            }
+        }
+        // ── END Fixture dump ──
 
         let mut calldata_values = vec![
             Value::Uint(U256::from(batch.number)),
