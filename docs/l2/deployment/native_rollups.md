@@ -216,14 +216,14 @@ DEPOSIT_TO=0x6f4c950442e1af093bcff730381e63ae9171b87a
 rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
 
 # Deposit 1 ETH via sendL1Message(to, gasLimit, data)
-# Uses the L1 deployer key (pre-funded with 1M ETH)
+# Uses a separate L1 key (NOT the deployer/advancer key, which is busy sending advance() txs)
 # Note: --value is in wei (1 ETH = 1000000000000000000)
 rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
   "sendL1Message(address,uint256,bytes)" \
   $DEPOSIT_TO 105000 "" \
   --value 1000000000000000000 \
   --rpc-url http://localhost:8545 \
-  -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+  -k 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 
 # Watch the L2 logs in Terminal 3 — the watcher picks up the message and
 # the block producer includes a relayer tx for it.
@@ -257,7 +257,7 @@ rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
   $COUNTER 105000 d09de08a \
   --value 0 \
   --rpc-url http://localhost:8545 \
-  -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+  -k 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 
 # Wait ~10 seconds for the L2 to process the L1 message, then check:
 rex call $COUNTER "count()" --rpc-url http://localhost:1729
@@ -292,7 +292,7 @@ Then claim the withdrawal on L1 (replace `TX_HASH` with the L2 withdrawal tx has
 ```shell
 # Fetches the proof from L2 and claims the withdrawal on L1 in one step
 rex l2 claim-native-withdraw TX_HASH \
-  0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
   $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
   http://localhost:8545 \
   http://localhost:1729
