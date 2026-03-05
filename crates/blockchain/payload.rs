@@ -434,8 +434,19 @@ impl Blockchain {
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
-        self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
+
+        // Per EIP-7928: withdrawals use block_access_index = n_txs + 1
+        #[allow(clippy::cast_possible_truncation)]
+        let withdrawal_index = (context.payload.body.transactions.len() + 1) as u16;
+        context.vm.set_bal_index(withdrawal_index);
+        if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+            if let Some(withdrawals) = &context.payload.body.withdrawals {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
+        }
+        self.apply_withdrawals(&mut context)?;
+
         self.extract_requests(&mut context)?;
         self.finalize_payload(&mut context)?;
 
