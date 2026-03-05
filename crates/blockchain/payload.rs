@@ -434,8 +434,26 @@ impl Blockchain {
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
-        self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
+        // EIP-7928: Withdrawals must be processed AFTER transactions (at index n+1),
+        // matching execute_block order. Processing them before would record withdrawal
+        // balance changes at the wrong BAL index and alter state during tx execution.
+        if context
+            .chain_config()
+            .is_amsterdam_activated(context.payload.header.timestamp)
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let withdrawal_index = (context.payload.body.transactions.len() + 1) as u16;
+            context.vm.set_bal_index(withdrawal_index);
+            // Record withdrawal recipients as touched addresses per EIP-7928
+            if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+                if let Some(withdrawals) = &context.payload.body.withdrawals {
+                    recorder
+                        .extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+                }
+            }
+        }
+        self.apply_withdrawals(&mut context)?;
         self.extract_requests(&mut context)?;
         self.finalize_payload(&mut context)?;
 
