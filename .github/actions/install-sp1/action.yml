@@ -1,0 +1,14 @@
+name: "Install SP1"
+description: "Install SP1 Toolchain"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install SP1
+      shell: bash
+      run: |
+        source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+
+        retry curl -L https://sp1.succinct.xyz -o /tmp/sp1_install.sh
+        bash /tmp/sp1_install.sh
+        retry ~/.sp1/bin/sp1up --version 5.0.8

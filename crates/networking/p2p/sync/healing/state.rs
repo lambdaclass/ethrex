@@ -284,13 +284,12 @@ async fn heal_state_trie(
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
             // NOTE: we keep only a single task in the background to avoid out of order deletes
-            if !db_joinset.is_empty() {
-                db_joinset
-                    .join_next()
-                    .await
-                    .expect("we just checked joinset is not empty")?;
+            if !db_joinset.is_empty()
+                && let Some(result) = db_joinset.join_next().await
+            {
+                result??;
             }
-            db_joinset.spawn_blocking(move || {
+            db_joinset.spawn_blocking(move || -> Result<(), SyncError> {
                 let mut encoded_to_write = BTreeMap::new();
                 for (path, node) in to_write {
                     for i in 0..path.len() {
@@ -298,20 +297,20 @@ async fn heal_state_trie(
                     }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
-                let trie_db = store
-                    .open_direct_state_trie(*EMPTY_TRIE_HASH)
-                    .expect("Store should open");
+                let trie_db = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
                 let db = trie_db.db();
                 // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
-                db.put_batch(encoded_to_write.into_iter().collect())
-                    .expect("The put batch on the store failed");
+                db.put_batch(encoded_to_write.into_iter().collect())?;
+                Ok(())
             });
         }
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if is_done {
             debug!("Nothing more to heal found");
-            db_joinset.join_all().await;
+            for result in db_joinset.join_all().await {
+                result?;
+            }
             break;
         }
 
@@ -323,7 +322,9 @@ async fn heal_state_trie(
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             debug!("Finished inflight tasks");
-            db_joinset.join_all().await;
+            for result in db_joinset.join_all().await {
+                result?;
+            }
             break;
         }
     }
@@ -357,7 +358,7 @@ fn heal_state_batch(
                 &path.parent_path,
                 healing_queue,
                 nodes_to_write,
-            );
+            )?;
         } else {
             let entry = HealingQueueEntry {
                 node: node.clone(),
@@ -376,16 +377,16 @@ fn commit_node(
     parent_path: &Nibbles,
     healing_queue: &mut StateHealingQueue,
     nodes_to_write: &mut Vec<(Nibbles, Node)>,
-) {
+) -> Result<(), SyncError> {
     nodes_to_write.push((path.clone(), node));
 
     if parent_path == path {
-        return; // Case where we're saving the root
+        return Ok(()); // Case where we're saving the root
     }
 
-    let mut healing_queue_entry = healing_queue.remove(parent_path).unwrap_or_else(|| {
-        panic!("The parent should exist. Parent: {parent_path:?}, path: {path:?}")
-    });
+    let mut healing_queue_entry = healing_queue.remove(parent_path).ok_or_else(|| {
+        SyncError::HealingQueueInconsistency(format!("{parent_path:?}"), format!("{path:?}"))
+    })?;
 
     healing_queue_entry.pending_children_count -= 1;
     if healing_queue_entry.pending_children_count == 0 {
@@ -395,10 +396,11 @@ fn commit_node(
             &healing_queue_entry.parent_path,
             healing_queue,
             nodes_to_write,
-        );
+        )?;
     } else {
         healing_queue.insert(parent_path.clone(), healing_queue_entry);
     }
+    Ok(())
 }
 
 /// Returns the partial paths to the node's children if they are not already part of the trie state

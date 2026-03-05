@@ -37,7 +37,7 @@
   - is **elected through a Round-Robin** election in L1,
   - **produces** L2 blocks,
   - **posts** L2 batches to L1 during their allowed period.
-- `OnChainProposer`’s `verifyBatch` method is **callable by anyone**. **Only one valid proof is needed** to advance the network.
+- `OnChainProposer`'s `verifyBatches` method is **callable by anyone**. **Only one valid proof is needed** to advance the network.
 - `OnChainProposer`’s `commitBatch` method is **callable by the lead Sequencer**.
 
 ### Milestone 2: P2P

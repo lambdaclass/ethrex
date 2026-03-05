@@ -3,7 +3,7 @@ use crate::debug::block_access_list::BlockAccessListRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
-use crate::engine::payload::{GetPayloadV5Request, NewPayloadV5Request};
+use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -60,6 +60,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -173,8 +174,13 @@ pub enum RpcRequestWrapper {
     Multiple(Vec<RpcRequest>),
 }
 
-/// Shared context passed to all RPC request handlers.
-///
+/// Channel message type for the block executor worker thread.
+type BlockWorkerMessage = (
+    oneshot::Sender<Result<(), ChainError>>,
+    Block,
+    Option<BlockAccessList>,
+);
+
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
@@ -200,7 +206,7 @@ pub struct RpcApiContext {
     /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
-    pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
+    pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
 }
 
 /// Client version information used for identification in the Engine API and P2P.
@@ -356,7 +362,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::MissingParam(_) => "MissingParam",
         RpcErr::TooLargeRequest => "TooLargeRequest",
         RpcErr::BadHexFormat(_) => "BadHexFormat",
-        RpcErr::UnsuportedFork(_) => "UnsuportedFork",
+        RpcErr::UnsupportedFork(_) => "UnsupportedFork",
         RpcErr::Internal(_) => "Internal",
         RpcErr::Vm(_) => "Vm",
         RpcErr::Revert { .. } => "Revert",
@@ -396,17 +402,14 @@ pub const FILTER_DURATION: Duration = {
 /// # Panics
 ///
 /// Panics if the worker thread cannot be spawned.
-pub fn start_block_executor(
-    blockchain: Arc<Blockchain>,
-) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
-    let (block_worker_channel, mut block_receiver) =
-        unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
+pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<BlockWorkerMessage> {
+    let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal)) = block_receiver.blocking_recv() {
                 let _ = notify
-                    .send(blockchain.add_block_pipeline(block))
+                    .send(blockchain.add_block_pipeline(block, bal.as_ref()))
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
             }
         })
@@ -811,6 +814,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
+        "engine_getPayloadV6" => GetPayloadV6Request::call(req, context).await,
         "engine_getPayloadV5" => GetPayloadV5Request::call(req, context).await,
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
@@ -841,7 +845,7 @@ pub async fn map_admin_requests(
     mut context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
+        "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data).await,
         "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler),
         "admin_addPeer" => admin::add_peer(&mut context, req).await,
@@ -910,7 +914,7 @@ mod tests {
     use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
         H160,
-        types::{ChainConfig, Genesis},
+        types::{BlockHeader, ChainConfig, Genesis},
     };
     use ethrex_crypto::keccak::keccak_hash;
     use ethrex_storage::{EngineType, Store};
@@ -947,6 +951,8 @@ mod tests {
             "bpo1": { "baseFeeUpdateFraction": 8346193, "max": 15, "target": 10,  },
             "bpo2": { "baseFeeUpdateFraction": 11684671, "max": 21, "target": 14,  },
         });
+        // Both genesis and head resolve to the default BlockHeader (number 0).
+        let default_hash = BlockHeader::default().hash();
         let json = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -955,6 +961,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(keccak_hash(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
+                "listenAddr": "127.0.0.1:30303",
                 "name": "ethrex/v0.1.0-test-abcd1234/x86_64-unknown-linux/rustc-v1.70.0",
                 "ports": {
                     "discovery": 30303,
@@ -962,39 +969,44 @@ mod tests {
                 },
                 "protocols": {
                     "eth": {
-                        "chainId": 3151908,
-                        "homesteadBlock": 0,
-                        "daoForkBlock": null,
-                        "daoForkSupport": false,
-                        "eip150Block": 0,
-                        "eip155Block": 0,
-                        "eip158Block": 0,
-                        "byzantiumBlock": 0,
-                        "constantinopleBlock": 0,
-                        "petersburgBlock": 0,
-                        "istanbulBlock": 0,
-                        "muirGlacierBlock": null,
-                        "berlinBlock": 0,
-                        "londonBlock": 0,
-                        "arrowGlacierBlock": null,
-                        "grayGlacierBlock": null,
-                        "mergeNetsplitBlock": 0,
-                        "shanghaiTime": 0,
-                        "cancunTime": 0,
-                        "pragueTime": 1718232101,
-                        "verkleTime": null,
-                        "osakaTime": null,
-                        "bpo1Time": null,
-                        "bpo2Time": null,
-                        "bpo3Time": null,
-                        "bpo4Time": null,
-                        "bpo5Time": null,
-                        "amsterdamTime": null,
-                        "terminalTotalDifficulty": 0,
-                        "terminalTotalDifficultyPassed": true,
-                        "blobSchedule": blob_schedule,
-                        "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
-                        "enableVerkleAtGenesis": false,
+                        "network": 3151908,
+                        "genesis": default_hash,
+                        "config": {
+                            "chainId": 3151908,
+                            "homesteadBlock": 0,
+                            "daoForkBlock": null,
+                            "daoForkSupport": false,
+                            "eip150Block": 0,
+                            "eip155Block": 0,
+                            "eip158Block": 0,
+                            "byzantiumBlock": 0,
+                            "constantinopleBlock": 0,
+                            "petersburgBlock": 0,
+                            "istanbulBlock": 0,
+                            "muirGlacierBlock": null,
+                            "berlinBlock": 0,
+                            "londonBlock": 0,
+                            "arrowGlacierBlock": null,
+                            "grayGlacierBlock": null,
+                            "mergeNetsplitBlock": 0,
+                            "shanghaiTime": 0,
+                            "cancunTime": 0,
+                            "pragueTime": 1718232101,
+                            "verkleTime": null,
+                            "osakaTime": null,
+                            "bpo1Time": null,
+                            "bpo2Time": null,
+                            "bpo3Time": null,
+                            "bpo4Time": null,
+                            "bpo5Time": null,
+                            "amsterdamTime": null,
+                            "terminalTotalDifficulty": "0x0",
+                            "terminalTotalDifficultyPassed": true,
+                            "blobSchedule": blob_schedule,
+                            "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
+                            "enableVerkleAtGenesis": false,
+                        },
+                        "head": default_hash,
                     }
                 },
             }
@@ -1058,6 +1070,38 @@ mod tests {
                 .unwrap(),
             ..Default::default()
         }
+    }
+
+    /// Tests that admin_nodeInfo doesn't fail when terminal_total_difficulty
+    /// exceeds u64::MAX. Before the fix, serde_json::to_value() would return
+    /// "number out of range" because Value::Number can only hold u64/i64/f64.
+    #[tokio::test]
+    async fn admin_nodeinfo_large_terminal_total_difficulty() {
+        // Mainnet's terminal_total_difficulty: 58_750_000_000_000_000_000_000
+        // This exceeds u64::MAX (~1.8e19) and triggers the bug with serde_json::to_value().
+        let mainnet_ttd: u128 = 58_750_000_000_000_000_000_000;
+
+        let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let mut config = example_chain_config();
+        config.terminal_total_difficulty = Some(mainnet_ttd);
+        storage.set_chain_config(&config).await.unwrap();
+        let context = default_context_with_storage(storage).await;
+
+        let result = map_http_requests(&request, context).await;
+        assert!(
+            result.is_ok(),
+            "admin_nodeInfo should not fail with large terminal_total_difficulty"
+        );
+
+        let value = result.unwrap();
+        let ttd = value
+            .pointer("/protocols/eth/config/terminalTotalDifficulty")
+            .expect("terminalTotalDifficulty should be present in response");
+        // Serialized as a hex string to avoid serde_json Value::Number u64 limitation.
+        assert_eq!(ttd.as_str().unwrap(), "0xc70d808a128d7380000");
     }
 
     #[tokio::test]
