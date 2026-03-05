@@ -394,6 +394,14 @@ impl Blockchain {
         // TODO(#4997): start with an empty block
         let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
+            // Wait for new transactions, cancellation, or slot deadline before rebuilding
+            let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
+            let notified = self.mempool.tx_added().notified();
+            tokio::select! {
+                _ = notified => {}
+                _ = cancel_token.cancelled() => break,
+                _ = tokio::time::sleep(remaining) => break,
+            }
             let payload = payload.clone();
             let self_clone = self.clone();
             let building_task =
@@ -482,10 +490,13 @@ impl Blockchain {
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
+        let blob_fee: u64 = context.base_fee_per_blob_gas.try_into().map_err(|_| {
+            ChainError::Custom("base_fee_per_blob_gas does not fit in u64".to_owned())
+        })?;
         let tx_filter = PendingTxFilter {
             /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
             base_fee: context.base_fee_per_gas(),
-            blob_fee: Some(context.base_fee_per_blob_gas),
+            blob_fee: Some(blob_fee),
             ..Default::default()
         };
         let plain_tx_filter = PendingTxFilter {

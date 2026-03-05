@@ -69,8 +69,15 @@ jobs:
           fi
           echo "build_profile=$profile" >> "$GITHUB_OUTPUT"
 
+  engine-restart:
+    name: Restart Kurtosis Engine
+    runs-on: ethrex-sync
+    steps:
+      - name: Restart engine to match CLI version
+        run: kurtosis engine restart
+
   sync-lighthouse:
-    needs: prepare
+    needs: [prepare, engine-restart]
     name: Sync ${{ matrix.network }} - Lighthouse
     runs-on: ethrex-sync
     strategy:
@@ -117,7 +124,7 @@ jobs:
           bash .github/scripts/notify_snapsync_run.sh
 
   sync-prysm:
-    needs: prepare
+    needs: [prepare, engine-restart]
     name: Sync ${{ matrix.network }} - Prysm
     runs-on: ethrex-sync
     strategy:
