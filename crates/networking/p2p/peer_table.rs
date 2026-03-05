@@ -65,17 +65,7 @@ pub enum DiscoveryProtocol {
 
 /// Session information for discv5 protocol.
 /// Contains symmetric keys derived from ECDH for message encryption/decryption.
-/// When experimental-discv5 feature is enabled, this is the actual Session type
-/// from the discv5 module. Otherwise, it's a placeholder type.
-#[cfg(feature = "experimental-discv5")]
 pub use crate::discv5::session::Session;
-
-#[cfg(not(feature = "experimental-discv5"))]
-#[derive(Debug, Clone)]
-pub struct Session {
-    pub outbound_key: [u8; 16],
-    pub inbound_key: [u8; 16],
-}
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -796,7 +786,8 @@ impl PeerTableServer {
     // and amount of inflight requests
     fn can_try_more_requests(&self, score: &i64, requests: &i64) -> bool {
         let score_ratio = (score - MIN_SCORE) as f64 / (MAX_SCORE - MIN_SCORE) as f64;
-        (*requests as f64) < MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio
+        let max_requests = (MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio).max(1.0);
+        (*requests as f64) < max_requests
     }
 
     fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {

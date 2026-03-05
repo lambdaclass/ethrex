@@ -4140,6 +4140,7 @@ dependencies = [
  "lazy_static",
  "malachite 0.6.1",
  "p256",
+ "rayon",
  "ripemd",
  "rustc-hash 2.1.1",
  "secp256k1",
@@ -4476,6 +4477,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

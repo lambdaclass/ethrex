@@ -1331,15 +1331,8 @@ async fn _generic_call(
         .get(..4)
         .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
         .to_vec();
-
-    let mut calldata = Vec::new();
-    calldata.extend_from_slice(&selector);
-
-    let leading_zeros = 32 - ((calldata.len() - 4) % 32);
-    calldata.extend(vec![0; leading_zeros]);
-
     let hex_string = client
-        .call(contract_address, calldata.into(), Overrides::default())
+        .call(contract_address, selector.into(), Overrides::default())
         .await?;
 
     Ok(hex_string)
