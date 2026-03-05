@@ -33,7 +33,6 @@ serde.workspace = true
 secp256k1.workspace = true
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
-spawned-macros.workspace = true
 sha2.workspace = true
 futures.workspace = true
 indexmap.workspace = true

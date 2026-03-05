@@ -9,9 +9,12 @@ use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
-use spawned_concurrency::error::ActorError;
-use spawned_concurrency::tasks::{Actor, ActorStart as _, Context, Handler};
-use spawned_macros::{actor, protocol};
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorStart as _, Context, Handler},
+};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;

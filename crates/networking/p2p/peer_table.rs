@@ -23,10 +23,11 @@ use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use rustc_hash::FxHashSet;
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_message_on},
 };
-use spawned_macros::{actor, protocol};
 use std::{
     net::IpAddr,
     time::{Duration, Instant},

@@ -19,13 +19,14 @@ use ethrex_storage::{Store, error::StoreError};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{
         Actor, ActorRef, ActorStart as _, Context, Handler, send_after, send_interval,
         send_message_on,
     },
 };
-use spawned_macros::{actor, protocol};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, trace};

@@ -26,10 +26,11 @@ use ethrex_rpc::{
 use ethrex_storage_rollup::StoreRollup;
 use serde::Serialize;
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_after},
 };
-use spawned_macros::{actor, protocol};
 use tracing::{error, info, warn};
 
 use super::{

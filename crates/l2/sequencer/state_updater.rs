@@ -7,10 +7,11 @@ use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_after},
 };
-use spawned_macros::{actor, protocol};
 use tracing::{debug, error, info, warn};
 
 use crate::{SequencerConfig, sequencer::utils::node_is_up_to_date, utils::parse::hash_to_address};

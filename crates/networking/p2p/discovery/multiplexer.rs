@@ -6,10 +6,11 @@ use bytes::BytesMut;
 use ethrex_common::{H256, utils::keccak};
 use futures::StreamExt;
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_message_on, spawn_listener},
 };
-use spawned_macros::{actor, protocol};
 use thiserror::Error;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;

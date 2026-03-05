@@ -3,12 +3,13 @@ use crate::peer_table::PeerTableServerProtocol as _;
 use crate::types::Node;
 use crate::{metrics::METRICS, network::P2PContext, rlpx::connection::server::PeerConnection};
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{
         Actor, ActorRef, ActorStart as _, Backend, Context, Handler, send_after, send_message_on,
     },
 };
-use spawned_macros::{actor, protocol};
 use std::time::Duration;
 use tracing::{debug, error, info};
 

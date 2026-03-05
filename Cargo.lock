@@ -3409,7 +3409,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3733,7 +3733,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3860,7 +3860,6 @@ dependencies = [
  "serde",
  "serde_json",
  "spawned-concurrency",
- "spawned-macros",
  "spawned-rt",
  "thiserror 2.0.18",
  "tikv-jemallocator",
@@ -4054,7 +4053,6 @@ dependencies = [
  "serde_with",
  "sp1-sdk",
  "spawned-concurrency",
- "spawned-macros",
  "spawned-rt",
  "tabwriter",
  "thiserror 2.0.18",
@@ -4195,7 +4193,6 @@ dependencies = [
  "secp256k1",
  "serde",
  "spawned-concurrency",
- "spawned-macros",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -4244,7 +4241,6 @@ dependencies = [
  "sha2",
  "snap",
  "spawned-concurrency",
- "spawned-macros",
  "spawned-rt",
  "thiserror 2.0.18",
  "tokio",
@@ -4353,7 +4349,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "spawned-concurrency",
- "spawned-macros",
  "spawned-rt",
  "thiserror 2.0.18",
  "tokio",
@@ -6098,7 +6093,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7264,7 +7259,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10378,7 +10373,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -11383,7 +11378,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -12679,7 +12674,7 @@ dependencies = [
 [[package]]
 name = "spawned-concurrency"
 version = "0.4.5"
-source = "git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b#7ff4f4e1e1d6d1e4215546fa362a0dc598d16de6"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b#ace38c17362808502bbdc73da591df20380a4046"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -12692,7 +12687,7 @@ dependencies = [
 [[package]]
 name = "spawned-macros"
 version = "0.4.5"
-source = "git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b#7ff4f4e1e1d6d1e4215546fa362a0dc598d16de6"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b#ace38c17362808502bbdc73da591df20380a4046"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12702,7 +12697,7 @@ dependencies = [
 [[package]]
 name = "spawned-rt"
 version = "0.4.5"
-source = "git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b#7ff4f4e1e1d6d1e4215546fa362a0dc598d16de6"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=feat%2Fapproach-b#ace38c17362808502bbdc73da591df20380a4046"
 dependencies = [
  "crossbeam 0.7.3",
  "ctrlc",
@@ -13020,7 +13015,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

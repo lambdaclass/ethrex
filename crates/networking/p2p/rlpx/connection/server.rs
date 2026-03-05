@@ -45,10 +45,11 @@ use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_interval, spawn_listener},
 };
-use spawned_macros::{actor, protocol};
 use spawned_rt::tasks::BroadcastStream;
 use std::{
     collections::HashMap,

@@ -26,10 +26,11 @@ pub use payload_builder::build_payload;
 use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Backend, Context, Handler, Response, send_after},
 };
-use spawned_macros::{actor, protocol};
 use tracing::{debug, error, info, warn};
 
 use crate::{BlockProducerConfig, SequencerConfig};

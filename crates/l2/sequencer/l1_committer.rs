@@ -65,10 +65,11 @@ use tracing::{debug, error, info, trace, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Backend, Context, Handler, Response, send_after},
 };
-use spawned_macros::{actor, protocol};
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,uint256,bytes32,bytes[])";

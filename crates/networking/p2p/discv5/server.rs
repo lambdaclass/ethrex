@@ -22,13 +22,14 @@ use rand::{Rng, RngCore, rngs::OsRng};
 use rustc_hash::{FxHashMap, FxHashSet};
 use secp256k1::{PublicKey, SecretKey, ecdsa::Signature};
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{
         Actor, ActorRef, ActorStart as _, Context, Handler, send_after, send_interval,
         send_message_on,
     },
 };
-use spawned_macros::{actor, protocol};
 use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,

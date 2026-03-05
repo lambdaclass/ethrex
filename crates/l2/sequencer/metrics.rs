@@ -11,10 +11,11 @@ use ethrex_rpc::clients::eth::EthClient;
 use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_after},
 };
-use spawned_macros::{actor, protocol};
 use std::{collections::BTreeMap, time::Duration};
 use tracing::{debug, error};
 

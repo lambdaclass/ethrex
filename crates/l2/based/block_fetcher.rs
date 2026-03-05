@@ -11,10 +11,11 @@ use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorStart as _, Context, Handler, send_after},
 };
-use spawned_macros::{actor, protocol};
 use tracing::{debug, error, info};
 
 use crate::utils::state_reconstruct::get_batch;

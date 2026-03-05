@@ -10,10 +10,11 @@ use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_storage::error::StoreError;
 use rand::{seq::SliceRandom, thread_rng};
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_interval},
 };
-use spawned_macros::{actor, protocol};
 use tracing::{debug, error, info, trace};
 
 use crate::{

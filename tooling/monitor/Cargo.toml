@@ -27,7 +27,6 @@ reqwest.workspace = true
 secp256k1.workspace = true
 serde.workspace = true
 spawned-concurrency.workspace = true
-spawned-macros.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

@@ -59,7 +59,6 @@ pprof = { version = "0.15", features = ["cpp", "prost-codec", "frame-pointer"], 
 
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
-spawned-macros.workspace = true
 
 # L2 external dependencies
 

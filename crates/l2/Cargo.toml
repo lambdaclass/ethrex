@@ -41,7 +41,6 @@ envy = "0.4.2"
 rand.workspace = true
 thiserror.workspace = true
 spawned-concurrency.workspace = true
-spawned-macros.workspace = true
 spawned-rt.workspace = true
 futures.workspace = true
 directories = "5.0.1"

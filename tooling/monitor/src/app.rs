@@ -19,10 +19,11 @@ use ratatui::{
 };
 use reqwest::Url;
 use spawned_concurrency::{
+    actor,
     error::ActorError,
+    protocol,
     tasks::{Actor, ActorStart as _, Context, Handler, send_after, spawn_listener},
 };
-use spawned_macros::{actor, protocol};
 use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
