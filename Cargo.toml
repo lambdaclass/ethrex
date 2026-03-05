@@ -26,7 +26,10 @@ members = [
   "tooling/repl",
   "test",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison"]
+exclude = [
+  "crates/vm/levm/bench/revm_comparison",
+  "crates/desktop-app/ui/src-tauri",
+]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]

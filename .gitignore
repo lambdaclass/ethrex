@@ -157,3 +157,4 @@ platform/server/db/*.sqlite-wal
 # Generated L2 config files
 zk-dex-l2-*.toml
 
+crates/desktop-app/ui/node_modules/
