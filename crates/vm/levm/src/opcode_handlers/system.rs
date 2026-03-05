@@ -52,16 +52,16 @@ impl OpcodeHandler for OpCallHandler {
 
         // FAST PATH: precompile calls skip EIP-7702 code lookup and is_empty DB check.
         // Precompiles cannot have delegation designations and are never empty accounts.
-        if precompiles::is_precompile(&callee, self.env.config.fork, self.vm_type) {
-            return self.precompile_call(
+        if precompiles::is_precompile(&callee, vm.env.config.fork, vm.vm_type) {
+            return vm.precompile_call(
                 gas,
                 callee,
                 value,
-                current_memory_size,
+                vm.current_call_frame.memory.len(),
                 args_offset,
-                args_size,
-                return_data_offset,
-                return_data_size,
+                args_len,
+                return_offset,
+                return_len,
             );
         }
 
@@ -913,7 +913,8 @@ impl<'a> VM<'a> {
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_offset, args_size)?;
 
-        self.tracer.enter(CALL, from, to, value, gas_limit, &data);
+        self.tracer
+            .enter(CallType::CALL, from, to, value, gas_limit, &data);
 
         // Execute precompile inline via generic_call (which will hit the precompile branch)
         self.generic_call(
