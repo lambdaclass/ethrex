@@ -64,8 +64,7 @@ pub static L1MESSAGE_TOPIC: LazyLock<H256> =
 pub const ETH_TRANSFER_GAS: u64 = 21_000;
 
 /// Fixed gas cost for a withdrawal via CommonBridgeL2.
-/// TODO: Measure actual EVM gas for CommonBridgeL2.withdraw().
-pub const WITHDRAWAL_GAS: u64 = 100_000;
+pub const WITHDRAWAL_GAS: u64 = 95_002;
 
 /// Fixed gas cost for a system contract call.
 /// TODO: Measure actual EVM gas per system contract.
