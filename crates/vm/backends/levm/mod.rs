@@ -1219,7 +1219,6 @@ impl LEVM {
         Ok(())
     }
 
-
     /// Validates BAL entries at the withdrawal index against actual post-withdrawal state.
     ///
     /// After `process_withdrawals` + `extract_all_requests_levm` run on the BAL-seeded
