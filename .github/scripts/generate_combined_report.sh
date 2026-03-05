@@ -237,8 +237,7 @@ done
 # --- Parse block time data ---
 ethrex_bt=""
 nether_bt=""
-reth_bt_p50=""
-reth_bt_p999=""
+reth_bt=""
 geth_bt_p50=""
 geth_bt_p999=""
 
@@ -269,8 +268,7 @@ for row in "${raw_bt[@]}"; do
   fi
   case "${series_name}:${qualifier}" in
     ethrex:mean)     ethrex_bt="$series_value" ;;
-    reth:p50)        reth_bt_p50="$series_value" ;;
-    reth:p99.9)      reth_bt_p999="$series_value" ;;
+    reth:mean)       reth_bt="$series_value" ;;
     geth:p50)        geth_bt_p50="$series_value" ;;
     geth:p99.9)      geth_bt_p999="$series_value" ;;
     nethermind:mean) nether_bt="$series_value" ;;
@@ -283,7 +281,7 @@ header_text="Daily ethrex report"
 # Sort entries for block time (ascending) and throughput (descending)
 bt_sort_entries=()
 [[ -n "$ethrex_bt" ]]                          && bt_sort_entries+=("$ethrex_bt ethrex")
-[[ -n "$reth_bt_p50"   || -n "$reth_bt_p999"  ]] && bt_sort_entries+=("${reth_bt_p50:-0} reth")
+[[ -n "$reth_bt" ]] && bt_sort_entries+=("$reth_bt reth")
 [[ -n "$geth_bt_p50"   || -n "$geth_bt_p999"  ]] && bt_sort_entries+=("${geth_bt_p50:-0} geth")
 [[ -n "$nether_bt" ]]                          && bt_sort_entries+=("$nether_bt nethermind")
 
@@ -309,7 +307,7 @@ comparing_line="${comparing_line%, }"  # strip trailing ", "
 fmt_bt_row() {
   case "$1" in
     ethrex)     printf "%10s: %.3fms (mean)\n"                    "ethrex"     "${ethrex_bt:-0}" ;;
-    reth)       printf "%10s: %.3fms (p50) | %.3fms (p99.9)\n"   "reth"       "${reth_bt_p50:-0}" "${reth_bt_p999:-0}" ;;
+    reth)       printf "%10s: %.3fms (mean)\n"                    "reth"       "${reth_bt:-0}" ;;
     geth)       printf "%10s: %.3fms (p50) | %.3fms (p99.9)\n"   "geth"       "${geth_bt_p50:-0}" "${geth_bt_p999:-0}" ;;
     nethermind) printf "%10s: %.3fms (mean)\n"                    "nethermind" "${nether_bt:-0}" ;;
   esac

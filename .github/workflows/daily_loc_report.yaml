@@ -117,18 +117,9 @@ jobs:
               ""
             )
             or label_replace(
-              avg_over_time(
-                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.999"}[24h]
-              ) * 10e2,
-              "client",
-              "reth",
-              "",
-              ""
-            )
-            or label_replace(
-              avg_over_time(
-                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.5"}[24h]
-              ) * 10e2,
+              rate(reth_consensus_engine_beacon_new_payload_latency_sum{instance="reth-mainnet-1:6060"}[24h])
+              / rate(reth_consensus_engine_beacon_new_payload_latency_count{instance="reth-mainnet-1:6060"}[24h])
+              * 1000,
               "client",
               "reth",
               "",
