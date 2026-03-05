@@ -1,14 +1,14 @@
 use std::time::Duration;
 
 use ethrex_common::H256;
-use ethrex_common::{serde_utils, tracing::CallTrace, types::BlockNumber};
+use ethrex_common::{serde_utils, tracing::CallTraceFrame, types::BlockNumber};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{rpc::RpcHandler, utils::RpcErr};
+use crate::{rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr};
 
 /// Default max amount of blocks to re-excute if it is not given
-const DEFAULT_REEXEC: u32 = 128;
+const DEFAULT_REEXEC: u32 = 10000;
 /// Default max amount of time to spend tracing a transaction (doesn't take into account state rebuild time)
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -116,7 +116,13 @@ impl RpcHandler for TraceTransactionRequest {
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                Ok(serde_json::to_value(call_trace)?)
+                // Geth returns a single CallTraceFrame object, not an array.
+                // Blockscout expects this format for internal transaction indexing.
+                let top_frame = call_trace
+                    .into_iter()
+                    .next()
+                    .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
+                Ok(serde_json::to_value(top_frame)?)
             }
         }
     }
@@ -136,8 +142,22 @@ impl RpcHandler for TraceBlockByNumberRequest {
             TraceConfig::default()
         };
 
+        // Parse block number: accept both plain integers (42) and hex strings ("0x2a")
+        // Blockscout sends hex strings like "0x13E"
+        let number = match BlockIdentifier::parse(params[0].clone(), 0) {
+            Ok(block_id) => match block_id {
+                BlockIdentifier::Number(n) => n,
+                BlockIdentifier::Tag(_) => {
+                    return Err(RpcErr::BadParams(
+                        "Block tags not supported for debug_traceBlockByNumber".to_owned(),
+                    ));
+                }
+            },
+            Err(_) => serde_json::from_value(params[0].clone())?,
+        };
+
         Ok(TraceBlockByNumberRequest {
-            number: serde_json::from_value(params[0].clone())?,
+            number,
             trace_config,
         })
     }
@@ -173,9 +193,15 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                // We need to show transactions from newest to oldest
-                let block_trace: BlockTrace<CallTrace> =
-                    call_traces.into_iter().rev().map(Into::into).collect();
+                // Unwrap each CallTrace (Vec<CallTraceFrame>) to a single
+                // CallTraceFrame to match geth's callTracer response format.
+                let block_trace: BlockTrace<CallTraceFrame> = call_traces
+                    .into_iter()
+                    .rev()
+                    .filter_map(|(hash, trace)| {
+                        trace.into_iter().next().map(|frame| (hash, frame).into())
+                    })
+                    .collect();
                 Ok(serde_json::to_value(block_trace)?)
             }
         }
