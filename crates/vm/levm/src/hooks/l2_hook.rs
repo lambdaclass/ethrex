@@ -362,15 +362,11 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         let value = vm.current_call_frame.msg_value;
         if value > sender_balance {
             tx_should_fail = true;
-        } else {
-            // This should never fail, since we just checked the balance is enough.
-            vm.decrease_account_balance(sender_address, value)
-                .map_err(|_| {
-                    InternalError::Custom(
-                        "Insufficient funds in privileged transaction".to_string(),
-                    )
-                })?;
         }
+        // NOTE: Balance is NOT debited here — it is deferred until after all
+        // validation passes. This avoids permanent fund loss if a later check
+        // (e.g. intrinsic gas) triggers the failure path, which zeroes msg_value
+        // and makes undo_value_transfer a no-op.
     }
 
     // if fork > prague: default_hook::validate_min_gas_limit
@@ -426,6 +422,17 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
             jump_targets: Vec::new(),
         })?;
         return Ok(());
+    }
+
+    // Debit sender balance now that all validation has passed.
+    // This must happen after the tx_should_fail checks above to avoid
+    // permanent fund loss when the failure path zeroes msg_value.
+    if sender_address != COMMON_BRIDGE_L2_ADDRESS {
+        let value = vm.current_call_frame.msg_value;
+        vm.decrease_account_balance(sender_address, value)
+            .map_err(|_| {
+                InternalError::Custom("Insufficient funds in privileged transaction".to_string())
+            })?;
     }
 
     default_hook::transfer_value(vm)?;
