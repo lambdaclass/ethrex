@@ -1028,19 +1028,13 @@ impl PeerTableServer {
 
     fn do_peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> usize {
         self.peers
-            .iter()
-            .filter_map(|(node_id, peer_data)| {
-                if !capabilities
+            .values()
+            .filter(|peer_data| {
+                capabilities
                     .iter()
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
-                {
-                    None
-                } else {
-                    Some(*node_id)
-                }
             })
-            .collect::<Vec<_>>()
-            .len()
+            .count()
     }
 
     fn do_get_peer_connections(

@@ -64,7 +64,7 @@ impl MetricsGatherer {
         rollup_store: StoreRollup,
         l2_url: Url,
     ) -> Result<ActorRef<MetricsGatherer>, MetricsGathererError> {
-        let metrics = Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)?;
+        let metrics = Self::new(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url)?;
         let actor_ref = metrics.start();
         actor_ref
             .send(metrics_gatherer_protocol::Gather)

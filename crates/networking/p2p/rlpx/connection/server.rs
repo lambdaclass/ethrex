@@ -388,13 +388,11 @@ impl PeerConnectionServer {
                 message=%msg.message,
                 "Received outgoing request",
             );
-            let result = handle_outgoing_request(
-                established_state,
-                msg.message,
-                Arc::<oneshot::Sender<Message>>::into_inner(msg.sender)
-                    .expect("Could not obtain sender channel"),
-            )
-            .await;
+            let Some(sender) = Arc::<oneshot::Sender<Message>>::into_inner(msg.sender) else {
+                debug!("Could not obtain sender channel: Arc has multiple references");
+                return;
+            };
+            let result = handle_outgoing_request(established_state, msg.message, sender).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
             debug!("Connection not yet established");
