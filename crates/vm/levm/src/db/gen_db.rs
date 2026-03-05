@@ -24,6 +24,104 @@ use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
 
+/// Payload sent from the execution thread to the diff thread.
+/// `new_states` uses `Arc` so both the pending overlay (execution thread) and
+/// the diff thread can reference the same account data without cloning.
+pub struct DiffPayload {
+    pub new_states: FxHashMap<Address, Arc<LevmAccount>>,
+    pub initial_snapshot: CacheDB,
+    pub codes: FxHashMap<H256, Code>,
+}
+
+/// Compute `Vec<AccountUpdate>` from a `DiffPayload`.
+/// Performs the same diff logic as `get_state_transitions_tx` but operates on
+/// the extracted payload, intended to run on a dedicated diff thread.
+pub fn compute_state_transitions(payload: DiffPayload) -> Result<Vec<AccountUpdate>, VMError> {
+    let DiffPayload {
+        new_states,
+        initial_snapshot,
+        codes,
+    } = payload;
+    let mut account_updates: Vec<AccountUpdate> = vec![];
+    for (address, new_state_account) in &new_states {
+        let initial_state_account = initial_snapshot.get(address).ok_or_else(|| {
+            VMError::Internal(InternalError::Custom(format!(
+                "Failed to get account {address} from initial snapshot",
+            )))
+        })?;
+
+        let mut acc_info_updated = false;
+        let mut storage_updated = false;
+
+        if initial_state_account.info.balance != new_state_account.info.balance {
+            acc_info_updated = true;
+        }
+
+        if initial_state_account.info.nonce != new_state_account.info.nonce {
+            acc_info_updated = true;
+        }
+
+        let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+            acc_info_updated = true;
+            Some(
+                codes
+                    .get(&new_state_account.info.code_hash)
+                    .cloned()
+                    .ok_or_else(|| {
+                        VMError::Internal(InternalError::Custom(format!(
+                            "Failed to get code for account {address}"
+                        )))
+                    })?,
+            )
+        } else {
+            None
+        };
+
+        let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+        let removed_storage = was_destroyed && initial_state_account.has_storage;
+
+        let mut added_storage: FxHashMap<_, _> = Default::default();
+
+        for (key, new_value) in &new_state_account.storage {
+            let old_value = if !was_destroyed {
+                initial_state_account.storage.get(key).ok_or_else(|| {
+                    VMError::Internal(InternalError::Custom(format!(
+                        "Failed to get old value from account's initial storage for address: {address}"
+                    )))
+                })?
+            } else {
+                &ZERO_U256
+            };
+
+            if new_value != old_value {
+                added_storage.insert(*key, *new_value);
+                storage_updated = true;
+            }
+        }
+
+        let info = acc_info_updated.then(|| new_state_account.info.clone());
+
+        let was_empty = initial_state_account.is_empty();
+        let removed = new_state_account.is_empty() && !was_empty;
+
+        if !removed && !acc_info_updated && !storage_updated && !removed_storage {
+            continue;
+        }
+
+        let account_update = AccountUpdate {
+            address: *address,
+            removed,
+            info,
+            code,
+            added_storage,
+            removed_storage,
+        };
+
+        account_updates.push(account_update);
+    }
+    Ok(account_updates)
+}
+
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
@@ -42,6 +140,12 @@ pub struct GeneralizedDatabase {
     /// Used for parallel per-tx DBs where `get_state_transitions_tx` is never called
     /// (state transitions come from BAL instead).
     skip_initial_tracking: bool,
+    /// Post-batch overlay: holds `Arc<LevmAccount>` for accounts modified in the
+    /// previous flush. Checked in `load_account` between `current_accounts_state`
+    /// and `initial_accounts_state`. Shared with the diff thread via `Arc` so no
+    /// cloning is needed at flush time; the clone is deferred to account load time
+    /// and only happens for accounts accessed across consecutive batches.
+    pending_overlay: FxHashMap<Address, Arc<LevmAccount>>,
 }
 
 impl GeneralizedDatabase {
@@ -56,6 +160,7 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
+            pending_overlay: Default::default(),
         }
     }
 
@@ -87,6 +192,7 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,
+            pending_overlay: Default::default(),
         }
     }
 
@@ -144,6 +250,7 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
+            pending_overlay: Default::default(),
         }
     }
 
@@ -154,6 +261,17 @@ impl GeneralizedDatabase {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
+                // Check pending overlay first (post-batch state from previous flush).
+                // This is the most recent committed state for accounts modified in the
+                // last batch. Clone from Arc deferred to here (only for cross-batch access).
+                if let Some(arc_account) = self.pending_overlay.get(&address) {
+                    let account = (**arc_account).clone();
+                    if !self.skip_initial_tracking {
+                        self.initial_accounts_state
+                            .insert(address, account.clone());
+                    }
+                    return Ok(entry.insert(account));
+                }
                 if let Some(account) = self.initial_accounts_state.get(&address) {
                     return Ok(entry.insert(account.clone()));
                 }
@@ -499,6 +617,71 @@ impl GeneralizedDatabase {
             account_updates.push(account_update);
         }
         Ok(account_updates)
+    }
+
+    /// Fast extraction of dirty state for the diff thread.
+    ///
+    /// 1. Merges the previous `pending_overlay` into `initial_accounts_state`
+    ///    (the diff thread is done by this point, so `Arc::try_unwrap` succeeds).
+    /// 2. `mem::take`s `current_accounts_state` and drains modified accounts,
+    ///    wrapping each in `Arc` — one ref for the new overlay, one for the diff
+    ///    payload. **No `LevmAccount` cloning on the execution thread.**
+    /// 3. Removes old initial states from `initial_accounts_state` for the diff
+    ///    thread to use as comparison baseline.
+    pub fn extract_dirty_state(&mut self) -> Result<DiffPayload, VMError> {
+        // Step 1: Merge previous overlay into initial_accounts_state.
+        // The diff thread has finished processing (queue_length == 0 at flush sites),
+        // so its Arc refs are dropped and try_unwrap succeeds without cloning.
+        // Only insert if the account is NOT already in initial_accounts_state:
+        // if it is, load_account already cloned it from the overlay and
+        // get_value_from_database may have enriched it with additional storage
+        // slots — overwriting would lose those slots.
+        for (addr, arc_account) in self.pending_overlay.drain() {
+            if !self.initial_accounts_state.contains_key(&addr) {
+                let account = Arc::try_unwrap(arc_account).unwrap_or_else(|arc| (*arc).clone());
+                self.initial_accounts_state.insert(addr, account);
+            }
+        }
+
+        // Step 2: Drain dirty map; wrap modified accounts in Arc for zero-copy sharing.
+        let dirty = std::mem::take(&mut self.current_accounts_state);
+        let mut new_states: FxHashMap<Address, Arc<LevmAccount>> = FxHashMap::default();
+        let mut initial_snapshot = CacheDB::default();
+        let mut codes = FxHashMap::default();
+
+        for (address, new_state) in dirty {
+            if new_state.is_unmodified() {
+                continue;
+            }
+
+            // Extract code before removing initial state (need code_hash comparison)
+            if let Some(initial) = self.initial_accounts_state.get(&address)
+                && initial.info.code_hash != new_state.info.code_hash
+                && let Some(code) = self.codes.get(&new_state.info.code_hash)
+            {
+                codes.insert(new_state.info.code_hash, code.clone());
+            }
+
+            // Remove old initial for the diff thread's comparison baseline
+            if let Some(old_initial) = self.initial_accounts_state.remove(&address) {
+                initial_snapshot.insert(address, old_initial);
+            } else {
+                return Err(VMError::Internal(InternalError::Custom(format!(
+                    "Failed to get account {address} from immutable cache during extraction",
+                ))));
+            }
+
+            // Wrap in Arc: one ref for overlay, one for diff thread payload
+            let arc_state = Arc::new(new_state);
+            self.pending_overlay.insert(address, arc_state.clone());
+            new_states.insert(address, arc_state);
+        }
+
+        Ok(DiffPayload {
+            new_states,
+            initial_snapshot,
+            codes,
+        })
     }
 }
 

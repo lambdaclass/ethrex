@@ -12,7 +12,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, types::fee_config::FeeConfig};
 pub use ethrex_levm::call_frame::CallFrameBackup;
-use ethrex_levm::db::gen_db::GeneralizedDatabase;
+use ethrex_levm::db::gen_db::{DiffPayload, GeneralizedDatabase};
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
@@ -94,7 +94,8 @@ impl Evm {
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,
-        merkleizer: Sender<Vec<AccountUpdate>>,
+        diff_sender: Sender<DiffPayload>,
+        merkle_sender: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         bal: Option<&BlockAccessList>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
@@ -102,7 +103,8 @@ impl Evm {
             block,
             &mut self.db,
             self.vm_type,
-            merkleizer,
+            diff_sender,
+            merkle_sender,
             queue_length,
             bal,
         )

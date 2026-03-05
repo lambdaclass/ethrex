@@ -84,7 +84,7 @@ use ethrex_storage::{
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
 use ethrex_vm::backends::CachingDatabase;
-use ethrex_vm::backends::levm::LEVM;
+use ethrex_vm::backends::levm::{LEVM, compute_state_transitions};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -410,7 +410,7 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
-        let (execution_result, merkleization_result, warmer_duration) =
+        let (execution_result, merkleization_result, warmer_duration, diff_result) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let warm_handle = std::thread::Builder::new()
@@ -436,12 +436,23 @@ impl Blockchain {
                         ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
-                let (tx, rx) = channel();
+                // Two-stage pipeline: execution → diff thread → merkleizer
+                let (diff_tx, diff_rx) = channel();
+                let (merkle_tx, merkle_rx) = channel();
+                // Clone merkle_tx so the execution thread can pass it to the BAL
+                // parallel path (which sends Vec<AccountUpdate> directly, bypassing
+                // the diff thread). The diff thread also holds a merkle_tx.
+                let merkle_tx_for_exec = merkle_tx.clone();
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, produced_bal) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal)?;
+                        let (execution_result, produced_bal) = vm.execute_block_pipeline(
+                            block,
+                            diff_tx,
+                            merkle_tx_for_exec,
+                            queue_length_ref,
+                            bal,
+                        )?;
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -466,13 +477,28 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
                     })?;
+                let diff_handle = std::thread::Builder::new()
+                    .name("block_executor_diff".to_string())
+                    .spawn_scoped(s, move || -> Result<(), ChainError> {
+                        for payload in diff_rx {
+                            let updates = compute_state_transitions(payload)
+                                .map_err(|e| ChainError::Custom(format!("diff failed: {e}")))?;
+                            merkle_tx.send(updates).map_err(|e| {
+                                ChainError::Custom(format!("merkle send failed: {e}"))
+                            })?;
+                        }
+                        Ok(())
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn diff thread: {e}"))
+                    })?;
                 let parent_header_ref = &parent_header; // Avoid moving to thread
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, StoreError> {
                         let (account_updates_list, accumulated_updates) = if bal.is_some() {
                             self.handle_merkleization_bal(
-                                rx,
+                                merkle_rx,
                                 parent_header_ref,
                                 queue_length_ref,
                                 max_queue_length_ref,
@@ -480,7 +506,7 @@ impl Blockchain {
                         } else {
                             self.handle_merkleization(
                                 s,
-                                rx,
+                                merkle_rx,
                                 parent_header_ref,
                                 queue_length_ref,
                                 max_queue_length_ref,
@@ -501,6 +527,10 @@ impl Blockchain {
                     .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                     .ok()
                     .unwrap_or(Duration::ZERO);
+                // Join the diff thread and propagate errors
+                let diff_result = diff_handle.join().unwrap_or_else(|_| {
+                    Err(ChainError::Custom("diff thread panicked".to_string()))
+                });
                 Ok((
                     execution_handle.join().unwrap_or_else(|_| {
                         Err(ChainError::Custom("execution thread panicked".to_string()))
@@ -511,8 +541,10 @@ impl Blockchain {
                         ))
                     }),
                     warmer_duration,
+                    diff_result,
                 ))
             })?;
+        diff_result?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
