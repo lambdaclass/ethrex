@@ -721,7 +721,12 @@ impl LEVM {
                     &store,
                 )
                 .map_err(|e| {
-                    EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
+                    let state_addrs: Vec<_> = tx_db.current_accounts_state.keys().collect();
+                    EvmError::Custom(format!(
+                        "BAL validation failed for tx {tx_idx} (sender={sender:?}, \
+                         result={:?}, state_addrs={state_addrs:?}): {e}",
+                        report.result
+                    ))
                 })?;
 
                 Ok((tx_idx, tx.tx_type(), report))
