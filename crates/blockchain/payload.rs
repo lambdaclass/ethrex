@@ -212,6 +212,9 @@ pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
 pub struct PayloadBuildContext {
     pub payload: Block,
     pub remaining_gas: u64,
+    /// Cumulative gas spent (post-refund) for receipt tracking.
+    /// Per EIP-7778 this differs from `remaining_gas` which tracks pre-refund gas.
+    pub cumulative_gas_spent: u64,
     pub receipts: Vec<Receipt>,
     pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
@@ -257,6 +260,7 @@ impl PayloadBuildContext {
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
+            cumulative_gas_spent: 0,
             receipts: vec![],
             requests: config
                 .is_prague_activated(payload.header.timestamp)
@@ -390,6 +394,14 @@ impl Blockchain {
         // TODO(#4997): start with an empty block
         let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
+            // Wait for new transactions, cancellation, or slot deadline before rebuilding
+            let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
+            let notified = self.mempool.tx_added().notified();
+            tokio::select! {
+                _ = notified => {}
+                _ = cancel_token.cancelled() => break,
+                _ = tokio::time::sleep(remaining) => break,
+            }
             let payload = payload.clone();
             let self_clone = self.clone();
             let building_task =
@@ -478,10 +490,13 @@ impl Blockchain {
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
+        let blob_fee: u64 = context.base_fee_per_blob_gas.try_into().map_err(|_| {
+            ChainError::Custom("base_fee_per_blob_gas does not fit in u64".to_owned())
+        })?;
         let tx_filter = PendingTxFilter {
             /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
             base_fee: context.base_fee_per_gas(),
-            blob_fee: Some(context.base_fee_per_blob_gas),
+            blob_fee: Some(blob_fee),
             ..Default::default()
         };
         let plain_tx_filter = PendingTxFilter {
@@ -734,14 +749,16 @@ pub fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let (report, gas_used) = context.vm.execute_tx(
+    let (receipt, gas_spent) = context.vm.execute_tx(
         &head.tx,
         &context.payload.header,
         &mut context.remaining_gas,
+        &mut context.cumulative_gas_spent,
         head.tx.sender(),
     )?;
-    context.block_value += U256::from(gas_used) * head.tip;
-    Ok(report)
+    // Block value uses gas_spent (what the user actually pays) for tip calculation
+    context.block_value += U256::from(gas_spent) * head.tip;
+    Ok(receipt)
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block
