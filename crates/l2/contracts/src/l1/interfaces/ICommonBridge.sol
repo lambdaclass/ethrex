@@ -103,12 +103,34 @@ interface ICommonBridge {
         uint16 number
     ) external view returns (bytes32);
 
+    /// @notice Same as getPendingTransactionsVersionedHash but skips `offset` entries.
+    /// @dev Used by OnChainProposer to verify batches when previous committed
+    /// batches haven't been verified yet.
+    /// @param offset number of entries to skip from the front of the pending queue.
+    /// @param number of pending privileged transactions to hash.
+    function getPendingTransactionsVersionedHashWithOffset(
+        uint256 offset,
+        uint16 number
+    ) external view returns (bytes32);
+
     /// @notice Method to retrieve the versioned hash of the first `number`
     /// pending L2 messages.
     /// @param chainId the chain id of the L2 messages to retrieve.
     /// @param number of pending L2 messages to retrieve the versioned hash.
     function getPendingL2MessagesVersionedHash(
         uint256 chainId,
+        uint16 number
+    ) external view returns (bytes32);
+
+    /// @notice Same as getPendingL2MessagesVersionedHash but skips `offset` entries.
+    /// @dev Used by OnChainProposer to verify batches when previous committed
+    /// batches haven't been verified yet.
+    /// @param chainId the chain id of the L2 messages to retrieve.
+    /// @param offset number of entries to skip from the front of the pending queue.
+    /// @param number of pending L2 messages to hash.
+    function getPendingL2MessagesVersionedHashWithOffset(
+        uint256 chainId,
+        uint256 offset,
         uint16 number
     ) external view returns (bytes32);
 

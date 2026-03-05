@@ -114,6 +114,13 @@ contract OnChainProposer is
     mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
         public verificationKeys;
 
+    /// @notice Total privileged transactions in committed-but-not-yet-verified batches.
+    /// @dev Invariant: equals the sum of priv tx counts for batches in range (lastVerifiedBatch, lastCommittedBatch].
+    uint256 public committedPrivilegedTxCount;
+
+    /// @notice Per-chain count of L2 messages in committed-but-not-yet-verified batches.
+    mapping(uint256 chainId => uint256 count) public committedL2MessageCount;
+
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev The owner is expected to be the Timelock contract.
@@ -241,25 +248,34 @@ contract OnChainProposer is
         if (lastBlockHash == bytes32(0)) revert LastBlockHashIsZero();
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
+            uint16 privTxCount = uint16(
+                bytes2(processedPrivilegedTransactionsRollingHash)
+            );
             bytes32 claimedProcessedTransactions = ICommonBridge(BRIDGE)
-                .getPendingTransactionsVersionedHash(
-                    uint16(bytes2(processedPrivilegedTransactionsRollingHash))
+                .getPendingTransactionsVersionedHashWithOffset(
+                    committedPrivilegedTxCount,
+                    privTxCount
                 );
             if (
                 claimedProcessedTransactions !=
                 processedPrivilegedTransactionsRollingHash
             ) revert InvalidPrivilegedTransactionLogs();
+            committedPrivilegedTxCount += privTxCount;
         }
 
         for (uint256 i = 0; i < l2MessageRollingHashes.length; i++) {
             bytes32 receivedRollingHash = l2MessageRollingHashes[i].rollingHash;
+            uint256 chainId = l2MessageRollingHashes[i].chainId;
+            uint16 msgCount = uint16(bytes2(receivedRollingHash));
             bytes32 expectedRollingHash = ICommonBridge(BRIDGE)
-                .getPendingL2MessagesVersionedHash(
-                    l2MessageRollingHashes[i].chainId,
-                    uint16(bytes2(receivedRollingHash))
+                .getPendingL2MessagesVersionedHashWithOffset(
+                    chainId,
+                    committedL2MessageCount[chainId],
+                    msgCount
                 );
             if (expectedRollingHash != receivedRollingHash)
                 revert InvalidL2MessageRollingHash();
+            committedL2MessageCount[chainId] += msgCount;
         }
 
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
@@ -330,6 +346,7 @@ contract OnChainProposer is
             ICommonBridge(BRIDGE).removePendingTransactionHashes(
                 privileged_transaction_count
             );
+            committedPrivilegedTxCount -= privileged_transaction_count;
         }
 
         ICommonBridge.L2MessageRollingHash[]
@@ -343,6 +360,9 @@ contract OnChainProposer is
                 batchL2InRollingHashes[i].chainId,
                 l2_messages_count
             );
+            committedL2MessageCount[
+                batchL2InRollingHashes[i].chainId
+            ] -= l2_messages_count;
         }
 
         if (
@@ -474,6 +494,7 @@ contract OnChainProposer is
                 ICommonBridge(BRIDGE).removePendingTransactionHashes(
                     privileged_transaction_count
                 );
+                committedPrivilegedTxCount -= privileged_transaction_count;
             }
 
             ICommonBridge.L2MessageRollingHash[]
@@ -487,6 +508,9 @@ contract OnChainProposer is
                     batchL2InRollingHashes[j].chainId,
                     l2_messages_count
                 );
+                committedL2MessageCount[
+                    batchL2InRollingHashes[j].chainId
+                ] -= l2_messages_count;
             }
 
             // Reconstruct public inputs from commitments
@@ -654,6 +678,29 @@ contract OnChainProposer is
 
         // Remove batch commitments from batchNumber to lastCommittedBatch
         for (uint256 i = batchNumber; i <= lastCommittedBatch; i++) {
+            // Decrement committed counters for the reverted batch
+            uint16 privTxCount = uint16(
+                bytes2(
+                    batchCommitments[i]
+                        .processedPrivilegedTransactionsRollingHash
+                )
+            );
+            if (privTxCount > 0) {
+                committedPrivilegedTxCount -= privTxCount;
+            }
+
+            ICommonBridge.L2MessageRollingHash[]
+                memory batchL2InRollingHashes = batchCommitments[i]
+                    .l2InMessageRollingHashes;
+            for (uint256 j = 0; j < batchL2InRollingHashes.length; j++) {
+                uint16 l2MsgCount = uint16(
+                    bytes2(batchL2InRollingHashes[j].rollingHash)
+                );
+                committedL2MessageCount[
+                    batchL2InRollingHashes[j].chainId
+                ] -= l2MsgCount;
+            }
+
             delete batchCommitments[i];
         }
 
