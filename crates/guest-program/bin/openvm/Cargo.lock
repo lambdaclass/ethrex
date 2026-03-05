@@ -991,6 +991,7 @@ dependencies = [
  "lazy_static",
  "malachite",
  "p256",
+ "rayon",
  "ripemd",
  "rustc-hash",
  "serde",
