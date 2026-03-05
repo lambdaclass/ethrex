@@ -42,6 +42,7 @@ if [[ -f "$LOC_JSON" ]]; then
 
   pct() {
     # Integer percentage: pct numerator denominator
+    [[ "$2" -eq 0 ]] && { printf "0"; return; }
     printf "%d" $(( ($1 * 100 + $2 / 2) / $2 ))
   }
 
@@ -79,9 +80,13 @@ if [[ -f "$LOC_JSON" ]]; then
   # Build as array of lines for proper newline handling
   l1_crates_text=""
   while IFS=$'\t' read -r crate_name crate_loc; do
-    old_crate_loc=$(jq -r --arg n "$crate_name" '
-      (.ethrex_crates[] | select(.[0] == $n) | .[1]) // 0
-    ' "${LOC_OLD_JSON:-/dev/null}" 2>/dev/null || echo 0)
+    if [[ -f "$LOC_OLD_JSON" ]]; then
+      old_crate_loc=$(jq -r --arg n "$crate_name" \
+        '(.ethrex_crates[] | select(.[0] == $n) | .[1]) // 0' \
+        "$LOC_OLD_JSON" 2>/dev/null || echo 0)
+    else
+      old_crate_loc="$crate_loc"
+    fi
     [[ -z "$old_crate_loc" || "$old_crate_loc" == "null" ]] && old_crate_loc=0
     l1_crates_text+="$(fmt_sub_row "$crate_name" "$crate_loc" "$old_crate_loc" "$loc_l1")"$'\n'
   done < <(jq -r '
@@ -109,12 +114,10 @@ BLOCK_TIME_RANGE="${BLOCK_TIME_PROMETHEUS_RANGE:-24h}"
 
 # Build auth args (same Prometheus instance for both queries)
 auth_args=()
-if [[ -n "${PERF_PROMETHEUS_BEARER_TOKEN:-}" ]]; then
-  auth_args+=(-H "Authorization: Bearer $PERF_PROMETHEUS_BEARER_TOKEN")
-fi
-if [[ -n "${PERF_PROMETHEUS_BASIC_AUTH:-}" ]]; then
-  auth_args+=(-u "$PERF_PROMETHEUS_BASIC_AUTH")
-fi
+_bearer="${PERF_PROMETHEUS_BEARER_TOKEN:-${BLOCK_TIME_PROMETHEUS_BEARER_TOKEN:-${PROMETHEUS_BEARER_TOKEN:-}}}"
+_basic="${PERF_PROMETHEUS_BASIC_AUTH:-${BLOCK_TIME_PROMETHEUS_BASIC_AUTH:-${PROMETHEUS_BASIC_AUTH:-}}}"
+if [[ -n "$_bearer" ]]; then auth_args+=(-H "Authorization: Bearer $_bearer"); fi
+if [[ -n "$_basic"  ]]; then auth_args+=(-u "$_basic"); fi
 
 prometheus_query() {
   local query="$1"
@@ -227,14 +230,14 @@ for row in "${raw_perf[@]}"; do
     nethermind:mean) nether_tput="$series_value" ;;
     geth:p50)        geth_tput_p50="$series_value" ;;
     geth:p99.9)      geth_tput_p999="$series_value" ;;
+    *) echo "WARNING: unmatched series ${series_name}:${qualifier} (instance: ${series_instance})" >&2 ;;
   esac
 done
 
 # --- Parse block time data ---
 ethrex_bt=""
 nether_bt=""
-reth_bt_p50=""
-reth_bt_p999=""
+reth_bt=""
 geth_bt_p50=""
 geth_bt_p999=""
 
@@ -265,11 +268,11 @@ for row in "${raw_bt[@]}"; do
   fi
   case "${series_name}:${qualifier}" in
     ethrex:mean)     ethrex_bt="$series_value" ;;
-    reth:p50)        reth_bt_p50="$series_value" ;;
-    reth:p99.9)      reth_bt_p999="$series_value" ;;
+    reth:mean)       reth_bt="$series_value" ;;
     geth:p50)        geth_bt_p50="$series_value" ;;
     geth:p99.9)      geth_bt_p999="$series_value" ;;
     nethermind:mean) nether_bt="$series_value" ;;
+    *) echo "WARNING: unmatched series ${series_name}:${qualifier} (instance: ${series_instance})" >&2 ;;
   esac
 done
 
@@ -278,7 +281,7 @@ header_text="Daily ethrex report"
 # Sort entries for block time (ascending) and throughput (descending)
 bt_sort_entries=()
 [[ -n "$ethrex_bt" ]]                          && bt_sort_entries+=("$ethrex_bt ethrex")
-[[ -n "$reth_bt_p50"   || -n "$reth_bt_p999"  ]] && bt_sort_entries+=("${reth_bt_p50:-0} reth")
+[[ -n "$reth_bt" ]] && bt_sort_entries+=("$reth_bt reth")
 [[ -n "$geth_bt_p50"   || -n "$geth_bt_p999"  ]] && bt_sort_entries+=("${geth_bt_p50:-0} geth")
 [[ -n "$nether_bt" ]]                          && bt_sort_entries+=("$nether_bt nethermind")
 
@@ -304,7 +307,7 @@ comparing_line="${comparing_line%, }"  # strip trailing ", "
 fmt_bt_row() {
   case "$1" in
     ethrex)     printf "%10s: %.3fms (mean)\n"                    "ethrex"     "${ethrex_bt:-0}" ;;
-    reth)       printf "%10s: %.3fms (p50) | %.3fms (p99.9)\n"   "reth"       "${reth_bt_p50:-0}" "${reth_bt_p999:-0}" ;;
+    reth)       printf "%10s: %.3fms (mean)\n"                    "reth"       "${reth_bt:-0}" ;;
     geth)       printf "%10s: %.3fms (p50) | %.3fms (p99.9)\n"   "geth"       "${geth_bt_p50:-0}" "${geth_bt_p999:-0}" ;;
     nethermind) printf "%10s: %.3fms (mean)\n"                    "nethermind" "${nether_bt:-0}" ;;
   esac
@@ -381,3 +384,33 @@ jq -n --arg header "$header_text" --arg text "$slack_text" '{
     { "type": "section", "text": { "type": "mrkdwn", "text": $text } }
   ]
 }' >"${OUTPUT_DIR}/daily_report_slack.json"
+
+# --- Generate Telegram HTML report ---
+# Uses <pre> for code sections (monospace) and <b> for bold headers
+tg_text="<b>${header_text}</b>"$'\n\n'
+
+if [[ -n "$loc_text" ]]; then
+  tg_text+="<b>Lines of code</b>"$'\n'
+  tg_text+="<pre>"$'\n'
+  tg_text+="${loc_text}"$'\n'
+  tg_text+="</pre>"$'\n\n'
+fi
+
+tg_text+="<b>Comparative performance report (24h average)</b>"$'\n'
+tg_text+="Comparing ${comparing_line}"$'\n\n'
+
+tg_text+="<b>Block Time</b>"$'\n'
+tg_text+="<pre>"$'\n'
+while read -r _val client; do
+  tg_text+="$(fmt_bt_row "$client")"$'\n'
+done < <(printf '%s\n' "${bt_sort_entries[@]}" | LC_ALL=C sort -n)
+tg_text+="</pre>"$'\n\n'
+
+tg_text+="<b>Throughput</b>"$'\n'
+tg_text+="<pre>"$'\n'
+while read -r _val client; do
+  tg_text+="$(fmt_tput_row "$client")"$'\n'
+done < <(printf '%s\n' "${tput_sort_entries[@]}" | LC_ALL=C sort -rn)
+tg_text+="</pre>"
+
+printf "%s" "$tg_text" >"${OUTPUT_DIR}/daily_report_telegram.txt"

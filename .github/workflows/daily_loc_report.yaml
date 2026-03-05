@@ -2,8 +2,8 @@ name: Daily Lines of Code Report
 
 on:
   schedule:
-    # Every day at UTC midnight
-    - cron: "0 0 * * 1,2,3,4,5"
+    # Every Monday and Thursday at UTC midnight
+    - cron: "0 0 * * 1,4"
   workflow_dispatch:
     inputs:
       slack_channel:
@@ -117,18 +117,9 @@ jobs:
               ""
             )
             or label_replace(
-              avg_over_time(
-                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.999"}[24h]
-              ) * 10e2,
-              "client",
-              "reth",
-              "",
-              ""
-            )
-            or label_replace(
-              avg_over_time(
-                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.5"}[24h]
-              ) * 10e2,
+              rate(reth_consensus_engine_beacon_new_payload_latency_sum{instance="reth-mainnet-1:6060"}[24h])
+              / rate(reth_consensus_engine_beacon_new_payload_latency_count{instance="reth-mainnet-1:6060"}[24h])
+              * 1000,
               "client",
               "reth",
               "",
@@ -190,9 +181,12 @@ jobs:
           done
 
       - name: Post results to Telegram
-        if: github.event_name == 'schedule' || inputs.slack_channel == 'prod'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_ETHREX_CHAT_ID: ${{ secrets.TELEGRAM_ETHREX_CHAT_ID }}
+          TELEGRAM_ETHREX_CHAT_ID: >-
+            ${{ (github.event_name == 'schedule' || inputs.slack_channel == 'prod')
+              && secrets.TELEGRAM_ETHREX_CHAT_ID
+              || secrets.TELEGRAM_ETHREX_TEST_CHAT_ID
+            }}
         run: |
-          bash .github/scripts/publish_telegram.sh tooling/daily_report/daily_report_github.txt
+          bash .github/scripts/publish_telegram.sh tooling/daily_report/daily_report_telegram.txt

@@ -79,9 +79,8 @@ fn main() {
     // Also include cmd/ in the breakdown (counted in ethrex_l1 but outside crates/)
     if let Some(cmd_loc) = count_loc(ethrex_path.join("cmd"), &config) {
         ethrex_crates_loc.push(("cmd".to_owned(), cmd_loc.code));
-        ethrex_crates_loc.sort_by_key(|(_name, loc)| *loc);
-        ethrex_crates_loc.reverse();
     }
+    ethrex_crates_loc.sort_by(|a, b| b.1.cmp(&a.1));
 
     spinner.success("Lines of code calculated!");
 
