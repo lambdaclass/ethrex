@@ -1,0 +1,30 @@
+{
+  "app": "zk-dex",
+  "batch_number": 12,
+  "program_type_id": 2,
+  "chain_id": 65536999,
+  "description": "Batch with 1 withdrawal tx, proof verified on L1 (NO 00e)",
+
+  "prover": {
+    "initial_state_hash": "0xe13dfb0343a9d80105399653ecb0c46d22f53fd3ab4605e7a00d84728cc42da2",
+    "final_state_hash": "0x819237befb6921984c0ec7b416b902113c678e6a2904384ce76d3657450a3b78",
+    "l1_out_messages_merkle_root": "0x2f4c37e36d2e418f5373c70ef6afca99113d1fae596e80dc2720e4081dacc235",
+    "l1_in_messages_rolling_hash": "0x0001c7c22bff85722d98b8e756e9105f36ad812c74ccca7efdc7eb107f6c47de",
+    "blob_versioned_hash": "0x0117729d187fb1c9e7d26a7bd61ddc106dad5890feb54ea804a8a75980a7cbab",
+    "last_block_hash": "0x2373fb2fba4ea6f5f7937bf97308fde3a628745e659a93900ec81454f0fc62b0",
+    "non_privileged_count": 1,
+    "balance_diffs": [],
+    "l2_in_message_rolling_hashes": [],
+    "encoded_public_values": "0xe13dfb0343a9d80105399653ecb0c46d22f53fd3ab4605e7a00d84728cc42da2819237befb6921984c0ec7b416b902113c678e6a2904384ce76d3657450a3b782f4c37e36d2e418f5373c70ef6afca99113d1fae596e80dc2720e4081dacc2350001c7c22bff85722d98b8e756e9105f36ad812c74ccca7efdc7eb107f6c47de0117729d187fb1c9e7d26a7bd61ddc106dad5890feb54ea804a8a75980a7cbab2373fb2fba4ea6f5f7937bf97308fde3a628745e659a93900ec81454f0fc62b00000000000000000000000000000000000000000000000000000000003e803e70000000000000000000000000000000000000000000000000000000000000001",
+    "sha256_public_values": "0x4a84ea652bc25090b337f98be32e40fd2cd557e1dc1f2d2d5b0a538ddbf27805"
+  },
+
+  "committer": {
+    "new_state_root": "0x819237befb6921984c0ec7b416b902113c678e6a2904384ce76d3657450a3b78",
+    "withdrawals_merkle_root": "0x2f4c37e36d2e418f5373c70ef6afca99113d1fae596e80dc2720e4081dacc235",
+    "priv_tx_rolling_hash": "0x0001c7c22bff85722d98b8e756e9105f36ad812c74ccca7efdc7eb107f6c47de",
+    "non_privileged_txs": 1,
+    "balance_diffs": [],
+    "l2_in_message_rolling_hashes": []
+  }
+}
