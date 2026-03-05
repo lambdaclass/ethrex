@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tokamak Apps",
+  "productName": "Tokamak Appchain",
   "version": "0.1.0",
   "identifier": "network.tokamak.apps",
   "build": {
@@ -12,10 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "Tokamak Apps",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 900,
+        "title": "Tokamak Appchain",
+        "width": 420,
+        "height": 720,
+        "minWidth": 380,
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false

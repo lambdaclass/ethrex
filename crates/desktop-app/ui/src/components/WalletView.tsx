@@ -2,171 +2,191 @@ import { useState } from 'react'
 import { useLang } from '../App'
 import { t } from '../i18n'
 
-interface WalletInfo {
-  address: string
-  l1Balance: string
-  l2Balances: { name: string; chainId: number; balance: string }[]
+interface TokenBalance {
+  symbol: string
+  name: string
+  balance: string
+  icon: string
+  iconBg: string
 }
+
+interface AppchainBalance {
+  name: string
+  chainId: number
+  icon: string
+  tokens: { symbol: string; balance: string }[]
+}
+
+// Bridge-allowed tokens (would come from bridge contract in production)
+const bridgeTokens: TokenBalance[] = [
+  { symbol: 'TON', name: 'Tokamak Network', balance: '1,250.0', icon: 'T', iconBg: 'bg-blue-100' },
+  { symbol: 'WTON', name: 'Wrapped TON', balance: '500.0', icon: 'W', iconBg: 'bg-indigo-100' },
+  { symbol: 'TOS', name: 'TONStarter', balance: '3,000.0', icon: 'S', iconBg: 'bg-purple-100' },
+  { symbol: 'DOC', name: 'Door Open Close', balance: '10,000', icon: 'D', iconBg: 'bg-green-100' },
+]
 
 export default function WalletView() {
   const { lang } = useLang()
-  const [wallets, setWallets] = useState<WalletInfo[]>([
-    {
-      address: '0x1234...abcd',
-      l1Balance: '125.0',
-      l2Balances: [
-        { name: 'DEX Chain', chainId: 17001, balance: '50.0' },
-        { name: 'NFT Chain', chainId: 17002, balance: '20.0' },
-        { name: 'Test Chain', chainId: 17003, balance: '5.0' },
-      ],
-    },
-  ])
-  const [newAddress, setNewAddress] = useState('')
-  const [showAddForm, setShowAddForm] = useState(false)
+  const [address, setAddress] = useState('0x1234...abcd')
+  const [isEditing, setIsEditing] = useState(false)
+  const [editAddress, setEditAddress] = useState('')
 
-  const addWallet = () => {
-    if (!newAddress.trim()) return
-    setWallets(prev => [...prev, {
-      address: newAddress,
-      l1Balance: '0.0',
-      l2Balances: [],
-    }])
-    setNewAddress('')
-    setShowAddForm(false)
-  }
+  // L1 balances
+  const l1Tokens: TokenBalance[] = [
+    { symbol: 'ETH', name: 'Ethereum', balance: '2.45', icon: '\u039E', iconBg: 'bg-slate-100' },
+    { symbol: 'TON', name: 'Tokamak Network', balance: '1,250.0', icon: 'T', iconBg: 'bg-blue-100' },
+    { symbol: 'WTON', name: 'Wrapped TON', balance: '500.0', icon: 'W', iconBg: 'bg-indigo-100' },
+  ]
 
-  const removeWallet = (address: string) => {
-    setWallets(prev => prev.filter(w => w.address !== address))
-  }
+  // Per-appchain balances
+  const appchainBalances: AppchainBalance[] = [
+    { name: 'DEX Chain', chainId: 17001, icon: '\uD83D\uDD04', tokens: [{ symbol: 'TON', balance: '50.0' }, { symbol: 'WTON', balance: '100.0' }] },
+    { name: 'NFT Chain', chainId: 17002, icon: '\uD83C\uDFA8', tokens: [{ symbol: 'TON', balance: '20.0' }] },
+    { name: 'Test Chain', chainId: 17003, icon: '\uD83E\uDDEA', tokens: [{ symbol: 'TON', balance: '5.0' }] },
+  ]
 
-  const totalBalance = (wallet: WalletInfo) => {
-    const l2Total = wallet.l2Balances.reduce((sum, l2) => sum + parseFloat(l2.balance), 0)
-    return (parseFloat(wallet.l1Balance) + l2Total).toFixed(1)
+  const saveAddress = () => {
+    if (editAddress.trim()) setAddress(editAddress.trim())
+    setIsEditing(false)
+    setEditAddress('')
   }
 
   return (
-    <div className="flex flex-col h-full bg-[var(--color-bg-chat)]">
-      <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">{t('wallet.title', lang)}</h1>
-          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{t('wallet.subtitle', lang)}</p>
-        </div>
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-sm px-4 py-2 rounded-lg transition-colors cursor-pointer"
-        >
-          + {t('wallet.addWallet', lang)}
-        </button>
+    <div className="flex flex-col h-full bg-[var(--color-bg-sidebar)]">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-main)]">
+        <h1 className="text-base font-semibold">{t('wallet.title', lang)}</h1>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {/* Add Wallet Form */}
-        {showAddForm && (
-          <div className="bg-[var(--color-bubble-ai)] rounded-xl p-4 space-y-3">
-            <h3 className="text-sm font-medium">{t('wallet.addWallet', lang)}</h3>
-            <div className="flex gap-2">
+      <div className="flex-1 overflow-y-auto">
+        {/* Address Card */}
+        <div className="m-4 rounded-2xl p-4 bg-[var(--color-accent)] text-[var(--color-accent-text)]">
+          {isEditing ? (
+            <div className="flex gap-2 mb-2">
               <input
                 type="text"
-                value={newAddress}
-                onChange={e => setNewAddress(e.target.value)}
+                value={editAddress}
+                onChange={e => setEditAddress(e.target.value)}
                 placeholder={t('wallet.addressPlaceholder', lang)}
-                className="flex-1 bg-[var(--color-border)] rounded-lg px-3 py-2 text-sm outline-none font-mono placeholder-[var(--color-text-secondary)]"
+                autoFocus
+                onKeyDown={e => e.key === 'Enter' && saveAddress()}
+                className="flex-1 bg-black/10 rounded-lg px-2.5 py-1.5 text-[11px] font-mono outline-none placeholder-black/40"
               />
-              <button
-                onClick={addWallet}
-                disabled={!newAddress.trim()}
-                className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 px-4 py-2 rounded-lg text-sm transition-colors cursor-pointer"
-              >
+              <button onClick={saveAddress} className="bg-black/10 px-3 py-1.5 rounded-lg text-[11px] font-medium cursor-pointer hover:bg-black/20">
                 {t('wallet.add', lang)}
               </button>
             </div>
-          </div>
-        )}
+          ) : (
+            <button
+              onClick={() => { setIsEditing(true); setEditAddress('') }}
+              className="text-[11px] font-mono opacity-70 hover:opacity-100 cursor-pointer mb-2 block"
+            >
+              {address} &#x270F;&#xFE0E;
+            </button>
+          )}
+          <div className="text-xl font-bold">$12,450.00</div>
+          <div className="text-[11px] opacity-60 mt-0.5">{t('wallet.totalBalance', lang)}</div>
+        </div>
 
-        {wallets.length === 0 ? (
-          <div className="flex items-center justify-center h-64 text-[var(--color-text-secondary)] text-sm">
-            {t('wallet.noWallet', lang)}
-          </div>
-        ) : (
-          wallets.map(wallet => (
-            <div key={wallet.address} className="space-y-3">
-              {/* Wallet Header */}
-              <div className="bg-[var(--color-bubble-ai)] rounded-xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">👛</span>
-                    <span className="font-mono text-sm">{wallet.address}</span>
-                  </div>
-                  <button
-                    onClick={() => removeWallet(wallet.address)}
-                    className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-error)] cursor-pointer"
-                  >
-                    ✕
-                  </button>
+        {/* Quick Actions */}
+        <div className="flex gap-2 mx-4 mb-4">
+          <button className="flex-1 bg-[var(--color-bg-main)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
+              <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
+            </svg>
+            <span className="text-[11px]">{t('wallet.deposit', lang)}</span>
+          </button>
+          <button className="flex-1 bg-[var(--color-bg-main)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
+              <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+            </svg>
+            <span className="text-[11px]">{t('wallet.withdraw', lang)}</span>
+          </button>
+          <button className="flex-1 bg-[var(--color-bg-main)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
+              <polyline points="7 17 2 12 7 7"/><polyline points="17 7 22 12 17 17"/><line x1="2" y1="12" x2="22" y2="12"/>
+            </svg>
+            <span className="text-[11px]">{t('wallet.bridge', lang)}</span>
+          </button>
+          <button className="flex-1 bg-[var(--color-bg-main)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
+            </svg>
+            <span className="text-[11px]">{t('wallet.txHistory', lang)}</span>
+          </button>
+        </div>
+
+        {/* L1 Balances */}
+        <div className="mx-4 mb-2 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
+          {t('wallet.balanceBreakdown', lang)}
+        </div>
+        <div className="mx-4 mb-4 bg-[var(--color-bg-main)] rounded-xl overflow-hidden border border-[var(--color-border)]">
+          {l1Tokens.map((token, i) => (
+            <div key={token.symbol} className={`flex items-center justify-between px-3.5 py-2.5 ${i < l1Tokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
+              <div className="flex items-center gap-2.5">
+                <div className={`w-8 h-8 rounded-lg ${token.iconBg} flex items-center justify-center text-sm font-bold text-gray-700`}>
+                  {token.icon}
                 </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold">{totalBalance(wallet)} TON</span>
-                  <span className="text-xs text-[var(--color-text-secondary)]">{t('wallet.totalBalance', lang)}</span>
+                <div>
+                  <div className="text-[13px] font-medium">{token.symbol}</div>
+                  <div className="text-[10px] text-[var(--color-text-secondary)]">{token.name}</div>
                 </div>
               </div>
-
-              {/* L1 Balance */}
-              <div className="bg-[var(--color-bubble-ai)] rounded-xl p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-2 h-8 bg-blue-500 rounded-full" />
-                  <div>
-                    <div className="text-sm font-medium">L1 (Ethereum)</div>
-                    <div className="text-xs text-[var(--color-text-secondary)]">{t('wallet.l1Balance', lang)}</div>
-                  </div>
-                </div>
-                <span className="font-bold">{wallet.l1Balance} TON</span>
+              <div className="text-[13px] font-semibold text-right">
+                <div>{token.balance}</div>
               </div>
+            </div>
+          ))}
+        </div>
 
-              {/* L2 Balances */}
-              {wallet.l2Balances.map(l2 => (
-                <div key={l2.chainId} className="bg-[var(--color-bubble-ai)] rounded-xl p-4 flex items-center justify-between ml-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2 h-8 bg-[var(--color-accent)] rounded-full" />
-                    <div>
-                      <div className="text-sm font-medium">{l2.name}</div>
-                      <div className="text-xs text-[var(--color-text-secondary)]">Chain #{l2.chainId}</div>
-                    </div>
-                  </div>
-                  <span className="font-bold">{l2.balance} TON</span>
+        {/* Bridge Allowed Tokens */}
+        <div className="mx-4 mb-2 flex items-center gap-2">
+          <span className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
+            {t('wallet.bridgeTokens', lang)}
+          </span>
+          <span className="text-[9px] bg-[var(--color-tag-bg)] text-[var(--color-tag-text)] px-1.5 py-0.5 rounded font-medium">
+            {bridgeTokens.length}
+          </span>
+        </div>
+        <div className="mx-4 mb-4 bg-[var(--color-bg-main)] rounded-xl overflow-hidden border border-[var(--color-border)]">
+          {bridgeTokens.map((token, i) => (
+            <div key={token.symbol} className={`flex items-center justify-between px-3.5 py-2.5 ${i < bridgeTokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
+              <div className="flex items-center gap-2.5">
+                <div className={`w-8 h-8 rounded-lg ${token.iconBg} flex items-center justify-center text-sm font-bold text-gray-700`}>
+                  {token.icon}
+                </div>
+                <div>
+                  <div className="text-[13px] font-medium">{token.symbol}</div>
+                  <div className="text-[10px] text-[var(--color-text-secondary)]">{token.name}</div>
+                </div>
+              </div>
+              <div className="text-[13px] font-semibold">{token.balance}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Appchain Balances */}
+        <div className="mx-4 mb-2 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
+          {t('wallet.appchainBalances', lang)}
+        </div>
+        <div className="mx-4 mb-6 space-y-2">
+          {appchainBalances.map(chain => (
+            <div key={chain.chainId} className="bg-[var(--color-bg-main)] rounded-xl overflow-hidden border border-[var(--color-border)]">
+              <div className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
+                <span className="text-base">{chain.icon}</span>
+                <div>
+                  <div className="text-[12px] font-medium">{chain.name}</div>
+                  <div className="text-[10px] text-[var(--color-text-secondary)]">#{chain.chainId}</div>
+                </div>
+              </div>
+              {chain.tokens.map((token, i) => (
+                <div key={token.symbol} className={`flex items-center justify-between px-3.5 py-2 ${i < chain.tokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
+                  <span className="text-[12px] text-[var(--color-text-secondary)]">{token.symbol}</span>
+                  <span className="text-[13px] font-semibold">{token.balance}</span>
                 </div>
               ))}
             </div>
-          ))
-        )}
-
-        {/* AI Wallet */}
-        <div className="bg-[var(--color-bubble-ai)] rounded-xl p-5 border border-dashed border-[var(--color-border)]">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-lg">🤖</span>
-                <span className="font-medium text-sm">{t('wallet.aiWallet', lang)}</span>
-              </div>
-              <div className="text-xs text-[var(--color-text-secondary)] mt-1 font-mono">0xAI...not created</div>
-            </div>
-            <button className="bg-[var(--color-accent)] text-sm px-4 py-2 rounded-lg hover:bg-[var(--color-accent-hover)] transition-colors cursor-pointer">
-              {t('wallet.fundAi', lang)}
-            </button>
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="grid grid-cols-2 gap-4">
-          <button className="bg-[var(--color-bubble-ai)] rounded-xl p-5 text-center hover:opacity-80 transition-opacity cursor-pointer">
-            <div className="text-2xl mb-2">⬇️</div>
-            <div className="font-medium text-sm">{t('wallet.deposit', lang)}</div>
-            <div className="text-xs text-[var(--color-text-secondary)] mt-1">{t('wallet.depositDesc', lang)}</div>
-          </button>
-          <button className="bg-[var(--color-bubble-ai)] rounded-xl p-5 text-center hover:opacity-80 transition-opacity cursor-pointer">
-            <div className="text-2xl mb-2">⬆️</div>
-            <div className="font-medium text-sm">{t('wallet.withdraw', lang)}</div>
-            <div className="text-xs text-[var(--color-text-secondary)] mt-1">{t('wallet.withdrawDesc', lang)}</div>
-          </button>
+          ))}
         </div>
       </div>
     </div>

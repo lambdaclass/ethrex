@@ -111,7 +111,7 @@ export default function OpenL2View() {
 
           <div className="flex flex-wrap gap-2">
             {selectedL2.hashtags.map(tag => (
-              <span key={tag} className="text-xs bg-[var(--color-border)] px-3 py-1 rounded-full text-[var(--color-accent)]">
+              <span key={tag} className="text-xs bg-[var(--color-tag-bg)] px-3 py-1 rounded-full text-[var(--color-tag-text)]">
                 #{tag}
               </span>
             ))}
@@ -191,7 +191,7 @@ export default function OpenL2View() {
             onClick={() => setSelectedTag(tag)}
             className={`px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors cursor-pointer ${
               selectedTag === tag
-                ? 'bg-[var(--color-accent)] text-white'
+                ? 'bg-[var(--color-accent)] text-[var(--color-accent-text)]'
                 : 'bg-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
             }`}
           >
@@ -230,7 +230,7 @@ export default function OpenL2View() {
                 </div>
                 <div className="flex gap-1 mt-1">
                   {l2.hashtags.slice(0, 3).map(tag => (
-                    <span key={tag} className="text-[10px] text-[var(--color-accent)] bg-[var(--color-bg-dark)] px-1.5 py-0.5 rounded">
+                    <span key={tag} className="text-[10px] text-[var(--color-tag-text)] bg-[var(--color-tag-bg)] px-1.5 py-0.5 rounded">
                       #{tag}
                     </span>
                   ))}
