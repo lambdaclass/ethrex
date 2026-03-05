@@ -32,7 +32,7 @@ services:
       POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
     ports:
       - target: 5432
-        published: 7432
+        published: ${TOOLS_DB_PORT:-7432}
     volumes:
       - zk-dex-tools-blockscout-db:/var/lib/postgresql/data
     healthcheck:
@@ -65,8 +65,8 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     environment:
-      ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8545/
-      ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:8545/
+      ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:${TOOLS_L1_RPC_PORT:-8545}/
+      ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:${TOOLS_L1_RPC_PORT:-8545}/
       CHAIN_ID: '9'
       ETHEREUM_JSONRPC_VARIANT: geth
       INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: true
@@ -111,7 +111,7 @@ services:
     depends_on:
       - backend-l1
     environment:
-      NEXT_PUBLIC_API_HOST: localhost:8083
+      NEXT_PUBLIC_API_HOST: localhost:${TOOLS_L1_EXPLORER_PORT:-8083}
       NEXT_PUBLIC_API_PROTOCOL: http
       NEXT_PUBLIC_NETWORK_NAME: TokamakAppL2 ZK-DEX L1
       NEXT_PUBLIC_NETWORK_SHORT_NAME: TokamakAppL2 ZK-DEX L1
@@ -120,7 +120,7 @@ services:
       NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
       NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: 18
       NEXT_PUBLIC_API_BASE_PATH: /
-      NEXT_PUBLIC_APP_HOST: localhost:8083
+      NEXT_PUBLIC_APP_HOST: localhost:${TOOLS_L1_EXPLORER_PORT:-8083}
       NEXT_PUBLIC_APP_PROTOCOL: http
       NEXT_PUBLIC_HOMEPAGE_CHARTS: "['daily_txs']"
       NEXT_PUBLIC_IS_TESTNET: true
@@ -151,8 +151,8 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     environment:
-      ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:1729/
-      ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:1729/
+      ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:${TOOLS_L2_RPC_PORT:-1729}/
+      ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:${TOOLS_L2_RPC_PORT:-1729}/
       CHAIN_ID: '65536999'
       ETHEREUM_JSONRPC_VARIANT: geth
       INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: true
@@ -197,7 +197,7 @@ services:
     depends_on:
       - backend-l2
     environment:
-      NEXT_PUBLIC_API_HOST: localhost:8082
+      NEXT_PUBLIC_API_HOST: localhost:${TOOLS_L2_EXPLORER_PORT:-8082}
       NEXT_PUBLIC_API_PROTOCOL: http
       NEXT_PUBLIC_NETWORK_NAME: TokamakAppL2 ZK-DEX L2
       NEXT_PUBLIC_NETWORK_SHORT_NAME: TokamakAppL2 ZK-DEX L2
@@ -206,7 +206,7 @@ services:
       NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
       NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: 18
       NEXT_PUBLIC_API_BASE_PATH: /
-      NEXT_PUBLIC_APP_HOST: localhost:8082
+      NEXT_PUBLIC_APP_HOST: localhost:${TOOLS_L2_EXPLORER_PORT:-8082}
       NEXT_PUBLIC_APP_PROTOCOL: http
       NEXT_PUBLIC_HOMEPAGE_CHARTS: "['daily_txs']"
       NEXT_PUBLIC_IS_TESTNET: true
@@ -236,9 +236,9 @@ services:
     restart: unless-stopped
     ports:
       - target: 8082
-        published: 8082
+        published: ${TOOLS_L2_EXPLORER_PORT:-8082}
       - target: 8083
-        published: 8083
+        published: ${TOOLS_L1_EXPLORER_PORT:-8083}
 
   # ==========================================================================
   # Function Selectors (insert known ABI into Blockscout DB)
@@ -319,9 +319,15 @@ services:
     restart: unless-stopped
     env_file:
       - .zk-dex-deployed.env
+    environment:
+      TOOLS_L1_RPC_PORT: ${TOOLS_L1_RPC_PORT:-8545}
+      TOOLS_L2_RPC_PORT: ${TOOLS_L2_RPC_PORT:-1729}
+      TOOLS_L1_EXPLORER_PORT: ${TOOLS_L1_EXPLORER_PORT:-8083}
+      TOOLS_L2_EXPLORER_PORT: ${TOOLS_L2_EXPLORER_PORT:-8082}
+      TOOLS_METRICS_PORT: ${TOOLS_METRICS_PORT:-3702}
     ports:
       - target: 80
-        published: 3000
+        published: ${TOOLS_BRIDGE_UI_PORT:-3000}
 
 # ==========================================================================
 # Nginx Config
