@@ -157,5 +157,14 @@ platform/server/db/*.sqlite-wal
 # Generated L2 config files
 zk-dex-l2-*.toml
 
+# TypeScript build info
+*.tsbuildinfo
+
+# Platform SQLite database (runtime data)
+platform/server/db/platform.sqlite
+
+# ZK-DEX deployed contract addresses (local deployment state)
+crates/l2/.zk-dex-deployed.env
+
 # Platform build artifacts
 # platform/
