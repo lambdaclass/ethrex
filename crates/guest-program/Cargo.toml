@@ -56,6 +56,7 @@ sp1-cycles = []
 
 [dev-dependencies]
 tempfile.workspace = true
+hex.workspace = true
 
 [lib]
 path = "./src/lib.rs"

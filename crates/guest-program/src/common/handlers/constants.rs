@@ -69,3 +69,21 @@ pub const WITHDRAWAL_GAS: u64 = 95_002;
 /// Fixed gas cost for a system contract call.
 /// TODO: Measure actual EVM gas per system contract.
 pub const SYSTEM_CALL_GAS: u64 = 50_000;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WITHDRAWAL_GAS must match actual EVM gas for CommonBridgeL2.withdraw().
+    /// If this value changes, the circuit/prover/verifier all need rebuilding.
+    /// See: platform/docs/sp1-00e-debug-report.md
+    #[test]
+    fn withdrawal_gas_matches_evm() {
+        assert_eq!(WITHDRAWAL_GAS, 95_002, "WITHDRAWAL_GAS changed — will cause 00e proof verification failure");
+    }
+
+    #[test]
+    fn eth_transfer_gas_is_standard() {
+        assert_eq!(ETH_TRANSFER_GAS, 21_000);
+    }
+}
