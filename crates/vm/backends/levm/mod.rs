@@ -731,16 +731,12 @@ impl LEVM {
                 .map_err(|e| {
                     let state_addrs: Vec<_> = tx_db.current_accounts_state.keys().collect();
                     // Collect addresses with BAL changes at this tx's index
-                    let bal_active: Vec<_> = if let Some(active) =
-                        validation_index.tx_to_accounts.get(&bal_idx)
-                    {
-                        active
-                            .iter()
-                            .map(|&i| bal.accounts()[i].address)
-                            .collect()
-                    } else {
-                        vec![]
-                    };
+                    let bal_active: Vec<_> =
+                        if let Some(active) = validation_index.tx_to_accounts.get(&bal_idx) {
+                            active.iter().map(|&i| bal.accounts()[i].address).collect()
+                        } else {
+                            vec![]
+                        };
                     EvmError::Custom(format!(
                         "BAL validation failed for tx {tx_idx} (sender={sender:?}, \
                          result={:?}, bal_active_at_{bal_idx}={bal_active:?}, \

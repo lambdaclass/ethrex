@@ -447,8 +447,7 @@ impl Blockchain {
             // Record withdrawal recipients as touched addresses per EIP-7928
             if let Some(recorder) = context.vm.db.bal_recorder_mut() {
                 if let Some(withdrawals) = &context.payload.body.withdrawals {
-                    recorder
-                        .extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+                    recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
                 }
             }
         }
