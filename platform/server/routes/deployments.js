@@ -28,6 +28,16 @@ const fs = require("fs");
 
 router.use(requireAuth);
 
+// GET /api/deployments/docker/status — check if Docker daemon is available
+router.get("/docker/status", (req, res) => {
+  try {
+    const available = docker.isDockerAvailable();
+    res.json({ available });
+  } catch (e) {
+    res.json({ available: false });
+  }
+});
+
 // POST /api/deployments — create a new deployment (use a program)
 router.post("/", (req, res) => {
   try {
@@ -150,7 +160,8 @@ router.post("/:id/provision", async (req, res) => {
       return res.status(400).json({ error: "Deployment is already running" });
     }
 
-    if (["building", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover"].includes(deployment.phase)) {
+    if (["checking_docker", "building", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover", "starting_tools"].includes(deployment.phase)) {
+      // Note: "pulling" is intentionally excluded — it's only used in remote provisioning
       return res.status(400).json({ error: "Deployment is already in progress" });
     }
 
@@ -224,6 +235,77 @@ router.post("/:id/destroy", async (req, res) => {
 
     const updated = await destroyDeployment(deployment);
     res.json({ deployment: updated });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/deployments/:id/build-tools — rebuild support tools images
+router.post("/:id/build-tools", async (req, res) => {
+  try {
+    const deployment = getDeploymentById(req.params.id);
+    if (!deployment || deployment.user_id !== req.user.id) {
+      return res.status(404).json({ error: "Deployment not found" });
+    }
+
+    const toolsPorts = {
+      toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
+      toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
+      toolsBridgeUIPort: deployment.tools_bridge_ui_port,
+      toolsDbPort: deployment.tools_db_port,
+      toolsMetricsPort: deployment.tools_metrics_port,
+      l1Port: deployment.l1_port,
+      l2Port: deployment.l2_port,
+    };
+
+    await docker.buildTools(toolsPorts);
+    res.json({ ok: true, message: "Tools images rebuilt" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/deployments/:id/restart-tools — restart support tools (no rebuild)
+router.post("/:id/restart-tools", async (req, res) => {
+  try {
+    const deployment = getDeploymentById(req.params.id);
+    if (!deployment || deployment.user_id !== req.user.id) {
+      return res.status(404).json({ error: "Deployment not found" });
+    }
+    if (!deployment.docker_project) {
+      return res.status(400).json({ error: "Deployment has not been provisioned yet" });
+    }
+
+    const envVars = {};
+    if (deployment.bridge_address) envVars.ETHREX_WATCHER_BRIDGE_ADDRESS = deployment.bridge_address;
+    if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
+
+    const toolsPorts = {
+      toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
+      toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
+      toolsBridgeUIPort: deployment.tools_bridge_ui_port,
+      toolsDbPort: deployment.tools_db_port,
+      toolsMetricsPort: deployment.tools_metrics_port,
+      l1Port: deployment.l1_port,
+      l2Port: deployment.l2_port,
+    };
+
+    await docker.restartTools(envVars, toolsPorts);
+    res.json({ ok: true, message: "Tools restarted" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/deployments/:id/stop-tools — stop support tools
+router.post("/:id/stop-tools", async (req, res) => {
+  try {
+    const deployment = getDeploymentById(req.params.id);
+    if (!deployment || deployment.user_id !== req.user.id) {
+      return res.status(404).json({ error: "Deployment not found" });
+    }
+    await docker.stopTools();
+    res.json({ ok: true, message: "Tools stopped" });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -328,6 +410,10 @@ router.get("/:id/logs", async (req, res) => {
     const follow = req.query.follow === "true";
     const tail = parseInt(req.query.tail) || 100;
 
+    // Tools services use the separate tools compose file
+    const toolsServices = ["bridge-ui", "db", "backend-l1", "backend-l2", "frontend-l1", "frontend-l2", "proxy"];
+    const isToolsService = service && toolsServices.includes(service);
+
     if (follow) {
       // SSE streaming logs
       res.writeHead(200, {
@@ -336,7 +422,9 @@ router.get("/:id/logs", async (req, res) => {
         Connection: "keep-alive",
       });
 
-      const proc = docker.streamLogs(deployment.docker_project, composeFile, service);
+      const proc = isToolsService
+        ? docker.streamToolsLogs(service)
+        : docker.streamLogs(deployment.docker_project, composeFile, service);
 
       proc.stdout.on("data", (chunk) => {
         const lines = chunk.toString().split("\n").filter(Boolean);
@@ -356,7 +444,9 @@ router.get("/:id/logs", async (req, res) => {
       req.on("close", () => proc.kill("SIGTERM"));
     } else {
       // Return logs as plain text
-      const logs = await docker.getLogs(deployment.docker_project, composeFile, service, tail);
+      const logs = isToolsService
+        ? await docker.getToolsLogs(service, tail)
+        : await docker.getLogs(deployment.docker_project, composeFile, service, tail);
       res.json({ logs });
     }
   } catch (e) {

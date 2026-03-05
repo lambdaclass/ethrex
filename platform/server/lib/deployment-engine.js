@@ -29,12 +29,14 @@ const deploymentEvents = new Map();
 
 const PHASES = [
   "configured",
+  "checking_docker",
   "building",
   "pulling",
   "l1_starting",
   "deploying_contracts",
   "l2_starting",
   "starting_prover",
+  "starting_tools",
   "running",
 ];
 
@@ -59,52 +61,57 @@ function emit(deploymentId, event, data) {
 async function provision(deployment) {
   const { id, program_slug: programSlug } = deployment;
 
+  emit(id, "phase", { phase: "checking_docker", message: "Checking Docker availability..." });
+  updateDeployment(id, { phase: "checking_docker", error_message: null });
+
   if (!docker.isDockerAvailable()) {
-    throw new Error("Docker daemon is not running. Please start Docker first.");
+    const errMsg = "Docker is not running. Please install and start Docker Desktop first.";
+    emit(id, "error", { message: errMsg });
+    updateDeployment(id, { phase: "error", error_message: errMsg });
+    throw new Error(errMsg);
   }
+
+  emit(id, "phase", { phase: "checking_docker", message: "Docker is available" });
 
   // Parse config
   let deployDir = null;
-  let strategy = "pull"; // default: use pre-built images
   try {
     const config = deployment.config ? JSON.parse(deployment.config) : {};
     deployDir = config.deployDir || null;
-    if (config.strategy === "build") strategy = "build";
   } catch {}
 
-  const { l1Port, l2Port, proofCoordPort } = getNextAvailablePorts();
+  const { l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = getNextAvailablePorts();
   const projectName = `tokamak-${id.slice(0, 8)}`;
-
-  const initialPhase = strategy === "build" ? "building" : "pulling";
 
   updateDeployment(id, {
     docker_project: projectName,
     l1_port: l1Port,
     l2_port: l2Port,
     proof_coord_port: proofCoordPort,
+    tools_l1_explorer_port: toolsL1ExplorerPort,
+    tools_l2_explorer_port: toolsL2ExplorerPort,
+    tools_bridge_ui_port: toolsBridgeUIPort,
+    tools_db_port: toolsDbPort,
+    tools_metrics_port: toolsMetricsPort,
     deploy_dir: deployDir,
-    phase: initialPhase,
+    phase: "building",
     error_message: null,
   });
 
-  emit(id, "phase", { phase: initialPhase, message: "Generating Docker Compose configuration..." });
+  emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration..." });
 
   try {
-    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, projectName, strategy });
+    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName });
     const composeFile = writeComposeFile(id, composeContent, deployDir);
 
-    if (strategy === "build") {
-      emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
-      await docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
-    } else {
-      // Check if local images exist; if not, build them automatically
-      if (!docker.imageExists("tokamak-app-l2:latest")) {
-        emit(id, "phase", { phase: "building", message: "Building platform images (first time only)..." });
-        updateDeployment(id, { phase: "building" });
-        await docker.buildPlatformImages();
+    emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
+    await docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
+      // Stream build log lines to SSE
+      const lines = chunk.split("\n").filter(Boolean);
+      for (const line of lines) {
+        emit(id, "log", { message: line });
       }
-      emit(id, "phase", { phase: "pulling", message: "Images ready" });
-    }
+    });
 
     emit(id, "phase", { phase: "l1_starting", message: "Starting L1 node..." });
     updateDeployment(id, { phase: "l1_starting" });
@@ -117,13 +124,23 @@ async function provision(deployment) {
     await docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
 
     let envVars = {};
-    try { envVars = await docker.extractEnv(projectName, composeFile); } catch {}
+    try {
+      envVars = await docker.extractEnv(projectName, composeFile);
+    } catch (extractErr) {
+      emit(id, "log", { message: `Warning: extractEnv failed: ${extractErr.message}, retrying...` });
+      // Retry once after a short delay
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        envVars = await docker.extractEnv(projectName, composeFile);
+      } catch (retryErr) {
+        emit(id, "log", { message: `extractEnv retry failed: ${retryErr.message}` });
+      }
+    }
 
     const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
     const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
-    if (bridgeAddress || proposerAddress) {
-      updateDeployment(id, { bridge_address: bridgeAddress, proposer_address: proposerAddress });
-    }
+    // Always update — clear stale addresses from previous deployments
+    updateDeployment(id, { bridge_address: bridgeAddress, proposer_address: proposerAddress });
 
     emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed", bridgeAddress, proposerAddress });
 
@@ -136,6 +153,17 @@ async function provision(deployment) {
     emit(id, "phase", { phase: "starting_prover", message: "Starting prover..." });
     updateDeployment(id, { phase: "starting_prover" });
     await docker.startProver(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+
+    // Start support tools (Blockscout, Bridge UI, Dashboard)
+    emit(id, "phase", { phase: "starting_tools", message: "Starting support tools (Blockscout, Bridge UI, Dashboard)..." });
+    updateDeployment(id, { phase: "starting_tools" });
+    try {
+      await docker.startTools(envVars, { toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l1Port, l2Port, toolsMetricsPort });
+      emit(id, "phase", { phase: "starting_tools", message: "Support tools started" });
+    } catch (toolsErr) {
+      // Tools failure is non-fatal — deployment still works without them
+      emit(id, "phase", { phase: "starting_tools", message: `Tools setup skipped: ${toolsErr.message}` });
+    }
 
     emit(id, "phase", {
       phase: "running",
@@ -302,6 +330,7 @@ async function stopDeployment(deployment) {
     return await stopDeploymentRemote(deployment);
   }
   const composeFile = require("path").join(getDeploymentDir(deployment.id), "docker-compose.yaml");
+  try { await docker.stopTools(); } catch {}
   await docker.stop(deployment.docker_project, composeFile);
   return updateDeployment(deployment.id, { phase: "stopped", status: "configured" });
 }
@@ -320,6 +349,7 @@ async function destroyDeployment(deployment) {
     return await destroyDeploymentRemote(deployment);
   }
   const composeFile = require("path").join(getDeploymentDir(deployment.id), "docker-compose.yaml");
+  try { await docker.stopTools(); } catch {}
   await docker.destroy(deployment.docker_project, composeFile);
   const fs = require("fs");
   const deployDir = getDeploymentDir(deployment.id);

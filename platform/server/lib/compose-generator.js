@@ -6,8 +6,11 @@
  * - Port assignments (unique per deployment)
  * - Chain configuration
  *
+ * Local deployments always build from source (no pull strategy).
+ * Each deployment gets a unique image name: ethrex:{programSlug}-{projectName}
+ *
  * Different apps require different:
- * - Docker images (ethrex:main vs ethrex:sp1)
+ * - Docker images (built per-deployment)
  * - Build features (l2,l2-sql vs l2,l2-sql,sp1)
  * - Guest programs (evm-l2 vs zk-dex)
  * - Genesis files (l2.json vs l2-zk-dex.json)
@@ -22,7 +25,6 @@ const { ETHREX_ROOT } = require("./docker-local");
 // App-specific configuration profiles
 const APP_PROFILES = {
   "evm-l2": {
-    image: "ethrex:main-l2",
     dockerfile: null, // uses default Dockerfile
     buildFeatures: "--features l2,l2-sql",
     guestPrograms: null, // no guest program build arg needed
@@ -31,10 +33,10 @@ const APP_PROFILES = {
     sp1Enabled: false,
     registerGuestPrograms: null,
     programsToml: null,
+    deployRich: true,
     description: "Default EVM L2 — full EVM compatibility",
   },
   "zk-dex": {
-    image: "ethrex:sp1",
     dockerfile: "Dockerfile.sp1",
     buildFeatures: "--features l2,l2-sql,sp1",
     guestPrograms: "evm-l2,zk-dex",
@@ -43,10 +45,10 @@ const APP_PROFILES = {
     sp1Enabled: true,
     registerGuestPrograms: "zk-dex",
     programsToml: "programs-zk-dex.toml",
+    deployRich: false,
     description: "ZK-DEX — decentralized exchange with SP1 ZK proofs",
   },
   "tokamon": {
-    image: "ethrex:main-l2",
     dockerfile: null,
     buildFeatures: "--features l2,l2-sql",
     guestPrograms: null,
@@ -55,6 +57,7 @@ const APP_PROFILES = {
     sp1Enabled: false,
     registerGuestPrograms: null,
     programsToml: null,
+    deployRich: true,
     description: "Tokamon — gaming application circuits",
   },
 };
@@ -68,48 +71,42 @@ function getAppProfile(programSlug) {
 }
 
 /**
- * Generate docker-compose.yaml content for a deployment.
+ * Generate docker-compose.yaml content for a local deployment (build-only).
  *
- * Supports two strategies:
- * - "pull" (default): uses pre-built images from registry — fast, no build needed
- * - "build": builds from source — slow, requires full repo checkout
+ * Each deployment builds its own images with unique names to allow
+ * multiple apps on the same machine without image conflicts.
  *
  * @param {Object} opts
  * @param {string} opts.programSlug - App identifier (evm-l2, zk-dex, etc.)
  * @param {number} opts.l1Port - Host port for L1 RPC
  * @param {number} opts.l2Port - Host port for L2 RPC
  * @param {number} opts.proofCoordPort - Host port for proof coordinator
- * @param {string} opts.projectName - Docker Compose project name
- * @param {string} [opts.strategy="pull"] - "pull" for pre-built images, "build" for source build
+ * @param {string} opts.projectName - Docker Compose project name (e.g. tokamak-08cab1ae)
  * @returns {string} docker-compose.yaml content
  */
 function generateComposeFile(opts) {
-  const { programSlug, l1Port, l2Port, proofCoordPort = 3900, projectName, strategy = "pull" } = opts;
+  const { programSlug, l1Port, l2Port, proofCoordPort = 3900, metricsPort = 3702, projectName } = opts;
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
-  const useBuild = strategy === "build";
+  // Unique image names per deployment: ethrex:{programSlug}-{projectName}
+  const l1Image = `ethrex:l1-${projectName}`;
+  const l2Image = `ethrex:${programSlug}-${projectName}`;
 
-  // Image references
-  const l1Image = useBuild ? "ethrex:main" : PULL_IMAGES["ethrex:main"];
-  const l2Image = useBuild ? profile.image : (PULL_IMAGES[profile.image] || PULL_IMAGES["ethrex:main-l2"]);
-
-  // Build section for L2 image (only used when strategy=build)
-  const buildSection = useBuild
-    ? (profile.dockerfile
-        ? `    build:
+  // Build section for L2 image
+  const buildSection = profile.dockerfile
+    ? `    build:
       context: ${ETHREX_ROOT}
       dockerfile: ${profile.dockerfile}
       args:
         - BUILD_FLAGS=${profile.buildFeatures}${profile.guestPrograms ? `\n        - GUEST_PROGRAMS=${profile.guestPrograms}` : ""}`
-        : `    build:
+    : `    build:
       context: ${ETHREX_ROOT}
       args:
-        - BUILD_FLAGS=${profile.buildFeatures}`)
-    : "";
+        - BUILD_FLAGS=${profile.buildFeatures}`;
 
-  // L1 build (only used when strategy=build)
-  const l1Build = useBuild ? `    build: ${ETHREX_ROOT}` : "";
+  // L1 build
+  const l1Build = `    build: ${ETHREX_ROOT}`;
 
   // Deployer env vars
   let deployerExtraEnv = "";
@@ -157,39 +154,10 @@ function generateComposeFile(opts) {
       - /tmp:/tmp`;
   }
 
-  // Volume mounts differ: build mode mounts source dirs, pull mode uses baked-in files
-  const l1Volumes = useBuild
-    ? `    volumes:
-      - ${ETHREX_ROOT}/fixtures/genesis/l1.json:/genesis/l1.json`
-    : "";
-
-  const deployerVolumes = useBuild
-    ? `    volumes:
-      - ${ETHREX_ROOT}/crates/l2/contracts:${workdir}/contracts
-      - env:/env/
-      - ${ETHREX_ROOT}/fixtures/genesis/l1.json:${workdir}/fixtures/genesis/l1.json
-      - ${ETHREX_ROOT}/fixtures/genesis/l2.json:${workdir}/fixtures/genesis/l2.json
-      - ${ETHREX_ROOT}/fixtures/keys/private_keys_l1.txt:${workdir}/fixtures/keys/private_keys_l1.txt
-      - ${ETHREX_ROOT}/crates/guest-program/bin/sp1/out/:${workdir}/sp1_out
-      - ${ETHREX_ROOT}/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32:${workdir}/riscv32im-succinct-zkvm-vk-u32
-      - ${ETHREX_ROOT}/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254:${workdir}/riscv32im-succinct-zkvm-vk-bn254
-      - ${ETHREX_ROOT}/crates/guest-program/bin/risc0/out/riscv32im-risc0-vk:${workdir}/riscv32im-risc0-vk
-${deployerExtraVolumes}`
-    : `    volumes:
-      - env:/env/`;
-
-  const l2Volumes = useBuild
-    ? `    volumes:
-      - ${ETHREX_ROOT}/fixtures/genesis/${profile.genesisFile}:/genesis/${profile.genesisFile}
-      - env:/env/
-${l2ExtraVolumes}`
-    : `    volumes:
-      - env:/env/`;
-
   const yaml = `# Auto-generated by Tokamak Platform
 # App: ${programSlug} (${profile.description})
 # Project: ${projectName}
-# Strategy: ${strategy} (${useBuild ? "build from source" : "pre-built images"})
+# Mode: build from source
 
 volumes:
   env:
@@ -203,22 +171,31 @@ ${l1Build}
       - 127.0.0.1:${l1Port}:8545
     environment:
       - ETHREX_LOG_LEVEL
-${l1Volumes}
+    volumes:
+      - ${ETHREX_ROOT}/fixtures/genesis/l1.json:/genesis/l1.json
     command: --network /genesis/l1.json --http.addr 0.0.0.0 --http.port 8545 --dev
 
   tokamak-app-deployer:
     container_name: ${projectName}-deployer
     image: "${l2Image}"
     restart: on-failure:10
-${buildSection}
-${deployerVolumes}
-    environment:
+    volumes:
+      - ${ETHREX_ROOT}/crates/l2/contracts:${workdir}/contracts
+      - env:/env/
+      - ${ETHREX_ROOT}/fixtures/genesis/l1.json:${workdir}/fixtures/genesis/l1.json
+      - ${ETHREX_ROOT}/fixtures/genesis/l2.json:${workdir}/fixtures/genesis/l2.json
+      - ${ETHREX_ROOT}/fixtures/keys/private_keys_l1.txt:${workdir}/fixtures/keys/private_keys_l1.txt
+      - ${ETHREX_ROOT}/crates/guest-program/bin/sp1/out/:${workdir}/sp1_out
+      - ${ETHREX_ROOT}/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32:${workdir}/riscv32im-succinct-zkvm-vk-u32
+      - ${ETHREX_ROOT}/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254:${workdir}/riscv32im-succinct-zkvm-vk-bn254
+      - ${ETHREX_ROOT}/crates/guest-program/bin/risc0/out/riscv32im-risc0-vk:${workdir}/riscv32im-risc0-vk
+${deployerExtraVolumes}    environment:
       - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
       - ETHREX_DEPLOYER_L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
       - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
       - ETHREX_DEPLOYER_GENESIS_L1_PATH=${workdir}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
-      - ETHREX_DEPLOYER_DEPLOY_RICH=true
+      - ETHREX_DEPLOYER_DEPLOY_RICH=${profile.deployRich}
       - ETHREX_L2_RISC0=false
       - ETHREX_L2_SP1=\${ETHREX_L2_SP1:-false}
       - ETHREX_L2_TDX=false
@@ -249,6 +226,7 @@ ${buildSection}
     ports:
       - 127.0.0.1:${l2Port}:1729
       - 127.0.0.1:${proofCoordPort}:3900
+      - 127.0.0.1:${metricsPort}:3702
     environment:
       - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
       - ETHREX_L2_VALIDIUM=false
@@ -259,8 +237,10 @@ ${buildSection}
       - ETHREX_WATCHER_WATCH_INTERVAL=\${ETHREX_WATCHER_WATCH_INTERVAL:-12000}
       - ETHREX_GUEST_PROGRAM_ID=${programSlug}
       - ETHREX_LOG_LEVEL
-${l2Volumes}
-    entrypoint:
+    volumes:
+      - ${ETHREX_ROOT}/fixtures/genesis/${profile.genesisFile}:/genesis/${profile.genesisFile}
+      - env:/env/
+${l2ExtraVolumes}    entrypoint:
       - /bin/bash
       - -c
       - export $$(xargs < /env/.env); ./ethrex l2 "$$0" "$$@"
@@ -274,6 +254,9 @@ ${l2Volumes}
       --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
       --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
       --no-monitor
+      --metrics
+      --metrics.port 3702
+      --metrics.addr 0.0.0.0
     depends_on:
       tokamak-app-deployer:
         condition: service_completed_successfully
@@ -281,7 +264,6 @@ ${l2Volumes}
   tokamak-app-prover:
     container_name: ${projectName}-prover
     image: "${l2Image}"
-${buildSection}
 ${proverExtraEnv ? `    environment:\n${proverExtraEnv}\n` : ""}${proverExtraVolumes ? `    volumes:\n${proverExtraVolumes}\n` : ""}    command: >
       ${proverCommand}
     depends_on:
@@ -291,8 +273,7 @@ ${proverExtraEnv ? `    environment:\n${proverExtraEnv}\n` : ""}${proverExtraVol
   return yaml;
 }
 
-// Pre-built image names (local or registry).
-// Default: local images (no registry prefix). Set ETHREX_IMAGE_REGISTRY to push/pull from a registry.
+// Pre-built image names for remote deployments only.
 const IMAGE_REGISTRY = process.env.ETHREX_IMAGE_REGISTRY || "";
 
 function imageRef(name) {
@@ -300,9 +281,9 @@ function imageRef(name) {
 }
 
 const PULL_IMAGES = {
-  "ethrex:main": imageRef("tokamak-app-l1:latest"),
-  "ethrex:main-l2": imageRef("tokamak-app-l2:latest"),
-  "ethrex:sp1": imageRef("tokamak-app-l2:sp1"),
+  "ethrex:main": imageRef("ethrex:main"),
+  "ethrex:main-l2": imageRef("ethrex:main-l2"),
+  "ethrex:sp1": imageRef("ethrex:sp1"),
 };
 
 /**
@@ -327,7 +308,9 @@ function generateRemoteComposeFile(opts) {
   const workdir = "/usr/local/bin";
 
   const l1Image = PULL_IMAGES["ethrex:main"];
-  const l2Image = PULL_IMAGES[profile.image] || PULL_IMAGES["ethrex:main-l2"];
+  // Map profile to the correct pre-built image name for remote
+  const remoteImageKey = profile.sp1Enabled ? "ethrex:sp1" : "ethrex:main-l2";
+  const l2Image = PULL_IMAGES[remoteImageKey];
 
   const l2Genesis = profile.genesisFile !== "l2.json"
     ? `/genesis/${profile.genesisFile}`
@@ -495,5 +478,4 @@ module.exports = {
   getDeploymentDir,
   getAppProfile,
   APP_PROFILES,
-  IMAGE_REGISTRY,
 };

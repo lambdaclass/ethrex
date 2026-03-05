@@ -36,6 +36,11 @@ function runMigrations(database) {
     { name: "host_id", type: "TEXT" },
     { name: "proof_coord_port", type: "INTEGER" },
     { name: "deploy_dir", type: "TEXT" },
+    { name: "tools_l1_explorer_port", type: "INTEGER" },
+    { name: "tools_l2_explorer_port", type: "INTEGER" },
+    { name: "tools_bridge_ui_port", type: "INTEGER" },
+    { name: "tools_db_port", type: "INTEGER" },
+    { name: "tools_metrics_port", type: "INTEGER" },
   ];
   for (const col of newCols) {
     if (!colNames.includes(col.name)) {
