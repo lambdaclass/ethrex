@@ -435,16 +435,15 @@ impl Blockchain {
             self.apply_system_operations(&mut context)?;
         }
         self.fill_transactions(&mut context)?;
-        // EIP-7928: Withdrawals must be processed AFTER transactions (at index n+1),
-        // matching execute_block order. Processing them before would record withdrawal
-        // balance changes at the wrong BAL index and alter state during tx execution.
+        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
+        // Order must match geth: requests (system calls) BEFORE withdrawals.
         if context
             .chain_config()
             .is_amsterdam_activated(context.payload.header.timestamp)
         {
             #[allow(clippy::cast_possible_truncation)]
-            let withdrawal_index = (context.payload.body.transactions.len() + 1) as u16;
-            context.vm.set_bal_index(withdrawal_index);
+            let post_tx_index = (context.payload.body.transactions.len() + 1) as u16;
+            context.vm.set_bal_index(post_tx_index);
             // Record withdrawal recipients as touched addresses per EIP-7928
             if let Some(recorder) = context.vm.db.bal_recorder_mut() {
                 if let Some(withdrawals) = &context.payload.body.withdrawals {
@@ -453,8 +452,8 @@ impl Blockchain {
                 }
             }
         }
-        self.apply_withdrawals(&mut context)?;
         self.extract_requests(&mut context)?;
+        self.apply_withdrawals(&mut context)?;
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
