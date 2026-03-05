@@ -632,9 +632,15 @@ impl GeneralizedDatabase {
         // Step 1: Merge previous overlay into initial_accounts_state.
         // The diff thread has finished processing (queue_length == 0 at flush sites),
         // so its Arc refs are dropped and try_unwrap succeeds without cloning.
+        // Only insert if the account is NOT already in initial_accounts_state:
+        // if it is, load_account already cloned it from the overlay and
+        // get_value_from_database may have enriched it with additional storage
+        // slots — overwriting would lose those slots.
         for (addr, arc_account) in self.pending_overlay.drain() {
-            let account = Arc::try_unwrap(arc_account).unwrap_or_else(|arc| (*arc).clone());
-            self.initial_accounts_state.insert(addr, account);
+            if !self.initial_accounts_state.contains_key(&addr) {
+                let account = Arc::try_unwrap(arc_account).unwrap_or_else(|arc| (*arc).clone());
+                self.initial_accounts_state.insert(addr, account);
+            }
         }
 
         // Step 2: Drain dirty map; wrap modified accounts in Arc for zero-copy sharing.
