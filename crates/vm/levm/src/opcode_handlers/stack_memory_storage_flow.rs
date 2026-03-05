@@ -339,11 +339,15 @@ impl OpcodeHandler for OpSStoreHandler {
                         // Also add state gas refund through the normal refund counter.
                         if fork >= Fork::Amsterdam {
                             delta += RESTORE_SLOT_COST; // 2800 instead of 19900
-                            #[expect(clippy::as_conversions, reason = "state gas constants fit i64")]
+                            #[expect(
+                                clippy::as_conversions,
+                                reason = "state gas constants fit i64"
+                            )]
                             {
                                 delta += STATE_BYTES_PER_STORAGE_SET
                                     .checked_mul(COST_PER_STATE_BYTE)
-                                    .ok_or(InternalError::Overflow)? as i64;
+                                    .ok_or(InternalError::Overflow)?
+                                    as i64;
                             }
                         } else {
                             delta += RESTORE_EMPTY_SLOT_COST;

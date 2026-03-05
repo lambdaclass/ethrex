@@ -187,6 +187,10 @@ impl Hook for DefaultHook {
         // Save pre-refund gas for EIP-7778 block accounting
         let gas_used_pre_refund = ctx_result.gas_used;
 
+        // Note: compute_gas_refunded caps at gas_used / MAX_REFUND_QUOTIENT, where
+        // gas_used already has the reservoir subtracted (line above). This matches
+        // EELS, which applies the refund cap after reservoir removal but before the
+        // regular/state gas split.
         let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
         let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
 

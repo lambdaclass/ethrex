@@ -19,9 +19,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     precompiles,
-    utils::{
-        address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *,
-    },
+    utils::{address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;

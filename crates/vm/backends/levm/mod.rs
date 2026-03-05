@@ -457,6 +457,17 @@ impl LEVM {
     }
 
     /// Convert BAL into `Vec<AccountUpdate>` for the merkleizer.
+    /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
+    fn code_from_bal(new_code: &Bytes) -> (H256, Option<Code>) {
+        if new_code.is_empty() {
+            (*EMPTY_KECCACK_HASH, None)
+        } else {
+            let code_obj = Code::from_bytecode(new_code.clone());
+            let hash = code_obj.hash;
+            (hash, Some(code_obj))
+        }
+    }
+
     ///
     /// For each account in the BAL, extracts the **final** post-block state
     /// (highest `block_access_index` entry per field) and builds an AccountUpdate.
@@ -518,14 +529,7 @@ impl LEVM {
 
             // Final code: last entry or prestate
             let (code_hash, code) = if let Some(c) = acct_changes.code_changes.last() {
-                if c.new_code.is_empty() {
-                    (*EMPTY_KECCACK_HASH, None)
-                } else {
-                    use ethrex_common::types::Code;
-                    let code_obj = Code::from_bytecode(c.new_code.clone());
-                    let hash = code_obj.hash;
-                    (hash, Some(code_obj))
-                }
+                Self::code_from_bal(&c.new_code)
             } else {
                 (prestate.code_hash, None)
             };
@@ -638,14 +642,9 @@ impl LEVM {
             // Compute code update before borrowing acc (borrow checker: can't access
             // db.codes while acc holds a mutable borrow of db)
             let code_update = if code_pos > 0 {
-                let last = &acct_changes.code_changes[code_pos - 1];
-                if last.new_code.is_empty() {
-                    Some((*EMPTY_KECCACK_HASH, None))
-                } else {
-                    use ethrex_common::types::Code;
-                    let code_obj = Code::from_bytecode(last.new_code.clone());
-                    Some((code_obj.hash, Some(code_obj)))
-                }
+                Some(Self::code_from_bal(
+                    &acct_changes.code_changes[code_pos - 1].new_code,
+                ))
             } else {
                 None
             };
@@ -741,7 +740,15 @@ impl LEVM {
         merkleizer: &Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
-    ) -> Result<(Vec<Receipt>, u64, FxHashSet<(Address, H256)>, FxHashSet<Address>), EvmError> {
+    ) -> Result<
+        (
+            Vec<Receipt>,
+            u64,
+            FxHashSet<(Address, H256)>,
+            FxHashSet<Address>,
+        ),
+        EvmError,
+    > {
         let store = db.store.clone();
         let header = &block.header;
         let n_txs = txs_with_sender.len();
@@ -787,13 +794,11 @@ impl LEVM {
         }
 
         // Mark storage reads that occurred during system calls (prepare_block).
-        for &(addr, key) in &unread_storage_reads.clone() {
-            if let Some(acct) = system_seed.get(&addr)
-                && acct.storage.contains_key(&key)
-            {
-                unread_storage_reads.remove(&(addr, key));
-            }
-        }
+        unread_storage_reads.retain(|(addr, key)| {
+            !system_seed
+                .get(addr)
+                .is_some_and(|a| a.storage.contains_key(key))
+        });
 
         // Pre-compute capacity hint for per-tx DBs from BAL account count.
         let bal_account_count = bal.accounts().len();
@@ -906,9 +911,7 @@ impl LEVM {
                 &system_seed,
                 &store,
             )
-            .map_err(|e| {
-                EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
-            })?;
+            .map_err(|e| EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}")))?;
 
             // Mark storage_reads that were actually loaded during this tx.
             // storage_reads slots are NOT in storage_changes (conflict check ensures this),
@@ -958,7 +961,12 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        Ok((receipts, block_gas_used, unread_storage_reads, unaccessed_pure_accounts))
+        Ok((
+            receipts,
+            block_gas_used,
+            unread_storage_reads,
+            unaccessed_pure_accounts,
+        ))
     }
 
     /// Validates that a tx's post-execution state matches BAL claims.
@@ -1236,11 +1244,7 @@ impl LEVM {
 
             // Lazily load pre-system-call state from store (only if needed for
             // extraneous-entry detection). Wrapped in a closure for on-demand fetch.
-            let pre_state = || {
-                store
-                    .get_account_state(addr)
-                    .unwrap_or_default()
-            };
+            let pre_state = || store.get_account_state(addr).unwrap_or_default();
 
             // Balance change at index 0
             if let Some(expected_balance) = find_exact_change_balance(&acct.balance_changes, 0) {
@@ -1344,9 +1348,7 @@ impl LEVM {
                         )));
                     }
                     // Verify the system call actually changed this slot
-                    let pre_slot = store
-                        .get_storage_value(addr, key)
-                        .unwrap_or_default();
+                    let pre_slot = store.get_storage_value(addr, key).unwrap_or_default();
                     if pre_slot == expected_value {
                         return Err(EvmError::Custom(format!(
                             "BAL validation failed for system_tx: account {addr:?} has \
@@ -1419,8 +1421,7 @@ impl LEVM {
             }
 
             // Code
-            if let Some(expected_code) =
-                find_exact_change_code(&acct.code_changes, withdrawal_idx)
+            if let Some(expected_code) = find_exact_change_code(&acct.code_changes, withdrawal_idx)
             {
                 let code_hash = if expected_code.is_empty() {
                     *EMPTY_KECCACK_HASH

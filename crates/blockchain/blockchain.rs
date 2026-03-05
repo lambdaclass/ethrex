@@ -1946,8 +1946,9 @@ impl Blockchain {
     /// Returns a two-level Result:
     /// - Outer `Err`: pipeline couldn't start (e.g. parent header not found).
     /// - Inner `Result`: block storage outcome. The produced BAL is returned
-    ///   regardless of whether storage succeeded, so callers like
-    ///   `add_block_pipeline_bal` can retrieve it even on storage failure.
+    ///   even when storage fails, so callers like `add_block_pipeline_bal` can
+    ///   retrieve it. Note: if *execution* itself fails (outer `Result`), the
+    ///   BAL is not available.
     fn add_block_pipeline_inner(
         &self,
         block: Block,
