@@ -623,10 +623,11 @@ impl Blockchain {
                 continue;
             }
 
-            // EIP-7928: Save BAL recorder state before trying the tx.
-            // If the tx fails and is skipped, we must undo BAL changes (touched
-            // addresses, index advancement, etc.) so the BAL only reflects
-            // transactions actually included in the block.
+            // EIP-7928: Snapshot BAL recorder before trying the tx.
+            // If the tx is rejected, restore so only included txs affect the BAL.
+            // TODO: This clones the entire recorder every tx. Add a tx-level
+            // checkpoint/restore that also undoes touched_addresses and storage_reads
+            // (the existing checkpoint only handles inner call reverts).
             let bal_snapshot = context.vm.db.bal_recorder.clone();
 
             // Set BAL index for this transaction (1-indexed per EIP-7928)
