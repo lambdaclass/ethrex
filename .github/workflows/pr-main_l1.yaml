@@ -232,6 +232,11 @@ jobs:
             simulation: ethereum/engine
             limit: "engine-withdrawals"
             artifact_prefix: engine_withdrawals
+          - name: "Consume Engine Amsterdam"
+            simulation: ethereum/eels/consume-engine
+            limit: ".*(8024|7708|7778|7843|7928|7954|8037).*"
+            buildarg: "fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.2.0/fixtures_bal.tar.gz branch=devnets/bal/3"
+            artifact_prefix: consume_engine_amsterdam
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
@@ -273,9 +278,9 @@ jobs:
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
           fi
-          if [[ -n "$SIM_BUILDARG" ]]; then
-            FLAGS+=" --sim.buildarg $SIM_BUILDARG"
-          fi
+          for arg in $SIM_BUILDARG; do
+            FLAGS+=" --sim.buildarg $arg"
+          done
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
