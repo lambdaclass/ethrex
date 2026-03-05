@@ -143,21 +143,21 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        // Set BAL index for post-execution phase (withdrawals, uint16)
+        // Set BAL index for post-execution phase (requests + withdrawals, uint16)
+        // Order must match geth: requests (system calls) BEFORE withdrawals.
         if record_bal {
             #[allow(clippy::cast_possible_truncation)]
-            let withdrawal_index = (block.body.transactions.len() + 1) as u16;
-            db.set_bal_index(withdrawal_index);
-        }
+            let post_tx_index = (block.body.transactions.len() + 1) as u16;
+            db.set_bal_index(post_tx_index);
 
-        if let Some(withdrawals) = &block.body.withdrawals {
             // Record ALL withdrawal recipients for BAL per EIP-7928:
             // "Withdrawal recipients regardless of amount"
             // The amount filter only applies to balance_changes, not touched_addresses
-            if record_bal && let Some(recorder) = db.bal_recorder_mut() {
-                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            if let Some(withdrawals) = &block.body.withdrawals {
+                if let Some(recorder) = db.bal_recorder_mut() {
+                    recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+                }
             }
-            Self::process_withdrawals(db, withdrawals)?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
@@ -167,6 +167,10 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2(_) => Default::default(),
         };
+
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
 
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
@@ -225,15 +229,15 @@ impl LEVM {
             let last_tx_idx = block.body.transactions.len() as u16;
             Self::seed_db_from_bal(db, bal, last_tx_idx)?;
 
-            // Withdrawals apply on top of seeded state; requests read predeploy storage
-            if let Some(withdrawals) = &block.body.withdrawals {
-                Self::process_withdrawals(db, withdrawals)?;
-            }
-
+            // Order must match geth: requests (system calls) BEFORE withdrawals.
             let requests = match vm_type {
                 VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
                 VMType::L2(_) => Default::default(),
             };
+
+            if let Some(withdrawals) = &block.body.withdrawals {
+                Self::process_withdrawals(db, withdrawals)?;
+            }
             // State transitions for merkleizer come from bal_to_account_updates,
             // not from db — no need to call send_state_transitions_tx here.
 
@@ -330,19 +334,19 @@ impl LEVM {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
-        // Set BAL index for post-execution phase (withdrawals, uint16)
+        // Set BAL index for post-execution phase (requests + withdrawals, uint16)
+        // Order must match geth: requests (system calls) BEFORE withdrawals.
         if is_amsterdam {
             #[allow(clippy::cast_possible_truncation)]
-            let withdrawal_index = (block.body.transactions.len() + 1) as u16;
-            db.set_bal_index(withdrawal_index);
-        }
+            let post_tx_index = (block.body.transactions.len() + 1) as u16;
+            db.set_bal_index(post_tx_index);
 
-        if let Some(withdrawals) = &block.body.withdrawals {
             // Record ALL withdrawal recipients for BAL per EIP-7928
-            if is_amsterdam && let Some(recorder) = db.bal_recorder_mut() {
-                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            if let Some(withdrawals) = &block.body.withdrawals {
+                if let Some(recorder) = db.bal_recorder_mut() {
+                    recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+                }
             }
-            Self::process_withdrawals(db, withdrawals)?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
@@ -352,6 +356,10 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2(_) => Default::default(),
         };
+
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // Extract BAL if recording was enabled
