@@ -22,7 +22,7 @@
 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
 | Phase 3: 오프라인 프루빙 | ✅ | `test_offline_proving.rs` — zk-dex 재증명 통과 (439초) |
 | Phase 4: 오프라인 검증 | ✅ | `test_offline_verify.rs` — proof.bin 오프체인 검증 (2.4초) |
-| Phase 5: Foundry on-chain 검증 | ⚠️ | 인코딩 일치 테스트 ✅, verifyProof는 Groth16 fixture 필요 |
+| Phase 5: Foundry on-chain 검증 | ✅ | 인코딩 5개 + verifyProof 4개 = 총 9개 Foundry 테스트 |
 | Prover balance_diffs 디코딩 | ⚠️ | 인코딩 포맷 한계로 빈 배열, warn 처리 |
 
 ---
@@ -179,22 +179,35 @@ cd crates/l2/contracts && forge test -vv
 - `test_encoding_with_l2_rolling_hashes` — L2 rolling hash 포함 시 인코딩 길이 검증
 - `test_encoding_length_fixed_only` — 8개 고정 필드 = 256 바이트
 
-**Phase 5b: verifyProof 테스트** — ❌ Groth16 fixture 필요
+**Phase 5b: verifyProof 테스트** — ✅ 완료
 
-현재 fixture는 Compressed 포맷. on-chain SP1 검증에는 Groth16 proof가 필요.
+SP1MockVerifier + mock Groth16 proof로 검증 플로우 전체 테스트.
 
-```solidity
-// TODO: Groth16 fixture 수집 후 구현
-function test_verifyBatch_zk_dex() public {
-    bytes memory proof = vm.readFileBinary("fixtures/zk-dex/batch_2/proof_calldata.bin");
-    bytes32 vk = ...; // verifying key hash
-    bytes memory publicValues = vm.readFileBinary("fixtures/zk-dex/batch_2/public_values.bin");
-    ISP1Verifier(sp1Verifier).verifyProof(vk, publicValues, proof);
-}
+테스트: `crates/l2/contracts/test/VerifyBatchFixture.t.sol`
+모의 검증기: `crates/l2/contracts/test/SP1MockVerifier.sol`
+
+4개 테스트:
+- `test_verifyProof_mock_zk_dex_batch_2` — 전체 encoding → verifyProof 호출
+- `test_verifyProof_with_sha256_check` — SHA-256 해시 + verifyProof
+- `test_full_verify_flow_zk_dex` — OnChainProposer._getPublicInputsFromCommitment 재현
+- `test_verifyProof_nonempty_proof` — 비어있지 않은 proof bytes 검증
+
+**Groth16 fixture 생성 (Rust)**: `crates/l2/prover/tests/test_groth16_prove.rs`
+- `groth16_mock_fixtures` — mock proof 생성 (빠름, ~초)
+- `groth16_real_prove` — 실제 Groth16 (SP1_DEV=true, 느림)
+
+```sh
+# Mock Groth16 fixtures 생성
+GUEST_PROGRAMS=zk-dex cargo test -p ethrex-prover --features sp1 --release -- groth16_mock
+
+# 실제 Groth16 proof 생성 (CPU + dev circuits)
+SP1_DEV=true GUEST_PROGRAMS=zk-dex cargo test -p ethrex-prover --features sp1 --release -- --ignored groth16_real
+
+# Foundry 테스트 실행
+cd crates/l2/contracts && forge test -vv
 ```
 
-**의존성**: Groth16 모드 Docker 배포 (GPU 필요), SP1 Verifier 컨트랙트
-**우선순위**: 낮음 — L1 컨트랙트 변경 시 회귀 테스트로 가치 있음
+**실제 SP1 검증기로 테스트하려면**: SP1MockVerifier를 실제 SP1Verifier로 교체 + `groth16_real_prove` fixture 사용
 
 ---
 
@@ -235,7 +248,7 @@ function test_verifyBatch_zk_dex() public {
 | 8 | Phase 3: 오프라인 프루빙 | ✅ | zk-dex 2배치 재증명 통과 (439초) |
 | 9 | Phase 4: 오프라인 검증 | ✅ | zk-dex 2배치 오프체인 검증 통과 (2.4초) |
 | 10 | Phase 5a: 인코딩 일치 | ✅ | Foundry 5개 테스트 통과 |
-| **10b** | **Phase 5b: verifyProof** | **❌** | **Groth16 fixture 필요 (GPU)** |
+| 10b | Phase 5b: verifyProof | ✅ | SP1MockVerifier + mock Groth16 (4개 테스트) |
 | 11 | Tools 포트 동적화 | ✅ | `TOOLS_*_PORT` 환경변수 |
 | 12 | GPU 감지 compose | ✅ | `hasNvidiaGpu()` + NVIDIA device reservation |
 | 13 | Metrics 포트 | ✅ | DB 할당 + compose 연동 |
