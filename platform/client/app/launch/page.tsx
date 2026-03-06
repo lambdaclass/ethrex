@@ -41,7 +41,7 @@ function LaunchPageContent() {
         <h1 className="text-3xl font-bold mb-3">Launch Your Own L2</h1>
         <p className="text-gray-600 text-lg max-w-2xl mx-auto">
           Deploy your own Layer 2 blockchain powered by Tokamak Network.
-          Choose a program from the store, install the Desktop app, and start building in minutes.
+          Install the Desktop App, create your appchain, and start building in minutes.
         </p>
       </div>
 
@@ -49,23 +49,23 @@ function LaunchPageContent() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
         <div className="bg-white rounded-xl border p-6 text-center">
           <div className="w-10 h-10 mx-auto mb-3 bg-blue-50 rounded-full flex items-center justify-center text-blue-600 font-bold">1</div>
-          <h3 className="font-semibold mb-2">Choose a Program</h3>
+          <h3 className="font-semibold mb-2">Install Desktop App</h3>
           <p className="text-sm text-gray-600">
-            Browse the Program Store and pick an application to run on your L2 chain.
+            Download and install the Tokamak Desktop App. Your control center for appchain management.
           </p>
         </div>
         <div className="bg-white rounded-xl border p-6 text-center">
           <div className="w-10 h-10 mx-auto mb-3 bg-blue-50 rounded-full flex items-center justify-center text-blue-600 font-bold">2</div>
-          <h3 className="font-semibold mb-2">Install Desktop App</h3>
+          <h3 className="font-semibold mb-2">Create Your Appchain</h3>
           <p className="text-sm text-gray-600">
-            Download and install the Tokamak Desktop App. It handles deployment, monitoring, and management.
+            Create your L2 appchain with one click. Choose local dev mode or connect to Sepolia/Ethereum.
           </p>
         </div>
         <div className="bg-white rounded-xl border p-6 text-center">
           <div className="w-10 h-10 mx-auto mb-3 bg-blue-50 rounded-full flex items-center justify-center text-blue-600 font-bold">3</div>
-          <h3 className="font-semibold mb-2">Deploy & Run</h3>
+          <h3 className="font-semibold mb-2">Browse Programs & Run</h3>
           <p className="text-sm text-gray-600">
-            Create your L2 chain with one click. Deploy locally with Docker or to a remote server via SSH.
+            Explore the Program Store for guest programs, deploy them on your chain, and start building.
           </p>
         </div>
       </div>
@@ -101,7 +101,7 @@ function LaunchPageContent() {
           </a>
         </div>
         <p className="text-blue-200 text-sm mt-4">
-          Requires Docker Desktop for local deployment
+          macOS and Linux supported
         </p>
       </div>
 
@@ -110,12 +110,12 @@ function LaunchPageContent() {
         <h2 className="text-xl font-bold mb-6 text-center">What You Can Do</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {[
-            { title: "Local Docker Deployment", desc: "Build and run your L2 locally using Docker Compose. Full source build or pre-built images." },
-            { title: "Remote SSH Deployment", desc: "Deploy to any server via SSH. Upload configs, pull images, and manage remotely." },
-            { title: "Real-time Log Viewer", desc: "Watch build progress and runtime logs in real-time with SSE streaming." },
-            { title: "Lifecycle Management", desc: "Start, stop, restart, and destroy deployments with one click." },
-            { title: "AI Pilot (Coming Soon)", desc: "AI-powered assistant to help configure, troubleshoot, and optimize your L2." },
-            { title: "Open Appchain Registry", desc: "Publish your L2 to the Tokamak Open Appchain registry for others to discover." },
+            { title: "One-Click Appchain Creation", desc: "Create your L2 appchain instantly. Local dev mode or connect to Sepolia/Ethereum mainnet." },
+            { title: "Process Lifecycle Management", desc: "Start, stop, and monitor your appchain processes with one click from the Desktop App." },
+            { title: "Real-time Log Viewer", desc: "Watch runtime logs in real-time. Debug and monitor your appchain as it runs." },
+            { title: "AI Pilot", desc: "AI-powered assistant that understands your appchain state. Get help with configuration, troubleshooting, and more." },
+            { title: "Program Store", desc: "Browse and deploy guest programs on your appchain. Extend functionality with community-built programs." },
+            { title: "Open Appchain Registry", desc: "Publish your L2 to the Tokamak Open Appchain registry for others to discover and connect." },
           ].map(({ title, desc }) => (
             <div key={title} className="bg-white rounded-xl border p-5">
               <h3 className="font-semibold mb-1">{title}</h3>
@@ -170,10 +170,10 @@ function LaunchPageContent() {
         <h2 className="text-xl font-bold mb-4 text-center">FAQ</h2>
         <div className="space-y-3 max-w-2xl mx-auto">
           {[
-            { q: "Do I need Docker?", a: "Yes, for local deployment. Docker Desktop handles all the containers (L1, L2, prover, tools). For remote deployment, the target server needs Docker." },
-            { q: "Can I deploy without the Desktop App?", a: "Yes! You can use the CLI directly: `ethrex l2 --dev`. The Desktop App provides a GUI with monitoring, logs, and lifecycle management." },
-            { q: "How much does it cost?", a: "Local deployment is free. For remote deployment, you provide your own server. Tokamak Network does not charge for L2 deployment." },
-            { q: "Can I make my L2 public?", a: "Yes. After deploying, you can publish your L2 to the Open Appchain registry from the Desktop App. Others can then discover and connect to your chain." },
+            { q: "Do I need Docker?", a: "Not for local dev mode. Just install the Desktop App and create an appchain with one click. Docker is optional for advanced deployment scenarios." },
+            { q: "Can I run without the Desktop App?", a: "Yes! You can use the CLI directly: `ethrex l2 --dev`. The Desktop App provides a GUI with monitoring, logs, AI Pilot, and lifecycle management." },
+            { q: "How much does it cost?", a: "Free. Tokamak Network does not charge for L2 deployment. You only need ETH for L1 gas fees when deploying to testnet or mainnet." },
+            { q: "Can I make my L2 public?", a: "Yes. After creating your appchain on testnet/mainnet, you can publish it to the Open Appchain registry from the Desktop App for others to discover." },
           ].map(({ q, a }) => (
             <details key={q} className="bg-white rounded-xl border p-4 group">
               <summary className="font-medium cursor-pointer list-none flex items-center justify-between">

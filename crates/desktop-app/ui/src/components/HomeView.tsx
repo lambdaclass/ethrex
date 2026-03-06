@@ -3,6 +3,7 @@ import { useLang } from '../App'
 import { t } from '../i18n'
 import type { ViewType } from '../App'
 import type { NetworkMode } from './CreateL2Wizard'
+import { invoke } from '@tauri-apps/api/core'
 
 interface HomeViewProps {
   onNavigate: (view: ViewType) => void
@@ -211,7 +212,13 @@ export default function HomeView({ onNavigate, onCreateWithNetwork }: HomeViewPr
             {steps.map((step, i) => (
               <button
                 key={step.titleKey}
-                onClick={() => onCreateWithNetwork(step.network)}
+                onClick={() => {
+                  if (step.network === 'local') {
+                    invoke('open_deployment_ui')
+                  } else {
+                    onCreateWithNetwork(step.network)
+                  }
+                }}
                 className={`w-full flex items-center gap-3 px-4 py-3.5 hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer text-left ${
                   i < steps.length - 1 ? 'border-b border-[var(--color-border)]' : ''
                 }`}

@@ -53,14 +53,6 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Start local-server in background
-            let local_server: Arc<local_server::LocalServer> = app.state::<Arc<local_server::LocalServer>>().inner().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = local_server.start().await {
-                    log::error!("Failed to start local-server: {}", e);
-                }
-            });
-
             Ok(())
         })
         .on_window_event(|window, event| {

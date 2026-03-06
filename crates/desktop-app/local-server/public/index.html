@@ -20,8 +20,8 @@
 
     <nav>
       <button class="nav-btn active" data-view="deployments">Deployments</button>
+      <button class="nav-btn" data-view="launch">Launch L2</button>
       <button class="nav-btn" data-view="hosts">Remote Hosts</button>
-      <button class="nav-btn" data-view="create">+ New Deployment</button>
     </nav>
 
     <!-- Deployments List -->
@@ -31,29 +31,82 @@
       </div>
     </section>
 
-    <!-- Create Deployment -->
-    <section id="view-create" class="view">
-      <div class="form-card">
-        <h2>New L2 Deployment</h2>
-        <form id="create-form">
-          <label>Name
-            <input type="text" name="name" required placeholder="my-l2-chain">
-          </label>
-          <label>Program
-            <select name="programSlug">
-              <option value="evm-l2">EVM L2 (ethrex)</option>
-            </select>
-          </label>
-          <label>Chain ID
-            <input type="number" name="chainId" placeholder="1729 (auto)">
-          </label>
-          <label>Deploy Directory (optional)
-            <input type="text" name="deployDir" placeholder="~/.tokamak-appchain/deployments/...">
-          </label>
-          <div class="form-actions">
-            <button type="submit" class="btn-primary">Create</button>
+    <!-- Launch Wizard -->
+    <section id="view-launch" class="view">
+      <!-- Step indicator -->
+      <div class="step-indicator" id="step-indicator"></div>
+
+      <!-- Step 1: Select Program -->
+      <div id="launch-step1" class="launch-step">
+        <h2>Step 1: Select an App</h2>
+        <p class="step-desc">Choose a guest program to deploy on your L2 chain.</p>
+        <div class="search-bar">
+          <input type="text" id="program-search" placeholder="Search programs..." oninput="filterPrograms()">
+        </div>
+        <div id="programs-grid" class="card-grid">
+          <p class="empty-state">Loading programs...</p>
+        </div>
+      </div>
+
+      <!-- Step 2: Configure -->
+      <div id="launch-step2" class="launch-step" style="display:none">
+        <h2>Step 2: Configure Your L2</h2>
+        <div id="selected-program-info" class="selected-program"></div>
+        <div class="form-card" style="max-width:100%">
+          <div class="form-row">
+            <label>L2 Name *
+              <input type="text" id="launch-name" placeholder="My L2 Chain">
+            </label>
+            <label>Chain ID
+              <input type="number" id="launch-chain-id" placeholder="auto-generated">
+            </label>
           </div>
-        </form>
+          <label>Environment
+            <div class="mode-toggle">
+              <button type="button" class="mode-btn active" data-mode="local" onclick="setLaunchMode('local')">Local (Docker)</button>
+              <button type="button" class="mode-btn" data-mode="remote" onclick="setLaunchMode('remote')">Remote Server</button>
+            </div>
+          </label>
+          <div id="docker-status-area"></div>
+          <div id="remote-host-area" style="display:none">
+            <label>Target Server
+              <select id="launch-host-select"><option value="">Select a server...</option></select>
+            </label>
+          </div>
+          <label>Deploy Directory (optional)
+            <input type="text" id="launch-deploy-dir" placeholder="~/.tokamak-appchain/deployments/... (default)">
+          </label>
+          <div id="launch-error" class="error-msg" style="display:none"></div>
+          <div class="form-actions">
+            <button class="btn-action" onclick="launchGoStep(1)">Back</button>
+            <button class="btn-primary" id="launch-deploy-btn" onclick="handleLaunchDeploy()">Deploy L2</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Deploying -->
+      <div id="launch-step3" class="launch-step" style="display:none">
+        <h2>Step 3: Deploying Your L2</h2>
+        <p class="step-desc" id="deploy-info-text"></p>
+        <div class="card">
+          <!-- Progress steps -->
+          <div id="deploy-progress-steps"></div>
+          <!-- Current message -->
+          <div id="deploy-message" class="deploy-message"></div>
+          <!-- Build log -->
+          <details id="build-log-details">
+            <summary class="build-log-summary">Build output (<span id="build-log-count">0</span> lines)</summary>
+            <div id="build-log" class="log-container" style="height:200px"></div>
+          </details>
+          <!-- Error -->
+          <div id="deploy-error-msg" class="error-box" style="display:none"></div>
+          <!-- Completion -->
+          <div id="deploy-complete" class="success-box" style="display:none"></div>
+        </div>
+        <div class="form-actions" style="margin-top:16px">
+          <button class="btn-primary" id="goto-dashboard-btn" style="display:none" onclick="goToDashboard()">Go to Dashboard</button>
+          <button class="btn-action" onclick="showView('deployments')">View All Deployments</button>
+        </div>
       </div>
     </section>
 
@@ -64,15 +117,48 @@
         <h2 id="detail-name"></h2>
         <span id="detail-phase" class="phase-badge"></span>
       </div>
-      <div class="detail-grid">
-        <div class="detail-info card">
-          <h3>Info</h3>
-          <dl id="detail-info-dl"></dl>
-          <div class="detail-actions" id="detail-actions"></div>
+      <!-- Tabs -->
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">Overview</button>
+        <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">Logs</button>
+        <button class="tab-btn" data-tab="config" onclick="switchTab('config')">Config</button>
+      </div>
+      <div class="detail-content">
+        <!-- Overview Tab -->
+        <div id="tab-overview" class="tab-panel active">
+          <div id="container-cards"></div>
+          <div class="detail-grid">
+            <div class="detail-info card">
+              <h3>Info</h3>
+              <dl id="detail-info-dl"></dl>
+              <div class="detail-actions" id="detail-actions"></div>
+            </div>
+            <div class="detail-endpoints card" id="detail-endpoints" style="display:none">
+              <h3>Endpoints & Tools</h3>
+              <div id="endpoints-content"></div>
+            </div>
+          </div>
         </div>
-        <div class="detail-logs card">
-          <h3>Logs <button class="btn-small" id="clear-logs" onclick="clearLogs()">Clear</button></h3>
-          <div id="log-container" class="log-container"></div>
+        <!-- Logs Tab -->
+        <div id="tab-logs" class="tab-panel" style="display:none">
+          <div class="log-controls">
+            <select id="log-service" onchange="reloadLogs()">
+              <option value="">All Services</option>
+              <option value="tokamak-app-l1">L1 Node</option>
+              <option value="tokamak-app-l2">L2 Node</option>
+              <option value="tokamak-app-prover">Prover</option>
+              <option value="tokamak-app-deployer">Deployer</option>
+            </select>
+            <input type="text" id="log-search" placeholder="Search logs..." oninput="filterLogs()">
+            <button class="btn-action" id="stream-btn" onclick="toggleStream()">Stream</button>
+            <label class="checkbox-label"><input type="checkbox" id="auto-scroll" checked> Auto-scroll</label>
+          </div>
+          <div id="log-viewer" class="log-container" style="height:500px"></div>
+          <div id="log-line-count" class="log-count"></div>
+        </div>
+        <!-- Config Tab -->
+        <div id="tab-config" class="tab-panel" style="display:none">
+          <div class="card" id="config-content"></div>
         </div>
       </div>
     </section>

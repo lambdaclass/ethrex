@@ -30,6 +30,31 @@ app.use("/api/deployments", deploymentRoutes);
 app.use("/api/hosts", hostRoutes);
 app.use("/api/fs", fsRoutes);
 
+// Store proxy — fetch programs from Platform API, fallback to defaults
+app.get("/api/store/programs", async (req, res) => {
+  const PLATFORM_API = process.env.PLATFORM_API_URL || "https://tokamak-platform.web.app";
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const resp = await fetch(`${PLATFORM_API}/api/store/programs`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (resp.ok) {
+      const data = await resp.json();
+      return res.json(data);
+    }
+  } catch (_) {
+    // Platform unreachable, use defaults
+  }
+  // Fallback default programs
+  res.json([
+    { id: "default-erc20", name: "ERC-20 Token", description: "Deploy a standard ERC-20 token on your L2", author: "Tokamak", tags: ["token", "defi"] },
+    { id: "default-nft", name: "NFT Collection", description: "Launch an NFT collection with minting capabilities", author: "Tokamak", tags: ["nft", "collectible"] },
+    { id: "default-dex", name: "DEX (AMM)", description: "Automated Market Maker decentralized exchange", author: "Tokamak", tags: ["defi", "exchange"] },
+    { id: "default-bridge", name: "Token Bridge", description: "Bridge tokens between L1 and your L2 chain", author: "Tokamak", tags: ["bridge", "infra"] },
+    { id: "default-blank", name: "Blank Chain", description: "Empty L2 chain — deploy your own contracts later", author: "Tokamak", tags: ["custom"] },
+  ]);
+});
+
 // Health check
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", version: "0.1.0", type: "local-server" });

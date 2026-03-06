@@ -55,4 +55,23 @@ function deleteDeployment(id) {
   db.prepare("DELETE FROM deployments WHERE id = ?").run(id);
 }
 
-module.exports = { createDeployment, getDeploymentById, getDeploymentsByUser, updateDeployment, deleteDeployment };
+function getActiveDeployments({ limit = 50, offset = 0, search } = {}) {
+  const db = getDb();
+  let sql = `SELECT d.id, d.name, d.chain_id, d.rpc_url, d.status, d.phase, d.bridge_address, d.proposer_address, d.created_at,
+             p.name as program_name, p.program_id as program_slug, p.category,
+             u.name as owner_name
+             FROM deployments d
+             JOIN programs p ON d.program_id = p.id
+             JOIN users u ON d.user_id = u.id
+             WHERE d.status = 'active'`;
+  const params = [];
+  if (search) {
+    sql += ` AND (d.name LIKE ? OR p.name LIKE ?)`;
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  sql += ` ORDER BY d.created_at DESC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+  return db.prepare(sql).all(...params);
+}
+
+module.exports = { createDeployment, getDeploymentById, getDeploymentsByUser, updateDeployment, deleteDeployment, getActiveDeployments };

@@ -57,6 +57,11 @@ export const storeApi = {
     const data = await apiFetch("/api/store/featured");
     return data.programs;
   },
+  appchains: async (params?: { search?: string }) => {
+    const qs = params?.search ? `?search=${encodeURIComponent(params.search)}` : "";
+    const data = await apiFetch(`/api/store/appchains${qs}`);
+    return data.appchains;
+  },
 };
 
 // File upload helper (multipart/form-data)
