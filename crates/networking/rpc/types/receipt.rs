@@ -4,8 +4,8 @@ use ethrex_common::{
     evm::calculate_create_address,
     serde_utils,
     types::{
-        BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
-        bloom_from_logs,
+        BlockHash, BlockHeader, BlockNumber, FrameReceipt, Log, Receipt, Transaction, TxKind,
+        TxType, bloom_from_logs,
     },
 };
 
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::utils::RpcErr;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RpcReceipt {
     #[serde(flatten)]
     pub receipt: RpcReceiptInfo,
@@ -22,6 +23,30 @@ pub struct RpcReceipt {
     pub tx_info: RpcReceiptTxInfo,
     #[serde(flatten)]
     pub block_info: RpcReceiptBlockInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payer: Option<Address>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_receipts: Option<Vec<RpcFrameReceipt>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcFrameReceipt {
+    #[serde(with = "serde_utils::bool")]
+    pub status: bool,
+    #[serde(with = "serde_utils::u64::hex_str")]
+    pub gas_used: u64,
+    pub logs: Vec<RpcLogInfo>,
+}
+
+impl From<FrameReceipt> for RpcFrameReceipt {
+    fn from(fr: FrameReceipt) -> Self {
+        Self {
+            status: fr.status,
+            gas_used: fr.gas_used,
+            logs: fr.logs.into_iter().map(RpcLogInfo::from).collect(),
+        }
+    }
 }
 
 impl RpcReceipt {
@@ -37,11 +62,18 @@ impl RpcReceipt {
             logs.push(RpcLog::new(log, log_index, &tx_info, &block_info));
             log_index += 1;
         }
+        let payer = receipt.payer;
+        let frame_receipts = receipt
+            .frame_receipts
+            .clone()
+            .map(|frs| frs.into_iter().map(RpcFrameReceipt::from).collect());
         Self {
             receipt: receipt.into(),
             logs,
             tx_info,
             block_info,
+            payer,
+            frame_receipts,
         }
     }
 }

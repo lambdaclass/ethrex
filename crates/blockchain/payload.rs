@@ -629,7 +629,7 @@ impl Blockchain {
                 }
                 // Ignore following txs from sender
                 Err(e) => {
-                    debug!("Failed to execute transaction: {tx_hash:x}, {e}");
+                    warn!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     txs.pop();
                     continue;

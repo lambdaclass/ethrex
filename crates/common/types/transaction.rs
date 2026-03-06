@@ -43,6 +43,7 @@ pub enum Transaction {
     EIP7702Transaction(EIP7702Transaction),
     PrivilegedL2Transaction(PrivilegedL2Transaction),
     FeeTokenTransaction(FeeTokenTransaction),
+    FrameTransaction(FrameTransaction),
 }
 
 /// The same as a Transaction enum, only that blob transactions are in wrapped format, including
@@ -346,6 +347,7 @@ pub enum TxType {
     EIP1559 = 0x02,
     EIP4844 = 0x03,
     EIP7702 = 0x04,
+    Frame = 0x06,
     FeeToken = 0x7d,
     // We take the same approach as Optimism to define the privileged tx prefix
     // https://github.com/ethereum-optimism/specs/blob/c6903a3b2cad575653e1f5ef472debb573d83805/specs/protocol/deposits.md#the-deposited-transaction-type
@@ -360,6 +362,7 @@ impl From<TxType> for u8 {
             TxType::EIP1559 => 0x02,
             TxType::EIP4844 => 0x03,
             TxType::EIP7702 => 0x04,
+            TxType::Frame => 0x06,
             TxType::FeeToken => 0x7d,
             TxType::Privileged => 0x7e,
         }
@@ -374,6 +377,7 @@ impl Display for TxType {
             TxType::EIP1559 => write!(f, "EIP1559"),
             TxType::EIP4844 => write!(f, "EIP4844"),
             TxType::EIP7702 => write!(f, "EIP7702"),
+            TxType::Frame => write!(f, "Frame"),
             TxType::Privileged => write!(f, "Privileged"),
             TxType::FeeToken => write!(f, "FeeToken"),
         }
@@ -390,6 +394,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => TxType::EIP7702,
             Transaction::FeeTokenTransaction(_) => TxType::FeeToken,
             Transaction::PrivilegedL2Transaction(_) => TxType::Privileged,
+            Transaction::FrameTransaction(_) => TxType::Frame,
         }
     }
 
@@ -412,6 +417,7 @@ impl Transaction {
             TxType::EIP1559 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP4844 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP7702 => self.calc_effective_gas_price(base_fee_per_gas),
+            TxType::Frame => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::FeeToken => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::Privileged => Some(self.gas_price()),
         }
@@ -424,6 +430,7 @@ impl Transaction {
             TxType::EIP1559 => U256::from(self.max_fee_per_gas()?),
             TxType::EIP4844 => U256::from(self.max_fee_per_gas()?),
             TxType::EIP7702 => U256::from(self.max_fee_per_gas()?),
+            TxType::Frame => U256::from(self.max_fee_per_gas()?),
             TxType::FeeToken => U256::from(self.max_fee_per_gas()?),
             TxType::Privileged => self.gas_price(),
         };
@@ -453,6 +460,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(t) => Some(&t.cached_canonical),
             Transaction::PrivilegedL2Transaction(t) => Some(&t.cached_canonical),
             Transaction::FeeTokenTransaction(t) => Some(&t.cached_canonical),
+            Transaction::FrameTransaction(t) => Some(&t.cached_canonical),
         }
     }
 }
@@ -503,6 +511,9 @@ impl RLPDecode for Transaction {
                 // FeeToken
                 0x7d => FeeTokenTransaction::decode(tx_encoding)
                     .map(|tx| (Transaction::FeeTokenTransaction(tx), remainder)),
+                // Frame (EIP-8141)
+                0x6 => FrameTransaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::FrameTransaction(tx), remainder)),
                 // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode(tx_encoding)
                     .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
@@ -686,6 +697,7 @@ impl PayloadRLPEncode for Transaction {
             Transaction::EIP7702Transaction(tx) => tx.encode_payload(buf),
             Transaction::PrivilegedL2Transaction(tx) => tx.encode_payload(buf),
             Transaction::FeeTokenTransaction(tx) => tx.encode_payload(buf),
+            Transaction::FrameTransaction(tx) => tx.encode_payload(buf),
         }
     }
 }
@@ -1084,6 +1096,10 @@ impl RLPDecode for FeeTokenTransaction {
 
 impl Transaction {
     pub fn sender(&self) -> Result<Address, EcdsaError> {
+        // Frame transactions have explicit sender, no ECDSA recovery
+        if let Transaction::FrameTransaction(tx) = self {
+            return Ok(tx.sender);
+        }
         let sender_cache = match self {
             Transaction::LegacyTransaction(tx) => &tx.sender_cache,
             Transaction::EIP2930Transaction(tx) => &tx.sender_cache,
@@ -1092,6 +1108,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.sender_cache,
             Transaction::PrivilegedL2Transaction(tx) => &tx.sender_cache,
             Transaction::FeeTokenTransaction(tx) => &tx.sender_cache,
+            Transaction::FrameTransaction(_) => unreachable!(),
         };
         sender_cache
             .get_or_try_init(|| self.compute_sender())
@@ -1212,6 +1229,7 @@ impl Transaction {
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
+            Transaction::FrameTransaction(tx) => Ok(tx.sender),
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
                 Encoder::new(&mut buf)
@@ -1244,6 +1262,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.gas,
             Transaction::PrivilegedL2Transaction(tx) => tx.gas_limit,
             Transaction::FeeTokenTransaction(tx) => tx.gas_limit,
+            Transaction::FrameTransaction(tx) => tx.total_gas_limit(),
         }
     }
 
@@ -1257,6 +1276,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::FrameTransaction(tx) => U256::from(tx.max_fee_per_gas),
         }
     }
 
@@ -1269,6 +1289,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => TxKind::Call(tx.to),
             Transaction::PrivilegedL2Transaction(tx) => tx.to.clone(),
             Transaction::FeeTokenTransaction(tx) => tx.to.clone(),
+            Transaction::FrameTransaction(tx) => TxKind::Call(tx.sender),
         }
     }
 
@@ -1281,6 +1302,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => tx.value,
             Transaction::PrivilegedL2Transaction(tx) => tx.value,
             Transaction::FeeTokenTransaction(tx) => tx.value,
+            Transaction::FrameTransaction(_) => U256::zero(),
         }
     }
 
@@ -1293,6 +1315,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => Some(tx.max_priority_fee_per_gas),
+            Transaction::FrameTransaction(tx) => Some(tx.max_priority_fee_per_gas),
         }
     }
 
@@ -1305,6 +1328,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(tx.chain_id),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.chain_id),
             Transaction::FeeTokenTransaction(tx) => Some(tx.chain_id),
+            Transaction::FrameTransaction(tx) => Some(tx.chain_id),
         }
     }
 
@@ -1318,6 +1342,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.access_list,
             Transaction::PrivilegedL2Transaction(tx) => &tx.access_list,
             Transaction::FeeTokenTransaction(tx) => &tx.access_list,
+            Transaction::FrameTransaction(_) => &EMPTY_ACCESS_LIST,
         }
     }
     pub fn authorization_list(&self) -> Option<&AuthorizationList> {
@@ -1329,6 +1354,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(&tx.authorization_list),
             Transaction::PrivilegedL2Transaction(_) => None,
             Transaction::FeeTokenTransaction(_) => None,
+            Transaction::FrameTransaction(_) => None,
         }
     }
 
@@ -1341,6 +1367,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => tx.nonce,
             Transaction::PrivilegedL2Transaction(tx) => tx.nonce,
             Transaction::FeeTokenTransaction(tx) => tx.nonce,
+            Transaction::FrameTransaction(tx) => tx.nonce,
         }
     }
 
@@ -1353,6 +1380,10 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.data,
             Transaction::PrivilegedL2Transaction(tx) => &tx.data,
             Transaction::FeeTokenTransaction(tx) => &tx.data,
+            Transaction::FrameTransaction(_) => {
+                static EMPTY_DATA: Bytes = Bytes::new();
+                &EMPTY_DATA
+            }
         }
     }
 
@@ -1365,6 +1396,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => Vec::new(),
             Transaction::PrivilegedL2Transaction(_) => Vec::new(),
             Transaction::FeeTokenTransaction(_) => Vec::new(),
+            Transaction::FrameTransaction(tx) => tx.blob_versioned_hashes.clone(),
         }
     }
 
@@ -1377,6 +1409,13 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => None,
             Transaction::PrivilegedL2Transaction(_) => None,
             Transaction::FeeTokenTransaction(_) => None,
+            Transaction::FrameTransaction(tx) => {
+                if tx.blob_versioned_hashes.is_empty() {
+                    None
+                } else {
+                    Some(tx.max_fee_per_blob_gas)
+                }
+            }
         }
     }
 
@@ -1389,6 +1428,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => false,
             Transaction::PrivilegedL2Transaction(t) => matches!(t.to, TxKind::Create),
             Transaction::FeeTokenTransaction(t) => matches!(t.to, TxKind::Create),
+            Transaction::FrameTransaction(_) => false,
         }
     }
 
@@ -1405,6 +1445,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => Some(tx.max_fee_per_gas),
+            Transaction::FrameTransaction(tx) => Some(tx.max_fee_per_gas),
         }
     }
 
@@ -1424,6 +1465,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
             Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
             Transaction::FeeTokenTransaction(tx) => &tx.inner_hash,
+            Transaction::FrameTransaction(tx) => &tx.inner_hash,
         };
 
         *inner_hash.get_or_init(|| self.compute_hash())
@@ -1566,6 +1608,7 @@ impl TxType {
             0x02 => Some(Self::EIP1559),
             0x03 => Some(Self::EIP4844),
             0x04 => Some(Self::EIP7702),
+            0x06 => Some(Self::Frame),
             0x7d => Some(Self::FeeToken),
             0x7e => Some(Self::Privileged),
             _ => None,
@@ -1635,6 +1678,218 @@ pub struct FeeTokenTransaction {
     pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
+/// EIP-8141 Frame Transaction mode
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+#[repr(u8)]
+pub enum FrameMode {
+    #[default]
+    Default = 0,
+    Verify = 1,
+    Sender = 2,
+}
+
+impl From<FrameMode> for u8 {
+    fn from(mode: FrameMode) -> u8 {
+        match mode {
+            FrameMode::Default => 0,
+            FrameMode::Verify => 1,
+            FrameMode::Sender => 2,
+        }
+    }
+}
+
+impl RLPEncode for FrameMode {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        u8::from(*self).encode(buf);
+    }
+}
+
+impl RLPDecode for FrameMode {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let (val, rest) = u8::decode_unfinished(rlp)?;
+        let mode = match val {
+            0 => FrameMode::Default,
+            1 => FrameMode::Verify,
+            2 => FrameMode::Sender,
+            v => return Err(RLPDecodeError::Custom(format!("Invalid frame mode: {v}"))),
+        };
+        Ok((mode, rest))
+    }
+}
+
+/// EIP-8141 Frame: a single execution step within a frame transaction
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct Frame {
+    pub mode: FrameMode,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
+    pub target: Option<Address>,
+    pub gas_limit: u64,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub data: Bytes,
+}
+
+impl RLPEncode for Frame {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        // target: encode as address or RLP null (empty bytes) for None
+        let target_kind = match self.target {
+            Some(addr) => TxKind::Call(addr),
+            None => TxKind::Create, // RLP_NULL encodes "no target" → sender
+        };
+        Encoder::new(buf)
+            .encode_field(&self.mode)
+            .encode_field(&target_kind)
+            .encode_field(&self.gas_limit)
+            .encode_field(&self.data)
+            .finish();
+    }
+}
+
+impl RLPDecode for Frame {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (mode, decoder) = decoder.decode_field("mode")?;
+        let (target_kind, decoder): (TxKind, _) = decoder.decode_field("target")?;
+        let target = match target_kind {
+            TxKind::Call(addr) => Some(addr),
+            TxKind::Create => None,
+        };
+        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let (data, decoder) = decoder.decode_field("data")?;
+        let frame = Frame {
+            mode,
+            target,
+            gas_limit,
+            data,
+        };
+        Ok((frame, decoder.finish()?))
+    }
+}
+
+/// EIP-8141 Frame Transaction
+/// A transaction whose validity and gas payment are defined abstractly via frames.
+/// No ECDSA signature — sender is explicit. Authentication happens via APPROVE opcode.
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct FrameTransaction {
+    pub chain_id: u64,
+    pub nonce: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    pub sender: Address,
+    pub frames: Vec<Frame>,
+    pub max_priority_fee_per_gas: u64,
+    pub max_fee_per_gas: u64,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub max_fee_per_blob_gas: U256,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
+    pub blob_versioned_hashes: Vec<H256>,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub cached_canonical: OnceCell<Vec<u8>>,
+}
+
+/// Intrinsic gas cost for frame transactions (EIP-8141)
+pub const FRAME_TX_INTRINSIC_COST: u64 = 15000;
+
+impl FrameTransaction {
+    /// Compute the signature hash per EIP-8141:
+    /// VERIFY frame data is elided before hashing.
+    pub fn compute_sig_hash(&self) -> H256 {
+        let mut buf = vec![TxType::Frame as u8];
+        // Build a copy with VERIFY frame data elided
+        let elided_frames: Vec<Frame> = self
+            .frames
+            .iter()
+            .map(|f| {
+                if f.mode == FrameMode::Verify {
+                    Frame {
+                        mode: f.mode,
+                        target: f.target,
+                        gas_limit: f.gas_limit,
+                        data: Bytes::new(),
+                    }
+                } else {
+                    f.clone()
+                }
+            })
+            .collect();
+        Encoder::new(&mut buf)
+            .encode_field(&self.chain_id)
+            .encode_field(&self.nonce)
+            .encode_field(&self.sender)
+            .encode_field(&elided_frames)
+            .encode_field(&self.max_priority_fee_per_gas)
+            .encode_field(&self.max_fee_per_gas)
+            .encode_field(&self.max_fee_per_blob_gas)
+            .encode_field(&self.blob_versioned_hashes)
+            .finish();
+        keccak(&buf)
+    }
+
+    /// Compute total gas limit: intrinsic + calldata cost + sum of frame gas limits
+    pub fn total_gas_limit(&self) -> u64 {
+        let mut calldata_gas: u64 = 0;
+        // RLP-encode frames to compute calldata cost
+        let mut frames_buf = Vec::new();
+        self.frames.encode(&mut frames_buf);
+        for byte in &frames_buf {
+            calldata_gas += if *byte == 0 { 4 } else { 16 };
+        }
+        FRAME_TX_INTRINSIC_COST
+            .saturating_add(calldata_gas)
+            .saturating_add(self.frames.iter().map(|f| f.gas_limit).sum::<u64>())
+    }
+}
+
+impl RLPEncode for FrameTransaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.chain_id)
+            .encode_field(&self.nonce)
+            .encode_field(&self.sender)
+            .encode_field(&self.frames)
+            .encode_field(&self.max_priority_fee_per_gas)
+            .encode_field(&self.max_fee_per_gas)
+            .encode_field(&self.max_fee_per_blob_gas)
+            .encode_field(&self.blob_versioned_hashes)
+            .finish();
+    }
+}
+
+impl RLPDecode for FrameTransaction {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(FrameTransaction, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
+        let (nonce, decoder) = decoder.decode_field("nonce")?;
+        let (sender, decoder) = decoder.decode_field("sender")?;
+        let (frames, decoder) = decoder.decode_field("frames")?;
+        let (max_priority_fee_per_gas, decoder) =
+            decoder.decode_field("max_priority_fee_per_gas")?;
+        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
+        let (max_fee_per_blob_gas, decoder) = decoder.decode_field("max_fee_per_blob_gas")?;
+        let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
+        let tx = FrameTransaction {
+            chain_id,
+            nonce,
+            sender,
+            frames,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            max_fee_per_blob_gas,
+            blob_versioned_hashes,
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        };
+        Ok((tx, decoder.finish()?))
+    }
+}
+
+impl PayloadRLPEncode for FrameTransaction {
+    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+        buf.put_u8(TxType::Frame as u8);
+        self.encode(buf);
+    }
+}
+
 /// Canonical Transaction Encoding
 /// Based on [EIP-2718]
 /// Transactions can be encoded in the following formats:
@@ -1673,6 +1928,10 @@ mod canonic_encoding {
                         // EIP7702
                         0x4 => EIP7702Transaction::decode(tx_bytes)
                             .map(Transaction::EIP7702Transaction),
+                        // Frame (EIP-8141)
+                        0x6 => {
+                            FrameTransaction::decode(tx_bytes).map(Transaction::FrameTransaction)
+                        }
                         // FeeTokenTransaction
                         0x7d => FeeTokenTransaction::decode(tx_bytes)
                             .map(Transaction::FeeTokenTransaction),
@@ -1708,6 +1967,7 @@ mod canonic_encoding {
                 Transaction::EIP7702Transaction(t) => t.encode(buf),
                 Transaction::FeeTokenTransaction(t) => t.encode(buf),
                 Transaction::PrivilegedL2Transaction(t) => t.encode(buf),
+                Transaction::FrameTransaction(t) => t.encode(buf),
             };
         }
 
@@ -2175,6 +2435,27 @@ mod serde_impl {
         }
     }
 
+    impl Serialize for FrameTransaction {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_struct("FrameTransaction", 8)?;
+            s.serialize_field("type", &TxType::Frame)?;
+            s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
+            s.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
+            s.serialize_field("sender", &format!("{:#x}", self.sender))?;
+            s.serialize_field(
+                "maxPriorityFeePerGas",
+                &format!("{:#x}", self.max_priority_fee_per_gas),
+            )?;
+            s.serialize_field("maxFeePerGas", &format!("{:#x}", self.max_fee_per_gas))?;
+            s.serialize_field("maxFeePerBlobGas", &self.max_fee_per_blob_gas)?;
+            s.serialize_field("blobVersionedHashes", &self.blob_versioned_hashes)?;
+            s.end()
+        }
+    }
+
     impl<'de> Deserialize<'de> for Transaction {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
@@ -2241,6 +2522,9 @@ mod serde_impl {
                             serde::de::Error::custom(format!("Couldn't Deserialize FeeToken {e}"))
                         })
                 }
+                TxType::Frame => Err(serde::de::Error::custom(
+                    "Frame transaction JSON deserialization not supported",
+                )),
             }
         }
     }
@@ -3007,6 +3291,36 @@ mod serde_impl {
                 Transaction::EIP7702Transaction(tx) => tx.into(),
                 Transaction::PrivilegedL2Transaction(tx) => tx.into(),
                 Transaction::FeeTokenTransaction(tx) => tx.into(),
+                Transaction::FrameTransaction(tx) => tx.into(),
+            }
+        }
+    }
+
+    impl From<FrameTransaction> for GenericTransaction {
+        fn from(value: FrameTransaction) -> Self {
+            Self {
+                r#type: TxType::Frame,
+                nonce: Some(value.nonce),
+                to: TxKind::Call(value.sender),
+                from: value.sender,
+                gas: Some(value.total_gas_limit()),
+                value: U256::zero(),
+                gas_price: value.max_fee_per_gas,
+                max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
+                max_fee_per_gas: Some(value.max_fee_per_gas),
+                max_fee_per_blob_gas: if value.blob_versioned_hashes.is_empty() {
+                    None
+                } else {
+                    Some(value.max_fee_per_blob_gas)
+                },
+                access_list: vec![],
+                fee_token: None,
+                authorization_list: None,
+                blob_versioned_hashes: value.blob_versioned_hashes,
+                blobs: vec![],
+                wrapper_version: None,
+                chain_id: Some(value.chain_id),
+                input: Bytes::new(),
             }
         }
     }
@@ -3722,5 +4036,140 @@ mod tests {
     fn test_eip1559_simple_transfer_size() {
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
         assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
+    }
+
+    // ── Frame Transaction (EIP-8141) tests ──
+
+    fn make_test_frame_tx() -> FrameTransaction {
+        FrameTransaction {
+            chain_id: 1,
+            nonce: 42,
+            sender: Address::from_low_u64_be(0xABCD),
+            frames: vec![
+                Frame {
+                    mode: FrameMode::Verify,
+                    target: Some(Address::from_low_u64_be(0xABCD)),
+                    gas_limit: 100_000,
+                    data: Bytes::from_static(b"verify_data"),
+                },
+                Frame {
+                    mode: FrameMode::Sender,
+                    target: Some(Address::from_low_u64_be(0x1234)),
+                    gas_limit: 200_000,
+                    data: Bytes::from_static(b"call_data"),
+                },
+            ],
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 30_000_000_000,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        }
+    }
+
+    #[test]
+    fn test_frame_rlp_roundtrip() {
+        let frame = Frame {
+            mode: FrameMode::Verify,
+            target: Some(Address::from_low_u64_be(0x1234)),
+            gas_limit: 50_000,
+            data: Bytes::from_static(b"hello"),
+        };
+        let encoded = frame.encode_to_vec();
+        let decoded = Frame::decode(&encoded).unwrap();
+        assert_eq!(frame, decoded);
+    }
+
+    #[test]
+    fn test_frame_null_target_rlp_roundtrip() {
+        let frame = Frame {
+            mode: FrameMode::Default,
+            target: None,
+            gas_limit: 10_000,
+            data: Bytes::from_static(b"deploy"),
+        };
+        let encoded = frame.encode_to_vec();
+        let decoded = Frame::decode(&encoded).unwrap();
+        assert_eq!(frame, decoded);
+    }
+
+    #[test]
+    fn test_frame_mode_rlp_roundtrip() {
+        for mode in [FrameMode::Default, FrameMode::Verify, FrameMode::Sender] {
+            let encoded = mode.encode_to_vec();
+            let decoded = FrameMode::decode(&encoded).unwrap();
+            assert_eq!(mode, decoded);
+        }
+    }
+
+    #[test]
+    fn test_frame_transaction_rlp_roundtrip() {
+        let tx = make_test_frame_tx();
+        let encoded = tx.encode_to_vec();
+        let decoded = FrameTransaction::decode(&encoded).unwrap();
+        assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn test_frame_transaction_canonical_roundtrip() {
+        let tx = Transaction::FrameTransaction(make_test_frame_tx());
+        let encoded = tx.encode_canonical_to_vec();
+        let decoded = Transaction::decode_canonical(&encoded).unwrap();
+        // Compare hashes since OnceCell cached state differs after encode
+        assert_eq!(tx.hash(), decoded.hash());
+        // Also verify core fields match
+        assert_eq!(tx.tx_type(), decoded.tx_type());
+        assert_eq!(tx.nonce(), decoded.nonce());
+        assert_eq!(tx.chain_id(), decoded.chain_id());
+    }
+
+    #[test]
+    fn test_frame_transaction_sig_hash_elides_verify_data() {
+        let tx = make_test_frame_tx();
+        let hash1 = tx.compute_sig_hash();
+
+        // Same tx but with different VERIFY frame data should produce the same sig_hash
+        let mut tx2 = tx.clone();
+        tx2.frames[0].data = Bytes::from_static(b"completely_different_verify_data");
+        let hash2 = tx2.compute_sig_hash();
+        assert_eq!(hash1, hash2);
+
+        // But changing SENDER frame data should produce a different hash
+        let mut tx3 = tx.clone();
+        tx3.frames[1].data = Bytes::from_static(b"different_call_data");
+        let hash3 = tx3.compute_sig_hash();
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_frame_transaction_accessor_methods() {
+        let frame_tx = make_test_frame_tx();
+        let tx = Transaction::FrameTransaction(frame_tx.clone());
+
+        assert_eq!(tx.tx_type(), TxType::Frame);
+        assert_eq!(tx.nonce(), 42);
+        assert_eq!(tx.chain_id(), Some(1));
+        assert_eq!(tx.to(), TxKind::Call(Address::from_low_u64_be(0xABCD)));
+        assert_eq!(tx.value(), U256::zero());
+        assert_eq!(tx.data(), &Bytes::new());
+        assert!(tx.access_list().is_empty());
+        assert!(tx.authorization_list().is_none());
+        assert_eq!(tx.max_priority_fee(), Some(1_000_000_000));
+        assert_eq!(tx.max_fee_per_gas(), Some(30_000_000_000));
+        assert_eq!(tx.max_fee_per_blob_gas(), None); // no blobs
+        assert!(!tx.is_contract_creation());
+        // sender returns explicit sender, no ECDSA
+        assert_eq!(tx.sender().unwrap(), Address::from_low_u64_be(0xABCD));
+        // gas_limit = intrinsic + calldata_cost + sum(frame.gas_limit)
+        assert!(tx.gas_limit() >= 300_000); // at least sum of frame gas limits
+    }
+
+    #[test]
+    fn test_frame_transaction_hash_uses_oncecell() {
+        let tx = Transaction::FrameTransaction(make_test_frame_tx());
+        let h1 = tx.hash();
+        let h2 = tx.hash();
+        assert_eq!(h1, h2);
     }
 }

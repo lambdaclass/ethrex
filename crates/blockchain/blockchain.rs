@@ -2531,6 +2531,9 @@ impl Blockchain {
             return Ok(None);
         }
 
+        // Frame transactions: skip balance/EOA checks (payer unknown until execution)
+        let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
+
         let header_no = self.storage.get_latest_block_number().await?;
         let header = self
             .storage
@@ -2591,14 +2594,17 @@ impl Blockchain {
                 return Err(MempoolError::NonceTooLow);
             }
 
-            let tx_cost = tx
-                .cost_without_base_fee()
-                .ok_or(MempoolError::InvalidTxGasvalues)?;
+            // Skip balance check for frame txs (payer unknown until execution)
+            if !is_frame_tx {
+                let tx_cost = tx
+                    .cost_without_base_fee()
+                    .ok_or(MempoolError::InvalidTxGasvalues)?;
 
-            if tx_cost > sender_acc_info.balance {
-                return Err(MempoolError::NotEnoughBalance);
+                if tx_cost > sender_acc_info.balance {
+                    return Err(MempoolError::NotEnoughBalance);
+                }
             }
-        } else {
+        } else if !is_frame_tx {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
         }
@@ -2669,6 +2675,11 @@ impl Blockchain {
                 ));
             }
             Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
+            Transaction::FrameTransaction(_) => {
+                return Err(StoreError::Custom(
+                    "Frame Transactions are not supported in P2P".to_string(),
+                ));
+            }
         };
 
         Ok(result)

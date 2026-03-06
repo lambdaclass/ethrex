@@ -19,9 +19,9 @@ use ethrex_common::types::{AuthorizationTuple, Code, EIP7702Transaction};
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
     types::{
-        AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
-        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, TxType, Withdrawal,
-        requests::Requests,
+        AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
+        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, TxType,
+        Withdrawal, requests::Requests,
     },
 };
 use ethrex_levm::EVMConfig;
@@ -133,12 +133,25 @@ impl LEVM {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
-            let receipt = Receipt::new(
+            let mut receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
                 report.logs,
             );
+            if matches!(tx, Transaction::FrameTransaction(_)) {
+                receipt.payer = report.payer_address;
+                receipt.frame_receipts = report.frame_results.map(|results| {
+                    results
+                        .into_iter()
+                        .map(|(status, gas_used, logs)| FrameReceipt {
+                            status,
+                            gas_used,
+                            logs,
+                        })
+                        .collect()
+                });
+            }
 
             receipts.push(receipt);
         }
@@ -306,12 +319,27 @@ impl LEVM {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
-            let receipt = Receipt::new(
+            let mut receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
                 report.logs,
             );
+
+            // For frame transactions, propagate payer and per-frame receipts
+            if matches!(tx, Transaction::FrameTransaction(_)) {
+                receipt.payer = report.payer_address;
+                receipt.frame_receipts = report.frame_results.map(|results| {
+                    results
+                        .into_iter()
+                        .map(|(status, gas_used, logs)| FrameReceipt {
+                            status,
+                            gas_used,
+                            logs,
+                        })
+                        .collect()
+                });
+            }
 
             receipts.push(receipt);
         }
@@ -739,12 +767,25 @@ impl LEVM {
         for (_, tx_type, report) in results {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
-            let receipt = Receipt::new(
+            let mut receipt = Receipt::new(
                 tx_type,
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
                 report.logs,
             );
+            if tx_type == TxType::Frame {
+                receipt.payer = report.payer_address;
+                receipt.frame_receipts = report.frame_results.map(|results| {
+                    results
+                        .into_iter()
+                        .map(|(status, gas_used, logs)| FrameReceipt {
+                            status,
+                            gas_used,
+                            logs,
+                        })
+                        .collect()
+                });
+            }
             receipts.push(receipt);
         }
 

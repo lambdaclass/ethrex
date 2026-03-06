@@ -1252,6 +1252,9 @@
       "storage": {},
       "balance": "0x33b2e3c9fd0803ce8000000",
       "nonce": "0x0"
+    },
+    "3f1eae7d46d88f08fc2f8ed27fcb2ab183eb2d0e": {
+      "balance": "0x33b2e3c9fd0803ce8000000"
     }
   }
 }
