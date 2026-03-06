@@ -241,3 +241,23 @@ WebView2 Runtime이 설치되어 있는지 확인하고, 없으면 수동으로 
 xcode-select --install
 sudo xcode-select --reset
 ```
+
+---
+
+## AI 기능 로드맵
+
+현재 AI 채팅 (Appchain Pilot)은 고정된 시스템 프롬프트로 동작합니다. 아래는 향후 개선 과제입니다.
+
+### Phase 1: 실시간 컨텍스트 주입
+- 채팅 시 사용자의 앱체인 목록/상태를 시스템 프롬프트에 자동 포함
+- AI가 "현재 실행 중인 앱체인이 2개 있습니다" 등 실시간 상태 기반 답변 가능
+
+### Phase 2: AI Function Calling
+- AI가 앱 기능을 직접 실행 (앱체인 생성, 시작/중지, 상태 조회 등)
+- 사용자가 "앱체인 하나 만들어줘"라고 하면 AI가 실제로 생성 플로우 실행
+- OpenAI/Claude Function Calling API 활용
+
+### Phase 3: ethrex 문서 RAG
+- ethrex 공식 문서를 벡터 DB에 인덱싱
+- 사용자 질문에 대해 관련 문서를 검색하여 AI에 제공
+- 더 정확한 기술 답변 가능

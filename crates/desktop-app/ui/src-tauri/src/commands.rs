@@ -1,3 +1,4 @@
+use crate::ai_provider::{AiConfig, AiProvider, ChatMessage};
 use crate::appchain_manager::{
     AppchainConfig, AppchainManager, AppchainStatus, NetworkMode, SetupProgress, StepStatus,
 };
@@ -8,26 +9,73 @@ use std::sync::Arc;
 use tauri::State;
 
 // ============================================================================
-// Chat
+// AI Config
 // ============================================================================
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: String,
-    pub content: String,
+#[tauri::command]
+pub fn get_ai_config(ai: State<Arc<AiProvider>>) -> AiConfig {
+    ai.get_config_masked()
 }
 
 #[tauri::command]
-pub async fn send_chat_message(message: String) -> Result<ChatMessage, String> {
+pub fn has_ai_key(ai: State<Arc<AiProvider>>) -> bool {
+    ai.has_api_key()
+}
+
+#[tauri::command]
+pub fn save_ai_config(
+    provider: String,
+    api_key: String,
+    model: String,
+    ai: State<Arc<AiProvider>>,
+) -> Result<(), String> {
+    ai.save_config(AiConfig {
+        provider,
+        api_key,
+        model,
+    })
+}
+
+#[tauri::command]
+pub async fn fetch_ai_models(
+    provider: String,
+    api_key: String,
+    ai: State<'_, Arc<AiProvider>>,
+) -> Result<Vec<String>, String> {
+    let ai = ai.inner().clone();
+    ai.fetch_models(&provider, &api_key).await
+}
+
+#[tauri::command]
+pub fn disconnect_ai(ai: State<Arc<AiProvider>>) -> Result<(), String> {
+    ai.clear_config()
+}
+
+#[tauri::command]
+pub async fn test_ai_connection(ai: State<'_, Arc<AiProvider>>) -> Result<String, String> {
+    let messages = vec![ChatMessage {
+        role: "user".to_string(),
+        content: "Hi! Please respond with just 'Connected!' to confirm the connection works."
+            .to_string(),
+    }];
+    let ai = ai.inner().clone();
+    ai.chat(messages).await
+}
+
+// ============================================================================
+// Chat
+// ============================================================================
+
+#[tauri::command]
+pub async fn send_chat_message(
+    messages: Vec<ChatMessage>,
+    ai: State<'_, Arc<AiProvider>>,
+) -> Result<ChatMessage, String> {
+    let ai = ai.inner().clone();
+    let content = ai.chat(messages).await?;
     Ok(ChatMessage {
         role: "assistant".to_string(),
-        content: format!(
-            "AI 연결이 아직 구현되지 않았습니다. (Phase 3에서 구현 예정)\n\n\
-             받은 메시지: \"{message}\"\n\n\
-             현재 사용 가능한 기능:\n\
-             - 노드 제어 패널에서 L1/L2 노드를 시작/중지할 수 있습니다.\n\
-             - 대시보드 탭에서 각 레이어의 상태를 확인할 수 있습니다."
-        ),
+        content,
     })
 }
 

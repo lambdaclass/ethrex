@@ -1,3 +1,4 @@
+mod ai_provider;
 mod appchain_manager;
 mod commands;
 mod process_manager;
@@ -63,7 +64,14 @@ pub fn run() {
         .manage(process_manager::ProcessManager::new())
         .manage(Arc::new(appchain_manager::AppchainManager::new()))
         .manage(Arc::new(runner::ProcessRunner::new()))
+        .manage(Arc::new(ai_provider::AiProvider::new()))
         .invoke_handler(tauri::generate_handler![
+            get_ai_config,
+            save_ai_config,
+            has_ai_key,
+            fetch_ai_models,
+            test_ai_connection,
+            disconnect_ai,
             get_all_status,
             start_node,
             stop_node,
