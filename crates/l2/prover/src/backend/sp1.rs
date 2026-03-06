@@ -214,8 +214,8 @@ impl ProverBackend for Sp1Backend {
         let batch_proof = match format {
             ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
                 prover_type: ProverType::SP1,
+                public_values: proof.proof.public_values.to_vec(),
                 proof: bincode::serialize(&proof.proof).map_err(BackendError::batch_proof)?,
-                public_values: pv_bytes,
             }),
             ProofFormat::Groth16 => BatchProof::ProofCalldata(Self::to_calldata(&proof)),
         };
