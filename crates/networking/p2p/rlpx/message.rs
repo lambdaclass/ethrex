@@ -195,7 +195,9 @@ impl Message {
                 StatusMessage68::CODE if matches!(eth_version, EthCapVersion::V68) => {
                     Ok(Message::Status68(StatusMessage68::decode(data)?))
                 }
-                StatusMessage69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                StatusMessage69::CODE
+                    if matches!(eth_version, EthCapVersion::V69 | EthCapVersion::V71) =>
+                {
                     Ok(Message::Status69(StatusMessage69::decode(data)?))
                 }
                 Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
@@ -218,7 +220,9 @@ impl Message {
                 Receipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
                     Ok(Message::Receipts68(Receipts68::decode(data)?))
                 }
-                Receipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                Receipts69::CODE
+                    if matches!(eth_version, EthCapVersion::V69 | EthCapVersion::V71) =>
+                {
                     Ok(Message::Receipts69(Receipts69::decode(data)?))
                 }
                 BlockRangeUpdate::CODE => {

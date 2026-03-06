@@ -677,7 +677,8 @@ where
     if let Some(eth) = state.negotiated_eth_capability.clone() {
         let status = match eth.version {
             68 => Message::Status68(StatusMessage68::new(&state.storage).await?),
-            69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            // eth/71 uses the same status message format as eth/69
+            69 | 71 => Message::Status69(StatusMessage69::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
@@ -1028,7 +1029,8 @@ async fn handle_incoming_message(
                 }
                 let response = match eth.version {
                     68 => Message::Receipts68(Receipts68::new(id, receipts)),
-                    69 => Message::Receipts69(Receipts69::new(id, receipts)),
+                    // eth/71 uses the same receipts format as eth/69
+                    69 | 71 => Message::Receipts69(Receipts69::new(id, receipts)),
                     ver => {
                         return Err(PeerConnectionError::InternalError(format!(
                             "Invalid eth version {ver}"

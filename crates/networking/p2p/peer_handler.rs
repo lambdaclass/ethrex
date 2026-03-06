@@ -586,9 +586,9 @@ impl PeerHandler {
         .await
         {
             Ok(RLPxMessage::BlockAccessLists(BlockAccessLists {
-                id: _,
+                id,
                 block_access_lists,
-            })) => {
+            })) if id == request_id => {
                 self.peer_table.record_success(&peer_id).await?;
                 Ok(Some(block_access_lists))
             }

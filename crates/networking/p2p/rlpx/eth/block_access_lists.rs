@@ -80,7 +80,8 @@ impl RLPxMessage for GetBlockAccessLists {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (block_hashes, _): (Vec<BlockHash>, _) = decoder.decode_field("blockHashes")?;
+        let (block_hashes, decoder): (Vec<BlockHash>, _) = decoder.decode_field("blockHashes")?;
+        decoder.finish()?;
         Ok(Self::new(id, block_hashes))
     }
 }
@@ -211,5 +212,37 @@ mod tests {
         let decoded = BlockAccessLists::decode(&buf).unwrap();
         assert_eq!(decoded.id, 10);
         assert_eq!(decoded.block_access_lists, bals);
+    }
+
+    /// Simulates the server-side truncation logic: when a peer requests more
+    /// than BLOCK_ACCESS_LIST_LIMIT hashes, the response is capped.
+    #[test]
+    fn response_truncated_at_limit() {
+        let request_count = BLOCK_ACCESS_LIST_LIMIT + 100;
+        let hashes: Vec<BlockHash> = (0..request_count)
+            .map(|i| {
+                let mut h = [0u8; 32];
+                h[..8].copy_from_slice(&(i as u64).to_be_bytes());
+                BlockHash::from(h)
+            })
+            .collect();
+
+        // Reproduce the server-side loop (storage always returns None here)
+        let mut block_access_lists: Vec<Option<BlockAccessList>> = Vec::new();
+        for _hash in &hashes {
+            block_access_lists.push(None);
+            if block_access_lists.len() >= BLOCK_ACCESS_LIST_LIMIT {
+                break;
+            }
+        }
+
+        assert_eq!(block_access_lists.len(), BLOCK_ACCESS_LIST_LIMIT);
+
+        // Verify the truncated response roundtrips correctly
+        let msg = BlockAccessLists::new(1, block_access_lists);
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decoded = BlockAccessLists::decode(&buf).unwrap();
+        assert_eq!(decoded.block_access_lists.len(), BLOCK_ACCESS_LIST_LIMIT);
     }
 }
