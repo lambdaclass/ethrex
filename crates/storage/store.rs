@@ -6,9 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CANONICAL_TX_INDEX, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -41,6 +42,7 @@ use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
+use arc_swap::ArcSwap;
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
@@ -157,7 +159,8 @@ pub struct Store {
     /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
     /// Cache for trie nodes from recent blocks.
-    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
+    /// Uses `ArcSwap` for lock-free reads (RCU pattern).
+    trie_cache: Arc<ArcSwap<TrieLayerCache>>,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     /// Channel for sending trie updates to the background worker.
@@ -573,7 +576,12 @@ impl Store {
             let tx_hash_bytes = transaction_hash.as_bytes();
             let tx = db.begin_read()?;
 
-            // Use prefix iterator to find all entries with this transaction hash
+            // Fast path: check canonical index first (O(1) lookup)
+            if let Some(value) = tx.get(CANONICAL_TX_INDEX, tx_hash_bytes)? {
+                return Ok(Some(<(BlockNumber, BlockHash, Index)>::decode(&value)?));
+            }
+
+            // Fallback: Use prefix iterator to find all entries with this transaction hash
             let mut iter = tx.prefix_iterator(TRANSACTION_LOCATIONS, tx_hash_bytes)?;
             let mut transaction_locations = Vec::new();
 
@@ -1014,6 +1022,24 @@ impl Store {
                 let head_key = block_number.to_le_bytes();
                 let head_value = block_hash.encode_to_vec();
                 txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
+
+                // Populate canonical transaction index for O(1) lookups.
+                // Read the block body to get transaction hashes.
+                let hash_key = block_hash.encode_to_vec();
+                if let Some(body_bytes) = {
+                    let read_txn = db.begin_read()?;
+                    read_txn.get(BODIES, &hash_key)?
+                } {
+                    let body: BlockBody = BlockBodyRLP::from_bytes(body_bytes)
+                        .to()
+                        .map_err(StoreError::from)?;
+                    for (index, transaction) in body.transactions.iter().enumerate() {
+                        let tx_hash = transaction.hash();
+                        let location_value =
+                            (block_number, block_hash, index as u64).encode_to_vec();
+                        txn.put(CANONICAL_TX_INDEX, tx_hash.as_bytes(), &location_value)?;
+                    }
+                }
             }
 
             for number in (head_number + 1)..=(latest) {
@@ -1477,7 +1503,7 @@ impl Store {
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_cache: Arc::new(ArcSwap::from_pointee(TrieLayerCache::new(commit_threshold))),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
@@ -2470,10 +2496,7 @@ impl Store {
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache.load_full(),
             Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
@@ -2502,10 +2525,7 @@ impl Store {
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache.load_full(),
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
@@ -2525,10 +2545,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache.load_full(),
             Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
@@ -2759,7 +2776,7 @@ struct TrieUpdate {
 fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
-    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    trie_cache: &Arc<ArcSwap<TrieLayerCache>>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2780,15 +2797,12 @@ fn apply_trie_updates(
         })
         .chain(account_updates)
         .collect();
-    // Read-Copy-Update the trie cache with a new layer.
-    let trie = trie_cache
-        .read()
-        .map_err(|_| StoreError::LockError)?
-        .clone();
+    // Read-Copy-Update the trie cache with a new layer (lock-free via ArcSwap).
+    let trie = trie_cache.load_full();
     let mut trie_mut = (*trie).clone();
     trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
     let trie = Arc::new(trie_mut);
-    *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
+    trie_cache.store(trie.clone());
     // Update finished, signal block processing.
     result_sender
         .send(Ok(()))
@@ -2853,7 +2867,7 @@ fn apply_trie_updates(
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
     // Phase 3: update diff layers with the removal of bottom layer.
-    *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+    trie_cache.store(Arc::new(trie_mut));
     Ok(())
 }
 
@@ -3092,19 +3106,26 @@ fn encode_code(code: &Code) -> Vec<u8> {
     buf
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 struct LatestBlockHeaderCache {
-    current: Arc<Mutex<Arc<BlockHeader>>>,
+    current: Arc<ArcSwap<BlockHeader>>,
+}
+
+impl Default for LatestBlockHeaderCache {
+    fn default() -> Self {
+        Self {
+            current: Arc::new(ArcSwap::from_pointee(BlockHeader::default())),
+        }
+    }
 }
 
 impl LatestBlockHeaderCache {
     pub fn get(&self) -> Arc<BlockHeader> {
-        self.current.lock().expect("poisoned mutex").clone()
+        self.current.load_full()
     }
 
     pub fn update(&self, header: BlockHeader) {
-        let new = Arc::new(header);
-        *self.current.lock().expect("poisoned mutex") = new;
+        self.current.store(Arc::new(header));
     }
 }
 
