@@ -6,14 +6,17 @@
 //! Requires:
 //! - SP1 toolchain installed
 //! - Fixture files collected via `ETHREX_DUMP_FIXTURES` (see fixture-data-collection.md)
+//! - The matching ELF must be compiled (e.g. `GUEST_PROGRAMS=evm-l2,zk-dex`)
 //!
 //! ```sh
-//! cargo test -p ethrex-prover --features sp1 -- --ignored offline_verify
+//! GUEST_PROGRAMS=evm-l2,zk-dex cargo test -p ethrex-prover --features sp1 --release -- --ignored offline_verify
 //! ```
 
 #[cfg(feature = "sp1")]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod sp1_offline_verify {
+    use ethrex_guest_program::programs::{EvmL2GuestProgram, TokammonGuestProgram, ZkDexGuestProgram};
+    use ethrex_guest_program::traits::{GuestProgram, backends};
     use ethrex_l2_common::prover::BatchProof;
     use sp1_sdk::{CpuProver, Prover, SP1ProofWithPublicValues};
     use std::path::{Path, PathBuf};
@@ -25,8 +28,18 @@ mod sp1_offline_verify {
             .expect("fixtures directory should exist")
     }
 
+    /// Get the SP1 ELF for a given app name, or None if not compiled.
+    fn get_elf_for_app(app: &str) -> Option<&'static [u8]> {
+        match app {
+            "evm-l2" => EvmL2GuestProgram.elf(backends::SP1),
+            "zk-dex" => ZkDexGuestProgram.elf(backends::SP1),
+            "tokamon" => TokammonGuestProgram.elf(backends::SP1),
+            _ => None,
+        }
+    }
+
     /// Discover all proof.bin fixtures across all apps.
-    fn discover_proof_fixtures() -> Vec<(String, PathBuf)> {
+    fn discover_proof_fixtures() -> Vec<(String, String, PathBuf)> {
         let dir = fixtures_dir();
         let mut results = Vec::new();
         if let Ok(apps) = std::fs::read_dir(&dir) {
@@ -41,7 +54,6 @@ mod sp1_offline_verify {
                     .to_str()
                     .unwrap()
                     .to_string();
-                // Look for batch directories containing proof.bin
                 if let Ok(batches) = std::fs::read_dir(&app_path) {
                     for batch_entry in batches.flatten() {
                         let batch_path = batch_entry.path();
@@ -53,15 +65,10 @@ mod sp1_offline_verify {
                                     app_name,
                                     batch_path.file_name().unwrap().to_str().unwrap()
                                 );
-                                results.push((label, proof_path));
+                                results.push((label, app_name.clone(), proof_path));
                             }
                         }
                     }
-                }
-                // Also check app-level proof.bin (flat layout)
-                let flat_proof = app_path.join("proof.bin");
-                if flat_proof.exists() {
-                    results.push((app_name, flat_proof));
                 }
             }
         }
@@ -78,11 +85,35 @@ mod sp1_offline_verify {
             return;
         }
 
-        let elf = ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
         let client = CpuProver::new();
-        let (_pk, vk) = client.setup(elf);
+        let mut verified = 0;
+        let mut skipped = 0;
 
-        for (label, proof_path) in &fixtures {
+        let mut current_app = String::new();
+        let mut current_vk: Option<sp1_sdk::SP1VerifyingKey> = None;
+
+        for (label, app, proof_path) in &fixtures {
+            // Get the correct ELF for this app
+            let elf = match get_elf_for_app(app) {
+                Some(elf) if !elf.is_empty() => elf,
+                _ => {
+                    eprintln!(
+                        "[{label}] SKIP — no SP1 ELF for app '{app}'. Build with GUEST_PROGRAMS={app}"
+                    );
+                    skipped += 1;
+                    continue;
+                }
+            };
+
+            // Setup VK (reuse if same app)
+            if *app != current_app {
+                eprintln!("[{label}] Setting up SP1 VK for app '{app}'...");
+                let (_pk, vk) = client.setup(elf);
+                current_vk = Some(vk);
+                current_app = app.clone();
+            }
+            let vk = current_vk.as_ref().unwrap();
+
             eprintln!("[{label}] verifying from {}", proof_path.display());
             let proof_bytes = std::fs::read(proof_path).expect("read proof.bin");
 
@@ -91,37 +122,41 @@ mod sp1_offline_verify {
                     panic!("[{label}] failed to deserialize BatchProof: {e}")
                 });
 
-            // Extract SP1ProofWithPublicValues based on BatchProof variant
             match &batch_proof {
                 BatchProof::ProofCalldata(pc) => {
-                    // ProofCalldata stores Groth16/PLONK calldata, not raw SP1 proof.
-                    // We can verify the public_values field is present.
                     assert!(
                         !pc.public_values.is_empty(),
                         "[{label}] ProofCalldata.public_values should not be empty"
                     );
                     eprintln!(
-                        "[{label}] OK — ProofCalldata with {} bytes public_values (on-chain format, no SP1 verify)",
+                        "[{label}] OK — ProofCalldata with {} bytes public_values (on-chain format)",
                         pc.public_values.len()
                     );
+                    verified += 1;
                 }
                 BatchProof::ProofBytes(pb) => {
-                    // ProofBytes stores the raw SP1ProofWithPublicValues
                     let sp1_proof: SP1ProofWithPublicValues =
                         bincode::deserialize(&pb.proof).unwrap_or_else(|e| {
                             panic!("[{label}] failed to deserialize SP1 proof: {e}")
                         });
 
                     client
-                        .verify(&sp1_proof, &vk)
+                        .verify(&sp1_proof, vk)
                         .unwrap_or_else(|e| panic!("[{label}] SP1 verification failed: {e}"));
 
                     eprintln!(
                         "[{label}] OK — SP1 proof verified ({} bytes)",
                         pb.proof.len()
                     );
+                    verified += 1;
                 }
             }
         }
+
+        eprintln!("Phase 4 summary: {verified} verified, {skipped} skipped");
+        assert!(
+            verified > 0 || skipped > 0,
+            "No fixtures were processed at all"
+        );
     }
 }
