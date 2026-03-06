@@ -338,3 +338,41 @@ pub async fn open_deployment_ui(
     let url = format!("http://127.0.0.1:{}", server.port());
     open::that(&url).map_err(|e| format!("Failed to open browser: {e}"))
 }
+
+// ============================================================================
+// Platform Auth (token stored in OS Keychain)
+// ============================================================================
+
+const KEYRING_SERVICE_PLATFORM: &str = "tokamak-appchain";
+const KEYRING_PLATFORM_TOKEN: &str = "platform-token";
+
+#[tauri::command]
+pub fn save_platform_token(token: String) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE_PLATFORM, KEYRING_PLATFORM_TOKEN)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    entry
+        .set_password(&token)
+        .map_err(|e| format!("Failed to save token: {e}"))
+}
+
+#[tauri::command]
+pub fn get_platform_token() -> Result<Option<String>, String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE_PLATFORM, KEYRING_PLATFORM_TOKEN)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    match entry.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Failed to get token: {e}")),
+    }
+}
+
+#[tauri::command]
+pub fn delete_platform_token() -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE_PLATFORM, KEYRING_PLATFORM_TOKEN)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("Failed to delete token: {e}")),
+    }
+}

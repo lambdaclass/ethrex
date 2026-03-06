@@ -99,6 +99,9 @@ pub fn run() {
             stop_local_server,
             get_local_server_status,
             open_deployment_ui,
+            save_platform_token,
+            get_platform_token,
+            delete_platform_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
