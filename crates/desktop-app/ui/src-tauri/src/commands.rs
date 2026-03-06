@@ -60,7 +60,7 @@ pub async fn test_ai_connection(ai: State<'_, Arc<AiProvider>>) -> Result<String
             .to_string(),
     }];
     let ai = ai.inner().clone();
-    ai.chat(messages).await
+    ai.chat(messages, None).await
 }
 
 // ============================================================================
@@ -70,10 +70,11 @@ pub async fn test_ai_connection(ai: State<'_, Arc<AiProvider>>) -> Result<String
 #[tauri::command]
 pub async fn send_chat_message(
     messages: Vec<ChatMessage>,
+    context: Option<String>,
     ai: State<'_, Arc<AiProvider>>,
 ) -> Result<ChatMessage, String> {
     let ai = ai.inner().clone();
-    let content = ai.chat(messages).await?;
+    let content = ai.chat(messages, context).await?;
     Ok(ChatMessage {
         role: "assistant".to_string(),
         content,
@@ -289,6 +290,32 @@ pub fn update_appchain_public(
         .ok_or(format!("Appchain not found: {id}"))?;
     am.update_public(&id, is_public);
     Ok(())
+}
+
+/// Returns current app state as context for AI chat
+#[tauri::command]
+pub fn get_chat_context(am: State<Arc<AppchainManager>>) -> serde_json::Value {
+    let chains = am.list_appchains();
+    let chain_summaries: Vec<serde_json::Value> = chains
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "id": c.id,
+                "name": c.name,
+                "chain_id": c.chain_id,
+                "status": format!("{:?}", c.status),
+                "network_mode": format!("{:?}", c.network_mode),
+                "rpc_port": c.l2_rpc_port,
+                "is_public": c.is_public,
+                "native_token": c.native_token,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "appchains": chain_summaries,
+        "total_count": chains.len(),
+    })
 }
 
 // ============================================================================

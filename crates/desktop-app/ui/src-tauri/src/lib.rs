@@ -96,6 +96,7 @@ pub fn run() {
             get_setup_progress,
             stop_appchain,
             update_appchain_public,
+            get_chat_context,
             start_local_server,
             stop_local_server,
             get_local_server_status,

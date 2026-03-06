@@ -64,7 +64,7 @@ function App() {
     switch (activeView) {
       case 'home': return <HomeView onNavigate={navigateTo} onCreateWithNetwork={navigateToCreate} />
       case 'myl2': return <MyL2View initialNetwork={createNetwork} onNetworkConsumed={() => setCreateNetwork(undefined)} />
-      case 'chat': return <ChatView />
+      case 'chat': return <ChatView onNavigate={navigateTo} onCreateWithNetwork={navigateToCreate} />
       case 'nodes': return <NodeControlView />
       case 'dashboard': return <DashboardView />
       case 'openl2': return <OpenL2View />

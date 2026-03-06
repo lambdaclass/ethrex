@@ -145,7 +145,11 @@ impl AiProvider {
         Ok(models)
     }
 
-    pub async fn chat(&self, messages: Vec<ChatMessage>) -> Result<String, String> {
+    pub async fn chat(
+        &self,
+        messages: Vec<ChatMessage>,
+        context_json: Option<String>,
+    ) -> Result<String, String> {
         let config = self.get_config();
         if config.api_key.is_empty() {
             return Err(
@@ -153,11 +157,11 @@ impl AiProvider {
             );
         }
 
+        let ctx_ref = context_json.as_deref();
         match config.provider.as_str() {
-            "claude" => self.chat_claude(&config, messages).await,
-            // Tokamak AI, GPT, Gemini all use OpenAI-compatible format
+            "claude" => self.chat_claude(&config, messages, ctx_ref).await,
             "tokamak" | "gpt" | "gemini" => {
-                self.chat_openai_compat(&config, messages).await
+                self.chat_openai_compat(&config, messages, ctx_ref).await
             }
             _ => Err(format!("지원하지 않는 프로바이더: {}", config.provider)),
         }
@@ -190,8 +194,9 @@ impl AiProvider {
         &self,
         config: &AiConfig,
         messages: Vec<ChatMessage>,
+        context_json: Option<&str>,
     ) -> Result<String, String> {
-        let system_prompt = Self::build_system_prompt();
+        let system_prompt = Self::build_system_prompt(context_json);
 
         let mut api_messages = vec![serde_json::json!({
             "role": "system",
@@ -250,8 +255,9 @@ impl AiProvider {
         &self,
         config: &AiConfig,
         messages: Vec<ChatMessage>,
+        context_json: Option<&str>,
     ) -> Result<String, String> {
-        let system_prompt = Self::build_system_prompt();
+        let system_prompt = Self::build_system_prompt(context_json);
 
         let api_messages: Vec<serde_json::Value> = messages
             .iter()
@@ -298,8 +304,8 @@ impl AiProvider {
             .ok_or_else(|| "응답에서 텍스트를 찾을 수 없습니다".to_string())
     }
 
-    fn build_system_prompt() -> String {
-        r#"You are "Appchain Pilot", an AI assistant built into the Tokamak Appchain Desktop App.
+    pub fn build_system_prompt(context_json: Option<&str>) -> String {
+        let mut prompt = r#"You are "Appchain Pilot", an AI assistant built into the Tokamak Appchain Desktop App.
 
 ## Your Role
 - Guide users through the Tokamak Appchain desktop application
@@ -313,7 +319,8 @@ impl AiProvider {
 4. **Open Appchain** - Browse and connect to public appchains
 5. **Dashboard** - Monitor L1/L2 node status
 6. **Tokamak Wallet** - Manage TON tokens, bridge L1↔L2
-7. **Settings** - AI provider, node config, theme, language
+7. **Program Store** - Browse available programs
+8. **Settings** - AI provider, Platform account, node config
 
 ## Appchain Creation Flow
 - **Local mode**: One-click setup, runs `ethrex l2 --dev` locally
@@ -327,12 +334,33 @@ impl AiProvider {
 - Tauri 2.x desktop app (Rust backend + React frontend)
 - Supports L1 node, L2 sequencer, prover management
 
+## Actions
+When it is appropriate to suggest an action the user can take in the app, include an action block in your response using this exact format:
+
+[ACTION:action_name:param1=value1,param2=value2]
+
+Available actions:
+- `[ACTION:navigate:view=home]` - Navigate to a view (home, myl2, chat, nodes, dashboard, openl2, wallet, store, settings)
+- `[ACTION:create_appchain:network=local]` - Start creating a new appchain (network: local, testnet, mainnet)
+- `[ACTION:stop_appchain:id=CHAIN_ID]` - Stop a running appchain
+- `[ACTION:open_appchain:id=CHAIN_ID]` - View appchain details
+
+Only include actions when they directly help the user accomplish their request. Multiple actions can be included.
+
 ## Guidelines
 - Respond in the same language the user uses (Korean or English)
 - Be concise and practical
-- If the user asks to perform an action (create appchain, start node, etc.), guide them step by step
+- If the user asks to perform an action, include the relevant ACTION block so they can execute it with one click
 - If something isn't implemented yet, honestly say so and suggest alternatives"#
-            .to_string()
+            .to_string();
+
+        if let Some(ctx) = context_json {
+            prompt.push_str("\n\n## Current App State\n```json\n");
+            prompt.push_str(ctx);
+            prompt.push_str("\n```");
+        }
+
+        prompt
     }
 }
 
