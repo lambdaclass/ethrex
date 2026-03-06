@@ -22,7 +22,7 @@
 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
 | Phase 3: 오프라인 프루빙 | ✅ | `test_offline_proving.rs` — zk-dex 재증명 통과 (439초) |
 | Phase 4: 오프라인 검증 | ✅ | `test_offline_verify.rs` — proof.bin 오프체인 검증 (2.4초) |
-| Phase 5: Foundry on-chain 검증 | ❌ | Solidity 테스트 미구현 |
+| Phase 5: Foundry on-chain 검증 | ⚠️ | 인코딩 일치 테스트 ✅, verifyProof는 Groth16 fixture 필요 |
 | Prover balance_diffs 디코딩 | ⚠️ | 인코딩 포맷 한계로 빈 배열, warn 처리 |
 
 ---
@@ -159,14 +159,30 @@ crates/guest-program/tests/
 
 ### Phase 5: Foundry on-chain 검증 테스트
 
-**목표**: Solidity 테스트로 L1 OnChainProposer.verifyBatch() 재현.
+**목표**: Solidity 테스트로 인코딩 일치 검증 + L1 verifyBatch() 재현.
 
-**필요한 코드 변경**:
+**Phase 5a: 인코딩 일치 테스트** — ✅ 완료
 
-1. Phase 4의 proof calldata 수집이 선행 조건
-2. Foundry 프로젝트에 테스트 추가: `crates/l2/contracts/test/VerifyBatchFixture.t.sol`
+Foundry 프로젝트: `crates/l2/contracts/foundry.toml`
+테스트: `crates/l2/contracts/test/PublicInputsEncoding.t.sol`
+
+```sh
+cd crates/l2/contracts && forge test -vv
+```
+
+5개 테스트:
+- `test_encoding_zk_dex_batch_2` — fixture의 `encoded_public_values`와 Solidity `abi.encodePacked` 비교
+- `test_sha256_public_values_zk_dex_batch_2` — SHA-256 해시 일치 (RISC0 검증 형식)
+- `test_encoding_with_balance_diffs` — balance_diffs 포함 시 인코딩 길이 검증
+- `test_encoding_with_l2_rolling_hashes` — L2 rolling hash 포함 시 인코딩 길이 검증
+- `test_encoding_length_fixed_only` — 8개 고정 필드 = 256 바이트
+
+**Phase 5b: verifyProof 테스트** — ❌ Groth16 fixture 필요
+
+현재 fixture는 Compressed 포맷. on-chain SP1 검증에는 Groth16 proof가 필요.
 
 ```solidity
+// TODO: Groth16 fixture 수집 후 구현
 function test_verifyBatch_zk_dex() public {
     bytes memory proof = vm.readFileBinary("fixtures/zk-dex/batch_2/proof_calldata.bin");
     bytes32 vk = ...; // verifying key hash
@@ -175,7 +191,7 @@ function test_verifyBatch_zk_dex() public {
 }
 ```
 
-**의존성**: Phase 4 완료, Foundry, SP1 Verifier 컨트랙트
+**의존성**: Groth16 모드 Docker 배포 (GPU 필요), SP1 Verifier 컨트랙트
 **우선순위**: 낮음 — L1 컨트랙트 변경 시 회귀 테스트로 가치 있음
 
 ---
@@ -216,7 +232,8 @@ function test_verifyBatch_zk_dex() public {
 | **7** | **다른 앱 fixture 수집** | **❌** | **evm-l2, tokamon 배포 필요** |
 | 8 | Phase 3: 오프라인 프루빙 | ✅ | zk-dex 2배치 재증명 통과 (439초) |
 | 9 | Phase 4: 오프라인 검증 | ✅ | zk-dex 2배치 오프체인 검증 통과 (2.4초) |
-| **10** | **Phase 5: Foundry 검증** | **❌** | **Phase 4 선행** |
+| 10 | Phase 5a: 인코딩 일치 | ✅ | Foundry 5개 테스트 통과 |
+| **10b** | **Phase 5b: verifyProof** | **❌** | **Groth16 fixture 필요 (GPU)** |
 | 11 | Tools 포트 동적화 | ✅ | `TOOLS_*_PORT` 환경변수 |
 | 12 | GPU 감지 compose | ✅ | `hasNvidiaGpu()` + NVIDIA device reservation |
 | 13 | Metrics 포트 | ✅ | DB 할당 + compose 연동 |
