@@ -122,26 +122,16 @@ crates/guest-program/tests/
 - `prove_batch()` legacy path: `serialize_raw(&input)` → `stdin.bin`
 - Fixture dump: `bincode::serialize(&batch_proof)` → `proof.bin`
 
+**테스트 코드**: ✅ 완료 — `crates/l2/prover/tests/test_offline_proving.rs`
+- `#[ignore]` 테스트, `--features sp1`로 실행
+- 자동 탐색: `tests/fixtures/*/batch_*/stdin.bin`
+- prover.json의 `encoded_public_values`와 재생성 값 비교
+
 **남은 작업**:
 1. Docker 이미지 재빌드 (stdin.bin/proof.bin dump 코드 포함)
 2. Fixture 재수집 (기존 prover.json + 새 stdin.bin/proof.bin)
-3. 테스트 작성 — SP1 SDK 의존성으로 `ethrex-prover` crate에 위치:
 
-```rust
-// crates/l2/prover/tests/test_offline_proving.rs
-#[test]
-#[ignore] // cargo test -p ethrex-prover --ignored (SP1 필요, ~10분)
-fn sp1_reprove_from_fixture() {
-    let stdin_bytes = std::fs::read("/path/to/fixtures/zk-dex/batch_2/stdin.bin").unwrap();
-    let elf = ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
-    let client = sp1_sdk::CpuProver::new();
-    let (pk, _vk) = client.setup(elf);
-    let mut stdin = sp1_sdk::SP1Stdin::new();
-    stdin.write_slice(&stdin_bytes);
-    let proof = client.prove(&pk, &stdin, sp1_sdk::SP1ProofMode::Compressed).unwrap();
-    // Compare public_values with prover.json's encoded_public_values
-}
-```
+**실행**: `cargo test -p ethrex-prover --features sp1 -- --ignored offline_prove`
 
 **의존성**: SP1 SDK (`sp1` feature), 느림 (~10분/batch)
 
@@ -153,21 +143,15 @@ fn sp1_reprove_from_fixture() {
 
 **Dump 코드**: ✅ 완료 (`proof.bin` = bincode-serialized `BatchProof`)
 
+**테스트 코드**: ✅ 완료 — `crates/l2/prover/tests/test_offline_verify.rs`
+- `#[ignore]` 테스트, `--features sp1`로 실행
+- 자동 탐색: `tests/fixtures/*/batch_*/proof.bin`
+- `BatchProof::ProofBytes` → SP1 verify, `BatchProof::ProofCalldata` → public_values 검증
+
 **남은 작업**:
 1. Fixture 재수집 (Phase 3과 동시)
-2. 테스트 작성:
 
-```rust
-// crates/l2/prover/tests/test_offline_verify.rs
-#[test]
-#[ignore] // cargo test -p ethrex-prover --ignored
-fn sp1_verify_from_fixture() {
-    let proof_bytes = std::fs::read("/path/to/fixtures/zk-dex/batch_2/proof.bin").unwrap();
-    let batch_proof: BatchProof = bincode::deserialize(&proof_bytes).unwrap();
-    // Extract SP1ProofWithPublicValues from BatchProof::ProofBytes
-    // Setup SP1 client from ELF → verify
-}
-```
+**실행**: `cargo test -p ethrex-prover --features sp1 -- --ignored offline_verify`
 
 **의존성**: Phase 3 fixture 수집, SP1 SDK
 
@@ -230,8 +214,8 @@ function test_verifyBatch_zk_dex() public {
 | 5 | CI workflow | ✅ | `pr_fixture_tests.yml` |
 | 6 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
 | **7** | **다른 앱 fixture 수집** | **❌** | **evm-l2, tokamon 배포 필요** |
-| **8** | **Phase 3: 오프라인 프루빙** | **⚠️** | **dump 코드 완료, 테스트는 fixture 재수집 후** |
-| **9** | **Phase 4: 오프라인 검증** | **⚠️** | **dump 코드 완료, 테스트는 fixture 재수집 후** |
+| 8 | Phase 3: 오프라인 프루빙 | ⚠️ | dump 코드 + 테스트 작성 완료, fixture 재수집 필요 |
+| 9 | Phase 4: 오프라인 검증 | ⚠️ | dump 코드 + 테스트 작성 완료, fixture 재수집 필요 |
 | **10** | **Phase 5: Foundry 검증** | **❌** | **Phase 4 선행** |
 | 11 | Tools 포트 동적화 | ✅ | `TOOLS_*_PORT` 환경변수 |
 | 12 | GPU 감지 compose | ✅ | `hasNvidiaGpu()` + NVIDIA device reservation |
