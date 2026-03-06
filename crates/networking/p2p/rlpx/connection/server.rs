@@ -1048,27 +1048,36 @@ async fn handle_incoming_message(
                     .await?;
 
                 let mut block_receipt_list = Vec::new();
+                let mut hit_limit = false;
                 for receipt in block_receipts {
                     let receipt_size = receipt.length();
                     if total_size + receipt_size > SOFT_RESPONSE_LIMIT
                         && (!block_receipt_list.is_empty() || !all_receipts.is_empty())
                     {
-                        last_block_incomplete = true;
+                        hit_limit = true;
+                        // Only mark incomplete when the current block actually
+                        // has a partial receipt list. When the limit is hit
+                        // before any receipt from this block fits, the previous
+                        // block is complete — setting the flag would cause the
+                        // peer to re-request an already-complete block.
+                        if !block_receipt_list.is_empty() {
+                            last_block_incomplete = true;
+                        }
                         break;
                     }
                     total_size += receipt_size;
                     block_receipt_list.push(receipt);
                 }
 
-                // Don't push an empty list when the soft limit was hit before
-                // any receipt from this block could be included — an empty
-                // trailing list would mislead the peer into thinking the
-                // block has no transactions.
-                if !block_receipt_list.is_empty() || !last_block_incomplete {
+                // Don't push an empty list when the limit was hit before any
+                // receipt from this block could be included — an empty trailing
+                // list would mislead the peer into thinking the block has no
+                // transactions.
+                if !block_receipt_list.is_empty() || !hit_limit {
                     all_receipts.push(block_receipt_list);
                 }
 
-                if last_block_incomplete {
+                if hit_limit {
                     break;
                 }
             }

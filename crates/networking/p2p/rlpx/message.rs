@@ -25,6 +25,8 @@ use ethrex_rlp::encode::RLPEncode;
 const ETH_CAPABILITY_OFFSET: u8 = 0x10;
 const SNAP_CAPABILITY_OFFSET_ETH_68: u8 = 0x21;
 const SNAP_CAPABILITY_OFFSET_ETH_69: u8 = 0x22;
+// eth/70 (EIP-7975) reuses the same message codes as eth/69 — it only changes the
+// format of GetReceipts (0x0F) and Receipts (0x10), so offsets are identical.
 const SNAP_CAPABILITY_OFFSET_ETH_70: u8 = 0x22;
 const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
 const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
