@@ -3,9 +3,11 @@
 import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { storeApi, deploymentsApi } from "@/lib/api";
-import { Program } from "@/lib/types";
+import { storeApi, deploymentsApi, hostsApi } from "@/lib/api";
+import { Program, DeploymentEvent, Host } from "@/lib/types";
 import { useAuth } from "@/components/auth-provider";
+import DeploymentProgress from "@/components/deployment-progress";
+import DirectoryPicker from "@/components/directory-picker";
 
 export default function LaunchPage() {
   return (
@@ -26,7 +28,7 @@ function LaunchPageContent() {
   const searchParams = useSearchParams();
   const { user } = useAuth();
 
-  // Step management
+  // Step management (1: select app, 2: configure, 3: deploying)
   const [step, setStep] = useState(1);
 
   // Step 1: Program selection
@@ -38,13 +40,27 @@ function LaunchPageContent() {
   const [selectedProgram, setSelectedProgram] = useState<Program | null>(null);
 
   // Step 2: L2 configuration
-  const [mode, setMode] = useState<"local" | "production">("local");
+  const [mode, setMode] = useState<"local" | "remote" | "manual">("local");
   const [l2Name, setL2Name] = useState("");
   const [chainId, setChainId] = useState("");
   const [rpcUrl, setRpcUrl] = useState("");
   const [l1Image, setL1Image] = useState("ethrex");
+  const [deployDir, setDeployDir] = useState("");
+  const [showDirPicker, setShowDirPicker] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState("");
+
+  // Docker status (local mode)
+  const [dockerAvailable, setDockerAvailable] = useState<boolean | null>(null);
+  const [dockerChecking, setDockerChecking] = useState(false);
+
+  // Remote hosts
+  const [hosts, setHosts] = useState<Host[]>([]);
+  const [selectedHostId, setSelectedHostId] = useState<string>("");
+  const [hostsLoading, setHostsLoading] = useState(false);
+
+  // Step 3: Deployment progress
+  const [deploymentId, setDeploymentId] = useState<string | null>(null);
 
   // Load programs and categories
   useEffect(() => {
@@ -69,6 +85,36 @@ function LaunchPageContent() {
       }
     });
   }, [searchParams]);
+
+  // Check Docker status when switching to local mode
+  useEffect(() => {
+    if (mode === "local") {
+      setDockerChecking(true);
+      deploymentsApi
+        .dockerStatus()
+        .then((res) => setDockerAvailable(res.available))
+        .catch(() => setDockerAvailable(false))
+        .finally(() => setDockerChecking(false));
+    } else {
+      setDockerAvailable(null);
+    }
+  }, [mode]);
+
+  // Load remote hosts when switching to remote mode
+  useEffect(() => {
+    if (mode === "remote" && hosts.length === 0) {
+      setHostsLoading(true);
+      hostsApi
+        .list()
+        .then((h: Host[]) => {
+          setHosts(h);
+          const active = h.filter((host: Host) => host.status === "active");
+          if (active.length > 0) setSelectedHostId(active[0].id);
+        })
+        .catch(() => {})
+        .finally(() => setHostsLoading(false));
+    }
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // If deep link program not found in list, try fetching directly
   useEffect(() => {
@@ -103,22 +149,50 @@ function LaunchPageContent() {
       setError("L2 name is required");
       return;
     }
+    if (mode === "remote" && !selectedHostId) {
+      setError("Please select a remote server");
+      return;
+    }
     setLaunching(true);
     setError("");
     try {
+      // Create deployment record
       const deployment = await deploymentsApi.create({
         programId: selectedProgram.id,
         name: l2Name.trim(),
         chainId: chainId ? parseInt(chainId) : undefined,
-        rpcUrl: mode === "local" ? undefined : rpcUrl || undefined,
-        config: { mode, l1Image: mode === "local" ? l1Image : undefined },
+        rpcUrl: mode === "manual" ? rpcUrl || undefined : undefined,
+        config: { mode, l1Image: mode === "local" ? l1Image : undefined, deployDir: deployDir.trim() || undefined },
       });
-      router.push(`/deployments/${deployment.id}`);
+
+      if (mode === "local") {
+        // Start local Docker deployment and show progress
+        setDeploymentId(deployment.id);
+        setStep(3);
+        await deploymentsApi.provision(deployment.id);
+      } else if (mode === "remote") {
+        // Start remote Docker deployment and show progress
+        setDeploymentId(deployment.id);
+        setStep(3);
+        await deploymentsApi.provision(deployment.id, selectedHostId);
+      } else {
+        // Manual mode: just save config and go to detail page
+        router.push(`/deployments/${deployment.id}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to launch L2");
-    } finally {
       setLaunching(false);
     }
+  };
+
+  const handleDeploymentComplete = (event: DeploymentEvent) => {
+    // Deployment finished successfully
+    setLaunching(false);
+  };
+
+  const handleDeploymentError = (errorMsg: string) => {
+    setError(errorMsg);
+    setLaunching(false);
   };
 
   // Filter programs
@@ -147,48 +221,47 @@ function LaunchPageContent() {
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Step indicator */}
       <div className="flex items-center gap-4 mb-8">
-        <div
-          className={`flex items-center gap-2 cursor-pointer ${
-            step === 1 ? "text-blue-600 font-semibold" : "text-gray-400"
-          }`}
-          onClick={() => setStep(1)}
-        >
-          <span
-            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-              step === 1
-                ? "bg-blue-600 text-white"
-                : selectedProgram
-                ? "bg-green-100 text-green-700"
-                : "bg-gray-200 text-gray-500"
-            }`}
-          >
-            {selectedProgram && step !== 1 ? "\u2713" : "1"}
-          </span>
-          <span>Select Program</span>
-        </div>
-        <div className="flex-1 h-px bg-gray-200" />
-        <div
-          className={`flex items-center gap-2 ${
-            step === 2 ? "text-blue-600 font-semibold" : "text-gray-400"
-          }`}
-        >
-          <span
-            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-              step === 2 ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-500"
-            }`}
-          >
-            2
-          </span>
-          <span>Configure & Launch</span>
-        </div>
+        {[
+          { num: 1, label: "Select App", complete: !!selectedProgram && step > 1 },
+          { num: 2, label: "Configure", complete: step > 2 },
+          { num: 3, label: "Deploy", complete: false },
+        ].map(({ num, label, complete }, idx) => (
+          <div key={num} className="contents">
+            {idx > 0 && <div className="flex-1 h-px bg-gray-200" />}
+            <div
+              className={`flex items-center gap-2 ${
+                step >= num ? "cursor-pointer" : ""
+              } ${
+                step === num ? "text-blue-600 font-semibold" : "text-gray-400"
+              }`}
+              onClick={() => {
+                if (num === 1) setStep(1);
+                if (num === 2 && selectedProgram) setStep(2);
+              }}
+            >
+              <span
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                  step === num
+                    ? "bg-blue-600 text-white"
+                    : complete
+                    ? "bg-green-100 text-green-700"
+                    : "bg-gray-200 text-gray-500"
+                }`}
+              >
+                {complete ? "\u2713" : num}
+              </span>
+              <span>{label}</span>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* Step 1: Program Selection */}
+      {/* Step 1: Program Selection (App Store) */}
       {step === 1 && (
         <div>
-          <h1 className="text-2xl font-bold mb-2">Select a Guest Program</h1>
+          <h1 className="text-2xl font-bold mb-2">Select an App</h1>
           <p className="text-gray-600 mb-6">
-            Choose a Guest Program to power your L2 chain.
+            Choose an application to deploy on your L2 chain. Each app has its own circuits and verification contracts.
           </p>
 
           {/* Search and filter */}
@@ -197,7 +270,7 @@ function LaunchPageContent() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search programs..."
+              placeholder="Search apps..."
               className="flex-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
             <select
@@ -220,14 +293,15 @@ function LaunchPageContent() {
             </div>
           ) : filtered.length === 0 ? (
             <div className="text-center py-16 bg-white rounded-xl border">
-              <p className="text-gray-500">No programs found.</p>
+              <p className="text-gray-500">No apps found.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filtered.map((program) => (
                 <div
                   key={program.id}
-                  className="bg-white rounded-xl border p-6 hover:shadow-md transition-shadow"
+                  className="bg-white rounded-xl border p-6 hover:shadow-md transition-shadow cursor-pointer"
+                  onClick={() => handleSelectProgram(program)}
                 >
                   <div className="flex items-start gap-4 mb-4">
                     <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 font-bold text-lg shrink-0">
@@ -245,7 +319,7 @@ function LaunchPageContent() {
                             Official
                           </span>
                         )}
-                        <span className="text-xs text-gray-400">{program.use_count} uses</span>
+                        <span className="text-xs text-gray-400">{program.use_count} deployments</span>
                       </div>
                     </div>
                   </div>
@@ -253,7 +327,10 @@ function LaunchPageContent() {
                     {program.description || "No description"}
                   </p>
                   <button
-                    onClick={() => handleSelectProgram(program)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectProgram(program);
+                    }}
                     className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
                   >
                     Select
@@ -292,6 +369,40 @@ function LaunchPageContent() {
               </button>
             </div>
 
+            {/* App-specific info */}
+            <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+              <h4 className="text-sm font-medium text-blue-800 mb-2">App Configuration</h4>
+              <div className="text-sm text-blue-700 space-y-1">
+                {selectedProgram.program_id === "zk-dex" && (
+                  <>
+                    <p>ZK Circuits: SP1 (DEX order matching + settlement)</p>
+                    <p>Verification: SP1 Verifier Contract</p>
+                    <p>Genesis: Custom L2 genesis with DEX pre-deploys</p>
+                  </>
+                )}
+                {selectedProgram.program_id === "evm-l2" && (
+                  <>
+                    <p>Circuits: Standard EVM execution</p>
+                    <p>Verification: Default Verifier Contract</p>
+                    <p>Genesis: Standard L2 genesis</p>
+                  </>
+                )}
+                {selectedProgram.program_id === "tokamon" && (
+                  <>
+                    <p>Circuits: Gaming state transition proofs</p>
+                    <p>Verification: Default Verifier Contract</p>
+                    <p>Genesis: Standard L2 genesis</p>
+                  </>
+                )}
+                {!["zk-dex", "evm-l2", "tokamon"].includes(selectedProgram.program_id) && (
+                  <>
+                    <p>Custom guest program: {selectedProgram.program_id}</p>
+                    <p>Verification: Default Verifier Contract</p>
+                  </>
+                )}
+              </div>
+            </div>
+
             {/* Configuration form */}
             <div className="space-y-4">
               {/* Mode toggle */}
@@ -309,23 +420,37 @@ function LaunchPageContent() {
                         : "border-gray-200 text-gray-500 hover:border-gray-300"
                     }`}
                   >
-                    <div className="font-semibold">Local</div>
+                    <div className="font-semibold">Local (Docker)</div>
                     <div className="text-xs mt-0.5 font-normal">
-                      L1 + L2 both run locally via Docker
+                      Build and run on this machine
                     </div>
                   </button>
                   <button
                     type="button"
-                    onClick={() => setMode("production")}
+                    onClick={() => setMode("remote")}
                     className={`flex-1 px-4 py-3 rounded-lg border-2 text-sm font-medium transition-colors ${
-                      mode === "production"
+                      mode === "remote"
                         ? "border-blue-600 bg-blue-50 text-blue-700"
                         : "border-gray-200 text-gray-500 hover:border-gray-300"
                     }`}
                   >
-                    <div className="font-semibold">Production</div>
+                    <div className="font-semibold">Remote Server</div>
                     <div className="text-xs mt-0.5 font-normal">
-                      Connect to an external L1 RPC
+                      Deploy to a remote server via SSH
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("manual")}
+                    className={`flex-1 px-4 py-3 rounded-lg border-2 text-sm font-medium transition-colors ${
+                      mode === "manual"
+                        ? "border-blue-600 bg-blue-50 text-blue-700"
+                        : "border-gray-200 text-gray-500 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className="font-semibold">Manual</div>
+                    <div className="text-xs mt-0.5 font-normal">
+                      Download config and run manually
                     </div>
                   </button>
                 </div>
@@ -356,13 +481,44 @@ function LaunchPageContent() {
                   placeholder="10000~99999 recommended"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  {mode === "local"
-                    ? "Auto-generated. Any value works for local testing."
-                    : "Auto-generated (10000~99999 recommended). For production, use a unique ID not listed on chainlist.org."}
+                  Auto-generated. Any unique value works.
                 </p>
               </div>
 
-              {mode === "production" && (
+              {(mode === "local" || mode === "remote") && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Deploy Directory
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={deployDir}
+                      onChange={(e) => setDeployDir(e.target.value)}
+                      className="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="~/.tokamak/deployments/<id> (default)"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDirPicker(true)}
+                      className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    docker-compose.yaml will be generated here. Leave empty for default.
+                  </p>
+                  <DirectoryPicker
+                    open={showDirPicker}
+                    onClose={() => setShowDirPicker(false)}
+                    onSelect={(path) => setDeployDir(path)}
+                    initialPath={deployDir}
+                  />
+                </div>
+              )}
+
+              {mode === "manual" && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     L1 RPC URL *
@@ -395,15 +551,86 @@ function LaunchPageContent() {
                       <option value="geth">Geth (go-ethereum)</option>
                       <option value="reth">Reth</option>
                     </select>
-                    <p className="text-xs text-gray-400 mt-1">
-                      L1 node to run locally alongside your L2.
-                    </p>
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
-                    <p className="font-medium text-gray-700 mb-1">Local mode</p>
+                  {/* Docker status */}
+                  {dockerChecking ? (
+                    <div className="flex items-center gap-2 p-4 bg-gray-50 rounded-lg border border-gray-200 text-sm text-gray-600">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+                      Checking Docker status...
+                    </div>
+                  ) : dockerAvailable === true ? (
+                    <div className="flex items-center gap-2 p-4 bg-green-50 rounded-lg border border-green-200 text-sm text-green-800">
+                      <svg className="w-5 h-5 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Docker is running
+                    </div>
+                  ) : dockerAvailable === false ? (
+                    <div className="p-4 bg-red-50 rounded-lg border border-red-200 text-sm text-red-800">
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg className="w-5 h-5 text-red-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className="font-medium">Docker is not running</span>
+                      </div>
+                      <p className="ml-7">
+                        Docker Desktop is required for local deployment.{" "}
+                        <a
+                          href="https://www.docker.com/products/docker-desktop/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline font-medium hover:text-red-900"
+                        >
+                          Download Docker Desktop
+                        </a>
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              {mode === "remote" && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Target Server *
+                    </label>
+                    {hostsLoading ? (
+                      <div className="flex items-center gap-2 py-2 text-sm text-gray-400">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+                        Loading servers...
+                      </div>
+                    ) : hosts.length === 0 ? (
+                      <div className="border rounded-lg p-4 text-center">
+                        <p className="text-sm text-gray-500 mb-2">No remote servers configured.</p>
+                        <a
+                          href="/settings"
+                          className="text-sm text-blue-600 hover:underline"
+                        >
+                          Add a server in Settings
+                        </a>
+                      </div>
+                    ) : (
+                      <select
+                        value={selectedHostId}
+                        onChange={(e) => setSelectedHostId(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="">Select a server...</option>
+                        {hosts.map((host) => (
+                          <option key={host.id} value={host.id}>
+                            {host.name} ({host.username}@{host.hostname}:{host.port})
+                            {host.status === "active" ? "" : " — not tested"}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <div className="bg-purple-50 rounded-lg p-4 text-sm text-purple-800 border border-purple-200">
+                    <p className="font-medium mb-1">Remote deployment</p>
                     <p>
-                      L1 and L2 both run locally via Docker.
-                      No external RPC needed — docker-compose will include both services.
+                      Pre-built Docker images will be pulled on the remote server.
+                      The server must have Docker installed and accessible via SSH.
                     </p>
                   </div>
                 </div>
@@ -413,11 +640,51 @@ function LaunchPageContent() {
 
               <button
                 onClick={handleLaunch}
-                disabled={launching}
-                className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
+                disabled={launching || (mode === "local" && dockerAvailable === false)}
+                className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {launching ? "Launching..." : "Launch L2"}
+                {launching
+                  ? "Deploying..."
+                  : mode === "manual"
+                  ? "Create L2 Config"
+                  : "Deploy L2"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Deployment Progress */}
+      {step === 3 && deploymentId && (
+        <div>
+          <h1 className="text-2xl font-bold mb-2">Deploying Your L2</h1>
+          <p className="text-gray-600 mb-6">
+            Your L2 <strong>{l2Name}</strong> powered by{" "}
+            <strong>{selectedProgram?.name}</strong> is being deployed...
+          </p>
+
+          <div className="bg-white rounded-xl border p-6">
+            <DeploymentProgress
+              deploymentId={deploymentId}
+              eventsUrl={deploymentsApi.eventsUrl(deploymentId)}
+              remote={mode === "remote"}
+              onComplete={handleDeploymentComplete}
+              onError={handleDeploymentError}
+            />
+
+            <div className="mt-6 pt-6 border-t flex gap-3">
+              <Link
+                href={`/deployments/${deploymentId}`}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+              >
+                Go to Dashboard
+              </Link>
+              <Link
+                href="/deployments"
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+              >
+                View All Deployments
+              </Link>
             </div>
           </div>
         </div>

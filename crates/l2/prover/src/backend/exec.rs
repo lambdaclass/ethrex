@@ -31,6 +31,7 @@ impl ExecBackend {
         ProofCalldata {
             prover_type: ProverType::Exec,
             calldata: vec![Value::Bytes(vec![].into())],
+            public_values: vec![],
         }
     }
 }

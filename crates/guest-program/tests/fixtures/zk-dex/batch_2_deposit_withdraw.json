@@ -1,0 +1,29 @@
+{
+  "app": "zk-dex",
+  "batch_number": 2,
+  "program_type_id": 2,
+  "chain_id": 65536999,
+  "description": "auto-collected batch 2",
+  "prover": {
+    "balance_diffs": [],
+    "blob_versioned_hash": "0x012e54ad02daf838c54881fa7a1271dad78eb3c186474b0f36d04d3e8c825298",
+    "encoded_public_values": "0x48f7b11fc87cbe873361a3ff5b40c91dc24cf42f2597c43b23e5d5ebd64fca94b652083c49449bf64a2c2d75f9a933a206ccb75b718e74cebeff78b580aa7b3ac55f9da905b0df29c9aaab516d596b67f57c6b60bc10c2a0dbac27744c6c997600015183d843661fbfd058d685348153652c98d9ec35fcc20f303daa31011239012e54ad02daf838c54881fa7a1271dad78eb3c186474b0f36d04d3e8c825298fceda1926883f57f3935802bbab4bd2b4c8968354d2366ff2b09b589c898c5fc0000000000000000000000000000000000000000000000000000000003e803e70000000000000000000000000000000000000000000000000000000000000001",
+    "final_state_hash": "0xb652083c49449bf64a2c2d75f9a933a206ccb75b718e74cebeff78b580aa7b3a",
+    "initial_state_hash": "0x48f7b11fc87cbe873361a3ff5b40c91dc24cf42f2597c43b23e5d5ebd64fca94",
+    "l1_in_messages_rolling_hash": "0x00015183d843661fbfd058d685348153652c98d9ec35fcc20f303daa31011239",
+    "l1_out_messages_merkle_root": "0xc55f9da905b0df29c9aaab516d596b67f57c6b60bc10c2a0dbac27744c6c9976",
+    "l2_in_message_rolling_hashes": [],
+    "last_block_hash": "0xfceda1926883f57f3935802bbab4bd2b4c8968354d2366ff2b09b589c898c5fc",
+    "non_privileged_count": 1,
+    "sha256_public_values": "0x24d23bc0f89d6e74a32b23b1a84c17d23565f113cc53f1f8c1deb8c183057f40"
+  },
+  "committer": {
+    "balance_diffs": [],
+    "l2_in_message_rolling_hashes": [],
+    "last_block_hash": "0xfceda1926883f57f3935802bbab4bd2b4c8968354d2366ff2b09b589c898c5fc",
+    "new_state_root": "0xb652083c49449bf64a2c2d75f9a933a206ccb75b718e74cebeff78b580aa7b3a",
+    "non_privileged_txs": 1,
+    "priv_tx_rolling_hash": "0x00015183d843661fbfd058d685348153652c98d9ec35fcc20f303daa31011239",
+    "withdrawals_merkle_root": "0xc55f9da905b0df29c9aaab516d596b67f57c6b60bc10c2a0dbac27744c6c9976"
+  }
+}

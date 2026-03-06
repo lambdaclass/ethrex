@@ -29,6 +29,9 @@ export function Nav() {
                   <Link href="/deployments" className="text-gray-600 hover:text-gray-900">
                     My L2s
                   </Link>
+                  <Link href="/settings" className="text-gray-600 hover:text-gray-900">
+                    Settings
+                  </Link>
                 </>
               )}
               {user?.role === "admin" && (

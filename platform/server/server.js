@@ -8,6 +8,8 @@ const storeRoutes = require("./routes/store");
 const programRoutes = require("./routes/programs");
 const adminRoutes = require("./routes/admin");
 const deploymentRoutes = require("./routes/deployments");
+const hostRoutes = require("./routes/hosts");
+const fsRoutes = require("./routes/fs");
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -73,6 +75,8 @@ app.use("/api/store", storeRoutes);
 app.use("/api/programs", programRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/deployments", deploymentRoutes);
+app.use("/api/hosts", hostRoutes);
+app.use("/api/fs", fsRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

@@ -158,3 +158,12 @@ platform/server/db/*.sqlite-wal
 zk-dex-l2-*.toml
 
 crates/desktop-app/ui/node_modules/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Platform SQLite database (runtime data)
+platform/server/db/platform.sqlite
+
+# ZK-DEX deployed contract addresses (local deployment state)
+crates/l2/.zk-dex-deployed.env

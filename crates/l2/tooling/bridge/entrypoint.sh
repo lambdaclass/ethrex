@@ -7,12 +7,13 @@ cat > /usr/share/nginx/html/config.json << EOF
   "timelock_address": "${ETHREX_TIMELOCK_ADDRESS:-}",
   "sp1_verifier_address": "${ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS:-}",
   "bridge_l2_address": "0x000000000000000000000000000000000000ffff",
-  "l1_rpc": "http://localhost:8545",
-  "l2_rpc": "http://localhost:1729",
-  "l1_explorer": "http://localhost:8083",
-  "l2_explorer": "http://localhost:8082",
+  "l1_rpc": "http://localhost:${TOOLS_L1_RPC_PORT:-8545}",
+  "l2_rpc": "http://localhost:${TOOLS_L2_RPC_PORT:-1729}",
+  "l1_explorer": "http://localhost:${TOOLS_L1_EXPLORER_PORT:-8083}",
+  "l2_explorer": "http://localhost:${TOOLS_L2_EXPLORER_PORT:-8082}",
   "l1_chain_id": 9,
-  "l2_chain_id": 65536999
+  "l2_chain_id": 65536999,
+  "metrics_url": "http://localhost:${TOOLS_METRICS_PORT:-3702}/metrics"
 }
 EOF
 

@@ -65,8 +65,33 @@ CREATE TABLE IF NOT EXISTS deployments (
   rpc_url TEXT,
   status TEXT DEFAULT 'configured',
   config TEXT,
+  host_id TEXT REFERENCES hosts(id),
+  docker_project TEXT,
+  l1_port INTEGER,
+  l2_port INTEGER,
+  phase TEXT DEFAULT 'configured',
+  bridge_address TEXT,
+  proposer_address TEXT,
+  error_message TEXT,
   created_at INTEGER NOT NULL
 );
+
+-- Remote hosts (SSH servers for remote deployment)
+CREATE TABLE IF NOT EXISTS hosts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  hostname TEXT NOT NULL,
+  port INTEGER DEFAULT 22,
+  username TEXT NOT NULL,
+  auth_method TEXT DEFAULT 'key',
+  private_key TEXT,
+  status TEXT DEFAULT 'pending',
+  last_tested INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hosts_user ON hosts(user_id);
 
 -- Sessions (persistent authentication tokens)
 CREATE TABLE IF NOT EXISTS sessions (

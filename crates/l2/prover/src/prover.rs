@@ -168,6 +168,71 @@ impl<B: ProverBackend> Prover<B> {
                     continue;
                 };
 
+                // ── Fixture dump: save prover public_values for offline testing ──
+                // Extracts field-by-field values from public_values bytes and saves
+                // in the same format as test fixtures (prover section).
+                if let Ok(fixture_dir) = std::env::var("ETHREX_DUMP_FIXTURES") {
+                    let dir = std::path::Path::new(&fixture_dir)
+                        .join(&prover_data.program_id)
+                        .join(format!("batch_{}", prover_data.batch_number));
+                    if let Ok(()) = std::fs::create_dir_all(&dir) {
+                        let pv_bytes = match &batch_proof {
+                            ethrex_l2_common::prover::BatchProof::ProofBytes(pb) => {
+                                Some(pb.public_values.clone())
+                            }
+                            ethrex_l2_common::prover::BatchProof::ProofCalldata(pc) => {
+                                if pc.public_values.is_empty() {
+                                    None
+                                } else {
+                                    Some(pc.public_values.clone())
+                                }
+                            }
+                        };
+                        if let Some(pv) = pv_bytes {
+                            if pv.len() >= 256 {
+                                let sha = <sha2::Sha256 as sha2::Digest>::digest(&pv);
+                                let h = |start: usize, end: usize| format!("0x{}", hex::encode(&pv[start..end]));
+                                // Parse non_privileged_count from bytes 224..256
+                                let mut count_bytes = [0u8; 32];
+                                count_bytes.copy_from_slice(&pv[224..256]);
+                                let non_priv_count = u64::from_be_bytes(count_bytes[24..32].try_into().unwrap_or([0u8; 8]));
+
+                                let fixture = serde_json::json!({
+                                    "initial_state_hash": h(0, 32),
+                                    "final_state_hash": h(32, 64),
+                                    "l1_out_messages_merkle_root": h(64, 96),
+                                    "l1_in_messages_rolling_hash": h(96, 128),
+                                    "blob_versioned_hash": h(128, 160),
+                                    "last_block_hash": h(160, 192),
+                                    "non_privileged_count": non_priv_count,
+                                    "balance_diffs": [],
+                                    "l2_in_message_rolling_hashes": [],
+                                    "encoded_public_values": format!("0x{}", hex::encode(&pv)),
+                                    "sha256_public_values": format!("0x{}", hex::encode(sha)),
+                                });
+                                let path = dir.join("prover.json");
+                                if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(&fixture).unwrap_or_default()) {
+                                    warn!("Failed to write prover fixture {}: {e}", path.display());
+                                } else {
+                                    info!("Prover fixture saved: {}", path.display());
+                                }
+                            }
+                        }
+                        // Save proof.bin for offline verification (Phase 4).
+                        match bincode::serialize(&batch_proof) {
+                            Ok(proof_bytes) => {
+                                let path = dir.join("proof.bin");
+                                match std::fs::write(&path, &proof_bytes) {
+                                    Ok(()) => info!("Fixture proof saved: {} ({} bytes)", path.display(), proof_bytes.len()),
+                                    Err(e) => warn!("Failed to write proof fixture {}: {e}", path.display()),
+                                }
+                            }
+                            Err(e) => warn!("Failed to serialize proof for fixture: {e}"),
+                        }
+                    }
+                }
+                // ── END Fixture dump ──
+
                 let _ = self
                     .submit_proof(
                         endpoint,
@@ -206,6 +271,20 @@ impl<B: ProverBackend> Prover<B> {
             let serialized = program
                 .serialize_input(input_bytes.as_slice())
                 .map_err(|e| BackendError::serialization(e.to_string()))?;
+
+            // ── Fixture dump: save serialized input for offline re-proving ──
+            if let Ok(fixture_dir) = std::env::var("ETHREX_DUMP_FIXTURES") {
+                let dir = std::path::Path::new(&fixture_dir)
+                    .join(program_id)
+                    .join(format!("batch_{batch_number}"));
+                if let Ok(()) = std::fs::create_dir_all(&dir) {
+                    let path = dir.join("stdin.bin");
+                    match std::fs::write(&path, &serialized) {
+                        Ok(()) => info!("Fixture stdin saved: {} ({} bytes)", path.display(), serialized.len()),
+                        Err(e) => warn!("Failed to write stdin fixture {}: {e}", path.display()),
+                    }
+                }
+            }
 
             // Enforce input size limit.
             let limits = program.resource_limits();
@@ -259,6 +338,21 @@ impl<B: ProverBackend> Prover<B> {
             }
         } else {
             // Legacy path: no ELF available, use prove() with ProgramInput directly.
+            // ── Fixture dump: save serialized input for offline re-proving ──
+            if let Ok(fixture_dir) = std::env::var("ETHREX_DUMP_FIXTURES") {
+                if let Ok(raw_bytes) = self.backend.serialize_raw(&input) {
+                    let dir = std::path::Path::new(&fixture_dir)
+                        .join(program_id)
+                        .join(format!("batch_{batch_number}"));
+                    if let Ok(()) = std::fs::create_dir_all(&dir) {
+                        let path = dir.join("stdin.bin");
+                        match std::fs::write(&path, &raw_bytes) {
+                            Ok(()) => info!("Fixture stdin saved: {} ({} bytes)", path.display(), raw_bytes.len()),
+                            Err(e) => warn!("Failed to write stdin fixture {}: {e}", path.display()),
+                        }
+                    }
+                }
+            }
             if self.timed {
                 let (output, elapsed) = self.backend.prove_timed(input, format)?;
                 info!(

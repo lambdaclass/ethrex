@@ -153,6 +153,9 @@ pub struct ProofBytes {
 pub struct ProofCalldata {
     pub prover_type: ProverType,
     pub calldata: Vec<Value>,
+    /// Raw public values committed by the guest program (for diagnostics/fixture dumps).
+    #[serde(default)]
+    pub public_values: Vec<u8>,
 }
 
 /// Indicates the prover which proof *format* to generate
@@ -460,6 +463,7 @@ mod tests {
         let proof = BatchProof::ProofCalldata(ProofCalldata {
             prover_type: ProverType::Exec,
             calldata: vec![],
+            public_values: vec![],
         });
         let original = ProofData::proof_submit_with_program(5, proof, "tokamon".to_string());
         let json = serde_json::to_string(&original).expect("serialize");
@@ -504,6 +508,7 @@ mod tests {
         let proof = BatchProof::ProofCalldata(ProofCalldata {
             prover_type: ProverType::Exec,
             calldata: vec![],
+            public_values: vec![],
         });
         let variants: Vec<ProofData> = vec![
             ProofData::prover_setup(ProverType::SP1, bytes::Bytes::from_static(b"key")),

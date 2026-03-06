@@ -56,6 +56,8 @@ sp1-cycles = []
 
 [dev-dependencies]
 tempfile.workspace = true
+hex.workspace = true
+serde_json.workspace = true
 
 [lib]
 path = "./src/lib.rs"
