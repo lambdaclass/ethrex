@@ -21,7 +21,6 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::{U256, U512};
-use std::cmp::Ordering;
 
 /// Implementation for the `ADD` opcode.
 pub struct OpAddHandler;
@@ -204,43 +203,16 @@ impl OpcodeHandler for OpMulModHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::MULMOD)?;
 
-        let [lhs, rhs, r#mod] = *vm.current_call_frame.stack.pop()?;
-        if lhs.is_zero() || rhs.is_zero() || r#mod.is_zero() {
+        let [multiplicand, multiplier, modulus] = *vm.current_call_frame.stack.pop()?;
+        if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
             vm.current_call_frame.stack.push_zero()?;
         } else {
-            #[cfg(not(feature = "zisk"))]
-            let res = {
-                let res = lhs.full_mul(rhs);
-
-                let r#mod = r#mod.into();
-                #[expect(clippy::unwrap_used, reason = "unreachable")]
-                match res.cmp(&r#mod) {
-                    Ordering::Less => res.try_into().unwrap(),
-                    Ordering::Equal => U256::zero(),
-                    #[expect(
-                        clippy::arithmetic_side_effects,
-                        reason = "mod is checked non-zero above"
-                    )]
-                    Ordering::Greater => (res % r#mod).try_into().unwrap(),
-                }
-            };
-
-            #[cfg(feature = "zisk")]
-            let res = unsafe {
-                use std::mem::MaybeUninit;
-                use ziskos::zisklib::mulmod256_c;
-
-                let mut res = MaybeUninit::<[u64; 4]>::uninit();
-                mulmod256_c(
-                    lhs.0.as_ptr(),
-                    rhs.0.as_ptr(),
-                    r#mod.0.as_ptr(),
-                    res.as_mut_ptr().cast(),
-                );
-                U256(res.assume_init())
-            };
-
-            vm.current_call_frame.stack.push(res)?;
+            let a_bytes = multiplicand.to_big_endian();
+            let b_bytes = multiplier.to_big_endian();
+            let m_bytes = modulus.to_big_endian();
+            let result_bytes = vm.crypto.mulmod256(&a_bytes, &b_bytes, &m_bytes);
+            let product_mod = U256::from_big_endian(&result_bytes);
+            vm.current_call_frame.stack.push(product_mod)?;
         }
 
         Ok(OpcodeResult::Continue)
