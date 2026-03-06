@@ -212,10 +212,10 @@ function test_verifyBatch_zk_dex() public {
 
 | 항목 | 상태 | 비고 |
 |------|:----:|------|
-| Tools compose 포트 동적화 | ❌ | 현재 8082/8083/3000 하드코딩 |
-| GPU 감지 및 compose override | ❌ | GPU 프루버 사용 시 필요 |
-| Metrics 포트 노출 | ❌ | 모니터링 대시보드 연동 시 필요 |
-| Deployer exit code 검증 | ❌ | 배포 실패 시 에러 핸들링 개선 |
+| Tools compose 포트 동적화 | ✅ | `TOOLS_*_PORT` 환경변수로 동적 할당 |
+| GPU 감지 및 compose override | ✅ | `hasNvidiaGpu()` + compose deploy.resources |
+| Metrics 포트 노출 | ✅ | `toolsMetricsPort` DB + compose 연동 |
+| Deployer exit code 검증 | ✅ | bridge/proposer null 검증 + 에러 throw |
 
 ---
 
@@ -233,10 +233,10 @@ function test_verifyBatch_zk_dex() public {
 | **8** | **Phase 3: 오프라인 프루빙** | **⚠️** | **dump 코드 완료, 테스트는 fixture 재수집 후** |
 | **9** | **Phase 4: 오프라인 검증** | **⚠️** | **dump 코드 완료, 테스트는 fixture 재수집 후** |
 | **10** | **Phase 5: Foundry 검증** | **❌** | **Phase 4 선행** |
-| **11** | **Tools 포트 동적화** | **❌** | **deployment-engine 개선** |
-| **12** | **GPU 감지 compose** | **❌** | **GPU 프루버 지원** |
-| **13** | **Metrics 포트** | **❌** | **모니터링 연동** |
-| **14** | **Deployer exit code** | **❌** | **에러 핸들링** |
+| 11 | Tools 포트 동적화 | ✅ | `TOOLS_*_PORT` 환경변수 |
+| 12 | GPU 감지 compose | ✅ | `hasNvidiaGpu()` + NVIDIA device reservation |
+| 13 | Metrics 포트 | ✅ | DB 할당 + compose 연동 |
+| 14 | Deployer exit code | ✅ | bridge/proposer 주소 null 검증 |
 
 ---
 

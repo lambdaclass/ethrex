@@ -144,6 +144,14 @@ async function provision(deployment) {
     const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
     console.log(`[deployment-engine] extractEnv for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}`);
     emit(id, "log", { message: `extractEnv [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}` });
+
+    if (!bridgeAddress || !proposerAddress) {
+      throw new Error(
+        `Contract deployment incomplete: bridge=${bridgeAddress}, proposer=${proposerAddress}. ` +
+        "The deployer may have exited before writing contract addresses."
+      );
+    }
+
     // Save with project ID and timestamp for consistency verification
     updateDeployment(id, {
       bridge_address: bridgeAddress,
@@ -295,10 +303,15 @@ async function provisionRemote(deployment, hostId) {
     try { envVars = await remote.extractEnvRemote(conn, projectName); } catch {}
     const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
     const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
-    if (bridgeAddress || proposerAddress) {
-      updateDeployment(id, { bridge_address: bridgeAddress, proposer_address: proposerAddress });
+
+    if (!bridgeAddress || !proposerAddress) {
+      throw new Error(
+        `Contract deployment incomplete: bridge=${bridgeAddress}, proposer=${proposerAddress}. ` +
+        "The deployer may have exited before writing contract addresses."
+      );
     }
 
+    updateDeployment(id, { bridge_address: bridgeAddress, proposer_address: proposerAddress });
     emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed", bridgeAddress, proposerAddress });
 
     // Start L2
