@@ -1,3 +1,4 @@
+mod batch_execution_tests;
 mod bls12_tests;
 mod eip7708_tests;
 mod eip7778_tests;
