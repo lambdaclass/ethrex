@@ -16,6 +16,27 @@ struct TrieLayer {
     id: usize,
 }
 
+/// In-memory cache of trie diff-layers, one per block (or per batch of blocks in full sync).
+///
+/// Layers form a singly-linked chain from newest to oldest via the `parent` field:
+///
+/// ```text
+/// newest_root -> parent_1 -> parent_2 -> ... -> oldest_root -> (on-disk state)
+/// ```
+///
+/// Each layer stores the trie node diffs produced by one block (regular sync) or one batch
+/// of ~1024 blocks (full sync). When the chain reaches `commit_threshold` layers,
+/// [`get_commitable`](Self::get_commitable) identifies the layer to flush, and
+/// [`commit`](Self::commit) removes it (plus all ancestors) and returns the merged key-values
+/// for writing to RocksDB.
+///
+/// Two commit thresholds are used in practice:
+/// - **128** — regular block-by-block execution (one layer ≈ one block's trie diff).
+/// - **4** — full sync / batch mode (one layer ≈ 1024 blocks ≈ 1 GB), configured via
+///   `BATCH_COMMIT_THRESHOLD` in `store.rs`.
+///
+/// A global bloom filter is maintained across all layers to short-circuit lookups for keys
+/// that don't exist in any layer, avoiding a full layer-chain walk.
 #[derive(Clone)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
@@ -48,12 +69,16 @@ impl Default for TrieLayerCache {
             bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
+            // TODO: this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
             commit_threshold: 128,
         }
     }
 }
 
 impl TrieLayerCache {
+    /// Creates a new cache with the given commit threshold.
+    ///
+    /// The threshold controls how many layers accumulate before a disk flush is triggered.
     pub fn new(commit_threshold: usize) -> Self {
         Self {
             bloom: Self::create_filter(BLOOM_SIZE),
@@ -69,6 +94,12 @@ impl TrieLayerCache {
             .expected_items(expected_items.max(BLOOM_SIZE))
     }
 
+    /// Looks up a trie node `key` starting from the layer identified by `state_root`,
+    /// walking the parent chain toward older layers.
+    ///
+    /// Returns `Some(value)` from the first (newest) layer that contains the key, or `None`
+    /// if no layer has it. A bloom filter is checked first to skip the walk entirely when the
+    /// key is guaranteed absent from all layers (callers then fall through to the on-disk trie).
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         // Fast check to know if any layer may contain the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or may not exist (false positive).
@@ -97,19 +128,55 @@ impl TrieLayerCache {
         None
     }
 
+    /// Returns the state root from which to start a disk commit, using the cache's
+    /// default `commit_threshold`.
+    ///
+    /// Used during regular block-by-block execution (threshold = 128).
+    /// See [`get_commitable_with_threshold`](Self::get_commitable_with_threshold) for details.
     // TODO: use finalized hash to know when to commit
-    pub fn get_commitable(&self, mut state_root: H256) -> Option<H256> {
+    pub fn get_commitable(&self, state_root: H256) -> Option<H256> {
+        self.get_commitable_with_threshold(state_root, self.commit_threshold)
+    }
+
+    /// Walks the layer chain starting from `state_root` toward older ancestors, counting
+    /// layers. When the count reaches `threshold`, returns `Some(state_root)` — the root
+    /// of the threshold-th layer, which is guaranteed to be a key in `self.layers`.
+    ///
+    /// The caller then passes the returned root to [`commit`](Self::commit), which removes
+    /// that layer **and all older ancestors below it**, flushing them to disk. This leaves
+    /// `threshold - 1` layers in the cache.
+    ///
+    /// Returns `None` if the chain has fewer than `threshold` layers (nothing to commit yet).
+    ///
+    /// # Why return the threshold-th layer (not the oldest)?
+    ///
+    /// Returning the threshold-th layer lets `commit` batch-remove all layers from that point
+    /// down to the oldest in a single call. If we instead returned the oldest layer, `commit`
+    /// would only remove one layer per call, requiring more frequent commits and bloom filter
+    /// rebuilds.
+    pub(crate) fn get_commitable_with_threshold(
+        &self,
+        mut state_root: H256,
+        threshold: usize,
+    ) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
-            state_root = layer.parent;
             counter += 1;
-            if counter > self.commit_threshold {
+            if counter >= threshold {
                 return Some(state_root);
             }
+            state_root = layer.parent;
         }
         None
     }
 
+    /// Inserts a new diff-layer into the cache, keyed by `state_root` and pointing to `parent`.
+    ///
+    /// In regular sync each call adds one block's trie diffs. In full sync (batch mode), each
+    /// call adds diffs for an entire batch of ~1024 blocks.
+    ///
+    /// No-ops if `parent == state_root` (empty block with no state change), or if `state_root`
+    /// is already present (duplicate insertion guard).
     pub fn put_batch(
         &mut self,
         parent: H256,
@@ -149,7 +216,10 @@ impl TrieLayerCache {
         self.layers.insert(state_root, Arc::new(entry));
     }
 
-    /// Rebuilds the global bloom filter by inserting all keys from all layers.
+    /// Rebuilds the global bloom filter from scratch using all keys across all remaining layers.
+    ///
+    /// Called after [`commit`](Self::commit) removes layers, since the old filter may contain
+    /// keys from the removed layers (producing unnecessary false positives).
     pub fn rebuild_bloom(&mut self) {
         // Pre-compute total keys for optimal filter sizing
         let total_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
@@ -166,6 +236,16 @@ impl TrieLayerCache {
         self.bloom = filter;
     }
 
+    /// Removes the layer at `state_root` and all its ancestors from the cache, returning
+    /// their merged trie node diffs in oldest-first order (suitable for sequential disk write).
+    ///
+    /// `state_root` must be a key in `self.layers` (as returned by
+    /// [`get_commitable`](Self::get_commitable) /
+    /// [`get_commitable_with_threshold`](Self::get_commitable_with_threshold)).
+    /// If it isn't, the walk exits immediately and returns `None`.
+    ///
+    /// After removal, any orphaned layers (older than the committed ones) are pruned, and
+    /// the bloom filter is rebuilt to remove stale entries.
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
@@ -187,6 +267,11 @@ impl TrieLayerCache {
     }
 }
 
+/// [`TrieDB`] adapter that checks in-memory diff-layers ([`TrieLayerCache`]) first,
+/// falling back to the on-disk trie only for keys not found in any layer.
+///
+/// Used by the EVM during block execution: reads see the latest uncommitted state without
+/// waiting for a disk flush.
 pub struct TrieWrapper {
     pub state_root: H256,
     pub inner: Arc<TrieLayerCache>,
@@ -214,9 +299,10 @@ impl TrieWrapper {
     }
 }
 
+/// Prepends an account address prefix (with an invalid nibble `17` as separator) to a
+/// trie path, distinguishing storage trie entries from state trie entries in the flat
+/// key-value namespace. Returns the path unchanged if `prefix` is `None` (state trie).
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
-    // Apply a prefix with an invalid nibble (17) as a separator, to
-    // differentiate between a state trie value and a storage trie root.
     match prefix {
         Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
             .append_new(17)
