@@ -137,91 +137,6 @@ export const deploymentsApi = {
     const data = await apiFetch(`/api/deployments/${id}/activate`, { method: "POST" });
     return data.deployment;
   },
-  // Docker status
-  dockerStatus: async () => {
-    const data = await apiFetch("/api/deployments/docker/status");
-    return data as { available: boolean };
-  },
-  // Docker lifecycle
-  provision: async (id: string, hostId?: string) => {
-    const data = await apiFetch(`/api/deployments/${id}/provision`, {
-      method: "POST",
-      body: JSON.stringify(hostId ? { hostId } : {}),
-    });
-    return data;
-  },
-  start: async (id: string) => {
-    const data = await apiFetch(`/api/deployments/${id}/start`, { method: "POST" });
-    return data.deployment;
-  },
-  stop: async (id: string) => {
-    const data = await apiFetch(`/api/deployments/${id}/stop`, { method: "POST" });
-    return data.deployment;
-  },
-  destroy: async (id: string) => {
-    const data = await apiFetch(`/api/deployments/${id}/destroy`, { method: "POST" });
-    return data.deployment;
-  },
-  buildTools: async (id: string) => {
-    const data = await apiFetch(`/api/deployments/${id}/build-tools`, { method: "POST" });
-    return data;
-  },
-  restartTools: async (id: string) => {
-    const data = await apiFetch(`/api/deployments/${id}/restart-tools`, { method: "POST" });
-    return data;
-  },
-  stopTools: async (id: string) => {
-    const data = await apiFetch(`/api/deployments/${id}/stop-tools`, { method: "POST" });
-    return data;
-  },
-  status: async (id: string) => {
-    const data = await apiFetch(`/api/deployments/${id}/status`);
-    return data;
-  },
-  monitoring: async (id: string) => {
-    const data = await apiFetch(`/api/deployments/${id}/monitoring`);
-    return data;
-  },
-  // SSE endpoints (return URL for EventSource)
-  eventsUrl: (id: string) => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("session_token") : null;
-    return `${API_URL}/api/deployments/${id}/events${token ? `?token=${token}` : ""}`;
-  },
-  logsUrl: (id: string, service?: string) => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("session_token") : null;
-    const params = new URLSearchParams();
-    params.set("follow", "true");
-    if (service) params.set("service", service);
-    if (token) params.set("token", token);
-    return `${API_URL}/api/deployments/${id}/logs?${params}`;
-  },
-};
-
-// Hosts (remote servers)
-export const hostsApi = {
-  list: async () => {
-    const data = await apiFetch("/api/hosts");
-    return data.hosts;
-  },
-  get: async (id: string) => {
-    const data = await apiFetch(`/api/hosts/${id}`);
-    return data.host;
-  },
-  create: async (body: { name: string; hostname: string; port?: number; username: string; authMethod?: string; privateKey?: string }) => {
-    const data = await apiFetch("/api/hosts", { method: "POST", body: JSON.stringify(body) });
-    return data.host;
-  },
-  update: async (id: string, body: Record<string, unknown>) => {
-    const data = await apiFetch(`/api/hosts/${id}`, { method: "PUT", body: JSON.stringify(body) });
-    return data.host;
-  },
-  remove: async (id: string) => {
-    await apiFetch(`/api/hosts/${id}`, { method: "DELETE" });
-  },
-  test: async (id: string) => {
-    const data = await apiFetch(`/api/hosts/${id}/test`, { method: "POST" });
-    return data;
-  },
 };
 
 // Admin
@@ -264,10 +179,4 @@ export const adminApi = {
   },
 };
 
-// Filesystem browser
-export const fsApi = {
-  browse: async (dirPath?: string) => {
-    const qs = dirPath ? `?path=${encodeURIComponent(dirPath)}` : "";
-    return apiFetch(`/api/fs/browse${qs}`);
-  },
-};
+// Hosts and filesystem APIs moved to Desktop local-server
