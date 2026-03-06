@@ -34,9 +34,11 @@ crates/guest-program/tests/
 ├── fixtures/
 │   ├── zk-dex/                           # ✅ 2개 fixture 수집됨
 │   │   ├── batch_2_deposit_withdraw.json
-│   │   └── batch_10_deposit_withdraw_2nd.json
-│   ├── evm-l2/                           # ❌ 미수집 (배포 필요)
-│   └── tokamon/                          # ❌ 미수집 (배포 필요)
+│   │   └── batch_11_deposit_withdraw_2nd.json
+│   ├── evm-l2/                           # ✅ 2개 fixture 수집됨 (exec backend, prover 없음)
+│   │   ├── batch_2_deposits.json
+│   │   └── batch_5_eth_transfers.json
+│   └── tokamon/                          # N/A (앱 미존재)
 ├── fixture_types.rs                      # ✅ 로더 + discover_all_apps()
 ├── test_program_output.rs                # ✅ 앱 자동 탐색
 ├── test_commitment_match.rs              # ✅ 앱 자동 탐색
@@ -229,7 +231,7 @@ function test_verifyBatch_zk_dex() public {
 | 4 | Test 앱 자동 탐색 | ✅ | `discover_all_apps()` |
 | 5 | CI workflow | ✅ | `pr_fixture_tests.yml` |
 | 6 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
-| **7** | **다른 앱 fixture 수집** | **❌** | **evm-l2, tokamon 배포 필요** |
+| 7 | evm-l2 fixture 수집 | ✅ | 2배치 수집 (exec backend, prover optional) |
 | 8 | Phase 3: 오프라인 프루빙 | ✅ | zk-dex 2배치 재증명 통과 (439초) |
 | 9 | Phase 4: 오프라인 검증 | ✅ | zk-dex 2배치 오프체인 검증 통과 (2.4초) |
 | 10 | Phase 5a: 인코딩 일치 | ✅ | Foundry 5개 테스트 통과 |
