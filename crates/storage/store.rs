@@ -1049,8 +1049,18 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
+        self.get_receipts_for_block_from_index(block_hash, 0).await
+    }
+
+    /// Retrieves receipts for a block starting from the given index.
+    /// Used by eth/70 partial receipt requests (EIP-7975).
+    pub async fn get_receipts_for_block_from_index(
+        &self,
+        block_hash: &BlockHash,
+        start_index: u64,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = Vec::new();
-        let mut index = 0u64;
+        let mut index = start_index;
 
         let txn = self.backend.begin_read()?;
         loop {
