@@ -208,6 +208,15 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
               <div className="text-[11px] text-[var(--color-text-secondary)]">
                 <code className="bg-[var(--color-bg-sidebar)] px-2 py-0.5 rounded text-[11px] border border-[var(--color-border)]">http://localhost:{l2.rpcPort + 1000}</code>
               </div>
+              <button
+                onClick={async () => {
+                  try { await invoke('open_deployment_ui') }
+                  catch (e) { console.error('Failed to open deployment UI:', e) }
+                }}
+                className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-text)] text-xs font-medium px-5 py-2.5 rounded-xl transition-colors cursor-pointer"
+              >
+                {lang === 'ko' ? 'Docker 배포 관리 열기' : 'Open Docker Deployment Manager'}
+              </button>
               <p className="text-[11px] text-[var(--color-text-secondary)] whitespace-pre-line">
                 {t('dashboard.hint', lang)}
               </p>
