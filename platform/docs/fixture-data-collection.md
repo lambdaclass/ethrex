@@ -104,14 +104,34 @@ Or manually:
 After batches are committed and proved, check the output:
 
 ```bash
-ls -la /tmp/fixtures/zk-dex/
-# batch_1/committer.json, batch_1/prover.json
-# batch_2/committer.json, batch_2/prover.json
-# ...
+ls -la /tmp/fixtures/zk-dex/batch_2/
+# committer.json   — committer calldata fields
+# prover.json      — prover public values (field-by-field + encoded hex)
+# stdin.bin        — serialized input for offline re-proving
+# proof.bin        — serialized BatchProof for offline verification
 ```
 
 Note: Empty/genesis batches (1-2) only have committer.json because the prover
-skips them. Only batches with actual transactions will have prover.json.
+skips them. Only batches with actual transactions will have prover.json + binaries.
+
+### Binary Fixture Files
+
+| File | Contents | Used For |
+|------|----------|----------|
+| `stdin.bin` | Serialized guest program input | Offline re-proving (Phase 3) |
+| `proof.bin` | Serialized `BatchProof` (bincode) | Offline verification (Phase 4) |
+
+These files enable re-proving and verification without Docker:
+```rust
+// Re-prove (requires SP1 SDK, ~10 min):
+let stdin_bytes = std::fs::read("stdin.bin").unwrap();
+let mut stdin = SP1Stdin::new();
+stdin.write_slice(&stdin_bytes);
+let proof = client.prove(&pk, &stdin, SP1ProofMode::Compressed).unwrap();
+
+// Verify (requires SP1 SDK, ~seconds):
+let batch_proof: BatchProof = bincode::deserialize(&std::fs::read("proof.bin").unwrap()).unwrap();
+```
 
 ## Step 5: Merge and Copy
 

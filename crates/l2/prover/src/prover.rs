@@ -218,6 +218,17 @@ impl<B: ProverBackend> Prover<B> {
                                 }
                             }
                         }
+                        // Save proof.bin for offline verification (Phase 4).
+                        match bincode::serialize(&batch_proof) {
+                            Ok(proof_bytes) => {
+                                let path = dir.join("proof.bin");
+                                match std::fs::write(&path, &proof_bytes) {
+                                    Ok(()) => info!("Fixture proof saved: {} ({} bytes)", path.display(), proof_bytes.len()),
+                                    Err(e) => warn!("Failed to write proof fixture {}: {e}", path.display()),
+                                }
+                            }
+                            Err(e) => warn!("Failed to serialize proof for fixture: {e}"),
+                        }
                     }
                 }
                 // ── END Fixture dump ──
@@ -260,6 +271,20 @@ impl<B: ProverBackend> Prover<B> {
             let serialized = program
                 .serialize_input(input_bytes.as_slice())
                 .map_err(|e| BackendError::serialization(e.to_string()))?;
+
+            // ── Fixture dump: save serialized input for offline re-proving ──
+            if let Ok(fixture_dir) = std::env::var("ETHREX_DUMP_FIXTURES") {
+                let dir = std::path::Path::new(&fixture_dir)
+                    .join(program_id)
+                    .join(format!("batch_{batch_number}"));
+                if let Ok(()) = std::fs::create_dir_all(&dir) {
+                    let path = dir.join("stdin.bin");
+                    match std::fs::write(&path, &serialized) {
+                        Ok(()) => info!("Fixture stdin saved: {} ({} bytes)", path.display(), serialized.len()),
+                        Err(e) => warn!("Failed to write stdin fixture {}: {e}", path.display()),
+                    }
+                }
+            }
 
             // Enforce input size limit.
             let limits = program.resource_limits();
@@ -313,6 +338,21 @@ impl<B: ProverBackend> Prover<B> {
             }
         } else {
             // Legacy path: no ELF available, use prove() with ProgramInput directly.
+            // ── Fixture dump: save serialized input for offline re-proving ──
+            if let Ok(fixture_dir) = std::env::var("ETHREX_DUMP_FIXTURES") {
+                if let Ok(raw_bytes) = self.backend.serialize_raw(&input) {
+                    let dir = std::path::Path::new(&fixture_dir)
+                        .join(program_id)
+                        .join(format!("batch_{batch_number}"));
+                    if let Ok(()) = std::fs::create_dir_all(&dir) {
+                        let path = dir.join("stdin.bin");
+                        match std::fs::write(&path, &raw_bytes) {
+                            Ok(()) => info!("Fixture stdin saved: {} ({} bytes)", path.display(), raw_bytes.len()),
+                            Err(e) => warn!("Failed to write stdin fixture {}: {e}", path.display()),
+                        }
+                    }
+                }
+            }
             if self.timed {
                 let (output, elapsed) = self.backend.prove_timed(input, format)?;
                 info!(

@@ -20,8 +20,8 @@
 | 앱 자동 탐색 | ✅ | `discover_all_apps()` — 디렉토리만 추가하면 자동 |
 | CI workflow | ✅ | `.github/workflows/pr_fixture_tests.yml` |
 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
-| Phase 3: 오프라인 프루빙 | ❌ | stdin.bin 수집 미구현 |
-| Phase 4: 오프라인 검증 | ❌ | proof.bin + vk.bin 수집 미구현 |
+| Phase 3: 오프라인 프루빙 | ⚠️ | dump 코드 완료, Docker 재빌드 + fixture 재수집 필요 |
+| Phase 4: 오프라인 검증 | ⚠️ | dump 코드 완료, Docker 재빌드 + fixture 재수집 필요 |
 | Phase 5: Foundry on-chain 검증 | ❌ | Solidity 테스트 미구현 |
 | Prover balance_diffs 디코딩 | ⚠️ | 인코딩 포맷 한계로 빈 배열, warn 처리 |
 
@@ -89,9 +89,9 @@ crates/guest-program/tests/
 | `sha256(public_values)` | 해시 검증 | ✅ prover.json에 저장 |
 | 필드별 값 (8개 고정 필드) | 개별 필드 검증 | ✅ prover.json에 저장 |
 | `balance_diffs` (가변 필드) | balance_diffs 검증 | ⚠️ 빈 배열 (디코딩 불가) |
-| `SP1Stdin` 직렬화 bytes | proof 재생성 (오프라인) | ❌ 미구현 |
-| proof bytes (Groth16/Compressed) | 오프체인 검증 | ❌ 미구현 |
-| VK bytes | 오프체인 검증 | ❌ 미구현 |
+| `stdin.bin` (직렬화 input) | proof 재생성 (오프라인) | ✅ prove_batch()에서 dump |
+| `proof.bin` (BatchProof bincode) | 오프체인 검증 | ✅ fixture dump에서 저장 |
+| VK bytes | 오프체인 검증 | N/A (SP1은 ELF에서 VK 생성) |
 
 ### 2.2 커미터 (`l1_committer.rs`) — 현재 수집 상태
 
@@ -117,56 +117,59 @@ crates/guest-program/tests/
 
 **목표**: SP1Stdin fixture로 proof를 오프라인에서 재생성하여 결정론적 검증.
 
-**필요한 코드 변경**:
+**Dump 코드**: ✅ 완료
+- `prove_batch()` registry path: `serialized` → `stdin.bin`
+- `prove_batch()` legacy path: `serialize_raw(&input)` → `stdin.bin`
+- Fixture dump: `bincode::serialize(&batch_proof)` → `proof.bin`
 
-1. `crates/l2/prover/src/prover.rs` — `prove_batch()` 안에서 `ETHREX_DUMP_FIXTURES` 활성화 시:
-   - `stdin.bin`: SP1Stdin 직렬화 바이트 저장 (prove_with_elf path에서 `serialized` 변수)
-   - `proof.bin`: BatchProof 직렬화 바이트 저장
-   - `vk.bin`: 검증키 바이트 저장
-
-2. 현재 `prove_batch()`에서 fixture dump가 `batch_proof` (BatchProof) 레벨에서 이루어지는데,
-   stdin은 그 이전 단계(input 직렬화)에서만 접근 가능. 따라서 dump 위치를 `prove_batch()` 내부로 이동하거나,
-   stdin을 `prove_batch()`가 반환하도록 변경 필요.
-
-3. 새 테스트 파일: `crates/guest-program/tests/test_offline_proving.rs`
+**남은 작업**:
+1. Docker 이미지 재빌드 (stdin.bin/proof.bin dump 코드 포함)
+2. Fixture 재수집 (기존 prover.json + 새 stdin.bin/proof.bin)
+3. 테스트 작성 — SP1 SDK 의존성으로 `ethrex-prover` crate에 위치:
 
 ```rust
+// crates/l2/prover/tests/test_offline_proving.rs
 #[test]
-#[ignore] // cargo test --ignored 로만 실행 (SP1 필요, ~10분)
-fn sp1_prove_zk_dex_batch() {
-    let stdin_bytes = std::fs::read("fixtures/zk-dex/batch_2/stdin.bin").unwrap();
-    let elf = include_bytes!("path/to/zk-dex-elf");
-    // SP1 client setup + prove + verify public_values match
+#[ignore] // cargo test -p ethrex-prover --ignored (SP1 필요, ~10분)
+fn sp1_reprove_from_fixture() {
+    let stdin_bytes = std::fs::read("/path/to/fixtures/zk-dex/batch_2/stdin.bin").unwrap();
+    let elf = ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
+    let client = sp1_sdk::CpuProver::new();
+    let (pk, _vk) = client.setup(elf);
+    let mut stdin = sp1_sdk::SP1Stdin::new();
+    stdin.write_slice(&stdin_bytes);
+    let proof = client.prove(&pk, &stdin, sp1_sdk::SP1ProofMode::Compressed).unwrap();
+    // Compare public_values with prover.json's encoded_public_values
 }
 ```
 
-**의존성**: SP1 SDK (feature flag `sp1` 필요), 느림 (~10분/batch)
-**우선순위**: 중간 — proof 결정론성 검증이 필요할 때
+**의존성**: SP1 SDK (`sp1` feature), 느림 (~10분/batch)
 
 ---
 
 ### Phase 4: 오프라인 검증 테스트
 
-**목표**: 저장된 proof + VK로 오프체인 검증. 빠름 (수 초).
+**목표**: 저장된 proof.bin으로 오프체인 검증. 빠름 (수 초).
 
-**필요한 코드 변경**:
+**Dump 코드**: ✅ 완료 (`proof.bin` = bincode-serialized `BatchProof`)
 
-1. Phase 3의 `proof.bin` + `vk.bin` 수집이 선행 조건
-2. 새 테스트 파일: `crates/guest-program/tests/test_offline_verify.rs`
+**남은 작업**:
+1. Fixture 재수집 (Phase 3과 동시)
+2. 테스트 작성:
 
 ```rust
+// crates/l2/prover/tests/test_offline_verify.rs
 #[test]
-#[ignore] // SP1 SDK 필요
-fn sp1_verify_zk_dex_batch() {
-    let proof: SP1ProofWithPublicValues = bincode::deserialize(&proof_bytes).unwrap();
-    let vk: SP1VerifyingKey = bincode::deserialize(&vk_bytes).unwrap();
-    let client = ProverClient::builder().cpu().build();
-    client.verify(&proof, &vk).expect("proof verification failed");
+#[ignore] // cargo test -p ethrex-prover --ignored
+fn sp1_verify_from_fixture() {
+    let proof_bytes = std::fs::read("/path/to/fixtures/zk-dex/batch_2/proof.bin").unwrap();
+    let batch_proof: BatchProof = bincode::deserialize(&proof_bytes).unwrap();
+    // Extract SP1ProofWithPublicValues from BatchProof::ProofBytes
+    // Setup SP1 client from ELF → verify
 }
 ```
 
-**의존성**: Phase 3 완료, SP1 SDK
-**우선순위**: 중간
+**의존성**: Phase 3 fixture 수집, SP1 SDK
 
 ---
 
@@ -227,8 +230,8 @@ function test_verifyBatch_zk_dex() public {
 | 5 | CI workflow | ✅ | `pr_fixture_tests.yml` |
 | 6 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
 | **7** | **다른 앱 fixture 수집** | **❌** | **evm-l2, tokamon 배포 필요** |
-| **8** | **Phase 3: 오프라인 프루빙** | **❌** | **stdin/proof/vk 수집 + SP1 테스트** |
-| **9** | **Phase 4: 오프라인 검증** | **❌** | **Phase 3 선행** |
+| **8** | **Phase 3: 오프라인 프루빙** | **⚠️** | **dump 코드 완료, 테스트는 fixture 재수집 후** |
+| **9** | **Phase 4: 오프라인 검증** | **⚠️** | **dump 코드 완료, 테스트는 fixture 재수집 후** |
 | **10** | **Phase 5: Foundry 검증** | **❌** | **Phase 4 선행** |
 | **11** | **Tools 포트 동적화** | **❌** | **deployment-engine 개선** |
 | **12** | **GPU 감지 compose** | **❌** | **GPU 프루버 지원** |
