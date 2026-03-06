@@ -154,9 +154,9 @@ fn finalize_non_privileged_execution(
     };
 
     // === Phase 2: State mutations (with rollback on error) ===
-    // All mutations go through get_account_mut which records the original
-    // values in call_frame_backup. If any step fails, we restore the
-    // cache to undo all partial mutations.
+    // Mutations record original values in call_frame_backup via
+    // backup_account_info / backup_storage_slot. If any step fails,
+    // we restore the cache to undo all partial mutations.
     let result = apply_finalize_mutations(
         vm,
         ctx_result,
@@ -680,8 +680,25 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
             TxValidationError::InsufficientAccountFunds,
         ));
     }
-    let fee_storage = db_clone.get_account(fee_token)?.storage.clone();
-    vm.db.get_account_mut(fee_token)?.storage = fee_storage;
+    let new_storage = db_clone.get_account(fee_token)?.storage.clone();
+    let current_storage = vm.db.get_account(fee_token)?.storage.clone();
+
+    // Back up original values for changed slots so restore_cache_state can revert them
+    for (key, new_value) in &new_storage {
+        let old_value = current_storage.get(key).copied().unwrap_or_default();
+        if old_value != *new_value {
+            vm.backup_storage_slot(fee_token, *key, old_value)?;
+        }
+    }
+
+    // Apply changed slots
+    let account = vm.db.get_account_mut(fee_token)?;
+    for (key, new_value) in new_storage {
+        let old_value = current_storage.get(&key).copied().unwrap_or_default();
+        if old_value != new_value {
+            account.storage.insert(key, new_value);
+        }
+    }
 
     // update the initial state account
     let initial_state_fee_token = db_clone
