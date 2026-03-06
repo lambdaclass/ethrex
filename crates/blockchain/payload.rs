@@ -1,10 +1,11 @@
 use std::{
     cmp::{Ordering, max},
-    collections::HashMap,
     ops::Div,
     sync::Arc,
     time::{Duration, Instant},
 };
+
+use rustc_hash::FxHashMap;
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
@@ -767,7 +768,7 @@ pub struct TransactionQueue {
     // The first transaction for each account along with its tip, sorted by highest tip
     heads: Vec<HeadTransaction>,
     // The remaining txs grouped by account and sorted by nonce
-    txs: HashMap<Address, Vec<MempoolTransaction>>,
+    txs: FxHashMap<Address, Vec<MempoolTransaction>>,
     // Base Fee stored for tip calculations
     base_fee: Option<u64>,
 }
@@ -795,7 +796,7 @@ impl From<HeadTransaction> for Transaction {
 impl TransactionQueue {
     /// Creates a new TransactionQueue from a set of transactions grouped by sender and sorted by nonce
     fn new(
-        mut txs: HashMap<Address, Vec<MempoolTransaction>>,
+        mut txs: FxHashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
         let mut heads = Vec::with_capacity(100);
