@@ -17,7 +17,9 @@ use ethrex_levm::{
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
     errors::DatabaseError,
-    hooks::l2_hook::{COMMON_BRIDGE_L2_ADDRESS, FEE_TOKEN_RATIO_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS},
+    hooks::l2_hook::{
+        COMMON_BRIDGE_L2_ADDRESS, FEE_TOKEN_RATIO_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS,
+    },
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -96,13 +98,20 @@ fn eoa(balance: U256, nonce: u64) -> Account {
 }
 
 fn contract_account(code: Bytes) -> Account {
-    Account::new(U256::zero(), Code::from_bytecode(code), 0, FxHashMap::default())
+    Account::new(
+        U256::zero(),
+        Code::from_bytecode(code),
+        0,
+        FxHashMap::default(),
+    )
 }
 
 /// EVM bytecode: PUSH1 1, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN
 /// Returns a 32-byte word with value 1 (used for isFeeToken → true, and ratio → 1).
 fn return_one_bytecode() -> Bytes {
-    Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3])
+    Bytes::from(vec![
+        0x60, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3,
+    ])
 }
 
 /// EVM bytecode for the fee-token contract: stores the `amount` parameter at slot 0.
@@ -112,7 +121,6 @@ fn return_one_bytecode() -> Bytes {
 fn fee_token_bytecode() -> Bytes {
     Bytes::from(vec![0x60, 0x24, 0x35, 0x60, 0x00, 0x55, 0x00])
 }
-
 
 /// Regression test: fee-token lock must be reverted when a later validation step fails.
 ///
@@ -131,9 +139,15 @@ fn fee_token_lock_reverted_on_validation_failure() {
         // Sender: nonce=5 so tx_nonce=0 will mismatch at validation step (7)/(nonce check)
         (sender, eoa(U256::from(10_000_000_000u64), 5)),
         // Fee token registry: returns true for isFeeToken
-        (FEE_TOKEN_REGISTRY_ADDRESS, contract_account(return_one_bytecode())),
+        (
+            FEE_TOKEN_REGISTRY_ADDRESS,
+            contract_account(return_one_bytecode()),
+        ),
         // Fee token ratio: returns U256(1)
-        (FEE_TOKEN_RATIO_ADDRESS, contract_account(return_one_bytecode())),
+        (
+            FEE_TOKEN_RATIO_ADDRESS,
+            contract_account(return_one_bytecode()),
+        ),
         // Fee token contract: stores locked amount at slot 0
         (fee_token, contract_account(fee_token_bytecode())),
         // Common bridge needs to exist for simulate_common_bridge_call
@@ -193,19 +207,17 @@ fn fee_token_lock_reverted_on_validation_failure() {
 
     // Execute: should fail due to nonce mismatch (sender nonce=5, tx nonce=0)
     let result = vm.execute();
-    assert!(result.is_err(), "Expected validation failure due to nonce mismatch");
+    assert!(
+        result.is_err(),
+        "Expected validation failure due to nonce mismatch"
+    );
 
     // The fee-token contract's storage slot 0 should be zero after rollback.
     // Before the fix, the lock_fee_token mutation persists because it bypasses
     // the call-frame backup mechanism (uses db.get_account_mut directly).
     let fee_token_storage_slot_0 = db
         .get_account(fee_token)
-        .map(|acc| {
-            acc.storage
-                .get(&H256::zero())
-                .copied()
-                .unwrap_or_default()
-        })
+        .map(|acc| acc.storage.get(&H256::zero()).copied().unwrap_or_default())
         .unwrap_or_default();
 
     assert_eq!(
