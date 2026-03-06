@@ -5,8 +5,8 @@
 새로운 개발자가 새로운 앱의 fixture를 자유롭게 추가하고, 오프라인 테스트를 실행할 수 있는
 셀프 서비스 플랫폼을 만든다.
 
-현재는 zk-dex만 fixture가 있고, 테스트 코드가 "zk-dex"에 하드코딩되어 있다.
-이를 **어떤 앱이든 fixture 디렉토리만 만들면 자동으로 테스트가 돌아가는 구조**로 바꾼다.
+**완료**: 어떤 앱이든 `tests/fixtures/<app>/` 디렉토리에 JSON을 넣으면
+자동으로 테스트가 돌아가는 구조를 구축했다.
 
 ---
 
@@ -22,24 +22,23 @@
 | Committer fixture dump | `crates/l2/sequencer/l1_committer.rs:1306-1362` | DB에서 program_id 조회 |
 | Fixture JSON schema | `tests/fixture_types.rs` | `app` 필드로 앱 구분 |
 
-### Hardcoded to zk-dex (변경 필요)
+### Previously Hardcoded (✅ 수정 완료)
 
-| Component | Location | Issue |
-|-----------|----------|-------|
-| test_program_output.rs | L13 | `load_all_fixtures("zk-dex")` 하드코딩 |
-| test_commitment_match.rs | L110 | `load_all_fixtures("zk-dex")` 하드코딩 |
-| test_state_continuity.rs | L10, L43, L59 | `load_all_fixtures("zk-dex")` x3 하드코딩 |
-| Fixture data | `tests/fixtures/` | zk-dex만 존재 |
+| Component | Before | After |
+|-----------|--------|-------|
+| test_program_output.rs | `load_all_fixtures("zk-dex")` | `discover_all_apps()` 자동 탐색 |
+| test_commitment_match.rs | `load_all_fixtures("zk-dex")` | `discover_all_apps()` 자동 탐색 |
+| test_state_continuity.rs | `load_all_fixtures("zk-dex")` x3 | `discover_all_apps()` 자동 탐색 |
 
-### Missing (신규 개발 필요)
+### Previously Missing (현재 상태)
 
-| Component | Issue |
-|-----------|-------|
-| Auto-discovery tests | fixture 디렉토리 추가만으로 테스트 자동 실행 안 됨 |
-| Prover balance_diffs dump | 빈 배열로 dump됨 (ProgramOutput에서 추출 필요) |
-| 새 앱 추가 가이드 | 어디를 수정해야 하는지 문서 없음 |
-| `cargo test` 검증 | feature flag 없이 돌아가는지 미확인 |
-| CI integration | GitHub Actions에 fixture 테스트 없음 |
+| Component | Status |
+|-----------|--------|
+| Auto-discovery tests | ✅ `discover_all_apps()` 구현, 디렉토리만 추가하면 자동 실행 |
+| Prover balance_diffs dump | ⚠️ 빈 배열 (인코딩 포맷상 decode 불가, warn 처리로 완화) |
+| 새 앱 추가 가이드 | ✅ `adding-new-app-fixtures.md` 작성 |
+| `cargo test` 검증 | ✅ feature flag 없이 정상 동작 확인 |
+| CI integration | ✅ `.github/workflows/pr_fixture_tests.yml` 추가 |
 
 ---
 
@@ -201,7 +200,7 @@ Phase 3 (Prover dump)        ⚠️ 부분 완료 (decode 불가, warn 처리로
 | `crates/l2/prover/src/prover.rs` | Guest program registry + fixture dump |
 | `crates/l2/sequencer/l1_committer.rs` | Committer fixture dump |
 | `crates/guest-program/tests/fixture_types.rs` | Fixture loader (generic) |
-| `crates/guest-program/tests/test_*.rs` | Offline tests (currently zk-dex only) |
+| `crates/guest-program/tests/test_*.rs` | Offline tests (auto-discover all apps) |
 | `crates/guest-program/tests/merge-fixtures.sh` | Fixture merger |
 | `platform/server/lib/compose-generator.js` | Docker compose app profiles |
 | `platform/server/db/db.js` | Platform app database |
