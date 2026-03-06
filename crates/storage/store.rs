@@ -237,6 +237,10 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// Whether this batch comes from full sync (batch execution mode).
+    /// When true, uses `BATCH_COMMIT_THRESHOLD` (aggressive) instead of
+    /// `DB_COMMIT_THRESHOLD` to bound memory during bulk block import.
+    pub batch_mode: bool,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1362,7 +1366,7 @@ impl Store {
             .state_root;
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
-        let is_batch = update_batch.blocks.len() > 1;
+        let is_batch = update_batch.batch_mode;
 
         let UpdateBatch {
             account_updates,
