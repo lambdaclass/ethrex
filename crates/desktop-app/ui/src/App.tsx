@@ -8,10 +8,11 @@ import SettingsView from './components/SettingsView'
 import OpenL2View from './components/OpenL2View'
 import MyL2View from './components/MyL2View'
 import HomeView from './components/HomeView'
+import ProgramStoreView from './components/ProgramStoreView'
 import type { Lang } from './i18n'
 import type { NetworkMode } from './components/CreateL2Wizard'
 
-export type ViewType = 'home' | 'myl2' | 'chat' | 'nodes' | 'dashboard' | 'openl2' | 'wallet' | 'settings'
+export type ViewType = 'home' | 'myl2' | 'chat' | 'nodes' | 'dashboard' | 'openl2' | 'wallet' | 'store' | 'settings'
 export type Theme = 'light' | 'dark'
 
 interface AppContextType {
@@ -68,6 +69,7 @@ function App() {
       case 'dashboard': return <DashboardView />
       case 'openl2': return <OpenL2View />
       case 'wallet': return <WalletView />
+      case 'store': return <ProgramStoreView />
       case 'settings': return <SettingsView />
     }
   }
