@@ -1,0 +1,6 @@
+node_modules/
+frontend/dist/
+contracts/out/
+contracts/deps/
+backend/node_modules/
+frontend/node_modules/

@@ -631,6 +631,12 @@ impl Blockchain {
                 Err(e) => {
                     warn!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                    // Frame transactions that fail are deterministic failures
+                    // (VERIFY frame signature is bound to the tx), so remove
+                    // them from the mempool to avoid retrying every block.
+                    if head_tx.tx_type() == TxType::Frame {
+                        self.remove_transaction_from_pool(&tx_hash)?;
+                    }
                     txs.pop();
                     continue;
                 }

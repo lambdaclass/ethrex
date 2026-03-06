@@ -606,6 +606,13 @@ impl<'a> VM<'a> {
         // Keep: gas limit checks, fee validation, nonce mismatch check
         let sender = frame_tx.sender;
 
+        // Validate frame count: must have at least 1 and at most 1000 frames
+        if frame_tx.frames.is_empty() || frame_tx.frames.len() > 1000 {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransaction,
+            ));
+        }
+
         // Check nonce matches
         let sender_info = self.db.get_account(sender)?.info.clone();
         if sender_info.nonce != frame_tx.nonce {
@@ -652,7 +659,9 @@ impl<'a> VM<'a> {
         let entry_point = Address::from_low_u64_be(0xaa);
 
         let mut all_logs: Vec<Log> = Vec::new();
-        let mut total_gas_used: u64 = 0;
+        let sum_frame_gas_limits: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
+        let intrinsic_gas = frame_tx.total_gas_limit().saturating_sub(sum_frame_gas_limits);
+        let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
 
         // Execute frames sequentially
@@ -806,8 +815,9 @@ impl<'a> VM<'a> {
 
         // Gas refunds: refund unused gas to payer
         let effective_gas_price = self.env.gas_price;
-        let total_gas_limit = frame_tx.total_gas_limit();
-        let gas_refund = total_gas_limit.saturating_sub(total_gas_used);
+        // Only refund unused frame gas — intrinsic gas is non-refundable
+        let frame_gas_used = total_gas_used.saturating_sub(intrinsic_gas);
+        let gas_refund = sum_frame_gas_limits.saturating_sub(frame_gas_used);
         let refund_amount = effective_gas_price
             .checked_mul(U256::from(gas_refund))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
