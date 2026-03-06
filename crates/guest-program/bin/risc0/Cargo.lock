@@ -1249,6 +1249,7 @@ dependencies = [
  "sha3",
  "strum",
  "substrate-bn",
+ "subtle",
  "thiserror",
  "walkdir",
 ]
