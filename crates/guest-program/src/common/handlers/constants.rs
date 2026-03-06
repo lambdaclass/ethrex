@@ -58,32 +58,7 @@ pub static WITHDRAWAL_INITIATED_TOPIC: LazyLock<H256> =
 pub static L1MESSAGE_TOPIC: LazyLock<H256> =
     LazyLock::new(|| H256::from(keccak_hash(b"L1Message(address,bytes32,uint256)")));
 
-// ── Gas constants ─────────────────────────────────────────────────
-
-/// Fixed gas cost for a simple ETH transfer (no calldata).
-pub const ETH_TRANSFER_GAS: u64 = 21_000;
-
-/// Fixed gas cost for a withdrawal via CommonBridgeL2.
-pub const WITHDRAWAL_GAS: u64 = 95_002;
-
-/// Fixed gas cost for a system contract call.
-/// TODO: Measure actual EVM gas per system contract.
-pub const SYSTEM_CALL_GAS: u64 = 50_000;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// WITHDRAWAL_GAS must match actual EVM gas for CommonBridgeL2.withdraw().
-    /// If this value changes, the circuit/prover/verifier all need rebuilding.
-    /// See: platform/docs/sp1-00e-debug-report.md
-    #[test]
-    fn withdrawal_gas_matches_evm() {
-        assert_eq!(WITHDRAWAL_GAS, 95_002, "WITHDRAWAL_GAS changed — will cause 00e proof verification failure");
-    }
-
-    #[test]
-    fn eth_transfer_gas_is_standard() {
-        assert_eq!(ETH_TRANSFER_GAS, 21_000);
-    }
-}
+// Note: Gas constants (WITHDRAWAL_GAS, ETH_TRANSFER_GAS, SYSTEM_CALL_GAS)
+// were removed. The guest program now uses block header gas_used instead of
+// fixed constants, because actual EVM gas varies with storage state (cold/warm
+// access patterns). See: platform/docs/fixture-data-collection.md (2026-03-06).
