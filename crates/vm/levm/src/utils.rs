@@ -79,6 +79,8 @@ pub fn restore_cache_state(
     for (address, account) in callframe_backup.original_accounts_info {
         if let Some(current_account) = db.current_accounts_state.get_mut(&address) {
             current_account.info = account.info;
+            current_account.status = account.status;
+            current_account.has_storage = account.has_storage;
         }
     }
 
