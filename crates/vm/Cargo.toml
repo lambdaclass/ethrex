@@ -22,6 +22,7 @@ serde.workspace = true
 rkyv.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
+dashmap.workspace = true
 
 bincode = "1"
 dyn-clone = "1.0"

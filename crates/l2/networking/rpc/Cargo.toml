@@ -32,6 +32,8 @@ reqwest.workspace = true
 ethereum-types.workspace = true
 hex.workspace = true
 rustc-hex.workspace = true
+dashmap.workspace = true
+rustc-hash.workspace = true
 url.workspace = true
 
 [lib]

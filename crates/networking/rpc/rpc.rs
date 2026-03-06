@@ -57,6 +57,7 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use bytes::Bytes;
+use dashmap::DashMap;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
@@ -67,15 +68,10 @@ use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
 use ethrex_storage::Store;
+use rustc_hash::FxBuildHasher;
 use serde::Deserialize;
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    future::IntoFuture,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 use tokio::sync::{
     Mutex as TokioMutex,
@@ -473,7 +469,7 @@ pub async fn start_api(
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
-    let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let active_filters = Arc::new(DashMap::with_hasher(FxBuildHasher));
     let block_worker_channel = start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         storage,

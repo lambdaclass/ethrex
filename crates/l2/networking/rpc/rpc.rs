@@ -11,6 +11,7 @@ use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
 use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
+use dashmap::DashMap;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
 use ethrex_p2p::peer_handler::PeerHandler;
@@ -25,14 +26,9 @@ use ethrex_rpc::{
     utils::{RpcRequest, RpcRequestId},
 };
 use ethrex_storage::Store;
+use rustc_hash::FxBuildHasher;
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    future::IntoFuture,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
@@ -90,7 +86,7 @@ pub async fn start_api(
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
-    let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let active_filters = Arc::new(DashMap::with_hasher(FxBuildHasher));
     let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         l1_ctx: ethrex_rpc::RpcApiContext {

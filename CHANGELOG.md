@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-03-03
+
+- Replace RwLock/Mutex<HashMap> with DashMap for concurrent caches [#6297](https://github.com/lambdaclass/ethrex/pull/6297)
+
 ### 2026-02-27
 
 - Refactor LEVM opcode handlers to avoid expensive matches [#4791](https://github.com/lambdaclass/ethrex/pull/4791)

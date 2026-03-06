@@ -2,14 +2,14 @@
 // - Manually testing the behaviour deploying contracts on the Sepolia test network.
 // - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
+use dashmap::DashMap;
 use ethrex_common::types::BlockNumber;
 use ethrex_storage::Store;
+use rustc_hash::FxBuildHasher;
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
-use tracing::error;
 
 use crate::rpc::RpcHandler;
 use crate::{
@@ -31,19 +31,10 @@ pub struct NewFilterRequest {
 /// - filter_duration: represents how many *seconds* filter can last,
 ///   if any filter is older than this, it will be removed.
 pub fn clean_outdated_filters(filters: ActiveFilters, filter_duration: Duration) {
-    let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
-        error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
-        **poisoned_guard.get_mut() = HashMap::new();
-        filters.clear_poison();
-        poisoned_guard.into_inner()
-    });
-
-    // Keep only filters that have not expired.
-    active_filters_guard
-        .retain(|_, (filter_timestamp, _)| filter_timestamp.elapsed() <= filter_duration);
+    filters.retain(|_, (filter_timestamp, _)| filter_timestamp.elapsed() <= filter_duration);
 }
 /// Maps IDs to active pollable filters and their timestamps.
-pub type ActiveFilters = Arc<Mutex<HashMap<u64, (Instant, PollableFilter)>>>;
+pub type ActiveFilters = Arc<DashMap<u64, (Instant, PollableFilter), FxBuildHasher>>;
 
 #[derive(Debug, Clone)]
 pub struct PollableFilter {
@@ -89,13 +80,7 @@ impl NewFilterRequest {
         let last_block_number = storage.get_latest_block_number().await?;
         let id: u64 = rand::random();
         let timestamp = Instant::now();
-        let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
-            error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
-            **poisoned_guard.get_mut() = HashMap::new();
-            filters.clear_poison();
-            poisoned_guard.into_inner()
-        });
-        active_filters_guard.insert(
+        filters.insert(
             id,
             (
                 timestamp,
@@ -142,13 +127,7 @@ impl DeleteFilterRequest {
         _storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
-            error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
-            **poisoned_guard.get_mut() = HashMap::new();
-            filters.clear_poison();
-            poisoned_guard.into_inner()
-        });
-        match active_filters_guard.remove(&self.id) {
+        match filters.remove(&self.id) {
             Some(_) => Ok(true.into()),
             None => Ok(false.into()),
         }
@@ -187,16 +166,13 @@ impl FilterChangesRequest {
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let latest_block_num = storage.get_latest_block_number().await?;
-        // Box needed to keep the future Sync
-        // https://github.com/rust-lang/rust/issues/128095
-        let mut active_filters_guard =
-            Box::new(filters.lock().unwrap_or_else(|mut poisoned_guard| {
-                error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
-                **poisoned_guard.get_mut() = HashMap::new();
-                filters.clear_poison();
-                poisoned_guard.into_inner()
-            }));
-        if let Some((timestamp, filter)) = active_filters_guard.get_mut(&self.id) {
+        let filter = {
+            let Some(mut entry) = filters.get_mut(&self.id) else {
+                return Err(RpcErr::BadParams(
+                    "No matching filter for given id".to_string(),
+                ));
+            };
+            let (timestamp, filter) = entry.value_mut();
             // We'll only get changes for a filter that either has a block
             // range for upcoming blocks, or for the 'latest' tag.
             let valid_block_range = match filter.filter_data.to_block {
@@ -204,39 +180,27 @@ impl FilterChangesRequest {
                 BlockIdentifier::Number(block_num) if block_num >= latest_block_num => true,
                 _ => false,
             };
-            // This filter has a valid block range, so here's what we'll do:
-            // - Update the filter's timestamp and block number from the last poll.
-            // - Do the query to fetch logs in range last_block_number..=to_block for
-            //   this filter.
-            if valid_block_range {
-                // Since the filter was polled, updated its timestamp, so
-                // it does not expire.
-                *timestamp = Instant::now();
-                // Update this filter so the current query
-                // starts from the last polled block.
-                filter.filter_data.from_block = BlockIdentifier::Number(filter.last_block_number);
-                filter.last_block_number = latest_block_num;
-                let mut filter = filter.clone();
-                filter.filter_data.to_block = BlockIdentifier::Number(latest_block_num);
-                // Drop the lock early to process this filter's query
-                // and not keep the lock more than we should.
-                drop(active_filters_guard);
-                let logs = fetch_logs_with_filter(&filter.filter_data, storage).await?;
-                serde_json::to_value(logs).map_err(|error| {
+            if !valid_block_range {
+                return serde_json::to_value(Vec::<u8>::new()).map_err(|error| {
                     tracing::error!("Log filtering request failed with: {error}");
                     RpcErr::Internal("Failed to filter logs".to_string())
-                })
-            } else {
-                serde_json::to_value(Vec::<u8>::new()).map_err(|error| {
-                    tracing::error!("Log filtering request failed with: {error}");
-                    RpcErr::Internal("Failed to filter logs".to_string())
-                })
+                });
             }
-        } else {
-            Err(RpcErr::BadParams(
-                "No matching filter for given id".to_string(),
-            ))
-        }
+            // Since the filter was polled, update its timestamp so it does not expire.
+            *timestamp = Instant::now();
+            // Update this filter so the current query starts from the last polled block.
+            filter.filter_data.from_block = BlockIdentifier::Number(filter.last_block_number);
+            filter.last_block_number = latest_block_num;
+            let mut cloned_filter = filter.clone();
+            cloned_filter.filter_data.to_block = BlockIdentifier::Number(latest_block_num);
+            cloned_filter
+            // DashMap RefMut dropped here when the block ends
+        };
+        let logs = fetch_logs_with_filter(&filter.filter_data, storage).await?;
+        serde_json::to_value(logs).map_err(|error| {
+            tracing::error!("Log filtering request failed with: {error}");
+            RpcErr::Internal("Failed to filter logs".to_string())
+        })
     }
     pub async fn stateful_call(
         req: &RpcRequest,
@@ -250,9 +214,10 @@ impl FilterChangesRequest {
 
 #[cfg(test)]
 mod tests {
+    use dashmap::DashMap;
+    use rustc_hash::FxBuildHasher;
     use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex},
+        sync::Arc,
         time::{Duration, Instant},
     };
 
@@ -291,11 +256,11 @@ mod tests {
             ]
                 ,"id":1
         });
-        let filters = Arc::new(Mutex::new(HashMap::new()));
+        let filters: ActiveFilters = Arc::new(DashMap::with_hasher(FxBuildHasher));
         let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
-        let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
-        let (_, filter) = filters.clone().get(&id).unwrap().clone();
+        let entry = filters.get(&id).expect("filter should exist");
+        let (_, filter) = entry.value();
         assert!(matches!(
             filter.filter_data.from_block,
             BlockIdentifier::Number(1)
@@ -328,11 +293,11 @@ mod tests {
             ]
                 ,"id":1
         });
-        let filters = Arc::new(Mutex::new(HashMap::new()));
+        let filters: ActiveFilters = Arc::new(DashMap::with_hasher(FxBuildHasher));
         let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
-        let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
-        let (_, filter) = filters.clone().get(&id).unwrap().clone();
+        let entry = filters.get(&id).expect("filter should exist");
+        let (_, filter) = entry.value();
         assert!(matches!(
             filter.filter_data.from_block,
             BlockIdentifier::Number(1)
@@ -362,11 +327,11 @@ mod tests {
             ]
                 ,"id":1
         });
-        let filters = Arc::new(Mutex::new(HashMap::new()));
+        let filters: ActiveFilters = Arc::new(DashMap::with_hasher(FxBuildHasher));
         let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
-        let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
-        let (_, filter) = filters.clone().get(&id).unwrap().clone();
+        let entry = filters.get(&id).expect("filter should exist");
+        let (_, filter) = entry.value();
         assert!(matches!(
             filter.filter_data.from_block,
             BlockIdentifier::Number(1)
@@ -376,7 +341,7 @@ mod tests {
             BlockIdentifier::Number(255)
         ));
         assert!(matches!(
-            filter.filter_data.address_filters.unwrap(),
+            filter.filter_data.address_filters.clone().unwrap(),
             AddressFilter::Many(_)
         ));
         assert!(matches!(&filter.filter_data.topics[..], []));
@@ -421,7 +386,7 @@ mod tests {
             ]
                 ,"id":1
         });
-        let filters = Arc::new(Mutex::new(HashMap::new()));
+        let filters: ActiveFilters = Arc::new(DashMap::with_hasher(FxBuildHasher));
         run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
     }
 
@@ -468,7 +433,8 @@ mod tests {
                 ,"id":1
         }))
         .expect("Json for test is not a valid request");
-        let filter = (
+        let active_filters: ActiveFilters = Arc::new(DashMap::with_hasher(FxBuildHasher));
+        active_filters.insert(
             0xFF,
             (
                 Instant::now(),
@@ -483,7 +449,6 @@ mod tests {
                 },
             ),
         );
-        let active_filters = Arc::new(Mutex::new(HashMap::from([filter])));
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
@@ -496,14 +461,14 @@ mod tests {
             .unwrap();
 
         assert!(
-            active_filters.clone().lock().unwrap().is_empty(),
+            active_filters.is_empty(),
             "Expected filter map to be empty after request"
         );
     }
 
     #[tokio::test]
     async fn removing_non_existing_filter_returns_false() {
-        let active_filters = Arc::new(Mutex::new(HashMap::new()));
+        let active_filters: ActiveFilters = Arc::new(DashMap::with_hasher(FxBuildHasher));
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");

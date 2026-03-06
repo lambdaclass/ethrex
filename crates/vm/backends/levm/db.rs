@@ -1,20 +1,21 @@
+use dashmap::DashMap;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::types::{AccountState, Code, CodeMetadata};
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
+use rustc_hash::FxBuildHasher;
 
 use crate::VmDatabase;
 use crate::db::DynVmDatabase;
 use ethrex_levm::errors::DatabaseError;
-use std::collections::HashMap;
 use std::result::Result;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct DatabaseLogger {
-    pub block_hashes_accessed: Arc<Mutex<HashMap<u64, CoreH256>>>,
-    pub state_accessed: Arc<Mutex<HashMap<CoreAddress, Vec<CoreH256>>>>,
+    pub block_hashes_accessed: Arc<DashMap<u64, CoreH256, FxBuildHasher>>,
+    pub state_accessed: Arc<DashMap<CoreAddress, Vec<CoreH256>, FxBuildHasher>>,
     pub code_accessed: Arc<Mutex<Vec<CoreH256>>>,
     pub store: Arc<dyn LevmDatabase>,
 }
@@ -22,8 +23,8 @@ pub struct DatabaseLogger {
 impl DatabaseLogger {
     pub fn new(store: Arc<dyn LevmDatabase>) -> Self {
         Self {
-            block_hashes_accessed: Arc::new(Mutex::new(HashMap::new())),
-            state_accessed: Arc::new(Mutex::new(HashMap::new())),
+            block_hashes_accessed: Arc::new(DashMap::with_hasher(FxBuildHasher)),
+            state_accessed: Arc::new(DashMap::with_hasher(FxBuildHasher)),
             code_accessed: Arc::new(Mutex::new(vec![])),
             store,
         }
@@ -32,11 +33,7 @@ impl DatabaseLogger {
 
 impl LevmDatabase for DatabaseLogger {
     fn get_account_state(&self, address: CoreAddress) -> Result<AccountState, DatabaseError> {
-        self.state_accessed
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .entry(address)
-            .or_default();
+        self.state_accessed.entry(address).or_default();
         let state = self.store.as_ref().get_account_state(address)?;
         Ok(state)
     }
@@ -47,8 +44,6 @@ impl LevmDatabase for DatabaseLogger {
         key: CoreH256,
     ) -> Result<CoreU256, DatabaseError> {
         self.state_accessed
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .and_modify(|keys| keys.push(key))
             .or_insert(vec![key]);
@@ -57,10 +52,7 @@ impl LevmDatabase for DatabaseLogger {
 
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
         let block_hash = self.store.as_ref().get_block_hash(block_number)?;
-        self.block_hashes_accessed
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .insert(block_number, block_hash);
+        self.block_hashes_accessed.insert(block_number, block_hash);
         Ok(block_hash)
     }
 

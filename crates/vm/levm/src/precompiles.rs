@@ -6,6 +6,7 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
+use dashmap::DashMap;
 use ethrex_common::H160;
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
@@ -29,11 +30,10 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::FxBuildHasher;
 use sha2::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
-use std::sync::RwLock;
 
 use crate::constants::{P256_A, P256_B, P256_N};
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
@@ -291,13 +291,13 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
 
 /// Per-block cache for precompile results shared between warmer and executor.
 pub struct PrecompileCache {
-    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+    cache: DashMap<(Address, Bytes), (Bytes, u64), FxBuildHasher>,
 }
 
 impl Default for PrecompileCache {
     fn default() -> Self {
         Self {
-            cache: RwLock::new(FxHashMap::default()),
+            cache: DashMap::with_hasher(FxBuildHasher),
         }
     }
 }
@@ -308,21 +308,13 @@ impl PrecompileCache {
     }
 
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
-        // Graceful degradation: if the lock is poisoned (a thread panicked while
-        // holding it), skip the cache rather than propagating the panic. The cache
-        // is a pure optimization — missing it only costs a recomputation.
         self.cache
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&(*address, calldata.clone()))
-            .cloned()
+            .map(|r| r.clone())
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        self.cache
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((address, calldata), (output, gas_cost));
+        self.cache.insert((address, calldata), (output, gas_cost));
     }
 }
 
