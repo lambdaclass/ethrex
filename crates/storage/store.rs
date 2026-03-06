@@ -1043,13 +1043,51 @@ impl Store {
             }
 
             for number in (head_number + 1)..=(latest) {
-                txn.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
+                // Purge canonical TX index entries for de-canonicalized blocks (reorg cleanup).
+                let old_hash_key = number.to_le_bytes();
+                if let Some(old_block_hash_bytes) = {
+                    let read_txn = db.begin_read()?;
+                    read_txn.get(CANONICAL_BLOCK_HASHES, &old_hash_key)?
+                } {
+                    let old_block_hash = BlockHash::decode(&old_block_hash_bytes)?;
+                    let body_key = old_block_hash.encode_to_vec();
+                    if let Some(body_bytes) = {
+                        let read_txn = db.begin_read()?;
+                        read_txn.get(BODIES, &body_key)?
+                    } {
+                        let body: BlockBody = BlockBodyRLP::from_bytes(body_bytes)
+                            .to()
+                            .map_err(StoreError::from)?;
+                        for transaction in body.transactions.iter() {
+                            let tx_hash = transaction.hash();
+                            txn.delete(CANONICAL_TX_INDEX, tx_hash.as_bytes())?;
+                        }
+                    }
+                }
+                txn.delete(CANONICAL_BLOCK_HASHES, old_hash_key.as_slice())?;
             }
 
             // Make head canonical
             let head_key = head_number.to_le_bytes();
             let head_value = head_hash.encode_to_vec();
             txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
+
+            // Index head block transactions (head may not be in new_canonical_blocks)
+            let head_hash_key = head_hash.encode_to_vec();
+            if let Some(body_bytes) = {
+                let read_txn = db.begin_read()?;
+                read_txn.get(BODIES, &head_hash_key)?
+            } {
+                let body: BlockBody = BlockBodyRLP::from_bytes(body_bytes)
+                    .to()
+                    .map_err(StoreError::from)?;
+                for (index, transaction) in body.transactions.iter().enumerate() {
+                    let tx_hash = transaction.hash();
+                    let location_value =
+                        (head_number, head_hash, index as u64).encode_to_vec();
+                    txn.put(CANONICAL_TX_INDEX, tx_hash.as_bytes(), &location_value)?;
+                }
+            }
 
             // Update chain data
             let latest_key = chain_data_key(ChainDataIndex::LatestBlockNumber);
