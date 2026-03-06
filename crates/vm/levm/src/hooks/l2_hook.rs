@@ -492,21 +492,18 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
     // NOT CHECKED: the blob price does not matter, fee token transactions do not support blobs
 
-    // (3) INSUFFICIENT_ACCOUNT_FUNDS
-    deduct_caller_fee_token(vm, gaslimit_price_product.saturating_mul(fee_token_ratio))?;
-
-    // (4) INSUFFICIENT_MAX_FEE_PER_GAS
+    // (3) INSUFFICIENT_MAX_FEE_PER_GAS
     default_hook::validate_sufficient_max_fee_per_gas(vm)?;
 
-    // (5) INITCODE_SIZE_EXCEEDED
+    // (4) INITCODE_SIZE_EXCEEDED
     if vm.is_create()? {
         default_hook::validate_init_code_size(vm)?;
     }
 
-    // (6) INTRINSIC_GAS_TOO_LOW
+    // (5) INTRINSIC_GAS_TOO_LOW
     vm.add_intrinsic_gas()?;
 
-    // (7) NONCE_IS_MAX
+    // (6) NONCE_IS_MAX
     vm.increment_account_nonce(sender_address)
         .map_err(|_| TxValidationError::NonceIsMax)?;
 
@@ -519,7 +516,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
         .into());
     }
 
-    // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
+    // (7) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
     if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
         vm.env.tx_max_priority_fee_per_gas,
         vm.env.tx_max_fee_per_gas,
@@ -532,11 +529,11 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
         .into());
     }
 
-    // (9) SENDER_NOT_EOA
+    // (8) SENDER_NOT_EOA
     let code = vm.db.get_code(sender_info.code_hash)?;
     default_hook::validate_sender(sender_address, &code.bytecode)?;
 
-    // (10) GAS_ALLOWANCE_EXCEEDED
+    // (9) GAS_ALLOWANCE_EXCEEDED
     default_hook::validate_gas_allowance(vm)?;
 
     // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
@@ -544,6 +541,13 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
 
     // Transaction is type 4 if authorization_list is Some
     // NOT CHECKED: fee token transactions are not type 4
+
+    // (10) INSUFFICIENT_ACCOUNT_FUNDS
+    // Deduct fee-token fees AFTER all fallible validations above. The fee-token lock
+    // mutates contract storage via db.get_account_mut() which bypasses the call-frame
+    // backup mechanism, so it cannot be reverted by restore_cache_state(). Moving it
+    // here ensures fees are only locked once the tx is certain to proceed.
+    deduct_caller_fee_token(vm, gaslimit_price_product.saturating_mul(fee_token_ratio))?;
 
     default_hook::transfer_value(vm)?;
 
