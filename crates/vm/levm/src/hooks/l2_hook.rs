@@ -138,9 +138,10 @@ fn finalize_non_privileged_execution(
         total_gas_pre_refund = vm.current_call_frame.gas_limit;
     }
 
-    default_hook::delete_self_destruct_accounts(vm)?;
-
-    let fee_token_ratio = if let Some(fee_token) = vm.env.fee_token {
+    // === Phase 1: Fallible computations (no state mutations) ===
+    // Perform contract calls and conversions that can fail BEFORE any
+    // mutations, so an error here leaves the DB state unchanged.
+    let fee_token_ratio: u64 = if let Some(fee_token) = vm.env.fee_token {
         get_fee_token_ratio(vm, fee_token)?
             .try_into()
             .map_err(|_| {
@@ -151,6 +152,48 @@ fn finalize_non_privileged_execution(
     } else {
         1u64
     };
+
+    // === Phase 2: State mutations (with rollback on error) ===
+    // All mutations go through get_account_mut which records the original
+    // values in call_frame_backup. If any step fails, we restore the
+    // cache to undo all partial mutations.
+    let result = apply_finalize_mutations(
+        vm,
+        ctx_result,
+        fee_config,
+        use_fee_token,
+        fee_token_ratio,
+        l1_gas,
+        gas_refunded,
+        execution_gas,
+        actual_gas_used,
+        total_gas_pre_refund,
+    );
+
+    if let Err(e) = result {
+        vm.restore_cache_state()?;
+        return Err(e);
+    }
+
+    Ok(())
+}
+
+/// Applies all finalize mutations atomically: if any step fails, the caller
+/// reverts the DB cache using `restore_cache_state`.
+#[allow(clippy::too_many_arguments)]
+fn apply_finalize_mutations(
+    vm: &mut VM<'_>,
+    ctx_result: &mut ContextResult,
+    fee_config: &FeeConfig,
+    use_fee_token: bool,
+    fee_token_ratio: u64,
+    l1_gas: u64,
+    gas_refunded: u64,
+    execution_gas: u64,
+    actual_gas_used: u64,
+    total_gas_pre_refund: u64,
+) -> Result<(), crate::errors::VMError> {
+    default_hook::delete_self_destruct_accounts(vm)?;
 
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
         pay_to_l1_fee_vault(
