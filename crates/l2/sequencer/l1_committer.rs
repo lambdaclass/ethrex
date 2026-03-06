@@ -1631,15 +1631,14 @@ pub async fn regenerate_state(
     blockchain: &Arc<Blockchain>,
     target_block_number: Option<u64>,
 ) -> Result<(), CommitterError> {
-    let target_block_number = if let Some(target_block_number) = target_block_number {
-        target_block_number - 1
-    } else {
-        store.get_latest_block_number().await?
+    let target_block_number = match target_block_number {
+        Some(n) => n,
+        None => store.get_latest_block_number().await?,
     };
-    let last_state_number = find_last_known_state_root(store, target_block_number).await?;
     if target_block_number == 0 {
         return Ok(());
     }
+    let last_state_number = find_last_known_state_root(store, target_block_number).await?;
     if last_state_number == target_block_number {
         debug!("State is already up to date");
         return Ok(());
