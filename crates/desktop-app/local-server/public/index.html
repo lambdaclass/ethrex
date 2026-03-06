@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tokamak L2 Deployment Manager</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="header-left">
+        <h1>Tokamak L2</h1>
+        <span class="subtitle">Deployment Manager</span>
+      </div>
+      <div class="header-right">
+        <span id="server-status" class="status-badge">connecting...</span>
+      </div>
+    </header>
+
+    <nav>
+      <button class="nav-btn active" data-view="deployments">Deployments</button>
+      <button class="nav-btn" data-view="hosts">Remote Hosts</button>
+      <button class="nav-btn" data-view="create">+ New Deployment</button>
+    </nav>
+
+    <!-- Deployments List -->
+    <section id="view-deployments" class="view active">
+      <div id="deployments-list" class="card-grid">
+        <p class="empty-state">Loading...</p>
+      </div>
+    </section>
+
+    <!-- Create Deployment -->
+    <section id="view-create" class="view">
+      <div class="form-card">
+        <h2>New L2 Deployment</h2>
+        <form id="create-form">
+          <label>Name
+            <input type="text" name="name" required placeholder="my-l2-chain">
+          </label>
+          <label>Program
+            <select name="programSlug">
+              <option value="evm-l2">EVM L2 (ethrex)</option>
+            </select>
+          </label>
+          <label>Chain ID
+            <input type="number" name="chainId" placeholder="1729 (auto)">
+          </label>
+          <label>Deploy Directory (optional)
+            <input type="text" name="deployDir" placeholder="~/.tokamak-appchain/deployments/...">
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Create</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Deployment Detail -->
+    <section id="view-detail" class="view">
+      <div class="detail-header">
+        <button class="btn-back" onclick="showView('deployments')">&larr; Back</button>
+        <h2 id="detail-name"></h2>
+        <span id="detail-phase" class="phase-badge"></span>
+      </div>
+      <div class="detail-grid">
+        <div class="detail-info card">
+          <h3>Info</h3>
+          <dl id="detail-info-dl"></dl>
+          <div class="detail-actions" id="detail-actions"></div>
+        </div>
+        <div class="detail-logs card">
+          <h3>Logs <button class="btn-small" id="clear-logs" onclick="clearLogs()">Clear</button></h3>
+          <div id="log-container" class="log-container"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Remote Hosts -->
+    <section id="view-hosts" class="view">
+      <div class="form-card">
+        <h2>Remote Hosts</h2>
+        <form id="host-form">
+          <div class="form-row">
+            <label>Name <input type="text" name="name" required placeholder="my-server"></label>
+            <label>Hostname <input type="text" name="hostname" required placeholder="192.168.1.100"></label>
+          </div>
+          <div class="form-row">
+            <label>Username <input type="text" name="username" required placeholder="ubuntu"></label>
+            <label>Port <input type="number" name="port" value="22"></label>
+          </div>
+          <label>Private Key (PEM)
+            <textarea name="privateKey" rows="4" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Add Host</button>
+          </div>
+        </form>
+      </div>
+      <div id="hosts-list" class="card-grid"></div>
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

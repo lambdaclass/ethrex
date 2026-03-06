@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 
 const deploymentRoutes = require("./routes/deployments");
 const hostRoutes = require("./routes/hosts");
@@ -21,7 +22,10 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Routes
+// Static web UI
+app.use(express.static(path.join(__dirname, "public")));
+
+// API Routes
 app.use("/api/deployments", deploymentRoutes);
 app.use("/api/hosts", hostRoutes);
 app.use("/api/fs", fsRoutes);
