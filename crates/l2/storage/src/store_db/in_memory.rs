@@ -41,6 +41,8 @@ struct StoreInner {
     blobs: HashMap<u64, Vec<Blob>>,
     /// latest sent batch proof
     latest_sent_batch_proof: u64,
+    /// (batch_number, timestamp_secs) for latest proof sent to Aligned gateway
+    latest_sent_to_aligned: (u64, u64),
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
     /// Map of signatures from the sequencer by block hashes
@@ -254,6 +256,19 @@ impl StoreEngineRollup for Store {
 
     async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.inner()?.latest_sent_batch_proof = batch_number;
+        Ok(())
+    }
+
+    async fn get_latest_sent_to_aligned(&self) -> Result<(u64, u64), RollupStoreError> {
+        Ok(self.inner()?.latest_sent_to_aligned)
+    }
+
+    async fn set_latest_sent_to_aligned(
+        &self,
+        batch_number: u64,
+        timestamp: u64,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.latest_sent_to_aligned = (batch_number, timestamp);
         Ok(())
     }
 
