@@ -14,7 +14,7 @@
 #[cfg(feature = "sp1")]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod sp1_offline_proving {
-    use sp1_sdk::{CpuProver, Prover, SP1ProofMode, SP1Stdin};
+    use sp1_sdk::{CpuProver, Prover, SP1ProofMode, SP1Stdin, SP1ProofWithPublicValues};
     use std::path::{Path, PathBuf};
 
     fn fixtures_dir() -> PathBuf {
@@ -88,9 +88,9 @@ mod sp1_offline_proving {
             let mut stdin = SP1Stdin::new();
             stdin.write_slice(&stdin_bytes);
 
-            let proof = client
-                .prove(&pk, &stdin, SP1ProofMode::Compressed)
-                .unwrap_or_else(|e| panic!("[{label}] proving failed: {e}"));
+            let proof: SP1ProofWithPublicValues =
+                <CpuProver as Prover<_>>::prove(&client, &pk, &stdin, SP1ProofMode::Compressed)
+                    .unwrap_or_else(|e| panic!("[{label}] proving failed: {e}"));
 
             // Verify the proof
             client
