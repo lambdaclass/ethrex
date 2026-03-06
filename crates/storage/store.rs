@@ -155,7 +155,8 @@ pub struct Store {
     /// Storage backend (InMemory or RocksDB).
     backend: Arc<dyn StorageBackend>,
     /// Chain configuration (fork schedule, chain ID, etc.).
-    chain_config: ChainConfig,
+    /// Wrapped in `Arc` to avoid copying 624 bytes on each `Store::clone`.
+    chain_config: Arc<ChainConfig>,
     /// Cache for trie nodes from recent blocks.
     trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     /// Channel for controlling the FlatKeyValue generator background task.
@@ -908,7 +909,7 @@ impl Store {
     /// Stores the chain configuration values, should only be called once after reading the genesis file
     /// Ignores previously stored values if present
     pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        self.chain_config = *chain_config;
+        self.chain_config = Arc::new(*chain_config);
         let key = chain_data_key(ChainDataIndex::ChainConfig);
         let value = serde_json::to_string(chain_config)
             .map_err(|_| StoreError::Custom("Failed to serialize chain config".to_string()))?
@@ -1475,7 +1476,7 @@ impl Store {
         let mut store = Self {
             db_path,
             backend,
-            chain_config: Default::default(),
+            chain_config: Arc::new(ChainConfig::default()),
             latest_block_header: Default::default(),
             trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
             flatkeyvalue_control_tx: fkv_tx,
@@ -2152,7 +2153,7 @@ impl Store {
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
-        self.chain_config
+        (*self.chain_config).clone()
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
