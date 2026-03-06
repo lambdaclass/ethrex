@@ -2245,26 +2245,23 @@ mod serde_impl {
         }
     }
 
-    fn deserialize_input_field(
-        map: &mut std::collections::HashMap<String, Value>,
-    ) -> Result<Bytes, serde_json::Error> {
+    fn deserialize_input_field<E>(map: &mut std::collections::HashMap<String, Value>) -> Result<Bytes, E>
+    where
+        E: serde::de::Error,
+    {
         let data_str: String = serde_json::from_value(
             map.remove("input")
-                .ok_or_else(|| serde::de::Error::missing_field("input"))?,
+                .ok_or_else(|| E::missing_field("input"))?,
         )
-        .map_err(serde::de::Error::custom)?;
-        if let Some(stripped) = data_str.strip_prefix("0x") {
-            match hex::decode(stripped) {
-                Ok(decoded_bytes) => Ok(Bytes::from(decoded_bytes)),
-                Err(_) => Err(serde::de::Error::custom(
-                    "Invalid hex format in 'input' field",
-                ))?,
-            }
-        } else {
-            Err(serde::de::Error::custom(
-                "'input' field must start with '0x'",
-            ))?
+        .map_err(E::custom)?;
+
+        if !data_str.starts_with("0x") {
+            return Err(E::custom("'input' field must start with '0x'"));
         }
+
+        let deser = serde::de::value::StringDeserializer::<E>::new(data_str);
+        crate::serde_utils::bytes::deserialize(deser)
+            .map_err(|e| E::custom(e))
     }
 
     fn deserialize_field<'de, T, D>(
@@ -2295,7 +2292,7 @@ mod serde_impl {
                 gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
-                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                data: deserialize_input_field(&mut map)?,
                 v: deserialize_field::<U256, D>(&mut map, "v")?,
                 r: deserialize_field::<U256, D>(&mut map, "r")?,
                 s: deserialize_field::<U256, D>(&mut map, "s")?,
@@ -2318,7 +2315,7 @@ mod serde_impl {
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
-                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                data: deserialize_input_field(&mut map)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
@@ -2354,7 +2351,7 @@ mod serde_impl {
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
-                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                data: deserialize_input_field(&mut map)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
@@ -2391,7 +2388,7 @@ mod serde_impl {
                 gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<Address, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
-                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                data: deserialize_input_field(&mut map)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
@@ -2433,7 +2430,7 @@ mod serde_impl {
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<Address, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
-                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                data: deserialize_input_field(&mut map)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
@@ -2477,7 +2474,7 @@ mod serde_impl {
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
-                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                data: deserialize_input_field(&mut map)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
@@ -2507,7 +2504,7 @@ mod serde_impl {
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
-                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                data: deserialize_input_field(&mut map)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
@@ -2606,10 +2603,10 @@ mod serde_impl {
                 }
             }
         };
+        use serde::de::IntoDeserializer;
+
         let value = String::deserialize(value).map_err(D::Error::custom)?;
-        let bytes = hex::decode(value.trim_start_matches("0x"))
-            .map_err(|e| D::Error::custom(e.to_string()))?;
-        Ok(Bytes::from(bytes))
+        crate::serde_utils::bytes::deserialize(value.into_deserializer())
     }
 
     impl From<EIP1559Transaction> for GenericTransaction {
