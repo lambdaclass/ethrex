@@ -4,68 +4,8 @@
 mod fixture_types;
 
 use fixture_types::{
-    fixture_to_program_output, hex_to_bytes, load_all_fixtures, load_fixture, sha256_hex,
+    fixture_to_program_output, hex_to_bytes, load_all_fixtures, sha256_hex,
 };
-
-#[test]
-fn encode_matches_prover_output_batch8_empty() {
-    let f = load_fixture("zk-dex", "batch_8_empty.json");
-    let output = fixture_to_program_output(&f);
-    let encoded = output.encode();
-
-    let expected = hex_to_bytes(&f.prover.encoded_public_values);
-    assert_eq!(
-        encoded, expected,
-        "batch {}: ProgramOutput.encode() mismatch",
-        f.batch_number
-    );
-    assert_eq!(
-        sha256_hex(&encoded),
-        f.prover.sha256_public_values,
-        "batch {}: sha256 mismatch",
-        f.batch_number
-    );
-}
-
-#[test]
-fn encode_matches_prover_output_batch11_deposit() {
-    let f = load_fixture("zk-dex", "batch_11_deposit.json");
-    let output = fixture_to_program_output(&f);
-    let encoded = output.encode();
-
-    let expected = hex_to_bytes(&f.prover.encoded_public_values);
-    assert_eq!(
-        encoded, expected,
-        "batch {}: ProgramOutput.encode() mismatch",
-        f.batch_number
-    );
-    assert_eq!(
-        sha256_hex(&encoded),
-        f.prover.sha256_public_values,
-        "batch {}: sha256 mismatch",
-        f.batch_number
-    );
-}
-
-#[test]
-fn encode_matches_prover_output_batch12_withdrawal() {
-    let f = load_fixture("zk-dex", "batch_12_withdrawal.json");
-    let output = fixture_to_program_output(&f);
-    let encoded = output.encode();
-
-    let expected = hex_to_bytes(&f.prover.encoded_public_values);
-    assert_eq!(
-        encoded, expected,
-        "batch {}: ProgramOutput.encode() mismatch",
-        f.batch_number
-    );
-    assert_eq!(
-        sha256_hex(&encoded),
-        f.prover.sha256_public_values,
-        "batch {}: sha256 mismatch",
-        f.batch_number
-    );
-}
 
 /// Parameterized: test ALL fixtures in zk-dex directory.
 #[test]

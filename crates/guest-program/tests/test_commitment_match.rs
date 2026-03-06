@@ -6,7 +6,7 @@
 /// computed, SP1Verifier.verifyProof() will revert with "00e".
 mod fixture_types;
 
-use fixture_types::{hex_to_h256, load_all_fixtures, load_fixture};
+use fixture_types::{hex_to_h256, load_all_fixtures};
 
 /// Verify that all shared fields between committer and prover are identical.
 fn assert_committer_matches_prover(fixture: &fixture_types::TestFixture) {
@@ -101,24 +101,6 @@ fn assert_committer_matches_prover(fixture: &fixture_types::TestFixture) {
             "batch {batch}: l2_in_msg[{i}].hash mismatch"
         );
     }
-}
-
-#[test]
-fn committer_matches_prover_batch8() {
-    let f = load_fixture("zk-dex", "batch_8_empty.json");
-    assert_committer_matches_prover(&f);
-}
-
-#[test]
-fn committer_matches_prover_batch11() {
-    let f = load_fixture("zk-dex", "batch_11_deposit.json");
-    assert_committer_matches_prover(&f);
-}
-
-#[test]
-fn committer_matches_prover_batch12() {
-    let f = load_fixture("zk-dex", "batch_12_withdrawal.json");
-    assert_committer_matches_prover(&f);
 }
 
 /// Run across ALL fixtures for an app — catches regressions automatically

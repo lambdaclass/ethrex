@@ -225,44 +225,75 @@ cargo test -p ethrex-guest-program --test test_state_continuity
   → 첫 번째 E2E 테스트가 이전 bridge 주소로 deposit 전송
 - macOS 포트 고갈 (`EADDRNOTAVAIL`) — Docker 빌드 + 많은 연결로 인해 발생
 
-## 내일 해야 할 작업 (TODO)
+## 2026-03-05 TODO (완료됨)
 
-### 1단계: fixture dump 버그 수정 배포 (최우선)
-1. **Docker 이미지 재빌드** — `ProofCalldata.public_values` 수정이 반영된 이미지
-2. **L2 + 프루버 재시작** — 새 이미지로 (L1은 유지 가능)
-3. **이전 fixture 데이터 삭제** — `/tmp/fixtures/zk-dex/batch_*/prover.json` (잘못된 데이터)
-4. **E2E 테스트 재실행** — deposit + withdrawal 트랜잭션 생성
-5. **프루버 완료 대기** — batch에 대한 SP1 proof 생성 (각 ~3분)
+1단계~2.5단계 모두 완료. 상세 내용은 아래 "2026-03-06" 섹션 참조.
 
-### 2단계: fixture 데이터 수집 및 테스트 검증
-6. **merge-fixtures.sh 실행** — committer.json + prover.json 병합
-7. **repo에 복사** — `crates/guest-program/tests/fixtures/zk-dex/` 디렉토리
-8. **오프라인 테스트 실행** — `cargo test` 로 세 가지 테스트 통과 확인:
-   - `test_program_output` — 인코딩 일치
-   - `test_commitment_match` — committer ↔ prover 필드 일치 (00e 방지)
-   - `test_state_continuity` — 배치 간 state hash 연속성
+## 2026-03-06: Fixture Dump 버그 수정 배포 + 새 00e 버그 발견
 
-### 2.5단계: 앱별 fixture 구조 테스트 검증
-- 현재 fixture는 `tests/fixtures/{app}/batch_{N}.json` 구조로 앱별 분리됨
-- `load_fixture(app, filename)`, `load_all_fixtures(app)` 로 앱별로 로드
-- **검증할 것**:
-  - `load_all_fixtures("zk-dex")`가 새로 수집한 fixture를 정상 로드하는지
-  - `fixture_to_program_output()`가 앱별 chain_id, program_type_id를 올바르게 변환하는지
-  - 다른 앱 디렉토리(`evm-l2/`)가 없을 때 빈 Vec 반환하는지
-  - 앱별 fixture 간 데이터가 섞이지 않는지 (chain_id 일관성 확인)
-- **관련 파일**:
-  - `crates/guest-program/tests/fixture_types.rs` — 로더 + 변환 헬퍼
-  - `crates/guest-program/tests/test_program_output.rs` — 인코딩 테스트
-  - `crates/guest-program/tests/test_commitment_match.rs` — committer ↔ prover 일치
-  - `crates/guest-program/tests/test_state_continuity.rs` — 배치 간 연속성
+### 완료된 작업
 
-### 3단계: 정리 및 커밋
-9. **기존 수동 fixture 교체** — batch_8/11/12 (이전 세션에서 수동 캡처한 것) → 자동 수집 데이터로
-10. **[DEBUG-00e] 로그 정리** — `sp1.rs`, `l1_proof_sender.rs`에서 디버그 로그 제거
-    (문제 해결 후 더 이상 불필요)
-11. **커밋** — fixture dump 버그 수정 + 새 fixture 데이터 + 테스트 통과 확인
+1. **Docker 이미지 재빌드** — `ProofCalldata.public_values` 수정 반영 (레이어 캐시로 빠르게 완료)
+2. **전체 재배포** — L1/deployer/L2/prover 모두 새로 시작
+   - 새 bridge: `0x3fd626312f3cda9be2c23fb27ecf55a563d471f2`
+   - 새 proposer: `0x91e057067c11073e799374f163adf0e15eafcd18`
+3. **1차 E2E 테스트** — deposit(1 ETH) + withdrawal(0.5 ETH) 성공, 12/12 통과
+4. **Batch 2 fixture 자동 수집 성공** — committer.json + prover.json 모두 정상
+   - Deposit + withdrawal이 batch_2에 함께 포함됨
+   - 빈 배치(1, 3~)는 proof-free 검증되어 prover.json 없음
+5. **merge-fixtures.sh** 정상 동작 확인
+6. **기존 수동 fixture(batch_8/11/12) 제거** — 이전 배포 데이터로 state 불일치
+7. **자동 수집 fixture(batch_2)로 테스트 교체** — 개별 테스트 삭제, `_all` 패턴으로 통합
+8. **오프라인 테스트 5/5 통과**: program_output, commitment_match, state_continuity(skip), chain_id, program_type_id
 
-### 4단계: 인프라 개선 (선택)
-12. compose-generator에 `ETHREX_DUMP_FIXTURES` 옵션 추가 (선택적 활성화)
-13. 다른 앱 (evm-l2, tokamon) fixture 수집
-14. CI 파이프라인에 fixture 테스트 추가
+### 새로 발견된 버그: 두 번째 실행 시 00e (state_root 불일치)
+
+**재현 방법**: 같은 배포에서 E2E 테스트를 2번 실행
+
+**증상**: batch 16 (두 번째 deposit+withdrawal) proof verification 실패
+```
+L1 Proof Sender: Failed because of an EthClient error:
+  eth_estimateGas: execution reverted: 00e
+```
+
+**데이터 비교**:
+| 필드 | Batch 2 (1차, 성공) | Batch 16 (2차, 실패) |
+|------|:---:|:---:|
+| state_root | committer = prover | committer != prover |
+| merkle_root | match | match |
+| rolling_hash | match | match |
+| last_block_hash | match | match |
+| non_priv_count | match | match |
+
+- Committer state_root: `0x995f08af...`
+- Prover state_root: `0xd0640d12...`
+- 두 값 모두 initial_state = `0xb652083c...` (batch 2 final)에서 시작
+
+**가능한 원인**:
+1. **EVM warm/cold storage 가스 차이** — 첫 실행 시 모든 storage slot이 cold (가스 높음),
+   두 번째 실행 시 일부 slot이 warm (가스 낮음). 고정 가스 상수는 cold 케이스에만 맞음.
+2. **계정 존재 여부에 따른 가스 차이** — 새 계정 생성 vs 기존 계정 업데이트의 가스 비용 차이
+3. **nonce 증가에 따른 저장소 레이아웃 차이** — 두 번째 tx의 nonce가 다르므로 가스 비용 차이
+
+**영향**: zk-dex 앱에서 동일 계정으로 반복 트랜잭션 시 proof verification 실패
+**심각도**: 높음 — production에서 재사용 시나리오 차단
+
+**디버그 데이터**: `/tmp/fixtures/zk-dex/batch_16/` (committer.json + prover.json)
+
+### 다음 해야 할 작업 (TODO)
+
+#### 최우선: 새 00e 버그 디버깅
+1. **batch 2 vs batch 16 트랜잭션 비교** — 실제 EVM gas_used 차이 분석
+   - `eth_getTransactionReceipt`로 두 withdrawal tx의 gas_used 비교
+   - 첫 withdrawal: 계정 생성 포함 vs 두번째: 기존 계정 업데이트
+2. **guest program 가스 상수 검토** — `constants.rs`의 고정값이 어떤 케이스에 맞춰져 있는지
+3. **EIP-2929 (access list) 영향 확인** — warm storage access 할인이 원인인지
+4. **수정 방안 결정**:
+   - 옵션 A: 가스 상수를 케이스별로 분리 (cold/warm)
+   - 옵션 B: 가스 상수를 worst-case (cold)로 맞추고 차액을 보정
+   - 옵션 C: guest program이 실제 EVM gas를 그대로 사용하도록 변경
+
+#### 인프라 (후순위)
+5. [DEBUG-00e] 로그 유지 (새 버그 디버깅에 필요)
+6. 새 00e 해결 후 추가 fixture 수집 (연속 배치 2개 이상)
+7. compose-generator에 `ETHREX_DUMP_FIXTURES` 옵션 추가

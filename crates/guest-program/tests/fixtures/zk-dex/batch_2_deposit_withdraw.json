@@ -1,0 +1,29 @@
+{
+  "app": "zk-dex",
+  "batch_number": 2,
+  "program_type_id": 2,
+  "chain_id": 65536999,
+  "description": "auto-collected batch 2",
+  "prover": {
+    "balance_diffs": [],
+    "blob_versioned_hash": "0x015a0a2568c4d486217faefaf078fccda0a6bb8d70c414fab3ff235ae275cbc2",
+    "encoded_public_values": "0x48f7b11fc87cbe873361a3ff5b40c91dc24cf42f2597c43b23e5d5ebd64fca94b652083c49449bf64a2c2d75f9a933a206ccb75b718e74cebeff78b580aa7b3ac55f9da905b0df29c9aaab516d596b67f57c6b60bc10c2a0dbac27744c6c997600015183d843661fbfd058d685348153652c98d9ec35fcc20f303daa31011239015a0a2568c4d486217faefaf078fccda0a6bb8d70c414fab3ff235ae275cbc2bb949451a9c377440f39d8cd873a067257fd9631aefc1d4db68a71b65057e3f40000000000000000000000000000000000000000000000000000000003e803e70000000000000000000000000000000000000000000000000000000000000001",
+    "final_state_hash": "0xb652083c49449bf64a2c2d75f9a933a206ccb75b718e74cebeff78b580aa7b3a",
+    "initial_state_hash": "0x48f7b11fc87cbe873361a3ff5b40c91dc24cf42f2597c43b23e5d5ebd64fca94",
+    "l1_in_messages_rolling_hash": "0x00015183d843661fbfd058d685348153652c98d9ec35fcc20f303daa31011239",
+    "l1_out_messages_merkle_root": "0xc55f9da905b0df29c9aaab516d596b67f57c6b60bc10c2a0dbac27744c6c9976",
+    "l2_in_message_rolling_hashes": [],
+    "last_block_hash": "0xbb949451a9c377440f39d8cd873a067257fd9631aefc1d4db68a71b65057e3f4",
+    "non_privileged_count": 1,
+    "sha256_public_values": "0x574e39729d2969e7ef66f9c2f5d1ff5cb8c88d4a1776d513d5eea89627fa75ca"
+  },
+  "committer": {
+    "balance_diffs": [],
+    "l2_in_message_rolling_hashes": [],
+    "last_block_hash": "0xbb949451a9c377440f39d8cd873a067257fd9631aefc1d4db68a71b65057e3f4",
+    "new_state_root": "0xb652083c49449bf64a2c2d75f9a933a206ccb75b718e74cebeff78b580aa7b3a",
+    "non_privileged_txs": 1,
+    "priv_tx_rolling_hash": "0x00015183d843661fbfd058d685348153652c98d9ec35fcc20f303daa31011239",
+    "withdrawals_merkle_root": "0xc55f9da905b0df29c9aaab516d596b67f57c6b60bc10c2a0dbac27744c6c9976"
+  }
+}
