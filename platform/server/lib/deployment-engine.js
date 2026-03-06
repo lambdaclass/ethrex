@@ -101,7 +101,8 @@ async function provision(deployment) {
   emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration..." });
 
   try {
-    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName });
+    const gpu = docker.hasNvidiaGpu();
+    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName, gpu });
     const composeFile = writeComposeFile(id, composeContent, deployDir);
 
     emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });

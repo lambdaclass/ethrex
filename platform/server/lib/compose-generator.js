@@ -82,10 +82,11 @@ function getAppProfile(programSlug) {
  * @param {number} opts.l2Port - Host port for L2 RPC
  * @param {number} opts.proofCoordPort - Host port for proof coordinator
  * @param {string} opts.projectName - Docker Compose project name (e.g. tokamak-08cab1ae)
+ * @param {boolean} [opts.gpu=false] - Enable NVIDIA GPU for SP1 prover
  * @returns {string} docker-compose.yaml content
  */
 function generateComposeFile(opts) {
-  const { programSlug, l1Port, l2Port, proofCoordPort = 3900, metricsPort = 3702, projectName } = opts;
+  const { programSlug, l1Port, l2Port, proofCoordPort = 3900, metricsPort = 3702, projectName, gpu = false } = opts;
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
@@ -264,7 +265,14 @@ ${l2ExtraVolumes}    entrypoint:
     image: "${l2Image}"
 ${proverExtraEnv ? `    environment:\n${proverExtraEnv}\n` : ""}${proverExtraVolumes ? `    volumes:\n${proverExtraVolumes}\n` : ""}    command: >
       ${proverCommand}
-    depends_on:
+${gpu && profile.sp1Enabled ? `    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+` : ""}    depends_on:
       - tokamak-app-l2
 `;
 

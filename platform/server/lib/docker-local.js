@@ -400,6 +400,16 @@ function isDockerAvailable() {
   }
 }
 
+/** Check if NVIDIA GPU is available via nvidia-smi */
+function hasNvidiaGpu() {
+  try {
+    execSync("nvidia-smi", { stdio: "ignore", timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   buildImages,
   startL1,
@@ -415,6 +425,7 @@ module.exports = {
   getLogs,
   streamLogs,
   isDockerAvailable,
+  hasNvidiaGpu,
   startTools,
   buildTools,
   restartTools,
