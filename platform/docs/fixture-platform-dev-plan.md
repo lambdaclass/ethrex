@@ -125,26 +125,24 @@
 
 ---
 
-### Phase 3: Prover Fixture Completeness (Prover dump 완성도)
+### Phase 3: Prover Fixture Completeness (Prover dump 완성도) — PARTIAL
 
 **목표**: prover.json이 balance_diffs, l2_in_message_rolling_hashes를 정확히 dump한다.
 
-**현재 문제**:
-- `prover.rs` fixture dump에서 `balance_diffs`와 `l2_in_message_rolling_hashes`가 빈 배열
-- ProgramOutput의 public_values 바이트를 파싱할 때 가변 길이 필드(balance_diffs)를 건너뜀
-- 현재는 테스트가 통과하는 이유: zk-dex batch에 balance_diffs가 비어 있거나,
-  encoded_public_values 전체 비교로 커버됨
+**현재 상태**:
+- Prover fixture dump는 이 필드들을 빈 배열로 저장 (decode 불가)
+- **근본 원인**: `ProgramOutput.encode()`가 길이 접두사 없이 가변 필드를 연결하므로,
+  바이트만으로 balance_diffs와 l2_in_message_rolling_hashes 경계를 알 수 없음
+- `ProgramOutput::decode(bytes)`를 만들려면 인코딩 포맷 변경 필요 (L1 컨트랙트 영향)
 
-**작업 내용**:
-1. `ProgramOutput::decode(bytes)` 함수 추가 (encode의 역함수)
-2. Prover fixture dump에서 decode 사용하여 모든 필드 정확히 추출
-3. 또는: ProofCalldata에 이미 있는 public_values에서 ProgramOutput을 직접 전달
+**적용된 완화책**:
+- `test_commitment_match`: prover 배열이 비어 있고 committer가 데이터가 있으면
+  fail 대신 warn 출력. `test_program_output`이 전체 바이트 비교로 이미 커버.
+- prover.json의 `encoded_public_values`에는 모든 데이터가 포함되어 있음
 
-**수정 파일**:
-- `crates/guest-program/src/l2/mod.rs` — `ProgramOutput::decode()` 추가
-- `crates/l2/prover/src/prover.rs` — fixture dump 개선
-
-**우선순위**: 낮음 — balance_diffs가 있는 batch fixture를 수집할 때 필요
+**향후 개선 옵션** (인코딩 포맷 변경 시):
+1. encode에 길이 접두사 추가 → decode 가능 (L1 컨트랙트 변경 필요)
+2. Guest program이 ProgramOutput을 별도로 직렬화하여 두 번째 출력으로 전달
 
 ---
 
@@ -167,13 +165,13 @@
 ## Priority & Dependencies
 
 ```
-Phase 1 (Auto-Discovery)     ← 핵심. 이것만 하면 새 앱 추가가 가능해짐
+Phase 1 (Auto-Discovery)     ✅ 완료
     │
-    ├── Phase 2 (Guide)       ← Phase 1과 병렬 가능. 문서 작성
+    ├── Phase 2 (Guide)       ✅ 완료
     │
-    └── Phase 4 (CI)          ← Phase 1 완료 후
+    └── Phase 4 (CI)          ✅ 완료
          │
-Phase 3 (Prover dump)        ← 독립적. balance_diffs 필요 시
+Phase 3 (Prover dump)        ⚠️ 부분 완료 (decode 불가, warn 처리로 완화)
 ```
 
 **추천 실행 순서**: Phase 1 → Phase 2 → Phase 4 → Phase 3
