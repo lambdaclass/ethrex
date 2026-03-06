@@ -11,8 +11,7 @@ use crate::{
 };
 use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::error::RLPDecodeError;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use librlp::{RlpDecode, RlpEncode, RlpError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
@@ -155,7 +154,7 @@ pub enum GuestProgramStateError {
     #[error("Trie error: {0}")]
     Trie(#[from] TrieError),
     #[error("RLP Decode: {0}")]
-    RLPDecode(#[from] RLPDecodeError),
+    RlpDecode(#[from] RlpError),
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
     #[error("Custom error: {0}")]
@@ -169,7 +168,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         let block_headers: BTreeMap<u64, BlockHeader> = value
             .block_headers_bytes
             .into_iter()
-            .map(|bytes| BlockHeader::decode(bytes.as_ref()))
+            .map(|bytes| BlockHeader::decode(&mut bytes.as_ref()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| {
                 GuestProgramStateError::Custom(format!("Failed to decode block headers: {}", e))
@@ -254,7 +253,7 @@ impl GuestProgramState {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
                 let mut account_state = match self.state_trie.get(hashed_address)? {
-                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                    Some(encoded_state) => AccountState::decode(&mut encoded_state.as_slice())?,
                     None => AccountState::default(),
                 };
                 if update.removed_storage {
@@ -284,7 +283,7 @@ impl GuestProgramState {
                         .partition(|(_k, v)| v.is_zero());
 
                     for (hashed_key, storage_value) in inserts {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        storage_trie.insert(hashed_key, storage_value.to_rlp())?;
                     }
 
                     for (hashed_key, _) in deletes {
@@ -296,7 +295,7 @@ impl GuestProgramState {
                 }
 
                 self.state_trie
-                    .insert(hashed_address.clone(), account_state.encode_to_vec())?;
+                    .insert(hashed_address.clone(), account_state.to_rlp())?;
             }
         }
         Ok(())
@@ -370,7 +369,7 @@ impl GuestProgramState {
         let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address) else {
             return Ok(None);
         };
-        let state = AccountState::decode(&encoded_state).map_err(|_| {
+        let state = AccountState::decode(&mut encoded_state.as_slice()).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
         })?;
 
@@ -404,7 +403,7 @@ impl GuestProgramState {
             .get(&hashed_key)
             .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
         {
-            U256::decode(&encoded_key)
+            U256::decode(&mut encoded_key.as_slice())
                 .map_err(|_| {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })

@@ -6,7 +6,7 @@ use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
-use ethrex_rlp::error::RLPDecodeError;
+use librlp::RlpError;
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
@@ -988,7 +988,7 @@ fn get_block_from_payload(
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
     block_access_list_hash: Option<H256>,
-) -> Result<Block, RLPDecodeError> {
+) -> Result<Block, RlpError> {
     let block_hash = payload.block_hash;
     let block_number = payload.block_number;
     debug!(%block_hash, %block_number, "Received new payload");

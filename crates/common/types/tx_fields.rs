@@ -1,10 +1,5 @@
 use crate::{Address, H256, U256};
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
+use librlp::{RlpDecode, RlpEncode, RlpError};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 /// A list of addresses and storage keys that the transaction plans to access.
@@ -51,39 +46,107 @@ pub struct AuthorizationTuple {
     pub s_signature: U256,
 }
 
-impl RLPEncode for AuthorizationTuple {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.address)
-            .encode_field(&self.nonce)
-            .encode_field(&self.y_parity)
-            .encode_field(&self.r_signature)
-            .encode_field(&self.s_signature)
-            .finish();
+/// Encode an access list item (address, storage_keys) as an RLP list.
+pub fn encode_access_list_item(item: &AccessListItem, buf: &mut librlp::RlpBuf) {
+    buf.list(|buf| {
+        item.0.encode(buf);
+        librlp::encode_list(&item.1, buf);
+    });
+}
+
+/// Compute the encoded length of an access list item.
+pub fn access_list_item_encoded_length(item: &AccessListItem) -> usize {
+    let payload = item.0.encoded_length() + crate::constants::vec_encoded_length(&item.1);
+    crate::constants::list_encoded_length(payload)
+}
+
+/// Decode an access list item from RLP.
+pub fn decode_access_list_item(buf: &mut &[u8]) -> Result<AccessListItem, RlpError> {
+    let header = librlp::Header::decode(buf)?;
+    if !header.list {
+        return Err(RlpError::UnexpectedString);
+    }
+    let mut payload = &buf[..header.payload_length];
+    let address = RlpDecode::decode(&mut payload)?;
+    let storage_keys = librlp::decode_list(&mut payload)?;
+    *buf = &buf[header.payload_length..];
+    Ok((address, storage_keys))
+}
+
+/// Encode an access list as an RLP list of items.
+pub fn encode_access_list(list: &AccessList, buf: &mut librlp::RlpBuf) {
+    buf.list(|buf| {
+        for item in list {
+            encode_access_list_item(item, buf);
+        }
+    });
+}
+
+/// Compute the encoded length of an access list.
+pub fn access_list_encoded_length(list: &AccessList) -> usize {
+    let payload: usize = list.iter().map(access_list_item_encoded_length).sum();
+    crate::constants::list_encoded_length(payload)
+}
+
+/// Decode an access list from RLP.
+pub fn decode_access_list(buf: &mut &[u8]) -> Result<AccessList, RlpError> {
+    let header = librlp::Header::decode(buf)?;
+    if !header.list {
+        return Err(RlpError::UnexpectedString);
+    }
+    let mut payload = &buf[..header.payload_length];
+    let mut list = Vec::new();
+    while !payload.is_empty() {
+        list.push(decode_access_list_item(&mut payload)?);
+    }
+    *buf = &buf[header.payload_length..];
+    Ok(list)
+}
+
+impl RlpEncode for AuthorizationTuple {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.address.encode(buf);
+            self.nonce.encode(buf);
+            self.y_parity.encode(buf);
+            self.r_signature.encode(buf);
+            self.s_signature.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let payload = self.chain_id.encoded_length()
+            + self.address.encoded_length()
+            + self.nonce.encoded_length()
+            + self.y_parity.encoded_length()
+            + self.r_signature.encoded_length()
+            + self.s_signature.encoded_length();
+        crate::constants::list_encoded_length(payload)
     }
 }
 
-impl RLPDecode for AuthorizationTuple {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        let (address, decoder) = decoder.decode_field("address")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (y_parity, decoder) = decoder.decode_field("y_parity")?;
-        let (r_signature, decoder) = decoder.decode_field("r_signature")?;
-        let (s_signature, decoder) = decoder.decode_field("s_signature")?;
-        let rest = decoder.finish()?;
-        Ok((
-            AuthorizationTuple {
-                chain_id,
-                address,
-                nonce,
-                y_parity,
-                r_signature,
-                s_signature,
-            },
-            rest,
-        ))
+impl RlpDecode for AuthorizationTuple {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = librlp::Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let chain_id = RlpDecode::decode(&mut payload)?;
+        let address = RlpDecode::decode(&mut payload)?;
+        let nonce = RlpDecode::decode(&mut payload)?;
+        let y_parity = RlpDecode::decode(&mut payload)?;
+        let r_signature = RlpDecode::decode(&mut payload)?;
+        let s_signature = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(AuthorizationTuple {
+            chain_id,
+            address,
+            nonce,
+            y_parity,
+            r_signature,
+            s_signature,
+        })
     }
 }

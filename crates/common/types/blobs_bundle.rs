@@ -6,12 +6,7 @@ use crate::types::Fork;
 use crate::types::constants::VERSIONED_HASH_VERSION_KZG;
 use crate::{Bytes, H256};
 
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
+use librlp::{RlpDecode, RlpEncode, RlpError};
 use serde::{Deserialize, Serialize};
 
 use super::{BYTES_PER_BLOB, SAFE_BYTES_PER_BLOB};
@@ -216,34 +211,57 @@ impl BlobsBundle {
     }
 }
 
-impl RLPEncode for BlobsBundle {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let encoder = Encoder::new(buf);
-        encoder
-            .encode_field(&self.blobs)
-            .encode_field(&self.commitments)
-            .encode_field(&self.proofs)
-            .encode_optional_field(&(self.version != 0).then_some(self.version))
-            .finish();
+/// Helper: compute encoded length of a list of fixed-size byte arrays.
+fn list_of_arrays_encoded_length<const N: usize>(items: &[[u8; N]]) -> usize {
+    let payload: usize = items.iter().map(|i| i.encoded_length()).sum();
+    crate::constants::list_encoded_length(payload)
+}
+
+impl RlpEncode for BlobsBundle {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            librlp::encode_list(&self.blobs, buf);
+            librlp::encode_list(&self.commitments, buf);
+            librlp::encode_list(&self.proofs, buf);
+            if self.version != 0 {
+                self.version.encode(buf);
+            }
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut payload = list_of_arrays_encoded_length(&self.blobs)
+            + list_of_arrays_encoded_length(&self.commitments)
+            + list_of_arrays_encoded_length(&self.proofs);
+        if self.version != 0 {
+            payload += self.version.encoded_length();
+        }
+        crate::constants::list_encoded_length(payload)
     }
 }
 
-impl RLPDecode for BlobsBundle {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (blobs, decoder) = decoder.decode_field("blobs")?;
-        let (commitments, decoder) = decoder.decode_field("commitments")?;
-        let (proofs, decoder) = decoder.decode_field("proofs")?;
-        let (version, decoder) = decoder.decode_optional_field();
-        Ok((
-            Self {
-                blobs,
-                commitments,
-                proofs,
-                version: version.unwrap_or_default(),
-            },
-            decoder.finish()?,
-        ))
+impl RlpDecode for BlobsBundle {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = librlp::Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let blobs = librlp::decode_list(&mut payload)?;
+        let commitments = librlp::decode_list(&mut payload)?;
+        let proofs = librlp::decode_list(&mut payload)?;
+        let version = if !payload.is_empty() {
+            Some(RlpDecode::decode(&mut payload)?)
+        } else {
+            None
+        };
+        *buf = &buf[header.payload_length..];
+        Ok(Self {
+            blobs,
+            commitments,
+            proofs,
+            version: version.unwrap_or_default(),
+        })
     }
 }
 

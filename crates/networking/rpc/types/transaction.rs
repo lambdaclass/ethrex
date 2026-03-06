@@ -7,7 +7,7 @@ use ethrex_common::{
         WrappedEIP4844Transaction,
     },
 };
-use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
+use librlp::{RlpDecode, RlpError};
 use serde::{Deserialize, Serialize};
 
 #[allow(unused)]
@@ -72,13 +72,13 @@ impl SendRawTransactionRequest {
         }
     }
 
-    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, RLPDecodeError> {
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, RlpError> {
         // Look at the first byte to check if it corresponds to a TransactionType
         match bytes.first() {
             // First byte is a valid TransactionType https://eips.ethereum.org/EIPS/eip-2718#transactiontype-only-goes-up-to-0x7f
             Some(tx_type) if *tx_type <= 0x7f => {
                 // Decode tx based on type
-                let tx_bytes = &bytes[1..];
+                let tx_bytes = &mut &bytes[1..];
 
                 match *tx_type {
                     // Legacy
@@ -106,13 +106,13 @@ impl SendRawTransactionRequest {
                     // PrivilegedL2Transaction
                     0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::PrivilegedL2),
-                    ty => Err(RLPDecodeError::Custom(format!(
+                    ty => Err(RlpError::Custom(format!(
                         "Invalid transaction type: {ty}"
                     ))),
                 }
             }
             // LegacyTransaction
-            _ => LegacyTransaction::decode(bytes).map(SendRawTransactionRequest::Legacy),
+            _ => LegacyTransaction::decode(&mut &bytes[..]).map(SendRawTransactionRequest::Legacy),
         }
     }
 }

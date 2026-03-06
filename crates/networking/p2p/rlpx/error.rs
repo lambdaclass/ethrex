@@ -3,7 +3,7 @@ use crate::peer_table::PeerTableError;
 use crate::snap::error::SnapError;
 use aes::cipher::InvalidLength;
 use ethrex_blockchain::error::{ChainError, MempoolError};
-use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
+use librlp::RlpError;
 use ethrex_storage::error::StoreError;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::RollupStoreError;
@@ -51,9 +51,9 @@ pub enum PeerConnectionError {
     #[error("Bad Request: {0}")]
     BadRequest(String),
     #[error(transparent)]
-    RLPDecodeError(#[from] RLPDecodeError),
-    #[error(transparent)]
-    RLPEncodeError(#[from] RLPEncodeError),
+    RlpError(#[from] RlpError),
+    #[error("Snappy compression error: {0}")]
+    SnappyError(#[from] snap::Error),
     #[error(transparent)]
     StoreError(#[from] StoreError),
     #[error(transparent)]

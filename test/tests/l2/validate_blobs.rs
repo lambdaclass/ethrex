@@ -11,7 +11,7 @@
 #![allow(clippy::expect_used)]
 
 use ethrex_common::types::{BYTES_PER_BLOB, Block, Genesis, bytes_from_blob};
-use ethrex_rlp::decode::RLPDecode;
+use librlp::RlpDecode;
 use std::fs::File;
 use std::io::BufReader;
 
@@ -64,7 +64,7 @@ fn validate_blobs_match_genesis() {
     );
 
     // Decode the first block to get its parent_hash
-    let (first_block, _) = Block::decode_unfinished(&decoded_blob[8..])
+    let first_block = Block::decode(&mut &decoded_blob[8..])
         .expect("Failed to decode first block from blob");
 
     let blob_parent_hash = first_block.header.parent_hash;

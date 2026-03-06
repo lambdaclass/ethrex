@@ -23,7 +23,7 @@ use ethrex_common::{
 use ethrex_crypto::keccak::Keccak256;
 use ethrex_vm::{Evm, EvmError};
 
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_storage::{Store, error::StoreError};
 
 use ethrex_metrics::metrics;
@@ -107,7 +107,7 @@ impl BuildPayloadArgs {
         hasher.update(self.random);
         hasher.update(self.fee_recipient);
         if let Some(withdrawals) = &self.withdrawals {
-            hasher.update(withdrawals.encode_to_vec());
+            hasher.update(librlp::encode_list_to_rlp(withdrawals));
         }
         if let Some(beacon_root) = self.beacon_root {
             hasher.update(beacon_root);
@@ -257,7 +257,7 @@ impl PayloadBuildContext {
             vm.set_bal_index(0);
         }
 
-        let payload_size = payload.length() as u64;
+        let payload_size = payload.encoded_length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             cumulative_gas_spent: 0,

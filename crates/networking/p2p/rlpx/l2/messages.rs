@@ -3,14 +3,12 @@ use crate::rlpx::{
     message::{Message, RLPxMessage},
     utils::{snappy_compress, snappy_decompress},
 };
-use bytes::BufMut;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, Signature,
-    types::{Block, batch::Batch, fee_config::FeeConfig},
+    types::{Block, balance_diff::BalanceDiff, batch::Batch, fee_config::FeeConfig},
 };
-use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
-use ethrex_rlp::structs::{Decoder, Encoder};
+use librlp::{Header, RlpBuf, RlpDecode, RlpEncode, RlpError};
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::{ops::Deref as _, sync::Arc};
 
@@ -30,27 +28,32 @@ pub struct NewBlock {
 impl RLPxMessage for NewBlock {
     const CODE: u8 = 0x0;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.block.deref().clone())
-            .encode_field(&self.signature)
-            .encode_field(&self.fee_config.to_vec())
-            .finish();
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            self.block.deref().clone().encode(buf);
+            self.signature.encode(buf);
+            self.fee_config.to_vec().encode(buf);
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (block, decoder) = decoder.decode_field("block")?;
-        let (signature, decoder) = decoder.decode_field("signature")?;
-        let (fee_config_bytes, decoder): (Vec<u8>, _) = decoder.decode_field("fee_config")?;
-        decoder.finish()?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let block = Block::decode(&mut payload)?;
+        let signature = Signature::decode(&mut payload)?;
+        let fee_config_bytes = Vec::<u8>::decode(&mut payload)?;
         let (_, fee_config) = FeeConfig::decode(&fee_config_bytes)
-            .map_err(|e| RLPDecodeError::Custom(format!("fee_config decode: {e}")))?;
+            .map_err(|e| RlpError::Custom(format!("fee_config decode: {e}").into()))?;
         Ok(NewBlock {
             block: Arc::new(block),
             signature,
@@ -108,52 +111,85 @@ pub fn batch_hash(sealed_batch: &Batch) -> H256 {
 impl RLPxMessage for BatchSealed {
     const CODE: u8 = 0x1;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.batch.number)
-            .encode_field(&self.batch.first_block)
-            .encode_field(&self.batch.last_block)
-            .encode_field(&self.batch.state_root)
-            .encode_field(&self.batch.l1_in_messages_rolling_hash)
-            .encode_field(&self.batch.l2_in_message_rolling_hashes)
-            .encode_field(&self.batch.non_privileged_transactions)
-            .encode_field(&self.batch.l1_out_message_hashes)
-            .encode_field(&self.batch.blobs_bundle.blobs)
-            .encode_field(&self.batch.blobs_bundle.commitments)
-            .encode_field(&self.batch.blobs_bundle.proofs)
-            .encode_optional_field(&self.batch.commit_tx)
-            .encode_optional_field(&self.batch.verify_tx)
-            .encode_field(&self.signature)
-            .encode_field(&self.batch.balance_diffs)
-            .finish();
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            self.batch.number.encode(buf);
+            self.batch.first_block.encode(buf);
+            self.batch.last_block.encode(buf);
+            self.batch.state_root.encode(buf);
+            self.batch.l1_in_messages_rolling_hash.encode(buf);
+            librlp::encode_list(&self.batch.l2_in_message_rolling_hashes, buf);
+            self.batch.non_privileged_transactions.encode(buf);
+            librlp::encode_list(&self.batch.l1_out_message_hashes, buf);
+            librlp::encode_list(&self.batch.blobs_bundle.blobs, buf);
+            librlp::encode_list(&self.batch.blobs_bundle.commitments, buf);
+            librlp::encode_list(&self.batch.blobs_bundle.proofs, buf);
+            // encode optional fields: commit_tx, verify_tx
+            if let Some(ref commit_tx) = self.batch.commit_tx {
+                commit_tx.encode(buf);
+            } else {
+                // Encode empty string for None
+                Vec::<u8>::new().encode(buf);
+            }
+            if let Some(ref verify_tx) = self.batch.verify_tx {
+                verify_tx.encode(buf);
+            } else {
+                Vec::<u8>::new().encode(buf);
+            }
+            self.signature.encode(buf);
+            librlp::encode_list(&self.batch.balance_diffs, buf);
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (batch_number, decoder) = decoder.decode_field("batch_number")?;
-        let (first_block, decoder) = decoder.decode_field("first_block")?;
-        let (last_block, decoder) = decoder.decode_field("last_block")?;
-        let (state_root, decoder) = decoder.decode_field("state_root")?;
-        let (l1_in_messages_rolling_hash, decoder) =
-            decoder.decode_field("l1_in_messages_rolling_hash")?;
-        let (l2_in_message_rolling_hashes, decoder) =
-            decoder.decode_field("l2_in_message_rolling_hashes")?;
-        let (non_privileged_transactions, decoder) =
-            decoder.decode_field("non_privileged_transactions")?;
-        let (l1_out_message_hashes, decoder) = decoder.decode_field("l1_out_message_hashes")?;
-        let (blobs, decoder) = decoder.decode_field("blobs")?;
-        let (commitments, decoder) = decoder.decode_field("commitments")?;
-        let (proofs, decoder) = decoder.decode_field("proofs")?;
-        let (commit_tx, decoder) = decoder.decode_optional_field();
-        let (verify_tx, decoder) = decoder.decode_optional_field();
-        let (signature, decoder) = decoder.decode_field("signature")?;
-        let (balance_diffs, decoder) = decoder.decode_field("balance_diffs")?;
-        decoder.finish()?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let batch_number = u64::decode(&mut payload)?;
+        let first_block = u64::decode(&mut payload)?;
+        let last_block = u64::decode(&mut payload)?;
+        let state_root = RlpDecode::decode(&mut payload)?;
+        let l1_in_messages_rolling_hash = RlpDecode::decode(&mut payload)?;
+        let l2_in_message_rolling_hashes: Vec<(u64, H256)> =
+            librlp::decode_list(&mut payload)?;
+        let non_privileged_transactions = u64::decode(&mut payload)?;
+        let l1_out_message_hashes: Vec<H256> = librlp::decode_list(&mut payload)?;
+        let blobs: Vec<[u8; 131072]> = librlp::decode_list(&mut payload)?;
+        let commitments: Vec<[u8; 48]> = librlp::decode_list(&mut payload)?;
+        let proofs: Vec<[u8; 48]> = librlp::decode_list(&mut payload)?;
+        // Decode optional commit_tx and verify_tx
+        // Try to decode; if it's an empty string, treat as None
+        let commit_tx = {
+            let peek_header = Header::decode(&mut payload.clone())?;
+            if !peek_header.list && peek_header.payload_length == 0 {
+                // empty string — skip it
+                let _ = Header::decode(&mut payload)?;
+                let _ = &payload[..0]; // consume nothing extra
+                None
+            } else {
+                Some(RlpDecode::decode(&mut payload)?)
+            }
+        };
+        let verify_tx = {
+            let peek_header = Header::decode(&mut payload.clone())?;
+            if !peek_header.list && peek_header.payload_length == 0 {
+                let _ = Header::decode(&mut payload)?;
+                None
+            } else {
+                Some(RlpDecode::decode(&mut payload)?)
+            }
+        };
+        let signature = Signature::decode(&mut payload)?;
+        let balance_diffs: Vec<BalanceDiff> = librlp::decode_list(&mut payload)?;
 
         let batch = Batch {
             number: batch_number,

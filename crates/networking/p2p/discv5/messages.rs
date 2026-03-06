@@ -2,12 +2,7 @@ use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
 use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
 use bytes::{BufMut, Bytes};
 use ethrex_common::H256;
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
+use librlp::{Header, RlpBuf, RlpDecode, RlpEncode, RlpError, decode_list, encode_list};
 use std::{array::TryFromSliceError, fmt::Display, net::SocketAddr};
 
 use crate::types::NodeRecord;
@@ -35,7 +30,7 @@ pub const DISTANCES_PER_FIND_NODE_MSG: u8 = 3;
 #[derive(Debug, thiserror::Error)]
 pub enum PacketCodecError {
     #[error("RLP decoding error")]
-    RLPDecodeError(#[from] RLPDecodeError),
+    RLPDecodeError(#[from] RlpError),
     #[error("Packet header decoding error")]
     InvalidHeader,
     #[error("Message decoding error, message type: {0}")]
@@ -46,14 +41,18 @@ pub enum PacketCodecError {
     SessionNotEstablished,
     #[error("Invalid protocol: {0}")]
     InvalidProtocol(String),
-    #[error("Stream Cipher Error: {0}")]
+    #[error("Cipher error: {0}")]
     CipherError(String),
-    #[error("TryFromSliceError: {0}")]
-    TryFromSliceError(#[from] TryFromSliceError),
-    #[error("Io Error: {0}")]
-    IoError(#[from] std::io::Error),
-    #[error("Malformed Data")]
+    #[error("Malformed data")]
     MalformedData,
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
+impl From<TryFromSliceError> for PacketCodecError {
+    fn from(_: TryFromSliceError) -> Self {
+        PacketCodecError::InvalidSize
+    }
 }
 
 impl From<StreamCipherError> for PacketCodecError {
@@ -257,9 +256,7 @@ impl PacketTrait for Ordinary {
     }
 
     fn get_encoded_message(&self) -> Vec<u8> {
-        let mut message = Vec::new();
-        self.message.encode(&mut message);
-        message
+        self.message.encode_to_bytes()
     }
 }
 
@@ -274,7 +271,7 @@ impl Ordinary {
 
         let src_id = H256::from_slice(&packet.header.authdata);
 
-        let message = Message::decode(&message).map_err(|_e| {
+        let message = Message::decode_msg(&message).map_err(|_e| {
             PacketCodecError::InvalidMessage(message.first().copied().unwrap_or(0))
         })?;
         Ok(Ordinary { src_id, message })
@@ -384,11 +381,11 @@ impl HandshakeAuthdata {
         let eph_pubkey = authdata[eph_key_start..authdata_head].to_vec();
 
         let record = if authdata.len() > authdata_head {
-            let record_bytes = &authdata[authdata_head..];
+            let mut record_bytes = &authdata[authdata_head..];
             if record_bytes.is_empty() {
                 None
             } else {
-                Some(NodeRecord::decode(record_bytes)?)
+                Some(NodeRecord::decode(&mut record_bytes)?)
             }
         } else {
             None
@@ -435,16 +432,15 @@ impl PacketTrait for Handshake {
         buf.put_slice(&self.id_signature);
         buf.put_slice(&self.eph_pubkey);
         if let Some(record) = &self.record {
-            record.encode(buf);
+            let rlp = record.to_rlp();
+            buf.put_slice(&rlp);
         }
 
         Ok(())
     }
 
     fn get_encoded_message(&self) -> Vec<u8> {
-        let mut message = Vec::new();
-        self.message.encode(&mut message);
-        message
+        self.message.encode_to_bytes()
     }
 }
 
@@ -455,7 +451,7 @@ impl Handshake {
 
         let mut encrypted = packet.encrypted_message.to_vec();
         decrypt_message(decrypt_key, packet, &mut encrypted)?;
-        let message = Message::decode(&encrypted)?;
+        let message = Message::decode_msg(&encrypted)?;
 
         Ok(Handshake {
             src_id: authdata.src_id,
@@ -504,51 +500,55 @@ impl Message {
         }
     }
 
-    pub fn encode(&self, buf: &mut dyn BufMut) {
-        buf.put_u8(self.msg_type());
-        match self {
-            Message::Ping(ping) => ping.encode(buf),
-            Message::Pong(pong) => pong.encode(buf),
-            Message::FindNode(find_node) => find_node.encode(buf),
-            Message::Nodes(nodes) => nodes.encode(buf),
-            Message::TalkReq(talk_req) => talk_req.encode(buf),
-            Message::TalkRes(talk_res) => talk_res.encode(buf),
-            Message::Ticket(ticket) => ticket.encode(buf),
-        }
+    pub fn encode_to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.push(self.msg_type());
+        let rlp = match self {
+            Message::Ping(ping) => ping.to_rlp(),
+            Message::Pong(pong) => pong.to_rlp(),
+            Message::FindNode(find_node) => find_node.to_rlp(),
+            Message::Nodes(nodes) => nodes.to_rlp(),
+            Message::TalkReq(talk_req) => talk_req.to_rlp(),
+            Message::TalkRes(talk_res) => talk_res.to_rlp(),
+            Message::Ticket(ticket) => ticket.to_rlp(),
+        };
+        buf.extend_from_slice(&rlp);
+        buf
     }
 
-    pub fn decode(message: &[u8]) -> Result<Message, RLPDecodeError> {
-        let &message_type = message.first().ok_or(RLPDecodeError::InvalidLength)?;
+    pub fn decode_msg(message: &[u8]) -> Result<Message, RlpError> {
+        let &message_type = message.first().ok_or(RlpError::InputTooShort)?;
+        let mut buf = &message[1..];
         match message_type {
             0x01 => {
-                let ping = PingMessage::decode(&message[1..])?;
+                let ping = PingMessage::decode(&mut buf)?;
                 Ok(Message::Ping(ping))
             }
             0x02 => {
-                let pong = PongMessage::decode(&message[1..])?;
+                let pong = PongMessage::decode(&mut buf)?;
                 Ok(Message::Pong(pong))
             }
             0x03 => {
-                let find_node_msg = FindNodeMessage::decode(&message[1..])?;
+                let find_node_msg = FindNodeMessage::decode(&mut buf)?;
                 Ok(Message::FindNode(find_node_msg))
             }
             0x04 => {
-                let nodes_msg = NodesMessage::decode(&message[1..])?;
+                let nodes_msg = NodesMessage::decode(&mut buf)?;
                 Ok(Message::Nodes(nodes_msg))
             }
             0x05 => {
-                let talk_req_msg = TalkReqMessage::decode(&message[1..])?;
+                let talk_req_msg = TalkReqMessage::decode(&mut buf)?;
                 Ok(Message::TalkReq(talk_req_msg))
             }
             0x06 => {
-                let enr_response_msg = TalkResMessage::decode(&message[1..])?;
+                let enr_response_msg = TalkResMessage::decode(&mut buf)?;
                 Ok(Message::TalkRes(enr_response_msg))
             }
             0x08 => {
-                let ticket_msg = TicketMessage::decode(&message[1..])?;
+                let ticket_msg = TicketMessage::decode(&mut buf)?;
                 Ok(Message::Ticket(ticket_msg))
             }
-            _ => Err(RLPDecodeError::MalformedData),
+            _ => Err(RlpError::Custom("malformed data".into())),
         }
     }
 }
@@ -581,22 +581,32 @@ impl PingMessage {
     }
 }
 
-impl RLPEncode for PingMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.req_id)
-            .encode_field(&self.enr_seq)
-            .finish();
+impl RlpEncode for PingMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.req_id.encode(buf);
+            self.enr_seq.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for PingMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (req_id, decoder) = decoder.decode_field("req_id")?;
-        let (enr_seq, decoder) = decoder.decode_field("enr_seq")?;
-        let ping = PingMessage { req_id, enr_seq };
-        Ok((ping, decoder.finish()?))
+impl RlpDecode for PingMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let req_id = Bytes::decode(&mut payload)?;
+        let enr_seq = u64::decode(&mut payload)?;
+        Ok(PingMessage { req_id, enr_seq })
     }
 }
 
@@ -607,34 +617,41 @@ pub struct PongMessage {
     pub recipient_addr: SocketAddr,
 }
 
-impl RLPEncode for PongMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.req_id)
-            .encode_field(&self.enr_seq)
-            .encode_field(&self.recipient_addr.ip())
-            .encode_field(&self.recipient_addr.port())
-            .finish();
+impl RlpEncode for PongMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.req_id.encode(buf);
+            self.enr_seq.encode(buf);
+            self.recipient_addr.ip().encode(buf);
+            self.recipient_addr.port().encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for PongMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+impl RlpDecode for PongMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
         use std::net::IpAddr;
-        let decoder = Decoder::new(rlp)?;
-        let (req_id, decoder) = decoder.decode_field("req_id")?;
-        let (enr_seq, decoder) = decoder.decode_field("enr_seq")?;
-        let (recipient_ip, decoder): (IpAddr, _) = decoder.decode_field("recipient_ip")?;
-        let (recipient_port, decoder): (u16, _) = decoder.decode_field("recipient_port")?;
-
-        Ok((
-            Self {
-                req_id,
-                enr_seq,
-                recipient_addr: SocketAddr::new(recipient_ip, recipient_port),
-            },
-            decoder.finish()?,
-        ))
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let req_id = Bytes::decode(&mut payload)?;
+        let enr_seq = u64::decode(&mut payload)?;
+        let recipient_ip = IpAddr::decode(&mut payload)?;
+        let recipient_port = u16::decode(&mut payload)?;
+        Ok(Self {
+            req_id,
+            enr_seq,
+            recipient_addr: SocketAddr::new(recipient_ip, recipient_port),
+        })
     }
 }
 
@@ -644,28 +661,35 @@ pub struct FindNodeMessage {
     pub distances: Vec<u32>,
 }
 
-impl RLPEncode for FindNodeMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.req_id)
-            .encode_field(&self.distances)
-            .finish();
+impl RlpEncode for FindNodeMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.req_id.encode(buf);
+            encode_list(&self.distances, buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for FindNodeMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (req_id, decoder) = decoder.decode_field("req_id")?;
-        let (distance, decoder) = decoder.decode_field("distance")?;
-
-        Ok((
-            Self {
-                req_id,
-                distances: distance,
-            },
-            decoder.finish()?,
-        ))
+impl RlpDecode for FindNodeMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let req_id = Bytes::decode(&mut payload)?;
+        let distances = decode_list::<u32>(&mut payload)?;
+        Ok(Self {
+            req_id,
+            distances,
+        })
     }
 }
 
@@ -676,31 +700,38 @@ pub struct NodesMessage {
     pub nodes: Vec<NodeRecord>,
 }
 
-impl RLPEncode for NodesMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.req_id)
-            .encode_field(&self.total)
-            .encode_field(&self.nodes)
-            .finish();
+impl RlpEncode for NodesMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.req_id.encode(buf);
+            self.total.encode(buf);
+            encode_list(&self.nodes, buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for NodesMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (req_id, decoder) = decoder.decode_field("req_id")?;
-        let (total, decoder) = decoder.decode_field("total")?;
-        let (nodes, decoder) = decoder.decode_field("nodes")?;
-
-        Ok((
-            Self {
-                req_id,
-                total,
-                nodes,
-            },
-            decoder.finish()?,
-        ))
+impl RlpDecode for NodesMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let req_id = Bytes::decode(&mut payload)?;
+        let total = u64::decode(&mut payload)?;
+        let nodes = decode_list::<NodeRecord>(&mut payload)?;
+        Ok(Self {
+            req_id,
+            total,
+            nodes,
+        })
     }
 }
 
@@ -711,31 +742,38 @@ pub struct TalkReqMessage {
     pub request: Bytes,
 }
 
-impl RLPEncode for TalkReqMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.req_id)
-            .encode_field(&self.protocol)
-            .encode_field(&self.request)
-            .finish();
+impl RlpEncode for TalkReqMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.req_id.encode(buf);
+            self.protocol.encode(buf);
+            self.request.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for TalkReqMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (req_id, decoder) = decoder.decode_field("req_id")?;
-        let (protocol, decoder) = decoder.decode_field("protocol")?;
-        let (request, decoder) = decoder.decode_field("request")?;
-
-        Ok((
-            Self {
-                req_id,
-                protocol,
-                request,
-            },
-            decoder.finish()?,
-        ))
+impl RlpDecode for TalkReqMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let req_id = Bytes::decode(&mut payload)?;
+        let protocol = Bytes::decode(&mut payload)?;
+        let request = Bytes::decode(&mut payload)?;
+        Ok(Self {
+            req_id,
+            protocol,
+            request,
+        })
     }
 }
 
@@ -745,27 +783,35 @@ pub struct TalkResMessage {
     pub response: Vec<u8>,
 }
 
-impl RLPEncode for TalkResMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.req_id)
-            .encode_field(&Bytes::copy_from_slice(&self.response))
-            .finish();
+impl RlpEncode for TalkResMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.req_id.encode(buf);
+            Bytes::copy_from_slice(&self.response).encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for TalkResMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let ((req_id, response), remaining) =
-            <(Bytes, Bytes) as RLPDecode>::decode_unfinished(rlp)?;
-
-        Ok((
-            Self {
-                req_id,
-                response: response.to_vec(),
-            },
-            remaining,
-        ))
+impl RlpDecode for TalkResMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let req_id = Bytes::decode(&mut payload)?;
+        let response = Bytes::decode(&mut payload)?;
+        Ok(Self {
+            req_id,
+            response: response.to_vec(),
+        })
     }
 }
 
@@ -776,31 +822,38 @@ pub struct TicketMessage {
     pub wait_time: u64,
 }
 
-impl RLPEncode for TicketMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.req_id)
-            .encode_field(&self.ticket)
-            .encode_field(&self.wait_time)
-            .finish();
+impl RlpEncode for TicketMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.req_id.encode(buf);
+            self.ticket.encode(buf);
+            self.wait_time.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for TicketMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (req_id, decoder) = decoder.decode_field("req_id")?;
-        let (ticket, decoder) = decoder.decode_field("ticket")?;
-        let (wait_time, decoder) = decoder.decode_field("wait_time")?;
-
-        Ok((
-            Self {
-                req_id,
-                ticket,
-                wait_time,
-            },
-            decoder.finish()?,
-        ))
+impl RlpDecode for TicketMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let req_id = Bytes::decode(&mut payload)?;
+        let ticket = Bytes::decode(&mut payload)?;
+        let wait_time = u64::decode(&mut payload)?;
+        Ok(Self {
+            req_id,
+            ticket,
+            wait_time,
+        })
     }
 }
 
@@ -840,19 +893,6 @@ mod tests {
     /// Ping message packet (flag 0) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
     fn decode_ping_packet() {
-        /*
-        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        # nonce = 0xffffffffffffffffffffffff
-        # read-key = 0x00000000000000000000000000000000
-        # ping.req-id = 0x00000001
-        # ping.enr-seq = 2
-
-        00000000000000000000000000000000088b3d4342774649325f313964a39e55
-        ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
-        4c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc
-        */
-
         let node_a_key = SecretKey::from_byte_array(&hex!(
             "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
         ))
@@ -873,7 +913,6 @@ mod tests {
         assert_eq!(0x00, packet.header.flag);
         assert_eq!(hex!("ffffffffffffffffffffffff"), packet.header.nonce);
 
-        // # read-key = 0x00000000000000000000000000000000
         let read_key = [0; 16];
 
         let decoded_message = Ordinary::decode(&packet, &read_key).unwrap();
@@ -892,19 +931,6 @@ mod tests {
     /// Ping message packet (flag 0) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
     fn encode_ping_packet() {
-        /*
-        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        # nonce = 0xffffffffffffffffffffffff
-        # read-key = 0x00000000000000000000000000000000
-        # ping.req-id = 0x00000001
-        # ping.enr-seq = 2
-
-        00000000000000000000000000000000088b3d4342774649325f313964a39e55
-        ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
-        4c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc
-        */
-
         let node_a_key = SecretKey::from_byte_array(&hex!(
             "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
         ))
@@ -928,7 +954,6 @@ mod tests {
         let masking_iv = [0; 16];
         let nonce = hex!("ffffffffffffffffffffffff");
 
-        // # read-key = 0x00000000000000000000000000000000
         let encrypt_key = [0; 16];
 
         let packet = message.encode(&nonce, masking_iv, &encrypt_key).unwrap();
@@ -945,15 +970,6 @@ mod tests {
 
     #[test]
     fn decode_whoareyou_packet() {
-        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
-        // # whoareyou.request-nonce = 0x0102030405060708090a0b0c
-        // # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
-        // # whoareyou.enr-seq = 0
-        //
-        // 00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad
-        // 1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d
         let node_b_key = SecretKey::from_byte_array(&hex!(
             "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
         ))
@@ -997,15 +1013,6 @@ mod tests {
 
     #[test]
     fn encode_whoareyou_packet() {
-        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
-        // # whoareyou.request-nonce = 0x0102030405060708090a0b0c
-        // # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
-        // # whoareyou.enr-seq = 0
-        //
-        // 00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad
-        // 1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d
         let node_b_key = SecretKey::from_byte_array(&hex!(
             "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
         ))
@@ -1041,31 +1048,6 @@ mod tests {
     /// Ping handshake packet (flag 2) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
     fn encode_ping_handshake_packet() {
-        /*
-        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        # nonce = 0xffffffffffffffffffffffff
-        # read-key = 0x4f9fac6de7567d1e3b1241dffe90f662
-        # ping.req-id = 0x00000001
-        # ping.enr-seq = 1
-        #
-        # handshake inputs:
-        #
-        # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000001
-        # whoareyou.request-nonce = 0x0102030405060708090a0b0c
-        # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
-        # whoareyou.enr-seq = 1
-        # ephemeral-key = 0x0288ef00023598499cb6c940146d050d2b1fb914198c327f76aad590bead68b6
-        # ephemeral-pubkey = 0x039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5
-
-        00000000000000000000000000000000088b3d4342774649305f313964a39e55
-        ea96c005ad521d8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
-        4c4f53245d08da4bb252012b2cba3f4f374a90a75cff91f142fa9be3e0a5f3ef
-        268ccb9065aeecfd67a999e7fdc137e062b2ec4a0eb92947f0d9a74bfbf44dfb
-        a776b21301f8b65efd5796706adff216ab862a9186875f9494150c4ae06fa4d1
-        f0396c93f215fa4ef524f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d83
-        9cf8
-         */
         let node_a_key = SecretKey::from_byte_array(&hex!(
             "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
         ))
@@ -1145,35 +1127,6 @@ mod tests {
     /// Ping handshake message packet (flag 2, with ENR) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
     fn decode_ping_handshake_packet_with_enr() {
-        /*
-        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        # nonce = 0xffffffffffffffffffffffff
-        # read-key = 0x53b1c075f41876423154e157470c2f48
-        # ping.req-id = 0x00000001
-        # ping.enr-seq = 1
-        #
-        # handshake inputs:
-        #
-        # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
-        # whoareyou.request-nonce = 0x0102030405060708090a0b0c
-        # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
-        # whoareyou.enr-seq = 0
-        # ephemeral-key = 0x0288ef00023598499cb6c940146d050d2b1fb914198c327f76aad590bead68b6
-        # ephemeral-pubkey = 0x039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5
-
-        00000000000000000000000000000000088b3d4342774649305f313964a39e55
-        ea96c005ad539c8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
-        4c4f53245d08da4bb23698868350aaad22e3ab8dd034f548a1c43cd246be9856
-        2fafa0a1fa86d8e7a3b95ae78cc2b988ded6a5b59eb83ad58097252188b902b2
-        1481e30e5e285f19735796706adff216ab862a9186875f9494150c4ae06fa4d1
-        f0396c93f215fa4ef524e0ed04c3c21e39b1868e1ca8105e585ec17315e755e6
-        cfc4dd6cb7fd8e1a1f55e49b4b5eb024221482105346f3c82b15fdaae36a3bb1
-        2a494683b4a3c7f2ae41306252fed84785e2bbff3b022812d0882f06978df84a
-        80d443972213342d04b9048fc3b1d5fcb1df0f822152eced6da4d3f6df27e70e
-        4539717307a0208cd208d65093ccab5aa596a34d7511401987662d8cf62b1394
-        71
-        */
         let node_b_key = SecretKey::from_byte_array(&hex!(
             "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
         ))
@@ -1219,35 +1172,6 @@ mod tests {
     /// Ping handshake packet (flag 2, with ENR) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
     fn encode_ping_handshake_packet_with_enr() {
-        /*
-        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        # nonce = 0xffffffffffffffffffffffff
-        # read-key = 0x53b1c075f41876423154e157470c2f48
-        # ping.req-id = 0x00000001
-        # ping.enr-seq = 1
-        #
-        # handshake inputs:
-        #
-        # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
-        # whoareyou.request-nonce = 0x0102030405060708090a0b0c
-        # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
-        # whoareyou.enr-seq = 0
-        # ephemeral-key = 0x0288ef00023598499cb6c940146d050d2b1fb914198c327f76aad590bead68b6
-        # ephemeral-pubkey = 0x039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5
-
-        00000000000000000000000000000000088b3d4342774649305f313964a39e55
-        ea96c005ad539c8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
-        4c4f53245d08da4bb23698868350aaad22e3ab8dd034f548a1c43cd246be9856
-        2fafa0a1fa86d8e7a3b95ae78cc2b988ded6a5b59eb83ad58097252188b902b2
-        1481e30e5e285f19735796706adff216ab862a9186875f9494150c4ae06fa4d1
-        f0396c93f215fa4ef524e0ed04c3c21e39b1868e1ca8105e585ec17315e755e6
-        cfc4dd6cb7fd8e1a1f55e49b4b5eb024221482105346f3c82b15fdaae36a3bb1
-        2a494683b4a3c7f2ae41306252fed84785e2bbff3b022812d0882f06978df84a
-        80d443972213342d04b9048fc3b1d5fcb1df0f822152eced6da4d3f6df27e70e
-        4539717307a0208cd208d65093ccab5aa596a34d7511401987662d8cf62b1394
-        71
-        */
         let node_a_key = SecretKey::from_byte_array(&hex!(
             "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
         ))
@@ -1344,7 +1268,6 @@ mod tests {
 
     #[test]
     fn aes_gcm_vector() {
-        // https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md#encryptiondecryption
         let key = hex!("9f2d77db7004bf8a1a85107ac686990b");
         let nonce = hex!("27b5af763c446acd2749fe8e");
         let ad = hex!("93a7400fa0d6a694ebc24d5cf570f65d04215b6ac00757875e3f3a5f42107903");
@@ -1401,31 +1324,6 @@ mod tests {
     /// Ping handshake packet (flag 2) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
     fn handshake_packet_vector_roundtrip() {
-        /*
-        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        # nonce = 0xffffffffffffffffffffffff
-        # read-key = 0x4f9fac6de7567d1e3b1241dffe90f662
-        # ping.req-id = 0x00000001
-        # ping.enr-seq = 1
-        #
-        # handshake inputs:
-        #
-        # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000001
-        # whoareyou.request-nonce = 0x0102030405060708090a0b0c
-        # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
-        # whoareyou.enr-seq = 1
-        # ephemeral-key = 0x0288ef00023598499cb6c940146d050d2b1fb914198c327f76aad590bead68b6
-        # ephemeral-pubkey = 0x039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5
-
-        00000000000000000000000000000000088b3d4342774649305f313964a39e55
-        ea96c005ad521d8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
-        4c4f53245d08da4bb252012b2cba3f4f374a90a75cff91f142fa9be3e0a5f3ef
-        268ccb9065aeecfd67a999e7fdc137e062b2ec4a0eb92947f0d9a74bfbf44dfb
-        a776b21301f8b65efd5796706adff216ab862a9186875f9494150c4ae06fa4d1
-        f0396c93f215fa4ef524f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d83
-        9cf8
-         */
         let node_b_key = SecretKey::from_byte_array(&hex!(
             "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
         ))
@@ -1560,8 +1458,8 @@ mod tests {
             enr_seq: 4321,
         };
 
-        let buf = pkt.encode_to_vec();
-        assert_eq!(PingMessage::decode(&buf).unwrap(), pkt);
+        let buf = pkt.to_rlp();
+        assert_eq!(PingMessage::decode(&mut buf.as_slice()).unwrap(), pkt);
     }
 
     // TODO: Test encode pong packet (with known good encoding).
@@ -1574,8 +1472,8 @@ mod tests {
             recipient_addr: SocketAddr::new(Ipv4Addr::BROADCAST.into(), 30303),
         };
 
-        let buf = pkt.encode_to_vec();
-        assert_eq!(PongMessage::decode(&buf).unwrap(), pkt);
+        let buf = pkt.to_rlp();
+        assert_eq!(PongMessage::decode(&mut buf.as_slice()).unwrap(), pkt);
     }
 
     #[test]
@@ -1585,8 +1483,8 @@ mod tests {
             distances: vec![0],
         };
 
-        let buf = pkt.encode_to_vec();
-        assert_eq!(FindNodeMessage::decode(&buf).unwrap(), pkt);
+        let buf = pkt.to_rlp();
+        assert_eq!(FindNodeMessage::decode(&mut buf.as_slice()).unwrap(), pkt);
     }
 
     #[test]
@@ -1607,8 +1505,8 @@ mod tests {
             }],
         };
 
-        let buf = pkt.encode_to_vec();
-        assert_eq!(NodesMessage::decode(&buf).unwrap(), pkt);
+        let buf = pkt.to_rlp();
+        assert_eq!(NodesMessage::decode(&mut buf.as_slice()).unwrap(), pkt);
     }
 
     #[test]
@@ -1619,8 +1517,8 @@ mod tests {
             request: Bytes::from_static(&[1, 2, 3, 4]),
         };
 
-        let buf = pkt.encode_to_vec();
-        assert_eq!(TalkReqMessage::decode(&buf).unwrap(), pkt);
+        let buf = pkt.to_rlp();
+        assert_eq!(TalkReqMessage::decode(&mut buf.as_slice()).unwrap(), pkt);
     }
 
     #[test]
@@ -1630,8 +1528,8 @@ mod tests {
             response: b"\x00\x01\x02\x03".into(),
         };
 
-        let buf = pkt.encode_to_vec();
-        assert_eq!(TalkResMessage::decode(&buf).unwrap(), pkt);
+        let buf = pkt.to_rlp();
+        assert_eq!(TalkResMessage::decode(&mut buf.as_slice()).unwrap(), pkt);
     }
 
     #[test]
@@ -1642,7 +1540,7 @@ mod tests {
             wait_time: 5,
         };
 
-        let buf = pkt.encode_to_vec();
-        assert_eq!(TicketMessage::decode(&buf).unwrap(), pkt);
+        let buf = pkt.to_rlp();
+        assert_eq!(TicketMessage::decode(&mut buf.as_slice()).unwrap(), pkt);
     }
 }

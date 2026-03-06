@@ -11,7 +11,7 @@ ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
 ethrex-levm = { path = "./levm", default-features = false }
 ethrex-trie.workspace = true
-ethrex-rlp.workspace = true
+librlp.workspace = true
 
 derive_more = { version = "1.0.0", features = ["full"] }
 bytes.workspace = true

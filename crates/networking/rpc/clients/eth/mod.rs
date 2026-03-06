@@ -21,7 +21,7 @@ use ethrex_common::{
     },
     utils::decode_hex,
 };
-use ethrex_rlp::decode::RLPDecode;
+use librlp::RlpDecode;
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
 use tracing::{debug, trace, warn};
@@ -464,13 +464,13 @@ impl EthClient {
         let encoded_block = decode_hex(&encoded_block?)
             .map_err(|e| EthClientError::Custom(format!("Failed to decode hex: {e}")))?;
 
-        let block = Block::decode_unfinished(&encoded_block).map_err(|e| {
+        let block = Block::decode(&mut encoded_block.as_slice()).map_err(|e| {
             RpcRequestError::RLPDecodeError {
                 method: "debug_getRawBlock".to_string(),
                 message: e.to_string(),
             }
         })?;
-        Ok(block.0)
+        Ok(block)
     }
 
     pub async fn get_logs(

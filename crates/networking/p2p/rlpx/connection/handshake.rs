@@ -16,13 +16,8 @@ use crate::{
 use aes::cipher::{KeyIvInit, StreamCipher};
 use ethrex_common::{H128, H256, H512, Signature};
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
 use futures::{StreamExt, stream::SplitStream};
+use librlp::{Header, RlpBuf, RlpDecode, RlpEncode, RlpError};
 use rand::Rng;
 use secp256k1::{
     PublicKey, SecretKey,
@@ -291,7 +286,7 @@ fn encode_auth_message(
     let auth = AuthMessage::new(signature, public_key, local_nonce);
 
     // RLP-encode the message.
-    let encoded_auth_msg = auth.encode_to_vec();
+    let encoded_auth_msg = auth.to_rlp();
 
     encrypt_message(remote_static_pubkey, encoded_auth_msg)
 }
@@ -304,8 +299,9 @@ fn decode_auth_message(
 ) -> Result<(AuthMessage, PublicKey), PeerConnectionError> {
     let payload = decrypt_message(static_key, msg, auth_data)?;
 
-    // RLP-decode the message.
-    let (auth, _padding) = AuthMessage::decode_unfinished(&payload)?;
+    // RLP-decode the message (ignoring padding after the list).
+    let mut buf = payload.as_slice();
+    let auth = AuthMessage::decode(&mut buf)?;
 
     // Derive a shared secret from the static keys.
     let peer_pk =
@@ -333,7 +329,7 @@ fn encode_ack_message(
     );
 
     // RLP-encode the message.
-    let encoded_ack_msg = ack_msg.encode_to_vec();
+    let encoded_ack_msg = ack_msg.to_rlp();
 
     encrypt_message(remote_static_pubkey, encoded_ack_msg)
 }
@@ -346,8 +342,9 @@ fn decode_ack_message(
 ) -> Result<AckMessage, PeerConnectionError> {
     let payload = decrypt_message(static_key, msg, auth_data)?;
 
-    // RLP-decode the message.
-    let (ack, _padding) = AckMessage::decode_unfinished(&payload)?;
+    // RLP-decode the message (ignoring padding after the list).
+    let mut buf = payload.as_slice();
+    let ack = AckMessage::decode(&mut buf)?;
 
     Ok(ack)
 }
@@ -518,34 +515,45 @@ impl AuthMessage {
     }
 }
 
-impl RLPEncode for AuthMessage {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.signature)
-            .encode_field(&self.public_key)
-            .encode_field(&self.nonce)
-            .encode_field(&self.version)
-            .finish()
+impl RlpEncode for AuthMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.signature.encode(buf);
+            self.public_key.encode(buf);
+            self.nonce.encode(buf);
+            self.version.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for AuthMessage {
-    // NOTE: discards any extra data in the list after the known fields.
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (signature, decoder) = decoder.decode_field("signature")?;
-        let (public_key, decoder) = decoder.decode_field("public_key")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (version, decoder) = decoder.decode_field("version")?;
+impl RlpDecode for AuthMessage {
+    // NOTE: consumes just the outer list; ignores extra data after the known fields.
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        // Don't advance buf past the list — caller may have padding
+        *buf = &buf[header.payload_length..];
 
-        let rest = decoder.finish_unchecked();
-        let this = Self {
+        let signature = Signature::decode(&mut payload)?;
+        let public_key = H512::decode(&mut payload)?;
+        let nonce = H256::decode(&mut payload)?;
+        let version = u8::decode(&mut payload)?;
+
+        Ok(Self {
             signature,
             public_key,
             nonce,
             version,
-        };
-        Ok((this, rest))
+        })
     }
 }
 
@@ -574,31 +582,41 @@ impl AckMessage {
     }
 }
 
-impl RLPEncode for AckMessage {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.ephemeral_pubkey)
-            .encode_field(&self.nonce)
-            .encode_field(&self.version)
-            .finish()
+impl RlpEncode for AckMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.ephemeral_pubkey.encode(buf);
+            self.nonce.encode(buf);
+            self.version.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for AckMessage {
-    // NOTE: discards any extra data in the list after the known fields.
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (ephemeral_pubkey, decoder) = decoder.decode_field("ephemeral_pubkey")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (version, decoder) = decoder.decode_field("version")?;
+impl RlpDecode for AckMessage {
+    // NOTE: consumes just the outer list; ignores extra data after the known fields.
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
 
-        let rest = decoder.finish_unchecked();
-        let this = Self {
+        let ephemeral_pubkey = H512::decode(&mut payload)?;
+        let nonce = H256::decode(&mut payload)?;
+        let version = u8::decode(&mut payload)?;
+
+        Ok(Self {
             ephemeral_pubkey,
             nonce,
             version,
-        };
-        Ok((this, rest))
+        })
     }
 }
 

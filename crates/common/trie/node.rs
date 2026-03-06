@@ -5,7 +5,7 @@ mod leaf;
 use std::sync::{Arc, OnceLock};
 
 pub use branch::BranchNode;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use librlp::{RlpDecode, RlpEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 use rkyv::{
@@ -56,12 +56,12 @@ impl NodeRef {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
-                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
+                Ok(Some(Arc::new(Node::decode(&mut hash.as_ref())?)))
             }
             NodeRef::Hash(_) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
-                .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
+                .map(|rlp| Ok(Arc::new(Node::decode(&mut rlp.as_slice())?)))
                 .transpose(),
         }
     }
@@ -76,12 +76,12 @@ impl NodeRef {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
-                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
+                Ok(Some(Arc::new(Node::decode(&mut hash.as_ref())?)))
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
-                .and_then(|rlp| match Node::decode(&rlp) {
+                .and_then(|rlp| match Node::decode(&mut rlp.as_slice()) {
                     Ok(node) => (node.compute_hash() == *hash).then_some(Ok(Arc::new(node))),
                     Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
@@ -103,7 +103,7 @@ impl NodeRef {
         match self {
             NodeRef::Node(node, _) => Ok(Some(Arc::make_mut(node))),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
-                let node = Node::decode(hash.as_ref())?;
+                let node = Node::decode(&mut hash.as_ref())?;
                 *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
                 self.get_node_mut(db, path)
             }
@@ -111,7 +111,7 @@ impl NodeRef {
                 let Some(node) = db
                     .get(path.clone())?
                     .filter(|rlp| !rlp.is_empty())
-                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                    .map(|rlp| Node::decode(&mut rlp.as_slice()).map_err(TrieError::RLPDecode))
                     .transpose()?
                 else {
                     return Ok(None);
@@ -147,7 +147,7 @@ impl NodeRef {
                     Node::Leaf(_) => {}
                 }
                 let mut buf = Vec::new();
-                node.encode(&mut buf);
+                node.encode_to_vec(&mut buf);
                 let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
@@ -420,7 +420,7 @@ impl Node {
             Node::Leaf(_) => {}
         };
 
-        encoded.push(self.encode_to_vec());
+        encoded.push(self.to_rlp());
         Ok(())
     }
 }

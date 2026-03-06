@@ -1,7 +1,7 @@
 use std::cmp::min;
 
 use ethrex_common::{Address, H256, types::Block};
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_storage::Store;
 use ratatui::{
     buffer::Buffer,
@@ -138,7 +138,7 @@ impl BlocksTable {
                 coinbase: block.header.coinbase,
                 gas_used: block.header.gas_used,
                 blob_gas_used: block.header.blob_gas_used,
-                size: block.length(),
+                size: block.encoded_length(),
             })
             .collect::<Vec<_>>();
 

@@ -13,8 +13,7 @@ use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block},
 };
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_rlp::encode::RLPEncode;
+use librlp::{RlpDecode, RlpEncode};
 use ethrex_rpc::utils::RpcResponse;
 use ethrex_storage::Store;
 use serde::{Deserialize, Serialize};
@@ -142,7 +141,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
         // Maybe we can validate the dump account here? or while deserializing
         state_trie.insert(
             hashed_address.0.to_vec(),
-            dump_account.get_account_state().encode_to_vec(),
+            dump_account.get_account_state().to_rlp(),
         )?;
         // Add code to DB if it is not empty
         if dump_account.code_hash != *EMPTY_KECCACK_HASH {
@@ -175,7 +174,7 @@ async fn process_dump_storage(
     let mut trie = store.open_direct_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
         // The key we receive is the preimage of the one stored in the trie
-        trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
+        trie.insert(keccak(key.0).0.to_vec(), val.to_rlp())?;
     }
     if trie.hash()? != storage_root {
         Err(eyre::ErrReport::msg(
@@ -321,7 +320,7 @@ impl DumpProcessor {
             writer.write_hashes_file(&block_hashes)?;
         }
         if let Some((current_root, store)) = self.sync_state.as_ref() {
-            let block = Block::decode(&rlp_block)?;
+            let block = Block::decode(&mut rlp_block.as_slice())?;
             let block_number = block.header.number;
             let block_hash = block.hash();
 

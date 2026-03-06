@@ -20,7 +20,7 @@ use ethrex_levm::{
     utils::get_base_fee_per_blob_gas,
     vm::{VM, VMType},
 };
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_vm::backends;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
@@ -428,7 +428,7 @@ pub async fn ensure_post_state(
                     let keccak_logs = {
                         let logs = execution_report.logs.clone();
                         let mut encoded_logs = Vec::new();
-                        logs.encode(&mut encoded_logs);
+                        logs.encode_to_vec(&mut encoded_logs);
                         keccak(encoded_logs)
                     };
 

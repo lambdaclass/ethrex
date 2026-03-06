@@ -1,6 +1,6 @@
 use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
+use librlp::{RlpBuf, RlpDecode, RlpEncode, RlpError};
 
 use crate::rkyv_utils::H256Wrapper;
 
@@ -79,17 +79,32 @@ impl NodeHash {
         !matches!(self, NodeHash::Inline(v) if v.1 == 0)
     }
 
-    /// Encodes this NodeHash with the given encoder.
-    pub fn encode<'a>(&self, mut encoder: Encoder<'a>) -> Encoder<'a> {
+    /// Encodes this NodeHash into an RlpBuf.
+    /// Inline nodes are written as raw bytes (already RLP-encoded),
+    /// Hashed nodes are written as an RLP byte string.
+    pub fn encode_node_hash(&self, buf: &mut RlpBuf) {
         match self {
             NodeHash::Inline(_) => {
-                encoder = encoder.encode_raw(self.as_ref());
+                buf.put_bytes(self.as_ref());
             }
-            NodeHash::Hashed(_) => {
-                encoder = encoder.encode_bytes(self.as_ref());
+            NodeHash::Hashed(hash) => {
+                hash.0.encode(buf);
             }
         }
-        encoder
+    }
+
+    /// Encodes this NodeHash into a Vec<u8>.
+    /// Inline nodes are written as raw bytes (already RLP-encoded),
+    /// Hashed nodes are written as an RLP byte string.
+    pub fn encode_node_hash_to_vec(&self, out: &mut Vec<u8>) {
+        match self {
+            NodeHash::Inline(_) => {
+                out.extend_from_slice(self.as_ref());
+            }
+            NodeHash::Hashed(hash) => {
+                hash.0.encode_to_vec(out);
+            }
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -132,12 +147,13 @@ impl Default for NodeHash {
 }
 
 // Encoded as Vec<u8>
-impl RLPEncode for NodeHash {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        RLPEncode::encode(&Into::<Vec<u8>>::into(self), buf)
+impl RlpEncode for NodeHash {
+    fn encode(&self, buf: &mut RlpBuf) {
+        let bytes: Vec<u8> = self.into();
+        bytes.encode(buf);
     }
 
-    fn length(&self) -> usize {
+    fn encoded_length(&self) -> usize {
         match self {
             NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
             NodeHash::Inline((_, 0)) => 1,               // if empty then it's encoded to RLP_NULL
@@ -146,14 +162,12 @@ impl RLPEncode for NodeHash {
     }
 }
 
-impl RLPDecode for NodeHash {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
-        let (hash, rest): (Vec<u8>, &[u8]);
-        (hash, rest) = RLPDecode::decode_unfinished(rlp)?;
+impl RlpDecode for NodeHash {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let hash: Vec<u8> = RlpDecode::decode(buf)?;
         if hash.len() > 32 {
-            return Err(RLPDecodeError::InvalidLength);
+            return Err(RlpError::Custom("NodeHash: invalid length, expected <= 32 bytes".into()));
         }
-        let hash = NodeHash::from_slice(&hash);
-        Ok((hash, rest))
+        Ok(NodeHash::from_slice(&hash))
     }
 }

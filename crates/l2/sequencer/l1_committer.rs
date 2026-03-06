@@ -43,7 +43,7 @@ use ethrex_l2_sdk::{
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
@@ -1208,7 +1208,7 @@ impl L1Committer {
             .await?;
 
             for block in blocks {
-                encoded_blocks.push(block.encode_to_vec().into());
+                encoded_blocks.push(block.to_rlp().into());
             }
 
             calldata_values.push(Value::FixedBytes(commit_hash_bytes.0.to_vec().into()));
@@ -1520,7 +1520,7 @@ pub fn generate_blobs_bundle(
     blob_data.extend(blocks_len.to_be_bytes());
 
     for block in blocks {
-        blob_data.extend(block.encode_to_vec());
+        blob_data.extend(block.to_rlp());
     }
 
     for fee_config in fee_configs {

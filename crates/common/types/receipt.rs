@@ -1,12 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::{
-    decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
+use librlp::{Header, RlpDecode, RlpEncode, RlpError};
 use serde::{Deserialize, Serialize};
 
 use crate::types::TxType;
@@ -35,32 +30,32 @@ impl Receipt {
     }
 
     pub fn encode_inner(&self) -> Vec<u8> {
-        let mut encoded_data = vec![];
+        let mut buf = librlp::RlpBuf::new();
         let tx_type: u8 = self.tx_type as u8;
-        Encoder::new(&mut encoded_data)
-            .encode_field(&tx_type)
-            .encode_field(&self.succeeded)
-            .encode_field(&self.cumulative_gas_used)
-            .encode_field(&self.logs)
-            .finish();
-        encoded_data
+        buf.list(|buf| {
+            tx_type.encode(buf);
+            self.succeeded.encode(buf);
+            self.cumulative_gas_used.encode(buf);
+            librlp::encode_list(&self.logs, buf);
+        });
+        buf.finish()
     }
 
     pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
-        // Bloom is already 256 bytes, so we preallocate at least that much plus some,
-        // to avoid multiple small allocations.
-        let mut encode_buf = Vec::with_capacity(512);
+        let mut result = Vec::with_capacity(512);
         if self.tx_type != TxType::Legacy {
-            encode_buf.push(self.tx_type as u8);
+            result.push(self.tx_type as u8);
         }
         let bloom = bloom_from_logs(&self.logs);
-        Encoder::new(&mut encode_buf)
-            .encode_field(&self.succeeded)
-            .encode_field(&self.cumulative_gas_used)
-            .encode_field(&bloom)
-            .encode_field(&self.logs)
-            .finish();
-        encode_buf
+        let mut buf = librlp::RlpBuf::new();
+        buf.list(|buf| {
+            self.succeeded.encode(buf);
+            self.cumulative_gas_used.encode(buf);
+            bloom.encode(buf);
+            librlp::encode_list(&self.logs, buf);
+        });
+        result.extend_from_slice(&buf.finish());
+        result
     }
 }
 
@@ -77,36 +72,42 @@ pub fn bloom_from_logs(logs: &[Log]) -> Bloom {
     bloom
 }
 
-impl RLPEncode for Receipt {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+impl RlpEncode for Receipt {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
         let encoded_inner = self.encode_inner();
-        buf.put_slice(&encoded_inner);
+        buf.put_bytes(&encoded_inner);
+    }
+
+    fn encoded_length(&self) -> usize {
+        self.encode_inner().len()
     }
 }
 
-impl RLPDecode for Receipt {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (tx_type, decoder): (u8, _) = decoder.decode_field("tx-type")?;
-        let (succeeded, decoder) = decoder.decode_field("succeeded")?;
-        let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
-        let (logs, decoder) = decoder.decode_field("logs")?;
+impl RlpDecode for Receipt {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let tx_type: u8 = RlpDecode::decode(&mut payload)?;
+        let succeeded = RlpDecode::decode(&mut payload)?;
+        let cumulative_gas_used = RlpDecode::decode(&mut payload)?;
+        let logs = librlp::decode_list(&mut payload)?;
 
         let Some(tx_type) = TxType::from_u8(tx_type) else {
-            return Err(RLPDecodeError::Custom(
-                "Invalid transaction type".to_string(),
+            return Err(RlpError::Custom(
+                "Invalid transaction type".into(),
             ));
         };
 
-        Ok((
-            Receipt {
-                tx_type,
-                succeeded,
-                cumulative_gas_used,
-                logs,
-            },
-            decoder.finish()?,
-        ))
+        *buf = &buf[header.payload_length..];
+        Ok(Receipt {
+            tx_type,
+            succeeded,
+            cumulative_gas_used,
+            logs,
+        })
     }
 }
 
@@ -152,27 +153,25 @@ impl ReceiptWithBloom {
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: tx_type | rlp(receipt).
     pub fn encode_inner(&self) -> Vec<u8> {
-        let mut encode_buff = match self.tx_type {
-            TxType::Legacy => {
-                vec![]
-            }
-            _ => {
-                vec![self.tx_type as u8]
-            }
+        let mut result = match self.tx_type {
+            TxType::Legacy => vec![],
+            _ => vec![self.tx_type as u8],
         };
-        Encoder::new(&mut encode_buff)
-            .encode_field(&self.succeeded)
-            .encode_field(&self.cumulative_gas_used)
-            .encode_field(&self.bloom)
-            .encode_field(&self.logs)
-            .finish();
-        encode_buff
+        let mut buf = librlp::RlpBuf::new();
+        buf.list(|buf| {
+            self.succeeded.encode(buf);
+            self.cumulative_gas_used.encode(buf);
+            self.bloom.encode(buf);
+            librlp::encode_list(&self.logs, buf);
+        });
+        result.extend_from_slice(&buf.finish());
+        result
     }
 
     /// Decodes Receipts in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: tx_type | rlp(receipt).
-    pub fn decode_inner(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
+    pub fn decode_inner(rlp: &[u8]) -> Result<Self, RlpError> {
         // Obtain TxType
         let (tx_type, rlp) = match rlp.first() {
             Some(tx_type) if *tx_type < 0x7f => {
@@ -185,7 +184,7 @@ impl ReceiptWithBloom {
                     0x7d => TxType::FeeToken,
                     0x7e => TxType::Privileged,
                     ty => {
-                        return Err(RLPDecodeError::Custom(format!(
+                        return Err(RlpError::Custom(format!(
                             "Invalid transaction type: {ty}"
                         )));
                     }
@@ -194,12 +193,16 @@ impl ReceiptWithBloom {
             }
             _ => (TxType::Legacy, rlp),
         };
-        let decoder = Decoder::new(rlp)?;
-        let (succeeded, decoder) = decoder.decode_field("succeeded")?;
-        let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
-        let (bloom, decoder) = decoder.decode_field("bloom")?;
-        let (logs, decoder) = decoder.decode_field("logs")?;
-        decoder.finish()?;
+        let mut buf = rlp;
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let succeeded = RlpDecode::decode(&mut payload)?;
+        let cumulative_gas_used = RlpDecode::decode(&mut payload)?;
+        let bloom = RlpDecode::decode(&mut payload)?;
+        let logs = librlp::decode_list(&mut payload)?;
 
         Ok(Self {
             tx_type,
@@ -211,35 +214,48 @@ impl ReceiptWithBloom {
     }
 }
 
-impl RLPEncode for ReceiptWithBloom {
+impl RlpEncode for ReceiptWithBloom {
     /// Receipts can be encoded in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
         match self.tx_type {
             TxType::Legacy => {
                 let legacy_encoded = self.encode_inner();
-                buf.put_slice(&legacy_encoded);
+                buf.put_bytes(&legacy_encoded);
             }
             _ => {
-                let typed_recepipt_encoded = self.encode_inner();
-                let bytes = Bytes::from(typed_recepipt_encoded);
+                let typed_receipt_encoded = self.encode_inner();
+                let bytes = Bytes::from(typed_receipt_encoded);
                 bytes.encode(buf);
             }
         };
     }
+
+    fn encoded_length(&self) -> usize {
+        match self.tx_type {
+            TxType::Legacy => self.encode_inner().len(),
+            _ => {
+                let typed_receipt_encoded = self.encode_inner();
+                Bytes::from(typed_receipt_encoded).encoded_length()
+            }
+        }
+    }
 }
 
-impl RLPDecode for ReceiptWithBloom {
+impl RlpDecode for ReceiptWithBloom {
     /// Receipts can be encoded in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        // The minimum size for a ReceiptWithBloom is > 256 bytes (due to the Bloom type field) meaning that it is safe
-        // to check for bytes prefix to diferenticate between legacy receipts and non-legacy receipt payloads
-        let (tx_type, rlp) = if is_encoded_as_bytes(rlp)? {
-            let payload = get_rlp_bytes_item_payload(rlp)?;
-            let tx_type = match payload.first().ok_or(RLPDecodeError::InvalidLength)? {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        // The minimum size for a ReceiptWithBloom is > 256 bytes (due to the Bloom type field)
+        // meaning that it is safe to check for bytes prefix to differentiate between
+        // legacy receipts and non-legacy receipt payloads
+        let header = Header::decode(buf)?;
+        let (tx_type, payload_buf) = if !header.list {
+            // Non-legacy: this was encoded as bytes wrapping type + rlp(receipt)
+            let payload = &buf[..header.payload_length];
+            let tx_type = match payload.first().ok_or(RlpError::InputTooShort)? {
                 0x0 => TxType::Legacy,
                 0x1 => TxType::EIP2930,
                 0x2 => TxType::EIP1559,
@@ -248,32 +264,44 @@ impl RLPDecode for ReceiptWithBloom {
                 0x7d => TxType::FeeToken,
                 0x7e => TxType::Privileged,
                 ty => {
-                    return Err(RLPDecodeError::Custom(format!(
+                    return Err(RlpError::Custom(format!(
                         "Invalid transaction type: {ty}"
                     )));
                 }
             };
+            *buf = &buf[header.payload_length..];
             (tx_type, &payload[1..])
         } else {
-            (TxType::Legacy, rlp)
+            // Legacy: header was a list header, we proceed to decode from the list payload
+            (TxType::Legacy, &buf[..header.payload_length])
         };
 
-        let decoder = Decoder::new(rlp)?;
-        let (succeeded, decoder) = decoder.decode_field("succeeded")?;
-        let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
-        let (bloom, decoder) = decoder.decode_field("bloom")?;
-        let (logs, decoder) = decoder.decode_field("logs")?;
+        let mut inner = payload_buf;
+        if tx_type != TxType::Legacy {
+            // For non-legacy, we need to decode the inner list header
+            let inner_header = Header::decode(&mut inner)?;
+            if !inner_header.list {
+                return Err(RlpError::UnexpectedString);
+            }
+            inner = &inner[..inner_header.payload_length];
+        }
 
-        Ok((
-            ReceiptWithBloom {
-                tx_type,
-                succeeded,
-                cumulative_gas_used,
-                bloom,
-                logs,
-            },
-            decoder.finish()?,
-        ))
+        let succeeded = RlpDecode::decode(&mut inner)?;
+        let cumulative_gas_used = RlpDecode::decode(&mut inner)?;
+        let bloom = RlpDecode::decode(&mut inner)?;
+        let logs = librlp::decode_list(&mut inner)?;
+
+        if tx_type == TxType::Legacy {
+            *buf = &buf[header.payload_length..];
+        }
+
+        Ok(ReceiptWithBloom {
+            tx_type,
+            succeeded,
+            cumulative_gas_used,
+            bloom,
+            logs,
+        })
     }
 }
 
@@ -308,28 +336,40 @@ pub struct Log {
     pub data: Bytes,
 }
 
-impl RLPEncode for Log {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.address)
-            .encode_field(&self.topics)
-            .encode_field(&self.data)
-            .finish();
+impl RlpEncode for Log {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.address.encode(buf);
+            librlp::encode_list(&self.topics, buf);
+            self.data.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.address.encoded_length()
+                + crate::constants::vec_encoded_length(&self.topics)
+                + self.data.encoded_length(),
+        )
     }
 }
 
-impl RLPDecode for Log {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (address, decoder) = decoder.decode_field("address")?;
-        let (topics, decoder) = decoder.decode_field("topics")?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let log = Log {
+impl RlpDecode for Log {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let address = RlpDecode::decode(&mut payload)?;
+        let topics = librlp::decode_list(&mut payload)?;
+        let data = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(Log {
             address,
             topics,
             data,
-        };
-        Ok((log, decoder.finish()?))
+        })
     }
 }
 
@@ -353,8 +393,8 @@ mod test {
                 data: Bytes::from_static(b"foo"),
             }],
         };
-        let encoded_receipt = receipt.encode_to_vec();
-        assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
+        let encoded_receipt = receipt.to_rlp();
+        assert_eq!(receipt, Receipt::decode(&mut encoded_receipt.as_slice()).unwrap())
     }
 
     #[test]
@@ -369,8 +409,8 @@ mod test {
                 data: Bytes::from_static(b"bar"),
             }],
         };
-        let encoded_receipt = receipt.encode_to_vec();
-        assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
+        let encoded_receipt = receipt.to_rlp();
+        assert_eq!(receipt, Receipt::decode(&mut encoded_receipt.as_slice()).unwrap())
     }
 
     #[test]

@@ -28,7 +28,7 @@ use ethrex_common::{
     BigEndianHash, H256, U256,
     types::{AccountState, BlockHeader},
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use librlp::{RlpDecode, RlpEncode};
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
@@ -1077,7 +1077,7 @@ pub async fn request_state_trienodes(
         Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
             .nodes
             .iter()
-            .map(|node| Node::decode(node))
+            .map(|node| Node::decode(&mut node.as_ref()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(SnapError::from),
         Ok(other_msg) => Err(SnapError::Protocol(
@@ -1189,7 +1189,7 @@ async fn request_account_range_worker(
             .unzip();
         let encoded_accounts = account_states
             .iter()
-            .map(|acc| acc.encode_to_vec())
+            .map(|acc| acc.to_rlp())
             .collect::<Vec<_>>();
 
         let Ok(should_continue) = verify_range(
@@ -1319,7 +1319,7 @@ async fn request_storage_ranges_worker(
         }
         let encoded_values = next_account_slots
             .iter()
-            .map(|slot| slot.data.encode_to_vec())
+            .map(|slot| slot.data.to_rlp())
             .collect::<Vec<_>>();
         let hashed_keys: Vec<_> = next_account_slots.iter().map(|slot| slot.hash).collect();
 

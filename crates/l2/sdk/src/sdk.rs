@@ -17,7 +17,7 @@ use ethrex_l2_rpc::{
     clients::get_l1_message_proof,
     signer::{LocalSigner, Signable, Signer},
 };
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_rpc::clients::eth::{EthClient, Overrides, errors::EthClientError};
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
@@ -819,7 +819,7 @@ pub async fn send_generic_transaction(
                 .await
                 .map_err(|err| EthClientError::Custom(err.to_string()))?;
 
-            signed_tx.encode(&mut encoded_tx);
+            signed_tx.encode_to_vec(&mut encoded_tx);
         }
         TxType::EIP4844 => {
             let mut tx: WrappedEIP4844Transaction = generic_tx.try_into()?;
@@ -828,7 +828,7 @@ pub async fn send_generic_transaction(
                 .await
                 .map_err(|err| EthClientError::Custom(err.to_string()))?;
 
-            tx.encode(&mut encoded_tx);
+            tx.encode_to_vec(&mut encoded_tx);
         }
         TxType::EIP7702 => {
             let tx: EIP7702Transaction = generic_tx.try_into()?;
@@ -836,7 +836,7 @@ pub async fn send_generic_transaction(
                 .sign(signer)
                 .await
                 .map_err(|err| EthClientError::Custom(err.to_string()))?;
-            signed_tx.encode(&mut encoded_tx);
+            signed_tx.encode_to_vec(&mut encoded_tx);
         }
         TxType::FeeToken => {
             let tx: FeeTokenTransaction = generic_tx.try_into()?;
@@ -845,7 +845,7 @@ pub async fn send_generic_transaction(
                 .await
                 .map_err(|err| EthClientError::Custom(err.to_string()))?;
 
-            signed_tx.encode(&mut encoded_tx);
+            signed_tx.encode_to_vec(&mut encoded_tx);
         }
         _ => {
             return Err(EthClientError::Custom(format!(

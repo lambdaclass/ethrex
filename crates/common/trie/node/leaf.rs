@@ -1,6 +1,6 @@
 use std::mem;
 
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 
 use crate::{
     ValueRLP,
@@ -145,7 +145,7 @@ impl LeafNode {
     /// Computes the node's hash, using the provided buffer
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
         buf.clear();
-        self.encode(buf);
+        self.encode_to_vec(buf);
         let hash = NodeHash::from_encoded(buf);
         buf.clear();
         hash
@@ -153,7 +153,7 @@ impl LeafNode {
 
     /// Encodes the node and appends it to `node_path` if the encoded node is 32 or more bytes long
     pub fn get_path(&self, node_path: &mut Vec<Vec<u8>>) -> Result<(), TrieError> {
-        let encoded = self.encode_to_vec();
+        let encoded = self.to_rlp();
         if encoded.len() >= 32 {
             node_path.push(encoded);
         }
@@ -173,7 +173,7 @@ impl LeafNode {
 
 #[cfg(test)]
 mod test {
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    use librlp::{RlpDecode, RlpEncode};
 
     use super::*;
     use crate::{Trie, pmt_node};
@@ -363,7 +363,7 @@ mod test {
             b"a comparatively long value".to_vec(),
         )
         .into();
-        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
+        assert_eq!(Node::decode(&mut node.to_rlp().as_slice()).unwrap(), node)
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod test {
             vec![0x12, 0x34, 0x56, 0x78],
         )
         .into();
-        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
+        assert_eq!(Node::decode(&mut node.to_rlp().as_slice()).unwrap(), node)
     }
 
     #[test]
@@ -383,6 +383,6 @@ mod test {
             vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 20],
         )
         .into();
-        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
+        assert_eq!(Node::decode(&mut node.to_rlp().as_slice()).unwrap(), node)
     }
 }

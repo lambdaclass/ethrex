@@ -14,8 +14,10 @@ pub mod trie_sorted;
 mod verify_range;
 use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::constants::RLP_NULL;
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
+
+/// RLP encoding of the empty string (0x80)
+const RLP_NULL: u8 = 0x80;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -33,7 +35,7 @@ pub use self::{
 pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
-use ethrex_rlp::decode::RLPDecode;
+use librlp::RlpDecode;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -116,11 +118,17 @@ impl Trie {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
-                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                        hash.finalize(),
-                    )))
-                })?)
+                Node::decode(
+                    &mut self
+                        .db
+                        .get(Nibbles::default())?
+                        .ok_or_else(|| {
+                            TrieError::InconsistentTree(Box::new(
+                                InconsistentTreeError::RootNotFound(hash.finalize()),
+                            ))
+                        })?
+                        .as_slice(),
+                )
                 .map_err(TrieError::RLPDecode)?
                 .get(self.db.as_ref(), path)?
             }
@@ -286,7 +294,7 @@ impl Trie {
         paths: &[PathRLP],
     ) -> Result<(Option<NodeRLP>, Vec<NodeRLP>), TrieError> {
         if self.root.is_valid() {
-            let encoded_root = self.get_root_node(Nibbles::default())?.encode_to_vec();
+            let encoded_root = self.get_root_node(Nibbles::default())?.to_rlp();
 
             let mut node_path: FxHashSet<_> = Default::default();
             for path in paths {
@@ -433,7 +441,7 @@ impl Trie {
         ) -> Result<Vec<u8>, TrieError> {
             // If we reached the end of the partial path, return the current node
             if partial_path.is_empty() {
-                return Ok(node.encode_to_vec());
+                return Ok(node.to_rlp());
             }
             match node {
                 Node::Branch(branch_node) => match partial_path.next_choice() {

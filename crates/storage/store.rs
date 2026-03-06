@@ -32,10 +32,7 @@ use ethrex_common::{
     utils::keccak,
 };
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
-    encode::RLPEncode,
-};
+use librlp::{RlpDecode, RlpEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
@@ -271,12 +268,12 @@ impl Store {
             for block in blocks {
                 let block_number = block.header.number;
                 let block_hash = block.hash();
-                let hash_key = block_hash.encode_to_vec();
+                let hash_key = block_hash.to_rlp();
 
                 let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
                 tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
 
-                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+                let body_value = BlockBodyRLP::from_bytes(block.body.to_rlp());
                 tx.put(BODIES, &hash_key, body_value.bytes())?;
 
                 tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
@@ -287,7 +284,7 @@ impl Store {
                     let mut composite_key = Vec::with_capacity(64);
                     composite_key.extend_from_slice(tx_hash.as_bytes());
                     composite_key.extend_from_slice(block_hash.as_bytes());
-                    let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                    let location_value = (block_number, block_hash, index as u64).to_rlp();
                     tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
                 }
             }
@@ -303,7 +300,7 @@ impl Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        let hash_key = block_hash.encode_to_vec();
+        let hash_key = block_hash.to_rlp();
         let header_value = BlockHeaderRLP::from(block_header).into_vec();
         self.write_async(HEADERS, hash_key, header_value).await
     }
@@ -318,7 +315,7 @@ impl Store {
         for header in block_headers {
             let block_hash = header.hash();
             let block_number = header.number;
-            let hash_key = block_hash.encode_to_vec();
+            let hash_key = block_hash.to_rlp();
             let header_value = BlockHeaderRLP::from(header).into_vec();
 
             txn.put(HEADERS, &hash_key, &header_value)?;
@@ -348,7 +345,7 @@ impl Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        let hash_key = block_hash.encode_to_vec();
+        let hash_key = block_hash.to_rlp();
         let body_value = BlockBodyRLP::from(block_body).into_vec();
         self.write_async(BODIES, hash_key, body_value).await
     }
@@ -373,7 +370,7 @@ impl Store {
 
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let hash_key = hash.encode_to_vec();
+            let hash_key = hash.to_rlp();
 
             let mut txn = backend.begin_write()?;
             txn.delete(
@@ -405,13 +402,13 @@ impl Store {
             for number in numbers {
                 let Some(hash) = txn
                     .get(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?
-                    .map(|bytes| H256::decode(bytes.as_slice()))
+                    .map(|bytes| H256::decode(&mut bytes.as_slice()))
                     .transpose()?
                 else {
                     block_bodies.push(None);
                     continue;
                 };
-                let hash_key = hash.encode_to_vec();
+                let hash_key = hash.to_rlp();
                 let block_body_opt = txn
                     .get(BODIES, &hash_key)?
                     .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
@@ -438,7 +435,7 @@ impl Store {
             let txn = backend.begin_read()?;
             let mut block_bodies = Vec::new();
             for hash in hashes {
-                let hash_key = hash.encode_to_vec();
+                let hash_key = hash.to_rlp();
 
                 let Some(block_body) = txn
                     .get(BODIES, &hash_key)?
@@ -463,7 +460,7 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        self.read_async(BODIES, block_hash.encode_to_vec())
+        self.read_async(BODIES, block_hash.to_rlp())
             .await?
             .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
             .transpose()
@@ -505,7 +502,7 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let number_value = block_number.to_le_bytes().to_vec();
-        self.write_async(BLOCK_NUMBERS, block_hash.encode_to_vec(), number_value)
+        self.write_async(BLOCK_NUMBERS, block_hash.to_rlp(), number_value)
             .await
     }
 
@@ -514,7 +511,7 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        self.read_async(BLOCK_NUMBERS, block_hash.encode_to_vec())
+        self.read_async(BLOCK_NUMBERS, block_hash.to_rlp())
             .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
@@ -537,7 +534,7 @@ impl Store {
         let mut composite_key = Vec::with_capacity(64);
         composite_key.extend_from_slice(transaction_hash.as_bytes());
         composite_key.extend_from_slice(block_hash.as_bytes());
-        let location_value = (block_number, block_hash, index).encode_to_vec();
+        let location_value = (block_number, block_hash, index).to_rlp();
 
         self.write_async(TRANSACTION_LOCATIONS, composite_key, location_value)
             .await
@@ -554,7 +551,7 @@ impl Store {
                 let mut composite_key = Vec::with_capacity(64);
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (*block_number, *block_hash, *index).encode_to_vec();
+                let location_value = (*block_number, *block_hash, *index).to_rlp();
                 (composite_key, location_value)
             })
             .collect();
@@ -581,7 +578,7 @@ impl Store {
                 // Ensure key is exactly tx_hash + block_hash (32 + 32 = 64 bytes)
                 // and starts with our exact tx_hash
                 if key.len() == 64 && &key[0..32] == tx_hash_bytes {
-                    transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
+                    transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&mut &*value)?);
                 }
             }
 
@@ -596,7 +593,7 @@ impl Store {
                         CANONICAL_BLOCK_HASHES,
                         block_number.to_le_bytes().as_slice(),
                     )?
-                    .map(|bytes| H256::decode(bytes.as_slice()))
+                    .map(|bytes| H256::decode(&mut bytes.as_slice()))
                     .transpose()?
                 };
 
@@ -619,8 +616,8 @@ impl Store {
         receipt: Receipt,
     ) -> Result<(), StoreError> {
         // FIXME: Use dupsort table
-        let key = (block_hash, index).encode_to_vec();
-        let value = receipt.encode_to_vec();
+        let key = (block_hash, index).to_rlp();
+        let value = receipt.to_rlp();
         self.write_async(RECEIPTS, key, value).await
     }
 
@@ -634,8 +631,8 @@ impl Store {
             .into_iter()
             .enumerate()
             .map(|(index, receipt)| {
-                let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
+                let key = (block_hash, index as u64).to_rlp();
+                let value = receipt.to_rlp();
                 (key, value)
             })
             .collect();
@@ -661,10 +658,10 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        let key = (block_hash, index).encode_to_vec();
+        let key = (block_hash, index).to_rlp();
         self.read_async(RECEIPTS, key)
             .await?
-            .map(|bytes| Receipt::decode(bytes.as_slice()))
+            .map(|bytes| Receipt::decode(&mut bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -692,13 +689,15 @@ impl Store {
             return Ok(None);
         };
         let bytes = Bytes::from_owner(bytes);
-        let (bytecode_slice, targets) = decode_bytes(&bytes)?;
-        let bytecode = bytes.slice_ref(bytecode_slice);
+        let mut buf = &bytes[..];
+        let bytecode: Vec<u8> = RlpDecode::decode(&mut buf)?;
+        let bytecode = Bytes::copy_from_slice(&bytecode);
+        let jump_targets: Vec<u32> = librlp::decode_list(&mut buf)?;
 
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
+            jump_targets,
         };
 
         // insert into cache and evict if needed
@@ -897,7 +896,7 @@ impl Store {
                     CANONICAL_BLOCK_HASHES,
                     block_number.to_le_bytes().as_slice(),
                 )?
-                .map(|bytes| H256::decode(bytes.as_slice()))
+                .map(|bytes| H256::decode(&mut bytes.as_slice()))
                 .transpose()
                 .map_err(StoreError::from)
         })
@@ -1012,7 +1011,7 @@ impl Store {
 
             for (block_number, block_hash) in new_canonical_blocks {
                 let head_key = block_number.to_le_bytes();
-                let head_value = block_hash.encode_to_vec();
+                let head_value = block_hash.to_rlp();
                 txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
@@ -1022,7 +1021,7 @@ impl Store {
 
             // Make head canonical
             let head_key = head_number.to_le_bytes();
-            let head_value = head_hash.encode_to_vec();
+            let head_value = head_hash.to_rlp();
             txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
 
             // Update chain data
@@ -1054,10 +1053,10 @@ impl Store {
 
         let txn = self.backend.begin_read()?;
         loop {
-            let key = (*block_hash, index).encode_to_vec();
+            let key = (*block_hash, index).to_rlp();
             match txn.get(RECEIPTS, key.as_slice())? {
                 Some(receipt_bytes) => {
-                    let receipt = Receipt::decode(receipt_bytes.as_slice())?;
+                    let receipt = Receipt::decode(&mut receipt_bytes.as_slice())?;
                     receipts.push(receipt);
                     index += 1;
                 }
@@ -1076,7 +1075,7 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<(), StoreError> {
         let key = snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
-        let value = block_hash.encode_to_vec();
+        let value = block_hash.to_rlp();
         self.write_async(SNAP_STATE, key, value).await
     }
 
@@ -1086,7 +1085,7 @@ impl Store {
         self.backend
             .begin_read()?
             .get(SNAP_STATE, &key)?
-            .map(|bytes| H256::decode(bytes.as_slice()))
+            .map(|bytes| H256::decode(&mut bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -1101,7 +1100,7 @@ impl Store {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
-        let value = latest_valid.encode_to_vec();
+        let value = latest_valid.to_rlp();
         self.write_async(INVALID_CHAINS, bad_block.as_bytes().to_vec(), value)
             .await
     }
@@ -1114,7 +1113,7 @@ impl Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read_async(INVALID_CHAINS, block.as_bytes().to_vec())
             .await?
-            .map(|bytes| H256::decode(bytes.as_slice()))
+            .map(|bytes| H256::decode(&mut bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -1125,7 +1124,7 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
         let txn = self.backend.begin_read()?;
-        txn.get(BLOCK_NUMBERS, &block_hash.encode_to_vec())?
+        txn.get(BLOCK_NUMBERS, &block_hash.to_rlp())?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
@@ -1149,7 +1148,7 @@ impl Store {
             CANONICAL_BLOCK_HASHES,
             block_number.to_le_bytes().as_slice(),
         )?
-        .map(|bytes| H256::decode(bytes.as_slice()))
+        .map(|bytes| H256::decode(&mut bytes.as_slice()))
         .transpose()
         .map_err(StoreError::from)
     }
@@ -1298,7 +1297,7 @@ impl Store {
             FULLSYNC_HEADERS,
             headers
                 .into_iter()
-                .map(|header| (header.number.to_le_bytes().to_vec(), header.encode_to_vec()))
+                .map(|header| (header.number.to_le_bytes().to_vec(), header.to_rlp()))
                 .collect(),
         )
         .await
@@ -1315,7 +1314,7 @@ impl Store {
         for key in start..start + limit {
             let header_opt = read_tx
                 .get(FULLSYNC_HEADERS, &key.to_le_bytes())?
-                .map(|header| BlockHeader::decode(&header))
+                .map(|header| BlockHeader::decode(&mut header.as_slice()))
                 .transpose()?;
             res.push(header_opt);
         }
@@ -1382,12 +1381,12 @@ impl Store {
         for block in update_batch.blocks {
             let block_number = block.header.number;
             let block_hash = block.hash();
-            let hash_key = block_hash.encode_to_vec();
+            let hash_key = block_hash.to_rlp();
 
             let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
             tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
 
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+            let body_value = BlockBodyRLP::from_bytes(block.body.to_rlp());
             tx.put(BODIES, &hash_key, body_value.bytes())?;
 
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
@@ -1398,15 +1397,15 @@ impl Store {
                 let mut composite_key = Vec::with_capacity(64);
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                let location_value = (block_number, block_hash, index as u64).to_rlp();
                 tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
             }
         }
 
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
+                let key = (block_hash, index as u64).to_rlp();
+                let value = receipt.to_rlp();
                 tx.put(RECEIPTS, &key, &value)?;
             }
         }
@@ -1594,7 +1593,7 @@ impl Store {
             return Ok(None);
         };
 
-        let account_state = AccountState::decode(&encoded_state)?;
+        let account_state = AccountState::decode(&mut encoded_state.as_slice())?;
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
             balance: account_state.balance,
@@ -1613,7 +1612,7 @@ impl Store {
         let Some(encoded_state) = state_trie.get(account_hash.as_bytes())? else {
             return Ok(None);
         };
-        let account_state = AccountState::decode(&encoded_state)?;
+        let account_state = AccountState::decode(&mut encoded_state.as_slice())?;
         Ok(Some(account_state))
     }
 
@@ -1647,7 +1646,7 @@ impl Store {
         let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
-        let account_state = AccountState::decode(&encoded_state)?;
+        let account_state = AccountState::decode(&mut encoded_state.as_slice())?;
         self.get_account_code(account_state.code_hash)
     }
 
@@ -1666,7 +1665,7 @@ impl Store {
         let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
-        let account_state = AccountState::decode(&encoded_state)?;
+        let account_state = AccountState::decode(&mut encoded_state.as_slice())?;
         Ok(Some(account_state.nonce))
     }
 
@@ -1705,7 +1704,7 @@ impl Store {
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
             let mut account_state = match state_trie.get(hashed_address.as_bytes())? {
-                Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                Some(encoded_state) => AccountState::decode(&mut encoded_state.as_slice())?,
                 None => AccountState::default(),
             };
             if update.removed_storage {
@@ -1729,7 +1728,7 @@ impl Store {
                     if storage_value.is_zero() {
                         storage_trie.remove(&hashed_key)?;
                     } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        storage_trie.insert(hashed_key, storage_value.to_rlp())?;
                     }
                 }
                 let (storage_hash, storage_updates) =
@@ -1739,7 +1738,7 @@ impl Store {
             }
             state_trie.insert(
                 hashed_address.as_bytes().to_vec(),
-                account_state.encode_to_vec(),
+                account_state.to_rlp(),
             )?;
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
@@ -1779,7 +1778,7 @@ impl Store {
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
             let mut account_state = match state_trie.get(&hashed_address)? {
-                Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                Some(encoded_state) => AccountState::decode(&mut encoded_state.as_slice())?,
                 None => AccountState::default(),
             };
 
@@ -1820,7 +1819,7 @@ impl Store {
                     if storage_value.is_zero() {
                         storage_trie.remove(&hashed_key)?;
                     } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        storage_trie.insert(hashed_key, storage_value.to_rlp())?;
                     }
                 }
 
@@ -1832,7 +1831,7 @@ impl Store {
                 ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
             }
 
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            state_trie.insert(hashed_address, account_state.to_rlp())?;
         }
 
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
@@ -1869,7 +1868,7 @@ impl Store {
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
-                    storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    storage_trie.insert(hashed_key, storage_value.to_rlp())?;
                 }
             }
 
@@ -1888,7 +1887,7 @@ impl Store {
                 storage_root,
                 code_hash,
             };
-            genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            genesis_state_trie.insert(hashed_address, account_state.to_rlp())?;
         }
 
         let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
@@ -2132,7 +2131,7 @@ impl Store {
             let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
             };
-            let account = AccountState::decode(&encoded_account)?;
+            let account = AccountState::decode(&mut encoded_account.as_slice())?;
             account.storage_root
         };
         let storage_trie = self.open_storage_trie_shared(
@@ -2147,7 +2146,7 @@ impl Store {
         let hashed_key = hash_key_fixed(&storage_key);
         storage_trie
             .get(&hashed_key)?
-            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .map(|rlp| U256::decode(&mut rlp.as_slice()).map_err(StoreError::RLPDecode))
             .transpose()
     }
 
@@ -2213,7 +2212,7 @@ impl Store {
         let Some(encoded_account) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
-        let account = AccountState::decode(&encoded_account)?;
+        let account = AccountState::decode(&mut encoded_account.as_slice())?;
         // Open storage_trie
         let storage_root = account.storage_root;
         Ok(Some(self.open_storage_trie(
@@ -2255,7 +2254,7 @@ impl Store {
         let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
-        Ok(Some(AccountState::decode(&encoded_state)?))
+        Ok(Some(AccountState::decode(&mut encoded_state.as_slice())?))
     }
 
     /// Constructs a merkle proof for the given account address against a given state.
@@ -2277,7 +2276,7 @@ impl Store {
         let proof = state_trie.get_proof(address_path.as_bytes())?;
         let account_opt = state_trie
             .get(address_path.as_bytes())?
-            .map(|encoded_state| AccountState::decode(&encoded_state))
+            .map(|encoded_state| AccountState::decode(&mut encoded_state.as_slice()))
             .transpose()?;
 
         let mut storage_proof = Vec::with_capacity(storage_keys.len());
@@ -2291,7 +2290,7 @@ impl Store {
                 let proof = storage_trie.get_proof(&hashed_key)?;
                 let value = storage_trie
                     .get(&hashed_key)?
-                    .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+                    .map(|rlp| U256::decode(&mut rlp.as_slice()).map_err(StoreError::RLPDecode))
                     .transpose()?
                     .unwrap_or_default();
 
@@ -2328,7 +2327,7 @@ impl Store {
         let mut iter = self.open_locked_state_trie(state_root)?.into_iter();
         iter.advance(starting_address.0.to_vec())?;
         Ok(iter.content().map_while(|(path, value)| {
-            Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
+            Some((H256::from_slice(&path), AccountState::decode(&mut value.as_slice()).ok()?))
         }))
     }
 
@@ -2353,13 +2352,13 @@ impl Store {
         let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
-        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
+        let storage_root = AccountState::decode(&mut account_rlp.as_slice())?.storage_root;
         let mut iter = self
             .open_locked_storage_trie(hashed_address, state_root, storage_root)?
             .into_iter();
         iter.advance(starting_slot.0.to_vec())?;
         Ok(Some(iter.content().map_while(|(path, value)| {
-            Some((H256::from_slice(&path), U256::decode(&value).ok()?))
+            Some((H256::from_slice(&path), U256::decode(&mut value.as_slice()).ok()?))
         })))
     }
 
@@ -2398,7 +2397,7 @@ impl Store {
         let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
-        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
+        let storage_root = AccountState::decode(&mut account_rlp.as_slice())?.storage_root;
         let storage_trie = self.open_storage_trie(hashed_address, state_root, storage_root)?;
         let mut proof = storage_trie.get_proof(starting_hash.as_bytes())?;
         if let Some(last_hash) = last_hash {
@@ -2432,7 +2431,7 @@ impl Store {
         // Storage Trie Nodes Request
         let Some(account_state) = state_trie
             .get(account_path)?
-            .map(|ref rlp| AccountState::decode(rlp))
+            .map(|ref rlp| AccountState::decode(&mut rlp.as_slice()))
             .transpose()?
         else {
             return Ok(vec![]);
@@ -2634,7 +2633,7 @@ impl Store {
         let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
         };
-        let root_hash = ethrex_trie::Node::decode(&root)?.compute_hash().finalize();
+        let root_hash = ethrex_trie::Node::decode(&mut root.as_slice())?.compute_hash().finalize();
         Ok(state_root == root_hash)
     }
 
@@ -2696,7 +2695,7 @@ impl Store {
             CANONICAL_BLOCK_HASHES,
             block_number.to_le_bytes().as_slice(),
         )?
-        .map(|bytes| H256::decode(bytes.as_slice()))
+        .map(|bytes| H256::decode(&mut bytes.as_slice()))
         .transpose()
         .map_err(StoreError::from)
     }
@@ -2717,7 +2716,7 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
         let txn = self.backend.begin_read()?;
-        let hash_key = block_hash.encode_to_vec();
+        let hash_key = block_hash.to_rlp();
         let header_value = txn.get(HEADERS, hash_key.as_slice())?;
         let mut header = header_value
             .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
@@ -2887,7 +2886,7 @@ fn flatkeyvalue_generator(
         let root = read_tx
             .get(ACCOUNT_TRIE_NODES, &[])?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
-        let root: Node = ethrex_trie::Node::decode(&root)?;
+        let root: Node = ethrex_trie::Node::decode(&mut root.as_slice())?;
         let state_root = root.compute_hash().finalize();
 
         let last_written = read_tx
@@ -2922,7 +2921,7 @@ fn flatkeyvalue_generator(
             let Node::Leaf(node) = node else {
                 return Ok(());
             };
-            let account_state = AccountState::decode(&node.value)?;
+            let account_state = AccountState::decode(&mut node.value.as_slice())?;
             let account_hash = H256::from_slice(&path.to_bytes());
             write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
             write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
@@ -3076,19 +3075,19 @@ pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
 }
 
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
-    (index as u8).encode_to_vec()
+    (index as u8).to_rlp()
 }
 
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
-    (index as u8).encode_to_vec()
+    (index as u8).to_rlp()
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
     let mut buf = Vec::with_capacity(
         6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
     );
-    code.bytecode.encode(&mut buf);
-    code.jump_targets.encode(&mut buf);
+    code.bytecode.encode_to_vec(&mut buf);
+    buf.extend_from_slice(&librlp::encode_list_to_rlp(&code.jump_targets));
     buf
 }
 

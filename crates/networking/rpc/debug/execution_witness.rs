@@ -9,7 +9,7 @@ use ethrex_common::{
     },
     utils::keccak,
 };
-use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
+use librlp::{RlpDecode, RlpError};
 use ethrex_storage::hash_address;
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie};
 use serde_json::Value;
@@ -27,7 +27,7 @@ pub fn execution_witness_from_rpc_chain_config(
     let mut initial_state_root = None;
 
     for h in &rpc_witness.headers {
-        let header = BlockHeader::decode(h)?;
+        let header = BlockHeader::decode(&mut &h[..])?;
         if header.number == first_block_number - 1 {
             initial_state_root = Some(header.state_root);
             break;
@@ -51,9 +51,9 @@ pub fn execution_witness_from_rpc_chain_config(
                 return None;
             }
             let hash = keccak(&b);
-            Some(Node::decode(&b).map(|node| (hash, node)))
+            Some(Node::decode(&mut b.as_ref()).map(|node| (hash, node)))
         })
-        .collect::<Result<_, RLPDecodeError>>()?;
+        .collect::<Result<_, RlpError>>()?;
 
     // get state trie root and embed the rest of the trie into it
     let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
@@ -80,7 +80,7 @@ pub fn execution_witness_from_rpc_chain_config(
         let Some(encoded_account) = state_trie.get(&hashed_address)? else {
             continue; // empty account, doesn't have a storage trie
         };
-        let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
+        let storage_root_hash = AccountState::decode(&mut encoded_account.as_slice())?.storage_root;
         if storage_root_hash == *EMPTY_TRIE_HASH {
             continue; // empty storage trie
         }

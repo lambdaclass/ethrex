@@ -1,12 +1,7 @@
 use std::fmt;
 
 use crc32fast::Hasher;
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
+use librlp::{RlpDecode, RlpEncode, RlpError};
 
 use ethereum_types::H32;
 use tracing::debug;
@@ -161,26 +156,33 @@ fn update_checksum(forks: Vec<u64>, hasher: &mut Hasher, head: u64) -> u64 {
     0
 }
 
-impl RLPEncode for ForkId {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.fork_hash)
-            .encode_field(&self.fork_next)
-            .finish();
+impl RlpEncode for ForkId {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.fork_hash.encode(buf);
+            self.fork_next.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(self.fork_hash.encoded_length() + self.fork_next.encoded_length())
     }
 }
 
-impl RLPDecode for ForkId {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (fork_hash, decoder) = decoder.decode_field("forkHash")?;
-        let (fork_next, decoder) = decoder.decode_field("forkNext")?;
-        let remaining = decoder.finish()?;
-        let fork_id = ForkId {
+impl RlpDecode for ForkId {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = librlp::Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let fork_hash = RlpDecode::decode(&mut payload)?;
+        let fork_next = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(ForkId {
             fork_hash,
             fork_next,
-        };
-        Ok((fork_id, remaining))
+        })
     }
 }
 
@@ -202,7 +204,7 @@ mod tests {
             fork_next: 0,
         };
         let expected = hex!("c6840000000080");
-        assert_eq!(fork.encode_to_vec(), expected);
+        assert_eq!(fork.to_rlp(), expected);
     }
     #[test]
     fn encode_fork_id2() {
@@ -211,7 +213,7 @@ mod tests {
             fork_next: u64::from_str_radix("baddcafe", 16).unwrap(),
         };
         let expected = hex!("ca84deadbeef84baddcafe");
-        assert_eq!(fork.encode_to_vec(), expected);
+        assert_eq!(fork.to_rlp(), expected);
     }
     #[test]
     fn encode_fork_id3() {
@@ -220,7 +222,7 @@ mod tests {
             fork_next: u64::MAX,
         };
         let expected = hex!("ce84ffffffff88ffffffffffffffff");
-        assert_eq!(fork.encode_to_vec(), expected);
+        assert_eq!(fork.to_rlp(), expected);
     }
 
     struct TestCase {

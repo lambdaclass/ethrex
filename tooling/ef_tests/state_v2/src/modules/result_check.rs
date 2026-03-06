@@ -10,7 +10,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxValidationError, VMError},
     vm::VM,
 };
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_storage::Store;
 use ethrex_vm::backends;
 use rustc_hash::FxHashMap;
@@ -236,7 +236,7 @@ pub fn check_logs(
     checks_result: &mut PostCheckResult,
 ) {
     let mut encoded_logs = Vec::new();
-    execution_report.logs.encode(&mut encoded_logs);
+    execution_report.logs.encode_to_vec(&mut encoded_logs);
     let hashed_logs = keccak(encoded_logs);
     if test_case.post.logs != hashed_logs {
         checks_result.passed = false;

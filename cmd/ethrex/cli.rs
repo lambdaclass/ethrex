@@ -18,7 +18,7 @@ use ethrex_p2p::{
     discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_storage::error::StoreError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
@@ -990,7 +990,7 @@ pub async fn export_blocks(
                 return;
             }
         };
-        block.encode(&mut buffer);
+        block.encode_to_vec(&mut buffer);
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
         exported_count += 1;

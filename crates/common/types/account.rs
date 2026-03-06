@@ -1,18 +1,12 @@
 use std::collections::BTreeMap;
 
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::Trie;
+use librlp::{RlpDecode, RlpEncode, RlpError};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
 
 use super::GenesisAccount;
 use crate::{
@@ -194,157 +188,214 @@ pub fn code_hash(code: &Bytes) -> H256 {
     keccak(code.as_ref())
 }
 
-impl RLPEncode for AccountInfo {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.code_hash)
-            .encode_field(&self.balance)
-            .encode_field(&self.nonce)
-            .finish();
+impl RlpEncode for AccountInfo {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.code_hash.encode(buf);
+            self.balance.encode(buf);
+            self.nonce.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.code_hash.encoded_length()
+                + self.balance.encoded_length()
+                + self.nonce.encoded_length(),
+        )
     }
 }
 
-impl RLPDecode for AccountInfo {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(AccountInfo, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (code_hash, decoder) = decoder.decode_field("code_hash")?;
-        let (balance, decoder) = decoder.decode_field("balance")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let account_info = AccountInfo {
+impl RlpDecode for AccountInfo {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = librlp::Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let code_hash = RlpDecode::decode(&mut payload)?;
+        let balance = RlpDecode::decode(&mut payload)?;
+        let nonce = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(AccountInfo {
             code_hash,
             balance,
             nonce,
-        };
-        Ok((account_info, decoder.finish()?))
+        })
     }
 }
 
-impl RLPEncode for AccountState {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.nonce)
-            .encode_field(&self.balance)
-            .encode_field(&self.storage_root)
-            .encode_field(&self.code_hash)
-            .finish();
+impl RlpEncode for AccountState {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.nonce.encode(buf);
+            self.balance.encode(buf);
+            self.storage_root.encode(buf);
+            self.code_hash.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.nonce.encoded_length()
+                + self.balance.encoded_length()
+                + self.storage_root.encoded_length()
+                + self.code_hash.encoded_length(),
+        )
     }
 }
 
-impl RLPDecode for AccountState {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(AccountState, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (balance, decoder) = decoder.decode_field("balance")?;
-        let (storage_root, decoder) = decoder.decode_field("storage_root")?;
-        let (code_hash, decoder) = decoder.decode_field("code_hash")?;
-        let state = AccountState {
+impl RlpDecode for AccountState {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = librlp::Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let nonce = RlpDecode::decode(&mut payload)?;
+        let balance = RlpDecode::decode(&mut payload)?;
+        let storage_root = RlpDecode::decode(&mut payload)?;
+        let code_hash = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(AccountState {
             nonce,
             balance,
             storage_root,
             code_hash,
-        };
-        Ok((state, decoder.finish()?))
+        })
     }
 }
 
-impl RLPEncode for AccountStateSlimCodec {
-    fn encode(&self, buf: &mut dyn BufMut) {
+impl RlpEncode for AccountStateSlimCodec {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
         struct StorageRootCodec<'a>(&'a H256);
-        impl RLPEncode for StorageRootCodec<'_> {
-            fn encode(&self, buf: &mut dyn BufMut) {
+        impl RlpEncode for StorageRootCodec<'_> {
+            fn encode(&self, buf: &mut librlp::RlpBuf) {
                 let data = if *self.0 != *EMPTY_TRIE_HASH {
                     self.0.as_bytes()
                 } else {
                     &[]
                 };
-
                 data.encode(buf);
+            }
+
+            fn encoded_length(&self) -> usize {
+                let data = if *self.0 != *EMPTY_TRIE_HASH {
+                    self.0.as_bytes()
+                } else {
+                    &[] as &[u8]
+                };
+                data.encoded_length()
             }
         }
 
         struct CodeHashCodec<'a>(&'a H256);
-        impl RLPEncode for CodeHashCodec<'_> {
-            fn encode(&self, buf: &mut dyn BufMut) {
+        impl RlpEncode for CodeHashCodec<'_> {
+            fn encode(&self, buf: &mut librlp::RlpBuf) {
                 let data = if *self.0 != *EMPTY_KECCACK_HASH {
                     self.0.as_bytes()
                 } else {
                     &[]
                 };
-
                 data.encode(buf);
+            }
+
+            fn encoded_length(&self) -> usize {
+                let data = if *self.0 != *EMPTY_KECCACK_HASH {
+                    self.0.as_bytes()
+                } else {
+                    &[] as &[u8]
+                };
+                data.encoded_length()
             }
         }
 
-        Encoder::new(buf)
-            .encode_field(&self.0.nonce)
-            .encode_field(&self.0.balance)
-            .encode_field(&StorageRootCodec(&self.0.storage_root))
-            .encode_field(&CodeHashCodec(&self.0.code_hash))
-            .finish();
+        buf.list(|buf| {
+            self.0.nonce.encode(buf);
+            self.0.balance.encode(buf);
+            StorageRootCodec(&self.0.storage_root).encode(buf);
+            CodeHashCodec(&self.0.code_hash).encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let sr_len = if self.0.storage_root != *EMPTY_TRIE_HASH {
+            self.0.storage_root.as_bytes().encoded_length()
+        } else {
+            (&[] as &[u8]).encoded_length()
+        };
+        let ch_len = if self.0.code_hash != *EMPTY_KECCACK_HASH {
+            self.0.code_hash.as_bytes().encoded_length()
+        } else {
+            (&[] as &[u8]).encoded_length()
+        };
+        crate::constants::list_encoded_length(
+            self.0.nonce.encoded_length() + self.0.balance.encoded_length() + sr_len + ch_len,
+        )
     }
 }
 
-impl RLPDecode for AccountStateSlimCodec {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        struct StorageRootCodec(H256);
-        impl RLPDecode for StorageRootCodec {
-            fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-                let value = match rlp.split_off_first() {
-                    Some(0x80) => *EMPTY_TRIE_HASH,
-                    Some(0xA0) => {
-                        let data;
-                        (data, rlp) = rlp
-                            .split_first_chunk::<32>()
-                            .ok_or(RLPDecodeError::InvalidLength)?;
-                        H256(*data)
-                    }
-                    _ => return Err(RLPDecodeError::InvalidLength),
-                };
-
-                Ok((Self(value), rlp))
-            }
+impl RlpDecode for AccountStateSlimCodec {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = librlp::Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
         }
+        let mut payload = &buf[..header.payload_length];
+        let nonce = RlpDecode::decode(&mut payload)?;
+        let balance = RlpDecode::decode(&mut payload)?;
 
-        struct CodeHashCodec(H256);
-        impl RLPDecode for CodeHashCodec {
-            fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-                let value = match rlp.split_off_first() {
-                    Some(0x80) => *EMPTY_KECCACK_HASH,
-                    Some(0xA0) => {
-                        let data;
-                        (data, rlp) = rlp
-                            .split_first_chunk::<32>()
-                            .ok_or(RLPDecodeError::InvalidLength)?;
-                        H256(*data)
-                    }
-                    _ => return Err(RLPDecodeError::InvalidLength),
-                };
-
-                Ok((Self(value), rlp))
+        // Custom decode for storage_root: 0x80 => empty trie hash, 0xA0 + 32 bytes => H256
+        let storage_root = {
+            let first = payload.first().ok_or(RlpError::InputTooShort)?;
+            match *first {
+                0x80 => {
+                    payload = &payload[1..];
+                    *EMPTY_TRIE_HASH
+                }
+                0xA0 => {
+                    payload = &payload[1..];
+                    let (data, rest) = payload
+                        .split_first_chunk::<32>()
+                        .ok_or(RlpError::InputTooShort)?;
+                    payload = rest;
+                    H256(*data)
+                }
+                _ => return Err(RlpError::InputTooShort),
             }
-        }
+        };
 
-        let decoder = Decoder::new(rlp)?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (balance, decoder) = decoder.decode_field("balance")?;
-        let (StorageRootCodec(storage_root), decoder) = decoder.decode_field("storage_root")?;
-        let (CodeHashCodec(code_hash), decoder) = decoder.decode_field("code_hash")?;
+        // Custom decode for code_hash: 0x80 => empty keccak hash, 0xA0 + 32 bytes => H256
+        let code_hash = {
+            let first = payload.first().ok_or(RlpError::InputTooShort)?;
+            match *first {
+                0x80 => {
+                    *EMPTY_KECCACK_HASH
+                }
+                0xA0 => {
+                    payload = &payload[1..];
+                    let (data, _rest) = payload
+                        .split_first_chunk::<32>()
+                        .ok_or(RlpError::InputTooShort)?;
+                    H256(*data)
+                }
+                _ => return Err(RlpError::InputTooShort),
+            }
+        };
 
-        Ok((
-            Self(AccountState {
-                nonce,
-                balance,
-                storage_root,
-                code_hash,
-            }),
-            decoder.finish()?,
-        ))
+        *buf = &buf[header.payload_length..];
+        Ok(Self(AccountState {
+            nonce,
+            balance,
+            storage_root,
+            code_hash,
+        }))
     }
 }
 
 pub fn compute_storage_root(storage: &BTreeMap<U256, U256>) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
+        (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.to_rlp()))
     });
     Trie::compute_hash_from_unsorted_iter(iter)
 }

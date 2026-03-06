@@ -5,7 +5,7 @@ use ethrex_common::types::{
     Block, Commitment, Proof, blob_from_bytes, kzg_commitment_to_versioned_hash,
 };
 use ethrex_crypto::kzg::verify_blob_kzg_proof;
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 
 use crate::l2::L2ExecutionError;
 
@@ -30,7 +30,7 @@ pub fn verify_blob(
     blob_data.extend(len.to_be_bytes());
 
     for block in blocks {
-        blob_data.extend(block.encode_to_vec());
+        blob_data.extend(block.to_rlp());
     }
 
     for fee_config in fee_configs {

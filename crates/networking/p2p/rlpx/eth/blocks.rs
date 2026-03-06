@@ -2,15 +2,9 @@ use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
-use bytes::BufMut;
 use ethrex_common::types::{BlockBody, BlockHash, BlockHeader, BlockNumber};
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::{RLPDecodeError, RLPEncodeError},
-    structs::{Decoder, Encoder},
-};
 use ethrex_storage::{Store, error::StoreError};
+use librlp::{Header, RlpBuf, RlpDecode, RlpEncode, RlpError};
 use tracing::{error, trace};
 
 pub const HASH_FIRST_BYTE_DECODER: u8 = 160;
@@ -30,18 +24,18 @@ impl core::fmt::Display for HashOrNumber {
     }
 }
 
-impl RLPEncode for HashOrNumber {
-    fn encode(&self, buf: &mut dyn BufMut) {
+impl RlpEncode for HashOrNumber {
+    fn encode(&self, buf: &mut RlpBuf) {
         match self {
             HashOrNumber::Hash(hash) => hash.encode(buf),
             HashOrNumber::Number(number) => number.encode(buf),
         }
     }
 
-    fn length(&self) -> usize {
+    fn encoded_length(&self) -> usize {
         match self {
-            HashOrNumber::Hash(hash) => hash.length(),
-            HashOrNumber::Number(number) => number.length(),
+            HashOrNumber::Hash(hash) => hash.encoded_length(),
+            HashOrNumber::Number(number) => number.encoded_length(),
         }
     }
 }
@@ -52,19 +46,19 @@ impl From<BlockHash> for HashOrNumber {
     }
 }
 
-impl RLPDecode for HashOrNumber {
-    fn decode_unfinished(buf: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let first_byte = buf.first().ok_or(RLPDecodeError::InvalidLength)?;
+impl RlpDecode for HashOrNumber {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let first_byte = buf.first().ok_or(RlpError::InputTooShort)?;
         // https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp/
         // hashes are 32 bytes long, so they enter in the 0-55 bytes range for rlp. This means the first byte
         // is the value 0x80 + len, where len = 32 (0x20). so we get the result of 0xa0 which is 160 in decimal
         if *first_byte == HASH_FIRST_BYTE_DECODER {
-            let (hash, rest) = BlockHash::decode_unfinished(buf)?;
-            return Ok((Self::Hash(hash), rest));
+            let hash = BlockHash::decode(buf)?;
+            return Ok(Self::Hash(hash));
         }
 
-        let (number, rest) = u64::decode_unfinished(buf)?;
-        Ok((Self::Number(number), rest))
+        let number = u64::decode(buf)?;
+        Ok(Self::Number(number))
     }
 }
 
@@ -174,26 +168,45 @@ fn get_block_header(
 
 impl RLPxMessage for GetBlockHeaders {
     const CODE: u8 = 0x03;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        let limit = self.limit;
-        let skip = self.skip;
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
         let reverse = self.reverse as u8;
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.id)
-            .encode_field(&(self.startblock, limit, skip, reverse))
-            .finish();
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        rlp_buf.list(|buf| {
+            self.id.encode(buf);
+            buf.list(|buf| {
+                self.startblock.encode(buf);
+                self.limit.encode(buf);
+                self.skip.encode(buf);
+                reverse.encode(buf);
+            });
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let ((start_block, limit, skip, reverse), _): ((HashOrNumber, u64, u64, bool), _) =
-            decoder.decode_field("get headers request params")?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let id = u64::decode(&mut payload)?;
+
+        // Decode the inner list [startblock, limit, skip, reverse]
+        let inner_header = Header::decode(&mut payload)?;
+        if !inner_header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut inner_payload = &payload[..inner_header.payload_length];
+        let start_block = HashOrNumber::decode(&mut inner_payload)?;
+        let limit = u64::decode(&mut inner_payload)?;
+        let skip = u64::decode(&mut inner_payload)?;
+        let reverse = bool::decode(&mut inner_payload)?;
+
         Ok(Self::new(id, start_block, limit, skip, reverse))
     }
 }
@@ -215,25 +228,28 @@ impl BlockHeaders {
 
 impl RLPxMessage for BlockHeaders {
     const CODE: u8 = 0x04;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        // Each message is encoded with its own
-        // message identifier (code).
-        // Go ethereum reference: https://github.com/ethereum/go-ethereum/blob/20bf543a64d7c2a590b18a1e1d907cae65707013/p2p/transport.go#L94
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.id)
-            .encode_field(&self.block_headers)
-            .finish();
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            self.id.encode(buf);
+            librlp::encode_list(&self.block_headers, buf);
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (block_headers, _): (Vec<BlockHeader>, _) = decoder.decode_field("headers")?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let id = u64::decode(&mut payload)?;
+        let block_headers: Vec<BlockHeader> = librlp::decode_list(&mut payload)?;
 
         Ok(Self::new(id, block_headers))
     }
@@ -283,23 +299,28 @@ impl GetBlockBodies {
 
 impl RLPxMessage for GetBlockBodies {
     const CODE: u8 = 0x05;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.id)
-            .encode_field(&self.block_hashes)
-            .finish();
-
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            self.id.encode(buf);
+            librlp::encode_list(&self.block_hashes, buf);
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (block_hashes, _): (Vec<BlockHash>, _) = decoder.decode_field("blockHashes")?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let id = u64::decode(&mut payload)?;
+        let block_hashes: Vec<BlockHash> = librlp::decode_list(&mut payload)?;
 
         Ok(Self::new(id, block_hashes))
     }
@@ -322,23 +343,28 @@ impl BlockBodies {
 
 impl RLPxMessage for BlockBodies {
     const CODE: u8 = 0x06;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.id)
-            .encode_field(&self.block_bodies)
-            .finish();
-
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            self.id.encode(buf);
+            librlp::encode_list(&self.block_bodies, buf);
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (block_bodies, _): (Vec<BlockBody>, _) = decoder.decode_field("blockBodies")?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let id = u64::decode(&mut payload)?;
+        let block_bodies: Vec<BlockBody> = librlp::decode_list(&mut payload)?;
 
         Ok(Self::new(id, block_bodies))
     }

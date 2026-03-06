@@ -14,13 +14,18 @@ pub use serde_impl::{
 /// The serialized length of a default eip1559 transaction
 pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
 
-use ethrex_rlp::{
-    constants::RLP_NULL,
-    decode::{RLPDecode, decode_rlp_item},
-    encode::{PayloadRLPEncode, RLPEncode},
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
+use crate::constants::RLP_NULL;
+use librlp::{Header, RlpDecode, RlpEncode, RlpError};
+
+/// Trait for encoding the unsigned payload of a transaction (used for EIP-2718 signing).
+pub trait PayloadRlpEncode {
+    fn encode_payload(&self, buf: &mut librlp::RlpBuf);
+    fn encode_payload_to_vec(&self) -> Vec<u8> {
+        let mut buf = librlp::RlpBuf::new();
+        self.encode_payload(&mut buf);
+        buf.finish()
+    }
+}
 
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
 use once_cell::sync::OnceCell;
@@ -72,49 +77,63 @@ impl TryInto<Transaction> for P2PTransaction {
     }
 }
 
-impl RLPEncode for P2PTransaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+impl RlpEncode for P2PTransaction {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
         match self {
             P2PTransaction::LegacyTransaction(t) => t.encode(buf),
-            tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
+            tx => {
+                let canonical = tx.encode_canonical_to_vec();
+                canonical.as_slice().encode(buf);
+            }
         };
+    }
+
+    fn encoded_length(&self) -> usize {
+        match self {
+            P2PTransaction::LegacyTransaction(t) => t.encoded_length(),
+            tx => {
+                let canonical = tx.encode_canonical_to_vec();
+                canonical.as_slice().encoded_length()
+            }
+        }
     }
 }
 
-impl RLPDecode for P2PTransaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
-        if !is_list {
-            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
-            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            // Look at the first byte to check if it corresponds to a TransactionType
-            match *tx_type {
-                // Legacy
-                0x0 => LegacyTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
-                // EIP2930
-                0x1 => EIP2930Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP2930Transaction(tx), remainder)),
-                // EIP1559
-                0x2 => EIP1559Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP1559Transaction(tx), remainder)),
-                // EIP4844
-                0x3 => WrappedEIP4844Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP4844TransactionWithBlobs(tx), remainder)),
-                // EIP7702
-                0x4 => EIP7702Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP7702Transaction(tx), remainder)),
-                // FeeToken
-                0x7d => FeeTokenTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
-                ty => Err(RLPDecodeError::Custom(format!(
+impl RlpDecode for P2PTransaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            // Non-legacy: encoded as bytes wrapping type + rlp(tx)
+            let payload = &buf[..header.payload_length];
+            let tx_type = payload.first().ok_or(RlpError::InputTooShort)?;
+            let mut tx_encoding = &payload[1..];
+            let result = match *tx_type {
+                0x0 => LegacyTransaction::decode(&mut tx_encoding)
+                    .map(P2PTransaction::LegacyTransaction),
+                0x1 => EIP2930Transaction::decode(&mut tx_encoding)
+                    .map(P2PTransaction::EIP2930Transaction),
+                0x2 => EIP1559Transaction::decode(&mut tx_encoding)
+                    .map(P2PTransaction::EIP1559Transaction),
+                0x3 => WrappedEIP4844Transaction::decode(&mut tx_encoding)
+                    .map(P2PTransaction::EIP4844TransactionWithBlobs),
+                0x4 => EIP7702Transaction::decode(&mut tx_encoding)
+                    .map(P2PTransaction::EIP7702Transaction),
+                0x7d => FeeTokenTransaction::decode(&mut tx_encoding)
+                    .map(P2PTransaction::FeeTokenTransaction),
+                ty => Err(RlpError::Custom(format!(
                     "Invalid transaction type: {ty}"
                 ))),
-            }
+            };
+            *buf = &buf[header.payload_length..];
+            result
         } else {
-            // LegacyTransaction
-            LegacyTransaction::decode_unfinished(rlp)
-                .map(|(tx, rem)| (P2PTransaction::LegacyTransaction(tx), rem))
+            // Legacy: header was a list header, decode legacy transaction from the full item
+            // We need to reconstruct the original bytes including the header
+            let payload = &buf[..header.payload_length];
+            let mut full_payload = payload;
+            let tx = LegacyTransaction::decode_from_list_payload(&mut full_payload)?;
+            *buf = &buf[header.payload_length..];
+            Ok(P2PTransaction::LegacyTransaction(tx))
         }
     }
 }
@@ -126,42 +145,76 @@ pub struct WrappedEIP4844Transaction {
     pub blobs_bundle: BlobsBundle,
 }
 
-impl RLPEncode for WrappedEIP4844Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let encoder = Encoder::new(buf);
-        encoder
-            .encode_field(&self.tx)
-            .encode_optional_field(&self.wrapper_version)
-            .encode_field(&self.blobs_bundle.blobs)
-            .encode_field(&self.blobs_bundle.commitments)
-            .encode_field(&self.blobs_bundle.proofs)
-            .finish();
+impl RlpEncode for WrappedEIP4844Transaction {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.tx.encode(buf);
+            if let Some(wv) = self.wrapper_version {
+                wv.encode(buf);
+            }
+            librlp::encode_list(&self.blobs_bundle.blobs, buf);
+            librlp::encode_list(&self.blobs_bundle.commitments, buf);
+            librlp::encode_list(&self.blobs_bundle.proofs, buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut payload = self.tx.encoded_length();
+        if let Some(wv) = self.wrapper_version {
+            payload += wv.encoded_length();
+        }
+        payload += crate::constants::vec_encoded_length(&self.blobs_bundle.blobs)
+            + crate::constants::vec_encoded_length(&self.blobs_bundle.commitments)
+            + crate::constants::vec_encoded_length(&self.blobs_bundle.proofs);
+        crate::constants::list_encoded_length(payload)
     }
 }
 
-impl RLPDecode for WrappedEIP4844Transaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedEIP4844Transaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let Ok((tx, decoder)) = decoder.decode_field("tx") else {
-            // Handle the case of blobless transaction
-            let (tx, rest) = EIP4844Transaction::decode_unfinished(rlp)?;
-            return Ok((
-                WrappedEIP4844Transaction {
+impl RlpDecode for WrappedEIP4844Transaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+
+        // Try to decode as wrapped (tx + optional version + blobs + commitments + proofs)
+        // The inner tx is itself an RLP list, so we peek at its header
+        let tx = match EIP4844Transaction::decode(&mut payload) {
+            Ok(tx) => tx,
+            Err(_) => {
+                // Handle the case of blobless transaction - re-decode from start
+                let mut full = &buf[..header.payload_length];
+                let tx = EIP4844Transaction::decode(&mut full)?;
+                *buf = &buf[header.payload_length..];
+                return Ok(WrappedEIP4844Transaction {
                     tx,
                     wrapper_version: None,
-                    // Empty blobs bundles are not valid
                     blobs_bundle: BlobsBundle::empty(),
-                },
-                rest,
-            ));
+                });
+            }
         };
 
-        let (wrapper_version, decoder) = decoder.decode_optional_field();
-        let (blobs, decoder) = decoder.decode_field("blobs")?;
-        let (commitments, decoder) = decoder.decode_field("commitments")?;
-        let (proofs, decoder) = decoder.decode_field("proofs")?;
+        // Check if remaining payload starts with a list (blobs) or a non-list (version byte)
+        let wrapper_version = if !payload.is_empty() {
+            // Peek: if next item is a list, it's the blobs field; otherwise it's wrapper_version
+            let mut peek = payload;
+            let peek_header = Header::decode(&mut peek)?;
+            if !peek_header.list {
+                Some(u8::decode(&mut payload)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
-        let wrapped = WrappedEIP4844Transaction {
+        let blobs = librlp::decode_list(&mut payload)?;
+        let commitments = librlp::decode_list(&mut payload)?;
+        let proofs = librlp::decode_list(&mut payload)?;
+
+        *buf = &buf[header.payload_length..];
+        Ok(WrappedEIP4844Transaction {
             tx,
             wrapper_version,
             blobs_bundle: BlobsBundle {
@@ -170,8 +223,7 @@ impl RLPDecode for WrappedEIP4844Transaction {
                 proofs,
                 version: wrapper_version.unwrap_or_default(),
             },
-        };
-        Ok((wrapped, decoder.finish()?))
+        })
     }
 }
 
@@ -457,63 +509,71 @@ impl Transaction {
     }
 }
 
-impl RLPEncode for Transaction {
+impl RlpEncode for Transaction {
     /// Transactions can be encoded in the following formats:
     /// A) Legacy transactions: rlp(LegacyTransaction)
     /// B) Non legacy transactions: rlp(Bytes) where Bytes represents the canonical encoding for the transaction as a bytes object.
     /// Checkout [Transaction::encode_canonical] for more information
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
         match self {
             Transaction::LegacyTransaction(t) => t.encode(buf),
             _ => {
                 let canonical = self.encode_canonical_to_vec();
-                <[u8] as RLPEncode>::encode(canonical.as_slice(), buf)
+                canonical.as_slice().encode(buf);
             }
         };
     }
+
+    fn encoded_length(&self) -> usize {
+        match self {
+            Transaction::LegacyTransaction(t) => t.encoded_length(),
+            _ => {
+                let canonical = self.encode_canonical_to_vec();
+                canonical.as_slice().encoded_length()
+            }
+        }
+    }
 }
 
-impl RLPDecode for Transaction {
+impl RlpDecode for Transaction {
     /// Transactions can be encoded in the following formats:
     /// A) Legacy transactions: rlp(LegacyTransaction)
     /// B) Non legacy transactions: rlp(Bytes) where Bytes represents the canonical encoding for the transaction as a bytes object.
     /// Checkout [Transaction::decode_canonical] for more information
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
-        if !is_list {
-            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
-            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            // Look at the first byte to check if it corresponds to a TransactionType
-            match *tx_type {
-                // Legacy
-                0x0 => LegacyTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
-                // EIP2930
-                0x1 => EIP2930Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP2930Transaction(tx), remainder)),
-                // EIP1559
-                0x2 => EIP1559Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP1559Transaction(tx), remainder)),
-                // EIP4844
-                0x3 => EIP4844Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP4844Transaction(tx), remainder)),
-                // EIP7702
-                0x4 => EIP7702Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP7702Transaction(tx), remainder)),
-                // FeeToken
-                0x7d => FeeTokenTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::FeeTokenTransaction(tx), remainder)),
-                // PrivilegedL2
-                0x7e => PrivilegedL2Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
-                ty => Err(RLPDecodeError::Custom(format!(
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            // Non-legacy: encoded as bytes wrapping type + rlp(tx)
+            let payload = &buf[..header.payload_length];
+            let tx_type = payload.first().ok_or(RlpError::InputTooShort)?;
+            let mut tx_encoding = &payload[1..];
+            let result = match *tx_type {
+                0x0 => LegacyTransaction::decode(&mut tx_encoding)
+                    .map(Transaction::LegacyTransaction),
+                0x1 => EIP2930Transaction::decode(&mut tx_encoding)
+                    .map(Transaction::EIP2930Transaction),
+                0x2 => EIP1559Transaction::decode(&mut tx_encoding)
+                    .map(Transaction::EIP1559Transaction),
+                0x3 => EIP4844Transaction::decode(&mut tx_encoding)
+                    .map(Transaction::EIP4844Transaction),
+                0x4 => EIP7702Transaction::decode(&mut tx_encoding)
+                    .map(Transaction::EIP7702Transaction),
+                0x7d => FeeTokenTransaction::decode(&mut tx_encoding)
+                    .map(Transaction::FeeTokenTransaction),
+                0x7e => PrivilegedL2Transaction::decode(&mut tx_encoding)
+                    .map(Transaction::PrivilegedL2Transaction),
+                ty => Err(RlpError::Custom(format!(
                     "Invalid transaction type: {ty}"
                 ))),
-            }
+            };
+            *buf = &buf[header.payload_length..];
+            result
         } else {
-            // LegacyTransaction
-            LegacyTransaction::decode_unfinished(rlp)
-                .map(|(tx, rem)| (Transaction::LegacyTransaction(tx), rem))
+            // Legacy: header was a list header
+            let mut payload = &buf[..header.payload_length];
+            let tx = LegacyTransaction::decode_from_list_payload(&mut payload)?;
+            *buf = &buf[header.payload_length..];
+            Ok(Transaction::LegacyTransaction(tx))
         }
     }
 }
@@ -526,158 +586,269 @@ pub enum TxKind {
     Create,
 }
 
-impl RLPEncode for TxKind {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+impl RlpEncode for TxKind {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
         match self {
             Self::Call(address) => address.encode(buf),
             Self::Create => buf.put_u8(RLP_NULL),
         }
     }
-}
 
-impl RLPDecode for TxKind {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let first_byte = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
-        if *first_byte == RLP_NULL {
-            return Ok((Self::Create, &rlp[1..]));
+    fn encoded_length(&self) -> usize {
+        match self {
+            Self::Call(address) => address.encoded_length(),
+            Self::Create => 1,
         }
-        Address::decode_unfinished(rlp).map(|(t, rest)| (Self::Call(t), rest))
     }
 }
 
-impl RLPEncode for LegacyTransaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.nonce)
-            .encode_field(&self.gas_price)
-            .encode_field(&self.gas)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.v)
-            .encode_field(&self.r)
-            .encode_field(&self.s)
-            .finish();
+impl RlpDecode for TxKind {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let first_byte = buf.first().ok_or(RlpError::InputTooShort)?;
+        if *first_byte == RLP_NULL {
+            *buf = &buf[1..];
+            return Ok(Self::Create);
+        }
+        Address::decode(buf).map(Self::Call)
     }
 }
 
-impl RLPEncode for EIP2930Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.gas_price)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+impl RlpEncode for LegacyTransaction {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.nonce.encode(buf);
+            self.gas_price.encode(buf);
+            self.gas.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            self.v.encode(buf);
+            self.r.encode(buf);
+            self.s.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.nonce.encoded_length()
+                + self.gas_price.encoded_length()
+                + self.gas.encoded_length()
+                + self.to.encoded_length()
+                + self.value.encoded_length()
+                + self.data.encoded_length()
+                + self.v.encoded_length()
+                + self.r.encoded_length()
+                + self.s.encoded_length(),
+        )
     }
 }
 
-impl RLPEncode for EIP1559Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+impl RlpEncode for EIP2930Transaction {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.gas_price.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            self.signature_y_parity.encode(buf);
+            self.signature_r.encode(buf);
+            self.signature_s.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.chain_id.encoded_length()
+                + self.nonce.encoded_length()
+                + self.gas_price.encoded_length()
+                + self.gas_limit.encoded_length()
+                + self.to.encoded_length()
+                + self.value.encoded_length()
+                + self.data.encoded_length()
+                + crate::types::tx_fields::access_list_encoded_length(&self.access_list)
+                + self.signature_y_parity.encoded_length()
+                + self.signature_r.encoded_length()
+                + self.signature_s.encoded_length(),
+        )
     }
 }
 
-impl RLPEncode for EIP4844Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.max_fee_per_blob_gas)
-            .encode_field(&self.blob_versioned_hashes)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+impl RlpEncode for EIP1559Transaction {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            self.signature_y_parity.encode(buf);
+            self.signature_r.encode(buf);
+            self.signature_s.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.chain_id.encoded_length()
+                + self.nonce.encoded_length()
+                + self.max_priority_fee_per_gas.encoded_length()
+                + self.max_fee_per_gas.encoded_length()
+                + self.gas_limit.encoded_length()
+                + self.to.encoded_length()
+                + self.value.encoded_length()
+                + self.data.encoded_length()
+                + crate::types::tx_fields::access_list_encoded_length(&self.access_list)
+                + self.signature_y_parity.encoded_length()
+                + self.signature_r.encoded_length()
+                + self.signature_s.encoded_length(),
+        )
     }
 }
 
-impl RLPEncode for EIP7702Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.authorization_list)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+impl RlpEncode for EIP4844Transaction {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            self.max_fee_per_blob_gas.encode(buf);
+            librlp::encode_list(&self.blob_versioned_hashes, buf);
+            self.signature_y_parity.encode(buf);
+            self.signature_r.encode(buf);
+            self.signature_s.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.chain_id.encoded_length() + self.nonce.encoded_length()
+                + self.max_priority_fee_per_gas.encoded_length()
+                + self.max_fee_per_gas.encoded_length()
+                + self.gas.encoded_length() + self.to.encoded_length()
+                + self.value.encoded_length() + self.data.encoded_length()
+                + crate::types::tx_fields::access_list_encoded_length(&self.access_list)
+                + self.max_fee_per_blob_gas.encoded_length()
+                + crate::constants::vec_encoded_length(&self.blob_versioned_hashes)
+                + self.signature_y_parity.encoded_length()
+                + self.signature_r.encoded_length()
+                + self.signature_s.encoded_length(),
+        )
     }
 }
 
-impl RLPEncode for PrivilegedL2Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.from)
-            .finish()
+impl RlpEncode for EIP7702Transaction {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            librlp::encode_list(&self.authorization_list, buf);
+            self.signature_y_parity.encode(buf);
+            self.signature_r.encode(buf);
+            self.signature_s.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.chain_id.encoded_length() + self.nonce.encoded_length()
+                + self.max_priority_fee_per_gas.encoded_length()
+                + self.max_fee_per_gas.encoded_length()
+                + self.gas_limit.encoded_length() + self.to.encoded_length()
+                + self.value.encoded_length() + self.data.encoded_length()
+                + crate::types::tx_fields::access_list_encoded_length(&self.access_list)
+                + crate::constants::vec_encoded_length(&self.authorization_list)
+                + self.signature_y_parity.encoded_length()
+                + self.signature_r.encoded_length()
+                + self.signature_s.encoded_length(),
+        )
     }
 }
 
-impl RLPEncode for FeeTokenTransaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.fee_token)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+impl RlpEncode for PrivilegedL2Transaction {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            self.from.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.chain_id.encoded_length() + self.nonce.encoded_length()
+                + self.max_priority_fee_per_gas.encoded_length()
+                + self.max_fee_per_gas.encoded_length()
+                + self.gas_limit.encoded_length() + self.to.encoded_length()
+                + self.value.encoded_length() + self.data.encoded_length()
+                + crate::types::tx_fields::access_list_encoded_length(&self.access_list) + self.from.encoded_length(),
+        )
     }
 }
 
-impl PayloadRLPEncode for Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+impl RlpEncode for FeeTokenTransaction {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            self.fee_token.encode(buf);
+            self.signature_y_parity.encode(buf);
+            self.signature_r.encode(buf);
+            self.signature_s.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.chain_id.encoded_length() + self.nonce.encoded_length()
+                + self.max_priority_fee_per_gas.encoded_length()
+                + self.max_fee_per_gas.encoded_length()
+                + self.gas_limit.encoded_length() + self.to.encoded_length()
+                + self.value.encoded_length() + self.data.encoded_length()
+                + crate::types::tx_fields::access_list_encoded_length(&self.access_list) + self.fee_token.encoded_length()
+                + self.signature_y_parity.encoded_length()
+                + self.signature_r.encoded_length()
+                + self.signature_s.encoded_length(),
+        )
+    }
+}
+
+impl PayloadRlpEncode for Transaction {
+    fn encode_payload(&self, buf: &mut librlp::RlpBuf) {
         match self {
             Transaction::LegacyTransaction(tx) => tx.encode_payload(buf),
             Transaction::EIP1559Transaction(tx) => tx.encode_payload(buf),
@@ -690,135 +861,132 @@ impl PayloadRLPEncode for Transaction {
     }
 }
 
-impl PayloadRLPEncode for LegacyTransaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.nonce)
-            .encode_field(&self.gas_price)
-            .encode_field(&self.gas)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .finish();
+impl PayloadRlpEncode for LegacyTransaction {
+    fn encode_payload(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.nonce.encode(buf);
+            self.gas_price.encode(buf);
+            self.gas.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+        });
     }
 }
 
-impl PayloadRLPEncode for EIP1559Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .finish();
+impl PayloadRlpEncode for EIP1559Transaction {
+    fn encode_payload(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+        });
     }
 }
 
-impl PayloadRLPEncode for EIP2930Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.gas_price)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .finish();
+impl PayloadRlpEncode for EIP2930Transaction {
+    fn encode_payload(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.gas_price.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+        });
     }
 }
 
-impl PayloadRLPEncode for EIP4844Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.max_fee_per_blob_gas)
-            .encode_field(&self.blob_versioned_hashes)
-            .finish();
+impl PayloadRlpEncode for EIP4844Transaction {
+    fn encode_payload(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            self.max_fee_per_blob_gas.encode(buf);
+            librlp::encode_list(&self.blob_versioned_hashes, buf);
+        });
     }
 }
 
-impl PayloadRLPEncode for EIP7702Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.authorization_list)
-            .finish();
+impl PayloadRlpEncode for EIP7702Transaction {
+    fn encode_payload(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            librlp::encode_list(&self.authorization_list, buf);
+        });
     }
 }
 
-impl PayloadRLPEncode for PrivilegedL2Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.from)
-            .finish();
+impl PayloadRlpEncode for PrivilegedL2Transaction {
+    fn encode_payload(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            self.from.encode(buf);
+        });
     }
 }
 
-impl PayloadRLPEncode for FeeTokenTransaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.fee_token)
-            .finish();
+impl PayloadRlpEncode for FeeTokenTransaction {
+    fn encode_payload(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.chain_id.encode(buf);
+            self.nonce.encode(buf);
+            self.max_priority_fee_per_gas.encode(buf);
+            self.max_fee_per_gas.encode(buf);
+            self.gas_limit.encode(buf);
+            self.to.encode(buf);
+            self.value.encode(buf);
+            self.data.encode(buf);
+            crate::types::tx_fields::encode_access_list(&self.access_list, buf);
+            self.fee_token.encode(buf);
+        });
     }
 }
 
-impl RLPDecode for LegacyTransaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(LegacyTransaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (gas_price, decoder) = decoder.decode_field("gas_price")?;
-        let (gas, decoder) = decoder.decode_field("gas")?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let (v, decoder) = decoder.decode_field("v")?;
-        let (r, decoder) = decoder.decode_field("r")?;
-        let (s, decoder) = decoder.decode_field("s")?;
-        let inner_hash = OnceCell::new();
-        let sender_cache = OnceCell::new();
-
-        let tx = LegacyTransaction {
+impl LegacyTransaction {
+    /// Decode from the payload of a list header that was already consumed.
+    fn decode_from_list_payload(payload: &mut &[u8]) -> Result<Self, RlpError> {
+        let nonce = RlpDecode::decode(payload)?;
+        let gas_price = RlpDecode::decode(payload)?;
+        let gas = RlpDecode::decode(payload)?;
+        let to = RlpDecode::decode(payload)?;
+        let value = RlpDecode::decode(payload)?;
+        let data = RlpDecode::decode(payload)?;
+        let v = RlpDecode::decode(payload)?;
+        let r = RlpDecode::decode(payload)?;
+        let s = RlpDecode::decode(payload)?;
+        Ok(LegacyTransaction {
             nonce,
             gas_price,
             gas,
@@ -828,257 +996,188 @@ impl RLPDecode for LegacyTransaction {
             v,
             r,
             s,
-            inner_hash,
-            sender_cache,
-        };
-        Ok((tx, decoder.finish()?))
+            inner_hash: OnceCell::new(),
+            sender_cache: OnceCell::new(),
+        })
     }
 }
 
-impl RLPDecode for EIP2930Transaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(EIP2930Transaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (gas_price, decoder) = decoder.decode_field("gas_price")?;
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let (access_list, decoder) = decoder.decode_field("access_list")?;
-        let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
-        let (signature_r, decoder) = decoder.decode_field("signature_r")?;
-        let (signature_s, decoder) = decoder.decode_field("signature_s")?;
-        let inner_hash = OnceCell::new();
-        let sender_cache = OnceCell::new();
-        let cached_canonical = OnceCell::new();
-
-        let tx = EIP2930Transaction {
-            chain_id,
-            nonce,
-            gas_price,
-            gas_limit,
-            to,
-            value,
-            data,
-            access_list,
-            signature_y_parity,
-            signature_r,
-            signature_s,
-            inner_hash,
-            sender_cache,
-            cached_canonical,
-        };
-        Ok((tx, decoder.finish()?))
+impl RlpDecode for LegacyTransaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let tx = Self::decode_from_list_payload(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(tx)
     }
 }
 
-impl RLPDecode for EIP1559Transaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(EIP1559Transaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (max_priority_fee_per_gas, decoder) =
-            decoder.decode_field("max_priority_fee_per_gas")?;
-        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let (access_list, decoder) = decoder.decode_field("access_list")?;
-        let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
-        let (signature_r, decoder) = decoder.decode_field("signature_r")?;
-        let (signature_s, decoder) = decoder.decode_field("signature_s")?;
-        let inner_hash = OnceCell::new();
-        let sender_cache = OnceCell::new();
-        let cached_canonical = OnceCell::new();
-
-        let tx = EIP1559Transaction {
-            chain_id,
-            nonce,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit,
-            to,
-            value,
-            data,
-            access_list,
-            signature_y_parity,
-            signature_r,
-            signature_s,
-            inner_hash,
-            sender_cache,
-            cached_canonical,
-        };
-        Ok((tx, decoder.finish()?))
+impl RlpDecode for EIP2930Transaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let chain_id = RlpDecode::decode(&mut payload)?;
+        let nonce = RlpDecode::decode(&mut payload)?;
+        let gas_price = RlpDecode::decode(&mut payload)?;
+        let gas_limit = RlpDecode::decode(&mut payload)?;
+        let to = RlpDecode::decode(&mut payload)?;
+        let value = RlpDecode::decode(&mut payload)?;
+        let data = RlpDecode::decode(&mut payload)?;
+        let access_list = crate::types::tx_fields::decode_access_list(&mut payload)?;
+        let signature_y_parity = RlpDecode::decode(&mut payload)?;
+        let signature_r = RlpDecode::decode(&mut payload)?;
+        let signature_s = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(EIP2930Transaction {
+            chain_id, nonce, gas_price, gas_limit, to, value, data,
+            access_list, signature_y_parity, signature_r, signature_s,
+            inner_hash: OnceCell::new(), sender_cache: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        })
     }
 }
 
-impl RLPDecode for EIP4844Transaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(EIP4844Transaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (max_priority_fee_per_gas, decoder) =
-            decoder.decode_field("max_priority_fee_per_gas")?;
-        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-        let (gas, decoder) = decoder.decode_field("gas")?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let (access_list, decoder) = decoder.decode_field("access_list")?;
-        let (max_fee_per_blob_gas, decoder) = decoder.decode_field("max_fee_per_blob_gas")?;
-        let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
-        let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
-        let (signature_r, decoder) = decoder.decode_field("signature_r")?;
-        let (signature_s, decoder) = decoder.decode_field("signature_s")?;
-        let inner_hash = OnceCell::new();
-        let sender_cache = OnceCell::new();
-        let cached_canonical = OnceCell::new();
-
-        let tx = EIP4844Transaction {
-            chain_id,
-            nonce,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas,
-            to,
-            value,
-            data,
-            access_list,
-            max_fee_per_blob_gas,
-            blob_versioned_hashes,
-            signature_y_parity,
-            signature_r,
-            signature_s,
-            inner_hash,
-            sender_cache,
-            cached_canonical,
-        };
-        Ok((tx, decoder.finish()?))
+impl RlpDecode for EIP1559Transaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let chain_id = RlpDecode::decode(&mut payload)?;
+        let nonce = RlpDecode::decode(&mut payload)?;
+        let max_priority_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let max_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let gas_limit = RlpDecode::decode(&mut payload)?;
+        let to = RlpDecode::decode(&mut payload)?;
+        let value = RlpDecode::decode(&mut payload)?;
+        let data = RlpDecode::decode(&mut payload)?;
+        let access_list = crate::types::tx_fields::decode_access_list(&mut payload)?;
+        let signature_y_parity = RlpDecode::decode(&mut payload)?;
+        let signature_r = RlpDecode::decode(&mut payload)?;
+        let signature_s = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(EIP1559Transaction {
+            chain_id, nonce, max_priority_fee_per_gas, max_fee_per_gas, gas_limit,
+            to, value, data, access_list, signature_y_parity, signature_r, signature_s,
+            inner_hash: OnceCell::new(), sender_cache: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        })
     }
 }
 
-impl RLPDecode for EIP7702Transaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(EIP7702Transaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (max_priority_fee_per_gas, decoder) =
-            decoder.decode_field("max_priority_fee_per_gas")?;
-        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let (access_list, decoder) = decoder.decode_field("access_list")?;
-        let (authorization_list, decoder) = decoder.decode_field("authorization_list")?;
-        let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
-        let (signature_r, decoder) = decoder.decode_field("signature_r")?;
-        let (signature_s, decoder) = decoder.decode_field("signature_s")?;
-        let inner_hash = OnceCell::new();
-        let sender_cache = OnceCell::new();
-        let cached_canonical = OnceCell::new();
-
-        let tx = EIP7702Transaction {
-            chain_id,
-            nonce,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit,
-            to,
-            value,
-            data,
-            access_list,
-            authorization_list,
-            signature_y_parity,
-            signature_r,
-            signature_s,
-            inner_hash,
-            sender_cache,
-            cached_canonical,
-        };
-        Ok((tx, decoder.finish()?))
+impl RlpDecode for EIP4844Transaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let chain_id = RlpDecode::decode(&mut payload)?;
+        let nonce = RlpDecode::decode(&mut payload)?;
+        let max_priority_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let max_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let gas = RlpDecode::decode(&mut payload)?;
+        let to = RlpDecode::decode(&mut payload)?;
+        let value = RlpDecode::decode(&mut payload)?;
+        let data = RlpDecode::decode(&mut payload)?;
+        let access_list = crate::types::tx_fields::decode_access_list(&mut payload)?;
+        let max_fee_per_blob_gas = RlpDecode::decode(&mut payload)?;
+        let blob_versioned_hashes = librlp::decode_list(&mut payload)?;
+        let signature_y_parity = RlpDecode::decode(&mut payload)?;
+        let signature_r = RlpDecode::decode(&mut payload)?;
+        let signature_s = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(EIP4844Transaction {
+            chain_id, nonce, max_priority_fee_per_gas, max_fee_per_gas, gas,
+            to, value, data, access_list, max_fee_per_blob_gas, blob_versioned_hashes,
+            signature_y_parity, signature_r, signature_s,
+            inner_hash: OnceCell::new(), sender_cache: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        })
     }
 }
 
-impl RLPDecode for PrivilegedL2Transaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(PrivilegedL2Transaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (max_priority_fee_per_gas, decoder) =
-            decoder.decode_field("max_priority_fee_per_gas")?;
-        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-        let (gas_limit, decoder) = decoder.decode_field::<u64>("gas_limit")?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let (access_list, decoder) = decoder.decode_field("access_list")?;
-        let (from, decoder) = decoder.decode_field("from")?;
-        let inner_hash = OnceCell::new();
-        let sender_cache = OnceCell::new();
-        let cached_canonical = OnceCell::new();
-
-        let tx = PrivilegedL2Transaction {
-            chain_id,
-            nonce,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit,
-            to,
-            value,
-            data,
-            access_list,
-            from,
-            inner_hash,
-            sender_cache,
-            cached_canonical,
-        };
-        Ok((tx, decoder.finish()?))
+impl RlpDecode for EIP7702Transaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let chain_id = RlpDecode::decode(&mut payload)?;
+        let nonce = RlpDecode::decode(&mut payload)?;
+        let max_priority_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let max_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let gas_limit = RlpDecode::decode(&mut payload)?;
+        let to = RlpDecode::decode(&mut payload)?;
+        let value = RlpDecode::decode(&mut payload)?;
+        let data = RlpDecode::decode(&mut payload)?;
+        let access_list = crate::types::tx_fields::decode_access_list(&mut payload)?;
+        let authorization_list = librlp::decode_list(&mut payload)?;
+        let signature_y_parity = RlpDecode::decode(&mut payload)?;
+        let signature_r = RlpDecode::decode(&mut payload)?;
+        let signature_s = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(EIP7702Transaction {
+            chain_id, nonce, max_priority_fee_per_gas, max_fee_per_gas, gas_limit,
+            to, value, data, access_list, authorization_list,
+            signature_y_parity, signature_r, signature_s,
+            inner_hash: OnceCell::new(), sender_cache: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        })
     }
 }
 
-impl RLPDecode for FeeTokenTransaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(FeeTokenTransaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let (max_priority_fee_per_gas, decoder) =
-            decoder.decode_field("max_priority_fee_per_gas")?;
-        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let (access_list, decoder) = decoder.decode_field("access_list")?;
-        let (fee_token, decoder) = decoder.decode_field("fee_token")?;
-        let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
-        let (signature_r, decoder) = decoder.decode_field("signature_r")?;
-        let (signature_s, decoder) = decoder.decode_field("signature_s")?;
-        let inner_hash = OnceCell::new();
-        let sender_cache = OnceCell::new();
-        let cached_canonical = OnceCell::new();
+impl RlpDecode for PrivilegedL2Transaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let chain_id = RlpDecode::decode(&mut payload)?;
+        let nonce = RlpDecode::decode(&mut payload)?;
+        let max_priority_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let max_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let gas_limit = RlpDecode::decode(&mut payload)?;
+        let to = RlpDecode::decode(&mut payload)?;
+        let value = RlpDecode::decode(&mut payload)?;
+        let data = RlpDecode::decode(&mut payload)?;
+        let access_list = crate::types::tx_fields::decode_access_list(&mut payload)?;
+        let from = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(PrivilegedL2Transaction {
+            chain_id, nonce, max_priority_fee_per_gas, max_fee_per_gas, gas_limit,
+            to, value, data, access_list, from,
+            inner_hash: OnceCell::new(), sender_cache: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        })
+    }
+}
 
-        let tx = FeeTokenTransaction {
-            chain_id,
-            nonce,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit,
-            to,
-            value,
-            data,
-            access_list,
-            fee_token,
-            signature_y_parity,
-            signature_r,
-            signature_s,
-            inner_hash,
-            sender_cache,
-            cached_canonical,
-        };
-        Ok((tx, decoder.finish()?))
+impl RlpDecode for FeeTokenTransaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let chain_id = RlpDecode::decode(&mut payload)?;
+        let nonce = RlpDecode::decode(&mut payload)?;
+        let max_priority_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let max_fee_per_gas = RlpDecode::decode(&mut payload)?;
+        let gas_limit = RlpDecode::decode(&mut payload)?;
+        let to = RlpDecode::decode(&mut payload)?;
+        let value = RlpDecode::decode(&mut payload)?;
+        let data = RlpDecode::decode(&mut payload)?;
+        let access_list = crate::types::tx_fields::decode_access_list(&mut payload)?;
+        let fee_token = RlpDecode::decode(&mut payload)?;
+        let signature_y_parity = RlpDecode::decode(&mut payload)?;
+        let signature_r = RlpDecode::decode(&mut payload)?;
+        let signature_s = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(FeeTokenTransaction {
+            chain_id, nonce, max_priority_fee_per_gas, max_fee_per_gas, gas_limit,
+            to, value, data, access_list, fee_token,
+            signature_y_parity, signature_r, signature_s,
+            inner_hash: OnceCell::new(), sender_cache: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        })
     }
 }
 
@@ -1105,28 +1204,35 @@ impl Transaction {
                     Some(chain_id) => tx.v.as_u64().saturating_sub(35 + chain_id * 2) != 0,
                     None => tx.v.as_u64().saturating_sub(27) != 0,
                 };
-                let mut buf = vec![];
-                match self.chain_id() {
-                    None => Encoder::new(&mut buf)
-                        .encode_field(&tx.nonce)
-                        .encode_field(&tx.gas_price)
-                        .encode_field(&tx.gas)
-                        .encode_field(&tx.to)
-                        .encode_field(&tx.value)
-                        .encode_field(&tx.data)
-                        .finish(),
-                    Some(chain_id) => Encoder::new(&mut buf)
-                        .encode_field(&tx.nonce)
-                        .encode_field(&tx.gas_price)
-                        .encode_field(&tx.gas)
-                        .encode_field(&tx.to)
-                        .encode_field(&tx.value)
-                        .encode_field(&tx.data)
-                        .encode_field(&chain_id)
-                        .encode_field(&0u8)
-                        .encode_field(&0u8)
-                        .finish(),
-                }
+                let buf = match self.chain_id() {
+                    None => {
+                        let mut rlp_buf = librlp::RlpBuf::new();
+                        rlp_buf.list(|buf| {
+                            tx.nonce.encode(buf);
+                            tx.gas_price.encode(buf);
+                            tx.gas.encode(buf);
+                            tx.to.encode(buf);
+                            tx.value.encode(buf);
+                            tx.data.encode(buf);
+                        });
+                        rlp_buf.finish()
+                    }
+                    Some(chain_id) => {
+                        let mut rlp_buf = librlp::RlpBuf::new();
+                        rlp_buf.list(|buf| {
+                            tx.nonce.encode(buf);
+                            tx.gas_price.encode(buf);
+                            tx.gas.encode(buf);
+                            tx.to.encode(buf);
+                            tx.value.encode(buf);
+                            tx.data.encode(buf);
+                            chain_id.encode(buf);
+                            0u8.encode(buf);
+                            0u8.encode(buf);
+                        });
+                        rlp_buf.finish()
+                    }
+                };
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.s.to_big_endian());
@@ -1135,16 +1241,7 @@ impl Transaction {
             }
             Transaction::EIP2930Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.gas_price)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .finish();
+                buf.extend_from_slice(&tx.encode_payload_to_vec());
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -1153,17 +1250,7 @@ impl Transaction {
             }
             Transaction::EIP1559Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .finish();
+                buf.extend_from_slice(&tx.encode_payload_to_vec());
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -1172,19 +1259,7 @@ impl Transaction {
             }
             Transaction::EIP4844Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .encode_field(&tx.max_fee_per_blob_gas)
-                    .encode_field(&tx.blob_versioned_hashes)
-                    .finish();
+                buf.extend_from_slice(&tx.encode_payload_to_vec());
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -1193,18 +1268,7 @@ impl Transaction {
             }
             Transaction::EIP7702Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .encode_field(&tx.authorization_list)
-                    .finish();
+                buf.extend_from_slice(&tx.encode_payload_to_vec());
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -1214,18 +1278,7 @@ impl Transaction {
             Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .encode_field(&tx.fee_token)
-                    .finish();
+                buf.extend_from_slice(&tx.encode_payload_to_vec());
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -1649,43 +1702,46 @@ mod canonic_encoding {
         /// Transactions can be encoded in the following formats:
         /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
         /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
-        pub fn decode_canonical(bytes: &[u8]) -> Result<Self, RLPDecodeError> {
+        pub fn decode_canonical(bytes: &[u8]) -> Result<Self, RlpError> {
             // Look at the first byte to check if it corresponds to a TransactionType
             match bytes.first() {
                 // First byte is a valid TransactionType
                 Some(tx_type) if *tx_type < 0x7f => {
                     // Decode tx based on type
-                    let tx_bytes = &bytes[1..];
+                    let mut tx_bytes = &bytes[1..];
                     match *tx_type {
                         // Legacy
                         0x0 => {
-                            LegacyTransaction::decode(tx_bytes).map(Transaction::LegacyTransaction)
+                            LegacyTransaction::decode(&mut tx_bytes).map(Transaction::LegacyTransaction)
                         } // TODO: check if this is a real case scenario
                         // EIP2930
-                        0x1 => EIP2930Transaction::decode(tx_bytes)
+                        0x1 => EIP2930Transaction::decode(&mut tx_bytes)
                             .map(Transaction::EIP2930Transaction),
                         // EIP1559
-                        0x2 => EIP1559Transaction::decode(tx_bytes)
+                        0x2 => EIP1559Transaction::decode(&mut tx_bytes)
                             .map(Transaction::EIP1559Transaction),
                         // EIP4844
-                        0x3 => EIP4844Transaction::decode(tx_bytes)
+                        0x3 => EIP4844Transaction::decode(&mut tx_bytes)
                             .map(Transaction::EIP4844Transaction),
                         // EIP7702
-                        0x4 => EIP7702Transaction::decode(tx_bytes)
+                        0x4 => EIP7702Transaction::decode(&mut tx_bytes)
                             .map(Transaction::EIP7702Transaction),
                         // FeeTokenTransaction
-                        0x7d => FeeTokenTransaction::decode(tx_bytes)
+                        0x7d => FeeTokenTransaction::decode(&mut tx_bytes)
                             .map(Transaction::FeeTokenTransaction),
                         // PrivilegedL2Transaction
-                        0x7e => PrivilegedL2Transaction::decode(tx_bytes)
+                        0x7e => PrivilegedL2Transaction::decode(&mut tx_bytes)
                             .map(Transaction::PrivilegedL2Transaction),
-                        ty => Err(RLPDecodeError::Custom(format!(
+                        ty => Err(RlpError::Custom(format!(
                             "Invalid transaction type: {ty}"
                         ))),
                     }
                 }
                 // LegacyTransaction
-                _ => LegacyTransaction::decode(bytes).map(Transaction::LegacyTransaction),
+                _ => {
+                    let mut buf = bytes;
+                    LegacyTransaction::decode(&mut buf).map(Transaction::LegacyTransaction)
+                }
             }
         }
 
@@ -1694,40 +1750,28 @@ mod canonic_encoding {
         /// Transactions can be encoded in the following formats:
         /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
         /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
-        pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
-            match self {
-                // Legacy transactions don't have a prefix
-                Transaction::LegacyTransaction(_) => {}
-                _ => buf.put_u8(self.tx_type() as u8),
-            }
-            match self {
-                Transaction::LegacyTransaction(t) => t.encode(buf),
-                Transaction::EIP2930Transaction(t) => t.encode(buf),
-                Transaction::EIP1559Transaction(t) => t.encode(buf),
-                Transaction::EIP4844Transaction(t) => t.encode(buf),
-                Transaction::EIP7702Transaction(t) => t.encode(buf),
-                Transaction::FeeTokenTransaction(t) => t.encode(buf),
-                Transaction::PrivilegedL2Transaction(t) => t.encode(buf),
-            };
-        }
-
-        /// Encodes a transaction in canonical format into a newly created buffer
-        /// Based on [EIP-2718]
-        /// Transactions can be encoded in the following formats:
-        /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
-        /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
         pub fn encode_canonical_to_vec(&self) -> Vec<u8> {
             if let Some(cell) = self.cached_canonical_cell() {
                 return cell
-                    .get_or_init(|| {
-                        let mut buf = Vec::new();
-                        self.encode_canonical(&mut buf);
-                        buf
-                    })
+                    .get_or_init(|| self.encode_canonical_inner())
                     .clone();
             }
-            let mut buf = Vec::new();
-            self.encode_canonical(&mut buf);
+            self.encode_canonical_inner()
+        }
+
+        fn encode_canonical_inner(&self) -> Vec<u8> {
+            let rlp_bytes = match self {
+                Transaction::LegacyTransaction(t) => return t.to_rlp(),
+                Transaction::EIP2930Transaction(t) => t.to_rlp(),
+                Transaction::EIP1559Transaction(t) => t.to_rlp(),
+                Transaction::EIP4844Transaction(t) => t.to_rlp(),
+                Transaction::EIP7702Transaction(t) => t.to_rlp(),
+                Transaction::FeeTokenTransaction(t) => t.to_rlp(),
+                Transaction::PrivilegedL2Transaction(t) => t.to_rlp(),
+            };
+            let mut buf = Vec::with_capacity(1 + rlp_bytes.len());
+            buf.push(self.tx_type() as u8);
+            buf.extend_from_slice(&rlp_bytes);
             buf
         }
     }
@@ -1744,25 +1788,18 @@ mod canonic_encoding {
             }
         }
 
-        pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
-            match self {
-                // Legacy transactions don't have a prefix
-                P2PTransaction::LegacyTransaction(_) => {}
-                _ => buf.put_u8(self.tx_type() as u8),
-            }
-            match self {
-                P2PTransaction::LegacyTransaction(t) => t.encode(buf),
-                P2PTransaction::EIP2930Transaction(t) => t.encode(buf),
-                P2PTransaction::EIP1559Transaction(t) => t.encode(buf),
-                P2PTransaction::EIP4844TransactionWithBlobs(t) => t.encode(buf),
-                P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
-                P2PTransaction::FeeTokenTransaction(t) => t.encode(buf),
-            };
-        }
-
         pub fn encode_canonical_to_vec(&self) -> Vec<u8> {
-            let mut buf = Vec::new();
-            self.encode_canonical(&mut buf);
+            let rlp_bytes = match self {
+                P2PTransaction::LegacyTransaction(t) => return t.to_rlp(),
+                P2PTransaction::EIP2930Transaction(t) => t.to_rlp(),
+                P2PTransaction::EIP1559Transaction(t) => t.to_rlp(),
+                P2PTransaction::EIP4844TransactionWithBlobs(t) => t.to_rlp(),
+                P2PTransaction::EIP7702Transaction(t) => t.to_rlp(),
+                P2PTransaction::FeeTokenTransaction(t) => t.to_rlp(),
+            };
+            let mut buf = Vec::with_capacity(1 + rlp_bytes.len());
+            buf.push(self.tx_type() as u8);
+            buf.extend_from_slice(&rlp_bytes);
             buf
         }
 
@@ -3052,29 +3089,38 @@ mod mempool {
         }
     }
 
-    impl RLPEncode for MempoolTransaction {
-        fn encode(&self, buf: &mut dyn bytes::BufMut) {
-            Encoder::new(buf)
-                .encode_field(&self.timestamp)
-                .encode_field(&*self.inner)
-                .finish();
+    impl RlpEncode for MempoolTransaction {
+        fn encode(&self, buf: &mut librlp::RlpBuf) {
+            buf.list(|buf| {
+                self.timestamp.encode(buf);
+                self.sender.encode(buf);
+                (*self.inner).encode(buf);
+            });
+        }
+
+        fn encoded_length(&self) -> usize {
+            crate::constants::list_encoded_length(
+                self.timestamp.encoded_length()
+                    + self.sender.encoded_length()
+                    + (*self.inner).encoded_length(),
+            )
         }
     }
 
-    impl RLPDecode for MempoolTransaction {
-        fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-            let decoder = Decoder::new(rlp)?;
-            let (timestamp, decoder) = decoder.decode_field("timestamp")?;
-            let (sender, decoder) = decoder.decode_field("sender")?;
-            let (inner, decoder) = decoder.decode_field("inner")?;
-            Ok((
-                Self {
-                    timestamp,
-                    sender,
-                    inner: Arc::new(inner),
-                },
-                decoder.finish()?,
-            ))
+    impl RlpDecode for MempoolTransaction {
+        fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+            let header = Header::decode(buf)?;
+            if !header.list { return Err(RlpError::UnexpectedString); }
+            let mut payload = &buf[..header.payload_length];
+            let timestamp = RlpDecode::decode(&mut payload)?;
+            let sender = RlpDecode::decode(&mut payload)?;
+            let inner = RlpDecode::decode(&mut payload)?;
+            *buf = &buf[header.payload_length..];
+            Ok(Self {
+                timestamp,
+                sender,
+                inner: Arc::new(inner),
+            })
         }
     }
 
@@ -3206,7 +3252,7 @@ mod tests {
     fn legacy_tx_rlp_decode() {
         let encoded_tx = "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4";
         let encoded_tx_bytes = hex::decode(encoded_tx).unwrap();
-        let tx = LegacyTransaction::decode(&encoded_tx_bytes).unwrap();
+        let tx = LegacyTransaction::decode(&mut encoded_tx_bytes.as_slice()).unwrap();
         let expected_tx = LegacyTransaction {
             nonce: 0,
             gas_price: U256::from(1001000000u64),
@@ -3236,7 +3282,7 @@ mod tests {
     fn eip1559_tx_rlp_decode() {
         let encoded_tx = "f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4";
         let encoded_tx_bytes = hex::decode(encoded_tx).unwrap();
-        let tx = EIP1559Transaction::decode(&encoded_tx_bytes).unwrap();
+        let tx = EIP1559Transaction::decode(&mut encoded_tx_bytes.as_slice()).unwrap();
         let expected_tx = EIP1559Transaction {
             nonce: 0,
             max_fee_per_gas: 78,
@@ -3541,7 +3587,7 @@ mod tests {
     }
 
     #[test]
-    fn serialize_deserialize_privileged_l2_transaction() -> Result<(), RLPDecodeError> {
+    fn serialize_deserialize_privileged_l2_transaction() -> Result<(), RlpError> {
         let privileged_l2 = PrivilegedL2Transaction {
             chain_id: 65536999,
             nonce: 0,
@@ -3558,11 +3604,11 @@ mod tests {
             ..Default::default()
         };
 
-        let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
+        let encoded = privileged_l2.to_rlp();
         println!("encoded length: {}", encoded.len());
-        assert_eq!(encoded.len(), privileged_l2.length());
+        assert_eq!(encoded.len(), privileged_l2.encoded_length());
 
-        let deserialized_tx = PrivilegedL2Transaction::decode(&encoded)?;
+        let deserialized_tx = PrivilegedL2Transaction::decode(&mut encoded.as_slice())?;
 
         assert_eq!(deserialized_tx, privileged_l2);
 
@@ -3713,14 +3759,14 @@ mod tests {
         // Encode a separate copy so the original's cached_canonical stays uninit,
         // avoiding a false PartialEq mismatch with the decoded (uncached) tx.
         let tx_to_encode = tx.clone();
-        let encoded = tx_to_encode.encode_to_vec();
-        let decoded_tx = Transaction::decode(&encoded).unwrap();
+        let encoded = tx_to_encode.to_rlp();
+        let decoded_tx = Transaction::decode(&mut encoded.as_slice()).unwrap();
         assert_eq!(tx, decoded_tx);
     }
 
     #[test]
     fn test_eip1559_simple_transfer_size() {
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
-        assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
+        assert_eq!(tx.to_rlp().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
     }
 }

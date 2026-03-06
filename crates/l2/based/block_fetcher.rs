@@ -6,7 +6,7 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256, types::Block};
 
 use ethrex_l2_sdk::{get_last_committed_batch, get_last_fetched_l1_block};
-use ethrex_rlp::decode::RLPDecode;
+use librlp::RlpDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
@@ -36,7 +36,7 @@ pub enum BlockFetcherError {
     #[error("Failed to push fetched block to execution cache: {0}")]
     ExecutionCacheError(#[from] crate::sequencer::errors::ExecutionCacheError),
     #[error("Failed to RLP decode fetched block: {0}")]
-    RLPDecodeError(#[from] ethrex_rlp::error::RLPDecodeError),
+    RLPDecodeError(#[from] librlp::RlpError),
     #[error("Block Fetcher failed in a helper function: {0}")]
     UtilsError(#[from] crate::utils::error::UtilsError),
     #[error("Missing bytes from calldata: {0}")]
@@ -443,7 +443,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
         let block_offset = base + dynamic_offset + 32;
 
         let block = Block::decode(
-            calldata
+            &mut calldata
                 .get(block_offset..block_offset + block_length_in_bytes)
                 .ok_or(BlockFetcherError::WrongBatchCalldata(
                     "Couldn't get block bytes".to_owned(),

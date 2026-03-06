@@ -1,4 +1,4 @@
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use serde_json::Value;
 
 use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifier};
@@ -49,7 +49,7 @@ impl RpcHandler for BlockAccessListRequest {
         // Return BAL as RLP hex string (null for pre-Amsterdam blocks)
         match bal {
             Some(bal) => {
-                let rlp_bytes = bal.encode_to_vec();
+                let rlp_bytes = bal.to_rlp();
                 Ok(Value::String(format!("0x{}", hex::encode(rlp_bytes))))
             }
             None => Ok(Value::Null),

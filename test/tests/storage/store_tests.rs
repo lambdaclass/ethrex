@@ -9,7 +9,7 @@ use ethrex_common::{
     },
     utils::keccak,
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use librlp::{RlpDecode, RlpEncode};
 use ethrex_storage::{EngineType, Store, error::StoreError};
 use std::{fs, str::FromStr};
 
@@ -75,7 +75,7 @@ async fn test_iter_accounts(store: Store) {
     accounts.sort_by_key(|a| a.0);
     let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
     for (address, state) in &accounts {
-        trie.insert(address.0.to_vec(), state.encode_to_vec())
+        trie.insert(address.0.to_vec(), state.to_rlp())
             .unwrap();
     }
     let state_root = trie.hash().unwrap();
@@ -97,7 +97,7 @@ async fn test_iter_storage(store: Store) {
         .open_direct_storage_trie(address, *EMPTY_TRIE_HASH)
         .unwrap();
     for (slot, value) in &slots {
-        trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
+        trie.insert(slot.0.to_vec(), value.to_rlp()).unwrap();
     }
     let storage_root = trie.hash().unwrap();
     let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
@@ -109,7 +109,7 @@ async fn test_iter_storage(store: Store) {
             storage_root,
             code_hash: *EMPTY_KECCACK_HASH,
         }
-        .encode_to_vec(),
+        .to_rlp(),
     )
     .unwrap();
     let state_root = trie.hash().unwrap();
@@ -223,8 +223,8 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
         ..Default::default()
     };
     let block_body = BlockBody {
-        transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),
-        Transaction::decode(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap()],
+        transactions: vec![Transaction::decode(&mut hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap().as_slice()).unwrap(),
+        Transaction::decode(&mut hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap().as_slice()).unwrap()],
         ommers: Default::default(),
         withdrawals: Default::default(),
     };

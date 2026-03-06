@@ -1,4 +1,4 @@
-use ethrex_rlp::error::RLPDecodeError;
+use librlp::RlpError;
 use ethrex_trie::TrieError;
 use thiserror::Error;
 
@@ -13,7 +13,7 @@ pub enum StoreError {
     #[error("{0}")]
     Custom(String),
     #[error(transparent)]
-    RLPDecode(#[from] RLPDecodeError),
+    RLPDecode(#[from] RlpError),
     #[error(transparent)]
     Trie(#[from] TrieError),
     #[error("missing store: is an execution DB being used instead?")]

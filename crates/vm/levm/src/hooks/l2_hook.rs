@@ -20,7 +20,7 @@ use ethrex_common::{
         },
     },
 };
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -785,7 +785,7 @@ fn calculate_l1_fee_gas(
         return Ok(0);
     };
 
-    let tx_size = vm.tx.length();
+    let tx_size = vm.tx.encoded_length();
 
     let l1_fee = calculate_l1_fee(fee_config, tx_size)?;
     let mut l1_fee_gas = l1_fee

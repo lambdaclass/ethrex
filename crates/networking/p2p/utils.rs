@@ -1,6 +1,8 @@
 use crate::peer_handler::DumpError;
 use ethrex_common::{H256, H512, U256, types::AccountState, utils::keccak};
-use ethrex_rlp::encode::RLPEncode;
+#[cfg(not(feature = "rocksdb"))]
+use librlp::RlpBuf;
+use librlp::RlpEncode;
 use secp256k1::{PublicKey, SecretKey};
 use std::{
     path::{Path, PathBuf},
@@ -93,13 +95,11 @@ pub fn dump_accounts_to_rocks_db(
         buf[..32].copy_from_slice(&k.0);
         buf
     });
-    let mut buffer: Vec<u8> = Vec::new();
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     writer.open(std::path::Path::new(&path))?;
     for (key, account) in contents {
-        buffer.clear();
-        account.encode(&mut buffer);
+        let buffer = account.to_rlp();
         writer.put(key.0.as_ref(), buffer.as_slice())?;
     }
     writer.finish()
@@ -125,13 +125,11 @@ pub fn dump_storages_to_rocks_db(
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     let mut buffer_key = [0_u8; 64];
-    let mut buffer_storage: Vec<u8> = Vec::new();
     writer.open(std::path::Path::new(&path))?;
     for (account, slot_hash, slot_value) in contents {
         buffer_key[0..32].copy_from_slice(&account.0);
         buffer_key[32..64].copy_from_slice(&slot_hash.0);
-        buffer_storage.clear();
-        slot_value.encode(&mut buffer_storage);
+        let buffer_storage = slot_value.to_rlp();
         writer.put(buffer_key.as_ref(), buffer_storage.as_slice())?;
     }
     writer.finish()
@@ -166,7 +164,18 @@ pub fn dump_accounts_to_file(
             error: std::io::ErrorKind::Other,
         });
     #[cfg(not(feature = "rocksdb"))]
-    dump_to_file(path, accounts.encode_to_vec())
+    {
+        let mut buf = RlpBuf::new();
+        buf.list(|buf| {
+            for (hash, state) in &accounts {
+                buf.list(|buf| {
+                    hash.encode(buf);
+                    state.encode(buf);
+                });
+            }
+        });
+        dump_to_file(path, buf.finish())
+    }
 }
 
 /// Struct representing the storage slots of certain accounts that share the same storage root
@@ -209,14 +218,29 @@ pub fn dump_storages_to_file(
     });
 
     #[cfg(not(feature = "rocksdb"))]
-    dump_to_file(
-        path,
-        storages
+    {
+        let collected: Vec<(Vec<H256>, Vec<(H256, U256)>)> = storages
             .into_iter()
             .map(|accounts_with_slots| (accounts_with_slots.accounts, accounts_with_slots.storages))
-            .collect::<Vec<_>>()
-            .encode_to_vec(),
-    )
+            .collect();
+        let mut buf = RlpBuf::new();
+        buf.list(|buf| {
+            for (accounts, storages) in &collected {
+                buf.list(|buf| {
+                    librlp::encode_list(accounts, buf);
+                    buf.list(|buf| {
+                        for (slot_hash, slot_value) in storages {
+                            buf.list(|buf| {
+                                slot_hash.encode(buf);
+                                slot_value.encode(buf);
+                            });
+                        }
+                    });
+                });
+            }
+        });
+        dump_to_file(path, buf.finish())
+    }
 }
 
 /// Computes the distance between two nodes according to the discv4/5 protocols

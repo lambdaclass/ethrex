@@ -1,5 +1,4 @@
 use ethrex_common::H512;
-use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use secp256k1::ecdh::shared_secret_point;
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
@@ -60,7 +59,7 @@ pub fn compress_pubkey(pk: H512) -> Option<PublicKey> {
     PublicKey::from_slice(&full_pk).ok()
 }
 
-pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError> {
+pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, snap::Error> {
     let mut snappy_encoder = SnappyEncoder::new();
     let mut msg_data = vec![0; max_compress_len(encoded_data.len()) + 1];
     let compressed_size = snappy_encoder.compress(&encoded_data, &mut msg_data)?;
@@ -69,7 +68,7 @@ pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError>
     Ok(msg_data)
 }
 
-pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
+pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, snap::Error> {
     let mut snappy_decoder = SnappyDecoder::new();
     Ok(snappy_decoder.decompress_vec(msg_data)?)
 }

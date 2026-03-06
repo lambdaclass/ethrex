@@ -17,7 +17,7 @@ use ethrex_common::{
     utils::{keccak, truncate_array},
 };
 use ethrex_crypto::keccak::{Keccak256, keccak_hash};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode as _};
+use librlp::{RlpBuf, RlpDecode, RlpEncode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
@@ -228,7 +228,9 @@ impl Decoder for RLPxCodec {
                 PeerConnectionError::CryptographyError("Invalid frame size".to_owned())
             })?;
 
-        let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
+        let mut frame_buf: &[u8] = frame_data;
+        let msg_id = u8::decode(&mut frame_buf)?;
+        let msg_data = frame_buf;
         Ok(Some(rlpx::Message::decode(
             msg_id,
             msg_data,
@@ -270,8 +272,12 @@ impl Encoder<rlpx::Message> for RLPxCodec {
         })?);
 
         // header-data = [capability-id, context-id]  (both always zero)
-        let header_data = (0_u8, 0_u8);
-        header_data.encode(&mut header);
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            0_u8.encode(buf);
+            0_u8.encode(buf);
+        });
+        header.extend_from_slice(&rlp_buf.finish());
 
         header.resize(16, 0);
         self.egress_aes

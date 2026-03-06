@@ -647,8 +647,8 @@ pub fn parse_duration(input: String) -> Option<Duration> {
 pub mod block_access_list {
 
     use super::*;
-    use ethrex_rlp::decode::RLPDecode;
-    use ethrex_rlp::encode::RLPEncode;
+    use librlp::RlpDecode;
+    use librlp::RlpEncode;
 
     pub mod rlp_str {
 
@@ -662,7 +662,7 @@ pub mod block_access_list {
             let value = String::deserialize(d)?;
             let bytes = hex::decode(value.trim_start_matches("0x"))
                 .map_err(|e| D::Error::custom(e.to_string()))?;
-            BlockAccessList::decode(&bytes)
+            BlockAccessList::decode(&mut bytes.as_slice())
                 .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
         }
 
@@ -670,7 +670,7 @@ pub mod block_access_list {
         where
             S: Serializer,
         {
-            let buf = value.encode_to_vec();
+            let buf = value.to_rlp();
             serializer.serialize_str(&format!("0x{}", hex::encode(buf)))
         }
     }
@@ -691,7 +691,7 @@ pub mod block_access_list {
                 Some(s) if !s.is_empty() => hex::decode(s.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))
                     .and_then(|b| {
-                        BlockAccessList::decode(&b)
+                        BlockAccessList::decode(&mut b.as_slice())
                             .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
                     })
                     .map(Some),
@@ -708,7 +708,7 @@ pub mod block_access_list {
         {
             let bal = value
                 .as_ref()
-                .map(|bal| bal.encode_to_vec())
+                .map(|bal| bal.to_rlp())
                 .map(|bytes| format!("0x{}", hex::encode(bytes)));
             Option::<String>::serialize(&bal, serializer)
         }

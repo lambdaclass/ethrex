@@ -1,7 +1,7 @@
 use crate::H256;
 use bytes::Bytes;
 use ethereum_types::Address;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use librlp::{RlpDecode, RlpEncode, RlpError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::error;
@@ -45,16 +45,20 @@ impl Serialize for EncodedRequests {
     }
 }
 
-impl RLPEncode for EncodedRequests {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+impl RlpEncode for EncodedRequests {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
         self.0.encode(buf)
+    }
+
+    fn encoded_length(&self) -> usize {
+        self.0.encoded_length()
     }
 }
 
-impl RLPDecode for EncodedRequests {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (bytes, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((EncodedRequests(bytes), rest))
+impl RlpDecode for EncodedRequests {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let bytes = Bytes::decode(buf)?;
+        Ok(EncodedRequests(bytes))
     }
 }
 

@@ -15,7 +15,7 @@ use ethrex_common::{
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_storage::Store;
 
 use ethrex_vm::{ExecutionResult, backends::levm::get_max_allowed_gas_limit};
@@ -407,7 +407,7 @@ impl RpcHandler for GetRawTransaction {
             Some(tx) => tx,
             _ => return Ok(Value::Null),
         };
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+        serde_json::to_value(format!("0x{}", &hex::encode(tx.to_rlp())))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

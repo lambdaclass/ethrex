@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethrex_rlp::error::RLPDecodeError;
+use librlp::RlpError;
 use serde::{Deserialize, Serialize};
 
 use ethrex_common::{
@@ -95,7 +95,7 @@ impl EncodedTransaction {
     /// Transactions can be encoded in the following formats:
     /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
     /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
-    fn decode(&self) -> Result<Transaction, RLPDecodeError> {
+    fn decode(&self) -> Result<Transaction, RlpError> {
         Transaction::decode_canonical(self.0.as_ref())
     }
 
@@ -112,13 +112,13 @@ impl ExecutionPayload {
         parent_beacon_block_root: Option<H256>,
         requests_hash: Option<H256>,
         block_access_list_hash: Option<H256>,
-    ) -> Result<Block, RLPDecodeError> {
+    ) -> Result<Block, RlpError> {
         let body = BlockBody {
             transactions: self
                 .transactions
                 .iter()
                 .map(|encoded_tx| encoded_tx.decode())
-                .collect::<Result<Vec<_>, RLPDecodeError>>()?,
+                .collect::<Result<Vec<_>, RlpError>>()?,
             ommers: vec![],
             withdrawals: self.withdrawals,
         };

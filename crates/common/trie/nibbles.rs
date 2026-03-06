@@ -1,11 +1,6 @@
 use std::{cmp, mem};
 
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
+use librlp::{Header, RlpBuf, RlpDecode, RlpEncode, RlpError};
 
 // TODO: move path-tracking logic somewhere else
 // PERF: try using a stack-allocated array
@@ -277,23 +272,39 @@ impl AsRef<[u8]> for Nibbles {
     }
 }
 
-impl RLPEncode for Nibbles {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf).encode_field(&self.data).finish();
+impl RlpEncode for Nibbles {
+    fn encode(&self, buf: &mut RlpBuf) {
+        // Encode as a list with a single field (data as Vec<u8>)
+        buf.list(|buf| {
+            self.data.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let payload_len = self.data.encoded_length();
+        Header::list_header_len(payload_len) + payload_len
     }
 }
 
-impl RLPDecode for Nibbles {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        Ok((
-            Self {
-                data,
-                already_consumed: vec![],
-            },
-            decoder.finish()?,
-        ))
+impl RlpDecode for Nibbles {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let started_len = buf.len();
+        let data: Vec<u8> = RlpDecode::decode(buf)?;
+        let consumed = started_len - buf.len();
+        if consumed != header.payload_length {
+            return Err(RlpError::ListLengthMismatch {
+                expected: header.payload_length,
+                got: consumed,
+            });
+        }
+        Ok(Self {
+            data,
+            already_consumed: vec![],
+        })
     }
 }
 

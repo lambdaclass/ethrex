@@ -20,7 +20,7 @@ use ethrex_levm::{
     account::LevmAccount,
     errors::{ExecutionReport, TxResult},
 };
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use revm::primitives::{
     Address as RevmAddress, TxKind as RevmTxKind, U256 as RevmU256, hardfork::SpecId,
 };
@@ -50,14 +50,14 @@ fn levm_and_revm_logs_match(
     let levm_keccak_logs = {
         let logs = levm_logs;
         let mut encoded_logs = Vec::new();
-        logs.encode(&mut encoded_logs);
+        logs.encode_to_vec(&mut encoded_logs);
         keccak(encoded_logs)
     };
 
     let revm_keccak_logs = {
         let logs = revm_logs;
         let mut encoded_logs = Vec::new();
-        logs.encode(&mut encoded_logs);
+        logs.encode_to_vec(&mut encoded_logs);
         keccak(encoded_logs)
     };
 

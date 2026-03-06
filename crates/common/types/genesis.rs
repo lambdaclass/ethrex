@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -762,7 +762,7 @@ impl Genesis {
         let iter = self.alloc.iter().map(|(addr, account)| {
             (
                 keccak_hash(addr).to_vec(),
-                AccountState::from(account).encode_to_vec(),
+                AccountState::from(account).to_rlp(),
             )
         });
         Trie::compute_hash_from_unsorted_iter(iter)

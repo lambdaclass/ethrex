@@ -10,7 +10,7 @@ license.workspace = true
 lazy_static.workspace = true
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
-ethrex-rlp.workspace = true
+librlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
 
 bytes.workspace = true

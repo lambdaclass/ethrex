@@ -82,8 +82,8 @@ pub enum DiscoveryServerError {
     CryptographyError(String),
 }
 
-impl From<ethrex_rlp::error::RLPDecodeError> for DiscoveryServerError {
-    fn from(err: ethrex_rlp::error::RLPDecodeError) -> Self {
+impl From<librlp::RlpError> for DiscoveryServerError {
+    fn from(err: librlp::RlpError) -> Self {
         DiscoveryServerError::DecodeError(PacketCodecError::from(err))
     }
 }
@@ -391,7 +391,7 @@ impl DiscoveryServer {
         // Decrypt and handle the contained message
         let mut encrypted = packet.encrypted_message.clone();
         decrypt_message(&session.inbound_key, &packet, &mut encrypted)?;
-        let message = Message::decode(&encrypted)?;
+        let message = Message::decode_msg(&encrypted)?;
         trace!(protocol = "discv5", received = %message, from = %src_id, %addr, "Handshake completed");
 
         // Handle the contained message

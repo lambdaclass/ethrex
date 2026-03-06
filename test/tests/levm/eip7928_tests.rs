@@ -10,7 +10,7 @@ use ethrex_common::types::block_access_list::{
     AccountChanges, BalanceChange, BlockAccessList, BlockAccessListRecorder, CodeChange,
     NonceChange, SlotChange, StorageChange,
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use librlp::{RlpDecode, RlpEncode};
 
 // Test addresses (matching those in block_access_list.rs for RLP compatibility)
 const ALICE: H160 = H160([
@@ -395,7 +395,7 @@ fn test_block_access_index_semantics() {
 
 #[test]
 fn test_bal_rlp_roundtrip() {
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    use librlp::{RlpDecode, RlpEncode};
 
     let mut recorder = BlockAccessListRecorder::new();
     recorder.set_block_access_index(1);
@@ -407,8 +407,8 @@ fn test_bal_rlp_roundtrip() {
     recorder.record_code_change(ALICE, bytes::Bytes::from_static(&[0x60, 0x00]));
 
     let original = recorder.build();
-    let encoded = original.encode_to_vec();
-    let decoded = BlockAccessList::decode(&encoded).expect("Failed to decode BAL");
+    let encoded = original.to_rlp();
+    let decoded = BlockAccessList::decode(&mut encoded.as_slice()).expect("Failed to decode BAL");
 
     assert_eq!(original, decoded);
     assert_eq!(original.compute_hash(), decoded.compute_hash());
@@ -416,33 +416,33 @@ fn test_bal_rlp_roundtrip() {
 
 #[test]
 fn test_storage_change_rlp_roundtrip() {
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    use librlp::{RlpDecode, RlpEncode};
 
     let change = StorageChange::new(5, U256::from(0x12345));
-    let encoded = change.encode_to_vec();
-    let decoded = StorageChange::decode(&encoded).expect("Failed to decode StorageChange");
+    let encoded = change.to_rlp();
+    let decoded = StorageChange::decode(&mut encoded.as_slice()).expect("Failed to decode StorageChange");
 
     assert_eq!(change, decoded);
 }
 
 #[test]
 fn test_balance_change_rlp_roundtrip() {
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    use librlp::{RlpDecode, RlpEncode};
 
     let change = BalanceChange::new(3, U256::from(1000));
-    let encoded = change.encode_to_vec();
-    let decoded = BalanceChange::decode(&encoded).expect("Failed to decode BalanceChange");
+    let encoded = change.to_rlp();
+    let decoded = BalanceChange::decode(&mut encoded.as_slice()).expect("Failed to decode BalanceChange");
 
     assert_eq!(change, decoded);
 }
 
 #[test]
 fn test_nonce_change_rlp_roundtrip() {
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    use librlp::{RlpDecode, RlpEncode};
 
     let change = NonceChange::new(2, 42);
-    let encoded = change.encode_to_vec();
-    let decoded = NonceChange::decode(&encoded).expect("Failed to decode NonceChange");
+    let encoded = change.to_rlp();
+    let decoded = NonceChange::decode(&mut encoded.as_slice()).expect("Failed to decode NonceChange");
 
     assert_eq!(change, decoded);
 }
@@ -450,8 +450,8 @@ fn test_nonce_change_rlp_roundtrip() {
 #[test]
 fn test_code_change_rlp_roundtrip() {
     let change = CodeChange::new(1, bytes::Bytes::from_static(&[0x60, 0x00, 0x60, 0x00]));
-    let encoded = change.encode_to_vec();
-    let decoded = CodeChange::decode(&encoded).expect("Failed to decode CodeChange");
+    let encoded = change.to_rlp();
+    let decoded = CodeChange::decode(&mut encoded.as_slice()).expect("Failed to decode CodeChange");
 
     assert_eq!(change, decoded);
 }
@@ -464,7 +464,7 @@ fn test_encode_decode_empty_list_validation() {
     let actual_bal = BlockAccessList::from_accounts(vec![AccountChanges::new(ALICE_ADDR)]);
 
     let mut buf = Vec::new();
-    actual_bal.encode(&mut buf);
+    actual_bal.encode_to_vec(&mut buf);
 
     let encoded_rlp = hex::encode(&buf);
     assert_eq!(
@@ -472,7 +472,7 @@ fn test_encode_decode_empty_list_validation() {
         "dbda94000000000000000000000000000000000000000ac0c0c0c0c0"
     );
 
-    let decoded_bal = BlockAccessList::decode(&buf).unwrap();
+    let decoded_bal = BlockAccessList::decode(&mut buf.as_slice()).unwrap();
     assert_eq!(decoded_bal, actual_bal);
 }
 
@@ -486,7 +486,7 @@ fn test_encode_decode_partial_validation() {
     ]);
 
     let mut buf = Vec::new();
-    actual_bal.encode(&mut buf);
+    actual_bal.encode_to_vec(&mut buf);
 
     let encoded_rlp = hex::encode(&buf);
     assert_eq!(
@@ -494,7 +494,7 @@ fn test_encode_decode_partial_validation() {
         "e3e294000000000000000000000000000000000000000ac0c20102c3c20164c3c20101c0"
     );
 
-    let decoded_bal = BlockAccessList::decode(&buf).unwrap();
+    let decoded_bal = BlockAccessList::decode(&mut buf.as_slice()).unwrap();
     assert_eq!(decoded_bal, actual_bal);
 }
 
@@ -508,7 +508,7 @@ fn test_storage_changes_validation() {
     ]);
 
     let mut buf = Vec::new();
-    actual_bal.encode(&mut buf);
+    actual_bal.encode_to_vec(&mut buf);
 
     let encoded_rlp = hex::encode(buf);
     assert_eq!(
@@ -526,7 +526,7 @@ fn test_expected_addresses_auto_sorted() {
     ]);
 
     let mut buf = Vec::new();
-    actual_bal.encode(&mut buf);
+    actual_bal.encode_to_vec(&mut buf);
 
     let encoded_rlp = hex::encode(buf);
     assert_eq!(
@@ -547,7 +547,7 @@ fn test_expected_storage_slots_ordering_correct_order_should_pass() {
         )]);
 
     let mut buf = Vec::new();
-    actual_bal.encode(&mut buf);
+    actual_bal.encode_to_vec(&mut buf);
 
     let encoded_rlp = hex::encode(&buf);
     assert_eq!(
@@ -567,7 +567,7 @@ fn test_expected_storage_reads_ordering_correct_order_should_pass() {
     ]);
 
     let mut buf = Vec::new();
-    actual_bal.encode(&mut buf);
+    actual_bal.encode_to_vec(&mut buf);
 
     let encoded_rlp = hex::encode(buf);
     assert_eq!(
@@ -588,7 +588,7 @@ fn test_expected_tx_indices_ordering_correct_order_should_pass() {
         )]);
 
     let mut buf = Vec::new();
-    actual_bal.encode(&mut buf);
+    actual_bal.encode_to_vec(&mut buf);
 
     let encoded_rlp = hex::encode(buf);
     assert_eq!(
@@ -612,7 +612,7 @@ fn test_decode_storage_slots_ordering_correct_order_should_pass() {
         hex::decode("e4e394000000000000000000000000000000000000000ac9c201c0c202c0c203c0c0c0c0c0")
             .unwrap();
 
-    let decoded_bal = BlockAccessList::decode(&encoded_rlp).unwrap();
+    let decoded_bal = BlockAccessList::decode(&mut encoded_rlp.as_slice()).unwrap();
     assert_eq!(decoded_bal, actual_bal);
 }
 

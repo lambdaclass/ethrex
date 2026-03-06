@@ -2,7 +2,7 @@ use ethrex_common::{
     H256,
     types::{BlobsBundleError, BlockHash},
 };
-use ethrex_rlp::error::RLPDecodeError;
+use librlp::RlpError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use ethrex_vm::EvmError;
@@ -25,7 +25,7 @@ pub enum ChainError {
     #[error("Trie error: {0}")]
     TrieError(#[from] TrieError),
     #[error("RLP decode error: {0}")]
-    RLPDecodeError(#[from] RLPDecodeError),
+    RlpError(#[from] RlpError),
     #[error("EVM error: {0}")]
     EvmError(EvmError),
     #[error("Invalid Transaction: {0}")]
@@ -61,7 +61,7 @@ impl ChainError {
             ChainError::ParentStateNotFound => "parent_state_not_found",
             ChainError::StoreError(_) => "store_error",
             ChainError::TrieError(_) => "trie_error",
-            ChainError::RLPDecodeError(_) => "rlp_decode_error",
+            ChainError::RlpError(_) => "rlp_decode_error",
             ChainError::EvmError(_) => "evm_error",
             ChainError::InvalidTransaction(_) => "invalid_transaction",
             ChainError::WitnessGeneration(_) => "witness_generation",

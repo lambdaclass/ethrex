@@ -14,12 +14,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
+use librlp::{Header, RlpDecode, RlpEncode, RlpError};
 use ethrex_trie::Trie;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -50,32 +45,52 @@ impl Block {
     }
 }
 
-impl RLPEncode for Block {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.header)
-            .encode_field(&self.body.transactions)
-            .encode_field(&self.body.ommers)
-            .encode_optional_field(&self.body.withdrawals)
-            .finish();
+impl RlpEncode for Block {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.header.encode(buf);
+            librlp::encode_list(&self.body.transactions, buf);
+            librlp::encode_list(&self.body.ommers, buf);
+            if let Some(ref withdrawals) = self.body.withdrawals {
+                librlp::encode_list(withdrawals, buf);
+            }
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        use crate::constants::vec_encoded_length;
+        let mut payload = self.header.encoded_length()
+            + vec_encoded_length(&self.body.transactions)
+            + vec_encoded_length(&self.body.ommers);
+        if let Some(ref withdrawals) = self.body.withdrawals {
+            payload += vec_encoded_length(withdrawals);
+        }
+        crate::constants::list_encoded_length(payload)
     }
 }
 
-impl RLPDecode for Block {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (header, decoder) = decoder.decode_field("header")?;
-        let (transactions, decoder) = decoder.decode_field("transactions")?;
-        let (ommers, decoder) = decoder.decode_field("ommers")?;
-        let (withdrawals, decoder) = decoder.decode_optional_field();
-        let remaining = decoder.finish()?;
+impl RlpDecode for Block {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let block_header = RlpDecode::decode(&mut payload)?;
+        let transactions = librlp::decode_list(&mut payload)?;
+        let ommers = librlp::decode_list(&mut payload)?;
+        let withdrawals = if !payload.is_empty() {
+            Some(librlp::decode_list(&mut payload)?)
+        } else {
+            None
+        };
+        *buf = &buf[header.payload_length..];
         let body = BlockBody {
             transactions,
             ommers,
             withdrawals,
         };
-        let block = Block::new(header, body);
-        Ok((block, remaining))
+        Ok(Block::new(block_header, body))
     }
 }
 
@@ -210,93 +225,158 @@ impl PartialEq for BlockHeader {
     }
 }
 
-impl RLPEncode for BlockHeader {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.parent_hash)
-            .encode_field(&self.ommers_hash)
-            .encode_field(&self.coinbase)
-            .encode_field(&self.state_root)
-            .encode_field(&self.transactions_root)
-            .encode_field(&self.receipts_root)
-            .encode_field(&self.logs_bloom)
-            .encode_field(&self.difficulty)
-            .encode_field(&self.number)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.gas_used)
-            .encode_field(&self.timestamp)
-            .encode_field(&self.extra_data)
-            .encode_field(&self.prev_randao)
-            .encode_field(&self.nonce.to_be_bytes())
-            .encode_optional_field(&self.base_fee_per_gas)
-            .encode_optional_field(&self.withdrawals_root)
-            .encode_optional_field(&self.blob_gas_used)
-            .encode_optional_field(&self.excess_blob_gas)
-            .encode_optional_field(&self.parent_beacon_block_root)
-            .encode_optional_field(&self.requests_hash)
-            .encode_optional_field(&self.block_access_list_hash)
-            .encode_optional_field(&self.slot_number)
-            .finish();
+impl RlpEncode for BlockHeader {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.parent_hash.encode(buf);
+            self.ommers_hash.encode(buf);
+            self.coinbase.encode(buf);
+            self.state_root.encode(buf);
+            self.transactions_root.encode(buf);
+            self.receipts_root.encode(buf);
+            self.logs_bloom.encode(buf);
+            self.difficulty.encode(buf);
+            self.number.encode(buf);
+            self.gas_limit.encode(buf);
+            self.gas_used.encode(buf);
+            self.timestamp.encode(buf);
+            self.extra_data.encode(buf);
+            self.prev_randao.encode(buf);
+            self.nonce.to_be_bytes().encode(buf);
+            // Trailing optional fields: encode only up to the last Some
+            let trailing: [Option<&dyn EncodeTrailing>; 8] = [
+                self.base_fee_per_gas.as_ref().map(|v| v as &dyn EncodeTrailing),
+                self.withdrawals_root.as_ref().map(|v| v as &dyn EncodeTrailing),
+                self.blob_gas_used.as_ref().map(|v| v as &dyn EncodeTrailing),
+                self.excess_blob_gas.as_ref().map(|v| v as &dyn EncodeTrailing),
+                self.parent_beacon_block_root.as_ref().map(|v| v as &dyn EncodeTrailing),
+                self.requests_hash.as_ref().map(|v| v as &dyn EncodeTrailing),
+                self.block_access_list_hash.as_ref().map(|v| v as &dyn EncodeTrailing),
+                self.slot_number.as_ref().map(|v| v as &dyn EncodeTrailing),
+            ];
+            let last_some = trailing.iter().rposition(|o| o.is_some()).map(|i| i + 1).unwrap_or(0);
+            for opt in &trailing[..last_some] {
+                match opt {
+                    Some(val) => val.encode_trailing(buf),
+                    None => unreachable!("trailing optional fields must be contiguous"),
+                }
+            }
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut payload = self.parent_hash.encoded_length()
+            + self.ommers_hash.encoded_length()
+            + self.coinbase.encoded_length()
+            + self.state_root.encoded_length()
+            + self.transactions_root.encoded_length()
+            + self.receipts_root.encoded_length()
+            + self.logs_bloom.encoded_length()
+            + self.difficulty.encoded_length()
+            + self.number.encoded_length()
+            + self.gas_limit.encoded_length()
+            + self.gas_used.encoded_length()
+            + self.timestamp.encoded_length()
+            + self.extra_data.encoded_length()
+            + self.prev_randao.encoded_length()
+            + self.nonce.to_be_bytes().encoded_length();
+        // For optional trailing fields, we must encode all up to the last Some
+        let opt_lengths: [Option<usize>; 8] = [
+            self.base_fee_per_gas.as_ref().map(|v| v.encoded_length()),
+            self.withdrawals_root.as_ref().map(|v| v.encoded_length()),
+            self.blob_gas_used.as_ref().map(|v| v.encoded_length()),
+            self.excess_blob_gas.as_ref().map(|v| v.encoded_length()),
+            self.parent_beacon_block_root.as_ref().map(|v| v.encoded_length()),
+            self.requests_hash.as_ref().map(|v| v.encoded_length()),
+            self.block_access_list_hash.as_ref().map(|v| v.encoded_length()),
+            self.slot_number.as_ref().map(|v| v.encoded_length()),
+        ];
+        let last_some = opt_lengths.iter().rposition(|o| o.is_some()).map(|i| i + 1).unwrap_or(0);
+        for opt in &opt_lengths[..last_some] {
+            payload += opt.unwrap_or(0);
+        }
+        crate::constants::list_encoded_length(payload)
     }
 }
 
-impl RLPDecode for BlockHeader {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (parent_hash, decoder) = decoder.decode_field("parent_hash")?;
-        let (ommers_hash, decoder) = decoder.decode_field("ommers_hash")?;
-        let (coinbase, decoder) = decoder.decode_field("coinbase")?;
-        let (state_root, decoder) = decoder.decode_field("state_root")?;
-        let (transactions_root, decoder) = decoder.decode_field("transactions_root")?;
-        let (receipts_root, decoder) = decoder.decode_field("receipts_root")?;
-        let (logs_bloom, decoder) = decoder.decode_field("logs_bloom")?;
-        let (difficulty, decoder) = decoder.decode_field("difficulty")?;
-        let (number, decoder) = decoder.decode_field("number")?;
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
-        let (gas_used, decoder) = decoder.decode_field("gas_used")?;
-        let (timestamp, decoder) = decoder.decode_field("timestamp")?;
-        let (extra_data, decoder) = decoder.decode_field("extra_data")?;
-        let (prev_randao, decoder) = decoder.decode_field("prev_randao")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let nonce = u64::from_be_bytes(nonce);
-        let (base_fee_per_gas, decoder) = decoder.decode_optional_field();
-        let (withdrawals_root, decoder) = decoder.decode_optional_field();
-        let (blob_gas_used, decoder) = decoder.decode_optional_field();
-        let (excess_blob_gas, decoder) = decoder.decode_optional_field();
-        let (parent_beacon_block_root, decoder) = decoder.decode_optional_field();
-        let (requests_hash, decoder) = decoder.decode_optional_field();
-        let (block_access_list_hash, decoder) = decoder.decode_optional_field();
-        let (slot_number, decoder) = decoder.decode_optional_field();
+/// Helper trait for encoding trailing optional fields.
+trait EncodeTrailing {
+    fn encode_trailing(&self, buf: &mut librlp::RlpBuf);
+}
 
-        Ok((
-            BlockHeader {
-                hash: OnceCell::new(),
-                parent_hash,
-                ommers_hash,
-                coinbase,
-                state_root,
-                transactions_root,
-                receipts_root,
-                logs_bloom,
-                difficulty,
-                number,
-                gas_limit,
-                gas_used,
-                timestamp,
-                extra_data,
-                prev_randao,
-                nonce,
-                base_fee_per_gas,
-                withdrawals_root,
-                blob_gas_used,
-                excess_blob_gas,
-                parent_beacon_block_root,
-                requests_hash,
-                block_access_list_hash,
-                slot_number,
-            },
-            decoder.finish()?,
-        ))
+impl EncodeTrailing for u64 {
+    fn encode_trailing(&self, buf: &mut librlp::RlpBuf) {
+        RlpEncode::encode(self, buf);
+    }
+}
+
+impl EncodeTrailing for H256 {
+    fn encode_trailing(&self, buf: &mut librlp::RlpBuf) {
+        RlpEncode::encode(self, buf);
+    }
+}
+
+impl RlpDecode for BlockHeader {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let parent_hash = RlpDecode::decode(&mut payload)?;
+        let ommers_hash = RlpDecode::decode(&mut payload)?;
+        let coinbase = RlpDecode::decode(&mut payload)?;
+        let state_root = RlpDecode::decode(&mut payload)?;
+        let transactions_root = RlpDecode::decode(&mut payload)?;
+        let receipts_root = RlpDecode::decode(&mut payload)?;
+        let logs_bloom = RlpDecode::decode(&mut payload)?;
+        let difficulty = RlpDecode::decode(&mut payload)?;
+        let number = RlpDecode::decode(&mut payload)?;
+        let gas_limit = RlpDecode::decode(&mut payload)?;
+        let gas_used = RlpDecode::decode(&mut payload)?;
+        let timestamp = RlpDecode::decode(&mut payload)?;
+        let extra_data = RlpDecode::decode(&mut payload)?;
+        let prev_randao = RlpDecode::decode(&mut payload)?;
+        let nonce_bytes: [u8; 8] = RlpDecode::decode(&mut payload)?;
+        let nonce = u64::from_be_bytes(nonce_bytes);
+
+        // Trailing optional fields
+        let base_fee_per_gas = (!payload.is_empty()).then(|| RlpDecode::decode(&mut payload)).transpose()?;
+        let withdrawals_root = (!payload.is_empty()).then(|| RlpDecode::decode(&mut payload)).transpose()?;
+        let blob_gas_used = (!payload.is_empty()).then(|| RlpDecode::decode(&mut payload)).transpose()?;
+        let excess_blob_gas = (!payload.is_empty()).then(|| RlpDecode::decode(&mut payload)).transpose()?;
+        let parent_beacon_block_root = (!payload.is_empty()).then(|| RlpDecode::decode(&mut payload)).transpose()?;
+        let requests_hash = (!payload.is_empty()).then(|| RlpDecode::decode(&mut payload)).transpose()?;
+        let block_access_list_hash = (!payload.is_empty()).then(|| RlpDecode::decode(&mut payload)).transpose()?;
+        let slot_number = (!payload.is_empty()).then(|| RlpDecode::decode(&mut payload)).transpose()?;
+
+        *buf = &buf[header.payload_length..];
+        Ok(BlockHeader {
+            hash: OnceCell::new(),
+            parent_hash,
+            ommers_hash,
+            coinbase,
+            state_root,
+            transactions_root,
+            receipts_root,
+            logs_bloom,
+            difficulty,
+            number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data,
+            prev_randao,
+            nonce,
+            base_fee_per_gas,
+            withdrawals_root,
+            blob_gas_used,
+            excess_blob_gas,
+            parent_beacon_block_root,
+            requests_hash,
+            block_access_list_hash,
+            slot_number,
+        })
     }
 }
 
@@ -336,7 +416,7 @@ pub fn compute_transactions_root(transactions: &[Transaction]) -> H256 {
         // Key: RLP(tx_index)
         // Value: tx_type || RLP(tx)  if tx_type != 0
         //                   RLP(tx)  else
-        (idx.encode_to_vec(), tx.encode_canonical_to_vec())
+        (idx.to_rlp(), tx.encode_canonical_to_vec())
     });
     Trie::compute_hash_from_unsorted_iter(iter)
 }
@@ -345,7 +425,7 @@ pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
     let iter = receipts
         .iter()
         .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
+        .map(|(idx, receipt)| (idx.to_rlp(), receipt.encode_inner_with_bloom()));
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
@@ -354,42 +434,57 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
     let iter = withdrawals
         .iter()
         .enumerate()
-        .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
+        .map(|(idx, withdrawal)| (idx.to_rlp(), withdrawal.to_rlp()));
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
-impl RLPEncode for BlockBody {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.transactions)
-            .encode_field(&self.ommers)
-            .encode_optional_field(&self.withdrawals)
-            .finish();
+impl RlpEncode for BlockBody {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            librlp::encode_list(&self.transactions, buf);
+            librlp::encode_list(&self.ommers, buf);
+            if let Some(ref withdrawals) = self.withdrawals {
+                librlp::encode_list(withdrawals, buf);
+            }
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        use crate::constants::vec_encoded_length;
+        let mut payload = vec_encoded_length(&self.transactions) + vec_encoded_length(&self.ommers);
+        if let Some(ref withdrawals) = self.withdrawals {
+            payload += vec_encoded_length(withdrawals);
+        }
+        crate::constants::list_encoded_length(payload)
     }
 }
 
-impl RLPDecode for BlockBody {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (transactions, decoder) = decoder.decode_field("transactions")?;
-        let (ommers, decoder) = decoder.decode_field("ommers")?;
-        let (withdrawals, decoder) = decoder.decode_optional_field();
-        Ok((
-            BlockBody {
-                transactions,
-                ommers,
-                withdrawals,
-            },
-            decoder.finish()?,
-        ))
+impl RlpDecode for BlockBody {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let transactions = librlp::decode_list(&mut payload)?;
+        let ommers = librlp::decode_list(&mut payload)?;
+        let withdrawals = if !payload.is_empty() {
+            Some(librlp::decode_list(&mut payload)?)
+        } else {
+            None
+        };
+        *buf = &buf[header.payload_length..];
+        Ok(BlockBody {
+            transactions,
+            ommers,
+            withdrawals,
+        })
     }
 }
 
 impl BlockHeader {
     pub fn compute_block_hash(&self) -> H256 {
-        let mut buf = vec![];
-        self.encode(&mut buf);
-        keccak(buf)
+        keccak(self.to_rlp())
     }
 
     pub fn hash(&self) -> H256 {
@@ -412,33 +507,44 @@ pub struct Withdrawal {
     pub amount: u64,
 }
 
-impl RLPEncode for Withdrawal {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.index)
-            .encode_field(&self.validator_index)
-            .encode_field(&self.address)
-            .encode_field(&self.amount)
-            .finish();
+impl RlpEncode for Withdrawal {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.index.encode(buf);
+            self.validator_index.encode(buf);
+            self.address.encode(buf);
+            self.amount.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.index.encoded_length()
+                + self.validator_index.encoded_length()
+                + self.address.encoded_length()
+                + self.amount.encoded_length(),
+        )
     }
 }
 
-impl RLPDecode for Withdrawal {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (index, decoder) = decoder.decode_field("index")?;
-        let (validator_index, decoder) = decoder.decode_field("validator_index")?;
-        let (address, decoder) = decoder.decode_field("address")?;
-        let (amount, decoder) = decoder.decode_field("amount")?;
-        Ok((
-            Withdrawal {
-                index,
-                validator_index,
-                address,
-                amount,
-            },
-            decoder.finish()?,
-        ))
+impl RlpDecode for Withdrawal {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let index = RlpDecode::decode(&mut payload)?;
+        let validator_index = RlpDecode::decode(&mut payload)?;
+        let address = RlpDecode::decode(&mut payload)?;
+        let amount = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(Withdrawal {
+            index,
+            validator_index,
+            address,
+            amount,
+        })
     }
 }
 
@@ -967,8 +1073,8 @@ mod test {
             ..Default::default()
         };
         assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
-        assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
-        assert_eq!(block.encode_to_vec().len(), block.length());
+        assert_eq!(parent_block.to_rlp().len(), parent_block.encoded_length());
+        assert_eq!(block.to_rlp().len(), block.encoded_length());
     }
 
     #[test]
@@ -1086,4 +1192,5 @@ mod test {
         // With u64 this overflows
         assert!(thing.is_ok());
     }
+
 }

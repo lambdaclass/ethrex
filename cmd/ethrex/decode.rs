@@ -1,7 +1,7 @@
 use anyhow::Error;
 use bytes::Bytes;
 use ethrex_common::types::Block;
-use ethrex_rlp::decode::RLPDecode as _;
+use librlp::RlpDecode as _;
 use std::{
     fs::File,
     io::{BufReader, Read as _},
@@ -26,9 +26,8 @@ pub fn chain_file(file: File) -> Result<Vec<Block>, Error> {
     let mut buf = buf.as_slice();
     let mut blocks = Vec::new();
     while !buf.is_empty() {
-        let (item, rest) = Block::decode_unfinished(buf)?;
+        let item = Block::decode(&mut buf)?;
         blocks.push(item);
-        buf = rest;
     }
     Ok(blocks)
 }

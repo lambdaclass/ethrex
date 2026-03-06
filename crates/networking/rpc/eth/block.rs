@@ -1,4 +1,4 @@
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use serde_json::Value;
 use tracing::debug;
 
@@ -210,7 +210,7 @@ impl RpcHandler for GetRawHeaderRequest {
             .get_block_header(block_number)?
             .ok_or(RpcErr::BadParams("Header not found".to_owned()))?;
 
-        let str_encoded = format!("0x{}", hex::encode(header.encode_to_vec()));
+        let str_encoded = format!("0x{}", hex::encode(header.to_rlp()));
         Ok(Value::String(str_encoded))
     }
 }
@@ -241,7 +241,7 @@ impl RpcHandler for GetRawBlockRequest {
             (Some(header), Some(body)) => (header, body),
             _ => return Ok(Value::Null),
         };
-        let block = Block::new(header, body).encode_to_vec();
+        let block = Block::new(header, body).to_rlp();
 
         serde_json::to_value(format!("0x{}", &hex::encode(block)))
             .map_err(|error| RpcErr::Internal(error.to_string()))

@@ -3,7 +3,7 @@ use crate::snap::constants::CODE_HASH_WRITE_BUFFER_SIZE;
 use crate::sync::SyncError;
 use crate::utils::{dump_to_file, get_code_hashes_snapshot_file};
 use ethrex_common::H256;
-use ethrex_rlp::encode::RLPEncode;
+use librlp::encode_list_to_rlp;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tokio::task::JoinSet;
@@ -82,7 +82,8 @@ impl CodeHashCollector {
     /// Flushes the given buffer to a file
     fn flush_buffer(&mut self, buffer: HashSet<H256>) {
         let file_name = get_code_hashes_snapshot_file(&self.snapshots_dir, self.file_index);
-        let encoded = buffer.into_iter().collect::<Vec<_>>().encode_to_vec();
+        let items: Vec<_> = buffer.into_iter().collect();
+        let encoded = encode_list_to_rlp(&items);
         self.disk_tasks
             .spawn(async move { dump_to_file(&file_name, encoded) });
         self.file_index += 1;

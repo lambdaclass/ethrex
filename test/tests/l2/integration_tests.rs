@@ -31,7 +31,7 @@ use ethrex_l2_sdk::{
     wait_for_l1_message_proof, wait_for_l2_deposit_receipt,
 };
 
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::{
@@ -2078,7 +2078,7 @@ async fn test_deploy(
         ..Default::default()
     });
 
-    let transaction_size: u64 = deploy_tx.encode_to_vec().len().try_into().unwrap();
+    let transaction_size: u64 = deploy_tx.to_rlp().len().try_into().unwrap();
 
     let deploy_fees = get_fees_details_l2(&deploy_tx_receipt, l2_client, transaction_size).await?;
 
@@ -2631,7 +2631,7 @@ fn calculate_transaction_size(data: Bytes) -> u64 {
         data,
         ..Default::default()
     });
-    tx.encode_to_vec().len().try_into().unwrap()
+    tx.to_rlp().len().try_into().unwrap()
 }
 
 fn l1_client() -> EthClient {

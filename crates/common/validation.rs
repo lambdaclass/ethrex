@@ -11,7 +11,7 @@ use crate::types::{
     validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header.
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
@@ -33,7 +33,7 @@ pub fn validate_block_pre_execution(
     validate_block_header(&block.header, parent_header, elasticity_multiplier)?;
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
-        let block_rlp_size = block.length();
+        let block_rlp_size = block.encoded_length();
         if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(InvalidBlockError::MaximumRlpSizeExceeded(
                 MAX_RLP_BLOCK_SIZE,

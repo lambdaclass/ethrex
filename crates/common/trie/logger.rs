@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use ethrex_rlp::decode::RLPDecode;
+use librlp::RlpDecode;
 
 use crate::{Nibbles, Node, NodeHash, Trie, TrieDB, TrieError};
 
@@ -36,7 +36,7 @@ impl TrieDB for TrieLogger {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let result = self.inner_db.get(key)?;
         if let Some(result) = result.as_ref()
-            && let Ok(decoded) = Node::decode(result)
+            && let Ok(decoded) = Node::decode(&mut result.as_slice())
         {
             let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
             lock.insert(decoded.compute_hash(), decoded);

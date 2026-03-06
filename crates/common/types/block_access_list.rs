@@ -1,10 +1,6 @@
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::{RLPEncode, encode_length, list_length},
-    structs,
-};
+use librlp::{Header, RlpDecode, RlpEncode, RlpError};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,34 +8,26 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::constants::{EMPTY_BLOCK_ACCESS_LIST_HASH, SYSTEM_ADDRESS};
 use crate::utils::keccak;
 
-/// Encode a slice of items in sorted order without cloning.
-fn encode_sorted_by<T, K, F>(items: &[T], buf: &mut dyn BufMut, key_fn: F)
+/// Encode a slice of items as a sorted list into an `RlpBuf`.
+fn encode_sorted_by<T, K, F>(items: &[T], buf: &mut librlp::RlpBuf, key_fn: F)
 where
-    T: RLPEncode,
+    T: RlpEncode,
     K: Ord,
     F: Fn(&T) -> K,
 {
-    if items.is_empty() {
-        buf.put_u8(0xc0);
-        return;
-    }
     let mut indices: Vec<usize> = (0..items.len()).collect();
     indices.sort_by(|&i, &j| key_fn(&items[i]).cmp(&key_fn(&items[j])));
-
-    let payload_len: usize = items.iter().map(|item| item.length()).sum();
-    encode_length(payload_len, buf);
-    for &i in &indices {
-        items[i].encode(buf);
-    }
+    buf.list(|buf| {
+        for &i in &indices {
+            items[i].encode(buf);
+        }
+    });
 }
 
 /// Calculate the encoded length of a sorted list.
-fn sorted_list_length<T: RLPEncode>(items: &[T]) -> usize {
-    if items.is_empty() {
-        return 1;
-    }
-    let payload_len: usize = items.iter().map(|item| item.length()).sum();
-    list_length(payload_len)
+fn sorted_list_length<T: RlpEncode>(items: &[T]) -> usize {
+    let payload_len: usize = items.iter().map(|item| item.encoded_length()).sum();
+    crate::constants::list_encoded_length(payload_len)
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -59,28 +47,30 @@ impl StorageChange {
     }
 }
 
-impl RLPEncode for StorageChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.block_access_index)
-            .encode_field(&self.post_value)
-            .finish();
+impl RlpEncode for StorageChange {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.block_access_index.encode(buf);
+            self.post_value.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.block_access_index.encoded_length() + self.post_value.encoded_length(),
+        )
     }
 }
 
-impl RLPDecode for StorageChange {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
-        let decoder = structs::Decoder::new(rlp)?;
-        let (block_access_index, decoder) = decoder.decode_field("block_access_index")?;
-        let (post_value, decoder) = decoder.decode_field("post_value")?;
-        let remaining = decoder.finish()?;
-        Ok((
-            Self {
-                block_access_index,
-                post_value,
-            },
-            remaining,
-        ))
+impl RlpDecode for StorageChange {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let block_access_index = RlpDecode::decode(&mut payload)?;
+        let post_value = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(Self { block_access_index, post_value })
     }
 }
 
@@ -113,22 +103,30 @@ impl SlotChange {
     }
 }
 
-impl RLPEncode for SlotChange {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        let payload_len = self.slot.length() + sorted_list_length(&self.slot_changes);
-        encode_length(payload_len, buf);
-        self.slot.encode(buf);
-        encode_sorted_by(&self.slot_changes, buf, |s| s.block_access_index);
+impl RlpEncode for SlotChange {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.slot.encode(buf);
+            encode_sorted_by(&self.slot_changes, buf, |s| s.block_access_index);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.slot.encoded_length() + sorted_list_length(&self.slot_changes),
+        )
     }
 }
 
-impl RLPDecode for SlotChange {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
-        let decoder = structs::Decoder::new(rlp)?;
-        let (slot, decoder) = decoder.decode_field("slot")?;
-        let (slot_changes, decoder) = decoder.decode_field("slot_changes")?;
-        let remaining = decoder.finish()?;
-        Ok((Self { slot, slot_changes }, remaining))
+impl RlpDecode for SlotChange {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let slot = RlpDecode::decode(&mut payload)?;
+        let slot_changes = librlp::decode_list(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(Self { slot, slot_changes })
     }
 }
 
@@ -149,28 +147,30 @@ impl BalanceChange {
     }
 }
 
-impl RLPEncode for BalanceChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.block_access_index)
-            .encode_field(&self.post_balance)
-            .finish();
+impl RlpEncode for BalanceChange {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.block_access_index.encode(buf);
+            self.post_balance.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.block_access_index.encoded_length() + self.post_balance.encoded_length(),
+        )
     }
 }
 
-impl RLPDecode for BalanceChange {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
-        let decoder = structs::Decoder::new(rlp)?;
-        let (block_access_index, decoder) = decoder.decode_field("block_access_index")?;
-        let (post_balance, decoder) = decoder.decode_field("post_balance")?;
-        let remaining = decoder.finish()?;
-        Ok((
-            Self {
-                block_access_index,
-                post_balance,
-            },
-            remaining,
-        ))
+impl RlpDecode for BalanceChange {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let block_access_index = RlpDecode::decode(&mut payload)?;
+        let post_balance = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(Self { block_access_index, post_balance })
     }
 }
 
@@ -191,28 +191,30 @@ impl NonceChange {
     }
 }
 
-impl RLPEncode for NonceChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.block_access_index)
-            .encode_field(&self.post_nonce)
-            .finish();
+impl RlpEncode for NonceChange {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.block_access_index.encode(buf);
+            self.post_nonce.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.block_access_index.encoded_length() + self.post_nonce.encoded_length(),
+        )
     }
 }
 
-impl RLPDecode for NonceChange {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
-        let decoder = structs::Decoder::new(rlp)?;
-        let (block_access_index, decoder) = decoder.decode_field("block_access_index")?;
-        let (post_nonce, decoder) = decoder.decode_field("post_nonce")?;
-        let remaining = decoder.finish()?;
-        Ok((
-            Self {
-                block_access_index,
-                post_nonce,
-            },
-            remaining,
-        ))
+impl RlpDecode for NonceChange {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let block_access_index = RlpDecode::decode(&mut payload)?;
+        let post_nonce = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(Self { block_access_index, post_nonce })
     }
 }
 
@@ -233,28 +235,30 @@ impl CodeChange {
     }
 }
 
-impl RLPEncode for CodeChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.block_access_index)
-            .encode_field(&self.new_code)
-            .finish();
+impl RlpEncode for CodeChange {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.block_access_index.encode(buf);
+            self.new_code.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.block_access_index.encoded_length() + self.new_code.encoded_length(),
+        )
     }
 }
 
-impl RLPDecode for CodeChange {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
-        let decoder = structs::Decoder::new(rlp)?;
-        let (block_access_index, decoder) = decoder.decode_field("block_access_index")?;
-        let (new_code, decoder) = decoder.decode_field("new_code")?;
-        let remaining = decoder.finish()?;
-        Ok((
-            Self {
-                block_access_index,
-                new_code,
-            },
-            remaining,
-        ))
+impl RlpDecode for CodeChange {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let block_access_index = RlpDecode::decode(&mut payload)?;
+        let new_code = RlpDecode::decode(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(Self { block_access_index, new_code })
     }
 }
 
@@ -350,46 +354,46 @@ impl AccountChanges {
     }
 }
 
-impl RLPEncode for AccountChanges {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        let payload_len = self.address.length()
-            + sorted_list_length(&self.storage_changes)
-            + sorted_list_length(&self.storage_reads)
-            + sorted_list_length(&self.balance_changes)
-            + sorted_list_length(&self.nonce_changes)
-            + sorted_list_length(&self.code_changes);
+impl RlpEncode for AccountChanges {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
+        buf.list(|buf| {
+            self.address.encode(buf);
+            encode_sorted_by(&self.storage_changes, buf, |s| s.slot);
+            encode_sorted_by(&self.storage_reads, buf, |s| *s);
+            encode_sorted_by(&self.balance_changes, buf, |b| b.block_access_index);
+            encode_sorted_by(&self.nonce_changes, buf, |n| n.block_access_index);
+            encode_sorted_by(&self.code_changes, buf, |c| c.block_access_index);
+        });
+    }
 
-        encode_length(payload_len, buf);
-        self.address.encode(buf);
-        encode_sorted_by(&self.storage_changes, buf, |s| s.slot);
-        encode_sorted_by(&self.storage_reads, buf, |s| *s);
-        encode_sorted_by(&self.balance_changes, buf, |b| b.block_access_index);
-        encode_sorted_by(&self.nonce_changes, buf, |n| n.block_access_index);
-        encode_sorted_by(&self.code_changes, buf, |c| c.block_access_index);
+    fn encoded_length(&self) -> usize {
+        crate::constants::list_encoded_length(
+            self.address.encoded_length()
+                + sorted_list_length(&self.storage_changes)
+                + sorted_list_length(&self.storage_reads)
+                + sorted_list_length(&self.balance_changes)
+                + sorted_list_length(&self.nonce_changes)
+                + sorted_list_length(&self.code_changes),
+        )
     }
 }
 
-impl RLPDecode for AccountChanges {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
-        let decoder = structs::Decoder::new(rlp)?;
-        let (address, decoder) = decoder.decode_field("address")?;
-        let (storage_changes, decoder) = decoder.decode_field("storage_changes")?;
-        let (storage_reads, decoder) = decoder.decode_field("storage_reads")?;
-        let (balance_changes, decoder) = decoder.decode_field("balance_changes")?;
-        let (nonce_changes, decoder) = decoder.decode_field("nonce_changes")?;
-        let (code_changes, decoder) = decoder.decode_field("code_changes")?;
-        let remaining = decoder.finish()?;
-        Ok((
-            Self {
-                address,
-                storage_changes,
-                storage_reads,
-                balance_changes,
-                nonce_changes,
-                code_changes,
-            },
-            remaining,
-        ))
+impl RlpDecode for AccountChanges {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list { return Err(RlpError::UnexpectedString); }
+        let mut payload = &buf[..header.payload_length];
+        let address = RlpDecode::decode(&mut payload)?;
+        let storage_changes = librlp::decode_list(&mut payload)?;
+        let storage_reads = librlp::decode_list(&mut payload)?;
+        let balance_changes = librlp::decode_list(&mut payload)?;
+        let nonce_changes = librlp::decode_list(&mut payload)?;
+        let code_changes = librlp::decode_list(&mut payload)?;
+        *buf = &buf[header.payload_length..];
+        Ok(Self {
+            address, storage_changes, storage_reads,
+            balance_changes, nonce_changes, code_changes,
+        })
     }
 }
 
@@ -521,7 +525,7 @@ impl BlockAccessList {
             return *EMPTY_BLOCK_ACCESS_LIST_HASH;
         }
 
-        let buf = self.encode_to_vec();
+        let buf = self.to_rlp();
         keccak(buf)
     }
 
@@ -637,16 +641,20 @@ pub fn has_exact_change_storage(changes: &[StorageChange], idx: u16) -> bool {
     pos < changes.len() && changes[pos].block_access_index == idx
 }
 
-impl RLPEncode for BlockAccessList {
-    fn encode(&self, buf: &mut dyn BufMut) {
+impl RlpEncode for BlockAccessList {
+    fn encode(&self, buf: &mut librlp::RlpBuf) {
         encode_sorted_by(&self.inner, buf, |a| a.address);
+    }
+
+    fn encoded_length(&self) -> usize {
+        sorted_list_length(&self.inner)
     }
 }
 
-impl RLPDecode for BlockAccessList {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
-        let (inner, remaining) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((Self { inner }, remaining))
+impl RlpDecode for BlockAccessList {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let inner = librlp::decode_list(buf)?;
+        Ok(Self { inner })
     }
 }
 

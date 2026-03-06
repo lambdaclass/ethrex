@@ -365,7 +365,7 @@ where
 #[cfg(test)]
 mod test {
     use ethereum_types::U256;
-    use ethrex_rlp::encode::RLPEncode;
+    use librlp::RlpEncode;
 
     use crate::{InMemoryTrieDB, Trie};
 
@@ -434,7 +434,7 @@ mod test {
                 U256::from(480),
             ),
         ] {
-            accounts.insert(H256::from_str(string).unwrap(), value.encode_to_vec());
+            accounts.insert(H256::from_str(string).unwrap(), value.to_rlp());
         }
         accounts
     }
@@ -460,14 +460,14 @@ mod test {
             &mut accounts
                 .clone()
                 .into_iter()
-                .map(|(hash, state)| (hash, state.encode_to_vec())),
+                .map(|(hash, state)| (hash, state.to_rlp())),
         )
         .expect("Shouldn't have errors");
 
         let expected_data = Arc::new(Mutex::new(BTreeMap::new()));
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(expected_data.clone())));
         for account in accounts.iter() {
-            trie.insert(account.0.as_bytes().to_vec(), account.1.encode_to_vec())
+            trie.insert(account.0.as_bytes().to_vec(), account.1.to_rlp())
                 .unwrap();
         }
 
@@ -493,13 +493,13 @@ mod test {
             &mut slots
                 .clone()
                 .into_iter()
-                .map(|(hash, state)| (hash, state.encode_to_vec())),
+                .map(|(hash, state)| (hash, state.to_rlp())),
         )
         .expect("Shouldn't have errors");
 
         let mut trie: Trie = Trie::empty_in_memory();
         for account in slots.iter() {
-            trie.insert(account.0.as_bytes().to_vec(), account.1.encode_to_vec())
+            trie.insert(account.0.as_bytes().to_vec(), account.1.to_rlp())
                 .unwrap();
         }
 

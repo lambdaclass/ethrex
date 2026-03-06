@@ -5,12 +5,8 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 
-use bytes::BufMut;
 use ethrex_common::types::BlockHash;
-use ethrex_rlp::{
-    error::{RLPDecodeError, RLPEncodeError},
-    structs::{Decoder, Encoder},
-};
+use librlp::{Header, RlpBuf, RlpDecode, RlpEncode, RlpError, decode_list, encode_list};
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
 #[derive(Debug, Clone)]
@@ -29,23 +25,28 @@ impl GetReceipts {
 
 impl RLPxMessage for GetReceipts {
     const CODE: u8 = 0x0F;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.id)
-            .encode_field(&self.block_hashes)
-            .finish();
-
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            self.id.encode(buf);
+            encode_list(&self.block_hashes, buf);
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (block_hashes, _): (Vec<BlockHash>, _) = decoder.decode_field("blockHashes")?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let id = u64::decode(&mut payload)?;
+        let block_hashes = decode_list::<BlockHash>(&mut payload)?;
 
         Ok(Self::new(id, block_hashes))
     }

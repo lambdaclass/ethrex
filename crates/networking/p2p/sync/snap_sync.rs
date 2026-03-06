@@ -17,7 +17,9 @@ use ethrex_common::{
     H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
 };
-use ethrex_rlp::decode::RLPDecode;
+#[cfg(not(feature = "rocksdb"))]
+use librlp::Header;
+use librlp::{RlpDecode, decode_list};
 use ethrex_storage::Store;
 #[cfg(feature = "rocksdb")]
 use ethrex_trie::Trie;
@@ -45,7 +47,7 @@ use super::{AccountStorageRoots, SyncError};
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
 #[cfg(not(feature = "rocksdb"))]
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 
 /// Persisted State during the Block Sync phase for SnapSync
 #[derive(Clone)]
@@ -508,7 +510,7 @@ pub async fn snap_sync(
             entry.map_err(|e| SyncError::FileSystem(format!("Failed to read dir entry: {e}")))?;
         let snapshot_contents = std::fs::read(entry.path())
             .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
-        let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
+        let code_hashes: Vec<H256> = decode_list(&mut snapshot_contents.as_slice())
             .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
 
         for hash in code_hashes {
@@ -818,13 +820,13 @@ fn compute_storage_roots(
 
     let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
     let trie_hash = match storage_trie.db().get(Nibbles::default())? {
-        Some(noderlp) => Node::decode(&noderlp)?.compute_hash().finalize(),
+        Some(noderlp) => Node::decode(&mut noderlp.as_slice())?.compute_hash().finalize(),
         None => *EMPTY_TRIE_HASH,
     };
     let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
 
     for (hashed_key, value) in key_value_pairs {
-        if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
+        if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.to_rlp()) {
             warn!(
                 "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
             );
@@ -855,9 +857,25 @@ async fn insert_accounts(
         let snapshot_path = entry.path();
         let snapshot_contents = std::fs::read(&snapshot_path)
             .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-        let account_states_snapshot: Vec<(H256, AccountState)> =
-            RLPDecode::decode(&snapshot_contents)
+        let account_states_snapshot: Vec<(H256, AccountState)> = {
+            let mut buf = snapshot_contents.as_slice();
+            let outer_header = Header::decode(&mut buf)
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+            let mut outer_payload = &buf[..outer_header.payload_length];
+            let mut pairs = Vec::new();
+            while !outer_payload.is_empty() {
+                let inner_header = Header::decode(&mut outer_payload)
+                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                let mut inner_payload = &outer_payload[..inner_header.payload_length];
+                outer_payload = &outer_payload[inner_header.payload_length..];
+                let hash = H256::decode(&mut inner_payload)
+                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                let state = AccountState::decode(&mut inner_payload)
+                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                pairs.push((hash, state));
+            }
+            pairs
+        };
 
         storage_accounts.accounts_with_storage_root.extend(
             account_states_snapshot.iter().filter_map(|(hash, state)| {
@@ -885,7 +903,7 @@ async fn insert_accounts(
                 let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
 
                 for (account_hash, account) in account_states_snapshot {
-                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+                    trie.insert(account_hash.0.to_vec(), account.to_rlp())?;
                 }
                 info!("Comitting to disk");
                 let current_state_root = trie.hash()?;
@@ -925,16 +943,42 @@ async fn insert_storages(
         let snapshot_contents = std::fs::read(&snapshot_path)
             .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
 
-        #[expect(clippy::type_complexity)]
-        let account_storages_snapshot: Vec<AccountsWithStorage> =
-            RLPDecode::decode(&snapshot_contents)
-                .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
-                    all_accounts
-                        .into_iter()
-                        .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
-                        .collect()
-                })
+        let account_storages_snapshot: Vec<AccountsWithStorage> = {
+            use ethrex_common::U256;
+            let mut buf = snapshot_contents.as_slice();
+            let outer_header = Header::decode(&mut buf)
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+            let mut outer_payload = &buf[..outer_header.payload_length];
+            let mut result: Vec<AccountsWithStorage> = Vec::new();
+            while !outer_payload.is_empty() {
+                // Each element is a list of [accounts_list, storages_list]
+                let group_header = Header::decode(&mut outer_payload)
+                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                let mut group_payload = &outer_payload[..group_header.payload_length];
+                outer_payload = &outer_payload[group_header.payload_length..];
+                // Decode accounts list (Vec<H256>)
+                let accounts: Vec<H256> = decode_list(&mut group_payload)
+                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                // Decode storages list (Vec<(H256, U256)>)
+                let storages_header = Header::decode(&mut group_payload)
+                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                let mut storages_payload = &group_payload[..storages_header.payload_length];
+                let mut storages: Vec<(H256, U256)> = Vec::new();
+                while !storages_payload.is_empty() {
+                    let pair_header = Header::decode(&mut storages_payload)
+                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                    let mut pair_payload = &storages_payload[..pair_header.payload_length];
+                    storages_payload = &storages_payload[pair_header.payload_length..];
+                    let slot_hash = H256::decode(&mut pair_payload)
+                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                    let slot_value = U256::decode(&mut pair_payload)
+                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                    storages.push((slot_hash, slot_value));
+                }
+                result.push(AccountsWithStorage { accounts, storages });
+            }
+            result
+        };
 
         let store_clone = store.clone();
         info!("Starting compute of account_storages_snapshot");
@@ -1000,7 +1044,7 @@ async fn insert_accounts(
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     for account in iter {
         let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
+        let account_state = AccountState::decode(&mut &*account.1).map_err(SyncError::Rlp)?;
         if account_state.code_hash != *EMPTY_KECCACK_HASH {
             code_hash_collector.add(account_state.code_hash);
             code_hash_collector.flush_if_needed().await?;
@@ -1016,7 +1060,7 @@ async fn insert_accounts(
                 METRICS
                     .account_tries_inserted
                     .fetch_add(1, Ordering::Relaxed);
-                let account_state = AccountState::decode(v).expect("We should have accounts here");
+                let account_state = AccountState::decode(&mut v.as_ref()).expect("We should have accounts here");
                 if account_state.storage_root != *EMPTY_TRIE_HASH {
                     storage_accounts.accounts_with_storage_root.insert(
                         H256::from_slice(k),

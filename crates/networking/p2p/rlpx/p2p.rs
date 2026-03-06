@@ -3,14 +3,8 @@ use super::{
     utils::{decompress_pubkey, snappy_compress},
 };
 use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
-use bytes::BufMut;
 use ethrex_common::H512;
-use ethrex_rlp::structs::{Decoder, Encoder};
-use ethrex_rlp::{
-    decode::{RLPDecode, decode_rlp_item},
-    encode::RLPEncode,
-    error::{RLPDecodeError, RLPEncodeError},
-};
+use librlp::{Header, RlpBuf, RlpDecode, RlpEncode, RlpError};
 use secp256k1::PublicKey;
 use serde::Serialize;
 
@@ -75,29 +69,42 @@ impl Capability {
             .iter()
             .position(|c| c == &b'\0')
             .unwrap_or(CAPABILITY_NAME_MAX_LENGTH);
-        str::from_utf8(&self.protocol[..len]).expect("value parsed as utf8 in RLPDecode")
+        str::from_utf8(&self.protocol[..len]).expect("value parsed as utf8 in RlpDecode")
     }
 }
 
-impl RLPEncode for Capability {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.protocol())
-            .encode_field(&self.version)
-            .finish();
+impl RlpEncode for Capability {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.protocol().encode(buf);
+            self.version.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for Capability {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (protocol_name, rest) = String::decode_unfinished(&rlp[1..])?;
-        if protocol_name.len() > CAPABILITY_NAME_MAX_LENGTH {
-            return Err(RLPDecodeError::InvalidLength);
+impl RlpDecode for Capability {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
         }
-        let (version, rest) = u8::decode_unfinished(rest)?;
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+
+        let protocol_name = String::decode(&mut payload)?;
+        if protocol_name.len() > CAPABILITY_NAME_MAX_LENGTH {
+            return Err(RlpError::InputTooShort);
+        }
+        let version = u8::decode(&mut payload)?;
         let mut protocol = [0; CAPABILITY_NAME_MAX_LENGTH];
         protocol[..protocol_name.len()].copy_from_slice(protocol_name.as_bytes());
-        Ok((Capability { protocol, version }, rest))
+        Ok(Capability { protocol, version })
     }
 }
 
@@ -129,45 +136,52 @@ impl HelloMessage {
 
 impl RLPxMessage for HelloMessage {
     const CODE: u8 = 0x00;
-    fn encode(&self, mut buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        Encoder::new(&mut buf)
-            .encode_field(&SUPPORTED_P2P_CAPABILITY_VERSION) // protocolVersion
-            .encode_field(&self.client_id) // clientId
-            .encode_field(&self.capabilities) // capabilities
-            .encode_field(&0u8) // listenPort (ignored)
-            .encode_field(&decompress_pubkey(&self.node_id)) // nodeKey
-            .finish();
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            SUPPORTED_P2P_CAPABILITY_VERSION.encode(buf); // protocolVersion
+            self.client_id.encode(buf); // clientId
+            librlp::encode_list(&self.capabilities, buf); // capabilities
+            0u8.encode(buf); // listenPort (ignored)
+            decompress_pubkey(&self.node_id).encode(buf); // nodeKey
+        });
+        buf.extend_from_slice(&rlp_buf.finish());
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
         // decode hello message: [protocolVersion: P, clientId: B, capabilities, listenPort: P, nodeId: B_64, ...]
-        let decoder = Decoder::new(msg_data)?;
-        let (protocol_version, decoder): (u64, _) = decoder.decode_field("protocolVersion")?;
+        let mut buf = msg_data;
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+
+        let protocol_version = u64::decode(&mut payload)?;
 
         if protocol_version != SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
-            return Err(RLPDecodeError::IncompatibleProtocol(format!(
-                "Received message is encoded in p2p version {} when negotiated p2p version was {} ",
+            return Err(RlpError::Custom(format!(
+                "incompatible protocol: Received message is encoded in p2p version {} when negotiated p2p version was {} ",
                 protocol_version, SUPPORTED_P2P_CAPABILITY_VERSION
-            )));
+            ).into()));
         }
 
-        let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
+        let client_id = String::decode(&mut payload)?;
 
         // [[cap1, capVersion1], [cap2, capVersion2], ...]
-        let (capabilities, decoder): (Vec<Capability>, _) = decoder.decode_field("capabilities")?;
+        let capabilities: Vec<Capability> = librlp::decode_list(&mut payload)?;
 
         // This field should be ignored
-        let (_listen_port, decoder): (u16, _) = decoder.decode_field("listenPort")?;
+        let _listen_port = u16::decode(&mut payload)?;
 
-        let (node_id, decoder): (H512, _) = decoder.decode_field("nodeId")?;
+        let node_id = H512::decode(&mut payload)?;
 
         // Implementations must ignore any additional list elements
-        let _padding = decoder.finish_unchecked();
 
         Ok(Self::new(
             capabilities,
-            compress_pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
+            compress_pubkey(node_id).ok_or(RlpError::Custom("malformed data".into()))?,
             client_id,
         ))
     }
@@ -291,21 +305,28 @@ impl DisconnectMessage {
 
 impl RLPxMessage for DisconnectMessage {
     const CODE: u8 = 0x01;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
         let mut encoded_data = vec![];
         // Disconnect msg_data is reason or none
         match self.reason.map(Into::<u8>::into) {
-            Some(value) => Encoder::new(&mut encoded_data)
-                .encode_field(&value)
-                .finish(),
-            None => Vec::<u8>::new().encode(&mut encoded_data),
+            Some(value) => {
+                let mut rlp_buf = RlpBuf::new();
+                rlp_buf.list(|buf| {
+                    value.encode(buf);
+                });
+                encoded_data.extend_from_slice(&rlp_buf.finish());
+            }
+            None => {
+                let empty: Vec<u8> = Vec::new();
+                encoded_data.extend_from_slice(&empty.to_rlp());
+            }
         }
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
         // decode disconnect message: [reason (optional)]
         // The msg data may be compressed or not
         let msg_data = if let Ok(decompressed) = snappy_decompress(msg_data) {
@@ -318,11 +339,15 @@ impl RLPxMessage for DisconnectMessage {
             0 => None,
             // As a single u8
             1 => Some(msg_data[0]),
-            // As an RLP encoded Vec<u8>
+            // As an RLP encoded list
             _ => {
-                let decoder = Decoder::new(&msg_data)?;
-                let (reason, _): (Option<u8>, _) = decoder.decode_optional_field();
-                reason
+                let mut buf = msg_data.as_slice();
+                let header = Header::decode(&mut buf)?;
+                if header.list && header.payload_length > 0 {
+                    Some(u8::decode(&mut &buf[..header.payload_length])?)
+                } else {
+                    None
+                }
             }
         };
 
@@ -335,23 +360,22 @@ pub struct PingMessage {}
 
 impl RLPxMessage for PingMessage {
     const CODE: u8 = 0x02;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        // Ping msg_data is only []
-        Vec::<u8>::new().encode(&mut encoded_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let empty: Vec<u8> = Vec::new();
+        let encoded_data = empty.to_rlp();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
         // decode ping message: data is empty list [] or string but it is snappy compressed
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
-
-        let empty: &[u8] = &[];
-        assert_eq!(payload, empty, "Ping payload should be &[]");
-        assert_eq!(remaining, empty, "Ping remaining should be &[]");
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        // Ping should be an empty list
+        assert_eq!(header.payload_length, 0, "Ping payload should be empty");
         Ok(Self {})
     }
 }
@@ -361,23 +385,22 @@ pub struct PongMessage {}
 
 impl RLPxMessage for PongMessage {
     const CODE: u8 = 0x03;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        // Pong msg_data is only []
-        Vec::<u8>::new().encode(&mut encoded_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let empty: Vec<u8> = Vec::new();
+        let encoded_data = empty.to_rlp();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
         // decode pong message: data is empty list [] or string but it is snappy compressed
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
-
-        let empty: &[u8] = &[];
-        assert_eq!(payload, empty, "Pong payload should be &[]");
-        assert_eq!(remaining, empty, "Pong remaining should be &[]");
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        // Pong should be an empty list
+        assert_eq!(header.payload_length, 0, "Pong payload should be empty");
         Ok(Self {})
     }
 }

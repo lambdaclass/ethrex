@@ -18,7 +18,7 @@ serde_json.workspace = true
 ethereum-types.workspace = true
 ethrex-common = { workspace = true, features = ["c-kzg"] }
 ethrex-config.workspace = true
-ethrex-rlp.workspace = true
+librlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-storage.workspace = true

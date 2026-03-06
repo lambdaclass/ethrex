@@ -1,5 +1,4 @@
-use bytes::BufMut;
-use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
+use librlp::RlpError;
 use std::fmt::Display;
 
 use crate::rlpx::snap::{
@@ -20,7 +19,7 @@ use super::l2::messages::{BatchSealed, L2Message, NewBlock};
 use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 
 const ETH_CAPABILITY_OFFSET: u8 = 0x10;
 const SNAP_CAPABILITY_OFFSET_ETH_68: u8 = 0x21;
@@ -58,9 +57,9 @@ impl EthCapVersion {
 pub trait RLPxMessage: Sized {
     const CODE: u8;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError>;
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error>;
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError>;
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -164,7 +163,7 @@ impl Message {
         msg_id: u8,
         data: &[u8],
         eth_version: EthCapVersion,
-    ) -> Result<Message, RLPDecodeError> {
+    ) -> Result<Message, RlpError> {
         if msg_id < eth_version.eth_capability_offset() {
             match msg_id {
                 HelloMessage::CODE => Ok(Message::Hello(HelloMessage::decode(data)?)),
@@ -173,7 +172,7 @@ impl Message {
                 }
                 PingMessage::CODE => Ok(Message::Ping(PingMessage::decode(data)?)),
                 PongMessage::CODE => Ok(Message::Pong(PongMessage::decode(data)?)),
-                _ => Err(RLPDecodeError::MalformedData),
+                _ => Err(RlpError::Custom("malformed data".into())),
             }
         } else if msg_id < eth_version.snap_capability_offset() {
             // eth capability
@@ -210,7 +209,7 @@ impl Message {
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
-                _ => Err(RLPDecodeError::MalformedData),
+                _ => Err(RlpError::Custom("malformed data".into())),
             }
         } else if msg_id < eth_version.based_capability_offset() {
             // snap capability
@@ -227,7 +226,7 @@ impl Message {
                 ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
                 GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
                 TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
-                _ => Err(RLPDecodeError::MalformedData),
+                _ => Err(RlpError::Custom("malformed data".into())),
             }
         } else {
             // based capability
@@ -242,21 +241,21 @@ impl Message {
                         let decoded = l2::messages::BatchSealed::decode(data)?;
                         L2Message::BatchSealed(decoded)
                     }
-                    _ => return Err(RLPDecodeError::MalformedData),
+                    _ => return Err(RlpError::Custom("malformed data".into())),
                 },
             ));
 
             #[cfg(not(feature = "l2"))]
-            Err(RLPDecodeError::MalformedData)
+            Err(RlpError::Custom("malformed data".into()))
         }
     }
 
     pub fn encode(
         &self,
-        buf: &mut dyn BufMut,
+        buf: &mut Vec<u8>,
         eth_version: EthCapVersion,
-    ) -> Result<(), RLPEncodeError> {
-        self.code(eth_version).encode(buf);
+    ) -> Result<(), snap::Error> {
+        buf.extend_from_slice(&self.code(eth_version).to_rlp());
         match self {
             Message::Hello(msg) => msg.encode(buf),
             Message::Disconnect(msg) => msg.encode(buf),

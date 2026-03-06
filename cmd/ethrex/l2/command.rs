@@ -22,7 +22,7 @@ use ethrex_config::networks::Network;
 use ethrex_l2::utils::state_reconstruct::get_batch;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::call_contract;
-use ethrex_rlp::decode::RLPDecode as _;
+use librlp::RlpDecode as _;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
@@ -434,9 +434,8 @@ impl Command {
                     let mut buf = &blob[8..];
                     let mut blocks = Vec::new();
                     for _ in 0..blocks_count {
-                        let (item, rest) = Block::decode_unfinished(buf)?;
+                        let item = Block::decode(&mut buf)?;
                         blocks.push(item);
-                        buf = rest;
                     }
 
                     // Decode fee configs

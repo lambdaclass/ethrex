@@ -5,12 +5,7 @@ use crate::{
 use bytes::BufMut;
 use ethrex_common::{H256, H512, H520, utils::keccak};
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{self, Decoder, Encoder},
-};
+use librlp::{Header, RlpBuf, RlpDecode, RlpEncode, RlpError};
 use secp256k1::{
     SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -20,7 +15,7 @@ use std::{convert::Into, io::ErrorKind};
 #[derive(Debug, thiserror::Error)]
 pub enum PacketDecodeErr {
     #[error("RLP decoding error")]
-    RLPDecodeError(#[from] RLPDecodeError),
+    RLPDecodeError(#[from] RlpError),
     #[error("Invalid packet size")]
     InvalidSize,
     #[error("Hash mismatch")]
@@ -168,45 +163,52 @@ impl Message {
 
     fn encode_with_type(&self, buf: &mut dyn BufMut) {
         buf.put_u8(self.packet_type());
-        match self {
-            Message::Ping(msg) => msg.encode(buf),
-            Message::Pong(msg) => msg.encode(buf),
-            Message::FindNode(msg) => msg.encode(buf),
-            Message::ENRRequest(msg) => msg.encode(buf),
-            Message::ENRResponse(msg) => msg.encode(buf),
-            Message::Neighbors(msg) => msg.encode(buf),
-        }
+        let rlp = match self {
+            Message::Ping(msg) => msg.to_rlp(),
+            Message::Pong(msg) => msg.to_rlp(),
+            Message::FindNode(msg) => msg.to_rlp(),
+            Message::ENRRequest(msg) => msg.to_rlp(),
+            Message::ENRResponse(msg) => msg.to_rlp(),
+            Message::Neighbors(msg) => msg.to_rlp(),
+        };
+        buf.put_slice(&rlp);
     }
 
-    pub fn decode_with_type(packet_type: u8, msg: &[u8]) -> Result<Message, RLPDecodeError> {
+    pub fn decode_with_type(packet_type: u8, msg: &[u8]) -> Result<Message, RlpError> {
         // NOTE: extra elements inside the message should be ignored, along with extra data
         // after the message.
         match packet_type {
             0x01 => {
-                let (ping, _rest) = PingMessage::decode_unfinished(msg)?;
+                let mut buf = msg;
+                let ping = PingMessage::decode(&mut buf)?;
                 Ok(Message::Ping(ping))
             }
             0x02 => {
-                let (pong, _rest) = PongMessage::decode_unfinished(msg)?;
+                let mut buf = msg;
+                let pong = PongMessage::decode(&mut buf)?;
                 Ok(Message::Pong(pong))
             }
             0x03 => {
-                let (find_node_msg, _rest) = FindNodeMessage::decode_unfinished(msg)?;
+                let mut buf = msg;
+                let find_node_msg = FindNodeMessage::decode(&mut buf)?;
                 Ok(Message::FindNode(find_node_msg))
             }
             0x04 => {
-                let (neighbors_msg, _rest) = NeighborsMessage::decode_unfinished(msg)?;
+                let mut buf = msg;
+                let neighbors_msg = NeighborsMessage::decode(&mut buf)?;
                 Ok(Message::Neighbors(neighbors_msg))
             }
             0x05 => {
-                let (enr_request_msg, _rest) = ENRRequestMessage::decode_unfinished(msg)?;
+                let mut buf = msg;
+                let enr_request_msg = ENRRequestMessage::decode(&mut buf)?;
                 Ok(Message::ENRRequest(enr_request_msg))
             }
             0x06 => {
-                let (enr_response_msg, _rest) = ENRResponseMessage::decode_unfinished(msg)?;
+                let mut buf = msg;
+                let enr_response_msg = ENRResponseMessage::decode(&mut buf)?;
                 Ok(Message::ENRResponse(enr_response_msg))
             }
-            _ => Err(RLPDecodeError::MalformedData),
+            _ => Err(RlpError::Custom("malformed data".into())),
         }
     }
 
@@ -258,15 +260,23 @@ impl PingMessage {
     }
 }
 
-impl RLPEncode for PingMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.version)
-            .encode_field(&self.from)
-            .encode_field(&self.to)
-            .encode_field(&self.expiration)
-            .encode_optional_field(&self.enr_seq)
-            .finish();
+impl RlpEncode for PingMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.version.encode(buf);
+            self.from.encode(buf);
+            self.to.encode(buf);
+            self.expiration.encode(buf);
+            if let Some(enr_seq) = &self.enr_seq {
+                enr_seq.encode(buf);
+            }
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
@@ -286,23 +296,33 @@ impl FindNodeMessage {
     }
 }
 
-impl RLPEncode for FindNodeMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.target)
-            .encode_field(&self.expiration)
-            .finish();
+impl RlpEncode for FindNodeMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.target.encode(buf);
+            self.expiration.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for FindNodeMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (target, decoder) = decoder.decode_field("target")?;
-        let (expiration, decoder) = decoder.decode_field("expiration")?;
-        let remaining = decoder.finish_unchecked();
-        let msg = FindNodeMessage { target, expiration };
-        Ok((msg, remaining))
+impl RlpDecode for FindNodeMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        // Advance past this list in buf (ignore extra elements after the list)
+        *buf = &buf[header.payload_length..];
+        let target = H512::decode(&mut payload)?;
+        let expiration = u64::decode(&mut payload)?;
+        Ok(FindNodeMessage { target, expiration })
     }
 }
 
@@ -337,25 +357,32 @@ impl FindNodeRequest {
     }
 }
 
-impl RLPDecode for PingMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (version, decoder): (u8, Decoder) = decoder.decode_field("version")?;
-        let (from, decoder) = decoder.decode_field("from")?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (expiration, decoder) = decoder.decode_field("expiration")?;
-        let (enr_seq, decoder) = decoder.decode_optional_field();
-
-        let ping = PingMessage {
+impl RlpDecode for PingMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let version = u8::decode(&mut payload)?;
+        let from = Endpoint::decode(&mut payload)?;
+        let to = Endpoint::decode(&mut payload)?;
+        let expiration = u64::decode(&mut payload)?;
+        // enr_seq is optional
+        let enr_seq = if !payload.is_empty() {
+            Some(u64::decode(&mut payload)?)
+        } else {
+            None
+        };
+        // NOTE: as per the spec, any additional elements should be ignored.
+        Ok(PingMessage {
             version,
             from,
             to,
             expiration,
             enr_seq,
-        };
-        // NOTE: as per the spec, any additional elements should be ignored.
-        let remaining = decoder.finish_unchecked();
-        Ok((ping, remaining))
+        })
     }
 }
 
@@ -391,34 +418,49 @@ impl PongMessage {
     }
 }
 
-impl RLPEncode for PongMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.to)
-            .encode_field(&self.ping_hash)
-            .encode_field(&self.expiration)
-            .encode_optional_field(&self.enr_seq)
-            .finish();
+impl RlpEncode for PongMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.to.encode(buf);
+            self.ping_hash.encode(buf);
+            self.expiration.encode(buf);
+            if let Some(enr_seq) = &self.enr_seq {
+                enr_seq.encode(buf);
+            }
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPDecode for PongMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (ping_hash, decoder) = decoder.decode_field("ping_hash")?;
-        let (expiration, decoder) = decoder.decode_field("expiration")?;
-        let (enr_seq, decoder) = decoder.decode_optional_field();
-
-        let pong = PongMessage {
+impl RlpDecode for PongMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let to = Endpoint::decode(&mut payload)?;
+        let ping_hash = H256::decode(&mut payload)?;
+        let expiration = u64::decode(&mut payload)?;
+        // enr_seq is optional
+        let enr_seq = if !payload.is_empty() {
+            Some(u64::decode(&mut payload)?)
+        } else {
+            None
+        };
+        // NOTE: as per the spec, any additional elements should be ignored.
+        Ok(PongMessage {
             to,
             ping_hash,
             expiration,
             enr_seq,
-        };
-        // NOTE: as per the spec, any additional elements should be ignored.
-        let remaining = decoder.finish_unchecked();
-        Ok((pong, remaining))
+        })
     }
 }
 
@@ -435,24 +477,32 @@ impl NeighborsMessage {
     }
 }
 
-impl RLPDecode for NeighborsMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (nodes, decoder) = decoder.decode_field("nodes")?;
-        let (expiration, decoder) = decoder.decode_field("expiration")?;
-        let remaining = decoder.finish_unchecked();
-
-        let neighbors = NeighborsMessage::new(nodes, expiration);
-        Ok((neighbors, remaining))
+impl RlpDecode for NeighborsMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let nodes: Vec<Node> = librlp::decode_list(&mut payload)?;
+        let expiration = u64::decode(&mut payload)?;
+        Ok(NeighborsMessage::new(nodes, expiration))
     }
 }
 
-impl RLPEncode for NeighborsMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.nodes)
-            .encode_field(&self.expiration)
-            .finish();
+impl RlpEncode for NeighborsMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            librlp::encode_list(&self.nodes, buf);
+            self.expiration.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
@@ -471,17 +521,20 @@ impl ENRResponseMessage {
     }
 }
 
-impl RLPDecode for ENRResponseMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (request_hash, decoder) = decoder.decode_field("request_hash")?;
-        let (node_record, decoder) = decoder.decode_field("node_record")?;
-        let remaining = decoder.finish_unchecked();
-        let response = ENRResponseMessage {
+impl RlpDecode for ENRResponseMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let request_hash = H256::decode(&mut payload)?;
+        let node_record = NodeRecord::decode(&mut payload)?;
+        Ok(ENRResponseMessage {
             request_hash,
             node_record,
-        };
-        Ok((response, remaining))
+        })
     }
 }
 
@@ -496,30 +549,45 @@ impl ENRRequestMessage {
     }
 }
 
-impl RLPDecode for ENRRequestMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (expiration, decoder) = decoder.decode_field("expiration")?;
-        let remaining = decoder.finish_unchecked();
-        let enr_request = ENRRequestMessage { expiration };
-        Ok((enr_request, remaining))
+impl RlpDecode for ENRRequestMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, RlpError> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        *buf = &buf[header.payload_length..];
+        let expiration = u64::decode(&mut payload)?;
+        Ok(ENRRequestMessage { expiration })
     }
 }
 
-impl RLPEncode for ENRRequestMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.expiration)
-            .finish();
+impl RlpEncode for ENRRequestMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.expiration.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
-impl RLPEncode for ENRResponseMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.request_hash)
-            .encode_field(&self.node_record)
-            .finish();
+impl RlpEncode for ENRResponseMessage {
+    fn encode(&self, buf: &mut RlpBuf) {
+        buf.list(|buf| {
+            self.request_hash.encode(buf);
+            self.node_record.encode(buf);
+        });
+    }
+
+    fn encoded_length(&self) -> usize {
+        let mut buf = RlpBuf::new();
+        self.encode(&mut buf);
+        buf.finish().len()
     }
 }
 
@@ -721,7 +789,6 @@ mod tests {
         let seq = 0x018cf3c3bd18;
 
         // define optional fields
-        let eth: Vec<Vec<u32>> = vec![vec![0x88cf81d9, 0]];
         let id = String::from("v4");
         let ip = IpAddr::from_str("138.197.51.181").unwrap();
         let secp256k1 =
@@ -729,25 +796,24 @@ mod tests {
                 .unwrap();
         let tcp: u16 = 30303;
         let udp: u16 = 30303;
-        let snap: Vec<u32> = vec![];
-
-        // declare buffers for optional fields encoding
-        let mut eth_rlp = Vec::new();
-        let mut id_rlp = Vec::new();
-        let mut ip_rlp = Vec::new();
-        let mut secp256k1_rlp = Vec::new();
-        let mut tcp_rlp = Vec::new();
-        let mut udp_rlp = Vec::new();
-        let mut snap_rlp = Vec::new();
 
         // encode optional fields
-        eth.encode(&mut eth_rlp);
-        id.encode(&mut id_rlp);
-        ip.encode(&mut ip_rlp);
-        secp256k1.encode(&mut secp256k1_rlp);
-        tcp.encode(&mut tcp_rlp);
-        udp.encode(&mut udp_rlp);
-        snap.encode(&mut snap_rlp);
+        // eth = [[0x88cf81d9, 0]] — nested list of u32s
+        let mut eth_buf = RlpBuf::new();
+        eth_buf.list(|buf| {
+            buf.list(|buf| {
+                0x88cf81d9u32.encode(buf);
+                0u32.encode(buf);
+            });
+        });
+        let eth_rlp = eth_buf.finish();
+        let id_rlp = id.to_rlp();
+        let ip_rlp = ip.to_rlp();
+        let secp256k1_rlp = secp256k1.to_rlp();
+        let tcp_rlp = tcp.to_rlp();
+        let udp_rlp = udp.to_rlp();
+        // snap = [] — empty list
+        let snap_rlp = librlp::encode_list_to_rlp::<u32>(&[]);
 
         // initialize vector with (key, value) pairs
         let pairs: Vec<(Bytes, Bytes)> = vec![
@@ -847,7 +913,6 @@ mod tests {
         let seq = 0x018cf3c3bd18;
 
         // define optional fields
-        let eth: Vec<Vec<u32>> = vec![vec![0x88cf81d9, 0]];
         let id = String::from("v4");
         let ip = IpAddr::from_str("138.197.51.181").unwrap();
         let secp256k1 =
@@ -855,25 +920,24 @@ mod tests {
                 .unwrap();
         let tcp: u16 = 30303;
         let udp: u16 = 30303;
-        let snap: Vec<u32> = vec![];
-
-        // declare buffers for optional fields encoding
-        let mut eth_rlp = Vec::new();
-        let mut id_rlp = Vec::new();
-        let mut ip_rlp = Vec::new();
-        let mut secp256k1_rlp = Vec::new();
-        let mut tcp_rlp = Vec::new();
-        let mut udp_rlp = Vec::new();
-        let mut snap_rlp = Vec::new();
 
         // encode optional fields
-        eth.encode(&mut eth_rlp);
-        id.encode(&mut id_rlp);
-        ip.encode(&mut ip_rlp);
-        secp256k1.encode(&mut secp256k1_rlp);
-        tcp.encode(&mut tcp_rlp);
-        udp.encode(&mut udp_rlp);
-        snap.encode(&mut snap_rlp);
+        // eth = [[0x88cf81d9, 0]] — nested list of u32s
+        let mut eth_buf = RlpBuf::new();
+        eth_buf.list(|buf| {
+            buf.list(|buf| {
+                0x88cf81d9u32.encode(buf);
+                0u32.encode(buf);
+            });
+        });
+        let eth_rlp = eth_buf.finish();
+        let id_rlp = id.to_rlp();
+        let ip_rlp = ip.to_rlp();
+        let secp256k1_rlp = secp256k1.to_rlp();
+        let tcp_rlp = tcp.to_rlp();
+        let udp_rlp = udp.to_rlp();
+        // snap = [] — empty list
+        let snap_rlp = librlp::encode_list_to_rlp::<u32>(&[]);
 
         // initialize vector with (key, value) pairs
         let pairs: Vec<(Bytes, Bytes)> = vec![
@@ -1013,12 +1077,8 @@ mod tests {
             tcp_port: 0,
         };
 
-        let encoded = {
-            let mut buf = vec![];
-            endpoint.encode(&mut buf);
-            buf
-        };
-        let decoded = Endpoint::decode(&encoded).expect("Failed decoding Endpoint");
+        let encoded = endpoint.to_rlp();
+        let decoded = Endpoint::decode(&mut encoded.as_slice()).expect("Failed decoding Endpoint");
         assert_eq!(endpoint, decoded);
     }
 

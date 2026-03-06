@@ -19,7 +19,7 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use librlp::{RlpDecode, RlpEncode, RlpError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
 use rand::random;
@@ -224,7 +224,7 @@ pub async fn heal_storage_trie(
                         for i in 0..path.len() {
                             account_nodes.push((path.slice(0, i), vec![]));
                         }
-                        account_nodes.push((path, node.encode_to_vec()));
+                        account_nodes.push((path, node.to_rlp()));
                     }
                     encoded_to_write.push((hashed_account, account_nodes));
                 }
@@ -469,7 +469,7 @@ async fn zip_requeue_node_responses_score_peer(
         .iter()
         .zip(trie_nodes.nodes.clone())
         .map(|(node_request, node_bytes)| {
-            let node = Node::decode(&node_bytes).inspect_err(|err| {
+            let node = Node::decode(&mut node_bytes.as_ref()).inspect_err(|err| {
                 trace!(
                     peer=?request.peer_id,
                     ?node_request,
@@ -486,7 +486,7 @@ async fn zip_requeue_node_responses_score_peer(
                     ?node_bytes,
                     "Node Hash failed"
                 );
-                Err(RLPDecodeError::MalformedData)
+                Err(RlpError::Custom("malformed data".into()))
             } else {
                 Ok(NodeResponse {
                     node_request: node_request.clone(),
@@ -494,7 +494,7 @@ async fn zip_requeue_node_responses_score_peer(
                 })
             }
         })
-        .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
+        .collect::<Result<Vec<NodeResponse>, RlpError>>()
     {
         if request.requests.len() > nodes_size {
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
@@ -599,7 +599,7 @@ fn get_initial_downloads(
                 let rlp = trie
                     .get(acc_path.as_bytes())
                     .expect("We should be able to open the store")?;
-                let account = AccountState::decode(&rlp).expect("We should have a valid account");
+                let account = AccountState::decode(&mut rlp.as_slice()).expect("We should have a valid account");
                 if account.storage_root == *EMPTY_TRIE_HASH {
                     return None;
                 }

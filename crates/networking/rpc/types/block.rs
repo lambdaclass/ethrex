@@ -3,7 +3,7 @@ use ethrex_common::{
     H256, serde_utils,
     types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Withdrawal},
 };
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 
 use crate::utils::RpcErr;
 use serde::{Deserialize, Serialize};
@@ -72,7 +72,7 @@ impl RpcBlock {
         hash: H256,
         full_transactions: bool,
     ) -> Result<RpcBlock, RpcErr> {
-        let size = Block::new(header.clone(), body.clone()).length();
+        let size = Block::new(header.clone(), body.clone()).encoded_length();
         let body_wrapper = if full_transactions {
             BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash)?)
         } else {

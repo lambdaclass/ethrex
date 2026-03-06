@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::decode::RLPDecode;
+use librlp::RlpDecode;
 
 use crate::{
     ProofTrie, Trie, TrieError, ValueRLP,
@@ -160,7 +160,9 @@ impl RangeProof<'_> {
             NodeHash::Hashed(hash) => self.node_refs.get(&hash).copied(),
             NodeHash::Inline(_) => Some(hash.as_ref()),
         };
-        Ok(encoded_node.map(Node::decode).transpose()?)
+        Ok(encoded_node
+            .map(|rlp| Node::decode(&mut &*rlp))
+            .transpose()?)
     }
 }
 

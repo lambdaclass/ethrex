@@ -3,7 +3,6 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use crate::types::Node;
-use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
@@ -11,11 +10,8 @@ use ethrex_common::types::Fork;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{H256, types::Transaction};
-use ethrex_rlp::{
-    error::{RLPDecodeError, RLPEncodeError},
-    structs::{Decoder, Encoder},
-};
 use ethrex_storage::error::StoreError;
+use librlp::{Header, RlpBuf, RlpDecode, RlpEncode, RlpError};
 use tracing::debug;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
@@ -33,30 +29,36 @@ impl Transactions {
 
 impl RLPxMessage for Transactions {
     const CODE: u8 = 0x02;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        let mut encoder = Encoder::new(&mut encoded_data);
-        let txs_iter = self.transactions.iter();
-        for tx in txs_iter {
-            encoder = encoder.encode_field(tx)
-        }
-        encoder.finish();
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            for tx in &self.transactions {
+                tx.encode(buf);
+            }
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let mut decoder = Decoder::new(&decompressed_data)?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
         let mut transactions: Vec<Transaction> = vec![];
         // This is done like this because the blanket Vec<T> implementation
         // gets confused since a legacy transaction is actually a list,
         // or so it seems.
-        while let Ok((tx, updated_decoder)) = decoder.decode_field::<Transaction>("p2p transaction")
-        {
-            decoder = updated_decoder;
-            transactions.push(tx);
+        while !payload.is_empty() {
+            match Transaction::decode(&mut payload) {
+                Ok(tx) => transactions.push(tx),
+                Err(_) => break,
+            }
         }
         Ok(Self::new(transactions))
     }
@@ -129,26 +131,30 @@ impl NewPooledTransactionHashes {
 
 impl RLPxMessage for NewPooledTransactionHashes {
     const CODE: u8 = 0x08;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.transaction_types)
-            .encode_field(&self.transaction_sizes)
-            .encode_field(&self.transaction_hashes)
-            .finish();
-
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            self.transaction_types.encode(buf);
+            librlp::encode_list(&self.transaction_sizes, buf);
+            librlp::encode_list(&self.transaction_hashes, buf);
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (transaction_types, decoder): (Bytes, _) = decoder.decode_field("transactionTypes")?;
-        let (transaction_sizes, decoder): (Vec<usize>, _) =
-            decoder.decode_field("transactionSizes")?;
-        let (transaction_hashes, _): (Vec<H256>, _) = decoder.decode_field("transactionHashes")?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let transaction_types = Bytes::decode(&mut payload)?;
+        let transaction_sizes: Vec<usize> = librlp::decode_list(&mut payload)?;
+        let transaction_hashes: Vec<H256> = librlp::decode_list(&mut payload)?;
 
         if transaction_hashes.len() == transaction_sizes.len()
             && transaction_sizes.len() == transaction_types.len()
@@ -159,9 +165,9 @@ impl RLPxMessage for NewPooledTransactionHashes {
                 transaction_hashes,
             })
         } else {
-            Err(RLPDecodeError::Custom(
+            Err(RlpError::Custom(
                 "transaction_hashes, transaction_sizes and transaction_types must have the same length"
-                    .to_string(),
+                    .into(),
             ))
         }
     }
@@ -204,23 +210,28 @@ impl GetPooledTransactions {
 
 impl RLPxMessage for GetPooledTransactions {
     const CODE: u8 = 0x09;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.id)
-            .encode_field(&self.transaction_hashes)
-            .finish();
-
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            self.id.encode(buf);
+            librlp::encode_list(&self.transaction_hashes, buf);
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (transaction_hashes, _): (Vec<H256>, _) = decoder.decode_field("transactionHashes")?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let id = u64::decode(&mut payload)?;
+        let transaction_hashes: Vec<H256> = librlp::decode_list(&mut payload)?;
 
         Ok(Self::new(id, transaction_hashes))
     }
@@ -325,23 +336,28 @@ impl PooledTransactions {
 
 impl RLPxMessage for PooledTransactions {
     const CODE: u8 = 0x0A;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.id)
-            .encode_field(&self.pooled_transactions)
-            .finish();
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), snap::Error> {
+        let mut rlp_buf = RlpBuf::new();
+        rlp_buf.list(|buf| {
+            self.id.encode(buf);
+            librlp::encode_list(&self.pooled_transactions, buf);
+        });
+        let msg_data = snappy_compress(rlp_buf.finish())?;
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (pooled_transactions, _): (Vec<P2PTransaction>, _) =
-            decoder.decode_field("pooledTransactions")?;
+    fn decode(msg_data: &[u8]) -> Result<Self, RlpError> {
+        let decompressed_data =
+            snappy_decompress(msg_data).map_err(|e| RlpError::Custom(e.to_string().into()))?;
+        let mut buf = decompressed_data.as_slice();
+        let header = Header::decode(&mut buf)?;
+        if !header.list {
+            return Err(RlpError::UnexpectedString);
+        }
+        let mut payload = &buf[..header.payload_length];
+        let id = u64::decode(&mut payload)?;
+        let pooled_transactions: Vec<P2PTransaction> = librlp::decode_list(&mut payload)?;
 
         Ok(Self::new(id, pooled_transactions))
     }

@@ -75,9 +75,8 @@ pub use ethrex_common::{
     validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
 use ethrex_metrics::metrics;
-use ethrex_rlp::constants::RLP_NULL;
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_common::constants::RLP_NULL;
+use librlp::{RlpDecode, RlpEncode};
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
@@ -879,7 +878,7 @@ impl Blockchain {
                                             let storage_root =
                                                 match state_trie.get(hashed_address.as_bytes())? {
                                                     Some(rlp) => {
-                                                        AccountState::decode(&rlp)?.storage_root
+                                                        AccountState::decode(&mut rlp.as_slice())?.storage_root
                                                     }
                                                     None => *EMPTY_TRIE_HASH,
                                                 };
@@ -897,7 +896,7 @@ impl Blockchain {
                                             } else {
                                                 trie.insert(
                                                     hashed_key.as_bytes().to_vec(),
-                                                    value.encode_to_vec(),
+                                                    value.to_rlp(),
                                                 )?;
                                             }
                                         }
@@ -966,7 +965,7 @@ impl Blockchain {
                                     // Load existing account state
                                     let mut account_state = match state_trie.get(path)? {
                                         Some(rlp) => {
-                                            let state = AccountState::decode(&rlp)?;
+                                            let state = AccountState::decode(&mut rlp.as_slice())?;
                                             // Re-insert to materialize the trie path so
                                             // collect_changes_since_last_hash includes this
                                             // node in the diff (needed for both updates and
@@ -994,7 +993,7 @@ impl Blockchain {
                                     // empty code, empty storage) from the state trie.
                                     if account_state != AccountState::default() {
                                         state_trie
-                                            .insert(path.to_vec(), account_state.encode_to_vec())?;
+                                            .insert(path.to_vec(), account_state.to_rlp())?;
                                     } else {
                                         state_trie.remove(path)?;
                                     }
@@ -1049,7 +1048,7 @@ impl Blockchain {
             Some(account_hash) => {
                 let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
                 let storage_root = match state_trie.get(account_hash.as_bytes())? {
-                    Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                    Some(rlp) => AccountState::decode(&mut rlp.as_slice())?.storage_root,
                     None => *EMPTY_TRIE_HASH,
                 };
                 self.storage.open_storage_trie(
@@ -1129,7 +1128,7 @@ impl Blockchain {
                     Entry::Vacant(vacant_entry) => {
                         let account_state = match state_trie.get(prefix.as_bytes())? {
                             Some(rlp) => {
-                                let state = AccountState::decode(&rlp)?;
+                                let state = AccountState::decode(&mut rlp.as_slice())?;
                                 state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
                                 state
                             }
@@ -1146,7 +1145,7 @@ impl Blockchain {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                         Entry::Vacant(vacant_entry) => {
                             let storage_root = match state_trie.get(prefix.as_bytes())? {
-                                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                                Some(rlp) => AccountState::decode(&mut rlp.as_slice())?.storage_root,
                                 None => *EMPTY_TRIE_HASH,
                             };
                             vacant_entry.insert(self.storage.open_storage_trie(
@@ -1159,7 +1158,7 @@ impl Blockchain {
                     if value.is_zero() {
                         trie.remove(key.as_bytes())?;
                     } else {
-                        trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+                        trie.insert(key.as_bytes().to_vec(), value.to_rlp())?;
                     }
                 }
                 MerklizationRequest::MerklizeAccount {
@@ -1186,7 +1185,7 @@ impl Blockchain {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                         Entry::Vacant(vacant_entry) => {
                             let account_state = match state_trie.get(path)? {
-                                Some(rlp) => AccountState::decode(&rlp)?,
+                                Some(rlp) => AccountState::decode(&mut rlp.as_slice())?,
                                 None => AccountState::default(),
                             };
                             vacant_entry.insert(account_state)
@@ -1202,7 +1201,7 @@ impl Blockchain {
                         old_state.code_hash = info.code_hash;
                     }
                     if *old_state != AccountState::default() {
-                        state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
+                        state_trie.insert(path.to_vec(), old_state.to_rlp())?;
                     } else {
                         state_trie.remove(path)?;
                     }
@@ -1536,7 +1535,7 @@ impl Blockchain {
                     ))
                 })?;
 
-            block_headers_bytes.push(current_header.encode_to_vec());
+            block_headers_bytes.push(current_header.to_rlp());
         }
 
         // Create a list of all read/write addresses and storage slots
@@ -1577,7 +1576,7 @@ impl Blockchain {
             let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 continue; // empty account, doesn't have a storage trie
             };
-            let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
+            let storage_root_hash = AccountState::decode(&mut encoded_account.as_slice())?.storage_root;
             if storage_root_hash == *EMPTY_TRIE_HASH {
                 continue; // empty storage trie
             }
@@ -1778,7 +1777,7 @@ impl Blockchain {
                     ))
                 })?;
 
-            block_headers_bytes.push(current_header.encode_to_vec());
+            block_headers_bytes.push(current_header.to_rlp());
         }
 
         // Create a list of all read/write addresses and storage slots
@@ -1819,7 +1818,7 @@ impl Blockchain {
             let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 continue; // empty account, doesn't have a storage trie
             };
-            let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
+            let storage_root_hash = AccountState::decode(&mut encoded_account.as_slice())?.storage_root;
             if storage_root_hash == *EMPTY_TRIE_HASH {
                 continue; // empty storage trie
             }

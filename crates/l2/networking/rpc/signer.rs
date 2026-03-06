@@ -9,7 +9,7 @@ use ethrex_common::{
         LegacyTransaction, Transaction, TxType,
     },
 };
-use ethrex_rlp::encode::PayloadRLPEncode;
+use ethrex_common::types::PayloadRlpEncode;
 use reqwest::{Client, StatusCode, Url};
 use rustc_hex::FromHexError;
 use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};

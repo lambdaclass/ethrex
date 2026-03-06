@@ -19,7 +19,7 @@ serde_json = "1.0"
 
 ethrex-common = { path = "../../../common", default-features = false }
 ethrex-storage = { path = "../../../storage", default-features = false }
-ethrex-rlp = { path = "../../../common/rlp" }
+librlp.workspace = true
 ethrex-vm = { path = "../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../blockchain", default-features = false }
 ethrex-rpc = { path = "../../../networking/rpc", default-features = false }

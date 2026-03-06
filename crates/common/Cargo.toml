@@ -9,7 +9,7 @@ license.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-rlp.workspace = true
+librlp.workspace = true
 ethrex-trie.workspace = true
 ethrex-crypto.workspace = true
 

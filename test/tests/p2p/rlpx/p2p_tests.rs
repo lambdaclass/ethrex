@@ -1,10 +1,10 @@
 use ethrex_p2p::rlpx::p2p::{Capability, DisconnectReason};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use librlp::{RlpDecode, RlpEncode};
 
 #[test]
 fn test_encode_capability() {
     let capability = Capability::eth(8);
-    let encoded = capability.encode_to_vec();
+    let encoded = capability.to_rlp();
 
     assert_eq!(&encoded, &[197_u8, 131, b'e', b't', b'h', 8]);
 }
@@ -12,7 +12,7 @@ fn test_encode_capability() {
 #[test]
 fn test_decode_capability() {
     let encoded_bytes = &[197_u8, 131, b'e', b't', b'h', 8];
-    let decoded = Capability::decode(encoded_bytes).unwrap();
+    let decoded = Capability::decode(&mut &encoded_bytes[..]).unwrap();
 
     assert_eq!(decoded, Capability::eth(8));
 }

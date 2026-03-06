@@ -18,7 +18,7 @@ use ethrex_metrics::{
     blocks::METRICS_BLOCKS,
     transactions::{METRICS_TX, MetricsTxType},
 };
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 use ethrex_storage::Store;
 use std::sync::Arc;
 use std::{collections::HashMap, ops::Div};
@@ -105,7 +105,7 @@ pub async fn fill_transactions(
     let VMType::L2(fee_config) = context.vm.vm_type else {
         return Err(BlockProducerError::Custom("invalid VM type".to_string()));
     };
-    let mut acc_encoded_size = context.payload.length();
+    let mut acc_encoded_size = context.payload.encoded_length();
     let fee_config_len = fee_config.to_vec().len();
     let chain_config = store.get_chain_config();
     let chain_id = chain_config.chain_id;
@@ -160,7 +160,7 @@ pub async fn fill_transactions(
 
         // Check if we have enough blob space to add this transaction
         let tx: Transaction = head_tx.clone().into();
-        let tx_size = tx.length();
+        let tx_size = tx.encoded_length();
         if acc_encoded_size + fee_config_len + tx_size > SAFE_BYTES_PER_BLOB {
             debug!("No more blob space to run transactions");
             break;

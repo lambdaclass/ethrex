@@ -2,7 +2,7 @@
 #![allow(clippy::expect_used)]
 
 use ethrex_common::types::{Block, Genesis};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use librlp::{RlpDecode, RlpEncode};
 use ethrex_storage::Store;
 use tracing::info;
 
@@ -44,7 +44,7 @@ pub async fn generate_rlp(
             let header = store.get_block_header(i)?.unwrap();
 
             let block = Block::new(header, body);
-            let vec = block.encode_to_vec();
+            let vec = block.to_rlp();
             file.write_all(&vec)?;
         }
 
@@ -59,10 +59,10 @@ fn _chain_file(file: File) -> Result<Vec<Block>, Box<dyn std::error::Error>> {
     let mut buf = vec![];
     chain_rlp_reader.read_to_end(&mut buf)?;
     let mut blocks = Vec::new();
-    while !buf.is_empty() {
-        let (item, rest) = Block::decode_unfinished(&buf)?;
+    let mut slice = buf.as_slice();
+    while !slice.is_empty() {
+        let item = Block::decode(&mut slice)?;
         blocks.push(item);
-        buf = rest.to_vec();
     }
     Ok(blocks)
 }

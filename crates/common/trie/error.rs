@@ -1,5 +1,5 @@
 use ethereum_types::H256;
-use ethrex_rlp::error::RLPDecodeError;
+use librlp::RlpError;
 use thiserror::Error;
 
 use crate::Nibbles;
@@ -7,7 +7,7 @@ use crate::Nibbles;
 #[derive(Debug, Error)]
 pub enum TrieError {
     #[error(transparent)]
-    RLPDecode(#[from] RLPDecodeError),
+    RLPDecode(#[from] RlpError),
     #[error("Verification Error: {0}")]
     Verify(String),
     #[error("Inconsistent internal tree structure: {0}")]

@@ -16,7 +16,7 @@ ethrex-p2p = { workspace = true, features = ["l2"] }
 ethrex-storage-rollup.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-rpc.workspace = true
-ethrex-rlp.workspace = true
+librlp.workspace = true
 
 axum.workspace = true
 tower-http.workspace = true

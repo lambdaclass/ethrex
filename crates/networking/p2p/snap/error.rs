@@ -5,7 +5,7 @@
 
 use crate::peer_table::PeerTableError;
 use crate::rlpx::error::PeerConnectionError;
-use ethrex_rlp::error::RLPDecodeError;
+use librlp::RlpError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use std::io::ErrorKind;
@@ -29,7 +29,7 @@ pub enum SnapError {
 
     /// RLP decoding errors
     #[error(transparent)]
-    RlpDecode(#[from] RLPDecodeError),
+    RlpDecode(#[from] RlpError),
 
     /// Peer table errors
     #[error(transparent)]

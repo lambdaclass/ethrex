@@ -434,15 +434,15 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::RLPDecodeError(rlpdecode_error) => {
+            PeerConnectionError::RlpError(rlp_error) => {
                 failures_grouped_by_reason
-                    .entry(format!("RLPDecodeError - {rlpdecode_error}"))
+                    .entry(format!("RlpError - {rlp_error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::RLPEncodeError(rlpencode_error) => {
+            PeerConnectionError::SnappyError(snappy_error) => {
                 failures_grouped_by_reason
-                    .entry(format!("RLPEncodeError - {rlpencode_error}"))
+                    .entry(format!("SnappyError - {snappy_error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }

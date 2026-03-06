@@ -1,7 +1,25 @@
 use crate::{H160, H256};
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::constants::RLP_NULL;
 use std::{str::FromStr, sync::LazyLock};
+
+/// RLP encoding of the empty byte string (0x80).
+pub const RLP_NULL: u8 = 0x80;
+/// RLP encoding of the empty list (0xC0).
+pub const RLP_EMPTY_LIST: u8 = 0xC0;
+
+/// Returns the total encoded length of an RLP list given the payload length.
+/// Equivalent to `Header::list_header_len(payload) + payload`.
+#[inline]
+pub fn list_encoded_length(payload: usize) -> usize {
+    librlp::Header::list_header_len(payload) + payload
+}
+
+/// Returns the total encoded length of a `Vec<T>` encoded as an RLP list.
+#[inline]
+pub fn vec_encoded_length<T: librlp::RlpEncode>(items: &[T]) -> usize {
+    let payload: usize = items.iter().map(|i| i.encoded_length()).sum();
+    list_encoded_length(payload)
+}
 
 /// SYSTEM_ADDRESS used for system contract calls and BAL filtering.
 /// 0xfffffffffffffffffffffffffffffffffffffffe

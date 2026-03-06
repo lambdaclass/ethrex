@@ -16,7 +16,7 @@ use crate::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
 use ethrex_common::H256;
-use ethrex_rlp::error::RLPDecodeError;
+use librlp::RlpError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
@@ -184,7 +184,7 @@ pub enum SyncError {
     #[error(transparent)]
     Trie(#[from] TrieError),
     #[error(transparent)]
-    Rlp(#[from] RLPDecodeError),
+    Rlp(#[from] RlpError),
     #[error(transparent)]
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]

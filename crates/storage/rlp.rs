@@ -5,7 +5,7 @@ use ethrex_common::{
     H256,
     types::{Block, BlockBody, BlockHeader, Receipt},
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use librlp::{RlpDecode, RlpEncode};
 
 // Account types
 pub type AccountCodeHashRLP = Rlp<H256>;
@@ -22,17 +22,16 @@ pub type ReceiptRLP = Rlp<Receipt>;
 #[derive(Clone, Debug)]
 pub struct Rlp<T>(Vec<u8>, PhantomData<T>);
 
-impl<T: RLPEncode> From<T> for Rlp<T> {
+impl<T: RlpEncode> From<T> for Rlp<T> {
     fn from(value: T) -> Self {
-        let mut buf = Vec::new();
-        RLPEncode::encode(&value, &mut buf);
+        let buf = value.to_rlp();
         Self(buf, Default::default())
     }
 }
 
-impl<T: RLPDecode> Rlp<T> {
-    pub fn to(&self) -> Result<T, ethrex_rlp::error::RLPDecodeError> {
-        T::decode(&self.0)
+impl<T: RlpDecode> Rlp<T> {
+    pub fn to(&self) -> Result<T, librlp::RlpError> {
+        T::decode(&mut self.0.as_slice())
     }
 }
 

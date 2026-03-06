@@ -20,7 +20,7 @@ use ethrex_guest_program::input::ProgramInput;
 #[cfg(feature = "sp1")]
 use ethrex_prover_lib::Sp1Backend;
 use ethrex_prover_lib::{BackendType, ExecBackend, ProverBackend};
-use ethrex_rlp::decode::RLPDecode;
+use librlp::RlpDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
 use regex::Regex;
@@ -68,7 +68,7 @@ pub async fn run_ef_test(
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
-    let decoded_block = match CoreBlock::decode(&genesis_rlp) {
+    let decoded_block = match CoreBlock::decode(&mut genesis_rlp.as_slice()) {
         Ok(block) => block,
         Err(e) => return Err(format!("Failed to decode genesis RLP: {e}")),
     };
@@ -324,7 +324,7 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::RLPException));
 
-    match CoreBlock::decode(block_fixture.rlp.as_ref()) {
+    match CoreBlock::decode(&mut block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
             false

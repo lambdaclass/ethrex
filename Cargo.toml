@@ -5,7 +5,6 @@ members = [
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
-  "crates/common/rlp",
   "crates/common/trie",
   "crates/common/crypto",
   "crates/l2/",
@@ -64,7 +63,7 @@ ethrex-storage = { path = "./crates/storage" }
 ethrex-vm = { path = "./crates/vm", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
-ethrex-rlp = { path = "./crates/common/rlp" }
+librlp = { git = "ssh://git@github.com/lambdaclass/librlp", rev = "fc56d6a", features = ["ethereum-types", "bytes", "librlp-derive"] }
 ethrex-crypto = { path = "./crates/common/crypto" }
 ethrex-metrics = { path = "./crates/blockchain/metrics" }
 ethrex-l2 = { path = "./crates/l2" }

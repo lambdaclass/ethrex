@@ -28,7 +28,7 @@ url.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
-ethrex-rlp.workspace = true
+librlp.workspace = true
 ethrex-blockchain.workspace = true
 
 # l2

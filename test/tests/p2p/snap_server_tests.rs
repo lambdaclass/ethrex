@@ -8,7 +8,7 @@ use std::str::FromStr;
 use ethrex_common::{BigEndianHash, H256, types::AccountStateSlimCodec};
 use ethrex_p2p::rlpx::snap::GetAccountRange;
 use ethrex_p2p::snap::{SnapError, process_account_range_request};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use librlp::{RlpDecode, RlpEncode};
 use ethrex_storage::{EngineType, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
 
@@ -815,9 +815,9 @@ fn setup_initial_state() -> Result<(Store, H256), SnapError> {
     let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     for (address, account) in accounts {
         let hashed_address = H256::from_str(address).unwrap().as_bytes().to_vec();
-        let AccountStateSlimCodec(account) = RLPDecode::decode(&account).unwrap();
+        let AccountStateSlimCodec(account) = RlpDecode::decode(&mut account.as_slice()).unwrap();
         state_trie
-            .insert(hashed_address, account.encode_to_vec())
+            .insert(hashed_address, account.to_rlp())
             .unwrap();
     }
     Ok((store, state_trie.hash().unwrap()))

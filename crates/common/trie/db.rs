@@ -1,5 +1,5 @@
 use ethereum_types::H256;
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 
 use crate::{Nibbles, Node, Trie, error::TrieError};
 use std::{
@@ -18,7 +18,7 @@ pub trait TrieDB: Send + Sync {
         self.put_batch(
             key_values
                 .iter()
-                .map(|node| (node.0.clone(), node.1.encode_to_vec()))
+                .map(|node| (node.0.clone(), node.1.to_rlp()))
                 .collect(),
         )
     }

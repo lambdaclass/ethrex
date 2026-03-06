@@ -770,7 +770,7 @@ fn match_disconnect_reason(error: &PeerConnectionError) -> Option<DisconnectReas
     match error {
         PeerConnectionError::DisconnectSent(reason) => Some(*reason),
         PeerConnectionError::DisconnectReceived(reason) => Some(*reason),
-        PeerConnectionError::RLPDecodeError(_) => Some(DisconnectReason::NetworkError),
+        PeerConnectionError::RlpError(_) => Some(DisconnectReason::NetworkError),
         PeerConnectionError::TooManyPeers => Some(DisconnectReason::TooManyPeers),
         // TODO build a proper matching between error types and disconnection reasons
         _ => None,

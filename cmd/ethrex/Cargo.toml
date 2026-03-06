@@ -22,7 +22,7 @@ ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 ethrex-p2p.workspace = true
 ethrex-repl.workspace = true
 ethrex-prover = { workspace = true, optional = true, features = ["l2"] }
-ethrex-rlp.workspace = true
+librlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-sdk = { workspace = true, optional = true }
 ethrex-storage.workspace = true

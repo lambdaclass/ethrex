@@ -1,6 +1,6 @@
 use std::mem;
 
-use ethrex_rlp::encode::RLPEncode;
+use librlp::RlpEncode;
 
 use crate::{
     InconsistentTreeError, TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles,
@@ -268,7 +268,7 @@ impl BranchNode {
     /// Computes the node's hash, using the provided buffer
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
         buf.clear();
-        self.encode(buf);
+        self.encode_to_vec(buf);
         let hash = NodeHash::from_encoded(buf);
         buf.clear();
         hash
@@ -284,7 +284,7 @@ impl BranchNode {
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
-        let encoded = self.encode_to_vec();
+        let encoded = self.to_rlp();
         if encoded.len() >= 32 {
             node_path.push(encoded);
         };
@@ -312,7 +312,7 @@ impl BranchNode {
 #[cfg(test)]
 mod test {
     use ethereum_types::H256;
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    use librlp::{RlpDecode, RlpEncode};
 
     use super::*;
 
@@ -651,7 +651,7 @@ mod test {
             }
         }
         .into();
-        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
+        assert_eq!(Node::decode(&mut node.to_rlp().as_slice()).unwrap(), node)
     }
 
     #[test]
@@ -667,7 +667,7 @@ mod test {
             }
         }
         .into();
-        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
+        assert_eq!(Node::decode(&mut node.to_rlp().as_slice()).unwrap(), node)
     }
 
     #[test]
@@ -693,6 +693,6 @@ mod test {
             } with_leaf { &[0x1] => vec![0x1] }
         }
         .into();
-        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
+        assert_eq!(Node::decode(&mut node.to_rlp().as_slice()).unwrap(), node)
     }
 }
