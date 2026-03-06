@@ -5,69 +5,74 @@
 
 ---
 
+## 현재 상태 요약 (2026-03-06)
+
+| 항목 | 상태 | 비고 |
+|------|:----:|------|
+| Fixture JSON 포맷 + 로더 | ✅ | `fixture_types.rs`, `discover_all_apps()` |
+| Fixture 자동 수집 (`ETHREX_DUMP_FIXTURES`) | ✅ | prover.rs + l1_committer.rs |
+| Fixture 병합 스크립트 | ✅ | `merge-fixtures.sh` |
+| Test 1: ProgramOutput 인코딩 | ✅ | `test_program_output.rs` |
+| Test 2: Committer ↔ Prover 일치 | ✅ | `test_commitment_match.rs` |
+| Test 3: Balance Diffs 계산 | ✅ | `messages.rs` 내 7개 단위 테스트 |
+| Test 4: State Hash 연속성 | ✅ | `test_state_continuity.rs` |
+| Test 5: Gas 상수 핀 | N/A | gas 상수 제거됨 (block header gas 사용으로 전환) |
+| 앱 자동 탐색 | ✅ | `discover_all_apps()` — 디렉토리만 추가하면 자동 |
+| CI workflow | ✅ | `.github/workflows/pr_fixture_tests.yml` |
+| 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
+| Phase 3: 오프라인 프루빙 | ❌ | stdin.bin 수집 미구현 |
+| Phase 4: 오프라인 검증 | ❌ | proof.bin + vk.bin 수집 미구현 |
+| Phase 5: Foundry on-chain 검증 | ❌ | Solidity 테스트 미구현 |
+| Prover balance_diffs 디코딩 | ⚠️ | 인코딩 포맷 한계로 빈 배열, warn 처리 |
+
+---
+
 ## 1. 아키텍처: Fixture 기반 테스트
 
 ```
 crates/guest-program/tests/
 ├── fixtures/
-│   ├── zk-dex/
-│   │   ├── batch_8_empty.json          # 빈 배치 (deposit만, 비특권 tx 없음)
-│   │   ├── batch_11_deposit.json       # deposit 포함 배치
-│   │   ├── batch_12_withdrawal.json    # withdrawal 포함 배치
-│   │   └── README.md                   # fixture 수집 방법
-│   ├── evm-l2/
-│   │   └── ...
-│   └── tokamon/
-│       └── ...
-├── test_program_output.rs              # ProgramOutput 인코딩 검증
-├── test_public_values_hash.rs          # sha256(publicValues) 검증
-├── test_state_continuity.rs            # batch간 state hash 연속성
-├── test_balance_diffs.rs               # balance_diffs 계산 + 인코딩
-├── test_commitment_match.rs            # committer calldata ↔ prover output 일치
-└── test_gas_constants.rs               # 앱별 gas 상수 핀
+│   ├── zk-dex/                           # ✅ 2개 fixture 수집됨
+│   │   ├── batch_2_deposit_withdraw.json
+│   │   └── batch_10_deposit_withdraw_2nd.json
+│   ├── evm-l2/                           # ❌ 미수집 (배포 필요)
+│   └── tokamon/                          # ❌ 미수집 (배포 필요)
+├── fixture_types.rs                      # ✅ 로더 + discover_all_apps()
+├── test_program_output.rs                # ✅ 앱 자동 탐색
+├── test_commitment_match.rs              # ✅ 앱 자동 탐색
+├── test_state_continuity.rs              # ✅ 앱 자동 탐색 (chain_id, program_type_id 포함)
+└── merge-fixtures.sh                     # ✅ 범용 병합 스크립트
 ```
 
-### Fixture JSON 포맷 (앱 공통)
+### Fixture JSON 포맷
 
 ```json
 {
   "app": "zk-dex",
-  "batch_number": 11,
+  "batch_number": 2,
   "program_type_id": 2,
   "chain_id": 65536999,
-  "description": "batch with 1 deposit tx",
-
-  "program_output": {
-    "initial_state_hash": "0xf2d3abac...",
-    "final_state_hash": "0xe13dfb03...",
-    "l1_out_messages_merkle_root": "0xc55f9da9...",
-    "l1_in_messages_rolling_hash": "0x0001807d...",
-    "blob_versioned_hash": "0x0177acaa...",
-    "last_block_hash": "0xc73a2408...",
-    "chain_id": "0x03e803e7",
+  "description": "batch with deposit + withdrawal",
+  "prover": {
+    "initial_state_hash": "0x...",
+    "final_state_hash": "0x...",
+    "l1_out_messages_merkle_root": "0x...",
+    "l1_in_messages_rolling_hash": "0x...",
+    "blob_versioned_hash": "0x...",
+    "last_block_hash": "0x...",
     "non_privileged_count": 1,
     "balance_diffs": [],
-    "l2_in_message_rolling_hashes": []
+    "l2_in_message_rolling_hashes": [],
+    "encoded_public_values": "0x...",
+    "sha256_public_values": "0x..."
   },
-
-  "encoded_public_values_hex": "f2d3abac...0001",
-  "sha256_hash": "47b261816ac029786edfe31367cd76e2734541a6ddd44ff6d45a22901c98d9ef",
-
   "committer": {
-    "new_state_root": "0xe13dfb03...",
-    "withdrawals_merkle_root": "0xc55f9da9...",
-    "priv_tx_rolling_hash": "0x0001807d...",
-    "last_block_hash": "0xc73a2408...",
+    "new_state_root": "0x...",
+    "withdrawals_merkle_root": "0x...",
+    "priv_tx_rolling_hash": "0x...",
     "non_privileged_txs": 1,
-    "commit_hash": "0xb04b4c08...",
-    "balance_diffs_encoded": [],
-    "l2_in_rolling_hashes_encoded": []
-  },
-
-  "proof_sender": {
-    "prev_state_root": "0xf2d3abac...",
-    "cur_state_root": "0xe13dfb03...",
-    "l1_out_merkle_root": "0xc55f9da9..."
+    "balance_diffs": [],
+    "l2_in_message_rolling_hashes": []
   }
 }
 ```
@@ -76,165 +81,83 @@ crates/guest-program/tests/
 
 ## 2. 수집할 데이터 (로그 포인트)
 
-배포 시 한 번만 수집하면 해당 앱의 모든 단위 테스트에 영구 사용 가능.
-
-### 2.1 프루버 (`sp1.rs`) — 이미 [DEBUG-00e] 로그 있음
+### 2.1 프루버 (`prover.rs`) — 현재 수집 상태
 
 | 데이터 | 용도 | 상태 |
 |--------|------|:----:|
-| `public_values` (전체 hex) | ProgramOutput 인코딩 검증 | ✅ 수집됨 |
-| `sha256(public_values)` | 해시 검증 | ✅ 수집됨 |
-| 필드별 값 (8개 고정 필드) | 개별 필드 검증 | ✅ 수집됨 |
-| `SP1Stdin` 직렬화 bytes | proof 재생성 (오프라인) | ❌ 추가 필요 |
-| proof bytes (Groth16 calldata) | 오프체인 검증 | ❌ 추가 필요 |
-| VK bytes | 오프체인 검증 | ❌ 추가 필요 |
+| `public_values` (전체 hex) | ProgramOutput 인코딩 검증 | ✅ prover.json에 저장 |
+| `sha256(public_values)` | 해시 검증 | ✅ prover.json에 저장 |
+| 필드별 값 (8개 고정 필드) | 개별 필드 검증 | ✅ prover.json에 저장 |
+| `balance_diffs` (가변 필드) | balance_diffs 검증 | ⚠️ 빈 배열 (디코딩 불가) |
+| `SP1Stdin` 직렬화 bytes | proof 재생성 (오프라인) | ❌ 미구현 |
+| proof bytes (Groth16/Compressed) | 오프체인 검증 | ❌ 미구현 |
+| VK bytes | 오프체인 검증 | ❌ 미구현 |
 
-### 2.2 커미터 (`l1_committer.rs`) — 이미 [DEBUG-00e] 로그 있음
-
-| 데이터 | 용도 | 상태 |
-|--------|------|:----:|
-| commitBatch 전체 calldata 필드 | committer ↔ prover 일치 검증 | ✅ 수집됨 |
-| balance_diffs 값 | balance_diffs 인코딩 검증 | ⚠️ 빈 배치만 수집됨 |
-| `get_balance_diffs()` 입력 (L2 messages) | 계산 로직 검증 | ❌ 추가 필요 |
-| native_token_scale_factor | 스케일링 검증 | ❌ 추가 필요 |
-
-### 2.3 프루프 센더 (`l1_proof_sender.rs`) — 이미 [DEBUG-00e] 로그 있음
+### 2.2 커미터 (`l1_committer.rs`) — 현재 수집 상태
 
 | 데이터 | 용도 | 상태 |
 |--------|------|:----:|
-| verifyBatch calldata | on-chain 검증 재현 | ❌ 추가 필요 |
-| rollup store 데이터 (prev/cur state 등) | state 연속성 검증 | ✅ 수집됨 |
+| commitBatch calldata 필드 | committer ↔ prover 일치 검증 | ✅ committer.json에 저장 |
+| balance_diffs 값 | balance_diffs 인코딩 검증 | ✅ committer.json에 저장 |
+| `get_balance_diffs()` 입력 (L2 messages) | 계산 로직 검증 | ❌ 미수집 (단위 테스트로 대체) |
+| native_token_scale_factor | 스케일링 검증 | ❌ 미수집 (단위 테스트로 대체) |
+
+### 2.3 프루프 센더 (`l1_proof_sender.rs`)
+
+| 데이터 | 용도 | 상태 |
+|--------|------|:----:|
+| verifyBatch calldata | on-chain 검증 재현 | ❌ 미수집 |
+| rollup store 데이터 | state 연속성 검증 | ❌ 미수집 (fixture로 대체) |
 
 ---
 
-## 3. 테스트 단계별 계획
+## 3. 남은 작업 (Phase 3~5)
 
-### Phase 1: Fixture 수집 로직 추가 (코드 변경)
+### Phase 3: 오프라인 프루빙 테스트
 
-기존 `[DEBUG-00e]` 로그를 **fixture 파일 자동 저장**으로 확장.
-환경변수 `ETHREX_DUMP_FIXTURES=1`일 때만 활성화.
+**목표**: SP1Stdin fixture로 proof를 오프라인에서 재생성하여 결정론적 검증.
 
-#### 3.1 프루버 fixture 덤프 (`sp1.rs`)
+**필요한 코드 변경**:
 
-```rust
-// prove() 성공 후:
-if std::env::var("ETHREX_DUMP_FIXTURES").is_ok() {
-    let dir = format!("fixtures/{}/{}", program_id, batch_number);
-    std::fs::create_dir_all(&dir).ok();
-    // SP1Stdin (witness) — proof 재생성용
-    std::fs::write(format!("{dir}/stdin.bin"), &stdin_bytes).ok();
-    // Public values — 인코딩 검증용
-    std::fs::write(format!("{dir}/public_values.bin"), &pv_bytes).ok();
-    // Proof calldata — 오프체인 검증용
-    std::fs::write(format!("{dir}/proof.bin"), &proof_bytes).ok();
-    // VK — 검증용
-    std::fs::write(format!("{dir}/vk.bin"), &vk_bytes).ok();
-    // JSON 메타데이터
-    std::fs::write(format!("{dir}/metadata.json"), &json_metadata).ok();
-}
-```
+1. `crates/l2/prover/src/prover.rs` — `prove_batch()` 안에서 `ETHREX_DUMP_FIXTURES` 활성화 시:
+   - `stdin.bin`: SP1Stdin 직렬화 바이트 저장 (prove_with_elf path에서 `serialized` 변수)
+   - `proof.bin`: BatchProof 직렬화 바이트 저장
+   - `vk.bin`: 검증키 바이트 저장
 
-#### 3.2 커미터 fixture 덤프 (`l1_committer.rs`)
+2. 현재 `prove_batch()`에서 fixture dump가 `batch_proof` (BatchProof) 레벨에서 이루어지는데,
+   stdin은 그 이전 단계(input 직렬화)에서만 접근 가능. 따라서 dump 위치를 `prove_batch()` 내부로 이동하거나,
+   stdin을 `prove_batch()`가 반환하도록 변경 필요.
 
-```rust
-if std::env::var("ETHREX_DUMP_FIXTURES").is_ok() {
-    let dir = format!("fixtures/{}/{}", program_id, batch_number);
-    // commitBatch calldata 필드들
-    // balance_diffs 입력 (L2 messages) + 출력 (encoded diffs)
-    // native_token_scale_factor
-}
-```
-
-#### 3.3 프루프 센더 fixture 덤프 (`l1_proof_sender.rs`)
-
-```rust
-if std::env::var("ETHREX_DUMP_FIXTURES").is_ok() {
-    let dir = format!("fixtures/{}/{}", program_id, batch_number);
-    // verifyBatch calldata
-    // rollup store 데이터 (prev/cur state 등)
-}
-```
-
-### Phase 2: 오프라인 단위 테스트 (배포 불필요)
-
-fixture 데이터 기반. `cargo test`로 실행.
-
-#### Test 1: ProgramOutput 인코딩 (✅ 이미 구현)
-- fixture의 필드 값으로 `ProgramOutput` 구성
-- `.encode()` 결과가 `encoded_public_values_hex`와 일치 확인
-- `sha256(encoded)` == fixture의 `sha256_hash`
-
-#### Test 2: Committer ↔ Prover 일치
-- fixture에서 committer calldata의 state_root, merkle_root 등 추출
-- prover output의 동일 필드와 byte-exact 비교
-- **이것이 00e 에러를 사전에 잡는 핵심 테스트**
+3. 새 테스트 파일: `crates/guest-program/tests/test_offline_proving.rs`
 
 ```rust
 #[test]
-fn committer_matches_prover_batch11() {
-    let fixture = load_fixture("zk-dex/batch_11_deposit.json");
-    // committer의 new_state_root == prover의 final_state_hash
-    assert_eq!(fixture.committer.new_state_root, fixture.program_output.final_state_hash);
-    // committer의 withdrawals_merkle_root == prover의 l1_out_messages_merkle_root
-    assert_eq!(fixture.committer.withdrawals_merkle_root, fixture.program_output.l1_out_messages_merkle_root);
-    // ... 모든 공유 필드 비교
+#[ignore] // cargo test --ignored 로만 실행 (SP1 필요, ~10분)
+fn sp1_prove_zk_dex_batch() {
+    let stdin_bytes = std::fs::read("fixtures/zk-dex/batch_2/stdin.bin").unwrap();
+    let elf = include_bytes!("path/to/zk-dex-elf");
+    // SP1 client setup + prove + verify public_values match
 }
 ```
 
-#### Test 3: Balance Diffs 계산
-- fixture에서 L2 messages 입력 + native_token_scale_factor
-- `get_balance_diffs()` 호출
-- 결과가 fixture의 balance_diffs와 일치
+**의존성**: SP1 SDK (feature flag `sp1` 필요), 느림 (~10분/batch)
+**우선순위**: 중간 — proof 결정론성 검증이 필요할 때
+
+---
+
+### Phase 4: 오프라인 검증 테스트
+
+**목표**: 저장된 proof + VK로 오프체인 검증. 빠름 (수 초).
+
+**필요한 코드 변경**:
+
+1. Phase 3의 `proof.bin` + `vk.bin` 수집이 선행 조건
+2. 새 테스트 파일: `crates/guest-program/tests/test_offline_verify.rs`
 
 ```rust
 #[test]
-fn balance_diffs_zk_dex_batch12() {
-    let fixture = load_fixture("zk-dex/batch_12_withdrawal.json");
-    let diffs = get_balance_diffs(&fixture.l2_messages, fixture.native_token_scale_factor);
-    assert_eq!(diffs, fixture.expected_balance_diffs);
-}
-```
-
-#### Test 4: State Hash 연속성
-- 여러 배치 fixture 로드
-- batch N의 `final_state_hash` == batch N+1의 `initial_state_hash`
-- (✅ 이미 구현, fixture 기반으로 확장)
-
-#### Test 5: Gas 상수 핀 (✅ 이미 구현)
-- 앱별 gas 상수가 변경되면 테스트 실패
-- 변경 시 의도적으로 fixture 업데이트 필요
-
-### Phase 3: 오프라인 프루빙 테스트 (선택, 느림)
-
-SP1Stdin fixture로 proof 재생성. CI에서 주기적 실행 (8~10분).
-
-```rust
-#[test]
-#[ignore] // cargo test --ignored 로만 실행
-fn sp1_prove_zk_dex_batch11() {
-    let stdin_bytes = std::fs::read("fixtures/zk-dex/11/stdin.bin").unwrap();
-    let stdin: SP1Stdin = deserialize(&stdin_bytes);
-    let elf = include_bytes!("../bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-elf");
-    let client = ProverClient::builder().cpu().build();
-    let (pk, vk) = client.setup(elf);
-    let proof = client.prove(&pk, &stdin).compressed().run().unwrap();
-    // public values 일치 확인
-    let pv = proof.public_values.to_vec();
-    let expected = std::fs::read("fixtures/zk-dex/11/public_values.bin").unwrap();
-    assert_eq!(pv, expected);
-}
-```
-
-### Phase 4: 오프라인 검증 테스트 (선택, 빠름)
-
-저장된 proof + VK로 오프체인 검증. 수 초.
-
-```rust
-#[test]
-#[ignore]
-fn sp1_verify_zk_dex_batch11() {
-    let proof_bytes = std::fs::read("fixtures/zk-dex/11/proof.bin").unwrap();
-    let vk_bytes = std::fs::read("fixtures/zk-dex/11/vk.bin").unwrap();
+#[ignore] // SP1 SDK 필요
+fn sp1_verify_zk_dex_batch() {
     let proof: SP1ProofWithPublicValues = bincode::deserialize(&proof_bytes).unwrap();
     let vk: SP1VerifyingKey = bincode::deserialize(&vk_bytes).unwrap();
     let client = ProverClient::builder().cpu().build();
@@ -242,73 +165,90 @@ fn sp1_verify_zk_dex_batch11() {
 }
 ```
 
-### Phase 5: Foundry on-chain 검증 테스트 (선택)
+**의존성**: Phase 3 완료, SP1 SDK
+**우선순위**: 중간
 
-Solidity 테스트로 L1 OnChainProposer.verifyBatch() 재현.
+---
+
+### Phase 5: Foundry on-chain 검증 테스트
+
+**목표**: Solidity 테스트로 L1 OnChainProposer.verifyBatch() 재현.
+
+**필요한 코드 변경**:
+
+1. Phase 4의 proof calldata 수집이 선행 조건
+2. Foundry 프로젝트에 테스트 추가: `crates/l2/contracts/test/VerifyBatchFixture.t.sol`
 
 ```solidity
-// test/VerifyBatchFixture.t.sol
-function test_verifyBatch_zk_dex_batch11() public {
-    bytes memory proof = vm.readFileBinary("fixtures/zk-dex/11/proof_calldata.bin");
-    bytes32 vk = 0x00c40e105259b564873710f4a0369401b02b5cd9e5ecbc42fb63f427df67fdd8;
-    bytes memory publicValues = vm.readFileBinary("fixtures/zk-dex/11/public_values.bin");
-    // SP1Verifier should not revert
+function test_verifyBatch_zk_dex() public {
+    bytes memory proof = vm.readFileBinary("fixtures/zk-dex/batch_2/proof_calldata.bin");
+    bytes32 vk = ...; // verifying key hash
+    bytes memory publicValues = vm.readFileBinary("fixtures/zk-dex/batch_2/public_values.bin");
     ISP1Verifier(sp1Verifier).verifyProof(vk, publicValues, proof);
 }
 ```
 
----
-
-## 4. 구현 우선순위
-
-| 순서 | 작업 | 소요 | 효과 |
-|:----:|------|------|------|
-| **1** | Fixture JSON 포맷 정의 + 로더 유틸 | 1시간 | 인프라 |
-| **2** | 기존 로그에서 zk-dex batch 8/11/12 fixture 생성 | 30분 | 즉시 테스트 가능 |
-| **3** | Test 1~5 구현 (Phase 2) | 2시간 | **핵심: 00e 재발 방지** |
-| **4** | `ETHREX_DUMP_FIXTURES` 덤프 로직 추가 (Phase 1) | 2시간 | 다음 배포시 자동 수집 |
-| **5** | Phase 3 (오프라인 프루빙) | 1시간 | proof 재현성 검증 |
-| **6** | Phase 4 (오프라인 검증) | 1시간 | 검증 로직 독립 테스트 |
-| **7** | Phase 5 (Foundry) | 2시간 | L1 컨트랙트 검증 |
+**의존성**: Phase 4 완료, Foundry, SP1 Verifier 컨트랙트
+**우선순위**: 낮음 — L1 컨트랙트 변경 시 회귀 테스트로 가치 있음
 
 ---
 
-## 5. 새 앱 추가 시 워크플로우
+## 4. Test 5 (Gas 상수 핀) — 해당 없음
+
+원래 계획에서는 앱별 고정 가스 상수를 핀 테스트로 보호하려 했으나,
+2026-03-06에 고정 가스 상수를 **block header gas_used**로 전환했으므로
+이 테스트는 더 이상 필요하지 않음.
+
+- `WITHDRAWAL_GAS`, `ETH_TRANSFER_GAS`, `SYSTEM_CALL_GAS` 상수 모두 삭제됨
+- `app_execution.rs`에서 `block.header.gas_used / non_priv_tx_count`로 계산
+- 상세: `fixture-data-collection.md` (2026-03-06 섹션)
+
+---
+
+## 5. deployment-engine-refactoring.md 남은 항목
+
+| 항목 | 상태 | 비고 |
+|------|:----:|------|
+| Tools compose 포트 동적화 | ❌ | 현재 8082/8083/3000 하드코딩 |
+| GPU 감지 및 compose override | ❌ | GPU 프루버 사용 시 필요 |
+| Metrics 포트 노출 | ❌ | 모니터링 대시보드 연동 시 필요 |
+| Deployer exit code 검증 | ❌ | 배포 실패 시 에러 핸들링 개선 |
+
+---
+
+## 6. 구현 우선순위 (업데이트)
+
+| 순서 | 작업 | 상태 | 비고 |
+|:----:|------|:----:|------|
+| 1 | Fixture JSON 포맷 + 로더 | ✅ | `fixture_types.rs` |
+| 2 | Fixture 자동 수집 로직 | ✅ | `ETHREX_DUMP_FIXTURES` |
+| 3 | Test 1~4 구현 | ✅ | 5개 테스트 파일 |
+| 4 | Test 앱 자동 탐색 | ✅ | `discover_all_apps()` |
+| 5 | CI workflow | ✅ | `pr_fixture_tests.yml` |
+| 6 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
+| **7** | **다른 앱 fixture 수집** | **❌** | **evm-l2, tokamon 배포 필요** |
+| **8** | **Phase 3: 오프라인 프루빙** | **❌** | **stdin/proof/vk 수집 + SP1 테스트** |
+| **9** | **Phase 4: 오프라인 검증** | **❌** | **Phase 3 선행** |
+| **10** | **Phase 5: Foundry 검증** | **❌** | **Phase 4 선행** |
+| **11** | **Tools 포트 동적화** | **❌** | **deployment-engine 개선** |
+| **12** | **GPU 감지 compose** | **❌** | **GPU 프루버 지원** |
+| **13** | **Metrics 포트** | **❌** | **모니터링 연동** |
+| **14** | **Deployer exit code** | **❌** | **에러 핸들링** |
+
+---
+
+## 7. 새 앱 추가 시 워크플로우
 
 ```
-1. 앱 개발 완료 (guest program + circuit)
-2. Docker 배포 1회 (ETHREX_DUMP_FIXTURES=1)
-3. fixture 자동 생성됨: fixtures/{app_name}/{batch_number}/
-4. fixture를 테스트 디렉토리에 복사
-5. cargo test — 모든 오프라인 테스트 실행
-6. 이후 코드 변경 시 cargo test만으로 회귀 검증
+1. Guest Program 구현 (또는 기존 앱 사용)
+2. 앱 등록 (resolve_program_type_id, db.js, prover registry)
+3. Docker Compose 프로필 추가 (compose-generator.js)
+4. Docker 배포 + ETHREX_DUMP_FIXTURES 활성화
+5. E2E 테스트로 트랜잭션 생성
+6. merge-fixtures.sh로 fixture 병합
+7. tests/fixtures/<my-app>/ 에 JSON 복사
+8. cargo test → 자동 통과 (discover_all_apps)
+9. PR → CI 자동 검증 (pr_fixture_tests.yml)
 ```
 
----
-
-## 6. 현재 코드 변경 필요 사항
-
-### 6.1 수정 필요 파일
-
-| 파일 | 변경 내용 |
-|------|----------|
-| `crates/l2/prover/src/backend/sp1.rs` | fixture 덤프 로직 추가 |
-| `crates/l2/sequencer/l1_committer.rs` | fixture 덤프 로직 추가 |
-| `crates/l2/sequencer/l1_proof_sender.rs` | fixture 덤프 로직 추가 |
-| `crates/guest-program/Cargo.toml` | dev-deps 추가 (serde_json) |
-
-### 6.2 새로 생성할 파일
-
-| 파일 | 내용 |
-|------|------|
-| `crates/guest-program/tests/fixtures/` | fixture 데이터 디렉토리 |
-| `crates/guest-program/tests/fixture_loader.rs` | JSON fixture 로더 유틸 |
-| `crates/guest-program/tests/test_commitment_match.rs` | committer ↔ prover 일치 |
-| `crates/guest-program/tests/test_balance_diffs.rs` | balance_diffs 계산 검증 |
-
-### 6.3 기존 테스트 이동/확장
-
-| 현재 위치 | 변경 |
-|-----------|------|
-| `output.rs` 내 batch 8/11 테스트 | fixture JSON 기반으로 전환 |
-| `constants.rs` 내 gas 상수 테스트 | 앱별 gas 상수 매핑 추가 |
+상세 가이드: `adding-new-app-fixtures.md`
