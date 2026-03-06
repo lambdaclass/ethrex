@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-03-05
+
+- Doubly pipelined merkleization with self-coordinating shard workers [#6278](https://github.com/lambdaclass/ethrex/pull/6278)
+
 ### 2026-02-27
 
 - Refactor LEVM opcode handlers to avoid expensive matches [#4791](https://github.com/lambdaclass/ethrex/pull/4791)
