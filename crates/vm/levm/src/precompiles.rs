@@ -1949,6 +1949,44 @@ fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<Fp, VMError> {
         .ok_or(PrecompileError::ParsingInputError.into())
 }
 
+/// Constructs a `G1Affine` from raw coordinates without validation.
+#[cfg(not(feature = "sp1"))]
+#[inline]
+fn make_g1_affine(x: Fp, y: Fp) -> G1Affine {
+    G1Affine::new_unchecked(x, y)
+}
+
+/// Constructs a `G1Affine` from raw coordinates without validation.
+/// The sp1 patch exposes public fields but does not provide `new_unchecked`.
+#[cfg(feature = "sp1")]
+#[inline]
+fn make_g1_affine(x: Fp, y: Fp) -> G1Affine {
+    G1Affine {
+        x,
+        y,
+        infinity: subtle::Choice::from(0u8),
+    }
+}
+
+/// Constructs a `G2Affine` from raw coordinates without validation.
+#[cfg(not(feature = "sp1"))]
+#[inline]
+fn make_g2_affine(x: Fp2, y: Fp2) -> G2Affine {
+    G2Affine::new_unchecked(x, y)
+}
+
+/// Constructs a `G2Affine` from raw coordinates without validation.
+/// The sp1 patch exposes public fields but does not provide `new_unchecked`.
+#[cfg(feature = "sp1")]
+#[inline]
+fn make_g2_affine(x: Fp2, y: Fp2) -> G2Affine {
+    G2Affine {
+        x,
+        y,
+        infinity: subtle::Choice::from(0u8),
+    }
+}
+
 /// Parses a 128-byte encoding into a G1 projective point.
 #[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
 fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, VMError> {
@@ -1964,7 +2002,7 @@ fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, V
         return Ok(G1Projective::identity());
     }
 
-    let g1_affine = G1Affine::new_unchecked(x, y);
+    let g1_affine = make_g1_affine(x, y);
 
     if !bool::from(g1_affine.is_on_curve()) {
         return Err(PrecompileError::BLS12381G1PointNotInCurve.into());
@@ -1995,7 +2033,7 @@ fn parse_g2_point(point_bytes: &[u8], unchecked: bool) -> Result<G2Projective, V
         return Ok(G2Projective::identity());
     }
 
-    let g2_affine = G2Affine::new_unchecked(Fp2 { c0: x_0, c1: x_1 }, Fp2 { c0: y_0, c1: y_1 });
+    let g2_affine = make_g2_affine(Fp2 { c0: x_0, c1: x_1 }, Fp2 { c0: y_0, c1: y_1 });
 
     if !bool::from(g2_affine.is_on_curve()) {
         return Err(PrecompileError::BLS12381G2PointNotInCurve.into());

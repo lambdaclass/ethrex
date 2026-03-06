@@ -4150,6 +4150,7 @@ dependencies = [
  "spinoff",
  "strum 0.27.2",
  "substrate-bn",
+ "subtle",
  "thiserror 2.0.18",
  "walkdir",
  "ziskos",
