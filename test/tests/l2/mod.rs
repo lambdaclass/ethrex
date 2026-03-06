@@ -1,6 +1,8 @@
 mod error_selectors;
 #[cfg(feature = "l2")]
 mod integration_tests;
+#[cfg(feature = "native-rollup")]
+mod native_rollup;
 mod sdk;
 #[cfg(feature = "l2")]
 mod shared_bridge;

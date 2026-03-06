@@ -88,9 +88,7 @@ impl RpcHandler for GetL1MessageProof {
             };
 
             // Calculates the merkle proof of the batch
-            let Some(path) = compute_merkle_proof(&batch_message_hashes, index) else {
-                return Ok(Value::Null);
-            };
+            let path = compute_merkle_proof(&batch_message_hashes, index);
 
             let proof = L1MessageProof {
                 batch_number,
