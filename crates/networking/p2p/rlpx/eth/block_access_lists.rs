@@ -135,3 +135,81 @@ impl RLPxMessage for BlockAccessLists {
         Ok(Self::new(id, block_access_lists))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange};
+    use ethereum_types::Address;
+
+    fn sample_bal() -> BlockAccessList {
+        let account = AccountChanges::new(Address::from_low_u64_be(1))
+            .with_balance_changes(vec![BalanceChange::new(0, 100.into())]);
+        BlockAccessList::from_accounts(vec![account])
+    }
+
+    #[test]
+    fn get_block_access_lists_empty() {
+        let msg = GetBlockAccessLists::new(42, vec![]);
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decoded = GetBlockAccessLists::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 42);
+        assert!(decoded.block_hashes.is_empty());
+    }
+
+    #[test]
+    fn get_block_access_lists_roundtrip() {
+        let hashes = vec![BlockHash::from([1; 32]), BlockHash::from([2; 32])];
+        let msg = GetBlockAccessLists::new(7, hashes.clone());
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decoded = GetBlockAccessLists::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 7);
+        assert_eq!(decoded.block_hashes, hashes);
+    }
+
+    #[test]
+    fn block_access_lists_empty() {
+        let msg = BlockAccessLists::new(1, vec![]);
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decoded = BlockAccessLists::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 1);
+        assert!(decoded.block_access_lists.is_empty());
+    }
+
+    #[test]
+    fn block_access_lists_all_none() {
+        let msg = BlockAccessLists::new(5, vec![None, None, None]);
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decoded = BlockAccessLists::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 5);
+        assert_eq!(decoded.block_access_lists, vec![None, None, None]);
+    }
+
+    #[test]
+    fn block_access_lists_mixed() {
+        let bal = sample_bal();
+        let bals = vec![Some(bal.clone()), None, Some(bal.clone())];
+        let msg = BlockAccessLists::new(99, bals.clone());
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decoded = BlockAccessLists::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 99);
+        assert_eq!(decoded.block_access_lists, bals);
+    }
+
+    #[test]
+    fn block_access_lists_all_some() {
+        let bal = sample_bal();
+        let bals = vec![Some(bal.clone()), Some(bal.clone())];
+        let msg = BlockAccessLists::new(10, bals.clone());
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decoded = BlockAccessLists::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 10);
+        assert_eq!(decoded.block_access_lists, bals);
+    }
+}
