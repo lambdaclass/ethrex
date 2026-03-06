@@ -1,0 +1,72 @@
+name: Build Desktop App
+
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            label: macOS-ARM64
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            label: macOS-x64
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: Windows-x64
+
+    runs-on: ${{ matrix.platform }}
+    name: Build (${{ matrix.label }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: crates/desktop-app/ui/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: crates/desktop-app/ui/src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: pnpm install
+        working-directory: crates/desktop-app/ui
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/desktop-app/ui
+          args: --target ${{ matrix.target }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokamak-appchain-${{ matrix.label }}
+          path: |
+            crates/desktop-app/ui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            crates/desktop-app/ui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
+            crates/desktop-app/ui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            crates/desktop-app/ui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
