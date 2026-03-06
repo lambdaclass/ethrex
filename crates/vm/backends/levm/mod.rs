@@ -47,7 +47,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
 /// The struct implements the following functions:
@@ -992,6 +992,7 @@ impl LEVM {
         block: &Block,
         store: Arc<dyn Database>,
         vm_type: VMType,
+        cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
@@ -1009,6 +1010,9 @@ impl LEVM {
         sender_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
+                if cancelled.load(Ordering::Relaxed) {
+                    return;
+                }
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
                 // Execute transactions sequentially within sender group
@@ -1026,6 +1030,10 @@ impl LEVM {
                 }
             },
         );
+
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
         for withdrawal in block
             .body
@@ -1055,6 +1063,7 @@ impl LEVM {
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
+        cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
         let accounts = bal.accounts();
         if accounts.is_empty() {
@@ -1068,6 +1077,10 @@ impl LEVM {
         store
             .prefetch_accounts(&account_addresses)
             .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
         // Phase 2: Prefetch storage slots in batch — parallel inner fetch + single write-lock.
         // Storage is flattened to (address, slot) pairs so rayon can distribute
@@ -1084,6 +1097,10 @@ impl LEVM {
         store
             .prefetch_storage(&slots)
             .map_err(|e| EvmError::Custom(format!("prefetch_storage: {e}")))?;
+
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
         // Phase 3: Code prefetch — collect code hashes from Phase 1 account states
         // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
