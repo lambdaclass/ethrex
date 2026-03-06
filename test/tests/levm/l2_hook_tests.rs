@@ -9,8 +9,7 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{
         Account, AccountState, ChainConfig, Code, CodeMetadata, Fork, PrivilegedL2Transaction,
-        Transaction, TxKind,
-        fee_config::FeeConfig,
+        Transaction, TxKind, fee_config::FeeConfig,
     },
 };
 use ethrex_levm::{
@@ -167,6 +166,7 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         from: sender,
         inner_hash: Default::default(),
         sender_cache: Default::default(),
+        cached_canonical: Default::default(),
     });
 
     let fee_config = FeeConfig {
@@ -184,7 +184,9 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
     )
     .expect("VM creation should succeed");
 
-    let report = vm.execute().expect("Privileged tx execution should not error");
+    let report = vm
+        .execute()
+        .expect("Privileged tx execution should not error");
 
     // The tx should revert (INVALID opcode) because intrinsic gas was too low
     assert!(
@@ -195,7 +197,8 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
     // The sender's balance must be fully preserved — no funds should be burned.
     let sender_balance_after = db.get_account(sender).unwrap().info.balance;
     assert_eq!(
-        sender_balance_after, initial_balance,
+        sender_balance_after,
+        initial_balance,
         "Sender balance must be preserved after failed privileged tx. \
          Expected {initial_balance}, got {sender_balance_after}. \
          Difference (lost funds): {}",
