@@ -129,8 +129,7 @@ impl RLPxMessage for BlockAccessLists {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (bals, decoder): (Vec<OptionalBal>, _) =
-            decoder.decode_field("blockAccessLists")?;
+        let (bals, decoder): (Vec<OptionalBal>, _) = decoder.decode_field("blockAccessLists")?;
         decoder.finish()?;
         let block_access_lists = bals.into_iter().map(|b| b.0).collect();
         Ok(Self::new(id, block_access_lists))
@@ -140,8 +139,8 @@ impl RLPxMessage for BlockAccessLists {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange};
     use ethereum_types::Address;
+    use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange};
 
     fn sample_bal() -> BlockAccessList {
         let account = AccountChanges::new(Address::from_low_u64_be(1))

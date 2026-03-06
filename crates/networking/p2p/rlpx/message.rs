@@ -228,14 +228,12 @@ impl Message {
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
-                GetBlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => {
-                    Ok(Message::GetBlockAccessLists(GetBlockAccessLists::decode(
-                        data,
-                    )?))
-                }
-                BlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => Ok(
-                    Message::BlockAccessLists(BlockAccessLists::decode(data)?),
+                GetBlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => Ok(
+                    Message::GetBlockAccessLists(GetBlockAccessLists::decode(data)?),
                 ),
+                BlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => {
+                    Ok(Message::BlockAccessLists(BlockAccessLists::decode(data)?))
+                }
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else if msg_id < eth_version.based_capability_offset() {

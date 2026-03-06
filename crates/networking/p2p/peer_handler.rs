@@ -566,9 +566,7 @@ impl PeerHandler {
         block_hashes: &[H256],
     ) -> Result<Option<Vec<Option<BlockAccessList>>>, PeerHandlerError> {
         let eth71_capability = [Capability::eth(71)];
-        let Some((peer_id, mut connection)) =
-            self.get_random_peer(&eth71_capability).await?
-        else {
+        let Some((peer_id, mut connection)) = self.get_random_peer(&eth71_capability).await? else {
             return Ok(None);
         };
         let request_id = rand::random();

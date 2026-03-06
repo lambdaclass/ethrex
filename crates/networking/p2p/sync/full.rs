@@ -224,9 +224,7 @@ async fn add_blocks_in_batch(
                 Ok(Some(bals)) if bals.len() == blocks.len() => bals,
                 _ => {
                     // Peer doesn't support eth/71 or BAL unavailable — fall back to None
-                    debug!(
-                        "[SYNCING] BAL fetch unavailable or failed, proceeding without BALs"
-                    );
+                    debug!("[SYNCING] BAL fetch unavailable or failed, proceeding without BALs");
                     vec![None; blocks.len()]
                 }
             }
