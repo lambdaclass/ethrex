@@ -127,11 +127,13 @@ impl Sp1Backend {
     }
 
     fn to_calldata(proof: &Sp1ProveOutput) -> ProofCalldata {
+        let pv_bytes = proof.proof.public_values.to_vec();
         let calldata = vec![Value::Bytes(proof.proof.bytes().into())];
 
         ProofCalldata {
             prover_type: ProverType::SP1,
             calldata,
+            public_values: pv_bytes,
         }
     }
 
@@ -212,8 +214,8 @@ impl ProverBackend for Sp1Backend {
         let batch_proof = match format {
             ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
                 prover_type: ProverType::SP1,
-                proof: bincode::serialize(&proof.proof).map_err(BackendError::batch_proof)?,
                 public_values: proof.proof.public_values.to_vec(),
+                proof: bincode::serialize(&proof.proof).map_err(BackendError::batch_proof)?,
             }),
             ProofFormat::Groth16 => BatchProof::ProofCalldata(Self::to_calldata(&proof)),
         };

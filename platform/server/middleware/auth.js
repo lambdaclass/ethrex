@@ -13,9 +13,10 @@ function destroySession(token) {
 }
 
 // Middleware: require authentication
+// Supports both Authorization header and ?token= query param (for SSE/EventSource)
 async function requireAuth(req, res, next) {
   try {
-    const bearer = req.headers["authorization"]?.replace("Bearer ", "");
+    const bearer = req.headers["authorization"]?.replace("Bearer ", "") || req.query.token;
     if (!bearer) {
       return res.status(401).json({ error: "Authentication required" });
     }

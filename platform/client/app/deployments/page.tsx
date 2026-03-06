@@ -5,6 +5,7 @@ import Link from "next/link";
 import { deploymentsApi } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 import { Deployment } from "@/lib/types";
+import { DeploymentStatusBadge } from "@/components/deployment-status";
 
 export default function DeploymentsPage() {
   const { user } = useAuth();
@@ -61,45 +62,32 @@ export default function DeploymentsPage() {
       ) : (
         <div className="space-y-4">
           {deployments.map((d) => (
-            <div
+            <Link
               key={d.id}
-              className="bg-white rounded-xl border p-6 flex items-center justify-between"
+              href={`/deployments/${d.id}`}
+              className="block bg-white rounded-xl border p-6 hover:shadow-md transition-shadow"
             >
-              <div>
-                <h3 className="font-semibold">{d.name}</h3>
-                <p className="text-sm text-gray-500">
-                  Program: {d.program_name || d.program_id}
-                  {d.category && (
-                    <span className="ml-2 px-2 py-0.5 bg-gray-100 rounded text-xs">
-                      {d.category}
-                    </span>
-                  )}
-                </p>
-                <div className="flex gap-4 mt-1 text-xs text-gray-400">
-                  {d.chain_id && <span>Chain ID: {d.chain_id}</span>}
-                  <span>Created: {new Date(d.created_at).toLocaleDateString()}</span>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold">{d.name}</h3>
+                  <p className="text-sm text-gray-500">
+                    App: {d.program_name || d.program_slug}
+                    {d.category && (
+                      <span className="ml-2 px-2 py-0.5 bg-gray-100 rounded text-xs">
+                        {d.category}
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex gap-4 mt-1 text-xs text-gray-400">
+                    {d.chain_id && <span>Chain ID: {d.chain_id}</span>}
+                    {d.l1_port && <span>L1: :{d.l1_port}</span>}
+                    {d.l2_port && <span>L2: :{d.l2_port}</span>}
+                    <span>Created: {new Date(d.created_at).toLocaleDateString()}</span>
+                  </div>
                 </div>
+                <DeploymentStatusBadge phase={d.phase} />
               </div>
-              <div className="flex items-center gap-3">
-                <span
-                  className={`px-2 py-1 rounded text-xs font-medium ${
-                    d.status === "configured"
-                      ? "bg-yellow-100 text-yellow-700"
-                      : d.status === "active"
-                      ? "bg-green-100 text-green-700"
-                      : "bg-gray-100 text-gray-600"
-                  }`}
-                >
-                  {d.status}
-                </span>
-                <Link
-                  href={`/deployments/${d.id}`}
-                  className="text-blue-600 hover:underline text-sm"
-                >
-                  Details
-                </Link>
-              </div>
-            </div>
+            </Link>
           ))}
         </div>
       )}

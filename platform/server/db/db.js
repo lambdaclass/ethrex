@@ -21,6 +21,34 @@ function getDb() {
 function runMigrations(database) {
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf-8");
   database.exec(schema);
+
+  // Add deployment engine columns if they don't exist (for existing DBs)
+  const deploymentCols = database.prepare("PRAGMA table_info(deployments)").all();
+  const colNames = deploymentCols.map((c) => c.name);
+  const newCols = [
+    { name: "docker_project", type: "TEXT" },
+    { name: "l1_port", type: "INTEGER" },
+    { name: "l2_port", type: "INTEGER" },
+    { name: "phase", type: "TEXT DEFAULT 'configured'" },
+    { name: "bridge_address", type: "TEXT" },
+    { name: "proposer_address", type: "TEXT" },
+    { name: "error_message", type: "TEXT" },
+    { name: "host_id", type: "TEXT" },
+    { name: "proof_coord_port", type: "INTEGER" },
+    { name: "deploy_dir", type: "TEXT" },
+    { name: "tools_l1_explorer_port", type: "INTEGER" },
+    { name: "tools_l2_explorer_port", type: "INTEGER" },
+    { name: "tools_bridge_ui_port", type: "INTEGER" },
+    { name: "tools_db_port", type: "INTEGER" },
+    { name: "tools_metrics_port", type: "INTEGER" },
+    { name: "env_project_id", type: "TEXT" },
+    { name: "env_updated_at", type: "INTEGER" },
+  ];
+  for (const col of newCols) {
+    if (!colNames.includes(col.name)) {
+      database.exec(`ALTER TABLE deployments ADD COLUMN ${col.name} ${col.type}`);
+    }
+  }
 }
 
 function seedOfficialPrograms(database) {

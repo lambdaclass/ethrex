@@ -18,8 +18,7 @@ use ethrex_crypto::keccak::keccak_hash;
 
 use super::constants::{
     BURN_ADDRESS, COMMON_BRIDGE_L2_ADDRESS, ETH_TOKEN_ADDRESS, L1MESSAGE_TOPIC,
-    L2_TO_L1_MESSENGER_ADDRESS, MESSENGER_LAST_MESSAGE_ID_SLOT, WITHDRAWAL_GAS,
-    WITHDRAWAL_INITIATED_TOPIC,
+    L2_TO_L1_MESSENGER_ADDRESS, MESSENGER_LAST_MESSAGE_ID_SLOT, WITHDRAWAL_INITIATED_TOPIC,
 };
 use crate::common::app_execution::AppCircuitError;
 use crate::common::app_state::AppState;
@@ -31,12 +30,14 @@ use crate::common::app_state::AppState;
 ///   2. BURN_ADDRESS += value (EVM: bridge -> BURN_ADDRESS.call{value}(""))
 ///   3. Messenger.lastMessageId += 1 (storage slot 0)
 ///
-/// Returns `(gas_used, new_message_id)` for receipt and log generation.
+/// Returns `new_message_id` for receipt and log generation.
+/// Gas is NOT returned here — the caller uses the block header's gas_used
+/// to match the actual EVM gas, which varies with storage state (cold/warm).
 pub fn handle_withdrawal(
     state: &mut AppState,
     tx: &Transaction,
     sender: Address,
-) -> Result<(u64, U256), AppCircuitError> {
+) -> Result<U256, AppCircuitError> {
     let value = tx.value();
 
     // 1. sender -= value
@@ -59,7 +60,7 @@ pub fn handle_withdrawal(
         new_id,
     )?;
 
-    Ok((WITHDRAWAL_GAS, new_id))
+    Ok(new_id)
 }
 
 /// Generate the two EVM-matching event logs for a withdrawal transaction.
@@ -246,7 +247,7 @@ mod tests {
         );
 
         let tx = make_withdrawal_tx(receiver, five_eth, sender);
-        let (gas, msg_id) = handle_withdrawal(&mut state, &tx, sender).unwrap();
+        let msg_id = handle_withdrawal(&mut state, &tx, sender).unwrap();
 
         assert_eq!(state.get_balance(sender).unwrap(), five_eth);
         assert_eq!(state.get_balance(BURN_ADDRESS).unwrap(), five_eth);
@@ -257,7 +258,6 @@ mod tests {
                 .unwrap(),
             U256::one()
         );
-        assert_eq!(gas, WITHDRAWAL_GAS);
     }
 
     #[test]
@@ -280,11 +280,11 @@ mod tests {
         );
 
         let tx = make_withdrawal_tx(receiver, one_eth, sender);
-        let (_, msg_id_1) = handle_withdrawal(&mut state, &tx, sender).unwrap();
+        let msg_id_1 = handle_withdrawal(&mut state, &tx, sender).unwrap();
         assert_eq!(msg_id_1, U256::from(6));
 
         let tx2 = make_withdrawal_tx(receiver, one_eth, sender);
-        let (_, msg_id_2) = handle_withdrawal(&mut state, &tx2, sender).unwrap();
+        let msg_id_2 = handle_withdrawal(&mut state, &tx2, sender).unwrap();
         assert_eq!(msg_id_2, U256::from(7));
     }
 

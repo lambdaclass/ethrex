@@ -3,3 +3,7 @@
 
 # Libs
 lib/
+
+# Foundry build output
+forge-out/
+cache/

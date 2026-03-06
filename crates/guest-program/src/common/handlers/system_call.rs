@@ -7,23 +7,22 @@ use ethrex_common::types::Transaction;
 
 use super::constants::{
     COMMON_BRIDGE_L2_ADDRESS, FEE_TOKEN_RATIO_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS,
-    L2_TO_L1_MESSENGER_ADDRESS, SYSTEM_CALL_GAS,
+    L2_TO_L1_MESSENGER_ADDRESS,
 };
 use crate::common::app_execution::AppCircuitError;
 use crate::common::app_state::AppState;
 
 /// Handle a system contract call (L1Messenger, FeeTokenRegistry, etc.).
 ///
-/// Returns the fixed gas cost for this operation.
+/// Gas is NOT returned here — the caller uses the block header's gas_used.
 pub fn handle_system_call(
     _state: &mut AppState,
     _tx: &Transaction,
     _sender: Address,
     _target: Address,
-) -> Result<u64, AppCircuitError> {
+) -> Result<(), AppCircuitError> {
     // TODO: Implement system contract logic per contract.
-    // For now, just charge a fixed gas cost.
-    Ok(SYSTEM_CALL_GAS)
+    Ok(())
 }
 
 /// Check if an address is a known system contract.

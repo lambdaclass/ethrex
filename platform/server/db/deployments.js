@@ -35,7 +35,7 @@ function getDeploymentsByUser(userId) {
 
 function updateDeployment(id, fields) {
   const db = getDb();
-  const allowed = ["name", "chain_id", "rpc_url", "status", "config"];
+  const allowed = ["name", "chain_id", "rpc_url", "status", "config", "docker_project", "l1_port", "l2_port", "proof_coord_port", "phase", "bridge_address", "proposer_address", "error_message", "host_id", "deploy_dir", "tools_l1_explorer_port", "tools_l2_explorer_port", "tools_bridge_ui_port", "tools_db_port", "tools_metrics_port", "env_project_id", "env_updated_at"];
   const updates = [];
   const values = [];
   for (const [key, value] of Object.entries(fields)) {
@@ -55,4 +55,25 @@ function deleteDeployment(id) {
   db.prepare("DELETE FROM deployments WHERE id = ?").run(id);
 }
 
-module.exports = { createDeployment, getDeploymentById, getDeploymentsByUser, updateDeployment, deleteDeployment };
+function getNextAvailablePorts() {
+  const db = getDb();
+  const result = db.prepare(
+    `SELECT MAX(l1_port) as max_l1, MAX(l2_port) as max_l2, MAX(proof_coord_port) as max_pc,
+            MAX(tools_l1_explorer_port) as max_tl1, MAX(tools_l2_explorer_port) as max_tl2,
+            MAX(tools_bridge_ui_port) as max_tbridge, MAX(tools_db_port) as max_tdb,
+            MAX(tools_metrics_port) as max_tmetrics
+     FROM deployments WHERE l1_port IS NOT NULL`
+  ).get();
+  return {
+    l1Port: (result.max_l1 || 8544) + 1,
+    l2Port: (result.max_l2 || 1728) + 1,
+    proofCoordPort: (result.max_pc || 3899) + 1,
+    toolsL1ExplorerPort: (result.max_tl1 || 8083) + 1,
+    toolsL2ExplorerPort: (result.max_tl2 || 8082) + 1,
+    toolsBridgeUIPort: (result.max_tbridge || 3009) + 1,
+    toolsDbPort: (result.max_tdb || 7432) + 1,
+    toolsMetricsPort: (result.max_tmetrics || 3701) + 1,
+  };
+}
+
+module.exports = { createDeployment, getDeploymentById, getDeploymentsByUser, updateDeployment, deleteDeployment, getNextAvailablePorts };

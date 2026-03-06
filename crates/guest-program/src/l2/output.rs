@@ -129,6 +129,10 @@ mod tests {
         assert_eq!(encoded.len(), 320);
     }
 
+    // NOTE: Prover-log-based encoding tests (batch 8/11/12) have been moved to
+    // integration tests under tests/test_program_output.rs using fixture JSON files.
+    // See tests/fixtures/zk-dex/ for the fixture data.
+
     /// Verify encoding with l2_in_message_rolling_hashes appends (u64 BE + H256) tuples.
     #[test]
     fn l2_encode_with_l2_message_hashes() {

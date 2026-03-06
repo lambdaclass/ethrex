@@ -1,0 +1,37 @@
+name: Fixture Offline Tests
+
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/guest-program/**"
+      - "crates/l2/common/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  fixture-tests:
+    name: Fixture offline tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Run fixture tests
+        run: |
+          cargo test -p ethrex-guest-program \
+            --test test_program_output \
+            --test test_commitment_match \
+            --test test_state_continuity

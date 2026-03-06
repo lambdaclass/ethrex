@@ -243,8 +243,7 @@ pub fn execute_app_circuit<C: AppCircuit>(
 
             // ── ETH transfer (no calldata) ── common
             if tx.data().is_empty() {
-                let gas =
-                    eth_transfer::handle_eth_transfer(&mut state, sender, to_address, tx.value())?;
+                eth_transfer::handle_eth_transfer(&mut state, sender, to_address, tx.value())?;
                 cumulative_gas += gas;
                 gas_fee::apply_gas_fee_distribution(
                     &mut state,
@@ -266,7 +265,7 @@ pub fn execute_app_circuit<C: AppCircuit>(
 
             // ── Withdrawal (CommonBridgeL2) ── common
             if to_address == COMMON_BRIDGE_L2_ADDRESS {
-                let (gas, message_id) = withdrawal::handle_withdrawal(&mut state, tx, sender)?;
+                let message_id = withdrawal::handle_withdrawal(&mut state, tx, sender)?;
                 cumulative_gas += gas;
                 gas_fee::apply_gas_fee_distribution(
                     &mut state,
@@ -288,7 +287,7 @@ pub fn execute_app_circuit<C: AppCircuit>(
 
             // ── System contract calls ── common
             if system_call::is_system_contract(to_address) {
-                let gas = system_call::handle_system_call(&mut state, tx, sender, to_address)?;
+                system_call::handle_system_call(&mut state, tx, sender, to_address)?;
                 cumulative_gas += gas;
                 gas_fee::apply_gas_fee_distribution(
                     &mut state,

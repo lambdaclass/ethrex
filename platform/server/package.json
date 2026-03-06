@@ -16,6 +16,7 @@
     "express": "^4.21.0",
     "google-auth-library": "^10.5.0",
     "multer": "^1.4.5-lts.1",
+    "ssh2": "^1.17.0",
     "uuid": "^11.1.0"
   }
 }

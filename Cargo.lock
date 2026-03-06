@@ -4000,6 +4000,7 @@ dependencies = [
  "risc0-build",
  "rkyv",
  "serde",
+ "serde_json",
  "serde_with",
  "sha2",
  "sp1-build",
