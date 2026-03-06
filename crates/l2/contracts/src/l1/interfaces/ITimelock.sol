@@ -15,10 +15,10 @@ interface ITimelock {
     event EmergencyExecution(address indexed target, uint256 value, bytes data);
 
     // @notice Used for functions that can only be called by the Timelock itself.
-    error TimelockCallerNotSelf();
+    error TimelockCallerNotSelf(); // 0xc8fe83ea
 
     // @notice Used for other initialize() from contracts that the Timelock inherits from
-    error TimelockUseCustomInitialize();
+    error TimelockUseCustomInitialize(); // 0x3f348ad0
 
     /// @notice The OnChainProposer contract controlled by this timelock.
     function onChainProposer() external view returns (IOnChainProposer);
