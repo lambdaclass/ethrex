@@ -318,6 +318,6 @@ L1 Proof Sender: Failed because of an EthClient error:
 ### 남은 작업 (TODO)
 
 1. ~~[DEBUG-00e] 로그 제거~~ — 두 버그 모두 해결, 로그 불필요
-2. compose-generator에 `ETHREX_DUMP_FIXTURES` 옵션 추가 (선택적 활성화)
+2. ~~compose-generator에 `ETHREX_DUMP_FIXTURES` 옵션 추가~~ — ✅ `dumpFixtures` config 옵션으로 구현
 3. 다른 앱 (evm-l2, tokamon) fixture 수집
-4. CI 파이프라인에 fixture 테스트 추가
+4. ~~CI 파이프라인에 fixture 테스트 추가~~ — ✅ `pr_fixture_tests.yml`

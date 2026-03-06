@@ -75,9 +75,11 @@ async function provision(deployment) {
 
   // Parse config
   let deployDir = null;
+  let dumpFixtures = false;
   try {
     const config = deployment.config ? JSON.parse(deployment.config) : {};
     deployDir = config.deployDir || null;
+    dumpFixtures = !!config.dumpFixtures;
   } catch {}
 
   const { l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = getNextAvailablePorts();
@@ -102,7 +104,7 @@ async function provision(deployment) {
 
   try {
     const gpu = docker.hasNvidiaGpu();
-    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName, gpu });
+    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName, gpu, dumpFixtures });
     const composeFile = writeComposeFile(id, composeContent, deployDir);
 
     emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
