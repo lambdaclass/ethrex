@@ -124,9 +124,10 @@ npx tsc --noEmit
 # 완료 후 detail page에서 Blockscout/Bridge UI 링크 확인
 ```
 
-## 스코프 밖 (향후 작업)
+## 스코프 밖 (향후 작업) — 모두 완료
 
-- Tools compose 포트 동적화 (현재 8082/8083/3000 하드코딩)
-- GPU 감지 및 compose override
-- Metrics 포트 노출
-- Deployer exit code 검증
+- ~~Tools compose 포트 동적화~~ — ✅ `TOOLS_*_PORT` 환경변수로 동적 할당
+- ~~GPU 감지 및 compose override~~ — ✅ `hasNvidiaGpu()` + NVIDIA device reservation
+- ~~Metrics 포트 노출~~ — ✅ `toolsMetricsPort` DB + compose 연동
+- ~~Deployer exit code 검증~~ — ✅ bridge/proposer 주소 null 검증 + 에러 throw
+- `dumpFixtures` compose 옵션 — ✅ 배포 config에서 fixture 수집 활성화
