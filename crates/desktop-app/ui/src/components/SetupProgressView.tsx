@@ -102,7 +102,7 @@ export default function SetupProgressView({ chainId, chainName, chainIcon, onDon
 
         {/* Steps */}
         <div className="space-y-3 mb-6">
-          {progress?.steps.map((step, i) => (
+          {progress?.steps.map((step) => (
             <div key={step.id} className="flex items-center gap-3">
               <div className="flex-shrink-0">
                 {stepIcon(step.status)}

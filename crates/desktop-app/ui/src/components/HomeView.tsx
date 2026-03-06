@@ -1,3 +1,4 @@
+import type React from 'react'
 import { useLang } from '../App'
 import { t } from '../i18n'
 import type { ViewType } from '../App'
@@ -8,7 +9,7 @@ interface HomeViewProps {
   onCreateWithNetwork: (network: NetworkMode) => void
 }
 
-const features: { icon: JSX.Element; titleKey: string }[] = [
+const features: { icon: React.JSX.Element; titleKey: string }[] = [
   {
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -59,7 +60,7 @@ const features: { icon: JSX.Element; titleKey: string }[] = [
   },
 ]
 
-const steps: { num: string; titleKey: string; descKey: string; badgeColor: string; network: NetworkMode; icon: JSX.Element }[] = [
+const steps: { num: string; titleKey: string; descKey: string; badgeColor: string; network: NetworkMode; icon: React.JSX.Element }[] = [
   {
     num: '1',
     titleKey: 'home.step1',
@@ -98,7 +99,7 @@ const steps: { num: string; titleKey: string; descKey: string; badgeColor: strin
   },
 ]
 
-const quickLinks: { labelKey: string; view: ViewType; icon: JSX.Element }[] = [
+const quickLinks: { labelKey: string; view: ViewType; icon: React.JSX.Element }[] = [
   {
     labelKey: 'nav.openl2',
     view: 'openl2',

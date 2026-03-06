@@ -1,3 +1,4 @@
+import type React from 'react'
 import type { ViewType } from '../App'
 import { useLang } from '../App'
 import { t } from '../i18n'
@@ -7,7 +8,7 @@ interface SidebarProps {
   onNavigate: (view: ViewType) => void
 }
 
-const navItems: { view: ViewType; labelKey: string; icon: JSX.Element }[] = [
+const navItems: { view: ViewType; labelKey: string; icon: React.JSX.Element }[] = [
   {
     view: 'home', labelKey: 'nav.home',
     icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
