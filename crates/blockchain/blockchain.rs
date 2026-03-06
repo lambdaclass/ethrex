@@ -412,7 +412,7 @@ impl Blockchain {
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
-                let vm_type = vm.vm_type;
+                let _vm_type = vm.vm_type;
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
@@ -425,8 +425,8 @@ impl Blockchain {
                                 debug!("BAL warming failed (non-fatal): {e}");
                             }
                         } else {
-                            // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            if let Err(e) = LEVM::warm_block(block, caching_store, vm_type) {
+                            // Pre-Amsterdam / P2P sync: static analysis warming
+                            if let Err(e) = LEVM::warm_block_static(block, caching_store) {
                                 debug!("Block warming failed (non-fatal): {e}");
                             }
                         }

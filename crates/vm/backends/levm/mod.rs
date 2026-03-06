@@ -1,4 +1,5 @@
 pub mod db;
+mod static_warming;
 mod tracing;
 
 use super::BlockExecutionResult;
@@ -1104,6 +1105,22 @@ impl LEVM {
 
         Ok(())
     }
+
+    /// Pre-warm state using static analysis instead of speculative re-execution.
+    /// This is faster than warm_block() but may miss some dynamic storage accesses.
+    ///
+    /// Extracts account and storage access patterns from:
+    /// - Transaction call targets (tx.to())
+    /// - Transaction senders (for nonce/balance checks)
+    /// - Contract bytecode (static SLOAD slot keys via PUSH+SLOAD pattern scanning)
+    pub fn warm_block_static(
+        block: &Block,
+        store: Arc<dyn Database>,
+    ) -> Result<(), EvmError> {
+        static_warming::warm_block_static(block, store)
+            .map_err(|e| EvmError::Custom(e))
+    }
+
 
     fn send_state_transitions_tx(
         merkleizer: &Sender<Vec<AccountUpdate>>,
