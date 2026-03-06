@@ -3,8 +3,8 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-// DB path: ~/.tokamak-appchain/local.sqlite
-const DATA_DIR = path.join(os.homedir(), ".tokamak-appchain");
+// DB path: ~/.tokamak-appchain/local.sqlite (or TOKAMAK_DATA_DIR for testing)
+const DATA_DIR = process.env.TOKAMAK_DATA_DIR || path.join(os.homedir(), ".tokamak-appchain");
 const DB_PATH = path.join(DATA_DIR, "local.sqlite");
 
 // Ensure data directory exists

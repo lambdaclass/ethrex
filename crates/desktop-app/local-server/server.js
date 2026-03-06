@@ -42,6 +42,10 @@ app.use((err, req, res, _next) => {
 });
 
 // Bind to localhost only (security: no external access)
-app.listen(PORT, "127.0.0.1", () => {
-  console.log(`Tokamak local server running on http://127.0.0.1:${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, "127.0.0.1", () => {
+    console.log(`Tokamak local server running on http://127.0.0.1:${PORT}`);
+  });
+}
+
+module.exports = app;
