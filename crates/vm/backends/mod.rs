@@ -130,12 +130,29 @@ impl Evm {
         // Track cumulative post-refund gas for receipt
         *cumulative_gas_spent += execution_report.gas_spent;
 
-        let receipt = Receipt::new(
+        let mut receipt = Receipt::new(
             tx.tx_type(),
             execution_report.is_success(),
             *cumulative_gas_spent,
             execution_report.logs.clone(),
         );
+
+        // For frame transactions, populate payer and per-frame receipts
+        if matches!(tx, Transaction::FrameTransaction(_)) {
+            receipt.payer = execution_report.payer_address;
+            receipt.frame_receipts = execution_report.frame_results.map(|results| {
+                results
+                    .into_iter()
+                    .map(
+                        |(status, gas_used, logs)| ethrex_common::types::FrameReceipt {
+                            status,
+                            gas_used,
+                            logs,
+                        },
+                    )
+                    .collect()
+            });
+        }
 
         // Return gas_spent (post-refund) for block value calculation
         Ok((receipt, execution_report.gas_spent))
