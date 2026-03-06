@@ -1,6 +1,7 @@
 mod ai_provider;
 mod appchain_manager;
 mod commands;
+mod local_server;
 mod process_manager;
 mod runner;
 
@@ -52,6 +53,14 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Start local-server in background
+            let local_server: Arc<local_server::LocalServer> = app.state::<Arc<local_server::LocalServer>>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = local_server.start().await {
+                    log::error!("Failed to start local-server: {}", e);
+                }
+            });
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -65,6 +74,7 @@ pub fn run() {
         .manage(Arc::new(appchain_manager::AppchainManager::new()))
         .manage(Arc::new(runner::ProcessRunner::new()))
         .manage(Arc::new(ai_provider::AiProvider::new()))
+        .manage(Arc::new(local_server::LocalServer::new()))
         .invoke_handler(tauri::generate_handler![
             get_ai_config,
             save_ai_config,
@@ -85,6 +95,10 @@ pub fn run() {
             start_appchain_setup,
             get_setup_progress,
             stop_appchain,
+            start_local_server,
+            stop_local_server,
+            get_local_server_status,
+            open_deployment_ui,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

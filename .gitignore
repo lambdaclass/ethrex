@@ -158,6 +158,7 @@ platform/server/db/*.sqlite-wal
 zk-dex-l2-*.toml
 
 crates/desktop-app/ui/node_modules/
+crates/desktop-app/local-server/node_modules/
 
 # TypeScript build info
 *.tsbuildinfo

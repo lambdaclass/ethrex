@@ -2,6 +2,7 @@ use crate::ai_provider::{AiConfig, AiProvider, ChatMessage};
 use crate::appchain_manager::{
     AppchainConfig, AppchainManager, AppchainStatus, NetworkMode, SetupProgress, StepStatus,
 };
+use crate::local_server::LocalServer;
 use crate::process_manager::{NodeInfo, ProcessManager, ProcessStatus};
 use crate::runner::ProcessRunner;
 use serde::{Deserialize, Serialize};
@@ -276,4 +277,64 @@ pub async fn stop_appchain(
     am.update_status(&id, AppchainStatus::Stopped);
     am.add_log(&id, "Appchain stopped by user.".to_string());
     Ok(())
+}
+
+// ============================================================================
+// Local Server (Deployment Engine)
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct LocalServerStatus {
+    pub running: bool,
+    pub healthy: bool,
+    pub url: String,
+    pub port: u16,
+}
+
+#[tauri::command]
+pub async fn start_local_server(
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<String, String> {
+    server.start().await?;
+    Ok(server.url())
+}
+
+#[tauri::command]
+pub async fn stop_local_server(
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<(), String> {
+    server.stop().await
+}
+
+#[tauri::command]
+pub async fn get_local_server_status(
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<LocalServerStatus, String> {
+    let running = server.is_running().await;
+    let healthy = if running {
+        server.health_check().await
+    } else {
+        false
+    };
+    Ok(LocalServerStatus {
+        running,
+        healthy,
+        url: server.url(),
+        port: server.port(),
+    })
+}
+
+#[tauri::command]
+pub async fn open_deployment_ui(
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<(), String> {
+    // Ensure server is running
+    if !server.is_running().await {
+        server.start().await?;
+        // Wait briefly for server to be ready
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
+
+    let url = format!("http://127.0.0.1:{}", server.port());
+    open::that(&url).map_err(|e| format!("Failed to open browser: {e}"))
 }
