@@ -20,7 +20,9 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
+    types::{
+        AccessListEntry, Code, Fork, FrameMode, Log, Transaction, TxType, fee_config::FeeConfig,
+    },
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
@@ -354,6 +356,11 @@ impl Substate {
         self.transient_storage.insert((*to, *key), value);
     }
 
+    /// Clear all transient storage (used between frames in frame transactions).
+    pub fn clear_transient_storage(&mut self) {
+        self.transient_storage.clear();
+    }
+
     /// Extract all logs in order.
     pub fn extract_logs(&self) -> Vec<Log> {
         fn inner(substrate: &Substate, target: &mut Vec<Log>) {
@@ -411,6 +418,31 @@ impl Substate {
 ///     println!("Transaction reverted");
 /// }
 /// ```
+/// Context for frame transaction (EIP-8141) execution.
+/// This is set when executing a frame transaction and is used by
+/// APPROVE, TXPARAMLOAD, TXPARAMSIZE, and TXPARAMCOPY opcodes.
+#[derive(Debug, Clone)]
+pub struct FrameTxContext {
+    /// Whether the sender has approved (APPROVE scope 0 or 2)
+    pub sender_approved: bool,
+    /// Whether a payer has approved (APPROVE scope 1 or 2)
+    pub payer_approved: bool,
+    /// The address that approved payment
+    pub payer_address: Option<Address>,
+    /// The frames in this transaction
+    pub frames: Vec<ethrex_common::types::Frame>,
+    /// Per-frame execution results (status, gas_used, logs)
+    pub frame_results: Vec<(bool, u64, Vec<Log>)>,
+    /// Index of the currently executing frame
+    pub current_frame_index: usize,
+    /// The sig_hash of the frame transaction
+    pub sig_hash: H256,
+    /// The full frame transaction (for TXPARAMLOAD access)
+    pub tx: ethrex_common::types::FrameTransaction,
+    /// Whether APPROVE was called in the current frame
+    pub approve_called_in_current_frame: bool,
+}
+
 pub struct VM<'a> {
     /// Stack of parent call frames (for nested calls).
     pub call_frames: Vec<CallFrame>,
@@ -436,6 +468,8 @@ pub struct VM<'a> {
     pub stack_pool: Vec<Stack>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
+    /// Frame transaction context (EIP-8141). Set when executing a frame tx.
+    pub frame_tx_context: Option<FrameTxContext>,
 
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
@@ -487,6 +521,7 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
+            frame_tx_context: None,
             opcode_table: VM::build_opcode_table(fork),
         };
 
@@ -519,6 +554,11 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        // Detect frame transaction and branch to specialized execution
+        if self.tx.tx_type() == TxType::Frame {
+            return self.execute_frame_tx();
+        }
+
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
@@ -548,6 +588,249 @@ impl<'a> VM<'a> {
         let context_result = self.run_execution()?;
 
         let report = self.finalize_execution(context_result)?;
+
+        Ok(report)
+    }
+
+    /// Execute a frame transaction (EIP-8141).
+    /// This bypasses the normal prepare/finalize hooks and orchestrates per-frame execution.
+    fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {
+        use crate::errors::TxResult;
+
+        let frame_tx = match &self.tx {
+            Transaction::FrameTransaction(ft) => ft.clone(),
+            _ => unreachable!(),
+        };
+
+        // Simplified validation (skip balance deduction, nonce increment, value transfer, EOA check)
+        // Keep: gas limit checks, fee validation, nonce mismatch check
+        let sender = frame_tx.sender;
+
+        // Check nonce matches
+        let sender_info = self.db.get_account(sender)?.info.clone();
+        if sender_info.nonce != frame_tx.nonce {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::NonceMismatch {
+                    expected: sender_info.nonce,
+                    actual: frame_tx.nonce,
+                },
+            ));
+        }
+
+        // Check priority fee <= max fee
+        if frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                    priority_fee: U256::from(frame_tx.max_priority_fee_per_gas),
+                    max_fee_per_gas: U256::from(frame_tx.max_fee_per_gas),
+                },
+            ));
+        }
+
+        // Check max_fee >= base_fee
+        if U256::from(frame_tx.max_fee_per_gas) < self.env.base_fee_per_gas {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InsufficientMaxFeePerGas,
+            ));
+        }
+
+        // Initialize FrameTxContext
+        let sig_hash = frame_tx.compute_sig_hash();
+        self.frame_tx_context = Some(FrameTxContext {
+            sender_approved: false,
+            payer_approved: false,
+            payer_address: None,
+            frames: frame_tx.frames.clone(),
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash,
+            tx: frame_tx.clone(),
+            approve_called_in_current_frame: false,
+        });
+
+        // ENTRY_POINT address (0xaa) used as caller for DEFAULT/VERIFY frames
+        let entry_point = Address::from_low_u64_be(0xaa);
+
+        let mut all_logs: Vec<Log> = Vec::new();
+        let mut total_gas_used: u64 = 0;
+        let mut tx_invalid = false;
+
+        // Execute frames sequentially
+        for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
+            let ctx =
+                self.frame_tx_context
+                    .as_mut()
+                    .ok_or(VMError::Internal(InternalError::Custom(
+                        "missing frame tx context".to_string(),
+                    )))?;
+            ctx.current_frame_index = frame_idx;
+            ctx.approve_called_in_current_frame = false;
+
+            let target = frame.target.unwrap_or(sender);
+
+            // Determine caller and static mode per frame mode
+            let (caller, is_static) = match frame.mode {
+                FrameMode::Default => (entry_point, false),
+                FrameMode::Verify => (entry_point, true),
+                FrameMode::Sender => {
+                    // SENDER mode requires sender_approved
+                    let ctx = self.frame_tx_context.as_ref().ok_or(VMError::Internal(
+                        InternalError::Custom("missing frame tx context".to_string()),
+                    ))?;
+                    if !ctx.sender_approved {
+                        tx_invalid = true;
+                        break;
+                    }
+                    (sender, false)
+                }
+            };
+
+            // Set env.origin for this frame (ORIGIN opcode reads this)
+            self.env.origin = caller;
+
+            // Get target's bytecode
+            let bytecode = self.db.get_account_code(target)?.clone();
+
+            // Create a new CallFrame for this frame
+            let call_frame = CallFrame::new(
+                caller,                                    // msg_sender
+                target,                                    // to
+                target,                                    // code_address
+                bytecode,                                  // bytecode
+                U256::zero(),       // msg_value (frames don't transfer value)
+                frame.data.clone(), // calldata
+                is_static,          // is_static
+                frame.gas_limit,    // gas_limit
+                0,                  // depth
+                false,              // should_transfer_value
+                false,              // is_create
+                0,                  // ret_offset
+                0,                  // ret_size
+                self.stack_pool.pop().unwrap_or_default(), // stack
+                Memory::default(),  // memory
+            );
+
+            // Save current call frame and set up the frame's call frame
+            let saved_call_frame = mem::replace(&mut self.current_call_frame, call_frame);
+            let saved_call_frames = mem::take(&mut self.call_frames);
+
+            // Push substate backup for per-frame state isolation
+            self.substate.push_backup();
+
+            // Execute the frame
+            let frame_result = self.run_execution();
+
+            let (frame_success, frame_gas_used, frame_logs) = match frame_result {
+                Ok(ctx_result) => {
+                    let gas_used = ctx_result.gas_used;
+                    let success = ctx_result.is_success();
+
+                    if success {
+                        self.substate.commit_backup();
+                        let logs = self.substate.extract_logs();
+                        // Re-add logs to substate so they persist
+                        for log in &logs {
+                            self.substate.add_log(log.clone());
+                        }
+                        (true, gas_used, logs)
+                    } else {
+                        self.substate.revert_backup();
+                        self.restore_cache_state()?;
+                        (false, gas_used, Vec::new())
+                    }
+                }
+                Err(_e) => {
+                    self.substate.revert_backup();
+                    self.restore_cache_state()?;
+                    (false, frame.gas_limit, Vec::new())
+                }
+            };
+
+            // Restore call frame state
+            let finished_frame = mem::replace(&mut self.current_call_frame, saved_call_frame);
+            self.call_frames = saved_call_frames;
+            // Return the stack to the pool
+            self.stack_pool.push(finished_frame.stack);
+
+            total_gas_used = total_gas_used
+                .checked_add(frame_gas_used)
+                .ok_or(VMError::Internal(InternalError::Overflow))?;
+            all_logs.extend(frame_logs.clone());
+
+            // Store frame result in context
+            let ctx =
+                self.frame_tx_context
+                    .as_mut()
+                    .ok_or(VMError::Internal(InternalError::Custom(
+                        "missing frame tx context".to_string(),
+                    )))?;
+            ctx.frame_results
+                .push((frame_success, frame_gas_used, frame_logs));
+
+            // VERIFY frame enforcement: if VERIFY frame didn't call APPROVE, TX is invalid
+            if frame.mode == FrameMode::Verify && !ctx.approve_called_in_current_frame {
+                tx_invalid = true;
+                break;
+            }
+
+            // Clear transient storage between frames
+            self.substate.clear_transient_storage();
+        }
+
+        // Post-execution: check payer_approved
+        let ctx =
+            self.frame_tx_context
+                .as_ref()
+                .ok_or(VMError::Internal(InternalError::Custom(
+                    "missing frame tx context".to_string(),
+                )))?;
+        if !ctx.payer_approved {
+            tx_invalid = true;
+        }
+
+        if tx_invalid {
+            // TX is invalid — revert everything, return error
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransaction,
+            ));
+        }
+
+        // Take ownership of frame context
+        let ctx = self
+            .frame_tx_context
+            .take()
+            .ok_or(VMError::Internal(InternalError::Custom(
+                "missing frame tx context".to_string(),
+            )))?;
+        let payer = ctx.payer_address.unwrap_or(sender);
+
+        // Gas refunds: refund unused gas to payer
+        let effective_gas_price = self.env.gas_price;
+        let total_gas_limit = frame_tx.total_gas_limit();
+        let gas_refund = total_gas_limit.saturating_sub(total_gas_used);
+        let refund_amount = effective_gas_price
+            .checked_mul(U256::from(gas_refund))
+            .ok_or(VMError::Internal(InternalError::Overflow))?;
+
+        self.increase_account_balance(payer, refund_amount)?;
+
+        // Pay coinbase
+        let priority_fee = effective_gas_price.saturating_sub(self.env.base_fee_per_gas);
+        let coinbase_fee = priority_fee
+            .checked_mul(U256::from(total_gas_used))
+            .ok_or(VMError::Internal(InternalError::Overflow))?;
+        self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
+
+        let report = ExecutionReport {
+            result: TxResult::Success,
+            gas_used: total_gas_used,
+            gas_spent: total_gas_used,
+            gas_refunded: gas_refund,
+            output: Bytes::new(),
+            logs: all_logs,
+            payer_address: ctx.payer_address,
+            frame_results: Some(ctx.frame_results),
+        };
 
         Ok(report)
     }
@@ -683,6 +966,8 @@ impl<'a> VM<'a> {
             gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut ctx_result.output),
             logs,
+            payer_address: None,
+            frame_results: None,
         };
 
         Ok(report)

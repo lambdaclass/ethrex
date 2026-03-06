@@ -3,8 +3,8 @@ use ethrex_common::{
     Address, H256, serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
-        FeeTokenTransaction, LegacyTransaction, PrivilegedL2Transaction, Transaction,
-        WrappedEIP4844Transaction,
+        FeeTokenTransaction, FrameTransaction, LegacyTransaction, PrivilegedL2Transaction,
+        Transaction, WrappedEIP4844Transaction,
     },
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
@@ -55,6 +55,7 @@ pub enum SendRawTransactionRequest {
     EIP7702(EIP7702Transaction),
     PrivilegedL2(PrivilegedL2Transaction),
     FeeToken(FeeTokenTransaction),
+    Frame(FrameTransaction),
 }
 
 impl SendRawTransactionRequest {
@@ -69,6 +70,7 @@ impl SendRawTransactionRequest {
                 Transaction::PrivilegedL2Transaction(t.clone())
             }
             SendRawTransactionRequest::FeeToken(t) => Transaction::FeeTokenTransaction(t.clone()),
+            SendRawTransactionRequest::Frame(t) => Transaction::FrameTransaction(t.clone()),
         }
     }
 
@@ -103,6 +105,8 @@ impl SendRawTransactionRequest {
                     // FeeTokenTransaction
                     0x7d => FeeTokenTransaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::FeeToken),
+                    // FrameTransaction (EIP-8141)
+                    0x6 => FrameTransaction::decode(tx_bytes).map(SendRawTransactionRequest::Frame),
                     // PrivilegedL2Transaction
                     0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::PrivilegedL2),

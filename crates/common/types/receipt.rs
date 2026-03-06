@@ -12,6 +12,41 @@ use serde::{Deserialize, Serialize};
 use crate::types::TxType;
 pub type Index = u64;
 
+/// Per-frame execution result within a frame transaction (EIP-8141)
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct FrameReceipt {
+    pub status: bool,
+    pub gas_used: u64,
+    pub logs: Vec<Log>,
+}
+
+impl RLPEncode for FrameReceipt {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.status)
+            .encode_field(&self.gas_used)
+            .encode_field(&self.logs)
+            .finish();
+    }
+}
+
+impl RLPDecode for FrameReceipt {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (status, decoder) = decoder.decode_field("status")?;
+        let (gas_used, decoder) = decoder.decode_field("gas_used")?;
+        let (logs, decoder) = decoder.decode_field("logs")?;
+        Ok((
+            FrameReceipt {
+                status,
+                gas_used,
+                logs,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
 /// Result of a transaction
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Receipt {
@@ -22,6 +57,12 @@ pub struct Receipt {
     /// Note: Block-level gas accounting (pre-refund for EIP-7778) uses BlockExecutionResult::block_gas_used.
     pub cumulative_gas_used: u64,
     pub logs: Vec<Log>,
+    /// For frame transactions: the address that paid for gas (set by APPROVE)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payer: Option<Address>,
+    /// For frame transactions: per-frame execution results
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_receipts: Option<Vec<FrameReceipt>>,
 }
 
 impl Receipt {
@@ -31,18 +72,30 @@ impl Receipt {
             succeeded,
             cumulative_gas_used,
             logs,
+            payer: None,
+            frame_receipts: None,
         }
     }
 
     pub fn encode_inner(&self) -> Vec<u8> {
         let mut encoded_data = vec![];
         let tx_type: u8 = self.tx_type as u8;
-        Encoder::new(&mut encoded_data)
+        let mut encoder = Encoder::new(&mut encoded_data)
             .encode_field(&tx_type)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
-            .encode_field(&self.logs)
-            .finish();
+            .encode_field(&self.logs);
+        if self.tx_type == TxType::Frame {
+            let empty_frame_receipts = Vec::new();
+            encoder = encoder
+                .encode_field(&self.payer.unwrap_or_default())
+                .encode_field(
+                    self.frame_receipts
+                        .as_ref()
+                        .unwrap_or(&empty_frame_receipts),
+                );
+        }
+        encoder.finish();
         encoded_data
     }
 
@@ -98,12 +151,28 @@ impl RLPDecode for Receipt {
             ));
         };
 
+        let (payer, frame_receipts, decoder) = if tx_type == TxType::Frame {
+            let (payer, decoder): (Address, _) = decoder.decode_field("payer")?;
+            let (frame_receipts, decoder): (Vec<FrameReceipt>, _) =
+                decoder.decode_field("frame_receipts")?;
+            let payer = if payer == Address::zero() {
+                None
+            } else {
+                Some(payer)
+            };
+            (payer, Some(frame_receipts), decoder)
+        } else {
+            (None, None, decoder)
+        };
+
         Ok((
             Receipt {
                 tx_type,
                 succeeded,
                 cumulative_gas_used,
                 logs,
+                payer,
+                frame_receipts,
             },
             decoder.finish()?,
         ))
@@ -182,6 +251,7 @@ impl ReceiptWithBloom {
                     0x2 => TxType::EIP1559,
                     0x3 => TxType::EIP4844,
                     0x4 => TxType::EIP7702,
+                    0x6 => TxType::Frame,
                     0x7d => TxType::FeeToken,
                     0x7e => TxType::Privileged,
                     ty => {
@@ -245,6 +315,7 @@ impl RLPDecode for ReceiptWithBloom {
                 0x2 => TxType::EIP1559,
                 0x3 => TxType::EIP4844,
                 0x4 => TxType::EIP7702,
+                0x6 => TxType::Frame,
                 0x7d => TxType::FeeToken,
                 0x7e => TxType::Privileged,
                 ty => {
@@ -296,6 +367,8 @@ impl From<&ReceiptWithBloom> for Receipt {
             succeeded: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
             logs: receipt.logs.clone(),
+            payer: None,
+            frame_receipts: None,
         }
     }
 }
@@ -352,6 +425,8 @@ mod test {
                 topics: vec![],
                 data: Bytes::from_static(b"foo"),
             }],
+            payer: None,
+            frame_receipts: None,
         };
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
@@ -368,6 +443,8 @@ mod test {
                 topics: vec![],
                 data: Bytes::from_static(b"bar"),
             }],
+            payer: None,
+            frame_receipts: None,
         };
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
@@ -440,6 +517,8 @@ mod test {
                 ],
                 data: Bytes::from_static(b"bar"),
             }],
+            payer: None,
+            frame_receipts: None,
         };
         let encoded_receipt = receipt.encode_inner_with_bloom();
 
@@ -455,5 +534,51 @@ mod test {
         };
         let receipt_with_bloom = ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap();
         assert_eq!(receipt_with_bloom.bloom, correct_bloom);
+    }
+
+    #[test]
+    fn test_frame_receipt_rlp_roundtrip() {
+        let fr = FrameReceipt {
+            status: true,
+            gas_used: 21000,
+            logs: vec![Log {
+                address: Address::random(),
+                topics: vec![],
+                data: Bytes::from_static(b"test"),
+            }],
+        };
+        let encoded = fr.encode_to_vec();
+        let decoded = FrameReceipt::decode(&encoded).unwrap();
+        assert_eq!(fr, decoded);
+    }
+
+    #[test]
+    fn test_receipt_with_frame_fields_rlp_roundtrip() {
+        let receipt = Receipt {
+            tx_type: TxType::Frame,
+            succeeded: true,
+            cumulative_gas_used: 315000,
+            logs: vec![],
+            payer: Some(Address::from_low_u64_be(0x1234)),
+            frame_receipts: Some(vec![
+                FrameReceipt {
+                    status: true,
+                    gas_used: 100000,
+                    logs: vec![],
+                },
+                FrameReceipt {
+                    status: true,
+                    gas_used: 200000,
+                    logs: vec![Log {
+                        address: Address::random(),
+                        topics: vec![],
+                        data: Bytes::from_static(b"frame2"),
+                    }],
+                },
+            ]),
+        };
+        let encoded = receipt.encode_to_vec();
+        let decoded = Receipt::decode(&encoded).unwrap();
+        assert_eq!(receipt, decoded);
     }
 }
