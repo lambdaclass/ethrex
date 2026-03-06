@@ -20,20 +20,30 @@ fn state_continuity_all_apps() {
 
         fixtures.sort_by_key(|f| f.batch_number);
 
-        for window in fixtures.windows(2) {
-            let prev = &window[0];
-            let next = &window[1];
+        // Filter to fixtures that have prover data (exec backend has none)
+        let fixtures_with_prover: Vec<_> = fixtures.iter()
+            .filter(|f| f.prover.is_some())
+            .collect();
+        if fixtures_with_prover.len() < 2 {
+            eprintln!("[{app}] Skipping state_continuity: need 2+ fixtures with prover data, found {}", fixtures_with_prover.len());
+            continue;
+        }
+        for window in fixtures_with_prover.windows(2) {
+            let prev = window[0];
+            let next = window[1];
+            let prev_p = prev.prover.as_ref().unwrap();
+            let next_p = next.prover.as_ref().unwrap();
 
-            let prev_final = hex_to_h256(&prev.prover.final_state_hash);
-            let next_initial = hex_to_h256(&next.prover.initial_state_hash);
+            let prev_final = hex_to_h256(&prev_p.final_state_hash);
+            let next_initial = hex_to_h256(&next_p.initial_state_hash);
 
             assert_eq!(
                 prev_final, next_initial,
                 "[{app}] State continuity broken: batch {} final_state ({}) != batch {} initial_state ({})",
                 prev.batch_number,
-                prev.prover.final_state_hash,
+                prev_p.final_state_hash,
                 next.batch_number,
-                next.prover.initial_state_hash,
+                next_p.initial_state_hash,
             );
         }
     }

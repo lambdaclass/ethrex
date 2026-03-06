@@ -10,7 +10,16 @@ use fixture_types::{discover_all_apps, hex_to_h256, load_all_fixtures};
 
 /// Verify that all shared fields between committer and prover are identical.
 fn assert_committer_matches_prover(fixture: &fixture_types::TestFixture) {
-    let p = &fixture.prover;
+    let p = match &fixture.prover {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "[{}] batch {}: SKIP — no prover data (exec backend)",
+                fixture.app, fixture.batch_number
+            );
+            return;
+        }
+    };
     let c = &fixture.committer;
     let batch = fixture.batch_number;
 
