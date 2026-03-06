@@ -18,7 +18,7 @@ use crate::{
             block_access_lists::{BlockAccessLists, GetBlockAccessLists},
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts68, Receipts69},
-            status::{StatusMessage68, StatusMessage69},
+            status::{StatusMessage68, StatusMessage69, StatusMessage71},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
@@ -677,8 +677,8 @@ where
     if let Some(eth) = state.negotiated_eth_capability.clone() {
         let status = match eth.version {
             68 => Message::Status68(StatusMessage68::new(&state.storage).await?),
-            // eth/71 uses the same status message format as eth/69
-            69 | 71 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            71 => Message::Status71(StatusMessage71::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
@@ -701,6 +701,10 @@ where
             }
             Message::Status69(msg_data) => {
                 trace!(peer=%state.node, "Received Status(69)");
+                backend::validate_status(msg_data, &state.storage, &eth).await?
+            }
+            Message::Status71(msg_data) => {
+                trace!(peer=%state.node, "Received Status(71)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
@@ -937,6 +941,11 @@ async fn handle_incoming_message(
             };
         }
         Message::Status69(msg_data) => {
+            if let Some(eth) = &state.negotiated_eth_capability {
+                backend::validate_status(msg_data, &state.storage, eth).await?
+            };
+        }
+        Message::Status71(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
                 backend::validate_status(msg_data, &state.storage, eth).await?
             };
