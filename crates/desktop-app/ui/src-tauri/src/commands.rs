@@ -279,6 +279,18 @@ pub async fn stop_appchain(
     Ok(())
 }
 
+#[tauri::command]
+pub fn update_appchain_public(
+    id: String,
+    is_public: bool,
+    am: State<Arc<AppchainManager>>,
+) -> Result<(), String> {
+    am.get_appchain(&id)
+        .ok_or(format!("Appchain not found: {id}"))?;
+    am.update_public(&id, is_public);
+    Ok(())
+}
+
 // ============================================================================
 // Local Server (Deployment Engine)
 // ============================================================================

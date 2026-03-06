@@ -95,6 +95,7 @@ pub fn run() {
             start_appchain_setup,
             get_setup_progress,
             stop_appchain,
+            update_appchain_public,
             start_local_server,
             stop_local_server,
             get_local_server_status,

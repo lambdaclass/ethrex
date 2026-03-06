@@ -168,6 +168,15 @@ impl AppchainManager {
         self.save_appchains();
     }
 
+    pub fn update_public(&self, id: &str, is_public: bool) {
+        let mut map = self.appchains.lock().unwrap();
+        if let Some(chain) = map.get_mut(id) {
+            chain.is_public = is_public;
+        }
+        drop(map);
+        self.save_appchains();
+    }
+
     pub fn delete_appchain(&self, id: &str) -> Result<(), String> {
         {
             let mut map = self.appchains.lock().unwrap();
