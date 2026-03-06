@@ -503,7 +503,8 @@ impl L1ProofSender {
     }
 
     /// If the error data contains an invalid proof custom error selector,
-    /// deletes the offending proof from the store.
+    /// deletes the offending proof from the store. If the error is unrecognized,
+    /// deletes all proof types for the batch so provers can regenerate them.
     async fn try_delete_invalid_proof(
         &self,
         data: &str,
@@ -514,6 +515,16 @@ impl L1ProofSender {
             self.rollup_store
                 .delete_proof_by_batch_and_type(batch_number, proof_type)
                 .await?;
+        } else {
+            warn!(
+                "L1 rejected batch {batch_number} with unrecognized error, \
+                 deleting all proofs so provers can regenerate"
+            );
+            for proof_type in &self.needed_proof_types {
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, *proof_type)
+                    .await?;
+            }
         }
         Ok(())
     }
