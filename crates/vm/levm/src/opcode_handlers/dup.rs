@@ -1,38 +1,42 @@
+//! # Stack duplication operations
+//!
+//! Includes the following opcodes:
+//!   - `DUP1` to `DUP16`
+
 use crate::{
     errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
+    opcode_handlers::OpcodeHandler,
     vm::VM,
 };
 
-// Duplication Operation (16)
-// Opcodes: DUP1 ... DUP16
-
-impl<'a> VM<'a> {
-    // DUP operation
-    #[inline]
-    pub fn op_dup<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        // Increase the consumed gas
-        self.current_call_frame
+/// Implementation for the `DUPn` opcodes.
+pub struct OpDupHandler<const N: usize>;
+impl<const N: usize> OpcodeHandler for OpDupHandler<N> {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::DUPN)?;
 
-        // Duplicate the value at the specified depth
-        self.current_call_frame.stack.dup::<N>()?;
+        vm.current_call_frame.stack.dup::<N>()?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // DUPN operation
-    #[inline]
-    pub fn op_dupn(&mut self) -> Result<OpcodeResult, VMError> {
-        // Increase the consumed gas.
-        self.current_call_frame
+/// Implementation for the `DUPN` opcode.
+pub struct OpDupNHandler;
+impl OpcodeHandler for OpDupNHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::DUPN)?;
 
-        let relative_offset = self
+        let relative_offset = vm
             .current_call_frame
             .bytecode
             .bytecode
-            .get(self.current_call_frame.pc)
+            .get(vm.current_call_frame.pc)
             .copied()
             .unwrap_or_default();
 
@@ -49,7 +53,7 @@ impl<'a> VM<'a> {
         // Stack grows downwards, so we add the offset to get deeper elements
         // relative_offset is 1-indexed stack depth (17-235), convert to 0-indexed for array access
         // The n-th element (1-indexed) is at array index offset + (n-1)
-        let absolute_offset = self
+        let absolute_offset = vm
             .current_call_frame
             .stack
             .offset
@@ -57,20 +61,19 @@ impl<'a> VM<'a> {
             .ok_or(ExceptionalHalt::StackUnderflow)?;
 
         // Verify the offset is within stack bounds
-        if absolute_offset >= self.current_call_frame.stack.values.len() {
+        if absolute_offset >= vm.current_call_frame.stack.values.len() {
             return Err(ExceptionalHalt::StackUnderflow.into());
         }
 
         #[expect(unsafe_code, reason = "bound already checked")]
-        self.current_call_frame.stack.push(unsafe {
-            *self
-                .current_call_frame
+        vm.current_call_frame.stack.push(unsafe {
+            *vm.current_call_frame
                 .stack
                 .values
                 .get_unchecked(absolute_offset)
         })?;
 
-        self.current_call_frame.pc = self.current_call_frame.pc.wrapping_add(1);
+        vm.current_call_frame.pc = vm.current_call_frame.pc.wrapping_add(1);
         Ok(OpcodeResult::Continue)
     }
 }
