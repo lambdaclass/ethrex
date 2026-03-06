@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useLang, useTheme } from '../App'
 import { t, langNames } from '../i18n'
+import { platformAPI, type PlatformUser } from '../api/platform'
 import type { Lang } from '../i18n'
 import type { Theme } from '../App'
 
@@ -21,8 +22,16 @@ export default function SettingsView() {
   const [saving, setSaving] = useState(false)
   const [saveResult, setSaveResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
+  // Platform account
+  const [platformUser, setPlatformUser] = useState<PlatformUser | null>(null)
+  const [platformEmail, setPlatformEmail] = useState('')
+  const [platformPassword, setPlatformPassword] = useState('')
+  const [platformLogging, setPlatformLogging] = useState(false)
+  const [platformError, setPlatformError] = useState('')
+
   useEffect(() => {
     loadConfig()
+    loadPlatformUser()
   }, [])
 
   const loadConfig = async () => {
@@ -34,6 +43,40 @@ export default function SettingsView() {
     } catch {
       // defaults
     }
+  }
+
+  const loadPlatformUser = async () => {
+    const hasToken = await platformAPI.loadToken()
+    if (hasToken) {
+      try {
+        const { user } = await platformAPI.me()
+        setPlatformUser(user)
+      } catch {
+        // Token expired or invalid
+        setPlatformUser(null)
+      }
+    }
+  }
+
+  const handlePlatformLogin = async () => {
+    if (!platformEmail.trim() || !platformPassword.trim()) return
+    setPlatformLogging(true)
+    setPlatformError('')
+    try {
+      const { user } = await platformAPI.login(platformEmail.trim(), platformPassword.trim())
+      setPlatformUser(user)
+      setPlatformEmail('')
+      setPlatformPassword('')
+    } catch (e: unknown) {
+      setPlatformError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPlatformLogging(false)
+    }
+  }
+
+  const handlePlatformLogout = async () => {
+    await platformAPI.logout()
+    setPlatformUser(null)
   }
 
   const handleSave = async () => {
@@ -143,6 +186,87 @@ export default function SettingsView() {
               </button>
             ))}
           </div>
+        </section>
+
+        {/* Platform Account */}
+        <section className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 space-y-3 border border-[var(--color-border)]">
+          <h2 className="text-[13px] font-medium">
+            {lang === 'ko' ? 'Platform 계정' : 'Platform Account'}
+          </h2>
+          {platformUser ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[var(--color-accent)] flex items-center justify-center text-sm font-bold text-[var(--color-accent-text)]">
+                  {platformUser.name.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <div className="text-[13px] font-medium">{platformUser.name}</div>
+                  <div className="text-[11px] text-[var(--color-text-secondary)]">{platformUser.email}</div>
+                </div>
+              </div>
+              <p className="text-[11px] text-[var(--color-text-secondary)]">
+                {lang === 'ko'
+                  ? '오픈 앱체인 등록, 프로그램 스토어 등 Platform 기능을 사용할 수 있습니다.'
+                  : 'You can use Platform features like Open Appchain registration and Program Store.'}
+              </p>
+              <button
+                onClick={handlePlatformLogout}
+                className="w-full border border-[var(--color-error)] text-[var(--color-error)] hover:bg-[var(--color-error)] hover:text-white rounded-lg py-2 text-[13px] font-medium transition-colors cursor-pointer"
+              >
+                {lang === 'ko' ? '로그아웃' : 'Logout'}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-[11px] text-[var(--color-text-secondary)]">
+                {lang === 'ko'
+                  ? 'Platform 계정으로 로그인하면 오픈 앱체인 등록 등의 기능을 사용할 수 있습니다.'
+                  : 'Login with your Platform account to register Open Appchains and more.'}
+              </p>
+              <div>
+                <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">
+                  {lang === 'ko' ? '이메일' : 'Email'}
+                </label>
+                <input
+                  type="email"
+                  value={platformEmail}
+                  onChange={e => setPlatformEmail(e.target.value)}
+                  placeholder="email@example.com"
+                  className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-[13px] outline-none border border-[var(--color-border)] placeholder-[var(--color-text-secondary)]"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">
+                  {lang === 'ko' ? '비밀번호' : 'Password'}
+                </label>
+                <input
+                  type="password"
+                  value={platformPassword}
+                  onChange={e => setPlatformPassword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handlePlatformLogin()}
+                  placeholder="••••••••"
+                  className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-[13px] outline-none border border-[var(--color-border)] placeholder-[var(--color-text-secondary)]"
+                />
+              </div>
+              <button
+                onClick={handlePlatformLogin}
+                disabled={platformLogging || !platformEmail.trim() || !platformPassword.trim()}
+                className="w-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 rounded-lg py-2 text-[13px] font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]"
+              >
+                {platformLogging
+                  ? (lang === 'ko' ? '로그인 중...' : 'Logging in...')
+                  : (lang === 'ko' ? '로그인' : 'Login')}
+              </button>
+              {platformError && (
+                <p className="text-[12px] text-[var(--color-error)]">{platformError}</p>
+              )}
+              <p className="text-[10px] text-[var(--color-text-secondary)]">
+                {lang === 'ko'
+                  ? '인증 토큰은 OS 키체인에 안전하게 저장됩니다.'
+                  : 'Auth token is securely stored in the OS keychain.'}
+              </p>
+            </div>
+          )}
         </section>
 
         {/* AI Provider */}
