@@ -20,8 +20,8 @@
 | 앱 자동 탐색 | ✅ | `discover_all_apps()` — 디렉토리만 추가하면 자동 |
 | CI workflow | ✅ | `.github/workflows/pr_fixture_tests.yml` |
 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
-| Phase 3: 오프라인 프루빙 | ⚠️ | dump 코드 완료, Docker 재빌드 + fixture 재수집 필요 |
-| Phase 4: 오프라인 검증 | ⚠️ | dump 코드 완료, Docker 재빌드 + fixture 재수집 필요 |
+| Phase 3: 오프라인 프루빙 | ✅ | `test_offline_proving.rs` — zk-dex 재증명 통과 (439초) |
+| Phase 4: 오프라인 검증 | ✅ | `test_offline_verify.rs` — proof.bin 오프체인 검증 (2.4초) |
 | Phase 5: Foundry on-chain 검증 | ❌ | Solidity 테스트 미구현 |
 | Prover balance_diffs 디코딩 | ⚠️ | 인코딩 포맷 한계로 빈 배열, warn 처리 |
 
@@ -214,8 +214,8 @@ function test_verifyBatch_zk_dex() public {
 | 5 | CI workflow | ✅ | `pr_fixture_tests.yml` |
 | 6 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
 | **7** | **다른 앱 fixture 수집** | **❌** | **evm-l2, tokamon 배포 필요** |
-| 8 | Phase 3: 오프라인 프루빙 | ⚠️ | dump 코드 + 테스트 작성 완료, fixture 재수집 필요 |
-| 9 | Phase 4: 오프라인 검증 | ⚠️ | dump 코드 + 테스트 작성 완료, fixture 재수집 필요 |
+| 8 | Phase 3: 오프라인 프루빙 | ✅ | zk-dex 2배치 재증명 통과 (439초) |
+| 9 | Phase 4: 오프라인 검증 | ✅ | zk-dex 2배치 오프체인 검증 통과 (2.4초) |
 | **10** | **Phase 5: Foundry 검증** | **❌** | **Phase 4 선행** |
 | 11 | Tools 포트 동적화 | ✅ | `TOOLS_*_PORT` 환경변수 |
 | 12 | GPU 감지 compose | ✅ | `hasNvidiaGpu()` + NVIDIA device reservation |
