@@ -6,7 +6,7 @@
 /// computed, SP1Verifier.verifyProof() will revert with "00e".
 mod fixture_types;
 
-use fixture_types::{hex_to_h256, load_all_fixtures};
+use fixture_types::{discover_all_apps, hex_to_h256, load_all_fixtures};
 
 /// Verify that all shared fields between committer and prover are identical.
 fn assert_committer_matches_prover(fixture: &fixture_types::TestFixture) {
@@ -103,13 +103,15 @@ fn assert_committer_matches_prover(fixture: &fixture_types::TestFixture) {
     }
 }
 
-/// Run across ALL fixtures for an app — catches regressions automatically
-/// when new fixtures are added.
+/// Auto-discovery: run across ALL fixtures for ALL apps.
 #[test]
-fn committer_matches_prover_all_zk_dex() {
-    let fixtures = load_all_fixtures("zk-dex");
-    assert!(!fixtures.is_empty(), "No zk-dex fixtures found");
-    for f in &fixtures {
-        assert_committer_matches_prover(f);
+fn committer_matches_prover_all_apps() {
+    let apps = discover_all_apps();
+    assert!(!apps.is_empty(), "No fixture apps found in tests/fixtures/");
+    for app in &apps {
+        let fixtures = load_all_fixtures(app);
+        for f in &fixtures {
+            assert_committer_matches_prover(f);
+        }
     }
 }

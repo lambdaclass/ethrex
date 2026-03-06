@@ -58,6 +58,29 @@ fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
+/// Discover all app directories under tests/fixtures/ that contain at least one .json file.
+pub fn discover_all_apps() -> Vec<String> {
+    let dir = fixtures_dir();
+    let mut apps = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let has_json = std::fs::read_dir(&path)
+                    .map(|rd| rd.flatten().any(|e| e.path().extension().is_some_and(|ext| ext == "json")))
+                    .unwrap_or(false);
+                if has_json {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        apps.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    apps.sort();
+    apps
+}
+
 pub fn load_fixture(app: &str, filename: &str) -> TestFixture {
     let path = fixtures_dir().join(app).join(filename);
     let data = std::fs::read_to_string(&path)
