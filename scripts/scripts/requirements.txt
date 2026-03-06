@@ -1,5 +1,0 @@
-rlp>=4.0
-eth-utils>=2.0
-eth-account>=0.10
-requests>=2.28
-cryptography>=41.0
