@@ -461,41 +461,6 @@ impl L1ProofSender {
             "Sending batch verification transaction to L1"
         );
 
-        // ── DEBUG: Log data from rollup store for publicInputs comparison ──
-        {
-            use ethrex_l2_common::merkle_tree::compute_merkle_root;
-
-            let prev_batch = batch_number - 1;
-            let prev_state = self.rollup_store.get_state_root_by_batch(prev_batch).await;
-            let cur_state = self.rollup_store.get_state_root_by_batch(batch_number).await;
-            let l1_out_hashes = self.rollup_store.get_l1_out_message_hashes_by_batch(batch_number).await;
-            let rolling_hash = self.rollup_store.get_l1_in_messages_rolling_hash_by_batch_number(batch_number).await;
-            let non_priv = self.rollup_store.get_non_privileged_transactions_by_batch(batch_number).await;
-            let balance_diffs = self.rollup_store.get_balance_diffs_by_batch(batch_number).await;
-            let l2_msgs = self.rollup_store.get_l2_in_message_rolling_hashes_by_batch(batch_number).await;
-
-            // Compute merkle root from l1_out hashes
-            let merkle_root = l1_out_hashes.as_ref().ok()
-                .and_then(|opt| opt.as_ref())
-                .map(|hashes| compute_merkle_root(hashes));
-
-            info!("[DEBUG-00e] === Rollup store data for batch {} ===", batch_number);
-            info!("[DEBUG-00e]   prev_state (batch {}): {:?}", prev_batch,
-                prev_state.as_ref().ok().and_then(|o| o.as_ref()).map(|h| format!("0x{}", hex::encode(h.0))));
-            info!("[DEBUG-00e]   cur_state:             {:?}",
-                cur_state.as_ref().ok().and_then(|o| o.as_ref()).map(|h| format!("0x{}", hex::encode(h.0))));
-            info!("[DEBUG-00e]   l1_out_merkle_root:    {:?}",
-                merkle_root.as_ref().map(|h| format!("0x{}", hex::encode(h.0))));
-            info!("[DEBUG-00e]   l1_in_rolling_hash:    {:?}",
-                rolling_hash.as_ref().ok().and_then(|o| o.as_ref()).map(|h| format!("0x{}", hex::encode(h.0))));
-            info!("[DEBUG-00e]   non_priv_count:        {:?}", non_priv.ok());
-            info!("[DEBUG-00e]   balance_diffs_count:   {:?}",
-                balance_diffs.as_ref().ok().and_then(|o| o.as_ref()).map(|v| v.len()));
-            info!("[DEBUG-00e]   l2_in_msgs_count:      {:?}",
-                l2_msgs.as_ref().ok().and_then(|o| o.as_ref()).map(|v| v.len()));
-        }
-        // ── END DEBUG ──
-
         let calldata_values = [
             &[Value::Uint(U256::from(batch_number))],
             proofs

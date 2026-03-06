@@ -280,20 +280,24 @@ L1 Proof Sender: Failed because of an EthClient error:
 
 **디버그 데이터**: `/tmp/fixtures/zk-dex/batch_16/` (committer.json + prover.json)
 
-### 다음 해야 할 작업 (TODO)
+### 00e 버그 #2 해결 (2026-03-06)
 
-#### 최우선: 새 00e 버그 디버깅
-1. **batch 2 vs batch 16 트랜잭션 비교** — 실제 EVM gas_used 차이 분석
-   - `eth_getTransactionReceipt`로 두 withdrawal tx의 gas_used 비교
-   - 첫 withdrawal: 계정 생성 포함 vs 두번째: 기존 계정 업데이트
-2. **guest program 가스 상수 검토** — `constants.rs`의 고정값이 어떤 케이스에 맞춰져 있는지
-3. **EIP-2929 (access list) 영향 확인** — warm storage access 할인이 원인인지
-4. **수정 방안 결정**:
-   - 옵션 A: 가스 상수를 케이스별로 분리 (cold/warm)
-   - 옵션 B: 가스 상수를 worst-case (cold)로 맞추고 차액을 보정
-   - 옵션 C: guest program이 실제 EVM gas를 그대로 사용하도록 변경
+**원인 확인**: `eth_getTransactionReceipt`로 비교
+- 1st withdrawal gas_used: 95,002 (cold storage slots)
+- 2nd withdrawal gas_used: 52,902 (warm storage slots)
+- 차이: 42,100 — EVM warm/cold storage access 비용 차이
 
-#### 인프라 (후순위)
-5. [DEBUG-00e] 로그 유지 (새 버그 디버깅에 필요)
-6. 새 00e 해결 후 추가 fixture 수집 (연속 배치 2개 이상)
-7. compose-generator에 `ETHREX_DUMP_FIXTURES` 옵션 추가
+**수정**: 옵션 C 적용 — 고정 가스 상수 제거, block header `gas_used` 사용
+- `WITHDRAWAL_GAS`, `ETH_TRANSFER_GAS`, `SYSTEM_CALL_GAS` 상수 모두 삭제
+- `handle_withdrawal()`, `handle_eth_transfer()`, `handle_system_call()` 더 이상 gas 반환 안 함
+- `app_execution.rs`에서 `block.header.gas_used / non_priv_tx_count`로 gas 계산
+- 모든 non-privileged tx 타입이 동일한 gas 소스(block header) 사용
+
+**검증**: 2x 연속 E2E 테스트 24/24 통과, batch_2 + batch_10 fixture 자동 수집 완료
+
+### 남은 작업 (TODO)
+
+1. ~~[DEBUG-00e] 로그 제거~~ — 두 버그 모두 해결, 로그 불필요
+2. compose-generator에 `ETHREX_DUMP_FIXTURES` 옵션 추가 (선택적 활성화)
+3. 다른 앱 (evm-l2, tokamon) fixture 수집
+4. CI 파이프라인에 fixture 테스트 추가
