@@ -960,11 +960,18 @@ impl LEVM {
                 if let Some(expected_code) = find_exact_change_code(&acct.code_changes, bal_idx) {
                     match actual {
                         Some(a) => {
-                            let actual_code = codes
-                                .get(&a.info.code_hash)
-                                .map(|c| &c.bytecode)
-                                .cloned()
-                                .unwrap_or_default();
+                            let actual_code = if let Some(c) = codes.get(&a.info.code_hash) {
+                                c.bytecode.clone()
+                            } else {
+                                store
+                                    .get_account_code(a.info.code_hash)
+                                    .map_err(|e| {
+                                        BalValidationError::Database(format!(
+                                            "DB error reading account code for {addr:?}: {e}"
+                                        ))
+                                    })?
+                                    .bytecode
+                            };
                             if actual_code != *expected_code {
                                 return Err(BalValidationError::Mismatch(format!(
                                     "account {addr:?} code mismatch at index {bal_idx}"
@@ -975,21 +982,30 @@ impl LEVM {
                             // No-op check: compare against pre-state code.
                             // Try system_seed + codes cache first, then fall
                             // back to store (consistent with balance/nonce).
-                            let code_hash = system_seed
-                                .get(&addr)
-                                .map(|a| a.info.code_hash)
-                                .or_else(|| {
-                                    store.get_account_state(addr).ok().map(|a| a.code_hash)
-                                });
-                            let pre_code = match code_hash {
-                                Some(hash) => codes
-                                    .get(&hash)
-                                    .map(|c| c.bytecode.clone())
-                                    .or_else(|| {
-                                        store.get_account_code(hash).ok().map(|c| c.bytecode)
-                                    })
-                                    .unwrap_or_default(),
-                                None => Bytes::new(),
+                            let code_hash = if let Some(a) = system_seed.get(&addr) {
+                                a.info.code_hash
+                            } else {
+                                store
+                                    .get_account_state(addr)
+                                    .map(|a| a.code_hash)
+                                    .map_err(|e| {
+                                        BalValidationError::Database(format!(
+                                            "DB error reading account state for {addr:?}: {e}"
+                                        ))
+                                    })?
+                            };
+                            let pre_code = if let Some(c) = codes.get(&code_hash) {
+                                c.bytecode.clone()
+                            } else {
+                                store
+                                    .get_account_code(code_hash)
+                                    .map_err(|e| {
+                                        BalValidationError::Database(format!(
+                                            "DB error reading account code for hash \
+                                             {code_hash:?}: {e}"
+                                        ))
+                                    })?
+                                    .bytecode
                             };
                             if *expected_code != pre_code {
                                 return Err(BalValidationError::Mismatch(format!(
