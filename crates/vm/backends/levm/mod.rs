@@ -76,6 +76,16 @@ fn check_gas_limit(
     Ok(())
 }
 
+/// Error type for BAL validation failures, distinguishing state mismatches
+/// from database errors.
+#[derive(Debug, thiserror::Error)]
+enum BalValidationError {
+    #[error("{0}")]
+    Mismatch(String),
+    #[error("{0}")]
+    Database(String),
+}
+
 impl LEVM {
     /// Execute a block and return the execution result.
     ///
@@ -788,21 +798,23 @@ impl LEVM {
         acct: &ethrex_common::types::block_access_list::AccountChanges,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
-    ) -> U256 {
+    ) -> Result<U256, BalValidationError> {
         let pos = acct
             .balance_changes
             .partition_point(|c| c.block_access_index <= seed_idx);
         if pos > 0 {
-            acct.balance_changes[pos - 1].post_balance
+            Ok(acct.balance_changes[pos - 1].post_balance)
+        } else if let Some(a) = system_seed.get(&acct.address) {
+            Ok(a.info.balance)
         } else {
-            system_seed
-                .get(&acct.address)
-                .map(|a| a.info.balance)
-                .unwrap_or_else(|| {
-                    store
-                        .get_account_state(acct.address)
-                        .map(|a| a.balance)
-                        .unwrap_or_default()
+            store
+                .get_account_state(acct.address)
+                .map(|a| a.balance)
+                .map_err(|e| {
+                    BalValidationError::Database(format!(
+                        "DB error reading balance for {:?}: {e}",
+                        acct.address
+                    ))
                 })
         }
     }
@@ -814,21 +826,23 @@ impl LEVM {
         acct: &ethrex_common::types::block_access_list::AccountChanges,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
-    ) -> u64 {
+    ) -> Result<u64, BalValidationError> {
         let pos = acct
             .nonce_changes
             .partition_point(|c| c.block_access_index <= seed_idx);
         if pos > 0 {
-            acct.nonce_changes[pos - 1].post_nonce
+            Ok(acct.nonce_changes[pos - 1].post_nonce)
+        } else if let Some(a) = system_seed.get(&acct.address) {
+            Ok(a.info.nonce)
         } else {
-            system_seed
-                .get(&acct.address)
-                .map(|a| a.info.nonce)
-                .unwrap_or_else(|| {
-                    store
-                        .get_account_state(acct.address)
-                        .map(|a| a.nonce)
-                        .unwrap_or_default()
+            store
+                .get_account_state(acct.address)
+                .map(|a| a.nonce)
+                .map_err(|e| {
+                    BalValidationError::Database(format!(
+                        "DB error reading nonce for {:?}: {e}",
+                        acct.address
+                    ))
                 })
         }
     }
@@ -858,7 +872,7 @@ impl LEVM {
         index: &BalAddressIndex,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BalValidationError> {
         // PART A: For each BAL account with changes at bal_idx,
         //         verify execution produced matching post-state.
         if let Some(active_accounts) = index.tx_to_accounts.get(&bal_idx) {
@@ -872,17 +886,17 @@ impl LEVM {
                     match actual {
                         Some(a) if a.info.balance == expected => {}
                         Some(a) => {
-                            return Err(format!(
+                            return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={}",
                                 a.info.balance
-                            ));
+                            )));
                         }
                         None => {
                             // Account not in execution state. Check if the BAL entry
                             // is extraneous (claimed post-balance == pre-state balance,
                             // i.e., a no-op recorded by the builder). The state root
                             // will catch any true discrepancy.
-                            let seeded = Self::seeded_balance(seed_idx, acct, system_seed, store);
+                            let seeded = Self::seeded_balance(seed_idx, acct, system_seed, store)?;
                             if expected != seeded {
                                 // Dump full BAL entry for diagnosis
                                 let all_bal_indices: Vec<u16> = acct
@@ -909,12 +923,12 @@ impl LEVM {
                                     .iter()
                                     .map(|c| c.block_access_index)
                                     .collect();
-                                return Err(format!(
+                                return Err(BalValidationError::Mismatch(format!(
                                     "account {addr:?} has BAL balance change at {bal_idx} \
                                      but not in execution state (expected={expected}, pre={seeded}, \
                                      all_bal_idx={all_bal_indices:?}, nonce_idx={all_nonce_indices:?}, \
                                      storage_idx={all_storage_indices:?}, code_idx={code_indices:?})"
-                                ));
+                                )));
                             }
                         }
                     }
@@ -925,18 +939,18 @@ impl LEVM {
                     match actual {
                         Some(a) if a.info.nonce == expected => {}
                         Some(a) => {
-                            return Err(format!(
+                            return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} nonce mismatch at index {bal_idx}: BAL={expected}, exec={}",
                                 a.info.nonce
-                            ));
+                            )));
                         }
                         None => {
-                            let seeded = Self::seeded_nonce(seed_idx, acct, system_seed, store);
+                            let seeded = Self::seeded_nonce(seed_idx, acct, system_seed, store)?;
                             if expected != seeded {
-                                return Err(format!(
+                                return Err(BalValidationError::Mismatch(format!(
                                     "account {addr:?} has BAL nonce change at {bal_idx} \
                                      but not in execution state (expected={expected}, pre={seeded})"
-                                ));
+                                )));
                             }
                         }
                     }
@@ -952,24 +966,36 @@ impl LEVM {
                                 .cloned()
                                 .unwrap_or_default();
                             if actual_code != *expected_code {
-                                return Err(format!(
+                                return Err(BalValidationError::Mismatch(format!(
                                     "account {addr:?} code mismatch at index {bal_idx}"
-                                ));
+                                )));
                             }
                         }
                         None => {
                             // No-op check: compare against pre-state code.
-                            let pre_code = system_seed
+                            // Try system_seed + codes cache first, then fall
+                            // back to store (consistent with balance/nonce).
+                            let code_hash = system_seed
                                 .get(&addr)
-                                .and_then(|a| {
-                                    codes.get(&a.info.code_hash).map(|c| c.bytecode.clone())
-                                })
-                                .unwrap_or_default();
+                                .map(|a| a.info.code_hash)
+                                .or_else(|| {
+                                    store.get_account_state(addr).ok().map(|a| a.code_hash)
+                                });
+                            let pre_code = match code_hash {
+                                Some(hash) => codes
+                                    .get(&hash)
+                                    .map(|c| c.bytecode.clone())
+                                    .or_else(|| {
+                                        store.get_account_code(hash).ok().map(|c| c.bytecode)
+                                    })
+                                    .unwrap_or_default(),
+                                None => Bytes::new(),
+                            };
                             if *expected_code != pre_code {
-                                return Err(format!(
+                                return Err(BalValidationError::Mismatch(format!(
                                     "account {addr:?} has BAL code change at {bal_idx} \
                                      but not in execution state"
-                                ));
+                                )));
                             }
                         }
                     }
@@ -986,16 +1012,21 @@ impl LEVM {
                             // If account not in execution state, check pre-state
                             if actual.is_none() || actual_value.is_none() {
                                 let pre_value =
-                                    store.get_storage_value(addr, key).unwrap_or_default();
+                                    store.get_storage_value(addr, key).map_err(|e| {
+                                        BalValidationError::Database(format!(
+                                            "DB error reading storage for {addr:?} slot {}: {e}",
+                                            sc.slot
+                                        ))
+                                    })?;
                                 if expected_value == pre_value {
                                     continue; // Extraneous entry
                                 }
                             }
-                            return Err(format!(
+                            return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} storage slot {} mismatch at index {bal_idx}: \
                                  BAL={expected_value}, exec={actual_value:?}",
                                 sc.slot
-                            ));
+                            )));
                         }
                     }
                 }
@@ -1030,11 +1061,11 @@ impl LEVM {
                 if seeded_pos > 0 {
                     let seeded = acct.balance_changes[seeded_pos - 1].post_balance;
                     if account.info.balance != seeded {
-                        return Err(format!(
+                        return Err(BalValidationError::Mismatch(format!(
                             "account {addr:?} balance changed by execution ({}) but BAL has no \
                              balance change at index {bal_idx} (seeded={seeded})",
                             account.info.balance
-                        ));
+                        )));
                     }
                 }
                 // If seeded_pos == 0, balance was never seeded (loaded from store/shared_base).
@@ -1049,11 +1080,11 @@ impl LEVM {
                 if seeded_pos > 0 {
                     let seeded = acct.nonce_changes[seeded_pos - 1].post_nonce;
                     if account.info.nonce != seeded {
-                        return Err(format!(
+                        return Err(BalValidationError::Mismatch(format!(
                             "account {addr:?} nonce changed by execution ({}) but BAL has no \
                              nonce change at index {bal_idx} (seeded={seeded})",
                             account.info.nonce
-                        ));
+                        )));
                     }
                 }
             }
@@ -1073,10 +1104,10 @@ impl LEVM {
                         ethrex_common::utils::keccak(seeded_code)
                     };
                     if account.info.code_hash != seeded_hash {
-                        return Err(format!(
+                        return Err(BalValidationError::Mismatch(format!(
                             "account {addr:?} code changed by execution but BAL has no \
                              code change at index {bal_idx}"
-                        ));
+                        )));
                     }
                 }
             }
@@ -1097,11 +1128,11 @@ impl LEVM {
                         if seeded_pos > 0 {
                             let seeded = sc.slot_changes[seeded_pos - 1].post_value;
                             if value != seeded {
-                                return Err(format!(
+                                return Err(BalValidationError::Mismatch(format!(
                                     "account {addr:?} storage slot {slot_u256} changed by \
                                      execution ({value}) but BAL has no change at index \
                                      {bal_idx} (seeded={seeded})"
-                                ));
+                                )));
                             }
                         }
                     }
